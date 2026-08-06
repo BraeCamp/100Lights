@@ -61,6 +61,7 @@ interface Props {
   onQuantizeToBeat?: (id: string) => void
   /** Lock/unlock a linked DAW-mix clip (stops/resumes following audio changes). */
   onToggleDawLock?: (id: string) => void
+  onSetDawSyncMode?: (id: string) => void
 }
 
 const LABEL_WIDTH = 64
@@ -155,6 +156,7 @@ export default function Timeline({
   onSplitAtBeats,
   onQuantizeToBeat,
   onToggleDawLock,
+  onSetDawSyncMode,
 }: Props) {
   const trackAreaRef   = useRef<HTMLDivElement>(null)
   const [dropIndicator, setDropIndicator] = useState<{ trackId: string; x: number } | null>(null)
@@ -499,6 +501,15 @@ export default function Timeline({
           id: 'dawlock',
           label: item.dawMixLocked ? 'Unlock Audio Link (re-sync)' : 'Lock Audio Link',
           onClick: () => onToggleDawLock(item.id),
+        },
+      ] : []),
+      ...(item.dawMixLinked && !item.dawMixLocked && onSetDawSyncMode ? [
+        {
+          id: 'dawsync',
+          label: (item.dawMixSyncMode ?? (item.dawMixSourceProjectId ? 'save' : 'live')) === 'live'
+            ? 'Audio sync: Real-time → switch to On save'
+            : 'Audio sync: On save → switch to Real-time',
+          onClick: () => onSetDawSyncMode(item.id),
         },
       ] : []),
       { id: 's2',        separator: true, label: '' },

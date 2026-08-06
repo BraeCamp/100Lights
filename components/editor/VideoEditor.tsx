@@ -1804,8 +1804,32 @@ export default function VideoEditor({
     setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, dawMixLocked: nowLocked } : i))
     if (!nowLocked) {
       // Back on the live link — catch up with the current audio right away.
-      setTimeout(() => { void refreshDawMix(clip.dawMixTracks) }, 50)
+      setTimeout(() => { void resyncLinkedClip(clip) }, 50)
     }
+  }
+
+  /** Effective sync mode for a linked clip. Own-project links default to live
+   *  (re-bounce on every edit); cross-project links default to save (re-bounce
+   *  on save / reopen / manual re-sync only). */
+  const syncModeOf = (i: TimelineItem): 'live' | 'save' =>
+    i.dawMixSyncMode ?? (i.dawMixSourceProjectId ? 'save' : 'live')
+
+  /** Re-bounce one linked clip now, from the right source (own DAW or a linked
+   *  project's saved mix). Used by unlock and by switching a clip to real-time. */
+  function resyncLinkedClip(clip: TimelineItem) {
+    if (clip.dawMixSourceProjectId) void resyncSource(clip.dawMixSourceProjectId)
+    else void refreshDawMix(clip.dawMixTracks)
+  }
+
+  /** Toggle a linked clip between real-time and save-sync. Switching to
+   *  real-time catches it up immediately; switching to save just stops the
+   *  live re-bouncing (it'll refresh on the next save / reopen / re-sync). */
+  function handleSetDawSyncMode(id: string) {
+    const clip = timelineItemsRef.current.find(i => i.id === id)
+    if (!clip?.dawMixLinked) return
+    const next: 'live' | 'save' = syncModeOf(clip) === 'live' ? 'save' : 'live'
+    setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, dawMixSyncMode: next } : i))
+    if (next === 'live') setTimeout(() => { void resyncLinkedClip(clip) }, 50)
   }
 
   /** Move a clip's start to the nearest beat. */
@@ -1828,6 +1852,12 @@ export default function VideoEditor({
   const sameLink = (i: TimelineItem, trackIds: string[] | undefined, src: string | undefined) =>
     !!i.dawMixLinked && sameSel(i.dawMixTracks, trackIds) && (i.dawMixSourceProjectId ?? undefined) === (src ?? undefined)
   const dawMixBusyRef = useRef(false)
+  // Set when the own-project DAW changes; lets a save-sync mix skip live
+  // re-bounces yet still refresh on the next save.
+  const dawDirtyRef = useRef(false)
+  // Last cross-project render error, surfaced in the "rendered empty" alert so a
+  // failed sync self-reports (was a silent catch — impossible to diagnose).
+  const lastMixErrorRef = useRef<string>('')
 
   // Re-uploads of a linked mix wait for the edits to settle (8 s after the
   // last refresh) so a burst of live changes doesn't push transient renders
@@ -1854,9 +1884,11 @@ export default function VideoEditor({
     }
   }
 
-  /** Re-render EVERY linked selection (live edits, stale-on-load). */
+  /** Re-render EVERY linked selection (live edits, stale-on-load). `opts.modes`
+   *  restricts to clips of those sync modes (live path passes ['live']; the
+   *  post-save path passes ['save']; load/rehydrate pass nothing = all). */
   const mixRerunPendingRef = useRef(false)
-  async function refreshAllDawMixes(stamp?: string) {
+  async function refreshAllDawMixes(stamp?: string, opts?: { modes?: ('live' | 'save')[] }) {
     if (dawMixBusyRef.current) {
       // An edit landed mid-render — run again when this pass finishes so the
       // final audio state is never silently skipped.
@@ -1869,10 +1901,12 @@ export default function VideoEditor({
     for (const i of timelineItemsRef.current) {
       // Locked clips keep their render — only links with an unlocked clip refresh.
       if (i.dawMixLinked && !i.dawMixLocked &&
+          (!opts?.modes || opts.modes.includes(syncModeOf(i))) &&
           !links.some(l => (l.src ?? undefined) === (i.dawMixSourceProjectId ?? undefined) && sameSel(l.tracks, i.dawMixTracks)))
         links.push({ src: i.dawMixSourceProjectId, tracks: i.dawMixTracks })
     }
     if (!links.length) return
+    dawDirtyRef.current = false
     dawMixBusyRef.current = true
     const stampVal = stamp ?? new Date().toISOString()
     try {
@@ -1977,8 +2011,11 @@ export default function VideoEditor({
       // The mix defines the musical grid — adopt the DAW tempo unless the user
       // already tuned a grid of their own.
       if (daw.tempo) setBeatGrid(g => g ?? { bpm: daw.tempo, offset: 0, beatsPerBar: 4 })
+      lastMixErrorRef.current = ''
       setBounceStatus('idle')
-    } catch {
+    } catch (e) {
+      lastMixErrorRef.current = e instanceof Error ? e.message : String(e)
+      console.error('[dawmix] render failed', e)
       setBounceStatus('error')
       setTimeout(() => setBounceStatus('idle'), 2500)
     }
@@ -1995,7 +2032,9 @@ export default function VideoEditor({
   function scheduleMixRefresh(live: boolean) {
     if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
     liveMixTimerRef.current = setTimeout(() => {
-      if (timelineItemsRef.current.some(i => i.dawMixLinked && !i.dawMixLocked)) void refreshAllDawMixesRef.current()
+      // Only real-time links re-bounce on edits; save-sync links wait for a save.
+      if (timelineItemsRef.current.some(i => i.dawMixLinked && !i.dawMixLocked && syncModeOf(i) === 'live'))
+        void refreshAllDawMixesRef.current(undefined, { modes: ['live'] })
     }, live ? 2500 : 1200)
   }
 
@@ -2087,7 +2126,8 @@ export default function VideoEditor({
       // If nothing landed on the timeline, the render came back empty/silent —
       // say so instead of leaving the user staring at an empty pool.
       if (!timelineItemsRef.current.some(i => i.dawMixLinked && i.dawMixSourceProjectId === sourceId)) {
-        window.alert(`Linked “${name}”, but its mix rendered empty — the project may have no audible clips, or its sounds couldn't load here.`)
+        const why = lastMixErrorRef.current ? `\n\nReason: ${lastMixErrorRef.current}` : ''
+        window.alert(`Linked “${name}”, but its mix rendered empty — the project may have no audible clips, or its sounds couldn't load here (e.g. recorded/imported audio that was never uploaded to the cloud).${why}`)
       }
     } catch (err) {
       setBounceStatus('error')
@@ -2110,6 +2150,7 @@ export default function VideoEditor({
         : derived)
     // Only auto-render when an UNLOCKED mix is linked — a project that never
     // bounced stays manual, and locked links keep their frozen render.
+    dawDirtyRef.current = true   // a save-sync mix will pick this up on save
     scheduleMixRefresh(live)
   }
 
@@ -2730,6 +2771,11 @@ export default function VideoEditor({
         fetch(`/api/projects/${projectId}/autosave`, { method: 'DELETE' }).catch(() => {})
       }
       flashSaved()
+      // Save-sync: after a save, bring any "on save" linked mixes up to date so
+      // the clip reflects the arrangement you just saved (non-blocking — it swaps
+      // the media in place and re-uploads on its own timer).
+      if (dawDirtyRef.current && timelineItemsRef.current.some(i => i.dawMixLinked && !i.dawMixLocked && syncModeOf(i) === 'save'))
+        void refreshAllDawMixesRef.current(undefined, { modes: ['save'] })
       // Navigate to pretty URL after first save (exits /new) or any save that produced a slug
       if (saved.slug && pathname === '/new') {
         navigateToProject(saved.slug, saved.username)
@@ -3586,6 +3632,7 @@ export default function VideoEditor({
             onSplitAtBeats={handleSplitAtBeats}
             onQuantizeToBeat={handleQuantizeToBeat}
             onToggleDawLock={handleToggleDawLock}
+            onSetDawSyncMode={handleSetDawSyncMode}
           />
         </>
       )}

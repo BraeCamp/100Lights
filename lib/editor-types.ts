@@ -137,6 +137,11 @@ export interface TimelineItem {
   dawMixTracks?: string[]
   /** Locked: keep the current render — stop following audio changes until unlocked. */
   dawMixLocked?: boolean
+  /** How this linked mix follows its audio:
+   *  'live' — re-bounce on every edit (own-project default);
+   *  'save' — re-bounce only on save / reopen / manual re-sync (cross-project default).
+   *  Absent = the default for its kind. */
+  dawMixSyncMode?: 'live' | 'save'
   /** Cross-project link: the SOURCE project whose mix this clip renders. Absent =
    *  this project's own DAW. Set when you link another project's audio in; the
    *  editor joins that project's room so the clip re-syncs on the source's edits. */

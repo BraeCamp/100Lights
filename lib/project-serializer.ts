@@ -73,6 +73,7 @@ export interface SerializedClip {
   dawMixStamp?: string
   dawMixTracks?: string[]
   dawMixLocked?: boolean
+  dawMixSyncMode?: 'live' | 'save'
   dawMixSourceProjectId?: string
   // Draw Focus
   focusX?: number
@@ -220,6 +221,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       dawMixStamp:      item.dawMixStamp,
       dawMixTracks:     item.dawMixTracks,
       dawMixLocked:     item.dawMixLocked,
+      dawMixSyncMode:   item.dawMixSyncMode,
       dawMixSourceProjectId: item.dawMixSourceProjectId,
       focusX:           item.focusX,
       focusY:           item.focusY,
@@ -313,6 +315,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     dawMixStamp:      clip.dawMixStamp,
     dawMixTracks:     clip.dawMixTracks,
     dawMixLocked:     clip.dawMixLocked,
+    dawMixSyncMode:   clip.dawMixSyncMode,
     dawMixSourceProjectId: clip.dawMixSourceProjectId,
     focusX:           clip.focusX,
     focusY:           clip.focusY,
