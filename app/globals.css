@@ -166,6 +166,22 @@ input[type="range"].cf-slider::-moz-range-thumb {
 .menu-pop     { animation: menuPop 0.12s ease-out; transform-origin: top; }
 .menu-pop-out { animation: menuPopOut 0.11s ease-in forwards; transform-origin: top; }
 
+/* Clip settle — a quick brightness flash when a dragged/trimmed clip lands, so it
+   reads as "dropped into place". Uses filter (not transform) so it never fights a
+   clip's own centering transform. */
+@keyframes clipSettle {
+  0%   { filter: brightness(1.55); }
+  100% { filter: brightness(1); }
+}
+.clip-settle { animation: clipSettle 0.24s ease-out; }
+@media (prefers-reduced-motion: reduce) { .clip-settle { animation: none; } }
+
+/* Loading pulse — a breathing opacity for "working" labels/badges, so a wait
+   reads as active progress rather than a frozen state. */
+@keyframes loadingPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+.loading-shimmer { animation: loadingPulse 1.1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .loading-shimmer { animation: none; } }
+
 /* Modal / dialog open — a gentle fade + lift. */
 @keyframes modalIn {
   from { opacity: 0; transform: translateY(8px) scale(0.985); }

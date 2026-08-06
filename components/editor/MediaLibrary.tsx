@@ -199,7 +199,7 @@ export default function MediaLibrary({
                 aria-haspopup="menu" aria-expanded={showAudioMenu}
               >
                 <Music2 size={11} />
-                {bounceStatus === 'working' ? 'Syncing…' : 'Audio'}
+                {bounceStatus === 'working' ? <span className="loading-shimmer">Syncing…</span> : 'Audio'}
                 <ChevronDown size={11} />
               </button>
               {showAudioMenu && audioMenuPos && (<>
@@ -276,7 +276,7 @@ export default function MediaLibrary({
               onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
               <Link2 size={11} color="var(--accent-light)" style={{ flexShrink: 0 }} />
               <span className="flex-1 min-w-0 truncate" style={{ fontSize: 11.5, color: 'var(--text-primary)' }} title={s.name}>{s.name}</span>
-              {s.syncing && <span style={{ fontSize: 9, color: 'var(--accent-light)' }}>syncing…</span>}
+              {s.syncing && <span className="loading-shimmer" style={{ fontSize: 9, color: 'var(--accent-light)' }}>syncing…</span>}
               {onResyncSource && !s.syncing && (
                 <button onClick={() => onResyncSource(s.id)} title="Re-sync from this project's latest mix" style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 2, lineHeight: 0 }}><RotateCw size={11} /></button>
               )}

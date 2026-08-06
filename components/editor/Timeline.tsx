@@ -164,6 +164,27 @@ export default function Timeline({
   const trackAreaRef   = useRef<HTMLDivElement>(null)
   const [dropIndicator, setDropIndicator] = useState<{ trackId: string; x: number } | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
+  // Floating readout that follows the cursor while dragging/trimming a clip, and
+  // a transient id that plays the settle spring when a clip lands.
+  const [dragChip, setDragChip] = useState<{ x: number; y: number; text: string } | null>(null)
+  const [settleId, setSettleId] = useState<string | null>(null)
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flagSettle = (id: string) => {
+    setSettleId(id)
+    if (settleTimerRef.current) clearTimeout(settleTimerRef.current)
+    settleTimerRef.current = setTimeout(() => setSettleId(null), 240)
+  }
+  // Position readout: bar.beat (when a grid is set) + timecode.
+  const fmtPos = (t: number) => {
+    const m = Math.floor(t / 60), s = Math.max(0, t % 60)
+    const tc = `${m}:${s.toFixed(1).padStart(4, '0')}`
+    if (beatGrid) {
+      const spb = 60 / beatGrid.bpm, bpb = beatGrid.beatsPerBar || 4
+      const beat = Math.max(0, (t - beatGrid.offset) / spb)
+      return `${Math.floor(beat / bpb) + 1}.${Math.floor(beat % bpb) + 1} · ${tc}`
+    }
+    return tc
+  }
   const [creatingFocus, setCreatingFocus] = useState<{ trackId: string; x0: number; x1: number } | null>(null)
   // null = not scrubbing; number = current scrub speed multiplier (1 = normal)
   const [scrubSpeed, setScrubSpeed] = useState<number | null>(null)
@@ -393,6 +414,7 @@ export default function Timeline({
           }
         }
         lastMove = { start: newStart, trackId: newTrackId }
+        setDragChip({ x: ev.clientX, y: ev.clientY, text: fmtPos(newStart) })
         onMoveItem(item.id, newStart, newTrackId, false)   // preview only — no history
 
       } else if (type === 'trim-in') {
@@ -404,6 +426,7 @@ export default function Timeline({
         const newIn = Math.max(0, Math.min(origIn + (snappedEdge - origStart), origOut - 0.1))
         const newStart = origStart + (newIn - origIn)
         lastTrim = { edge: 'in', newIn, newOut: origOut, newStart: Math.max(0, newStart) }
+        setDragChip({ x: ev.clientX, y: ev.clientY, text: `${fmtPos(origOut - newIn)} long` })
         onTrimItem(item.id, 'in', newIn, origOut, Math.max(0, newStart), false)   // preview only
 
       } else {
@@ -415,6 +438,7 @@ export default function Timeline({
         newOut = snapFn(newOut, loopSnapPts, capturedPps, snapEnabled)
         newOut = Math.max(origIn + 0.1, newOut)
         lastTrim = { edge: 'out', newIn: origIn, newOut, newStart: origStart }
+        setDragChip({ x: ev.clientX, y: ev.clientY, text: `${fmtPos(newOut - origIn)} long` })
         onTrimItem(item.id, 'out', origIn, newOut, origStart, false)   // preview only
         // Ripple: shift all clips that start at or after origEnd on the same track
         if (ripple) {
@@ -429,6 +453,8 @@ export default function Timeline({
 
     function onUp() {
       setDraggingId(null)
+      setDragChip(null)
+      if (lastMove || lastTrim) flagSettle(item.id)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       // Commit the final position as a single history entry.
@@ -1045,6 +1071,7 @@ export default function Timeline({
 
                           {/* Clip body */}
                           <div
+                            className={settleId === item.id ? 'clip-settle' : undefined}
                             style={{
                               position: 'absolute', left, width,
                               top: 5, height: track.height - 10,
@@ -1224,6 +1251,19 @@ export default function Timeline({
           </div>
         </div>
       </div>
+
+      {/* Floating readout that follows the cursor while dragging/trimming a clip. */}
+      {dragChip && (
+        <div style={{
+          position: 'fixed', left: dragChip.x + 12, top: dragChip.y - 30, zIndex: 10000, pointerEvents: 'none',
+          background: 'var(--bg-card)', border: '1px solid var(--accent)', color: 'var(--accent-light)',
+          fontSize: 11, fontWeight: 600, padding: '3px 7px', borderRadius: 6,
+          fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+          boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
+        }}>
+          {dragChip.text}
+        </div>
+      )}
     </div>
   )
 }
