@@ -68,7 +68,7 @@ export function detectTransients(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onRangeSelect, onDoubleClick, onSettings, onMove, onResize, onResizeStart, onResizeEnd, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onRangeSelect, onDoubleClick, onSettings, onMove, onResize, onResizeLeft, onResizeStart, onResizeEnd, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -77,6 +77,9 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onSelect(): void; onShiftSelect(): void; onRangeSelect?(): void; onDoubleClick(): void; onSettings?(): void
   onMove(startBeat: number, trackId: string, altKey: boolean): void
   onResize(durationBeats: number, altKey: boolean): void
+  /** Left-edge drag: reports the clip's new START beat (end stays fixed). Used to
+   *  loop/extend the clip leftward — mirrors onResize on the right edge. */
+  onResizeLeft?(newStartBeat: number, altKey: boolean): void
   onResizeStart?(): void
   onResizeEnd?(): void
   onCrop(): void
@@ -335,6 +338,18 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       onResize(Math.max(0.125, resizeRef.current.startDur + (ev.clientX - resizeRef.current.startX) / beatW), ev.altKey)
     }
     function mu() { resizeRef.current = null; onResizeEnd?.(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+  }
+
+  // Left edge: drag to loop/extend the clip earlier (the end stays put). Reports
+  // the new start beat; the parent snaps + loops in whole loop-lengths.
+  function onMouseDownResizeLeft(e: React.MouseEvent) {
+    if (!onResizeLeft) return
+    e.stopPropagation()
+    onResizeStart?.()
+    const startX = e.clientX, startBeat = clip.startBeat
+    function mm(ev: MouseEvent) { onResizeLeft!(startBeat + (ev.clientX - startX) / beatW, ev.altKey) }
+    function mu() { onResizeEnd?.(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
   }
 
@@ -857,6 +872,9 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         )}
 
         <div onMouseDown={onMouseDownResize} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 7 }} />
+        {onResizeLeft && !isCropping && (
+          <div onMouseDown={onMouseDownResizeLeft} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 7 }} />
+        )}
       </div>
 
       {/* Gain drag tooltip — fixed positioning escapes overflow:hidden */}

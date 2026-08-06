@@ -722,6 +722,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     const edgeBeats = Math.min(n.durationBeats * 0.4, 8 / beatW)
     return rawBeat >= n.startBeat + n.durationBeats - edgeBeats
   }
+  // Left-edge grab zone: mirror of the right, but never overlapping it (so the
+  // right edge wins on tiny notes). Dragging it moves the note's START, end fixed.
+  function isNoteLeftEdge(n: MidiNote, rawBeat: number): boolean {
+    const edgeBeats = Math.min(n.durationBeats * 0.4, 8 / beatW)
+    return rawBeat <= n.startBeat + edgeBeats && rawBeat < n.startBeat + n.durationBeats - edgeBeats
+  }
 
   // Marquee drag shared by Edit (shift+drag select) and Erase (drag erase):
   // draws the rubber-band rect and reports the swept note ids on mouseup.
@@ -816,6 +822,31 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           }
           document.addEventListener('mousemove', onResizeMove)
           document.addEventListener('mouseup', onResizeUp)
+          return
+        }
+
+        // Grabbing the LEFT edge moves the note's start (end stays fixed) — drag
+        // left to lengthen, right to shorten. Resizes the whole selection too.
+        if (isNoteLeftEdge(existing, rawBeat)) {
+          const targets = (selectedNotes.has(existing.id) ? clip.notes.filter(n => selectedNotes.has(n.id)) : [existing])
+            .map(n => ({ id: n.id, start: n.startBeat, end: n.startBeat + n.durationBeats }))
+          setSelectedNotes(prev => prev.has(existing.id) ? prev : new Set([existing.id]))
+          const startX = e.clientX
+          function onLeftMove(ev: MouseEvent) {
+            const delta = (ev.clientX - startX) / beatW
+            for (const t of targets) {
+              const newStart = Math.max(0, Math.min(t.end - 0.125, snapUnless(ev.altKey, t.start + delta)))
+              const dur = t.end - newStart
+              lastNoteLenRef.current = dur
+              dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: t.id, patch: { startBeat: newStart, durationBeats: dur } })
+            }
+          }
+          function onLeftUp() {
+            document.removeEventListener('mousemove', onLeftMove)
+            document.removeEventListener('mouseup', onLeftUp)
+          }
+          document.addEventListener('mousemove', onLeftMove)
+          document.addEventListener('mouseup', onLeftUp)
           return
         }
 
@@ -963,7 +994,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     if (tool === 'edit' && p !== null) {
       const rawBeat = (e.clientX - rect.left + scrollLeft) / beatW
       const n = noteAt(rawBeat, p)
-      setHoverEdge(!!n && isNoteEdge(n, rawBeat))
+      setHoverEdge(!!n && (isNoteEdge(n, rawBeat) || isNoteLeftEdge(n, rawBeat)))
     } else if (hoverEdge) {
       setHoverEdge(false)
     }

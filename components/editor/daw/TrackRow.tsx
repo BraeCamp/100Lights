@@ -1596,6 +1596,33 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                     }
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch })
                   }}
+                  onResizeLeft={(newStartRaw, alt) => {
+                    if (frozen) return
+                    const origEnd = clip.startBeat + clip.durationBeats
+                    // Loop unit: MIDI pattern length (or its set loop length), audio native length.
+                    let L = 0
+                    if (isMidiClip(clip)) {
+                      const barBeats = project.timeSignatureNum || 4
+                      const contentEnd = clip.notes.length ? Math.max(...clip.notes.map(n => n.startBeat + n.durationBeats)) : barBeats
+                      L = clip.loopLengthBeats ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
+                    } else if (isAudioClip(clip) && clip.bufferDuration) {
+                      L = engine.secondsToBeats(clip.bufferDuration - clip.trimStart - clip.trimEnd)
+                    }
+                    if (L <= 0.01) return
+                    // Extend/shrink the START in whole loop-lengths anchored to the
+                    // (fixed) right edge, so the loop tiles align and the end never
+                    // moves. Drag left = more loops, drag right = fewer (min 1).
+                    const reqStart = alt ? newStartRaw : snapBeat(newStartRaw, snap, project.timeSignatureNum, meterSegments(project))
+                    const loops = Math.max(1, Math.round((origEnd - reqStart) / L))
+                    const newStart = Math.max(0, origEnd - loops * L)
+                    if (Math.abs(newStart - clip.startBeat) < 0.01) return
+                    const patch: Record<string, unknown> = { startBeat: newStart, durationBeats: origEnd - newStart }
+                    if (loops > 1 || clip.loopEnabled) {
+                      patch.loopEnabled = true
+                      if (isMidiClip(clip)) patch.loopLengthBeats = L
+                    }
+                    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch })
+                  }}
                   onResizeEnd={() => {
                     const grp = groupResizeRef.current
                     groupResizeRef.current = null
