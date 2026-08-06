@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2, X } from 'lucide-react'
+import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2, X, Wrench, Palette, Download } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { formatDisplayTime } from '@/lib/captions'
 import type { TimelineItem, VideoAdjustments, TransitionType, ClipFlag, CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
@@ -319,12 +320,12 @@ export default function Inspector({
   const [editingChapterTitle, setEditingChapterTitle] = useState('')
   const activeCaptionRef = useRef<HTMLDivElement>(null)
 
-  const TABS: { id: Tab; label: string }[] = [
-    { id: 'tools',      label: 'Tools' },
-    { id: 'transcript', label: 'Transcript' },
-    { id: 'clip',       label: 'Clip' },
-    ...(!isAudioOnly ? [{ id: 'color' as Tab, label: 'Color' }] : []),
-    { id: 'outputs',    label: 'Outputs' },
+  const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
+    { id: 'tools',      label: 'Tools',      icon: Wrench },
+    { id: 'transcript', label: 'Transcript', icon: FileText },
+    { id: 'clip',       label: 'Clip',       icon: Scissors },
+    ...(!isAudioOnly ? [{ id: 'color' as Tab, label: 'Color', icon: Palette }] : []),
+    { id: 'outputs',    label: 'Outputs',    icon: Download },
   ]
 
   function resetAdjustments() { onAdjustmentsChange({ ...DEFAULT_ADJUSTMENTS }) }
@@ -374,20 +375,27 @@ export default function Inspector({
   return (
     <div className="flex flex-col h-full select-none" style={{ background: 'var(--bg-surface)', borderLeft: '1px solid var(--border)' }}>
 
-      {/* Tab bar */}
-      <div className="flex shrink-0 overflow-x-auto" style={{ borderBottom: '1px solid var(--border)' }}>
-        {TABS.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-1"
-            style={{
-              color: tab === t.id ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: `2px solid ${tab === t.id ? 'var(--accent)' : 'transparent'}`,
-              minWidth: 48,
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
+      {/* Tab bar — icon-over-label, matching the editor's icon+label language.
+          Stacking the glyph over the word keeps all tabs visible without the
+          horizontal scroll the old text-only strip needed. */}
+      <div className="flex shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
+        {TABS.map((t) => {
+          const active = tab === t.id
+          const Icon = t.icon
+          return (
+            <button key={t.id} onClick={() => setTab(t.id)} title={t.label}
+              className="flex-1 flex flex-col items-center gap-1 py-2 transition-colors"
+              style={{
+                color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                minWidth: 44,
+              }}
+            >
+              <Icon size={14} color={active ? 'var(--accent-light)' : 'currentColor'} />
+              <span className="text-[10px] font-medium leading-none">{t.label}</span>
+            </button>
+          )
+        })}
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
