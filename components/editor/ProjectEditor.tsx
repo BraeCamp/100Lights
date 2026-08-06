@@ -27,6 +27,7 @@ import type { CfProjFile, SerializedAudioMedia, SerializedMedia } from '@/lib/pr
 import { saveProjectLocally } from '@/lib/project-serializer'
 import type { DawProject } from '@/lib/daw-types'
 import { SmallScreenGate } from './SmallScreenGate'
+import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import StudioGuide from './StudioGuide'
 import SuggestionsReview from './SuggestionsReview'
 import type { AudioTrack } from './AudioEditor'
@@ -794,8 +795,11 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
 
   // ── Video: VideoEditor handles all combos that include video ─
   if (hasVideo) {
+    // Same WorkshopThemeProvider the audio editor self-wraps with, so a user's
+    // theme applies identically here (the video root already carries
+    // data-editor="true" and reads the same --tokens) — one look across both.
     return (
-      <>
+      <WorkshopThemeProvider>
         <SmallScreenGate />
         <VideoEditor
           projectId={projectId}
@@ -816,7 +820,7 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
             onSkip={handleSyncSkip}
           />
         )}
-      </>
+      </WorkshopThemeProvider>
     )
   }
 

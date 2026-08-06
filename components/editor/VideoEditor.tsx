@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
-import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers } from 'lucide-react'
+import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers, SwatchBook } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
@@ -21,6 +21,9 @@ const Inspector     = dynamic(() => import('@/components/editor/Inspector'),    
 const ColorScopes   = dynamic(() => import('@/components/editor/ColorScopes'),   { ssr: false })
 const RenderQueue   = dynamic(() => import('@/components/editor/RenderQueue'),   { ssr: false })
 const ExportModal   = dynamic(() => import('@/components/editor/ExportModal'),   { ssr: false })
+// Same appearance/theme panel the audio editor uses — one customization system
+// across both editors (see the shared WorkshopThemeProvider in ProjectEditor).
+const AppearancePanel = dynamic(() => import('@/components/editor/daw/AppearancePanel'), { ssr: false })
 const StoryboardView = dynamic(() => import('@/components/editor/StoryboardView'), { ssr: false })
 const DawMixSync    = dynamic(() => import('@/components/editor/DawMixSync'),    { ssr: false })
 
@@ -703,6 +706,7 @@ export default function VideoEditor({
   // Recovery state — set when a more-recent autosave is found on mount
   const [recovery, setRecovery] = useState<{ cfproj: CfProjFile; at: Date; source: 'local' | 'cloud' } | null>(null)
   const [showExport, setShowExport] = useState(false)
+  const [showAppearance, setShowAppearance] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
   // Viewport layout
@@ -3099,7 +3103,7 @@ export default function VideoEditor({
   ]
 
   return (
-    <div data-editor="true" className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
+    <div data-editor="true" data-editor-kind="video" className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
 
       {/* ── Header ───────────────────────────────────────────── */}
       <div className="electron-drag-container flex items-center gap-3 px-4 shrink-0" style={{ height: 40, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', paddingLeft: isElectronMac ? 80 : 16 }}>
@@ -3285,6 +3289,16 @@ export default function VideoEditor({
         {projectId && (
           <ShareButton projectId={projectId} />
         )}
+
+        {/* Customize appearance — same theme panel as the audio editor */}
+        <button
+          onClick={() => setShowAppearance(true)}
+          className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+          title="Customize appearance (theme)"
+        >
+          <SwatchBook size={11} />
+        </button>
 
         {/* Modules — add / remove loaded modules */}
         <div className="relative shrink-0">
@@ -3945,6 +3959,8 @@ export default function VideoEditor({
           }
         </div>
       )}
+
+      {showAppearance && <AppearancePanel onClose={() => setShowAppearance(false)} editorKind="video" />}
 
       {showExport && (
         <ExportModal

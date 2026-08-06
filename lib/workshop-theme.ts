@@ -74,9 +74,17 @@ export interface WorkshopTheme {
   trackPalette?: string[]
   accentSync: boolean    // derive accent hover/light/subtle from the base accent
   autoContrast?: boolean // text/symbols follow a grayscale ramp off the bg (default true)
+  // Optional per-editor color overrides. Absent = the base (universal) theme
+  // applies to both editors identically. When present for a kind, those tokens
+  // win in that editor only (e.g. a neutral-gray video editor for color work
+  // while the audio editor stays themed).
+  perEditor?: Partial<Record<EditorKind, Partial<Record<ThemeColorKey, string>>>>
   // Open for future fields; unknown keys are preserved on round-trip.
   [k: string]: unknown
 }
+
+export type EditorKind = 'audio' | 'video'
+export const EDITOR_KINDS: EditorKind[] = ['audio', 'video']
 
 // The base editor palette (mirrors [data-editor="true"] in globals.css). Used as
 // the fall-back and the "reset" target so the UI always has something to show.
@@ -250,6 +258,24 @@ export function resolveColor(theme: WorkshopTheme, key: ThemeColorKey): string {
   return isHex(v) ? v! : BASE_EDITOR_COLORS[key]
 }
 
+// CSS vars for a PER-EDITOR override — only the tokens that editor overrides
+// (plus derived accent when the accent itself is overridden). Emitted in a
+// higher-specificity `[data-editor-kind="…"]` block so it wins over the base.
+export function overrideCssVars(colors: Partial<Record<ThemeColorKey, string>> | undefined, accentSync: boolean): Record<string, string> {
+  const vars: Record<string, string> = {}
+  if (!colors) return vars
+  for (const key of THEME_COLOR_KEYS) {
+    const v = colors[key]
+    if (isHex(v)) vars[THEME_COLOR_TOKENS[key]] = v!
+  }
+  if (isHex(colors.accent)) {
+    vars['--accent-rgb'] = hexToRgb(colors.accent!).join(' ')
+    vars['--accent-contrast'] = bestForeground(colors.accent!)
+    if (accentSync) Object.assign(vars, deriveAccentVars(colors.accent!))
+  }
+  return vars
+}
+
 export interface ContrastWarning { pair: string; ratio: number }
 
 // Flag low contrast against the surface (where text/icons sit). With
@@ -291,12 +317,25 @@ export function sanitizeTheme(input: unknown): WorkshopTheme {
   const trackPalette = Array.isArray(t.trackPalette)
     ? (t.trackPalette as unknown[]).filter(isHex).slice(0, 24) as string[]
     : undefined
+  // Per-editor color overrides (hex-only, known tokens only).
+  let perEditor: WorkshopTheme['perEditor']
+  const rawPer = (t.perEditor && typeof t.perEditor === 'object' ? t.perEditor : {}) as Record<string, unknown>
+  for (const kind of EDITOR_KINDS) {
+    const raw = (rawPer[kind] && typeof rawPer[kind] === 'object' ? rawPer[kind] : null) as Record<string, unknown> | null
+    if (!raw) continue
+    const c: Partial<Record<ThemeColorKey, string>> = {}
+    for (const key of THEME_COLOR_KEYS) {
+      if (isHex(raw[key])) c[key] = (raw[key] as string).startsWith('#') ? raw[key] as string : '#' + raw[key]
+    }
+    if (Object.keys(c).length) { perEditor = perEditor ?? {}; perEditor[kind] = c }
+  }
   return {
     version: THEME_VERSION,
     name: typeof t.name === 'string' ? t.name.slice(0, 60) : undefined,
     colors,
     pattern,
     ...(trackPalette && trackPalette.length ? { trackPalette } : {}),
+    ...(perEditor ? { perEditor } : {}),
     accentSync: t.accentSync !== false,
     autoContrast: t.autoContrast !== false,
   }

@@ -1669,6 +1669,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     <DawContext.Provider value={contextValue}>
       <div
         data-editor="true"
+        data-editor-kind="audio"
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -1679,7 +1680,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           overflow: 'hidden',
         }}
       >
-        {showAppearance && <AppearancePanel onClose={() => setShowAppearance(false)} />}
+        {showAppearance && <AppearancePanel onClose={() => setShowAppearance(false)} editorKind="audio" />}
         {props.projectId && <SessionRecap projectId={props.projectId} />}
         {/* Pre-save Share: saves the project, then CollabInvite opens */}
         {!props.projectId && props.onSave && !props.readOnly && (

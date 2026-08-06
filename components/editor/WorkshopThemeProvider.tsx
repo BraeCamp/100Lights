@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback } f
 import { useUser } from '@clerk/nextjs'
 import {
   type WorkshopTheme, defaultTheme, sanitizeTheme, themeCssVars, patternCss, resolveColor,
+  overrideCssVars, EDITOR_KINDS,
 } from '@/lib/workshop-theme'
 
 const LS_KEY = '100lights-workshop-theme'
@@ -90,7 +91,15 @@ export function WorkshopThemeProvider({ children }: { children: React.ReactNode 
     const patDecls = pat
       ? `--workshop-pattern:${pat.backgroundImage};--workshop-pattern-size:${pat.backgroundSize};`
       : `--workshop-pattern:none;--workshop-pattern-size:auto;`
-    el.textContent = `[data-editor="true"]{${decls}${patDecls}}`
+    // Base (universal) block, then any per-editor override blocks at higher
+    // specificity so they win only inside that editor.
+    let css = `[data-editor="true"]{${decls}${patDecls}}`
+    for (const kind of EDITOR_KINDS) {
+      const ov = overrideCssVars(theme.perEditor?.[kind], theme.accentSync)
+      const keys = Object.keys(ov)
+      if (keys.length) css += `[data-editor-kind="${kind}"]{${keys.map(k => `${k}:${ov[k]};`).join('')}}`
+    }
+    el.textContent = css
   }, [theme])
 
   useEffect(() => () => { styleRef.current?.remove() }, [])

@@ -11,12 +11,12 @@ import {
   THEME_COLOR_KEYS, THEME_COLOR_LABELS, PATTERN_TYPES, BUILTIN_PRESETS,
   DEFAULT_TRACK_PALETTE, resolveColor, contrastWarnings, autoTextTokens,
   getUserPresets, saveUserPreset, deleteUserPreset,
-  type WorkshopTheme, type ThemeColorKey, type PatternType, type SavedPreset,
+  type WorkshopTheme, type ThemeColorKey, type PatternType, type SavedPreset, type EditorKind,
 } from '@/lib/workshop-theme'
 
 const TEXT_KEYS: ThemeColorKey[] = ['textPrimary', 'textSecondary', 'textMuted']
 
-export default function AppearancePanel({ onClose }: { onClose: () => void }) {
+export default function AppearancePanel({ onClose, editorKind }: { onClose: () => void; editorKind?: EditorKind }) {
   const { theme, setTheme, update, reset, isSignedIn } = useWorkshopTheme()
   const { isPro, ent } = usePlan()
   const { showUpgrade } = useUpgradeModal()
@@ -25,14 +25,29 @@ export default function AppearancePanel({ onClose }: { onClose: () => void }) {
   const [desc, setDesc] = useState('')
   const [busy, setBusy] = useState<null | 'save' | 'share'>(null)
   const [flash, setFlash] = useState<string | null>(null)
+  // Colors apply to BOTH editors by default (one consistent look); switch to
+  // "This editor" to override just the editor you're in (e.g. a neutral video
+  // editor for color work). Only offered when we know which editor we're in.
+  const [scopeAll, setScopeAll] = useState(true)
+  const scoped = !scopeAll && !!editorKind
+  const perColors = (editorKind && theme.perEditor?.[editorKind]) || {}
 
   const warns = contrastWarnings(theme)
 
-  const setColor = (key: ThemeColorKey, val: string) =>
-    update({ colors: { ...theme.colors, [key]: val } })
+  const setColor = (key: ThemeColorKey, val: string) => {
+    if (scoped) update({ perEditor: { ...theme.perEditor, [editorKind!]: { ...perColors, [key]: val } } })
+    else update({ colors: { ...theme.colors, [key]: val } })
+  }
   const clearColor = (key: ThemeColorKey) => {
-    const next = { ...theme.colors }; delete next[key]
-    update({ colors: next })
+    if (scoped) {
+      const cur = { ...perColors }; delete cur[key]
+      const per = { ...(theme.perEditor ?? {}), [editorKind!]: cur }
+      if (!Object.keys(cur).length) delete per[editorKind!]
+      update({ perEditor: Object.keys(per).length ? per : undefined })
+    } else {
+      const next = { ...theme.colors }; delete next[key]
+      update({ colors: next })
+    }
   }
   const setPattern = (patch: Partial<WorkshopTheme['pattern']>) =>
     update({ pattern: { ...theme.pattern, ...patch } })
@@ -131,14 +146,34 @@ export default function AppearancePanel({ onClose }: { onClose: () => void }) {
         {/* Palette */}
         <div style={section}>
           <p style={label}>Palette</p>
+          {editorKind && (
+            <div style={{ display: 'flex', gap: 4, marginBottom: 10, padding: 3, background: 'var(--bg-card)', borderRadius: 7, border: '1px solid var(--border)' }}>
+              {([['all', 'Both editors'], ['editor', `This editor`]] as const).map(([v, lbl]) => {
+                const on = (v === 'all') === scopeAll
+                return (
+                  <button key={v} onClick={() => setScopeAll(v === 'all')}
+                    style={{ flex: 1, padding: '4px 6px', fontSize: 10.5, fontWeight: 600, borderRadius: 5, cursor: 'pointer', border: 'none',
+                      background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--accent-contrast)' : 'var(--text-muted)' }}>
+                    {lbl}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {scoped && (
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '0 0 8px', lineHeight: 1.4 }}>
+              Overriding colors for the <b style={{ color: 'var(--accent-light)' }}>{editorKind}</b> editor only. Cleared tokens fall back to the shared theme.
+            </p>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             {THEME_COLOR_KEYS.map(key => {
               const autoText = theme.autoContrast !== false && TEXT_KEYS.includes(key)
               const auto = autoText ? autoTextTokens(resolveColor(theme, 'bgSurface')) : null
-              const val = auto
+              const base = auto
                 ? (key === 'textPrimary' ? auto.primary : key === 'textSecondary' ? auto.secondary : auto.muted)
                 : resolveColor(theme, key)
-              const overridden = !autoText && !!theme.colors?.[key]
+              const val = scoped && !autoText ? (perColors[key] ?? base) : base
+              const overridden = !autoText && (scoped ? !!perColors[key] : !!theme.colors?.[key])
               return (
                 <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, opacity: autoText ? 0.55 : 1 }}>
                   <label style={{ position: 'relative', width: 26, height: 26, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border-light)', cursor: autoText ? 'default' : 'pointer', flexShrink: 0, background: val }}>
