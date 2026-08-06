@@ -65,6 +65,9 @@ interface Props {
 }
 
 const LABEL_WIDTH = 64
+// Small empty lead-in before 0s (mirrors the audio editor's START_GUTTER) so the
+// playhead at 0 isn't jammed against the track labels and 0 is easy to land on.
+const START_GUTTER = 14
 const SNAP_PX = 8
 const ZOOM_MIN = 0.01
 const ZOOM_MAX = 10
@@ -192,9 +195,10 @@ export default function Timeline({
   const phRulerRef = useRef<HTMLDivElement>(null)  // line in ruler strip
 
   const pps          = PIXELS_PER_SECOND * zoomLevel
-  const totalWidth   = Math.max(duration * pps + 200, 800)
+  const totalWidth   = Math.max(duration * pps + 200 + START_GUTTER, 800)
   const tracksHeight = tracks.reduce((s, t) => s + t.height, 0)
-  const timeToX      = (t: number) => t * pps
+  const timeToX      = (t: number) => t * pps                 // pure scale — widths & relative offsets
+  const posX         = (t: number) => START_GUTTER + t * pps  // absolute LEFT position (past the lead-in)
 
   // Stable refs so the RAF tick always reads the latest values without restarting.
   const ppsRef        = useRef(pps)
@@ -209,17 +213,30 @@ export default function Timeline({
   // to its on-screen position instead of letting the whole timeline slide out
   // from under the cursor. Anchor = playhead if it's visible, else the viewport
   // centre. Runs before paint so there's no visible jump.
+  // Manual-scroll yield: while (and shortly after) the user scrolls the timeline,
+  // the playback auto-follow steps aside so it never yanks the view back to the
+  // playhead mid-scroll. `programmaticScrollRef` marks our own scrollLeft writes
+  // so they don't count as a user scroll.
+  const userScrollRef = useRef(0)
+  const programmaticScrollRef = useRef(false)
+  const FOLLOW_RESUME_MS = 1800
+  const onTrackAreaScroll = () => {
+    if (programmaticScrollRef.current) { programmaticScrollRef.current = false; return }
+    userScrollRef.current = performance.now()
+  }
+
   const prevPpsRef = useRef(pps)
   useLayoutEffect(() => {
     const el = trackAreaRef.current
     const prev = prevPpsRef.current
     if (!el || prev === pps) { prevPpsRef.current = pps; return }
-    const phAbsOld  = LABEL_WIDTH + currentTime * prev
+    const phAbsOld  = LABEL_WIDTH + START_GUTTER + currentTime * prev
     const phVisible = phAbsOld >= el.scrollLeft && phAbsOld <= el.scrollLeft + el.clientWidth
     const anchorOld = phVisible ? phAbsOld : el.scrollLeft + el.clientWidth / 2
     const screenX   = anchorOld - el.scrollLeft                    // keep this fixed
-    const anchorT   = (anchorOld - LABEL_WIDTH) / prev
-    const anchorNew = LABEL_WIDTH + anchorT * pps
+    const anchorT   = (anchorOld - LABEL_WIDTH - START_GUTTER) / prev
+    const anchorNew = LABEL_WIDTH + START_GUTTER + anchorT * pps
+    programmaticScrollRef.current = true
     el.scrollLeft = Math.max(0, anchorNew - screenX)
     prevPpsRef.current = pps
   }, [pps]) // eslint-disable-line
@@ -249,20 +266,22 @@ export default function Timeline({
       const effect = syncRef.current
       const { time, wall } = (direct && direct.wall >= effect.wall) ? direct : effect
       const elapsed = isPlayingRef.current ? (performance.now() - wall) / 1000 : 0
-      const px = (time + elapsed * playbackRateRef.current) * ppsRef.current
+      const px = START_GUTTER + (time + elapsed * playbackRateRef.current) * ppsRef.current
       applyX(px)
 
       // Follow the playhead during playback: when it drifts out of the visible
       // band, recenter so it sits ~15% in from the left with a full viewport of
-      // lookahead. Gated to playback (never fights manual scroll/scrub) and
-      // sampled every 5th frame to avoid a forced reflow every frame.
-      if (isPlayingRef.current && frame++ % 5 === 0) {
+      // lookahead. Gated to playback, sampled every 5th frame to avoid a forced
+      // reflow every frame, AND suspended for ~1.8s after any manual scroll so it
+      // never fights the user (matches the audio editor's free-scroll feel).
+      if (isPlayingRef.current && frame++ % 5 === 0 && performance.now() - userScrollRef.current > FOLLOW_RESUME_MS) {
         const el = trackAreaRef.current
         if (el) {
           const abs    = LABEL_WIDTH + px           // playhead x in scroll-content coords
           const cw     = el.clientWidth
           const margin = 60
           if (abs < el.scrollLeft + margin || abs > el.scrollLeft + cw - margin) {
+            programmaticScrollRef.current = true
             el.scrollLeft = Math.max(0, abs - cw * 0.15)
           }
         }
@@ -273,7 +292,7 @@ export default function Timeline({
     rafId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(rafId)
   }, []) // runs once; reads all live values through refs
-  const xToTime      = (x: number) => Math.max(0, x / pps)
+  const xToTime      = (x: number) => Math.max(0, (x - START_GUTTER) / pps)
 
   // ── Ruler scrub ─────────────────────────────────────────────
   function handleRulerPointerDown(e: React.PointerEvent<HTMLDivElement>) {
@@ -702,6 +721,7 @@ export default function Timeline({
         ref={trackAreaRef}
         className="flex-1 overflow-x-auto overflow-y-auto"
         style={{ background: 'var(--bg-base)' }}
+        onScroll={onTrackAreaScroll}
       >
         <div style={{ width: totalWidth + LABEL_WIDTH, minWidth: '100%' }}>
 
@@ -719,7 +739,7 @@ export default function Timeline({
               onPointerDown={handleRulerPointerDown}
             >
               {ticks.map((t) => (
-                <div key={t} style={{ position: 'absolute', bottom: 0, left: timeToX(t) }}>
+                <div key={t} style={{ position: 'absolute', bottom: 0, left: posX(t) }}>
                   <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 9, lineHeight: 1, marginBottom: 2 }}>{formatRuler(t)}</span>
                   <div style={{ width: 1, height: 5, background: 'var(--border-light)' }} />
                 </div>
@@ -727,7 +747,7 @@ export default function Timeline({
 
               {/* Beat / bar ticks */}
               {beatTicks.map(({ t, bar, n }) => (
-                <div key={`b${t.toFixed(4)}`} style={{ position: 'absolute', bottom: 0, left: timeToX(t), pointerEvents: 'none' }}>
+                <div key={`b${t.toFixed(4)}`} style={{ position: 'absolute', bottom: 0, left: posX(t), pointerEvents: 'none' }}>
                   {bar && showBarNumbers && n !== undefined && n >= 1 && (
                     <span style={{ position: 'absolute', bottom: 12, left: 2, fontSize: 8, lineHeight: 1, color: 'rgb(var(--accent-rgb) / 0.65)', fontWeight: 700 }}>{n}</span>
                   )}
@@ -743,7 +763,7 @@ export default function Timeline({
               {inPoint !== null && outPoint !== null && inPoint < outPoint && (
                 <div style={{
                   position: 'absolute', top: 0, bottom: 0,
-                  left: timeToX(inPoint), width: timeToX(outPoint - inPoint),
+                  left: posX(inPoint), width: timeToX(outPoint - inPoint),
                   background: 'rgb(var(--accent-rgb) / 0.18)',
                   borderLeft: '2px solid rgb(var(--accent-rgb) / 0.7)',
                   borderRight: '2px solid rgb(var(--accent-rgb) / 0.7)',
@@ -751,17 +771,17 @@ export default function Timeline({
                 }} />
               )}
               {inPoint !== null && (
-                <div style={{ position: 'absolute', top: 0, bottom: 0, left: timeToX(inPoint), width: 2, background: 'rgb(var(--accent-rgb) / 0.9)', pointerEvents: 'none' }}>
+                <div style={{ position: 'absolute', top: 0, bottom: 0, left: posX(inPoint), width: 2, background: 'rgb(var(--accent-rgb) / 0.9)', pointerEvents: 'none' }}>
                   <span style={{ position: 'absolute', top: 2, left: 3, fontSize: 8, color: 'rgb(var(--accent-rgb) / 0.9)', fontWeight: 700, whiteSpace: 'nowrap' }}>IN</span>
                 </div>
               )}
               {outPoint !== null && (
-                <div style={{ position: 'absolute', top: 0, bottom: 0, left: timeToX(outPoint), width: 2, background: 'rgb(var(--accent-rgb) / 0.9)', pointerEvents: 'none' }}>
+                <div style={{ position: 'absolute', top: 0, bottom: 0, left: posX(outPoint), width: 2, background: 'rgb(var(--accent-rgb) / 0.9)', pointerEvents: 'none' }}>
                   <span style={{ position: 'absolute', top: 2, right: 3, fontSize: 8, color: 'rgb(var(--accent-rgb) / 0.9)', fontWeight: 700, whiteSpace: 'nowrap' }}>OUT</span>
                 </div>
               )}
 
-              <div ref={phRulerRef} style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: 1, background: 'rgba(255,255,255,0.85)', pointerEvents: 'none', willChange: 'transform', transform: `translateX(${timeToX(currentTime)}px)` }} />
+              <div ref={phRulerRef} style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: 1, background: 'rgba(255,255,255,0.85)', pointerEvents: 'none', willChange: 'transform', transform: `translateX(${posX(currentTime)}px)` }} />
 
               {/* Scrub speed badge — shown while dragging the ruler vertically */}
               {scrubSpeed !== null && scrubSpeed !== 1 && (
@@ -837,7 +857,7 @@ export default function Timeline({
               {/* Bar gridlines — faint verticals under the clips */}
               {barLines.map(({ t }) => (
                 <div key={`bar${t.toFixed(4)}`} style={{
-                  position: 'absolute', top: 0, bottom: 0, left: timeToX(t), width: 1,
+                  position: 'absolute', top: 0, bottom: 0, left: posX(t), width: 1,
                   background: 'rgb(var(--accent-rgb) / 0.10)', pointerEvents: 'none', zIndex: 0,
                 }} />
               ))}
@@ -935,7 +955,7 @@ export default function Timeline({
                       return (
                         <div key={idx} title={c.text} style={{
                           position: 'absolute',
-                          left: timeToX(c.start),
+                          left: posX(c.start),
                           width: Math.max(timeToX(c.end - c.start) - 1, 2),
                           bottom: 0, height: 7,
                           background: active ? 'rgba(139,92,246,0.95)' : 'rgba(139,92,246,0.4)',
@@ -949,7 +969,7 @@ export default function Timeline({
 
                     {/* Clip blocks */}
                     {trackItems.map((item) => {
-                      const left       = timeToX(item.startTime)
+                      const left       = posX(item.startTime)
                       const width      = Math.max(timeToX(item.outPoint - item.inPoint), 8)
                       const selected   = item.id === selectedId || (selectedIds?.has(item.id) ?? false)
                       const dragging   = item.id === draggingId
@@ -1198,8 +1218,8 @@ export default function Timeline({
               })}
 
               {/* Playhead */}
-              <div ref={phLineRef} style={{ position: 'absolute', top: 0, left: 0, height: tracksHeight, width: 1, background: 'rgba(255,255,255,0.8)', pointerEvents: 'none', zIndex: 15, willChange: 'transform', transform: `translateX(${timeToX(currentTime)}px)` }} />
-              <div ref={phHeadRef} style={{ position: 'absolute', left: 0, top: -1, width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '7px solid rgba(255,255,255,0.8)', pointerEvents: 'none', zIndex: 16, willChange: 'transform', transform: `translateX(${timeToX(currentTime) - 5}px)` }} />
+              <div ref={phLineRef} style={{ position: 'absolute', top: 0, left: 0, height: tracksHeight, width: 1, background: 'rgba(255,255,255,0.8)', pointerEvents: 'none', zIndex: 15, willChange: 'transform', transform: `translateX(${posX(currentTime)}px)` }} />
+              <div ref={phHeadRef} style={{ position: 'absolute', left: 0, top: -1, width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '7px solid rgba(255,255,255,0.8)', pointerEvents: 'none', zIndex: 16, willChange: 'transform', transform: `translateX(${posX(currentTime) - 5}px)` }} />
             </div>
           </div>
         </div>

@@ -153,6 +153,18 @@ input[type="range"].cf-slider::-moz-range-thumb {
   to   { opacity: 1; scale: 1; }
 }
 
+/* Dropdown / popover open animation. Compositor-only (opacity + transform), so
+   it costs nothing measurable. Apply `.menu-pop` to a menu's root element. */
+@keyframes menuPop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+.menu-pop { animation: menuPop 0.12s ease-out; transform-origin: top; }
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-pop { animation: none; }
+}
+
 /* Skip link for keyboard/screen reader navigation */
 .skip-link {
   position: absolute;

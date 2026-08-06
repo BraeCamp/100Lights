@@ -204,7 +204,7 @@ export default function MediaLibrary({
               </button>
               {showAudioMenu && audioMenuPos && (<>
                 <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setShowAudioMenu(false)} />
-                <div role="menu" style={{ position: 'fixed', top: audioMenuPos.top, left: audioMenuPos.left, zIndex: 1000, minWidth: 210, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: 4 }}>
+                <div role="menu" className="menu-pop" style={{ position: 'fixed', top: audioMenuPos.top, left: audioMenuPos.left, zIndex: 1000, minWidth: 210, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: 4 }}>
                   {onBounceDawMix && (
                     <MenuRow icon={<Music2 size={13} />} label="Sync this project's audio"
                       sub="Its full mix as a live clip"

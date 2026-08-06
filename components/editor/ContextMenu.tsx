@@ -44,6 +44,7 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
   return (
     <div
       ref={ref}
+      className="menu-pop"
       style={{
         position: 'fixed', left: safeX, top: safeY, zIndex: 9999,
         minWidth: 200, background: 'var(--bg-card)',

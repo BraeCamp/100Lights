@@ -1477,7 +1477,15 @@ export default function VideoEditor({
       // Space = play/pause (works with or without media loaded)
       if (e.code === 'Space') {
         e.preventDefault()
-        setIsPlaying(p => !p)
+        setIsPlaying(p => {
+          const next = !p
+          // Starting playback: re-seek the active video to exactly where the
+          // playhead sits. Scrubbing can leave the element mis-seeked (its
+          // currentTime lags, or you crossed a clip boundary), and without this
+          // the first timeupdate snaps the playhead — the "jumps on space" bug.
+          if (next && v) v.currentTime = Math.max(0, currentTimeRef.current - clipTimeOffsetRef.current)
+          return next
+        })
         return
       }
 
@@ -3465,7 +3473,7 @@ export default function VideoEditor({
                       </button>
                       {showOverlaysMenu && overlaysMenuPos && (<>
                         <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setShowOverlaysMenu(false)} />
-                        <div role="menu" style={{ position: 'fixed', top: overlaysMenuPos.top, left: overlaysMenuPos.left, zIndex: 1000, minWidth: 190, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: 4 }}>
+                        <div role="menu" className="menu-pop" style={{ position: 'fixed', top: overlaysMenuPos.top, left: overlaysMenuPos.left, zIndex: 1000, minWidth: 190, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: 4 }}>
                           {overlays.map(o => (
                             <button key={o.label} role="menuitemcheckbox" aria-checked={o.on} onClick={o.toggle}
                               className="flex items-center gap-2 w-full text-left rounded"
