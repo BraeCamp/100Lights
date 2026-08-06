@@ -68,7 +68,14 @@ export async function POST(req: Request) {
       const { getSubscription, getPlanLimits } = await import('@/lib/subscription')
       const sub = await getSubscription(clerkId)
       const limits = getPlanLimits(sub.plan)
-      const used = await sql`SELECT COALESCE(SUM(size), 0)::bigint AS total FROM upload_log WHERE user_id = ${clerkId}`
+      // Count one (latest) row per key, so historical duplicate rows from
+      // re-uploading the same stable key don't inflate the usage total.
+      const used = await sql`
+        SELECT COALESCE(SUM(sz), 0)::bigint AS total FROM (
+          SELECT DISTINCT ON (key) size AS sz
+          FROM upload_log WHERE user_id = ${clerkId}
+          ORDER BY key, at DESC
+        ) t`
       const totalAfter = Number(used[0]?.total ?? 0) + size
       if (totalAfter > limits.storageMb * 1024 * 1024) {
         return Response.json({ error: `Storage limit reached (${limits.storageMb >= 1024 ? `${limits.storageMb / 1024} GB` : `${limits.storageMb} MB`}). Upgrade for more space.` }, { status: 413 })
@@ -89,6 +96,11 @@ export async function POST(req: Request) {
   if (clerkId && size > 0) {
     try {
       await ensureUploadLog()
+      // The R2 key is STABLE per media id, so re-uploading a file (e.g. a linked
+      // DAW mix that re-bounces on every edit/save) OVERWRITES the same object —
+      // no real storage growth. Dedup the accounting by key so those overwrites
+      // don't accumulate phantom rows and falsely trip the storage cap.
+      await sql`DELETE FROM upload_log WHERE user_id = ${clerkId} AND key = ${key}`
       await sql`INSERT INTO upload_log (user_id, key, size) VALUES (${clerkId}, ${key}, ${size})`
     } catch { /* best-effort */ }
   }

@@ -2436,9 +2436,9 @@ export default function VideoEditor({
       if (!presignRes.ok) {
         const err = await presignRes.json().catch(() => ({})) as { error?: string }
         const msg = presignRes.status === 413
-          ? 'File is too large. Maximum size is 500 MB.'
+          ? (err.error ?? 'File is too large. Maximum size is 500 MB.')
           : (err.error ?? `Upload rejected (${presignRes.status})`)
-        setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error' } : m))
+        setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error', uploadError: msg } : m))
         setTranscribeError(msg)
         return
       }
@@ -2473,14 +2473,12 @@ export default function VideoEditor({
         }),
       }).catch(() => {})
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Upload failed'
-      setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error' } : m))
-      // Surface a brief note if the error looks like a CORS/network block
-      if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('CORS')) {
-        setTranscribeError('Upload blocked — configure R2 CORS to allow PUT from this origin, or contact support.')
-      } else {
-        setTranscribeError(msg)
-      }
+      const raw = err instanceof Error ? err.message : 'Upload failed'
+      const msg = (raw.includes('Failed to fetch') || raw.includes('NetworkError') || raw.includes('CORS'))
+        ? 'Upload blocked — configure R2 CORS to allow PUT from this origin, or contact support.'
+        : raw
+      setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error', uploadError: msg } : m))
+      setTranscribeError(msg)
     }
   }
 

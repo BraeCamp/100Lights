@@ -292,7 +292,7 @@ export default function MediaLibrary({
                       <CloudUpload size={12} color="var(--text-muted)" style={{ animation: 'pulse 1.5s ease-in-out infinite' }} />
                     </span>
                   ) : item.uploadStatus === 'error' ? (
-                    <span title="Upload failed — file is local only" style={{ flexShrink: 0, display: 'flex' }}>
+                    <span title={item.uploadError ? `Upload failed — file is local only.\n${item.uploadError}` : 'Upload failed — file is local only'} style={{ flexShrink: 0, display: 'flex' }}>
                       <AlertCircle size={12} color="#ef4444" />
                     </span>
                   ) : item.uploadStatus === 'uploaded' ? (

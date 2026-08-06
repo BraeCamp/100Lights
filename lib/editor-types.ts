@@ -174,6 +174,7 @@ export interface MediaItem {
   thumbnail?: string   // base64 JPEG data URL; video only
   r2Key?: string       // R2 object key; set after successful upload
   uploadStatus?: 'uploading' | 'uploaded' | 'error'
+  uploadError?: string // the reason, when uploadStatus === 'error' (shown on hover)
   peaks?: number[]     // audio waveform peak data (0–1 per band, 80 samples)
 }
 
