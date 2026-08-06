@@ -830,7 +830,40 @@ function makeHook(rand) {
     [[0, 0], [4, 0], [8, 1], [12, 0]],                 // call: repeated note, tiny lift
     [[0, 2], [3, 2], [6, 1], [8, 0], [12, -1]],        // sighing descent
   ]
-  return { bars, motif: rand.pick(SHAPES), thin: rand.chance(0.35) }
+  const motifA = rand.pick(SHAPES)
+  let motifB = rand.pick(SHAPES)
+  for (let g = 0; g < 4 && motifB === motifA; g++) motifB = rand.pick(SHAPES)
+  // A per-bar DEVELOPMENT plan so the hook grows instead of looping one shape:
+  //   A = statement · v = varied A (invert/transpose/retrograde/sequence) ·
+  //   B = a contrasting motif · c = cadence (resolves down, thins out).
+  // This is what turns "the same ascending run every bar" into a real phrase.
+  const FORMS2 = [['A', 'c'], ['A', 'v'], ['A', 'B']]
+  const FORMS4 = [
+    ['A', 'v', 'B', 'c'],   // statement → develop → contrast → cadence (AABA-ish)
+    ['A', 'A', 'B', 'c'],   // repeat, then a new idea
+    ['A', 'B', 'A', 'c'],   // ABA
+    ['A', 'v', 'B', 'v'],   // keep developing, no full stop
+    ['A', 'B', 'v', 'c'],
+  ]
+  const form = bars <= 2 ? rand.pick(FORMS2) : rand.pick(FORMS4)
+  const varKind = rand.pick(['invert', 'up1', 'down1', 'retro', 'seq', 'displace'])
+  return { bars, motif: motifA, motifA, motifB, form, varKind, thin: rand.chance(0.3) }
+}
+
+// Develop a motif: the classic transforms (invert / transpose / retrograde /
+// sequence) plus a rhythmic displace — so a repeated bar becomes a VARIATION of
+// the idea, not a carbon copy. Preserves the [slot, step] shape; `step` is
+// scale-degrees from the bar's anchor tone.
+function varyMotif(motif, kind) {
+  switch (kind) {
+    case 'invert':   return motif.map(([s, st]) => [s, -st])
+    case 'up1':      return motif.map(([s, st]) => [s, st + 1])
+    case 'down1':    return motif.map(([s, st]) => [s, st - 1])
+    case 'retro':    { const v = motif.map(m => m[1]); return motif.map(([s], i) => [s, v[motif.length - 1 - i]]) }
+    case 'seq':      return motif.map(([s, st], i) => [s, st + (i >= motif.length / 2 ? 2 : 0)])
+    case 'displace': return motif.map(([s, st]) => [Math.min(15, s + 2), st])
+    default:         return motif
+  }
 }
 function chordToneAt(chord, idx) {
   const n = chord.length
@@ -855,10 +888,21 @@ function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpD
     chords.forEach((chord, b) => {
       const bt = (bar0 + b) * 4
       const nn = [...chord, chord[1] + 12, chord[2] + 12].map(p => p + aReg)
+      // Vary direction across bars so it isn't a wall of ascending notes: the
+      // caller's arpDir seeds it, then we rotate through a small pattern (unless
+      // the caller explicitly asked for updown).
+      const dir = arpDir === 'updown' ? 'updown' : [arpDir, 'down', 'updown', arpDir][b % 4]
       let ord = nn
-      if (arpDir === 'down') ord = [...nn].reverse()
-      else if (arpDir === 'updown') ord = [...nn, ...[...nn].reverse().slice(1, -1)]
-      for (let i = 0, k = 0; i < 16; i += aRate, k++) clip.notes.push(note(ord[k % ord.length], bt + i * STEP, aRate * STEP * 0.9, hvel(rand, base - 6, i)))
+      if (dir === 'down') ord = [...nn].reverse()
+      else if (dir === 'updown') ord = [...nn, ...[...nn].reverse().slice(1, -1)]
+      for (let i = 0, k = 0; i < 16; i += aRate, k++) {
+        // Breathe: an occasional rest so it pulses instead of running wall-to-
+        // wall (more when calm), and a gentle octave lift on the bar's peak.
+        if (k > 0 && rand.chance(0.1 + (1 - motion) * 0.18)) continue
+        let p = ord[k % ord.length]
+        if (dir !== 'down' && (k % ord.length) === ord.length - 1 && rand.chance(0.35)) p += 12
+        clip.notes.push(note(p, bt + i * STEP, aRate * STEP * 0.9, hvel(rand, base - 6, i)))
+      }
     })
     return
   }
@@ -873,18 +917,26 @@ function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpD
   const restP = 0.04 + (1 - motion) * 0.4          // calm lines breathe more
   const lm = 1 + (1 - motion) * 0.9                // longer notes when calm
   const reach = 0.55 + motion * 0.6                // motion widens the motif's intervals
-  const motif = hook.motif
+  const form = hook.form || ['A']
   chords.forEach((chord, b) => {
     const bt = (bar0 + b) * 4
     const cds = []   // chord-tone scale-degrees in the lead register
     for (let d = -2; d <= 14; d++) if (chord.some(p => ((p % 12) + 12) % 12 === ((degPitch(d) % 12) + 12) % 12)) cds.push(d)
     const snap = to => cds.reduce((a, c) => Math.abs(c - to) < Math.abs(a - to) ? c : a, cds[0])
     const barPos = b % hook.bars
-    const last = barPos === hook.bars - 1
-    // Phrase arc: statement bars sit low, the mid bar lifts, the final bar
-    // resolves down to the tonic-ish and thins out (call → answer → cadence).
+    // Follow the development plan: each bar is a statement, a variation, a
+    // contrasting idea, or a cadence — so the line keeps offering NEW ideas
+    // instead of repeating one ascending shape.
+    const op = form[barPos % form.length] || 'A'
+    const last = op === 'c'
+    const motif = op === 'B' ? hook.motifB
+      : op === 'v' ? varyMotif(hook.motifA, hook.varKind)
+      : op === 'c' ? hook.motifA.filter(([s]) => s % 4 === 0)
+      : hook.motifA
+    // Phrase arc: statement/contrast bars lift off a chord tone; a cadence bar
+    // resolves down to the tonic-ish and thins out.
     const anchor = last ? snap(0) : snap(barPos % 2 === 0 ? 1 : 3)
-    const events = last ? motif.filter(([s]) => s % 4 === 0) : motif
+    const events = [...motif].sort((a, c) => a[0] - c[0])   // variations can reorder slots
     for (let i = 0; i < events.length; i++) {
       const [slot, step] = events[i]
       const strong = slot % 8 === 0
