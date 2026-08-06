@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
-import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2 } from 'lucide-react'
+import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
@@ -634,6 +634,7 @@ export default function VideoEditor({
 
   // Transcription
   const [importedFile, setImportedFile] = useState<File | null>(null)
+  const projectFileRef = useRef<HTMLInputElement | null>(null)   // hidden input for "Open project (.cfproj)"
   const [localProjectName, setLocalProjectName] = useState(projectName)
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState(projectName)
@@ -2156,6 +2157,25 @@ export default function VideoEditor({
     uploadMediaToR2(file, id)
   }
 
+  // Open a 100Lights project (.cfproj) straight into the video editor — the same
+  // load path the projects page uses, so a studio project can be brought into
+  // video (and vice-versa) without leaving the module.
+  async function handleOpenProjectFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (isDirty && !window.confirm('Open a different project? Unsaved changes to the current one will be lost.')) return
+    try {
+      const text = await file.text()
+      const cf = JSON.parse(text) as { _type?: string; name?: string; clips?: unknown; dawProject?: unknown }
+      if (cf._type !== '100lights-project' && !Array.isArray(cf.clips) && !cf.dawProject) throw new Error('not a project')
+      await loadCfproj(text)
+      setLocalProjectName(cf.name || file.name.replace(/\.cfproj$/i, ''))
+    } catch {
+      window.alert('That doesn’t look like a 100Lights project (.cfproj).')
+    }
+  }
+
   async function uploadMediaToR2(file: File, mediaId: string) {
     // Some browsers return empty type for formats like .mkv or .avi;
     // the presign route guesses from the extension when contentType is empty.
@@ -2735,6 +2755,17 @@ export default function VideoEditor({
         <Link href="/dashboard" className="flex items-center gap-1.5 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
           <ArrowLeft size={12} /> Dashboard
         </Link>
+        <div className="w-px h-4 shrink-0" style={{ background: 'var(--border)' }} />
+        {/* Import a project (.cfproj) straight into the video editor */}
+        <input ref={projectFileRef} type="file" accept=".cfproj,application/json" onChange={handleOpenProjectFile} className="hidden" />
+        <button
+          onClick={() => projectFileRef.current?.click()}
+          title="Open a project (.cfproj) in the video editor"
+          className="flex items-center gap-1.5 text-xs shrink-0 hover:opacity-70 transition-opacity"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Upload size={12} /> Open
+        </button>
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border)' }} />
         {editingName ? (
           <input

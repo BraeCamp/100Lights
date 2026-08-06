@@ -14,7 +14,7 @@ import { consumeStudioSeed } from '@/lib/open-in-studio'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
-import { Library, Settings, FileText, Users, Palette, Code2, PanelLeft, PlusCircle, RotateCw, Pencil, Keyboard, X } from 'lucide-react'
+import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X } from 'lucide-react'
 import { LogoMark } from '@/components/Logo'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { UITierProvider } from './UITierProvider'
@@ -1603,24 +1603,23 @@ export default function AudioEditor(props: AudioEditorProps) {
               >
                 <LogoMark size={22} />
               </a>
-              {/* Opens/closes the dashboard sidebar; opening defaults to the Sound Library */}
-              <button
-                onClick={() => setSidebarOpen(v => { const next = !v; if (next && !isPodcast) setLeftTab('library'); return next })}
-                title={sidebarOpen ? 'Hide sidebar' : 'Open sidebar'}
-                aria-expanded={sidebarOpen}
-                data-help-id="toggle-sidebar"
+              {/* Return to the projects list. (The sidebar still opens from the
+                  Sound Library / Code tab buttons just below.) */}
+              <a
+                href="/projects"
+                title="Return to projects"
+                data-help-id="return-to-projects"
                 style={{
-                  width: 28, height: 28, borderRadius: 6, marginBottom: 6, flexShrink: 0, border: 'none', cursor: 'pointer',
+                  width: 28, height: 28, borderRadius: 6, marginBottom: 6, flexShrink: 0, cursor: 'pointer', textDecoration: 'none',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: sidebarOpen ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
-                  color: sidebarOpen ? 'var(--accent)' : 'var(--text-muted)',
+                  background: 'transparent', color: 'var(--text-muted)',
                   transition: 'background 0.12s, color 0.12s',
                 }}
-                onMouseEnter={e => { if (!sidebarOpen) { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' } }}
-                onMouseLeave={e => { if (!sidebarOpen) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' } }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
               >
-                <PanelLeft size={15} />
-              </button>
+                <FolderOpen size={15} />
+              </a>
               {!isPodcast ? (
                 ([
                   { tab: 'library', Icon: Library, label: 'Sound Library',                     help: 'sound-library' },
