@@ -1,4 +1,3 @@
-import { auth } from '@clerk/nextjs/server'
 import { notFound } from 'next/navigation'
 import { sql } from '@/lib/db'
 import ProjectEditor from '@/components/editor/ProjectEditor'
@@ -15,10 +14,11 @@ export default async function ProjectBySlugPage({
   params: Promise<{ username: string; slug: string }>
 }) {
   const { username, slug } = await params
-  const { userId } = await auth()
-  if (!userId) return null // middleware handles the sign-in redirect
 
   // Project URLs are @-prefixed; a bare two-segment path isn't one of ours.
+  // (This route is public, matching /projects/{id}; access is enforced by
+  // /api/projects/[id] when ProjectEditor fetches, so a signed-out visitor gets
+  // the editor's own sign-in prompt rather than a hard 404.)
   if (!username.startsWith('@')) notFound()
   const owner = decodeURIComponent(username).replace(/^@/, '')
   const code = codeFromSlug(slug)

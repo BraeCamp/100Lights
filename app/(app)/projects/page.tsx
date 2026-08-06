@@ -244,10 +244,13 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
               style={{ background: 'var(--bg-card)', borderColor: row.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)' }}
               onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ id: row.id, starred: row.starred, x: e.clientX, y: e.clientY, href: cloudHref(row) }) }}
             >
-              <Link href={cloudHref(row)} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
+              {/* Hard navigation (plain <a>): a full load reliably hits the
+                  canonical server route, avoiding client-router quirks with the
+                  @-prefixed path. Opening a project reloads the editor anyway. */}
+              <a href={cloudHref(row)} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
                 {row.thumbnail ? <img src={row.thumbnail} className="w-full h-full object-cover" alt="" /> : <Film size={16} color="var(--text-secondary)" />}
-              </Link>
-              <Link href={cloudHref(row)} className="flex-1 min-w-0">
+              </a>
+              <a href={cloudHref(row)} className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{row.name}</span>
                   <SourceBadge source="cloud" />
@@ -255,7 +258,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
                 <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                   {row.clips} clip{row.clips !== 1 ? 's' : ''} · {row.media} media file{row.media !== 1 ? 's' : ''}
                 </div>
-              </Link>
+              </a>
               <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(row.ts)}</span>
               <button onClick={() => toggleStar(row.id)} title={row.starred ? 'Unstar' : 'Star'} className="p-1.5 rounded-lg" style={{ color: row.starred ? '#f59e0b' : 'var(--text-muted)' }}>
                 <Star size={14} fill={row.starred ? '#f59e0b' : 'none'} />
@@ -298,9 +301,9 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <Link href={ctxMenu.href} className="flex items-center gap-2.5 px-3.5 py-2 text-sm no-underline" style={{ color: 'var(--text-primary)' }}>
+          <a href={ctxMenu.href} className="flex items-center gap-2.5 px-3.5 py-2 text-sm no-underline" style={{ color: 'var(--text-primary)' }}>
             <FolderOpen size={14} /> Open
-          </Link>
+          </a>
           <button onClick={() => { toggleStar(ctxMenu.id); setCtxMenu(null) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
             <Star size={14} fill={ctxMenu.starred ? '#f59e0b' : 'none'} color={ctxMenu.starred ? '#f59e0b' : 'currentColor'} />
             {ctxMenu.starred ? 'Unstar' : 'Star'}

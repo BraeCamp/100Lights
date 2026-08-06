@@ -359,7 +359,7 @@ export default function DashboardPage() {
                   }}
                   onContextMenu={e => { e.preventDefault(); setCtxMenu({ id: project.id, name: project.name, x: e.clientX, y: e.clientY }) }}
                 >
-                  <Link
+                  <a
                     href={projHref(project)}
                     style={{
                       width: 40, height: 28, borderRadius: 6, flexShrink: 0,
@@ -371,7 +371,7 @@ export default function DashboardPage() {
                       ? <img src={project.thumbnail} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
                       : <Film size={14} color="var(--text-secondary)" />
                     }
-                  </Link>
+                  </a>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {renamingId === project.id ? (
@@ -385,12 +385,12 @@ export default function DashboardPage() {
                         onClick={e => e.stopPropagation()}
                       />
                     ) : (
-                      <Link
+                      <a
                         href={projHref(project)}
                         style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                       >
                         {project.name}
-                      </Link>
+                      </a>
                     )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
                       <Clock size={9} color="var(--text-muted)" />
@@ -436,7 +436,7 @@ export default function DashboardPage() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
               {sharedProjects.map(project => (
-                <Link key={project.id} href={projHref(project)}
+                <a key={project.id} href={projHref(project)}
                   style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 10, border: '1px solid rgba(139,92,246,0.28)', background: 'var(--bg-card)', textDecoration: 'none' }}>
                   <div style={{ width: 40, height: 28, borderRadius: 6, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--border)', overflow: 'hidden' }}>
                     {project.thumbnail ? <img src={project.thumbnail} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" /> : <AudioLines size={14} color="var(--text-secondary)" />}
@@ -448,7 +448,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <ArrowRight size={13} color="var(--accent-light)" style={{ flexShrink: 0 }} />
-                </Link>
+                </a>
               ))}
             </div>
           </section>

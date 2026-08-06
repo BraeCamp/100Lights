@@ -18,6 +18,11 @@ const isPublicRoute = createRouteMatcher([
   '/new',
   '/projects',
   '/projects/(.*)',
+  // Canonical pretty project + profile URLs (/@user and /@user/slug-code). These
+  // were the only project routes still behind auth (while /projects/(.*) is
+  // public), so opening a project via its canonical URL could 404 in production.
+  // Access is enforced downstream by /api/projects/[id], same as /projects/{id}.
+  '/@(.*)',
   '/apps/(.*)',
   '/settings',
   '/trash',
