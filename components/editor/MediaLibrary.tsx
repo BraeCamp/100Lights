@@ -37,6 +37,29 @@ function formatDur(s?: number) {
   return `${m}:${String(sec).padStart(2, '0')}`
 }
 
+// Compact waveform strip for audio media, drawn from the peaks already computed
+// on import (computeAudioPeaks). Mirrors the audio editor's Sound Library so a
+// sound reads as a sound here too, not just a text row.
+function MiniWave({ peaks }: { peaks: number[] }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const c = ref.current
+    if (!c) return
+    const ctx = c.getContext('2d')
+    if (!ctx || !peaks.length) return
+    const W = 240, H = 32
+    c.width = W; c.height = H
+    ctx.clearRect(0, 0, W, H)
+    ctx.fillStyle = 'rgba(99,102,241,0.55)'
+    const step = W / peaks.length
+    for (let i = 0; i < peaks.length; i++) {
+      const h = Math.max(1, peaks[i] * (H - 4))
+      ctx.fillRect(i * step, (H - h) / 2, Math.max(1, step - 0.5), h)
+    }
+  }, [peaks])
+  return <canvas ref={ref} style={{ width: '100%', height: 22, display: 'block', borderRadius: 4, background: 'rgba(0,0,0,0.2)' }} />
+}
+
 // One row of the "Audio ▾" menu: icon + label + a muted one-line explainer.
 function MenuRow({ icon, label, sub, onClick }: { icon: React.ReactNode; label: string; sub: string; onClick: () => void }) {
   return (
@@ -258,8 +281,25 @@ export default function MediaLibrary({
           ) : (
             <div className="flex flex-col gap-0.5">
               {items.map((item) => {
-                const Icon = item.contentType === 'video' ? Film : Mic
+                const isVideo = item.contentType === 'video'
+                const Icon = isVideo ? Film : Mic
                 const selected = item.id === selectedId
+                const accent = isVideo ? 'var(--accent)' : '#6366f1'
+                const showWave = !isVideo && !!item.peaks && item.peaks.length > 0
+                const statusIcon =
+                  item.uploadStatus === 'uploading' ? (
+                    <span title="Uploading to cloud…" style={{ flexShrink: 0, display: 'flex' }}>
+                      <CloudUpload size={12} color="var(--text-muted)" style={{ animation: 'pulse 1.5s ease-in-out infinite' }} />
+                    </span>
+                  ) : item.uploadStatus === 'error' ? (
+                    <span title="Upload failed — file is local only" style={{ flexShrink: 0, display: 'flex' }}>
+                      <AlertCircle size={12} color="#ef4444" />
+                    </span>
+                  ) : item.uploadStatus === 'uploaded' ? (
+                    <span title="Saved to cloud" style={{ flexShrink: 0, display: 'flex' }}>
+                      <CheckCircle2 size={12} color="var(--success)" />
+                    </span>
+                  ) : null
                 return (
                   <div
                     key={item.id}
@@ -271,45 +311,48 @@ export default function MediaLibrary({
                     onClick={() => onSelect(item.id)}
                     onDoubleClick={() => onAddToTimeline(item)}
                     onContextMenu={(e) => { e.preventDefault(); onSelect(item.id); onContextMenu(e, getMenuItems(item)) }}
-                    className="flex items-center gap-2 w-full px-2 py-2 rounded text-left cursor-grab active:cursor-grabbing transition-colors"
+                    className="w-full px-2 py-2 rounded text-left cursor-grab active:cursor-grabbing transition-colors"
                     style={{
                       background: selected ? 'rgba(124,58,237,0.15)' : 'transparent',
                       border: `1px solid ${selected ? 'rgba(124,58,237,0.3)' : 'transparent'}`,
+                      borderLeft: `2px solid ${selected ? 'var(--accent)' : accent}`,
                     }}
                     title="Drag to a timeline track, or double-click to add"
                   >
-                    <div
-                      className="w-10 h-7 rounded shrink-0 flex items-center justify-center overflow-hidden"
-                      style={{ background: 'var(--border)' }}
-                    >
-                      {item.thumbnail ? (
-                        <img src={item.thumbnail} className="w-full h-full object-cover" alt="" />
+                    <div className="flex items-center gap-2">
+                      {isVideo ? (
+                        <div
+                          className="w-10 h-7 rounded shrink-0 flex items-center justify-center overflow-hidden"
+                          style={{ background: 'var(--border)' }}
+                        >
+                          {item.thumbnail ? (
+                            <img src={item.thumbnail} className="w-full h-full object-cover" alt="" />
+                          ) : (
+                            <Icon size={12} color="var(--text-muted)" />
+                          )}
+                        </div>
                       ) : (
-                        <Icon size={12} color="var(--text-muted)" />
+                        <div
+                          className="w-6 h-6 rounded shrink-0 flex items-center justify-center"
+                          style={{ background: 'var(--border)' }}
+                        >
+                          <Icon size={12} color={accent} />
+                        </div>
                       )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                        {item.name}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                          {item.name}
+                        </div>
+                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                          {item.contentType} · {formatDur(item.duration)}
+                        </div>
                       </div>
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                        {item.contentType} · {formatDur(item.duration)}
-                      </div>
+                      {statusIcon}
                     </div>
-                    {item.uploadStatus === 'uploading' && (
-                      <span title="Uploading to cloud…" style={{ flexShrink: 0, display: 'flex' }}>
-                        <CloudUpload size={12} color="var(--text-muted)" style={{ animation: 'pulse 1.5s ease-in-out infinite' }} />
-                      </span>
-                    )}
-                    {item.uploadStatus === 'error' && (
-                      <span title="Upload failed — file is local only" style={{ flexShrink: 0, display: 'flex' }}>
-                        <AlertCircle size={12} color="#ef4444" />
-                      </span>
-                    )}
-                    {item.uploadStatus === 'uploaded' && (
-                      <span title="Saved to cloud" style={{ flexShrink: 0, display: 'flex' }}>
-                        <CheckCircle2 size={12} color="var(--success)" />
-                      </span>
+                    {showWave && (
+                      <div style={{ marginTop: 6 }}>
+                        <MiniWave peaks={item.peaks!} />
+                      </div>
                     )}
                   </div>
                 )
