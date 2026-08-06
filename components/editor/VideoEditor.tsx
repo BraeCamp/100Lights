@@ -2436,6 +2436,45 @@ export default function VideoEditor({
     void uploadMediaToR2(item.file, id)
   }
 
+  // Mark an item uploaded + register it in the account library (shared by the
+  // direct and proxied upload paths).
+  function markUploaded(mediaId: string, key: string, file: File, contentType: string) {
+    setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, r2Key: key, uploadStatus: 'uploaded', uploadError: undefined } : m))
+    const item = mediaItemsRef.current.find(m => m.id === mediaId)
+    fetch('/api/media/library', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: mediaId,
+        name: item?.name ?? file.name,
+        contentType: contentType || file.type,
+        duration: item?.duration ?? 0,
+        r2Key: key,
+        thumbnail: item?.thumbnail ?? null,
+      }),
+    }).catch(() => {})
+  }
+
+  // Fallback: POST the bytes through our own server, which PUTs to R2 (no browser
+  // CORS involved). Only for files under the proxy's size cap. Returns the key.
+  async function proxyUpload(file: File, mediaId: string): Promise<string | null> {
+    if (file.size > 4 * 1024 * 1024) return null
+    try {
+      const res = await fetch('/api/media/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          'x-media-id': mediaId,
+          'x-filename': file.name,
+        },
+        body: file,
+      })
+      if (!res.ok) return null
+      const { key } = await res.json() as { key: string }
+      return key ?? null
+    } catch { return null }
+  }
+
   async function uploadMediaToR2(file: File, mediaId: string) {
     // Some browsers return empty type for formats like .mkv or .avi;
     // the presign route guesses from the extension when contentType is empty.
@@ -2457,41 +2496,35 @@ export default function VideoEditor({
       }
       const { uploadUrl, key } = await presignRes.json() as { uploadUrl: string; key: string }
 
-      // PUT directly to R2 via presigned URL. If your R2 bucket has no CORS
-      // policy, this PUT may fail — add a CORS rule in the Cloudflare dashboard
-      // allowing PUT from your app's origin.
-      const putRes = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: { 'Content-Type': contentType || 'application/octet-stream' },
-      })
-      if (!putRes.ok) throw new Error(`R2 upload failed (${putRes.status})`)
+      // Try the direct presigned PUT first (offloads bandwidth from our server).
+      let direct = false
+      try {
+        const putRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': contentType || 'application/octet-stream' },
+        })
+        direct = putRes.ok
+      } catch { direct = false }
 
-      setMediaItems(prev => prev.map(m =>
-        m.id === mediaId ? { ...m, r2Key: key, uploadStatus: 'uploaded' } : m
-      ))
+      if (direct) { markUploaded(mediaId, key, file, contentType); return }
 
-      // Register in account media library so other projects can reuse this file
-      const item = mediaItemsRef.current.find(m => m.id === mediaId)
-      fetch('/api/media/library', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: mediaId,
-          name: item?.name ?? file.name,
-          contentType: contentType || file.type,
-          duration: item?.duration ?? 0,
-          r2Key: key,
-          thumbnail: item?.thumbnail ?? null,
-        }),
-      }).catch(() => {})
-    } catch (err) {
-      const raw = err instanceof Error ? err.message : 'Upload failed'
-      const msg = (raw.includes('Failed to fetch') || raw.includes('NetworkError') || raw.includes('CORS'))
-        ? 'Upload blocked — configure R2 CORS to allow PUT from this origin, or contact support.'
-        : raw
+      // Direct PUT was blocked (typically R2 CORS) — fall back through our server.
+      const proxied = await proxyUpload(file, mediaId)
+      if (proxied) { markUploaded(mediaId, proxied, file, contentType); return }
+
+      const msg = file.size > 4 * 1024 * 1024
+        ? 'Upload blocked (R2 CORS) and file is too large for the server fallback — add the R2 CORS rule for this origin.'
+        : 'Upload blocked (R2 CORS) and the server fallback failed. Add the R2 CORS rule for this origin.'
       setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error', uploadError: msg } : m))
       setTranscribeError(msg)
+    } catch (err) {
+      // Presign or something unexpected threw — last-ditch proxy attempt.
+      const proxied = await proxyUpload(file, mediaId)
+      if (proxied) { markUploaded(mediaId, proxied, file, contentType); return }
+      const raw = err instanceof Error ? err.message : 'Upload failed'
+      setMediaItems(prev => prev.map(m => m.id === mediaId ? { ...m, uploadStatus: 'error', uploadError: raw } : m))
+      setTranscribeError(raw)
     }
   }
 

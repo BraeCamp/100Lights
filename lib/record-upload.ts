@@ -36,8 +36,21 @@ export async function uploadRecordingBlob(blob: Blob, clipId: string): Promise<s
     })
     if (!presign.ok) return null
     const { uploadUrl, key } = await presign.json() as { uploadUrl: string; key: string }
-    const put = await fetch(uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': baseType } })
-    return put.ok ? key : null
+    try {
+      const put = await fetch(uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': baseType } })
+      if (put.ok) return key
+    } catch { /* direct PUT blocked (R2 CORS) — try the server proxy below */ }
+    // Fallback: route the bytes through our own server (no browser CORS). Fine
+    // for recordings, which are small.
+    if (blob.size <= 4 * 1024 * 1024) {
+      const proxy = await fetch('/api/media/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': baseType, 'x-media-id': `rec-${clipId}`, 'x-filename': `recording-${clipId}${ext}` },
+        body: blob,
+      })
+      if (proxy.ok) { const { key: k } = await proxy.json() as { key: string }; return k ?? null }
+    }
+    return null
   } catch {
     return null
   }
