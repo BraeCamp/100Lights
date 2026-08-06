@@ -4,7 +4,7 @@ import { uploadRecordingBlob } from '@/lib/record-upload'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, SlidersHorizontal, RotateCcw } from 'lucide-react'
+import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, Zap, RotateCcw } from 'lucide-react'
 import { TbMetronome } from 'react-icons/tb'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
 import { usePlan } from '@/hooks/usePlan'
@@ -861,7 +861,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       {/* Performance FX — parity with the mobile ⚡ hold-FX */}
       <div style={{ position: 'relative' }}>
         <button onClick={() => setFxOpen(o => !o)} style={fxOpen ? active : base} title="Performance FX — hold a pad to sweep the master" data-help-id="perf-fx">
-          <SlidersHorizontal size={15} />
+          <Zap size={15} />
         </button>
         {fxOpen && (
           <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, display: 'flex', gap: 5, padding: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, boxShadow: '0 6px 20px rgba(0,0,0,0.5)' }}>

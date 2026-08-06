@@ -461,11 +461,11 @@ const PAL = {
   techno: { keys: 'builtin-7', bass: 'builtin-4', pad: 'builtin-13', lead: 'builtin-8', kit: 'techno', ext: 0, bassStyle: 'root8', leadStyle: 'arp', keyRhythm: 'sustain' },
   trance: { keys: 'builtin-12', bass: 'builtin-4', pad: 'builtin-9', lead: 'builtin-3', kit: 'house', ext: 7, bassStyle: 'octarp', leadStyle: 'arp', keyRhythm: 'sustain' },
   synthwave: { keys: 'builtin-1', bass: 'builtin-4', pad: 'builtin-12', lead: 'builtin-3', kit: 'pop', ext: 7, bassStyle: 'octarp', leadStyle: 'riff', keyRhythm: 'sustain' },
-  'future-bass': { keys: 'builtin-12', bass: 'builtin-4', pad: 'builtin-29', lead: 'builtin-3', kit: 'trap808', ext: 9, bassStyle: '808', leadStyle: 'stab', keyRhythm: 'stab' },
+  'future-bass': { keys: 'builtin-12', bass: 'builtin-4', pad: 'builtin-30', lead: 'builtin-3', kit: 'trap808', ext: 9, bassStyle: '808', leadStyle: 'stab', keyRhythm: 'stab' },
   dnb: { keys: 'builtin-7', bass: 'builtin-4', pad: 'builtin-13', lead: 'builtin-8', kit: 'break', ext: 7, bassStyle: '808', leadStyle: 'arp', keyRhythm: 'sustain' },
   dubstep: { keys: 'builtin-7', bass: 'builtin-4', pad: 'builtin-13', lead: 'builtin-8', kit: 'traphard', ext: 0, bassStyle: '808', leadStyle: 'riff', keyRhythm: 'sustain' },
   trap: { keys: 'builtin-2', bass: 'builtin-4', pad: 'builtin-13', lead: 'builtin-8', kit: 'trap808', ext: 0, bassStyle: '808', leadStyle: 'riff', keyRhythm: 'sustain' },
-  ambient: { keys: 'builtin-30', bass: 'builtin-13', pad: 'builtin-29', lead: 'builtin-43', kit: 'none', ext: 9, bassStyle: 'pedal', leadStyle: 'sustained', keyRhythm: 'sustain' },
+  ambient: { keys: 'builtin-30', bass: 'builtin-13', pad: 'builtin-13', lead: 'builtin-43', kit: 'none', ext: 9, bassStyle: 'pedal', leadStyle: 'sustained', keyRhythm: 'sustain' },
   rnb: { keys: 'builtin-2', bass: 'builtin-18', pad: 'builtin-30', lead: 'builtin-36', kit: 'pop', ext: 9, bassStyle: 'walk', leadStyle: 'melody', keyRhythm: 'lofi' },
   funk: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-5', lead: 'builtin-15', kit: 'funk', ext: 9, bassStyle: 'walk', leadStyle: 'riff', keyRhythm: 'offstab' },
   disco: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-9', lead: 'builtin-15', kit: 'disco', ext: 7, bassStyle: 'octarp', leadStyle: 'riff', keyRhythm: 'offstab' },
@@ -484,12 +484,15 @@ const LEAD_ALTS = {
   arp:    ['builtin-3', 'builtin-8', 'builtin-12', 'builtin-39', 'builtin-38', 'builtin-36'],
   riff:   ['builtin-15', 'builtin-3', 'builtin-21', 'builtin-34', 'builtin-35', 'builtin-22'],
   stab:   ['builtin-3', 'builtin-1', 'builtin-8', 'builtin-21', 'builtin-45'],
-  sustained: ['builtin-43', 'builtin-24', 'builtin-30', 'builtin-6', 'builtin-40', 'builtin-28', 'builtin-42'],
+  sustained: ['builtin-43', 'builtin-24', 'builtin-30', 'builtin-40', 'builtin-28', 'builtin-42'],
 }
 // Alternate keys / pad / bass timbres (role-appropriate), seed-picked so songs
 // don't all use the one house voice per role.
 const KEYS_ALTS = ['builtin-2', 'builtin-1', 'builtin-27', 'builtin-26', 'builtin-0', 'builtin-36', 'builtin-35', 'builtin-45', 'builtin-31']
-const PAD_ALTS  = ['builtin-30', 'builtin-12', 'builtin-28', 'builtin-9', 'builtin-29', 'builtin-6', 'builtin-13', 'builtin-44']
+// NOTE: Choir (builtin-6) and Choir Aahs (builtin-29) are intentionally NOT in the
+// pad rotation — a choir sitting under a WHOLE song wears thin fast. Choir is
+// instead reserved for the one-shot pre-drop SWELL (useChoirSwell) below.
+const PAD_ALTS  = ['builtin-30', 'builtin-12', 'builtin-28', 'builtin-9', 'builtin-13', 'builtin-44']
 const BASS_ALTS = ['builtin-4', 'builtin-18', 'builtin-19', 'builtin-17']
 
 // ── Per-track sound shaping (rollFx) ──────────────────────────────────────────
@@ -1016,6 +1019,10 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const useKeyChange = B.keyChange ?? rand.chance(0.16)              // final chorus modulates UP (a lift)
   const keyShift     = rand.pick([2, 2, 1])                          // whole step (mostly) or half step
   const peakIdx      = form.map((s, i) => (/drop|chorus|hook/.test(s.role) ? i : -1)).filter(i => i >= 0)
+  // CHOIR SWELL — the ONE justified use of the choir: a single sustained "aahs"
+  // chord that swells across the 2 bars before a big drop, then releases into it.
+  // Reserved & seed-gated (not a whole-song pad — that wore thin). Needs a real peak.
+  const useChoirSwell = rand.chance(0.4) && form.some(s => /drop|chorus|hook/.test(s.role) && s.energy >= 0.9)
   const halfTimeIdx  = ((B.halfTime ?? rand.chance(0.3)) && peakIdx.length > 1) ? peakIdx[peakIdx.length - 1] : -1  // last peak flips half-time
   const keyChangeIdx = (useKeyChange && peakIdx.length > 1) ? peakIdx[peakIdx.length - 1] : -1        // final peak lifts
   // Energy → low-pass cutoff (Hz). Steep curve: quiet parts are clearly dark,
@@ -1061,6 +1068,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     lead:    { name: 'Lead',    instr: NONE,           preset: leadPreset,    rf: RF.lead,          pan: 0.08,  vol: 0.5,  fx: 'lead' },
     arp:     { name: 'Arp',     instr: NONE,           preset: arpPreset,     rf: RF.lead,          pan: -0.2,  vol: 0.4,  fx: 'keys' },
     counter: { name: 'Counter', instr: NONE,           preset: counterPreset, rf: RF.lead,          pan: -0.08, vol: 0.4,  fx: 'lead' },
+    swell:   { name: 'Choir Swell', instr: NONE,       preset: 'builtin-29',  rf: { attack: 0.7, gain: 1.2, filterHz: 6500 }, pan: 0, vol: 0.32, fx: 'pad' },
   }
   // A TEMPLATE can supply its OWN ensemble pool (the song-type's lineup) — else
   // the seed picks from the global set.
@@ -1071,7 +1079,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   if (leadReg.length > 2) { const drop = new Set(leadReg.slice(2)); ens = ens.filter(r => !drop.has(r)) }
   // Drums present unless the genre has none OR the template forbids them (ambient).
   const useDrums = genre.drums !== 'none' && opts.roster?.drums !== 'none'
-  const roleList = [...(useDrums ? ['drums'] : []), 'bass', ...ens]
+  const roleList = [...(useDrums ? ['drums'] : []), 'bass', ...ens, ...(useChoirSwell ? ['swell'] : [])]
   const TK = roleList.map(r => ({ key: r, ...ROLE[r] }))
   const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.fx, pal, genreId, rand, () => uid('e')) }))
   // Style signature — stamp the artist flavor onto the racks.
@@ -1129,6 +1137,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const push = c => { if (c.notes.length) clips.push(c) }
 
   let bar = 0
+  let swellDone = false   // the choir swell fires once, into the first big drop
   for (const sec of form) {
     const recipe = progs[sec.prog]
     const appearance = seen[sec.prog]++        // 0 = first time this section plays
@@ -1210,6 +1219,15 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
       if (sparse) fillPadLong(c, rand, 0, padCh, 42)
       else fillChords(c, rand, 0, padCh, KEY_RHYTHMS.sustain, e > 0.5 ? 48 : 40, 16, true, 0, voicing)
       push(c) }
+    // Choir SWELL — one held "aahs" chord across the 2 bars BEFORE this drop,
+    // releasing into the downbeat. Fires once, into the first real peak, on its
+    // own track (the choir's slow attack does the crescendo). Tension → release.
+    if (has('swell') && !swellDone && peak && e >= 0.9 && secStart >= 8) {
+      const c = secClip('swell', secStart - 8, 2, 0.75)
+      for (const p of voiceChord(chords[0], 'close').slice(0, 4)) c.notes.push(note(p, 0, 8 * 0.97, 72))
+      push(c)
+      swellDone = true
+    }
     // Lead — melody at peaks, register/motion set by the mood. leadPolicy governs
     // presence: 'none' = no lead at all; 'sparse' = peaks only (calm); 'peak' =
     // peaks; 'featured' = peaks + an arp fallback during builds. (Brae: many songs
@@ -1371,7 +1389,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     masterVolume: 0.5, tracks, clips, automationLanes, clipEffects,
     _form: form.map(s => s.role).join(' · '),
     _tracks: roleList.join('+'),
-    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} bass:${bassMotif || BASS_MOTIF_FOR[pal.bassStyle] || 'drive'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''} tension:[${dyn.join(',') || 'straight'}] riser:${useRiser ? 'on' : 'off'} impact:${useImpact ? 'on' : 'off'} stutter:${useStutter ? 'on' : 'off'} falseDrop:${useFalseDrop ? 'on' : 'off'} halfTime:${halfTimeIdx >= 0 ? 'on' : 'off'} keyChange:${keyChangeIdx >= 0 ? '+' + keyShift : 'off'}${moodTag}`,
+    _features: `intro:${introStyle} filterArc:${useFilterArc ? 'on' : 'off'} sidechain:${useSidechain ? 'on' : 'off'} sweep:${automationLanes.length ? sweepRole + '/' + sweepMode : 'off'} clipFx:${clipEffects.length} rolls:${useRolls ? 'on' : 'off'} voicing:${voicing} arp:${arpDir}/${arpRate === 2 ? '16th' : '8th'} bass:${bassMotif || BASS_MOTIF_FOR[pal.bassStyle] || 'drive'} swap:${useSwap ? 'on' : 'off'} human:${humanize ? 'on' : 'off'}${modeName ? ' mode:' + modeName : ''} tension:[${dyn.join(',') || 'straight'}] riser:${useRiser ? 'on' : 'off'} impact:${useImpact ? 'on' : 'off'} stutter:${useStutter ? 'on' : 'off'} falseDrop:${useFalseDrop ? 'on' : 'off'} halfTime:${halfTimeIdx >= 0 ? 'on' : 'off'} keyChange:${keyChangeIdx >= 0 ? '+' + keyShift : 'off'} choirSwell:${useChoirSwell ? 'on' : 'off'}${moodTag}`,
   }
 }
 

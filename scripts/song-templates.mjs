@@ -73,8 +73,8 @@ export const TEMPLATES = {
     variants: {
       'piano-swell': { presets: { keys: 'builtin-2', lead: 'builtin-2' }, sig: 'space' },
       'guitar-burn': { sig: 'guitar', mood: 'dark' },
-      'analog-rise': { presets: { pad: 'builtin-29' }, sig: 'space', mood: 'dreamy' },
-      'strings-lift': { presets: { lead: 'builtin-24', pad: 'builtin-6' }, sig: 'space', mood: 'warm' },
+      'analog-rise': { presets: { pad: 'builtin-30' }, sig: 'space', mood: 'dreamy' },
+      'strings-lift': { presets: { lead: 'builtin-24', pad: 'builtin-28' }, sig: 'space', mood: 'warm' },
     },
   },
 
@@ -160,10 +160,10 @@ export const TEMPLATES = {
     bias: { introStyle: 'soft', filterArc: true, sweeps: true, rolls: false, riser: false,
       impact: false, stutter: false, halfTime: false, keyChange: false, humanize: 0.02, voicing: 'open' },
     variants: {
-      'drone': { presets: { pad: 'builtin-29', lead: 'builtin-43' }, mood: 'dark' },
+      'drone': { presets: { pad: 'builtin-13', lead: 'builtin-43' }, mood: 'dark' },
       'glass-arp': { presets: { arp: 'builtin-39' } },
       'piano-space': { presets: { keys: 'builtin-2', lead: 'builtin-2' } },
-      'warm-analog': { presets: { pad: 'builtin-6' }, mood: 'warm' },
+      'warm-analog': { presets: { pad: 'builtin-30' }, mood: 'warm' },
     },
   },
 
