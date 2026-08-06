@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
-import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2, Link2, RotateCw, ArrowUpRight } from 'lucide-react'
+import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2, Link2, RotateCw, ArrowUpRight, ChevronDown } from 'lucide-react'
 import type { MediaItem } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
@@ -37,6 +37,23 @@ function formatDur(s?: number) {
   return `${m}:${String(sec).padStart(2, '0')}`
 }
 
+// One row of the "Audio ▾" menu: icon + label + a muted one-line explainer.
+function MenuRow({ icon, label, sub, onClick }: { icon: React.ReactNode; label: string; sub: string; onClick: () => void }) {
+  return (
+    <button role="menuitem" onClick={onClick}
+      className="flex items-start gap-2.5 w-full text-left rounded"
+      style={{ padding: '7px 8px', background: 'transparent', border: 'none', cursor: 'pointer' }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+      <span style={{ color: 'var(--accent-light)', marginTop: 1, flexShrink: 0 }}>{icon}</span>
+      <span className="min-w-0">
+        <span style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'var(--text-primary)' }}>{label}</span>
+        <span style={{ display: 'block', fontSize: 10.5, color: 'var(--text-muted)' }}>{sub}</span>
+      </span>
+    </button>
+  )
+}
+
 export default function MediaLibrary({
   items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu, onAddFromLibrary,
   onBounceDawMix, onLinkProject, onSendProject, bounceStatus = 'idle',
@@ -45,6 +62,16 @@ export default function MediaLibrary({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState('')
   const [tab, setTab] = useState<'local' | 'library'>('local')
+  const [showAudioMenu, setShowAudioMenu] = useState(false)
+  const [audioMenuPos, setAudioMenuPos] = useState<{ top: number; left: number } | null>(null)
+  const audioBtnRef = useRef<HTMLButtonElement>(null)
+  const hasAudioActions = !!(onBounceDawMix || onLinkProject || onSendProject)
+  const toggleAudioMenu = () => {
+    // Fixed-positioned so it escapes the (clipped) Media Pool column.
+    const r = audioBtnRef.current?.getBoundingClientRect()
+    if (r) setAudioMenuPos({ top: r.bottom + 4, left: r.left })
+    setShowAudioMenu(v => !v)
+  }
   const [libraryItems, setLibraryItems] = useState<LibraryMediaItem[]>([])
   const [libraryLoading, setLibraryLoading] = useState(false)
 
@@ -115,40 +142,42 @@ export default function MediaLibrary({
           Media Pool
         </span>
         <div className="flex items-center gap-1">
-          {onBounceDawMix && (
-            <button
-              onClick={() => onBounceDawMix()}
-              disabled={bounceStatus === 'working'}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs"
-              style={{
-                background: 'var(--accent-subtle)', border: '1px solid var(--accent)',
-                color: bounceStatus === 'error' ? '#f87171' : 'var(--accent-light)',
-              }}
-              title="Sync this project's audio (full mix) as a clip that re-renders whenever the audio changes"
-            >
-              <Music2 size={11} />
-              {bounceStatus === 'working' ? 'Syncing…' : bounceStatus === 'error' ? 'Failed' : 'Sync audio'}
-            </button>
-          )}
-          {onLinkProject && (
-            <button
-              onClick={onLinkProject}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs"
-              style={{ background: 'var(--accent-subtle)', border: '1px solid var(--accent)', color: 'var(--accent-light)' }}
-              title="Link another project's audio (full mix) in as a live clip that re-syncs when that project changes"
-            >
-              <Link2 size={11} /> Link project
-            </button>
-          )}
-          {onSendProject && (
-            <button
-              onClick={onSendProject}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs"
-              style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
-              title="Send this project's audio (full mix) into another project as a live clip"
-            >
-              <Music2 size={11} /> Send to…
-            </button>
+          {/* One grouped "Audio ▾" menu instead of three separate buttons. */}
+          {hasAudioActions && (
+            <div style={{ position: 'relative' }}>
+              <button
+                ref={audioBtnRef}
+                onClick={toggleAudioMenu}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                style={{ background: 'var(--accent-subtle)', border: '1px solid var(--accent)', color: bounceStatus === 'error' ? '#f87171' : 'var(--accent-light)' }}
+                title="Link, sync, or send project audio"
+                aria-haspopup="menu" aria-expanded={showAudioMenu}
+              >
+                <Music2 size={11} />
+                {bounceStatus === 'working' ? 'Syncing…' : 'Audio'}
+                <ChevronDown size={11} />
+              </button>
+              {showAudioMenu && audioMenuPos && (<>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setShowAudioMenu(false)} />
+                <div role="menu" style={{ position: 'fixed', top: audioMenuPos.top, left: audioMenuPos.left, zIndex: 1000, minWidth: 210, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)', padding: 4 }}>
+                  {onBounceDawMix && (
+                    <MenuRow icon={<Music2 size={13} />} label="Sync this project's audio"
+                      sub="Its full mix as a live clip"
+                      onClick={() => { setShowAudioMenu(false); onBounceDawMix() }} />
+                  )}
+                  {onLinkProject && (
+                    <MenuRow icon={<Link2 size={13} />} label="Link a project's audio"
+                      sub="Pull another project's mix in"
+                      onClick={() => { setShowAudioMenu(false); onLinkProject() }} />
+                  )}
+                  {onSendProject && (
+                    <MenuRow icon={<ArrowUpRight size={13} />} label="Send to a project"
+                      sub="Push this mix into another project"
+                      onClick={() => { setShowAudioMenu(false); onSendProject() }} />
+                  )}
+                </div>
+              </>)}
+            </div>
           )}
           <button
             onClick={() => fileInputRef.current?.click()}
