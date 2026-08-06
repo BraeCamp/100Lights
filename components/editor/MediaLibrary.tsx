@@ -183,9 +183,7 @@ export default function MediaLibrary({
         className="flex items-center justify-between px-3 py-2 shrink-0"
         style={{ borderBottom: '1px solid var(--border)' }}
       >
-        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-          Media Pool
-        </span>
+        <span className="panel-title">Media Pool</span>
         <div className="flex items-center gap-1">
           {/* One grouped "Audio ▾" menu instead of three separate buttons. */}
           {hasAudioActions && (

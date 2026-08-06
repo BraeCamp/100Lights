@@ -745,7 +745,7 @@ export default function Timeline({
       {/* ── Scroll area ─────────────────────────────────────────── */}
       <div
         ref={trackAreaRef}
-        className="flex-1 overflow-x-auto overflow-y-auto"
+        className="flex-1 overflow-x-auto overflow-y-auto surface-inset"
         style={{ background: 'var(--bg-base)' }}
         onScroll={onTrackAreaScroll}
       >

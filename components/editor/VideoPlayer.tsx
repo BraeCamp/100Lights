@@ -1360,6 +1360,7 @@ export default function VideoPlayer({
           </button>
           <button
             tabIndex={-1}
+            className={isPlaying ? 'transport-live' : undefined}
             onClick={() => isPlaying ? onPause() : onPlay()}
             style={{
               width: 30, height: 30, borderRadius: 8,

@@ -665,6 +665,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         </button>
 
         <button
+          className={playing ? 'transport-live' : undefined}
           style={playing ? active : base}
           onClick={handlePlayStop}
           title="Play / Stop (Space)"
