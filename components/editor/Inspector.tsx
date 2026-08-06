@@ -392,7 +392,7 @@ export default function Inspector({
               }}
             >
               <Icon size={14} color={active ? 'var(--accent-light)' : 'currentColor'} />
-              <span className="text-[10px] font-medium leading-none">{t.label}</span>
+              <span className="text-[10px] font-medium leading-none whitespace-nowrap">{t.label}</span>
             </button>
           )
         })}

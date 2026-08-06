@@ -28,7 +28,10 @@ export default function AppearancePanel({ onClose, editorKind }: { onClose: () =
   // Colors apply to BOTH editors by default (one consistent look); switch to
   // "This editor" to override just the editor you're in (e.g. a neutral video
   // editor for color work). Only offered when we know which editor we're in.
-  const [scopeAll, setScopeAll] = useState(true)
+  // Open on "This editor" when the current editor already has overrides, so they
+  // don't hide behind the default "Both editors" view.
+  const [scopeAll, setScopeAll] = useState(() =>
+    !(editorKind && theme.perEditor?.[editorKind] && Object.keys(theme.perEditor[editorKind]!).length))
   const scoped = !scopeAll && !!editorKind
   const perColors = (editorKind && theme.perEditor?.[editorKind]) || {}
 

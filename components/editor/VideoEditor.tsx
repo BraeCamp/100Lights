@@ -34,7 +34,9 @@ const DawMixSync    = dynamic(() => import('@/components/editor/DawMixSync'),   
 // don't force a bounce; everything else is included, erring toward an occasional
 // needless render rather than ever serving stale audio.
 function dawAudioFingerprint(daw: import('@/lib/daw-types').DawProject): string {
-  const json = JSON.stringify(daw, (k, v) => (k === 'name' || k === 'color' || k === 'colour' || k === 'label') ? undefined : v)
+  // `name` is intentionally kept: a sample clip without an r2Key selects its
+  // sample BY name, so a rename can change the sound (stale-audio risk otherwise).
+  const json = JSON.stringify(daw, (k, v) => (k === 'color' || k === 'colour' || k === 'label') ? undefined : v)
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57
   for (let i = 0; i < json.length; i++) {
     const ch = json.charCodeAt(i)
@@ -1946,7 +1948,10 @@ export default function VideoEditor({
         links.push({ src: i.dawMixSourceProjectId, tracks: i.dawMixTracks })
     }
     if (!links.length) return
-    dawDirtyRef.current = false
+    // Clear the own-DAW dirty flag only when this pass actually covers save-mode
+    // clips (all-modes or an explicit ['save']). A live-only pass must NOT clear
+    // it, or a later save would skip the save-mode clip's refresh.
+    if (!opts?.modes || opts.modes.includes('save')) dawDirtyRef.current = false
     dawMixBusyRef.current = true
     const stampVal = stamp ?? new Date().toISOString()
     try {
@@ -2160,8 +2165,11 @@ export default function VideoEditor({
   useEffect(() => {
     if (!linkedSourceIds.length) return
     let alive = true
+    let checking = false   // in-flight guard: never run two checks at once (they'd interleave renders)
+    let lastAt = 0
     async function check() {
-      if (!alive || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return
+      if (!alive || checking || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return
+      checking = true
       try {
         const r = await fetch('/api/projects')
         if (!r.ok) return
@@ -2170,10 +2178,12 @@ export default function VideoEditor({
         for (const sid of linkedSourceIds) {
           const remote = byId.get(sid)
           if (!remote) continue
+          const rt = new Date(remote).getTime()
+          if (!Number.isFinite(rt)) continue   // unparseable savedAt — skip rather than NaN-compare
           const seen = sourceSyncedAtRef.current.get(sid)
           // First sighting = establish the baseline, don't re-render.
           if (seen == null) { sourceSyncedAtRef.current.set(sid, remote); continue }
-          const changed = new Date(remote).getTime() > new Date(seen).getTime()
+          const changed = rt > new Date(seen).getTime()
           const hasUnlocked = timelineItemsRef.current.some(i =>
             i.dawMixLinked && !i.dawMixLocked && i.dawMixSourceProjectId === sid)
           if (changed && hasUnlocked) {
@@ -2184,14 +2194,33 @@ export default function VideoEditor({
           }
         }
       } catch { /* transient — try again next tick */ }
+      finally { checking = false; lastAt = Date.now() }
     }
     void check()
     const iv = setInterval(check, 15000)
-    const onVis = () => { if (typeof document === 'undefined' || document.visibilityState === 'visible') void check() }
+    // focus + visibilitychange both fire on a single tab switch — coalesce them
+    // with a short cooldown so returning to the tab does ONE check, not two.
+    const onVis = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      if (Date.now() - lastAt < 3000) return
+      void check()
+    }
     document.addEventListener('visibilitychange', onVis)
     window.addEventListener('focus', onVis)
     return () => { alive = false; clearInterval(iv); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis) }
   }, [linkedSourceIds]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Free cached stem PCM (tens of MB each) + fingerprints for sources that are no
+  // longer linked, so linking/unlinking over a session doesn't leak memory.
+  useEffect(() => {
+    const linked = new Set(linkedSourceIds)
+    for (const map of [stemCacheRef.current, lastRenderFpRef.current]) {
+      for (const key of Array.from(map.keys())) {
+        const src = key.split('::')[0]
+        if (src !== 'own' && !linked.has(src)) (map as Map<string, unknown>).delete(key)
+      }
+    }
+  }, [linkedSourceIds])
 
   async function rehydrateLinkedSources(sourceIds: string[]) {
     // Always re-pull the saved state so opening the video syncs it to whatever
@@ -3413,7 +3442,11 @@ export default function VideoEditor({
                 dawTracks={dawTracks}
                 bounceStatus={bounceStatus}
                 onAddToTimeline={addMediaToTimeline}
-                onRemove={(id) => setMediaItems(prev => prev.filter(m => m.id !== id))}
+                onRemove={(id) => setMediaItems(prev => {
+                  const m = prev.find(x => x.id === id)
+                  if (m?.url?.startsWith('blob:')) { try { URL.revokeObjectURL(m.url) } catch { /* already revoked */ } }
+                  return prev.filter(x => x.id !== id)
+                })}
                 onContextMenu={openCtx}
                 onAddFromLibrary={handleAddFromLibrary}
                 onRetryUpload={handleRetryUpload}

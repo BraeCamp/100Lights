@@ -26,15 +26,30 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [closing, setClosing] = useState(false)
   const closingRef = useRef(false)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Play the exit animation, THEN actually close (the parent unmounts us on
   // onClose; delaying it keeps us mounted long enough to animate out).
   const close = useCallback(() => {
     if (closingRef.current) return
+    // Reduced-motion: no exit animation, so close immediately (no dead pause).
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { onClose(); return }
     closingRef.current = true
     setClosing(true)
-    setTimeout(onClose, 110)
+    closeTimerRef.current = setTimeout(onClose, 110)
   }, [onClose])
+
+  // The parent renders this without a `key`, so opening a new menu (new x/y/items)
+  // reuses this instance. Reset the close latch/animation and cancel any pending
+  // deferred onClose, so a stale timeout can't dismiss the freshly-opened menu and
+  // the latch can't wedge it open.
+  useEffect(() => {
+    closingRef.current = false
+    setClosing(false)
+    if (closeTimerRef.current) { clearTimeout(closeTimerRef.current); closeTimerRef.current = null }
+  }, [x, y, items])
+  // Cancel the deferred close if we unmount first.
+  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current) }, [])
 
   const safeX = typeof window !== 'undefined' ? Math.min(x, window.innerWidth - 210) : x
   const safeY = typeof window !== 'undefined' ? Math.min(y, window.innerHeight - items.length * 32 - 16) : y

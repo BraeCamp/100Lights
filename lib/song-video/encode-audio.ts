@@ -59,23 +59,30 @@ async function muxCompressed(
   const ch1 = numCh > 1 ? (channels[1] ?? ch0) : ch0
   const total = ch0.length
   const CHUNK = 4096
-  for (let s = 0; s < total; s += CHUNK) {
-    const n = Math.min(CHUNK, total - s)
-    // Planar layout: channel 0 samples, then channel 1 samples.
-    const data = new Float32Array(n * numCh)
-    data.set(ch0.subarray(s, s + n), 0)
-    if (numCh > 1) data.set(ch1.subarray(s, s + n), n)
-    encoder.encode(new AudioData({
-      format: 'f32-planar',
-      sampleRate,
-      numberOfFrames: n,
-      numberOfChannels: numCh,
-      timestamp: Math.round((s / sampleRate) * 1e6),
-      data,
-    }))
+  try {
+    for (let s = 0; s < total; s += CHUNK) {
+      const n = Math.min(CHUNK, total - s)
+      // Planar layout: channel 0 samples, then channel 1 samples.
+      const data = new Float32Array(n * numCh)
+      data.set(ch0.subarray(s, s + n), 0)
+      if (numCh > 1) data.set(ch1.subarray(s, s + n), n)
+      const ad = new AudioData({
+        format: 'f32-planar',
+        sampleRate,
+        numberOfFrames: n,
+        numberOfChannels: numCh,
+        timestamp: Math.round((s / sampleRate) * 1e6),
+        data,
+      })
+      encoder.encode(ad)
+      ad.close()   // release the backing store immediately (encode has copied it)
+    }
+    await encoder.flush()
+  } finally {
+    // Always close the encoder — even if flush()/encode() threw — so it never
+    // leaks a system audio-encoder resource on the WAV-fallback path.
+    try { encoder.close() } catch { /* already closed */ }
   }
-  await encoder.flush()
-  encoder.close()
   if (encErr) return null
   muxer.finalize()
   return new Blob([target.buffer], { type: 'audio/mp4' })

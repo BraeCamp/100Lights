@@ -260,8 +260,12 @@ export function resolveColor(theme: WorkshopTheme, key: ThemeColorKey): string {
 
 // CSS vars for a PER-EDITOR override — only the tokens that editor overrides
 // (plus derived accent when the accent itself is overridden). Emitted in a
-// higher-specificity `[data-editor-kind="…"]` block so it wins over the base.
-export function overrideCssVars(colors: Partial<Record<ThemeColorKey, string>> | undefined, accentSync: boolean): Record<string, string> {
+// `[data-editor="true"][data-editor-kind="…"]` block (genuinely higher
+// specificity than the base `[data-editor="true"]`) so it wins.
+export function overrideCssVars(
+  colors: Partial<Record<ThemeColorKey, string>> | undefined,
+  opts: { accentSync: boolean; autoContrast: boolean },
+): Record<string, string> {
   const vars: Record<string, string> = {}
   if (!colors) return vars
   for (const key of THEME_COLOR_KEYS) {
@@ -271,7 +275,16 @@ export function overrideCssVars(colors: Partial<Record<ThemeColorKey, string>> |
   if (isHex(colors.accent)) {
     vars['--accent-rgb'] = hexToRgb(colors.accent!).join(' ')
     vars['--accent-contrast'] = bestForeground(colors.accent!)
-    if (accentSync) Object.assign(vars, deriveAccentVars(colors.accent!))
+    if (opts.accentSync) Object.assign(vars, deriveAccentVars(colors.accent!))
+  }
+  // Auto-contrast text is derived once (in the base block) from the BASE surface.
+  // If this editor overrides the surface, re-derive its text here — otherwise a
+  // light per-editor surface would keep dark-surface text and become unreadable.
+  if (opts.autoContrast && isHex(colors.bgSurface)) {
+    const t = autoTextTokens(colors.bgSurface!)
+    vars['--text-primary'] = t.primary
+    vars['--text-secondary'] = t.secondary
+    vars['--text-muted'] = t.muted
   }
   return vars
 }

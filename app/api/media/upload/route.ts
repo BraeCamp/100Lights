@@ -30,15 +30,42 @@ export async function POST(req: Request) {
   const mediaId = (req.headers.get('x-media-id') || '').trim()
   const ext = (req.headers.get('x-ext') || '').trim().toLowerCase()
   const contentType = req.headers.get('content-type') || 'application/octet-stream'
-  if (!mediaId) return Response.json({ error: 'Missing media id' }, { status: 400 })
+  // The media id becomes part of the R2 key — keep it to a safe charset so it
+  // can't inject '/' or '..' into the key path.
+  if (!/^[A-Za-z0-9_-]+$/.test(mediaId)) return Response.json({ error: 'Invalid media id' }, { status: 400 })
   if (!contentType.startsWith('audio/') && !contentType.startsWith('video/'))
     return Response.json({ error: `Only audio/video uploads are allowed (got "${contentType}")` }, { status: 415 })
   if (!EXT_OK.has(ext)) return Response.json({ error: `Unsupported file type (${ext || 'unknown'})` }, { status: 415 })
+
+  // Reject before buffering the whole body when the declared length is over cap.
+  const declared = Number(req.headers.get('content-length') || 0)
+  if (declared > MAX_PROXY_BYTES)
+    return Response.json({ error: 'File too large for server upload — needs direct-to-R2 (configure CORS).' }, { status: 413 })
 
   const buf = new Uint8Array(await req.arrayBuffer())
   if (buf.byteLength === 0) return Response.json({ error: 'Empty upload' }, { status: 400 })
   if (buf.byteLength > MAX_PROXY_BYTES)
     return Response.json({ error: 'File too large for server upload — needs direct-to-R2 (configure CORS).' }, { status: 413 })
+
+  // Enforce the plan storage cap using the REAL byte length — this path is the
+  // normal one when R2 CORS is unset, so without this the cap wouldn't apply.
+  // (Uses the same per-key dedup as the presign route so overwrites don't count.)
+  try {
+    await ensureUploadLog()
+    const { getSubscription, getPlanLimits } = await import('@/lib/subscription')
+    const sub = await getSubscription(userId)
+    const limits = getPlanLimits(sub.plan)
+    const key0 = `${userId}/${mediaId}${ext}`
+    const used = await sql`
+      SELECT COALESCE(SUM(sz), 0)::bigint AS total FROM (
+        SELECT DISTINCT ON (key) size AS sz FROM upload_log
+        WHERE user_id = ${userId} AND key <> ${key0}
+        ORDER BY key, at DESC
+      ) t`
+    const totalAfter = Number(used[0]?.total ?? 0) + buf.byteLength
+    if (totalAfter > limits.storageMb * 1024 * 1024)
+      return Response.json({ error: `Storage limit reached (${limits.storageMb >= 1024 ? `${limits.storageMb / 1024} GB` : `${limits.storageMb} MB`}). Upgrade for more space.` }, { status: 413 })
+  } catch { /* accounting/limits are best-effort — never block a legit upload on their failure */ }
 
   // Key MUST match the presign route's scheme so signed-url / library lookups line up.
   const key = `${userId}/${mediaId}${ext}`

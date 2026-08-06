@@ -174,6 +174,7 @@ export default function Timeline({
     if (settleTimerRef.current) clearTimeout(settleTimerRef.current)
     settleTimerRef.current = setTimeout(() => setSettleId(null), 240)
   }
+  useEffect(() => () => { if (settleTimerRef.current) clearTimeout(settleTimerRef.current) }, [])
   // Position readout: bar.beat (when a grid is set) + timecode.
   const fmtPos = (t: number) => {
     const m = Math.floor(t / 60), s = Math.max(0, t % 60)
@@ -257,8 +258,11 @@ export default function Timeline({
     const screenX   = anchorOld - el.scrollLeft                    // keep this fixed
     const anchorT   = (anchorOld - LABEL_WIDTH - START_GUTTER) / prev
     const anchorNew = LABEL_WIDTH + START_GUTTER + anchorT * pps
-    programmaticScrollRef.current = true
-    el.scrollLeft = Math.max(0, anchorNew - screenX)
+    const target = Math.max(0, anchorNew - screenX)
+    // Only flag (and write) when it actually changes — a no-op write fires no
+    // scroll event, which would leave the flag stuck and swallow the next real
+    // user scroll.
+    if (el.scrollLeft !== target) { programmaticScrollRef.current = true; el.scrollLeft = target }
     prevPpsRef.current = pps
   }, [pps]) // eslint-disable-line
 
@@ -302,8 +306,8 @@ export default function Timeline({
           const cw     = el.clientWidth
           const margin = 60
           if (abs < el.scrollLeft + margin || abs > el.scrollLeft + cw - margin) {
-            programmaticScrollRef.current = true
-            el.scrollLeft = Math.max(0, abs - cw * 0.15)
+            const target = Math.max(0, abs - cw * 0.15)
+            if (el.scrollLeft !== target) { programmaticScrollRef.current = true; el.scrollLeft = target }
           }
         }
       }
@@ -757,7 +761,7 @@ export default function Timeline({
       {/* ── Scroll area ─────────────────────────────────────────── */}
       <div
         ref={trackAreaRef}
-        className="flex-1 overflow-x-auto overflow-y-auto surface-inset"
+        className="flex-1 overflow-x-auto overflow-y-auto"
         style={{ background: 'var(--bg-base)' }}
         onScroll={onTrackAreaScroll}
       >
@@ -899,17 +903,7 @@ export default function Timeline({
                   background: 'rgb(var(--accent-rgb) / 0.10)', pointerEvents: 'none', zIndex: 0,
                 }} />
               ))}
-              {items.length === 0 && (
-                <div style={{
-                  position: 'absolute', inset: 0, zIndex: 2,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  pointerEvents: 'none',
-                }}>
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', userSelect: 'none' }}>
-                    Drag media from the pool · double-click a file to add it here
-                  </p>
-                </div>
-              )}
+              {/* (empty-timeline invite is rendered once as a non-scrolling overlay at the top of this component) */}
               {tracks.filter(t => t.type !== 'caption').map((track, trackIdx) => {
                 const isCap        = false  // caption type tracks are filtered out above
                 const isAudio      = track.type === 'audio'

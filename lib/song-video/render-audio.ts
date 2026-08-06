@@ -82,7 +82,10 @@ async function renderChannels(
     proj = {
       ...project,
       arrangementClips: (project.arrangementClips ?? []).filter(c => c.trackId === id),
-      tracks: project.tracks.map(t => t.id === id ? { ...t, mute: false, solo: false } : { ...t, mute: true }),
+      // Clear solo on EVERY track (not just the target): the engine silences the
+      // target if ANY other track still carries solo, which would make a stem —
+      // and thus a summed mix with 2+ soloed tracks — come out silent.
+      tracks: project.tracks.map(t => t.id === id ? { ...t, mute: false, solo: false } : { ...t, mute: true, solo: false }),
     }
   }
 
@@ -148,8 +151,11 @@ function trackStemFingerprint(project: DawProject, trackId: string, timingKey: s
   const presetIds = new Set<string>()
   for (const c of clips) { const pid = (c as { presetId?: string }).presetId; if (pid) presetIds.add(pid) }
   const presets = (project.presets ?? []).filter(p => presetIds.has(p.id))
+  // NOTE: `name` is NOT stripped — for a sample clip without an r2Key the engine
+  // resolves WHICH sample plays from the clip's name, so a rename can change the
+  // sound. Only truly-cosmetic keys are dropped.
   const json = JSON.stringify({ t, clips, presets, timingKey },
-    (k, v) => (k === 'name' || k === 'color' || k === 'label') ? undefined : v)
+    (k, v) => (k === 'color' || k === 'colour' || k === 'label') ? undefined : v)
   return hash(json)
 }
 

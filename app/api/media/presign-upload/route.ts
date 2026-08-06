@@ -37,6 +37,10 @@ export async function POST(req: Request) {
   if (!filename || !mediaId) {
     return Response.json({ error: 'Missing required fields' }, { status: 400 })
   }
+  // mediaId becomes part of the R2 key — keep it to a safe charset (no '/' or '..').
+  if (!/^[A-Za-z0-9_-]+$/.test(mediaId)) {
+    return Response.json({ error: 'Invalid media id' }, { status: 400 })
+  }
 
   // Resolve content type — browsers sometimes return empty string for formats
   // like .mkv or .avi, so we fall back to extension-based guessing.

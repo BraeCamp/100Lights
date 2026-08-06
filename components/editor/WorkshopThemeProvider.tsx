@@ -91,13 +91,15 @@ export function WorkshopThemeProvider({ children }: { children: React.ReactNode 
     const patDecls = pat
       ? `--workshop-pattern:${pat.backgroundImage};--workshop-pattern-size:${pat.backgroundSize};`
       : `--workshop-pattern:none;--workshop-pattern-size:auto;`
-    // Base (universal) block, then any per-editor override blocks at higher
-    // specificity so they win only inside that editor.
+    // Base (universal) block, then any per-editor override blocks. The per-kind
+    // selector chains BOTH attributes on the same root element, so it's genuinely
+    // higher specificity (0,2,0 > 0,1,0) than the base — overrides win regardless
+    // of source order.
     let css = `[data-editor="true"]{${decls}${patDecls}}`
     for (const kind of EDITOR_KINDS) {
-      const ov = overrideCssVars(theme.perEditor?.[kind], theme.accentSync)
+      const ov = overrideCssVars(theme.perEditor?.[kind], { accentSync: theme.accentSync, autoContrast: theme.autoContrast !== false })
       const keys = Object.keys(ov)
-      if (keys.length) css += `[data-editor-kind="${kind}"]{${keys.map(k => `${k}:${ov[k]};`).join('')}}`
+      if (keys.length) css += `[data-editor="true"][data-editor-kind="${kind}"]{${keys.map(k => `${k}:${ov[k]};`).join('')}}`
     }
     el.textContent = css
   }, [theme])
