@@ -506,7 +506,7 @@ export default function Timeline({
       ...(item.dawMixLinked && !item.dawMixLocked && onSetDawSyncMode ? [
         {
           id: 'dawsync',
-          label: (item.dawMixSyncMode ?? (item.dawMixSourceProjectId ? 'save' : 'live')) === 'live'
+          label: (item.dawMixSyncMode ?? 'save') === 'live'
             ? 'Audio sync: Real-time → switch to On save'
             : 'Audio sync: On save → switch to Real-time',
           onClick: () => onSetDawSyncMode(item.id),

@@ -720,6 +720,10 @@ export default function VideoEditor({
   // clip re-renders when the source project is edited. (Phase 1: audio → video, pull.)
   const sourceReplicasRef = useRef<Map<string, import('@/lib/daw-types').DawProject>>(new Map())
   const sourceNamesRef = useRef<Map<string, string>>(new Map())
+  // Last-seen savedAt per linked source (from the projects list). When a source's
+  // savedAt advances, we re-pull its mix — this is what makes "sync on save" of
+  // the ORIGINAL project actually update the linked video clip.
+  const sourceSyncedAtRef = useRef<Map<string, string>>(new Map())
   const [linkedSourceIds, setLinkedSourceIds] = useState<string[]>([])
   const [showProjectPicker, setShowProjectPicker] = useState(false)
   const [pickerMode, setPickerMode] = useState<'link' | 'send'>('link')   // link = pull a source in; send = push this mix out
@@ -1808,11 +1812,10 @@ export default function VideoEditor({
     }
   }
 
-  /** Effective sync mode for a linked clip. Own-project links default to live
-   *  (re-bounce on every edit); cross-project links default to save (re-bounce
-   *  on save / reopen / manual re-sync only). */
-  const syncModeOf = (i: TimelineItem): 'live' | 'save' =>
-    i.dawMixSyncMode ?? (i.dawMixSourceProjectId ? 'save' : 'live')
+  /** Effective sync mode for a linked clip. Default is SAVE-sync (re-bounce on
+   *  save / reopen / source-save / manual re-sync) — real-time is opt-in per
+   *  clip via the context menu. */
+  const syncModeOf = (i: TimelineItem): 'live' | 'save' => i.dawMixSyncMode ?? 'save'
 
   /** Re-bounce one linked clip now, from the right source (own DAW or a linked
    *  project's saved mix). Used by unlock and by switching a clip to real-time. */
@@ -2076,17 +2079,61 @@ export default function VideoEditor({
   }
 
   // Manual "Re-sync" on a linked project: pull its latest saved mix, re-bounce.
-  async function resyncSource(sid: string) {
+  async function resyncSource(sid: string, opts?: { silent?: boolean }) {
     setBounceStatus('working')
     const daw = await pullSavedSource(sid)
     if (!daw) {
       setBounceStatus('error')
       setTimeout(() => setBounceStatus('idle'), 2500)
-      window.alert(`Couldn't re-sync that project — it may be unreachable or have no audio.`)
+      if (!opts?.silent) window.alert(`Couldn't re-sync that project — it may be unreachable or have no audio.`)
       return
     }
     await renderDawSelection(daw, undefined, new Date().toISOString(), sid, sourceNamesRef.current.get(sid))
   }
+  const resyncSourceRef = useRef(resyncSource)
+  resyncSourceRef.current = resyncSource
+
+  // Sync-on-save auto-detect: while sources are linked, watch each source's
+  // savedAt (via the cheap projects list — one request, no full download) and
+  // re-pull when it advances. This is what makes saving the ORIGINAL audio
+  // project update the linked video clip — no manual re-sync needed. Runs on an
+  // interval and whenever the tab regains focus (so switching back from the
+  // audio tab syncs right away). Locked clips are left frozen.
+  useEffect(() => {
+    if (!linkedSourceIds.length) return
+    let alive = true
+    async function check() {
+      if (!alive || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return
+      try {
+        const r = await fetch('/api/projects')
+        if (!r.ok) return
+        const list = await r.json() as Array<{ id: string; savedAt?: string }>
+        const byId = new Map(list.map(p => [p.id, p.savedAt ?? '']))
+        for (const sid of linkedSourceIds) {
+          const remote = byId.get(sid)
+          if (!remote) continue
+          const seen = sourceSyncedAtRef.current.get(sid)
+          // First sighting = establish the baseline, don't re-render.
+          if (seen == null) { sourceSyncedAtRef.current.set(sid, remote); continue }
+          const changed = new Date(remote).getTime() > new Date(seen).getTime()
+          const hasUnlocked = timelineItemsRef.current.some(i =>
+            i.dawMixLinked && !i.dawMixLocked && i.dawMixSourceProjectId === sid)
+          if (changed && hasUnlocked) {
+            sourceSyncedAtRef.current.set(sid, remote)   // record before await so we don't double-fire
+            await resyncSourceRef.current(sid, { silent: true })
+          } else if (changed) {
+            sourceSyncedAtRef.current.set(sid, remote)
+          }
+        }
+      } catch { /* transient — try again next tick */ }
+    }
+    void check()
+    const iv = setInterval(check, 15000)
+    const onVis = () => { if (typeof document === 'undefined' || document.visibilityState === 'visible') void check() }
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('focus', onVis)
+    return () => { alive = false; clearInterval(iv); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis) }
+  }, [linkedSourceIds]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function rehydrateLinkedSources(sourceIds: string[]) {
     // Always re-pull the saved state so opening the video syncs it to whatever
