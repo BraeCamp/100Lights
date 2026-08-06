@@ -12,8 +12,7 @@ import { encodeMix } from './encode-audio'
 
 // Bounce the REAL project audio for a beat window, so a song-video can use the
 // actual mix instead of the preview synth. Uses the studio engine's OFFLINE
-// render path (OfflineAudioContext) — faster-than-real-time, so a 4-minute song
-// renders in a fraction of the time instead of 4 minutes. Client-only
+// render path (OfflineAudioContext) — faster-than-real-time. Client-only
 // (OfflineAudioContext + IndexedDB library). Import it lazily.
 
 export interface RenderedMix {
@@ -22,52 +21,211 @@ export interface RenderedMix {
   peaks: number[]   // 80-band max-abs, matching the timeline waveform format
 }
 
-export async function renderProjectAudioBlob(
-  project: DawProject,
-  opts: { startBeat: number; endBeat: number; userId?: string | null },
-): Promise<RenderedMix> {
-  const t0 = performance.now()
-  initLibrary(opts.userId ?? null)
+const SR = 44100
+
+// cyrb53 — cheap stable hash for fingerprints.
+function hash(str: string): string {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i)
+    h1 = Math.imul(h1 ^ ch, 2654435761)
+    h2 = Math.imul(h2 ^ ch, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)
+}
+
+let seededOnce = false
+async function ensureSeeded(userId?: string | null) {
+  initLibrary(userId ?? null)
   await seedDefaultSamples().catch(() => {})
-  // seedDefaultSamples() fires the multisample instrument folders (Rhodes/EP/
-  // pad/bass/strings/brass/…) off WITHOUT awaiting them, to keep normal app load
-  // fast. But the offline bounce runs a single synchronous scheduling pass, so
-  // any preset whose library folder isn't populated yet resolves to a null
-  // buffer and every one of its notes is silently skipped — which is why only
-  // the (synth) drums came through. Await the seeds here so the whole mix is
-  // present before we render. Idempotent: already-seeded folders return fast.
+  // The offline bounce is one synchronous scheduling pass, so any preset whose
+  // library folder isn't populated yet resolves to a null buffer and its notes
+  // are silently dropped. Await the seeds so the whole mix is present. Idempotent
+  // (localStorage-gated), and we only pay the Promise.all setup once per session.
+  if (seededOnce) return
   await Promise.all([
     seedKeyboardNotes(), seedRealInstruments(), seedBass(), seedStrings(),
     seedBrass(), seedWind(), seedDarkwave(), seedDarkKit(), seedArp(),
     seedFx(), seedPercussion(),
   ].map(p => p.catch(() => {})))
+  seededOnce = true
+}
 
-  // Size the offline context to the window's exact duration through the tempo map.
-  const segs = tempoSegments(project)
-  const durSec = Math.max(0.1, beatToSeconds(opts.endBeat, segs) - beatToSeconds(opts.startBeat, segs))
-  const sampleRate = 44100
-  const octx = new OfflineAudioContext(2, Math.ceil(durSec * sampleRate), sampleRate)
-
-  // Build the whole engine graph in the offline context, then render one pass.
-  const engine = new DawEngine({ ctx: octx as unknown as AudioContext })
-  engine.setPresets(combinePresets(project.presets))
-  engine.updateProject(project)
-  const t1 = performance.now()
-  const { channels, sampleRate: sr } = await engine.renderOffline({ startBeat: opts.startBeat, endBeat: opts.endBeat })
-  const t2 = performance.now()
-  // Compress to AAC/Opus when possible (falls back to WAV) — the returned blob's
-  // `.type` tells callers which it is, so they can name/presign the file right.
-  const { blob } = await encodeMix(channels, sr)
-  // Duration + 80-band peaks straight from the rendered PCM, so callers don't
-  // re-decode the file twice (readDuration + computeAudioPeaks each cost a decode).
-  const ch0 = channels[0] ?? new Float32Array(0)
+function peaksFrom(ch0: Float32Array): number[] {
   const bands = 80, step = Math.max(1, Math.floor(ch0.length / bands))
-  const peaks = Array.from({ length: bands }, (_, i) => {
+  return Array.from({ length: bands }, (_, i) => {
     let max = 0
     for (let j = 0; j < step; j++) max = Math.max(max, Math.abs(ch0[i * step + j] ?? 0))
     return max
   })
-  const t3 = performance.now()
-  console.log(`[dawmix] setup ${(t1 - t0) | 0}ms · render ${(t2 - t1) | 0}ms · encode+peaks ${(t3 - t2) | 0}ms · total ${(t3 - t0) | 0}ms`)
+}
+
+// Render a project's channels through the offline engine. With `soloTrackId`, only
+// that track's clips play (others muted) — its isolated stem. With `dryMaster`, the
+// master DynamicsCompressor is bypassed (tap post-analyser, pre-compressor), so the
+// sum of dry stems reconstructs the full pre-compressor bus EXACTLY (everything up
+// to the compressor is linear), and the compressor is re-applied once to the sum.
+async function renderChannels(
+  project: DawProject,
+  opts: { startBeat: number; endBeat: number },
+  o?: { soloTrackId?: string; dryMaster?: boolean },
+): Promise<{ channels: Float32Array[]; durSec: number }> {
+  const segs = tempoSegments(project)
+  const durSec = Math.max(0.1, beatToSeconds(opts.endBeat, segs) - beatToSeconds(opts.startBeat, segs))
+  const octx = new OfflineAudioContext(2, Math.ceil(durSec * SR), SR)
+
+  let proj = project
+  if (o?.soloTrackId) {
+    const id = o.soloTrackId
+    proj = {
+      ...project,
+      arrangementClips: (project.arrangementClips ?? []).filter(c => c.trackId === id),
+      tracks: project.tracks.map(t => t.id === id ? { ...t, mute: false, solo: false } : { ...t, mute: true }),
+    }
+  }
+
+  const engine = new DawEngine({ ctx: octx as unknown as AudioContext })
+  engine.setPresets(combinePresets(project.presets))
+  engine.updateProject(proj)
+  if (o?.dryMaster) {
+    // masterAnalyser → destination, skip the compressor.
+    try {
+      engine.masterAnalyser.disconnect()
+      engine.masterAnalyser.connect(octx.destination as unknown as AudioNode)
+      engine.masterCompressor.disconnect()
+    } catch { /* if the graph shape ever changes, fall through to normal render */ }
+  }
+  const { channels } = await engine.renderOffline({ startBeat: opts.startBeat, endBeat: opts.endBeat })
+  return { channels, durSec }
+}
+
+// Re-apply ONLY the master DynamicsCompressor (same settings as the live engine,
+// daw-engine.ts:225-230) to a summed dry buffer.
+async function applyMasterCompressor(channels: Float32Array[], sampleRate: number): Promise<Float32Array[]> {
+  const len = channels[0]?.length ?? 0
+  if (!len) return channels
+  const octx = new OfflineAudioContext(2, len, sampleRate)
+  const buf = octx.createBuffer(2, len, sampleRate)
+  buf.getChannelData(0).set(channels[0])
+  buf.getChannelData(1).set(channels[1] ?? channels[0])
+  const src = octx.createBufferSource()
+  src.buffer = buf
+  const comp = octx.createDynamicsCompressor()
+  comp.threshold.value = -6
+  comp.knee.value = 10
+  comp.ratio.value = 2.5
+  comp.attack.value = 0.003
+  comp.release.value = 0.25
+  src.connect(comp)
+  comp.connect(octx.destination)
+  src.start()
+  const out = await octx.startRendering()
+  return [out.getChannelData(0).slice(), out.getChannelData(1).slice()]
+}
+
+// Per-track stem summing is bit-exact ONLY when every track sums linearly into
+// masterGain: no group buses, no non-zero sends/returns, no sidechained
+// compressors. Otherwise fall back to a single full render.
+function stemSafe(project: DawProject): boolean {
+  const tracks = project.tracks ?? []
+  if (tracks.some(t => t.groupId || t.kind === 'group')) return false
+  if ((project.returnTracks?.length ?? 0) > 0) return false
+  if (tracks.some(t => t.sendAmounts && Object.values(t.sendAmounts).some(v => v > 0))) return false
+  if (tracks.some(t => (t.effects ?? []).some(e =>
+    e.type === 'compressor' && (e.params as { sidechainTrackId?: string | null })?.sidechainTrackId))) return false
+  return true
+}
+
+// Fingerprint one track's dry stem: its own settings + its clips + the presets it
+// references + global timing. Changing an UNRELATED track/preset leaves this
+// unchanged, so its cached stem is reused — that's the "change one instrument
+// across the whole song, re-render just that one" win.
+function trackStemFingerprint(project: DawProject, trackId: string, timingKey: string): string {
+  const t = project.tracks.find(x => x.id === trackId)
+  const clips = (project.arrangementClips ?? []).filter(c => c.trackId === trackId)
+  const presetIds = new Set<string>()
+  for (const c of clips) { const pid = (c as { presetId?: string }).presetId; if (pid) presetIds.add(pid) }
+  const presets = (project.presets ?? []).filter(p => presetIds.has(p.id))
+  const json = JSON.stringify({ t, clips, presets, timingKey },
+    (k, v) => (k === 'name' || k === 'color' || k === 'label') ? undefined : v)
+  return hash(json)
+}
+
+const MEM_CAP_BYTES = 220 * 1024 * 1024
+
+// Full-mix render with a per-track stem CACHE. Re-renders only the tracks whose
+// audio changed since last time and reuses cached stems for the rest, then sums
+// and re-applies the master compressor. Falls back to a single full render when
+// the project isn't stem-safe, is trivial (<2 tracks), or would exceed the cache
+// memory budget. `cache` is owned by the caller (one Map per linked source).
+export async function renderProjectMixCached(
+  project: DawProject,
+  opts: { startBeat: number; endBeat: number; userId?: string | null },
+  cache: Map<string, Float32Array[]>,
+): Promise<RenderedMix> {
+  const t0 = performance.now()
+  await ensureSeeded(opts.userId)
+  const segs = tempoSegments(project)
+  const durSec = Math.max(0.1, beatToSeconds(opts.endBeat, segs) - beatToSeconds(opts.startBeat, segs))
+  const len = Math.ceil(durSec * SR)
+
+  const hasSolo = project.tracks.some(t => t.solo)
+  const audible = project.tracks.filter(t =>
+    !t.mute && (!hasSolo || t.solo) &&
+    (project.arrangementClips ?? []).some(c => c.trackId === t.id))
+
+  const memEstimate = (audible.length + 1) * len * 2 * 4
+  if (!stemSafe(project) || audible.length < 2 || memEstimate > MEM_CAP_BYTES) {
+    cache.clear()
+    return renderProjectAudioBlob(project, opts)
+  }
+
+  const timingKey = hash(JSON.stringify(segs))
+  const sumL = new Float32Array(len)
+  const sumR = new Float32Array(len)
+  const live = new Set<string>()
+  let rendered = 0, reused = 0
+  for (const t of audible) {
+    const fp = trackStemFingerprint(project, t.id, timingKey)
+    live.add(fp)
+    let ch = cache.get(fp)
+    if (!ch) {
+      ch = (await renderChannels(project, opts, { soloTrackId: t.id, dryMaster: true })).channels
+      cache.set(fp, ch)
+      rendered++
+    } else {
+      reused++
+    }
+    const l = ch[0], r = ch[1] ?? ch[0]
+    const n = Math.min(len, l.length)
+    for (let i = 0; i < n; i++) { sumL[i] += l[i]; sumR[i] += r[i] }
+  }
+  for (const k of Array.from(cache.keys())) if (!live.has(k)) cache.delete(k)
+
+  const t1 = performance.now()
+  const mastered = await applyMasterCompressor([sumL, sumR], SR)
+  const { blob } = await encodeMix(mastered, SR)
+  const peaks = peaksFrom(mastered[0] ?? new Float32Array(0))
+  const t2 = performance.now()
+  console.log(`[dawmix] stems rendered ${rendered} reused ${reused} · synth ${(t1 - t0) | 0}ms · master+encode ${(t2 - t1) | 0}ms · total ${(t2 - t0) | 0}ms`)
+  return { blob, durationSec: durSec, peaks }
+}
+
+// Single full render (no stem cache). Used by the song-video pipeline, the
+// audio-editor cross link, and as the fallback inside renderProjectMixCached.
+export async function renderProjectAudioBlob(
+  project: DawProject,
+  opts: { startBeat: number; endBeat: number; userId?: string | null },
+): Promise<RenderedMix> {
+  const t0 = performance.now()
+  await ensureSeeded(opts.userId)
+  const { channels, durSec } = await renderChannels(project, opts)
+  const t1 = performance.now()
+  const { blob } = await encodeMix(channels, SR)
+  const peaks = peaksFrom(channels[0] ?? new Float32Array(0))
+  const t2 = performance.now()
+  console.log(`[dawmix] full render ${(t1 - t0) | 0}ms · encode+peaks ${(t2 - t1) | 0}ms · total ${(t2 - t0) | 0}ms`)
   return { blob, durationSec: durSec, peaks }
 }

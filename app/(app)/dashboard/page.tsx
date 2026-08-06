@@ -459,6 +459,7 @@ export default function DashboardPage() {
     {ctxMenu && (
       <div
         ref={ctxRef}
+        className="menu-pop"
         style={{ position: 'fixed', top: ctxMenu.y, left: ctxMenu.x, zIndex: 50, borderRadius: 8, padding: '4px 0', background: 'var(--bg-card)', border: '1px solid var(--border)', minWidth: 140, boxShadow: '0 4px 16px rgba(0,0,0,0.3)' }}
       >
         <button

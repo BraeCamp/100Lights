@@ -1891,6 +1891,9 @@ export default function VideoEditor({
   // Audio fingerprint of the last render per link key — lets a re-sync skip the
   // bounce when the source's sound is unchanged. See dawAudioFingerprint.
   const lastRenderFpRef = useRef<Map<string, string>>(new Map())
+  // Per-track stem PCM cache per link key, so a re-sync re-renders only the
+  // tracks whose audio changed (see renderProjectMixCached).
+  const stemCacheRef = useRef<Map<string, Map<string, Float32Array[]>>>(new Map())
 
   // Re-uploads of a linked mix wait for the edits to settle (8 s after the
   // last refresh) so a burst of live changes doesn't push transient renders
@@ -1989,8 +1992,14 @@ export default function VideoEditor({
           ? `DAW: ${stemNames.slice(0, 2).join(' + ')}${stemNames.length > 2 ? ` +${stemNames.length - 2}` : ''}`
           : 'DAW Mix'
 
-      const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
-      const { blob, durationSec, peaks: renderedPeaks } = await renderProjectAudioBlob(source, { startBeat: 0, endBeat, userId: user?.id })
+      const { renderProjectAudioBlob, renderProjectMixCached } = await import('@/lib/song-video/render-audio')
+      // Full-mix syncs use the per-track stem cache (re-render only changed tracks);
+      // single-track stem selections render directly.
+      let stemCache = stemCacheRef.current.get(linkKey)
+      if (!stemCache) { stemCache = new Map(); stemCacheRef.current.set(linkKey, stemCache) }
+      const { blob, durationSec, peaks: renderedPeaks } = isStem
+        ? await renderProjectAudioBlob(source, { startBeat: 0, endBeat, userId: user?.id })
+        : await renderProjectMixCached(source, { startBeat: 0, endBeat, userId: user?.id }, stemCache)
       const baseName = src ? (srcLabel || 'Linked project') : (localProjectName || 'Project')
       // The render is compressed (AAC/.m4a) when the browser can, else WAV —
       // name the file from the blob's actual type so the presign guesses right.

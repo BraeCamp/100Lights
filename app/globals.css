@@ -159,10 +159,22 @@ input[type="range"].cf-slider::-moz-range-thumb {
   from { opacity: 0; transform: translateY(-4px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0)    scale(1); }
 }
-.menu-pop { animation: menuPop 0.12s ease-out; transform-origin: top; }
+@keyframes menuPopOut {
+  from { opacity: 1; transform: translateY(0)    scale(1); }
+  to   { opacity: 0; transform: translateY(-4px) scale(0.97); }
+}
+.menu-pop     { animation: menuPop 0.12s ease-out; transform-origin: top; }
+.menu-pop-out { animation: menuPopOut 0.11s ease-in forwards; transform-origin: top; }
+
+/* Modal / dialog open — a gentle fade + lift. */
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+.modal-in { animation: modalIn 0.16s ease-out; }
 
 @media (prefers-reduced-motion: reduce) {
-  .menu-pop { animation: none; }
+  .menu-pop, .menu-pop-out, .modal-in { animation: none; }
 }
 
 /* Skip link for keyboard/screen reader navigation */

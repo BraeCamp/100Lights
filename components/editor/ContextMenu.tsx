@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 export interface ContextMenuItem {
   id: string
@@ -24,14 +24,25 @@ interface Props {
 
 export default function ContextMenu({ x, y, items, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null)
+  const [closing, setClosing] = useState(false)
+  const closingRef = useRef(false)
+
+  // Play the exit animation, THEN actually close (the parent unmounts us on
+  // onClose; delaying it keeps us mounted long enough to animate out).
+  const close = useCallback(() => {
+    if (closingRef.current) return
+    closingRef.current = true
+    setClosing(true)
+    setTimeout(onClose, 110)
+  }, [onClose])
 
   const safeX = typeof window !== 'undefined' ? Math.min(x, window.innerWidth - 210) : x
   const safeY = typeof window !== 'undefined' ? Math.min(y, window.innerHeight - items.length * 32 - 16) : y
 
   useEffect(() => {
     function handle(e: MouseEvent | KeyboardEvent) {
-      if (e instanceof KeyboardEvent) { if (e.key === 'Escape') onClose(); return }
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+      if (e instanceof KeyboardEvent) { if (e.key === 'Escape') close(); return }
+      if (ref.current && !ref.current.contains(e.target as Node)) close()
     }
     window.addEventListener('mousedown', handle)
     window.addEventListener('keydown', handle)
@@ -39,12 +50,12 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
       window.removeEventListener('mousedown', handle)
       window.removeEventListener('keydown', handle)
     }
-  }, [onClose])
+  }, [close])
 
   return (
     <div
       ref={ref}
-      className="menu-pop"
+      className={closing ? 'menu-pop-out' : 'menu-pop'}
       style={{
         position: 'fixed', left: safeX, top: safeY, zIndex: 9999,
         minWidth: 200, background: 'var(--bg-card)',
@@ -68,7 +79,7 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
                 <button
                   key={c}
                   title={c}
-                  onClick={() => { onColor(c); onClose() }}
+                  onClick={() => { onColor(c); close() }}
                   style={{
                     width: 16, height: 16, borderRadius: '50%',
                     background: c, border: '2px solid rgba(255,255,255,0.12)',
@@ -85,7 +96,7 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
         return (
           <button
             key={item.id}
-            onClick={() => { if (!item.disabled && item.onClick) { item.onClick(); onClose() } }}
+            onClick={() => { if (!item.disabled && item.onClick) { item.onClick(); close() } }}
             disabled={item.disabled}
             className="w-full flex items-center justify-between px-3 py-1.5 text-xs"
             style={{

@@ -1574,7 +1574,7 @@ export default function ArrangementView() {
               color: active ? 'var(--accent-light)' : 'var(--text-muted)', borderRadius: '0 3px 3px 0',
             }}><ChevronDown size={11} /></button>
             {showEditorMenu && (
-              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 150, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+              <div className="menu-pop" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 150, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
                 <button style={{ ...menuItem, display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => { setShowEditorMenu(false); createEditorClip('roll') }}><Music size={13} /> New Piano Roll</button>
                 <button style={{ ...menuItem, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => { setShowEditorMenu(false); createEditorClip('beat') }}><Grid3x3 size={13} /> New Beat</button>
               </div>
@@ -1614,7 +1614,7 @@ export default function ArrangementView() {
             }}
           ><ChevronDown size={11} /></button>
           {showExportDropdown && (
-            <div style={{
+            <div className="menu-pop" style={{
               position: 'absolute', top: '100%', right: 0, marginTop: 2,
               background: 'var(--bg-card)', border: '1px solid var(--border)',
               borderRadius: 4, zIndex: 1000, minWidth: 130, overflow: 'hidden',
@@ -1692,7 +1692,7 @@ export default function ArrangementView() {
               }}
             ><ChevronDown size={11} /></button>
             {showSaveDropdown && (
-              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 214, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+              <div className="menu-pop" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 214, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
                 <div style={{ padding: '7px 11px 4px', fontSize: 8.5, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Where to save</div>
                 <button onClick={() => { setSaveDest('cloud'); try { localStorage.setItem('100lights-save-dest', 'cloud') } catch { /* private mode */ } setShowSaveDropdown(false); void onSave?.() }}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 11px', textAlign: 'left', background: saveDest === 'cloud' ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', border: 'none', color: saveDest === 'cloud' ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11.5, cursor: 'pointer' }}>
