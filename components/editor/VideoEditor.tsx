@@ -2048,9 +2048,15 @@ export default function VideoEditor({
       sourceNamesRef.current.set(sourceId, name)
       setLinkedSourceIds(prev => prev.includes(sourceId) ? prev : [...prev, sourceId])   // mounts DawMixSync for live re-sync
       await renderDawSelection(daw, undefined, new Date().toISOString(), sourceId, name)
-    } catch {
+      // If nothing landed on the timeline, the render came back empty/silent —
+      // say so instead of leaving the user staring at an empty pool.
+      if (!timelineItemsRef.current.some(i => i.dawMixLinked && i.dawMixSourceProjectId === sourceId)) {
+        window.alert(`Linked “${name}”, but its mix rendered empty — the project may have no audible clips, or its sounds couldn't load here.`)
+      }
+    } catch (err) {
       setBounceStatus('error')
       setTimeout(() => setBounceStatus('idle'), 2500)
+      window.alert(`Couldn't sync “${sourceName || 'that project'}” in: ${err instanceof Error ? err.message : 'render failed'}.`)
     }
   }
 
@@ -3159,6 +3165,9 @@ export default function VideoEditor({
                 onBounceDawMix={hasDawProject ? handleBounceDawMix : undefined}
                 onLinkProject={() => openProjectPicker('link')}
                 onSendProject={hasDawProject ? () => openProjectPicker('send') : undefined}
+                linkedSources={linkedSourceIds.map(id => ({ id, name: sourceNamesRef.current.get(id) || 'Linked project', syncing: bounceStatus === 'working' }))}
+                onOpenSource={(id) => window.open(`/projects/${id}`, '_blank')}
+                onResyncSource={() => { void refreshAllDawMixesRef.current() }}
                 dawTracks={dawTracks}
                 bounceStatus={bounceStatus}
                 onAddToTimeline={addMediaToTimeline}

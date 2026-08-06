@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
-import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2, Link2 } from 'lucide-react'
+import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2, Link2, RotateCw, ArrowUpRight } from 'lucide-react'
 import type { MediaItem } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
@@ -25,6 +25,10 @@ interface Props {
   /** DAW tracks that carry clips — offered as stem link targets. */
   dawTracks?: Array<{ id: string; name: string }>
   bounceStatus?: 'idle' | 'working' | 'error'
+  /** Projects whose audio is linked in — surfaced so you can see + reach them. */
+  linkedSources?: Array<{ id: string; name: string; syncing?: boolean }>
+  onOpenSource?: (id: string) => void
+  onResyncSource?: (id: string) => void
 }
 
 function formatDur(s?: number) {
@@ -36,6 +40,7 @@ function formatDur(s?: number) {
 export default function MediaLibrary({
   items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu, onAddFromLibrary,
   onBounceDawMix, onLinkProject, onSendProject, bounceStatus = 'idle',
+  linkedSources = [], onOpenSource, onResyncSource,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState('')
@@ -185,6 +190,29 @@ export default function MediaLibrary({
           My Library
         </button>
       </div>
+
+      {/* Linked projects — the audio projects synced in, so they're findable +
+          reachable (open to edit the source; re-sync pulls its latest mix). */}
+      {linkedSources.length > 0 && (
+        <div style={{ borderBottom: '1px solid var(--border)', padding: '6px 8px' }}>
+          <p style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Linked projects</p>
+          {linkedSources.map(s => (
+            <div key={s.id} className="flex items-center gap-1.5" style={{ padding: '3px 4px', borderRadius: 5 }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+              <Link2 size={11} color="var(--accent-light)" style={{ flexShrink: 0 }} />
+              <span className="flex-1 min-w-0 truncate" style={{ fontSize: 11.5, color: 'var(--text-primary)' }} title={s.name}>{s.name}</span>
+              {s.syncing && <span style={{ fontSize: 9, color: 'var(--accent-light)' }}>syncing…</span>}
+              {onResyncSource && !s.syncing && (
+                <button onClick={() => onResyncSource(s.id)} title="Re-sync from this project's latest mix" style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 2, lineHeight: 0 }}><RotateCw size={11} /></button>
+              )}
+              {onOpenSource && (
+                <button onClick={() => onOpenSource(s.id)} title="Open this project to edit its audio" style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 2, lineHeight: 0 }}><ArrowUpRight size={12} /></button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Local media list */}
       {tab === 'local' && (
