@@ -24,6 +24,25 @@ const ExportModal   = dynamic(() => import('@/components/editor/ExportModal'),  
 const StoryboardView = dynamic(() => import('@/components/editor/StoryboardView'), { ssr: false })
 const DawMixSync    = dynamic(() => import('@/components/editor/DawMixSync'),    { ssr: false })
 
+// Cheap 53-bit hash (cyrb53) of a DAW project's AUDIO-relevant content, so a
+// re-sync can skip re-rendering when nothing that affects the sound changed
+// (a rename, a clip recolor, or a save that only touched the video side all
+// leave this identical). `name`/`color`/`label` are stripped so cosmetic edits
+// don't force a bounce; everything else is included, erring toward an occasional
+// needless render rather than ever serving stale audio.
+function dawAudioFingerprint(daw: import('@/lib/daw-types').DawProject): string {
+  const json = JSON.stringify(daw, (k, v) => (k === 'name' || k === 'color' || k === 'colour' || k === 'label') ? undefined : v)
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57
+  for (let i = 0; i < json.length; i++) {
+    const ch = json.charCodeAt(i)
+    h1 = Math.imul(h1 ^ ch, 2654435761)
+    h2 = Math.imul(h2 ^ ch, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)
+}
+
 // Cross-project audio sync is SYNC-ON-SAVE, not real-time. A linked source
 // project is rendered from its latest SAVED state (pulled fresh from the API on
 // link, on load, and on manual re-sync). The live Liveblocks-room path is off:
@@ -1869,6 +1888,9 @@ export default function VideoEditor({
   // Last cross-project render error, surfaced in the "rendered empty" alert so a
   // failed sync self-reports (was a silent catch — impossible to diagnose).
   const lastMixErrorRef = useRef<string>('')
+  // Audio fingerprint of the last render per link key — lets a re-sync skip the
+  // bounce when the source's sound is unchanged. See dawAudioFingerprint.
+  const lastRenderFpRef = useRef<Map<string, string>>(new Map())
 
   // Re-uploads of a linked mix wait for the edits to settle (8 s after the
   // last refresh) so a burst of live changes doesn't push transient renders
@@ -1939,6 +1961,16 @@ export default function VideoEditor({
     // The window always spans the FULL arrangement so stems stay aligned.
     const endBeat = (daw.arrangementClips ?? []).reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
     if (endBeat <= 0) { setBounceStatus('error'); setTimeout(() => setBounceStatus('idle'), 2500); return }
+    // Skip the (expensive) bounce when the source's audio content is byte-for-byte
+    // what we already rendered for this link — the common case for reopen, focus
+    // re-syncs, and saves that didn't touch the sound.
+    const linkKey = `${src ?? 'own'}::${[...(trackIds ?? [])].sort().join(',')}`
+    const fp = dawAudioFingerprint(daw)
+    const alreadyLinked = timelineItemsRef.current.some(i => sameLink(i, trackIds, src))
+    if (alreadyLinked && lastRenderFpRef.current.get(linkKey) === fp) {
+      setBounceStatus('idle')
+      return
+    }
     setBounceStatus('working')
     try {
       const isStem = !!trackIds?.length
@@ -2027,6 +2059,7 @@ export default function VideoEditor({
       // already tuned a grid of their own.
       if (daw.tempo) setBeatGrid(g => g ?? { bpm: daw.tempo, offset: 0, beatsPerBar: 4 })
       lastMixErrorRef.current = ''
+      lastRenderFpRef.current.set(linkKey, fp)   // remember what we rendered so an unchanged re-sync skips
       setBounceStatus('idle')
     } catch (e) {
       lastMixErrorRef.current = e instanceof Error ? e.message : String(e)
