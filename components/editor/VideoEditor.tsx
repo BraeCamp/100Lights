@@ -714,6 +714,7 @@ export default function VideoEditor({
   const sourceNamesRef = useRef<Map<string, string>>(new Map())
   const [linkedSourceIds, setLinkedSourceIds] = useState<string[]>([])
   const [showProjectPicker, setShowProjectPicker] = useState(false)
+  const [pickerMode, setPickerMode] = useState<'link' | 'send'>('link')   // link = pull a source in; send = push this mix out
   const [pickerProjects, setPickerProjects] = useState<Array<{ id: string; name: string }> | null>(null)
   // Set during load when the saved audio is newer than the linked mix bounce
   const pendingMixRefreshRef = useRef<string | null>(null)
@@ -1985,8 +1986,9 @@ export default function VideoEditor({
     }, live ? 2500 : 1200)
   }
 
-  // ── Cross-project PULL: link ANOTHER project's mix in as a live clip ──────────
-  async function openProjectPicker() {
+  // ── Cross-project links: PULL a source in, or PUSH this mix to a target ───────
+  async function openProjectPicker(mode: 'link' | 'send' = 'link') {
+    setPickerMode(mode)
     setShowProjectPicker(true)
     if (pickerProjects) return
     try {
@@ -1995,6 +1997,13 @@ export default function VideoEditor({
       // Don't offer to link a project to itself.
       setPickerProjects(data.filter(p => p.id !== savedProjectId))
     } catch { setPickerProjects([]) }
+  }
+  // PUSH: stash this project as the source under the target, then open the target,
+  // which resolves the link on load (see the push-target effect). One-shot.
+  function sendToTarget(targetId: string) {
+    setShowProjectPicker(false)
+    try { localStorage.setItem(`cf_link_source_${targetId}`, savedProjectId) } catch { /* storage unavailable */ }
+    window.location.assign(`/projects/${targetId}`)
   }
   // Reload: re-fetch each linked source so its live replica + listener come back.
   async function rehydrateLinkedSources(sourceIds: string[]) {
@@ -2069,6 +2078,20 @@ export default function VideoEditor({
     pendingMixRefreshRef.current = null
     void refreshAllDawMixesRef.current(stamp)
   }, [hasDawProject]) // eslint-disable-line
+
+  // PUSH target: another editor sent this project a link via "Send to project"
+  // (stashed the source id under our project). Resolve it once loaded, reusing
+  // the same pull path so it lands as a live linked clip.
+  const pushLinkDoneRef = useRef(false)
+  useEffect(() => {
+    if (isLoadingProject || pushLinkDoneRef.current) return
+    pushLinkDoneRef.current = true
+    try {
+      const key = `cf_link_source_${savedProjectId}`
+      const src = localStorage.getItem(key)
+      if (src && src !== savedProjectId) { localStorage.removeItem(key); void handleLinkProject(src, '') }
+    } catch { /* storage unavailable */ }
+  }, [isLoadingProject]) // eslint-disable-line
 
   // Sync timers die with the editor.
   useEffect(() => () => {
@@ -3134,7 +3157,8 @@ export default function VideoEditor({
                 onSelect={setSelectedMediaId}
                 onImport={handleFileImport}
                 onBounceDawMix={hasDawProject ? handleBounceDawMix : undefined}
-                onLinkProject={openProjectPicker}
+                onLinkProject={() => openProjectPicker('link')}
+                onSendProject={hasDawProject ? () => openProjectPicker('send') : undefined}
                 dawTracks={dawTracks}
                 bounceStatus={bounceStatus}
                 onAddToTimeline={addMediaToTimeline}
@@ -3653,10 +3677,12 @@ export default function VideoEditor({
             style={{ width: 'min(440px, 92vw)', maxHeight: '70vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
               <Link2 size={15} color="var(--accent-light)" />
-              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Link a project&rsquo;s audio</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{pickerMode === 'send' ? 'Send this audio to a project' : 'Link a project’s audio'}</span>
               <button onClick={() => setShowProjectPicker(false)} style={{ marginLeft: 'auto', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}><X size={16} /></button>
             </div>
-            <p style={{ padding: '10px 16px 4px', margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>Its full mix syncs in as a live clip — edit that project and this clip re-renders to match.</p>
+            <p style={{ padding: '10px 16px 4px', margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>{pickerMode === 'send'
+              ? 'This project’s full mix links into the project you pick — it live-updates there whenever you edit here.'
+              : 'Its full mix syncs in as a live clip — edit that project and this clip re-renders to match.'}</p>
             <div style={{ overflowY: 'auto', padding: '6px 8px 12px' }}>
               {pickerProjects === null ? (
                 <p style={{ padding: '16px', fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>Loading your projects…</p>
@@ -3665,7 +3691,7 @@ export default function VideoEditor({
               ) : pickerProjects.map(p => {
                 const linked = linkedSourceIds.includes(p.id)
                 return (
-                  <button key={p.id} onClick={() => handleLinkProject(p.id, p.name)}
+                  <button key={p.id} onClick={() => pickerMode === 'send' ? sendToTarget(p.id) : handleLinkProject(p.id, p.name)}
                     style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '9px 10px', borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-primary)' }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>

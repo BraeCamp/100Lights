@@ -20,6 +20,8 @@ interface Props {
   onBounceDawMix?: (trackIds?: string[]) => void
   /** Open the project picker to link ANOTHER project's audio in (cross-project sync). */
   onLinkProject?: () => void
+  /** Open the picker to SEND this project's audio into another project (push). */
+  onSendProject?: () => void
   /** DAW tracks that carry clips — offered as stem link targets. */
   dawTracks?: Array<{ id: string; name: string }>
   bounceStatus?: 'idle' | 'working' | 'error'
@@ -33,7 +35,7 @@ function formatDur(s?: number) {
 
 export default function MediaLibrary({
   items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu, onAddFromLibrary,
-  onBounceDawMix, onLinkProject, bounceStatus = 'idle',
+  onBounceDawMix, onLinkProject, onSendProject, bounceStatus = 'idle',
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState('')
@@ -131,6 +133,16 @@ export default function MediaLibrary({
               title="Link another project's audio (full mix) in as a live clip that re-syncs when that project changes"
             >
               <Link2 size={11} /> Link project
+            </button>
+          )}
+          {onSendProject && (
+            <button
+              onClick={onSendProject}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+              style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
+              title="Send this project's audio (full mix) into another project as a live clip"
+            >
+              <Music2 size={11} /> Send to…
             </button>
           )}
           <button

@@ -35,6 +35,7 @@ import { InspectButton } from './daw/InspectMode'
 import PracticeButton from './daw/PracticeButton'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
+import SendToProjectButton from './SendToProjectButton'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
 import { saveSnapshot, loadSnapshot, deleteSnapshot, getBranch } from '@/lib/offline-store'
@@ -1673,6 +1674,16 @@ export default function AudioEditor(props: AudioEditorProps) {
                   )
                 })
               )}
+              {/* Send this project's audio into another project (cross-project push) */}
+              <SendToProjectButton
+                sourceProjectId={props.projectId}
+                style={{
+                  width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
+                  marginTop: 'auto', flexShrink: 0, background: 'transparent',
+                  color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  transition: 'background 0.12s, color 0.12s',
+                }}
+              />
               {/* Appearance / theme customization — always available */}
               <button
                 onClick={() => setShowAppearance(true)}
@@ -1680,7 +1691,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 data-help-id="appearance"
                 style={{
                   width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
-                  marginTop: 'auto', marginBottom: 8, background: 'transparent',
+                  marginBottom: 8, background: 'transparent',
                   color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   transition: 'background 0.12s, color 0.12s',
                 }}
