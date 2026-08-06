@@ -813,20 +813,24 @@ function fillPadLong(clip, rand, bar0, chords, base) {
 // the same phrase recurs like a real hook instead of random notes.
 function makeHook(rand) {
   const bars = rand.pick([2, 2, 4])
-  const CALL = [[0, 4, 7, 10], [0, 3, 6, 10], [0, 4, 6, 12], [0, 6, 8, 12], [2, 4, 8, 10], [0, 2, 4, 8, 12]]
-  const ANSW = [[0, 8], [0], [4, 12], [8], [0, 4]]
-  const MOVES = [1, 1, -1, -1, 2, -2, 1, -1, 3, -2]   // mostly stepwise, occasional leap
-  const events = []
-  for (let bar = 0; bar < bars; bar++) {
-    const last = bar === bars - 1
-    const slots = last ? rand.pick(ANSW) : (rand.chance(0.72) ? rand.pick(CALL) : rand.pick(ANSW))
-    for (let k = 0; k < slots.length; k++) {
-      const slot = slots[k], next = k + 1 < slots.length ? slots[k + 1] : 16
-      const strong = slot % 8 === 0
-      events.push({ bar, slot, len: Math.min(next - slot, 4), strong, move: strong ? 0 : rand.pick(MOVES) })
-    }
-  }
-  return { bars, events }
+  // A MOTIF is a short contour: [slot (16th), step] where `step` is scale-degrees
+  // ABOVE the bar's anchor tone. These are real melodic shapes (arch, rise-and-
+  // resolve, plaintive dip) that RESOLVE near 0 — not a random walk. fillLead
+  // repeats the motif each bar (re-anchored to the chord), so the line is a
+  // recognizable, singable hook that develops via call/response.
+  const SHAPES = [
+    [[0, 0], [4, 2], [8, 1], [12, 0]],                 // gentle arch → resolve
+    [[0, 0], [2, 1], [4, 2], [8, 0]],                  // quick rise → land
+    [[0, 2], [4, 1], [8, 0], [10, -1]],                // fall, dips below the anchor
+    [[0, 0], [3, 2], [6, 4], [10, 2], [12, 0]],        // wide arch up and back
+    [[0, 0], [6, 3], [8, 2], [12, 0]],                 // leap up, step down
+    [[0, 4], [4, 2], [8, 1], [12, 0]],                 // descending line
+    [[0, 0], [2, -1], [6, 1], [10, 2], [12, 0]],       // dip then climb
+    [[0, 1], [4, 0], [8, 2], [12, 1]],                 // syncopated, hangs on 2
+    [[0, 0], [4, 0], [8, 1], [12, 0]],                 // call: repeated note, tiny lift
+    [[0, 2], [3, 2], [6, 1], [8, 0], [12, -1]],        // sighing descent
+  ]
+  return { bars, motif: rand.pick(SHAPES), thin: rand.chance(0.35) }
 }
 function chordToneAt(chord, idx) {
   const n = chord.length
@@ -863,32 +867,35 @@ function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpD
     return
   }
 
-  // melody / riff / stab: walk the hook's contour, anchoring to chord tones on
-  // strong beats so the line outlines the harmony and never wanders out of key.
-  const restP = 0.05 + (1 - motion) * 0.5          // calm lines breathe more
-  const holdP = (1 - motion) * 0.55                // …and repeat a note instead of always stepping
-  const hi = motion < 0.4 ? 6 : (motion < 0.7 ? 9 : 13)  // tighter range when calm → stays lower
+  // melody / riff / stab: place the hook's MOTIF on each bar, re-anchored to that
+  // bar's chord, so the SAME singable phrase recurs (with a call/response arc)
+  // instead of a random walk. Strong beats snap to a chord tone → always in key.
+  const restP = 0.04 + (1 - motion) * 0.4          // calm lines breathe more
   const lm = 1 + (1 - motion) * 0.9                // longer notes when calm
-  let cur = null
+  const reach = 0.55 + motion * 0.6                // motion widens the motif's intervals
+  const motif = hook.motif
   chords.forEach((chord, b) => {
     const bt = (bar0 + b) * 4
     const cds = []   // chord-tone scale-degrees in the lead register
     for (let d = -2; d <= 14; d++) if (chord.some(p => ((p % 12) + 12) % 12 === ((degPitch(d) % 12) + 12) % 12)) cds.push(d)
     const snap = to => cds.reduce((a, c) => Math.abs(c - to) < Math.abs(a - to) ? c : a, cds[0])
-    for (const ev of hook.events.filter(e => e.bar === (b % hook.bars))) {
-      if (cur === null) cur = snap(1)                 // open low-mid, not up high
-      else if (ev.strong) cur = snap(cur)             // land on a chord tone
-      else if (rand.chance(holdP)) { /* hold — repeat the last note, no step */ }
-      else {
-        let mv = ev.move
-        if (motion < 0.4) mv = Math.sign(mv)          // calm → single steps only
-        cur += mv
-        if (cur > hi) cur -= N; else if (cur < -2) cur += N
-        if (rand.chance(0.3)) cur = snap(cur)         // don't drift too far off the chord
-      }
-      if (rand.chance(restP)) continue                // rests to breathe (more when calm)
-      const len = (style === 'stab' ? 1 : ev.len) * STEP
-      clip.notes.push(note(degPitch(cur), bt + ev.slot * STEP, len * lm * 0.92, hvel(rand, base - (ev.strong ? 0 : 6), ev.slot)))
+    const barPos = b % hook.bars
+    const last = barPos === hook.bars - 1
+    // Phrase arc: statement bars sit low, the mid bar lifts, the final bar
+    // resolves down to the tonic-ish and thins out (call → answer → cadence).
+    const anchor = last ? snap(0) : snap(barPos % 2 === 0 ? 1 : 3)
+    const events = last ? motif.filter(([s]) => s % 4 === 0) : motif
+    for (let i = 0; i < events.length; i++) {
+      const [slot, step] = events[i]
+      const strong = slot % 8 === 0
+      // Thin inner notes for space — more when calm, and on the answer/last bar.
+      if (!strong && (hook.thin || last) && rand.chance(0.35 + (1 - motion) * 0.3)) continue
+      if (!strong && rand.chance(restP)) continue
+      let deg = anchor + Math.round(step * reach)
+      if (strong || rand.chance(0.22)) deg = snap(deg)   // anchor the harmony on strong beats
+      const nextSlot = i + 1 < events.length ? events[i + 1][0] : 16
+      const len = (style === 'stab' ? 1 : Math.min(nextSlot - slot, 4)) * STEP * lm * 0.92
+      clip.notes.push(note(degPitch(deg), bt + slot * STEP, len, hvel(rand, base - (strong ? 0 : 6), slot)))
     }
   })
 }
