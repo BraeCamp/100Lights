@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, Cloud, HardDrive, FileX } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { openProjectsFromFile, readProjectFile } from '@/lib/project-serializer'
+import { projectPath } from '@/lib/project-url'
 import { saveFolder, loadFolder, clearFolder, verifyPermission, verifyWritePermission } from '@/lib/local-folder'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 
@@ -18,6 +19,8 @@ interface CloudSummary {
   clips: number
   media: number
   thumbnail: string | null
+  slug: string | null
+  username: string | null
 }
 
 interface LocalFileHandle {
@@ -28,8 +31,14 @@ interface LocalFileHandle {
 
 // One row in the unified list — either a cloud project or a local file.
 type Row =
-  | { source: 'cloud'; key: string; ts: number; name: string; id: string; starred: boolean; clips: number; media: number; thumbnail: string | null }
+  | { source: 'cloud'; key: string; ts: number; name: string; id: string; starred: boolean; clips: number; media: number; thumbnail: string | null; slug: string | null; username: string | null }
   | { source: 'local'; key: string; ts: number; name: string; file: LocalFileHandle }
+
+// Link straight to the canonical /@username/slug-code URL so opening a project
+// no longer bounces through /projects/{id} first. Falls back to /projects/{id}
+// when the project has no owner username yet (projectPath handles that).
+const cloudHref = (r: { username: string | null; slug: string | null; id: string }) =>
+  projectPath(r.username, r.slug, r.id)
 
 function formatDate(ms: number) {
   if (!ms) return ''
@@ -48,7 +57,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
   const [localLoading, setLocalLoading] = useState(true)
 
   const [opening, setOpening]   = useState<string | null>(null)
-  const [ctxMenu, setCtxMenu]   = useState<{ id: string; starred: boolean; x: number; y: number } | null>(null)
+  const [ctxMenu, setCtxMenu]   = useState<{ id: string; starred: boolean; x: number; y: number; href: string } | null>(null)
   const [confirmDel, setConfirmDel] = useState<{ kind: 'cloud'; id: string; name: string } | { kind: 'local'; name: string } | null>(null)
 
   // ── Cloud ──
@@ -174,7 +183,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
 
   // ── Merge + sort (starred cloud first, then newest across both) ──
   const rows: Row[] = [
-    ...cloud.map((p): Row => ({ source: 'cloud', key: `c:${p.id}`, ts: Date.parse(p.savedAt) || 0, name: p.name, id: p.id, starred: p.starred, clips: p.clips, media: p.media, thumbnail: p.thumbnail })),
+    ...cloud.map((p): Row => ({ source: 'cloud', key: `c:${p.id}`, ts: Date.parse(p.savedAt) || 0, name: p.name, id: p.id, starred: p.starred, clips: p.clips, media: p.media, thumbnail: p.thumbnail, slug: p.slug, username: p.username })),
     ...local.map((f): Row => ({ source: 'local', key: `l:${f.name}`, ts: f.modifiedAt ?? 0, name: f.name.replace(/\.(cfproj|zip)$/i, ''), file: f })),
   ].sort((a, b) => {
     const aStar = a.source === 'cloud' && a.starred ? 1 : 0
@@ -233,12 +242,12 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
               key={row.key}
               className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
               style={{ background: 'var(--bg-card)', borderColor: row.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)' }}
-              onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ id: row.id, starred: row.starred, x: e.clientX, y: e.clientY }) }}
+              onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ id: row.id, starred: row.starred, x: e.clientX, y: e.clientY, href: cloudHref(row) }) }}
             >
-              <Link href={`/projects/${row.id}`} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
+              <Link href={cloudHref(row)} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
                 {row.thumbnail ? <img src={row.thumbnail} className="w-full h-full object-cover" alt="" /> : <Film size={16} color="var(--text-secondary)" />}
               </Link>
-              <Link href={`/projects/${row.id}`} className="flex-1 min-w-0">
+              <Link href={cloudHref(row)} className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{row.name}</span>
                   <SourceBadge source="cloud" />
@@ -289,7 +298,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <Link href={`/projects/${ctxMenu.id}`} className="flex items-center gap-2.5 px-3.5 py-2 text-sm no-underline" style={{ color: 'var(--text-primary)' }}>
+          <Link href={ctxMenu.href} className="flex items-center gap-2.5 px-3.5 py-2 text-sm no-underline" style={{ color: 'var(--text-primary)' }}>
             <FolderOpen size={14} /> Open
           </Link>
           <button onClick={() => { toggleStar(ctxMenu.id); setCtxMenu(null) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>

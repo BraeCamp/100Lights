@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
+import { projectPath } from '@/lib/project-url'
 import StarterCodeBanner from '@/components/StarterCodeBanner'
 import { useIsMobile } from '@/lib/use-is-mobile'
 
@@ -28,10 +29,18 @@ interface ProjectSummary {
   clips: number
   media: number
   thumbnail: string | null
+  slug?: string | null
+  username?: string | null
   shared?: boolean
   role?: string | null
   owner?: string | null
 }
+
+// Canonical /@username/slug-code link so opening a project doesn't bounce
+// through /projects/{id} first. For a shared project the canonical owner is
+// `owner`; falls back to /projects/{id} when there's no username yet.
+const projHref = (p: ProjectSummary) =>
+  projectPath(p.username ?? p.owner ?? null, p.slug ?? null, p.id)
 
 function formatDate(iso: string) {
   const d = new Date(iso)
@@ -351,7 +360,7 @@ export default function DashboardPage() {
                   onContextMenu={e => { e.preventDefault(); setCtxMenu({ id: project.id, name: project.name, x: e.clientX, y: e.clientY }) }}
                 >
                   <Link
-                    href={`/projects/${project.id}`}
+                    href={projHref(project)}
                     style={{
                       width: 40, height: 28, borderRadius: 6, flexShrink: 0,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -377,7 +386,7 @@ export default function DashboardPage() {
                       />
                     ) : (
                       <Link
-                        href={`/projects/${project.id}`}
+                        href={projHref(project)}
                         style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                       >
                         {project.name}
@@ -427,7 +436,7 @@ export default function DashboardPage() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
               {sharedProjects.map(project => (
-                <Link key={project.id} href={`/projects/${project.id}`}
+                <Link key={project.id} href={projHref(project)}
                   style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 10, border: '1px solid rgba(139,92,246,0.28)', background: 'var(--bg-card)', textDecoration: 'none' }}>
                   <div style={{ width: 40, height: 28, borderRadius: 6, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--border)', overflow: 'hidden' }}>
                     {project.thumbnail ? <img src={project.thumbnail} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" /> : <AudioLines size={14} color="var(--text-secondary)" />}

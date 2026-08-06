@@ -54,6 +54,7 @@ export async function GET() {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
+  await ensureSlugColumns()   // so the list can hand back slug + owner_username for direct canonical links
   purgeExpiredTrash(userId).catch(() => {})
 
   // Only pull lightweight fields for the list. Counting clips/media via
@@ -64,7 +65,7 @@ export async function GET() {
   // same reason (an oversized data-URI thumbnail would bloat the list).
   const cols = (starred: boolean) => sql`
     SELECT
-      id, name, saved_at, ${starred ? sql`starred,` : sql`FALSE AS starred,`}
+      id, name, saved_at, slug, owner_username, ${starred ? sql`starred,` : sql`FALSE AS starred,`}
       CASE WHEN jsonb_typeof(data->'clips') = 'array' THEN jsonb_array_length(data->'clips') ELSE 0 END AS clip_count,
       CASE WHEN jsonb_typeof(data->'media') = 'array' THEN jsonb_array_length(data->'media') ELSE 0 END AS media_count,
       CASE WHEN length(data->'media'->0->>'thumbnail') <= 262144 THEN data->'media'->0->>'thumbnail' ELSE NULL END AS thumbnail,
@@ -82,7 +83,7 @@ export async function GET() {
     await ensureSharingSchema()
     return sql`
       SELECT
-        p.id, p.name, p.saved_at, p.owner_username, m.role,
+        p.id, p.name, p.saved_at, p.slug, p.owner_username, m.role,
         CASE WHEN jsonb_typeof(p.data->'clips') = 'array' THEN jsonb_array_length(p.data->'clips') ELSE 0 END AS clip_count,
         CASE WHEN jsonb_typeof(p.data->'media') = 'array' THEN jsonb_array_length(p.data->'media') ELSE 0 END AS media_count,
         CASE WHEN length(p.data->'media'->0->>'thumbnail') <= 262144 THEN p.data->'media'->0->>'thumbnail' ELSE NULL END AS thumbnail,
@@ -106,12 +107,14 @@ export async function GET() {
 
     const owned = rows.map(r => ({
       id: r.id, name: r.name, savedAt: r.saved_at, starred: r.starred ?? false,
+      slug: (r.slug as string) ?? null, username: (r.owner_username as string) ?? null,
       clips: Number(r.clip_count) || 0, media: Number(r.media_count) || 0,
       thumbnail: r.thumbnail ?? null, modules: Array.isArray(r.modules) ? r.modules : null,
       shared: false as const, role: null, owner: null,
     }))
     const sharedList = shared.map(r => ({
       id: r.id, name: r.name, savedAt: r.saved_at, starred: false,
+      slug: (r.slug as string) ?? null, username: (r.owner_username as string) ?? null,
       clips: Number(r.clip_count) || 0, media: Number(r.media_count) || 0,
       thumbnail: r.thumbnail ?? null, modules: Array.isArray(r.modules) ? r.modules : null,
       shared: true as const, role: (r.role as string) ?? 'view', owner: (r.owner_username as string) ?? null,
