@@ -203,6 +203,28 @@ input[type="range"].cf-slider::-moz-range-thumb {
 .transport-live { animation: transportGlow 1.9s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .transport-live { animation: none; box-shadow: 0 0 12px 2px rgb(var(--accent-rgb) / 0.45); } }
 
+/* Completion flourish — a checkmark that springs in, for save/export success. */
+@keyframes successPop {
+  0%   { transform: scale(0.2) rotate(-12deg); opacity: 0; }
+  55%  { transform: scale(1.18) rotate(0deg);  opacity: 1; }
+  100% { transform: scale(1); }
+}
+.success-pop { animation: successPop 0.32s cubic-bezier(0.22, 1.2, 0.36, 1); display: inline-flex; }
+/* One-shot ring that blooms out from a success badge. */
+@keyframes successRing {
+  0%   { transform: scale(0.6); opacity: 0.55; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+.success-ring::after {
+  content: ""; position: absolute; inset: -3px; border-radius: inherit;
+  border: 1.5px solid var(--success); animation: successRing 0.5s ease-out forwards;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .success-pop { animation: none; }
+  .success-ring::after { animation: none; opacity: 0; }
+}
+
 /* Modal / dialog open — a gentle fade + lift. */
 @keyframes modalIn {
   from { opacity: 0; transform: translateY(8px) scale(0.985); }

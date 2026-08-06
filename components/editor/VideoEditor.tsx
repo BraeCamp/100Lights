@@ -3940,7 +3940,7 @@ export default function VideoEditor({
           }}
         >
           {saveStatus === 'saved'
-            ? <><CheckCircle2 size={14} /> Project saved</>
+            ? <><span className="success-pop success-ring" style={{ position: 'relative', borderRadius: '50%', color: 'var(--success)' }}><CheckCircle2 size={14} /></span> Project saved</>
             : <><Cloud size={14} /> Save failed — check your connection</>
           }
         </div>

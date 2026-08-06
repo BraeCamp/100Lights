@@ -593,8 +593,20 @@ export default function Timeline({
   return (
     <div
       className="flex flex-col select-none shrink-0"
-      style={{ height, background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}
+      style={{ height, background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', position: 'relative' }}
     >
+      {/* Empty-timeline invite — a friendly nudge over the blank lanes instead of
+          a void. Non-interactive so drops/clicks pass straight through. */}
+      {items.length === 0 && (
+        <div style={{ position: 'absolute', inset: '48px 0 0 0', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 4 }}>
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', maxWidth: 300, padding: '0 16px' }}>
+            <div style={{ fontSize: 22, marginBottom: 6, opacity: 0.7 }}>🎬</div>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 3 }}>Your timeline is empty</div>
+            <div style={{ fontSize: 11, lineHeight: 1.5 }}>Drag a clip from the Media Pool onto a track — or press <span style={{ fontFamily: 'var(--font-mono), monospace', color: 'var(--accent-light)' }}>Space</span> to preview as you build.</div>
+          </div>
+        </div>
+      )}
+
       {/* ── Toolbar ───────────────────────────────────────────── */}
       <div
         className="flex items-center gap-2 px-3 shrink-0"
