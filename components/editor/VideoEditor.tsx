@@ -707,6 +707,14 @@ export default function VideoEditor({
   const dawProjectRef = useRef<import('@/lib/daw-types').DawProject | null>(null)
   const [hasDawProject, setHasDawProject] = useState(false)
   const [bounceStatus, setBounceStatus] = useState<'idle' | 'working' | 'error'>('idle')
+  // ── Cross-project links: live replicas of OTHER projects whose mix we sync in.
+  // Each gets its own DawMixSync joined to that project's room, so the linked
+  // clip re-renders when the source project is edited. (Phase 1: audio → video, pull.)
+  const sourceReplicasRef = useRef<Map<string, import('@/lib/daw-types').DawProject>>(new Map())
+  const sourceNamesRef = useRef<Map<string, string>>(new Map())
+  const [linkedSourceIds, setLinkedSourceIds] = useState<string[]>([])
+  const [showProjectPicker, setShowProjectPicker] = useState(false)
+  const [pickerProjects, setPickerProjects] = useState<Array<{ id: string; name: string }> | null>(null)
   // Set during load when the saved audio is newer than the linked mix bounce
   const pendingMixRefreshRef = useRef<string | null>(null)
   // Non-video module data carried through video saves. The projects API
@@ -1146,9 +1154,15 @@ export default function VideoEditor({
       }
       // Linked audio ALWAYS re-syncs from the project's audio on open — the
       // link is live by definition until the user locks a clip.
-      if (cfproj.dawProject && patchedItems.some(i => i.dawMixLinked && !i.dawMixLocked)) {
+      if (cfproj.dawProject && patchedItems.some(i => i.dawMixLinked && !i.dawMixLocked && !i.dawMixSourceProjectId)) {
         pendingMixRefreshRef.current = cfproj.moduleSavedAt?.audio ?? new Date().toISOString()
       }
+      // Cross-project links: re-fetch each linked source project, rebuild its live
+      // replica, and mount its listener so the clip re-syncs again after a reload.
+      const srcIds = Array.from(new Set(patchedItems
+        .filter(i => i.dawMixLinked && i.dawMixSourceProjectId)
+        .map(i => i.dawMixSourceProjectId as string)))
+      if (srcIds.length) void rehydrateLinkedSources(srcIds)
       setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
 
@@ -1796,6 +1810,9 @@ export default function VideoEditor({
    * time-aligned with every other and with the full mix.
    */
   const sameSel = (a?: string[], b?: string[]) => [...(a ?? [])].sort().join(',') === [...(b ?? [])].sort().join(',')
+  // A linked clip's identity is (source project, track selection). Absent source = this project's own DAW.
+  const sameLink = (i: TimelineItem, trackIds: string[] | undefined, src: string | undefined) =>
+    !!i.dawMixLinked && sameSel(i.dawMixTracks, trackIds) && (i.dawMixSourceProjectId ?? undefined) === (src ?? undefined)
   const dawMixBusyRef = useRef(false)
 
   // Re-uploads of a linked mix wait for the edits to settle (8 s after the
@@ -1826,24 +1843,30 @@ export default function VideoEditor({
   /** Re-render EVERY linked selection (live edits, stale-on-load). */
   const mixRerunPendingRef = useRef(false)
   async function refreshAllDawMixes(stamp?: string) {
-    const daw = dawProjectRef.current
-    if (!daw) return
     if (dawMixBusyRef.current) {
       // An edit landed mid-render — run again when this pass finishes so the
       // final audio state is never silently skipped.
       mixRerunPendingRef.current = true
       return
     }
-    const selections: Array<string[] | undefined> = []
+    // Each distinct (source project, track selection) renders from the right
+    // DawProject: this project's own DAW (no source) or a linked source replica.
+    const links: Array<{ src?: string; tracks?: string[] }> = []
     for (const i of timelineItemsRef.current) {
-      // Locked clips keep their render — only selections with an unlocked clip refresh.
-      if (i.dawMixLinked && !i.dawMixLocked && !selections.some(s => sameSel(s, i.dawMixTracks))) selections.push(i.dawMixTracks)
+      // Locked clips keep their render — only links with an unlocked clip refresh.
+      if (i.dawMixLinked && !i.dawMixLocked &&
+          !links.some(l => (l.src ?? undefined) === (i.dawMixSourceProjectId ?? undefined) && sameSel(l.tracks, i.dawMixTracks)))
+        links.push({ src: i.dawMixSourceProjectId, tracks: i.dawMixTracks })
     }
-    if (!selections.length) return
+    if (!links.length) return
     dawMixBusyRef.current = true
     const stampVal = stamp ?? new Date().toISOString()
     try {
-      for (const sel of selections) await renderDawSelection(daw, sel, stampVal)
+      for (const l of links) {
+        const daw = l.src ? sourceReplicasRef.current.get(l.src) : dawProjectRef.current
+        if (!daw) continue
+        await renderDawSelection(daw, l.tracks, stampVal, l.src, l.src ? sourceNamesRef.current.get(l.src) : undefined)
+      }
     } finally {
       dawMixBusyRef.current = false
       if (mixRerunPendingRef.current) {
@@ -1853,7 +1876,7 @@ export default function VideoEditor({
     }
   }
 
-  async function renderDawSelection(daw: import('@/lib/daw-types').DawProject, trackIds: string[] | undefined, stampVal: string) {
+  async function renderDawSelection(daw: import('@/lib/daw-types').DawProject, trackIds: string[] | undefined, stampVal: string, src?: string, srcLabel?: string) {
     // The window always spans the FULL arrangement so stems stay aligned.
     const endBeat = (daw.arrangementClips ?? []).reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
     if (endBeat <= 0) { setBounceStatus('error'); setTimeout(() => setBounceStatus('idle'), 2500); return }
@@ -1869,17 +1892,20 @@ export default function VideoEditor({
       const stemNames = isStem
         ? daw.tracks.filter(t => trackIds!.includes(t.id)).map(t => t.name || 'Track')
         : []
-      const label = isStem
-        ? `DAW: ${stemNames.slice(0, 2).join(' + ')}${stemNames.length > 2 ? ` +${stemNames.length - 2}` : ''}`
-        : 'DAW Mix'
+      const label = src
+        ? (srcLabel || 'Linked mix')
+        : isStem
+          ? `DAW: ${stemNames.slice(0, 2).join(' + ')}${stemNames.length > 2 ? ` +${stemNames.length - 2}` : ''}`
+          : 'DAW Mix'
 
       const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
       const blob = await renderProjectAudioBlob(source, { startBeat: 0, endBeat, userId: user?.id })
-      const file = new File([blob], `${localProjectName || 'Project'} ${isStem ? stemNames.join('+') : 'mix'}.wav`, { type: 'audio/wav' })
+      const baseName = src ? (srcLabel || 'Linked project') : (localProjectName || 'Project')
+      const file = new File([blob], `${baseName} ${isStem ? stemNames.join('+') : 'mix'}.wav`, { type: 'audio/wav' })
       const url = URL.createObjectURL(file)
       const dur = await readDuration(url, 'audio')
 
-      const siblings = timelineItemsRef.current.filter(i => i.dawMixLinked && sameSel(i.dawMixTracks, trackIds))
+      const siblings = timelineItemsRef.current.filter(i => sameLink(i, trackIds, src))
       const linked = siblings.find(i => !i.dawMixLocked)
       const hasLockedSibling = siblings.some(i => i.dawMixLocked && i.url === linked?.url)
       if (linked) {
@@ -1901,7 +1927,7 @@ export default function VideoEditor({
           scheduleLinkedUpload(mediaId, file)
         }
         setTimelineItems(prev => prev.map(i => {
-          if (!(i.dawMixLinked && !i.dawMixLocked && sameSel(i.dawMixTracks, trackIds))) return i
+          if (!(sameLink(i, trackIds, src) && !i.dawMixLocked)) return i
           // Untrimmed clips follow the new mix length; trimmed ones just clamp.
           const wasFull = i.inPoint === 0 && (!media?.duration || Math.abs((i.outPoint - i.inPoint) - media.duration) < 0.05)
           return {
@@ -1917,17 +1943,18 @@ export default function VideoEditor({
         const mediaId = crypto.randomUUID()
         setMediaItems(prev => [...prev, { id: mediaId, name: file.name, contentType: 'audio', url, file, duration: dur, uploadStatus: 'uploading' }])
         uploadMediaToR2(file, mediaId)
-        const trackLabel = isStem ? (stemNames[0] ?? 'DAW').slice(0, 8) : 'DAW'
+        const trackLabel = src ? (srcLabel || 'Linked').slice(0, 10) : isStem ? (stemNames[0] ?? 'DAW').slice(0, 8) : 'DAW'
         const trackId = crypto.randomUUID()
         setTracks(prev => [...prev, { id: trackId, label: trackLabel, type: 'audio', height: AUDIO_TRACK_HEIGHT }])
         setTimelineItems(prev => [...prev, {
           id: crypto.randomUUID(),
           label,
           startTime: 0, inPoint: 0, outPoint: dur,
-          captions: [], color: '#3b82f6',
+          captions: [], color: src ? '#8b5cf6' : '#3b82f6',
           trackId, url, contentType: 'audio',
           dawMixLinked: true, dawMixStamp: stampVal,
           dawMixTracks: trackIds?.length ? [...trackIds] : undefined,
+          dawMixSourceProjectId: src,
         }])
       }
       computeAudioPeaks(url).then(peaks => {
@@ -1947,10 +1974,80 @@ export default function VideoEditor({
   refreshAllDawMixesRef.current = refreshAllDawMixes
   function handleBounceDawMix(trackIds?: string[]) { void refreshDawMix(trackIds) }
 
+  // Debounced re-render of every linked mix (own + cross-project sources) behind
+  // the last edit, so a burst of changes renders once. Shared by the own-project
+  // live link and every cross-project source's live link.
+  const liveMixTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function scheduleMixRefresh(live: boolean) {
+    if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
+    liveMixTimerRef.current = setTimeout(() => {
+      if (timelineItemsRef.current.some(i => i.dawMixLinked && !i.dawMixLocked)) void refreshAllDawMixesRef.current()
+    }, live ? 2500 : 1200)
+  }
+
+  // ── Cross-project PULL: link ANOTHER project's mix in as a live clip ──────────
+  async function openProjectPicker() {
+    setShowProjectPicker(true)
+    if (pickerProjects) return
+    try {
+      const r = await fetch('/api/projects')
+      const data = r.ok ? await r.json() as Array<{ id: string; name: string }> : []
+      // Don't offer to link a project to itself.
+      setPickerProjects(data.filter(p => p.id !== savedProjectId))
+    } catch { setPickerProjects([]) }
+  }
+  // Reload: re-fetch each linked source so its live replica + listener come back.
+  async function rehydrateLinkedSources(sourceIds: string[]) {
+    const fetched: string[] = []
+    for (const sid of sourceIds) {
+      if (sourceReplicasRef.current.has(sid)) { fetched.push(sid); continue }
+      try {
+        const r = await fetch(`/api/projects/${sid}`)
+        if (!r.ok) continue
+        const cf = await r.json() as { name?: string; dawProject?: import('@/lib/daw-types').DawProject }
+        if (!cf.dawProject?.tracks?.length) continue
+        sourceReplicasRef.current.set(sid, cf.dawProject)
+        sourceNamesRef.current.set(sid, cf.name || 'Linked project')
+        fetched.push(sid)
+      } catch { /* source unreachable — leave its last-rendered clip in place */ }
+    }
+    if (fetched.length) {
+      setLinkedSourceIds(prev => Array.from(new Set([...prev, ...fetched])))
+      void refreshAllDawMixesRef.current()   // re-render from the fresh sources
+    }
+  }
+  async function handleLinkProject(sourceId: string, sourceName: string) {
+    setShowProjectPicker(false)
+    if (linkedSourceIds.includes(sourceId) && sourceReplicasRef.current.has(sourceId)) {
+      // Already linked — just re-sync it.
+      void renderDawSelection(sourceReplicasRef.current.get(sourceId)!, undefined, new Date().toISOString(), sourceId, sourceNamesRef.current.get(sourceId))
+      return
+    }
+    setBounceStatus('working')
+    try {
+      const r = await fetch(`/api/projects/${sourceId}`)
+      if (!r.ok) throw new Error('fetch failed')
+      const cf = await r.json() as { name?: string; dawProject?: import('@/lib/daw-types').DawProject }
+      const daw = cf.dawProject
+      if (!daw || !Array.isArray(daw.tracks) || !daw.tracks.length) {
+        window.alert(`“${sourceName}” has no audio to sync.`)
+        setBounceStatus('idle')
+        return
+      }
+      const name = sourceName || cf.name || 'Linked project'
+      sourceReplicasRef.current.set(sourceId, daw)
+      sourceNamesRef.current.set(sourceId, name)
+      setLinkedSourceIds(prev => prev.includes(sourceId) ? prev : [...prev, sourceId])   // mounts DawMixSync for live re-sync
+      await renderDawSelection(daw, undefined, new Date().toISOString(), sourceId, name)
+    } catch {
+      setBounceStatus('error')
+      setTimeout(() => setBounceStatus('idle'), 2500)
+    }
+  }
+
   // Live audio→video: edits arriving over the project's collab room update the
   // DawProject replica immediately; the actual re-bounce debounces behind the
   // last edit so a burst of changes renders once.
-  const liveMixTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   function handleLiveDawProject(project: import('@/lib/daw-types').DawProject, live: boolean) {
     dawProjectRef.current = project
     setHasDawProject(true)
@@ -1960,12 +2057,9 @@ export default function VideoEditor({
       prev.length === derived.length && prev.every((t, i) => t.id === derived[i].id && t.name === derived[i].name)
         ? prev
         : derived)
-    if (liveMixTimerRef.current) clearTimeout(liveMixTimerRef.current)
-    liveMixTimerRef.current = setTimeout(() => {
-      // Only auto-render when an UNLOCKED mix is linked — a project that never
-      // bounced stays manual, and locked links keep their frozen render.
-      if (timelineItemsRef.current.some(i => i.dawMixLinked && !i.dawMixLocked)) void refreshAllDawMixesRef.current()
-    }, live ? 2500 : 1200)
+    // Only auto-render when an UNLOCKED mix is linked — a project that never
+    // bounced stays manual, and locked links keep their frozen render.
+    scheduleMixRefresh(live)
   }
 
   // Stale mix detected during load → refresh once state has settled.
@@ -3040,6 +3134,7 @@ export default function VideoEditor({
                 onSelect={setSelectedMediaId}
                 onImport={handleFileImport}
                 onBounceDawMix={hasDawProject ? handleBounceDawMix : undefined}
+                onLinkProject={openProjectPicker}
                 dawTracks={dawTracks}
                 bounceStatus={bounceStatus}
                 onAddToTimeline={addMediaToTimeline}
@@ -3537,6 +3632,52 @@ export default function VideoEditor({
           getProject={() => dawProjectRef.current}
           onProject={handleLiveDawProject}
         />
+      )}
+
+      {/* Cross-project links: one live listener per LINKED source project. When a
+          source is edited, its replica updates and the linked clip re-syncs. */}
+      {linkedSourceIds.map(sid => (
+        <DawMixSync
+          key={sid}
+          projectId={sid}
+          getProject={() => sourceReplicasRef.current.get(sid) ?? null}
+          onProject={(p, live) => { sourceReplicasRef.current.set(sid, p); scheduleMixRefresh(live) }}
+        />
+      ))}
+
+      {/* Pick a project to link its audio in */}
+      {showProjectPicker && (
+        <div onClick={() => setShowProjectPicker(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(8,8,12,0.55)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ width: 'min(440px, 92vw)', maxHeight: '70vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+              <Link2 size={15} color="var(--accent-light)" />
+              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Link a project&rsquo;s audio</span>
+              <button onClick={() => setShowProjectPicker(false)} style={{ marginLeft: 'auto', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}><X size={16} /></button>
+            </div>
+            <p style={{ padding: '10px 16px 4px', margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>Its full mix syncs in as a live clip — edit that project and this clip re-renders to match.</p>
+            <div style={{ overflowY: 'auto', padding: '6px 8px 12px' }}>
+              {pickerProjects === null ? (
+                <p style={{ padding: '16px', fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>Loading your projects…</p>
+              ) : pickerProjects.length === 0 ? (
+                <p style={{ padding: '16px', fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>No other projects to link.</p>
+              ) : pickerProjects.map(p => {
+                const linked = linkedSourceIds.includes(p.id)
+                return (
+                  <button key={p.id} onClick={() => handleLinkProject(p.id, p.name)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '9px 10px', borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-primary)' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+                    <Music size={13} color="var(--text-muted)" />
+                    <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                    {linked && <span style={{ fontSize: 10, color: 'var(--accent-light)', fontWeight: 600 }}>linked · re-sync</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Project loading overlay */}

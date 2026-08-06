@@ -137,6 +137,10 @@ export interface TimelineItem {
   dawMixTracks?: string[]
   /** Locked: keep the current render — stop following audio changes until unlocked. */
   dawMixLocked?: boolean
+  /** Cross-project link: the SOURCE project whose mix this clip renders. Absent =
+   *  this project's own DAW. Set when you link another project's audio in; the
+   *  editor joins that project's room so the clip re-syncs on the source's edits. */
+  dawMixSourceProjectId?: string
   // Draw Focus overlay fields (only for clips on drawfocus tracks)
   focusX?: number      // 0–1 horizontal position (default 0.5) — static fallback when no keyframes
   focusY?: number      // 0–1 vertical position (default 0.5)

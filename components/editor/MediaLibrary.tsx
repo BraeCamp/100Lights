@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
-import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2 } from 'lucide-react'
+import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2, Link2 } from 'lucide-react'
 import type { MediaItem } from '@/lib/editor-types'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
@@ -18,6 +18,8 @@ interface Props {
   /** Present when the project carries a DAW arrangement — links its real mix
    *  (or a single DAW track as a stem) as a live-updating clip. */
   onBounceDawMix?: (trackIds?: string[]) => void
+  /** Open the project picker to link ANOTHER project's audio in (cross-project sync). */
+  onLinkProject?: () => void
   /** DAW tracks that carry clips — offered as stem link targets. */
   dawTracks?: Array<{ id: string; name: string }>
   bounceStatus?: 'idle' | 'working' | 'error'
@@ -31,7 +33,7 @@ function formatDur(s?: number) {
 
 export default function MediaLibrary({
   items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu, onAddFromLibrary,
-  onBounceDawMix, bounceStatus = 'idle',
+  onBounceDawMix, onLinkProject, bounceStatus = 'idle',
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState('')
@@ -119,6 +121,16 @@ export default function MediaLibrary({
             >
               <Music2 size={11} />
               {bounceStatus === 'working' ? 'Syncing…' : bounceStatus === 'error' ? 'Failed' : 'Sync audio'}
+            </button>
+          )}
+          {onLinkProject && (
+            <button
+              onClick={onLinkProject}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+              style={{ background: 'var(--accent-subtle)', border: '1px solid var(--accent)', color: 'var(--accent-light)' }}
+              title="Link another project's audio (full mix) in as a live clip that re-syncs when that project changes"
+            >
+              <Link2 size={11} /> Link project
             </button>
           )}
           <button
