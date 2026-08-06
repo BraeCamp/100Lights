@@ -688,6 +688,11 @@ export interface AudioClip {
    *  re-render/reload the sample after a project reload, when the session's
    *  blob: URL is long dead. */
   libraryId?: string
+  /** Cross-project link: this audio clip renders ANOTHER project's full mix and
+   *  re-syncs live when that project changes (studio audio→audio). The blob URL
+   *  is transient, so on reload the mix is re-rendered from the source. */
+  dawMixSourceProjectId?: string
+  dawMixStamp?: string
   waveformPeaks?: number[]
   gain: number
   // Optional multi-point gain envelope drawn on the clip: points across the

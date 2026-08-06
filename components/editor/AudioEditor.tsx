@@ -6,7 +6,7 @@ import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch } from '@/lib/daw-undo'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
-import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy } from '@/lib/daw-types'
+import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
@@ -14,7 +14,7 @@ import { consumeStudioSeed } from '@/lib/open-in-studio'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
-import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X } from 'lucide-react'
+import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X, Link2 } from 'lucide-react'
 import { LogoMark } from '@/components/Logo'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { UITierProvider } from './UITierProvider'
@@ -89,6 +89,7 @@ const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: 
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
+const DawMixSync = dynamic(() => import('./DawMixSync'), { ssr: false })   // cross-project audio links (live)
 
 // Build-history coalescing: a slider drag or repeated tweaks of one control fire
 // many same-target UPDATE actions — collapse them to a single net step. Returns
@@ -449,6 +450,17 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [])
   const projectRef         = useRef(project)
   const selectedTrackIdRef = useRef<string | null>(null)
+  // ── Cross-project audio links (studio audio→audio host, Phase 3) ─────────────
+  // A linked audio clip renders ANOTHER project's mix and re-syncs live via that
+  // project's room. Replicas + names per source; DawMixSync mounts per source id.
+  const sourceReplicasRef = useRef<Map<string, import('@/lib/daw-types').DawProject>>(new Map())
+  const sourceNamesRef    = useRef<Map<string, string>>(new Map())
+  const [linkedSourceIds, setLinkedSourceIds] = useState<string[]>([])
+  const [showLinkPicker, setShowLinkPicker] = useState(false)
+  const [linkPickerProjects, setLinkPickerProjects] = useState<Array<{ id: string; name: string }> | null>(null)
+  const linkBusyRef = useRef<Set<string>>(new Set())
+  const linkTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const [projectLoaded, setProjectLoaded] = useState(!props.projectId)   // new (no cloud id) = ready now; cloud = after LOAD_PROJECT
   const voiceChainAppliedRef = useRef(false)
 
   // ── Collab broadcast refs ────────────────────────────────────────────────────
@@ -704,6 +716,8 @@ export default function AudioEditor(props: AudioEditorProps) {
       }
     }
     rawDispatch(action)
+    // The project's real content has arrived — cross-project links can resolve.
+    if (action.type === 'LOAD_PROJECT') setProjectLoaded(true)
     // Suggestions stay local — never broadcast a proposal into the shared room.
     if (!isRemoteRef.current && !suggestingRef.current && !NO_BROADCAST.has(action.type)) {
       broadcastRef.current?.(action)
@@ -813,6 +827,115 @@ export default function AudioEditor(props: AudioEditorProps) {
       } catch { /* deep-link is best-effort */ }
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Cross-project audio links: render a source project's mix and re-sync ──────
+  async function renderMixOf(daw: import('@/lib/daw-types').DawProject): Promise<Blob | null> {
+    const endBeat = (daw.arrangementClips ?? []).reduce((m, c) => Math.max(m, c.startBeat + (c.durationBeats ?? 0)), 0)
+    if (endBeat <= 0) return null
+    const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
+    return renderProjectAudioBlob(daw, { startBeat: 0, endBeat })
+  }
+  // PULL: link another project's mix in as a new live audio track.
+  async function linkProjectAudio(sourceId: string, name: string) {
+    setShowLinkPicker(false)
+    if (linkBusyRef.current.has(sourceId)) return
+    linkBusyRef.current.add(sourceId)
+    try {
+      let daw = sourceReplicasRef.current.get(sourceId)
+      if (!daw) {
+        const r = await fetch(`/api/projects/${sourceId}`)
+        if (!r.ok) throw new Error('fetch failed')
+        const cf = await r.json() as { name?: string; dawProject?: import('@/lib/daw-types').DawProject }
+        if (!cf.dawProject?.tracks?.length) { window.alert(`“${name || 'That project'}” has no audio to sync.`); return }
+        daw = cf.dawProject
+        sourceReplicasRef.current.set(sourceId, daw)
+        sourceNamesRef.current.set(sourceId, name || cf.name || 'Linked project')
+      }
+      const blob = await renderMixOf(daw)
+      if (!blob) { window.alert('That project has no arrangement to sync.'); return }
+      const url = URL.createObjectURL(blob)
+      const label = sourceNamesRef.current.get(sourceId) || name || 'Linked mix'
+      const trackId = crypto.randomUUID()
+      dispatch({ type: 'ADD_TRACK', id: trackId, name: `↳ ${label}` })
+      const clip = makeAudioClip(trackId, label, 0, 8, { audioUrl: url, dawMixSourceProjectId: sourceId, dawMixStamp: new Date().toISOString() })
+      dispatch({ type: 'ADD_CLIP', clip })
+      const buf = await engineRef.current?.loadClipBuffer(clip)
+      if (buf) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), durationBeats: engineRef.current!.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+      setLinkedSourceIds(prev => prev.includes(sourceId) ? prev : [...prev, sourceId])   // mounts DawMixSync
+    } catch { window.alert('Could not link that project.') }
+    finally { linkBusyRef.current.delete(sourceId) }
+  }
+  // Re-render a source and swap the buffer of every clip linked to it (live edits + reload).
+  async function resyncLinkedSource(sourceId: string) {
+    const daw = sourceReplicasRef.current.get(sourceId)
+    if (!daw) return
+    const clips = projectRef.current.arrangementClips.filter(c => isAudioClip(c) && c.dawMixSourceProjectId === sourceId) as import('@/lib/daw-types').AudioClip[]
+    if (!clips.length) return
+    const blob = await renderMixOf(daw)
+    if (!blob) return
+    const url = URL.createObjectURL(blob)
+    const ab = await blob.arrayBuffer()
+    const stamp = new Date().toISOString()
+    for (const c of clips) {
+      engineRef.current?.evictBuffer(c.id)
+      let buf: AudioBuffer | null = null
+      try { buf = (await engineRef.current?.loadBufferFromArrayBuffer(c.id, ab.slice(0))) ?? null } catch { /* decode failed */ }   // slice: decode detaches the buffer
+      dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { audioUrl: url, dawMixStamp: stamp, ...(buf ? { waveformPeaks: extractPeaks(buf), bufferDuration: buf.duration } : {}) } })
+    }
+  }
+  function scheduleLinkResync(sourceId: string, live: boolean) {
+    const t = linkTimerRef.current
+    const prior = t.get(sourceId); if (prior) clearTimeout(prior)
+    t.set(sourceId, setTimeout(() => { t.delete(sourceId); void resyncLinkedSource(sourceId) }, live ? 2500 : 1200))
+  }
+  async function openLinkPicker() {
+    setShowLinkPicker(true)
+    if (linkPickerProjects) return
+    try {
+      const r = await fetch('/api/projects')
+      const data = r.ok ? await r.json() as Array<{ id: string; name: string }> : []
+      setLinkPickerProjects(data.filter(p => p.id !== props.projectId))
+    } catch { setLinkPickerProjects([]) }
+  }
+
+  // Reload / push: for every clip that links a source, fetch that source, mount
+  // its listener, and re-render (blob URLs die on reload, so linked audio always
+  // re-renders from source). Derived from project state → covers open + push.
+  const linkedClipSources = useMemo(() => Array.from(new Set(
+    project.arrangementClips.filter(c => isAudioClip(c) && c.dawMixSourceProjectId).map(c => (c as import('@/lib/daw-types').AudioClip).dawMixSourceProjectId!)
+  )), [project.arrangementClips])
+  useEffect(() => {
+    for (const sid of linkedClipSources) {
+      if (sourceReplicasRef.current.has(sid) || linkBusyRef.current.has(sid)) continue
+      linkBusyRef.current.add(sid)
+      void (async () => {
+        try {
+          const r = await fetch(`/api/projects/${sid}`)
+          if (!r.ok) return
+          const cf = await r.json() as { name?: string; dawProject?: import('@/lib/daw-types').DawProject }
+          if (!cf.dawProject?.tracks?.length) return
+          sourceReplicasRef.current.set(sid, cf.dawProject)
+          sourceNamesRef.current.set(sid, cf.name || 'Linked project')
+          setLinkedSourceIds(prev => prev.includes(sid) ? prev : [...prev, sid])
+          await resyncLinkedSource(sid)
+        } catch { /* source unreachable — clip stays silent until re-synced */ }
+        finally { linkBusyRef.current.delete(sid) }
+      })()
+    }
+  }, [linkedClipSources]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // PUSH target: another editor sent this project a link ("Send to project").
+  // Resolve once loaded so the added clip isn't wiped by LOAD_PROJECT.
+  const pushLinkDoneRef = useRef(false)
+  useEffect(() => {
+    if (!projectLoaded || pushLinkDoneRef.current) return
+    pushLinkDoneRef.current = true
+    try {
+      const key = `cf_link_source_${props.projectId}`
+      const src = props.projectId ? localStorage.getItem(key) : null
+      if (src && src !== props.projectId) { localStorage.removeItem(key); void linkProjectAudio(src, '') }
+    } catch { /* storage unavailable */ }
+  }, [projectLoaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-apply voice chain to Host and Guest 1 tracks on new podcast projects
   useEffect(() => {
@@ -1577,6 +1700,52 @@ export default function AudioEditor(props: AudioEditorProps) {
             getPlayhead={getPlayheadRef.current}
           />
         )}
+
+        {/* Cross-project audio links: one live listener per LINKED source project.
+            A source edit updates its replica and re-syncs the linked clip's audio. */}
+        {linkedSourceIds.map(sid => (
+          <DawMixSync
+            key={sid}
+            projectId={sid}
+            getProject={() => sourceReplicasRef.current.get(sid) ?? null}
+            onProject={(p, live) => { sourceReplicasRef.current.set(sid, p); scheduleLinkResync(sid, live) }}
+          />
+        ))}
+
+        {/* Pick a project to link its audio in as a live track */}
+        {showLinkPicker && (
+          <div onClick={() => setShowLinkPicker(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(8,8,12,0.55)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={e => e.stopPropagation()}
+              style={{ width: 'min(440px, 92vw)', maxHeight: '70vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+                <Link2 size={15} color="var(--accent-light)" />
+                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Link a project&rsquo;s audio</span>
+                <button onClick={() => setShowLinkPicker(false)} style={{ marginLeft: 'auto', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}><X size={16} /></button>
+              </div>
+              <p style={{ padding: '10px 16px 4px', margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>Its full mix drops in as a live audio track — edit that project and this track re-renders to match.</p>
+              <div style={{ overflowY: 'auto', padding: '6px 8px 12px' }}>
+                {linkPickerProjects === null ? (
+                  <p style={{ padding: 16, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>Loading your projects…</p>
+                ) : linkPickerProjects.length === 0 ? (
+                  <p style={{ padding: 16, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>No other projects to link.</p>
+                ) : linkPickerProjects.map(p => {
+                  const linked = linkedSourceIds.includes(p.id)
+                  return (
+                    <button key={p.id} onClick={() => linkProjectAudio(p.id, p.name)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '9px 10px', borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-primary)' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+                      <Library size={13} color="var(--text-muted)" />
+                      <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                      {linked && <span style={{ fontSize: 10, color: 'var(--accent-light)', fontWeight: 600 }}>linked · re-sync</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
         <Transport onCommitName={onProjectNameCommit} />
 
         {/* Body */}
@@ -1674,12 +1843,28 @@ export default function AudioEditor(props: AudioEditorProps) {
                   )
                 })
               )}
+              {/* Link another project's audio in as a live track (cross-project pull) */}
+              <button
+                onClick={openLinkPicker}
+                title="Link another project's audio (full mix) in as a live track"
+                aria-label="Link a project's audio"
+                style={{
+                  width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
+                  marginTop: 'auto', flexShrink: 0, background: 'transparent',
+                  color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  transition: 'background 0.12s, color 0.12s',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+              >
+                <Link2 size={15} />
+              </button>
               {/* Send this project's audio into another project (cross-project push) */}
               <SendToProjectButton
                 sourceProjectId={props.projectId}
                 style={{
                   width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
-                  marginTop: 'auto', flexShrink: 0, background: 'transparent',
+                  flexShrink: 0, background: 'transparent',
                   color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   transition: 'background 0.12s, color 0.12s',
                 }}
