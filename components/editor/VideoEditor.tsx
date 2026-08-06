@@ -2427,6 +2427,15 @@ export default function VideoEditor({
     }
   }
 
+  // Re-attempt a failed upload for a media item that still holds its File (e.g.
+  // a linked mix whose PUT to R2 failed). Clears the error and re-uploads.
+  function handleRetryUpload(id: string) {
+    const item = mediaItemsRef.current.find(m => m.id === id)
+    if (!item?.file) { setTranscribeError('Can’t retry — re-sync this clip to regenerate its audio, then it will upload again.'); return }
+    setMediaItems(prev => prev.map(m => m.id === id ? { ...m, uploadStatus: 'uploading', uploadError: undefined } : m))
+    void uploadMediaToR2(item.file, id)
+  }
+
   async function uploadMediaToR2(file: File, mediaId: string) {
     // Some browsers return empty type for formats like .mkv or .avi;
     // the presign route guesses from the extension when contentType is empty.
@@ -3305,6 +3314,7 @@ export default function VideoEditor({
                 onRemove={(id) => setMediaItems(prev => prev.filter(m => m.id !== id))}
                 onContextMenu={openCtx}
                 onAddFromLibrary={handleAddFromLibrary}
+                onRetryUpload={handleRetryUpload}
               />
             </div>
             <VResizeHandle onDelta={clampLeft} />

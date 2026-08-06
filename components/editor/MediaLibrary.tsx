@@ -15,6 +15,8 @@ interface Props {
   onRemove: (id: string) => void
   onContextMenu: (e: React.MouseEvent, items: ContextMenuItem[]) => void
   onAddFromLibrary: (item: LibraryMediaItem) => void
+  /** Retry a failed upload for an item that still holds its File. */
+  onRetryUpload?: (id: string) => void
   /** Present when the project carries a DAW arrangement — links its real mix
    *  (or a single DAW track as a stem) as a live-updating clip. */
   onBounceDawMix?: (trackIds?: string[]) => void
@@ -87,7 +89,7 @@ function MenuRow({ icon, label, sub, onClick }: { icon: React.ReactNode; label: 
 export default function MediaLibrary({
   items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu, onAddFromLibrary,
   onBounceDawMix, onLinkProject, onSendProject, bounceStatus = 'idle',
-  linkedSources = [], onOpenSource, onResyncSource,
+  linkedSources = [], onOpenSource, onResyncSource, onRetryUpload,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState('')
@@ -312,9 +314,13 @@ export default function MediaLibrary({
                       <CloudUpload size={12} color="var(--text-muted)" style={{ animation: 'pulse 1.5s ease-in-out infinite' }} />
                     </span>
                   ) : item.uploadStatus === 'error' ? (
-                    <span title={item.uploadError ? `Upload failed — file is local only.\n${item.uploadError}` : 'Upload failed — file is local only'} style={{ flexShrink: 0, display: 'flex' }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onRetryUpload?.(item.id) }}
+                      title={`Upload failed — file is local only.${item.uploadError ? `\n${item.uploadError}` : ''}\nClick to retry.`}
+                      style={{ flexShrink: 0, display: 'flex', background: 'none', border: 'none', padding: 0, cursor: onRetryUpload ? 'pointer' : 'default' }}
+                    >
                       <AlertCircle size={12} color="#ef4444" />
-                    </span>
+                    </button>
                   ) : item.uploadStatus === 'uploaded' ? (
                     <span title="Saved to cloud" style={{ flexShrink: 0, display: 'flex' }}>
                       <CheckCircle2 size={12} color="var(--success)" />
