@@ -37,6 +37,13 @@ function formatDur(s?: number) {
   return `${m}:${String(sec).padStart(2, '0')}`
 }
 
+function formatBytes(b: number) {
+  if (b >= 1024 * 1024 * 1024) return `${(b / (1024 * 1024 * 1024)).toFixed(b >= 10 * 1024 * 1024 * 1024 ? 0 : 1)} GB`
+  if (b >= 1024 * 1024) return `${Math.round(b / (1024 * 1024))} MB`
+  if (b >= 1024) return `${Math.round(b / 1024)} KB`
+  return `${b} B`
+}
+
 // Compact waveform strip for audio media, drawn from the peaks already computed
 // on import (computeAudioPeaks). Mirrors the audio editor's Sound Library so a
 // sound reads as a sound here too, not just a text row.
@@ -97,6 +104,19 @@ export default function MediaLibrary({
   }
   const [libraryItems, setLibraryItems] = useState<LibraryMediaItem[]>([])
   const [libraryLoading, setLibraryLoading] = useState(false)
+  const [storage, setStorage] = useState<{ usedBytes: number; limitBytes: number } | null>(null)
+
+  // Account cloud-storage readout, refreshed when uploads settle so the number
+  // tracks reality (and a full bar explains any upload "!" at a glance).
+  const uploadedCount = items.filter(m => m.uploadStatus === 'uploaded').length
+  useEffect(() => {
+    let alive = true
+    fetch('/api/usage')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (alive && d?.storage) setStorage(d.storage) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [uploadedCount])
 
   const ACCEPTED_TYPES = ['video/', 'audio/']
   const MAX_BYTES = 500 * 1024 * 1024
@@ -432,12 +452,32 @@ export default function MediaLibrary({
       {/* Drag hint — only shown in local tab */}
       {tab === 'local' && items.length > 0 && (
         <div
-          className="px-3 py-2 shrink-0 text-center text-xs"
+          className="px-3 py-1.5 shrink-0 text-center text-xs"
           style={{ borderTop: '1px solid var(--border)', color: 'var(--text-muted)' }}
         >
           Drag to timeline · Double-click to add
         </div>
       )}
+
+      {/* Cloud storage readout — used / limit + a thin bar (red as it nears full,
+          which is what makes an upload "!" show up). */}
+      {storage && storage.limitBytes > 0 && (() => {
+        const frac = Math.min(1, storage.usedBytes / storage.limitBytes)
+        const pct = Math.round(frac * 100)
+        const near = frac >= 0.9
+        const barColor = near ? '#ef4444' : frac >= 0.75 ? '#f59e0b' : 'var(--accent)'
+        return (
+          <div className="px-3 py-2 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
+            <div className="flex items-center justify-between" style={{ fontSize: 10.5, color: near ? '#f87171' : 'var(--text-muted)' }}>
+              <span>Cloud storage</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatBytes(storage.usedBytes)} / {formatBytes(storage.limitBytes)}</span>
+            </div>
+            <div style={{ marginTop: 4, height: 4, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: barColor, transition: 'width .3s' }} />
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
