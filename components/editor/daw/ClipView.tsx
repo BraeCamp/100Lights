@@ -435,7 +435,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   const isMulti = multiSelected && !!onDeleteAll
   // Genuine multi-selection (2+ clips) — gates the shared "edit all clips' sound" flow.
   const soundMulti = !!selectedClipIds && selectedClipIds.size > 1 && selectedClipIds.has(clip.id)
-  type MenuItem = { label: string; fn: () => void; keepOpen?: boolean; color?: string }
+  type MenuItem = { label: string; fn: () => void; keepOpen?: boolean; color?: string } | { separator: true }
   const back = (label: string): MenuItem => ({ label, fn: () => setCtxSub(null), keepOpen: true })
 
   // Renders the audio clip's (trimmed) buffer to a WAV blob — shared by
@@ -539,11 +539,19 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   ]
 
   const menuItems: MenuItem[] = ctxSub === 'more' ? moreItems : [
+    // Top block: the everyday clip actions in the order Brae wants —
+    // Copy, Paste, Splice — then a divider.
+    { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
+    ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
+    dragEditItems[0], // Splice at Playhead
+    { separator: true },
+    // Second block: Sound Settings, then Rename — then a divider.
+    { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
+    ...(isMulti ? [] : [{ label: 'Rename…', fn: () => { setNameDraft(clip.name); setRenaming(true) } }]),
+    { separator: true },
+    // Everything else lives below the second divider.
     ...(isAudioClip(clip)
-      ? [
-          { label: 'Clip Settings', fn: () => onSettings?.() },
-          { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
-        ]
+      ? [{ label: 'Clip Settings', fn: () => onSettings?.() }]
       : [
           { label: isMidiClip(clip) && clip.isDrumClip ? 'Open Step Sequencer' : 'Open Piano Roll', fn: onDoubleClick },
           // Flip the editing surface in place — no audio change, just which editor
@@ -552,12 +560,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           ...(isMidiClip(clip)
             ? [{ label: clip.isDrumClip ? 'Convert to Piano Roll' : 'Convert to Beat', fn: () => { setCtxPos(null); dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { isDrumClip: !clip.isDrumClip } }) } }]
             : []),
-          { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
         ]),
-    ...(isMulti ? [] : [{ label: 'Rename…', fn: () => { setNameDraft(clip.name); setRenaming(true) } }]),
-    { label: isMulti ? 'Copy Selected' : 'Copy', fn: () => onCopy?.() },
-    ...(onPaste ? [{ label: 'Paste', fn: () => onPaste() }] : []),
-    ...dragEditItems,
+    dragEditItems[1], // Change Dragging Type → Loop/Expand
     { label: isAudioClip(clip) ? 'Tools ▸' : 'Sound ▸', fn: () => setCtxSub('more'), keepOpen: true },
     // Library & Community actions live together
     {
@@ -575,6 +579,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
       },
     },
     { label: 'Share to Community…', fn: () => setShareOpen(true) },
+    { separator: true },
     // Delete lives at the very bottom, away from the other actions
     { label: isMulti ? 'Delete Selected' : 'Delete', color: '#ef4444', fn: () => isMulti ? onDeleteAll!() : onDelete() },
   ]
@@ -902,13 +907,17 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         // Clicks inside the menu must not bubble through the React tree to the
         // lane's mousedown — that starts a zero-distance rubber band which
         // clears the selection region before the menu action runs
-        <div ref={menuRef} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: 320, overflowY: 'auto' }}>
-          {ctxSub !== 'presets' && menuItems.map(it => (
+        <div ref={menuRef} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: '85vh', overflowY: 'auto' }}>
+          {ctxSub !== 'presets' && menuItems.map((it, i) => (
+            'separator' in it ? (
+              <div key={`sep-${i}`} style={{ height: 1, background: 'var(--border)', margin: '4px 8px' }} />
+            ) : (
             <button key={it.label} onClick={() => { it.fn(); if (!(it as { keepOpen?: boolean }).keepOpen) setCtxPos(null) }}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: (it as { color?: string }).color ?? 'var(--text-primary)', fontWeight: (it as { color?: string }).color ? 700 : 400 }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
             >{it.label}</button>
+            )
           ))}
           {ctxSub === 'presets' && !isAudioClip(clip) && (() => {
             const presets = combinePresets(project.presets)

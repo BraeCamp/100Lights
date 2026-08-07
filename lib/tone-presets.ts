@@ -20,6 +20,8 @@ const PRESERVE_KEYS: (keyof RollFx)[] = ['gain', 'pan', 'sustain']
 // settings), so grittier tones sit higher up the slider than you'd expect.
 
 const GUITAR: TonePreset[] = [
+  { name: 'Pick',     fx: { treble: 3, drive: 0.14, attack: 0 } },                       // bright, hard plectrum attack
+  { name: 'Fingered', fx: { treble: -1, bass: 1, filterHz: 5500, reverbWet: 0.06 } },     // warm, soft fingerstyle
   { name: 'Clean',  fx: { reverbWet: 0.16 } },
   { name: 'Funk',   fx: { drive: 0.25, filterHz: 6000, treble: 2, mid: 1 } },
   { name: 'Blues',  fx: { drive: 0.4,  bass: 2, mid: 1, reverbWet: 0.12 } },
