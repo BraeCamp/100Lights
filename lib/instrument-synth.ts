@@ -22,21 +22,29 @@ export function playGuitar(
 ) {
   const hz = midiToHz(Math.max(28, Math.min(88, midiNote)))
   const sr = ctx.sampleRate
-  const period = Math.ceil(sr / hz)
-  const duration = 3.5
-  const bufLen = Math.min(Math.floor(sr * duration), sr * 5)
+  // The averaging low-pass in the loop below adds ~half a sample of delay, so
+  // target period − 0.5 for accurate pitch (the old `ceil` ran consistently flat,
+  // which is a big part of why it "sounded off").
+  const period = Math.max(2, Math.round(sr / hz - 0.5))
+  const duration = 4.5
+  const bufLen = Math.min(Math.floor(sr * duration), sr * 6)
 
   const buf = ctx.createBuffer(1, bufLen, sr)
   const data = buf.getChannelData(0)
 
-  // Excitation: noise burst at the pick point
+  // Excitation: a pick burst, low-pass smoothed so it reads as a finger/pick on a
+  // real string instead of a harsh white-noise click ("old strings + a quarter").
+  let s = 0
   for (let i = 0; i < period; i++) {
-    data[i] = Math.random() * 2 - 1
+    const x = Math.random() * 2 - 1
+    s = s * 0.6 + x * 0.4
+    data[i] = s
   }
 
-  // Decay coefficient — electric sustains longer, nylon decays faster, acoustic in between
-  const decay = variant === 'guitar-electric' ? 0.9997 :
-                variant === 'guitar-nylon'    ? 0.9980 : 0.9990
+  // Decay coefficient — electric sustains longest, nylon warm and a touch shorter,
+  // acoustic between. Raised across the board so notes ring instead of dying fast.
+  const decay = variant === 'guitar-electric' ? 0.9998 :
+                variant === 'guitar-nylon'    ? 0.9989 : 0.9994
 
   // Averaging feedback loop (low-pass + delay = string resonance)
   for (let i = period; i < bufLen; i++) {
@@ -48,7 +56,9 @@ export function playGuitar(
   src.buffer = buf
 
   const gain = ctx.createGain()
-  gain.gain.value = velocity * 0.9
+  // Short attack ramp so the pluck doesn't start with a click.
+  gain.gain.setValueAtTime(0.0001, when)
+  gain.gain.linearRampToValueAtTime(velocity * 0.9, when + 0.004)
 
   if (variant === 'guitar-electric') {
     // Slight high-shelf boost for electric twang
@@ -82,17 +92,21 @@ export function playPiano(
   when: number, velocity: number, dest: AudioNode = ctx.destination,
 ) {
   const hz = midiToHz(Math.max(21, Math.min(108, midiNote)))
-  const sustain = Math.max(0.8, Math.min(4.5, 5.0 - (midiNote - 21) / 87 * 3.0))
+  // Held-note ring time. Low notes ring far longer than high ones (like a real
+  // piano). ~5s in the middle of the keyboard, up to ~6.8s at the bottom.
+  const sustain = Math.max(1.8, Math.min(6.8, 6.8 - (midiNote - 21) / 87 * 3.4))
 
   const masterGain = ctx.createGain()
   masterGain.connect(dest)
 
   if (variant === 'piano-electric') {
-    // Electric piano: square fundamentals with sharp attack (Fender Rhodes-ish)
+    // Electric piano: square fundamentals with sharp attack (Fender Rhodes-ish).
+    // Gentle body decay, then a LINEAR fade to silence (a natural, gradual release).
     masterGain.gain.setValueAtTime(0.001, when)
     masterGain.gain.linearRampToValueAtTime(velocity * 0.38, when + 0.008)
-    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.28, when + 0.05)
-    masterGain.gain.exponentialRampToValueAtTime(0.001, when + sustain * 0.7)
+    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.22, when + 0.08)
+    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.07, when + sustain * 0.55)
+    masterGain.gain.linearRampToValueAtTime(0.0001, when + sustain * 0.85)
 
     for (const [ratio, amp] of [[1, 1.0], [2, 0.3], [4, 0.08]] as [number, number][]) {
       const osc = ctx.createOscillator()
@@ -106,8 +120,9 @@ export function playPiano(
     // Rhodes: tine-like bell quality — two slightly detuned sines per note create beating
     masterGain.gain.setValueAtTime(0.001, when)
     masterGain.gain.linearRampToValueAtTime(velocity * 0.35, when + 0.005)
-    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.22, when + 0.08)
-    masterGain.gain.exponentialRampToValueAtTime(0.001, when + sustain * 0.85)
+    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.20, when + 0.10)
+    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.06, when + sustain * 0.6)
+    masterGain.gain.linearRampToValueAtTime(0.0001, when + sustain)
 
     // Vibrato LFO (characteristic Rhodes tremolo)
     const lfo = ctx.createOscillator(); lfo.frequency.value = 5.5
@@ -125,11 +140,14 @@ export function playPiano(
     }
     lfo.stop(when + sustain + 0.1)
   } else {
-    // Acoustic grand: harmonics with natural inharmonicity + hammer noise
+    // Acoustic grand: harmonics with natural inharmonicity + hammer noise.
+    // Sharp hammer attack → gentle exponential body → LINEAR fade to silence, so a
+    // held note rings out gradually instead of dropping off fast.
     masterGain.gain.setValueAtTime(0.001, when)
     masterGain.gain.linearRampToValueAtTime(velocity * 0.36, when + 0.004)
-    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.29, when + 0.04)
-    masterGain.gain.exponentialRampToValueAtTime(0.001, when + sustain)
+    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.20, when + 0.09)
+    masterGain.gain.exponentialRampToValueAtTime(velocity * 0.07, when + sustain * 0.6)
+    masterGain.gain.linearRampToValueAtTime(0.0001, when + sustain)
 
     const partials: [number, number, number][] = [
       // [frequency ratio, amplitude, cents detune]
