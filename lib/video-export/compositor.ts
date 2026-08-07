@@ -25,6 +25,7 @@ import type { Caption } from '@/lib/types'
 import { captionWords } from '@/lib/captions'
 import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
+import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -218,6 +219,10 @@ export function drawFrame(
       drawTitle(ctx, clip, t, W, H)
       continue
     }
+    if (clip.contentType === 'musicviz') {
+      drawMusicViz(ctx, clip, t, W, H)
+      continue
+    }
     if (clip.contentType === 'audio' || !clip.url) continue   // audio layers draw nothing
 
     const trans = transitionAt(state.items, state.tracks, clip, t)
@@ -343,6 +348,39 @@ export function buildClipGradeFilter(clip: TimelineItem): string {
 }
 
 // ── Title clip ────────────────────────────────────────────────────────────────
+// ── Music-visual overlay ──────────────────────────────────────────────────────
+// Renders the clip's audio-reactive visual onto an offscreen canvas (via the same
+// lib/music-viz renderer the preview uses) and composites it over the frame with
+// the clip's opacity / blend mode, so it overlays the video rather than replacing
+// it. NOTE: export currently drives the visual by time only (idle motion) — full
+// audio-reactive export (an offline FFT of the mix per frame) is the next step;
+// the preview already reacts live.
+const mvRenderers = new Map<string, { key: string; viz: MusicVizRenderer }>()
+let mvCanvas: HTMLCanvasElement | null = null
+let mvCtx: CanvasRenderingContext2D | null = null
+function drawMusicViz(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number, W: number, H: number) {
+  if (typeof document === 'undefined') return
+  const format = clip.mvFormat || DEFAULT_MUSIC_VIZ_FORMAT
+  const accent = ((clip.mvMatchTheme ? getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() : '') || clip.mvAccent || '#a78bfa')
+  const bg = clip.mvBg ?? null
+  const key = `${format}|${accent}|${bg ? bg.join(',') : 'none'}`
+  let entry = mvRenderers.get(clip.id)
+  if (!entry || entry.key !== key) { entry = { key, viz: createMusicViz({ format, accent, bg }) }; mvRenderers.set(clip.id, entry) }
+  if (!mvCanvas || mvCanvas.width !== W || mvCanvas.height !== H) {
+    mvCanvas = document.createElement('canvas'); mvCanvas.width = W; mvCanvas.height = H
+    mvCtx = mvCanvas.getContext('2d')
+  }
+  if (!mvCtx) return
+  entry.viz.draw(mvCtx, W, H, Math.max(0, t - clip.startTime), null)
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.filter = 'none'
+  ctx.globalAlpha = Math.max(0, Math.min(1, (clip.opacity ?? 100) / 100))
+  if (clip.blendMode) ctx.globalCompositeOperation = clip.blendMode as GlobalCompositeOperation
+  ctx.drawImage(mvCanvas, 0, 0)
+  ctx.restore()
+}
+
 function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number, W: number, H: number) {
   const text = clip.titleText ?? ''
   if (!text) return

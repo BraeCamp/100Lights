@@ -73,6 +73,7 @@ import { r2CorsEligible } from '@/lib/media-cors'
 import { interpSpeedRamp } from '@/lib/video-export/speed'
 import { pickVisibleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss } from '@/lib/video-export/compositor'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
+import { DEFAULT_MUSIC_VIZ_FORMAT } from '@/lib/music-viz'
 import type { ActiveClipTransition, UnderLayer } from '@/components/editor/VideoPlayer'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
@@ -916,6 +917,26 @@ export default function VideoEditor({
     }
     return null
   }, [timelineItems, tracks, currentTime])
+
+  // Music-visual overlays active at the playhead — rendered OVER the video (not
+  // as a replacement), each reacting to the timeline audio via the player's
+  // analyser. mvMatchTheme pulls the accent from the editor's Workshop theme.
+  const activeMusicViz = useMemo(() => {
+    const themeAccent = (typeof window !== 'undefined'
+      && getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()) || '#a78bfa'
+    return timelineItems
+      .filter(i => i.contentType === 'musicviz' && i.enabled !== false
+        && currentTime >= i.startTime && currentTime < i.startTime + (i.outPoint - i.inPoint))
+      .map(i => ({
+        id: i.id,
+        format: i.mvFormat || DEFAULT_MUSIC_VIZ_FORMAT,
+        accent: (i.mvMatchTheme ? themeAccent : i.mvAccent) || i.mvAccent || themeAccent,
+        bg: i.mvBg ?? null,
+        resolution: i.mvResolution,
+        opacity: i.opacity,
+        blendMode: i.blendMode,
+      }))
+  }, [timelineItems, currentTime])
 
   // Real-time speed: interpolates velocity curve if the clip has speedPoints
   const rampSpeed = useMemo(() => {
@@ -2677,6 +2698,27 @@ export default function VideoEditor({
     handleSeek(at)
   }
 
+  function addMusicVizClip() {
+    const track = tracks.find(t => t.type === 'media' || t.type === 'video') ?? tracks[0]
+    const trackId = track?.id ?? 'v1'
+    const at = currentTimeRef.current
+    // Default accent = the editor's Workshop accent, so it matches the user's theme.
+    const themeAccent = (typeof window !== 'undefined'
+      && getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()) || '#a78bfa'
+    const newItem: TimelineItem = {
+      id: crypto.randomUUID(),
+      label: 'Music Visual',
+      startTime: at, inPoint: 0, outPoint: 5,
+      captions: [], color: CLIP_COLORS[timelineItems.length % CLIP_COLORS.length],
+      trackId, contentType: 'musicviz',
+      mvFormat: DEFAULT_MUSIC_VIZ_FORMAT, mvAccent: themeAccent, mvBg: null,
+      mvMatchTheme: true,
+    }
+    setTimelineItems(prev => [...prev, newItem])
+    setSelectedId(newItem.id)
+    handleSeek(at)
+  }
+
   async function handleDropMedia(mediaId: string, trackId: string, startTime: number) {
     const media = mediaItems.find(m => m.id === mediaId)
     if (!media) return
@@ -3216,6 +3258,18 @@ export default function VideoEditor({
           </button>
         )}
 
+        {/* Insert a music-visual overlay (waveform / EQ / radial) */}
+        {activePage === 'edit' && (
+          <button
+            onClick={addMusicVizClip}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
+            title="Add a music visual (waveform / EQ / spectrum) at the playhead"
+            style={{ color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+          >
+            <AudioLines size={12} /> Music Visual
+          </button>
+        )}
+
         {/* Tool selector — only relevant on Edit page */}
         {activePage === 'edit' && (
           <div className="flex items-center gap-1 px-1 py-0.5 rounded" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
@@ -3617,6 +3671,7 @@ export default function VideoEditor({
                       projectAspect={projectAspect}
                       transition={viewerTransition}
                       underLayers={underLayers}
+                      musicViz={activeMusicViz}
                       captionStyle={captionStyle}
                       clipGradeFilter={viewerClip ? buildClipGradeFilter(viewerClip) : ''}
                       lutData={activeLut}
@@ -3697,6 +3752,7 @@ export default function VideoEditor({
                       projectAspect={projectAspect}
                       transition={viewerTransition}
                       underLayers={underLayers}
+                      musicViz={activeMusicViz}
                       captionStyle={captionStyle}
                       clipGradeFilter={viewerClip ? buildClipGradeFilter(viewerClip) : ''}
                       lutData={activeLut}

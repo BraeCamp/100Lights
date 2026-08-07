@@ -64,6 +64,12 @@ export interface SerializedClip {
   titleBg?: string
   titlePosition?: 'upper' | 'center' | 'lower-third'
   titleAnimation?: 'none' | 'fade' | 'slide-up'
+  // Music-visual overlay
+  mvFormat?: string
+  mvAccent?: string
+  mvBg?: [string, string] | null
+  mvMatchTheme?: boolean
+  mvResolution?: number
   // Audio & color
   eq?: { low: number; mid: number; high: number }
   grade?: { brightness: number; contrast: number; saturation: number }
@@ -214,6 +220,11 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       titleBg:          item.titleBg,
       titlePosition:    item.titlePosition,
       titleAnimation:   item.titleAnimation,
+      mvFormat:         item.mvFormat,
+      mvAccent:         item.mvAccent,
+      mvBg:             item.mvBg,
+      mvMatchTheme:     item.mvMatchTheme,
+      mvResolution:     item.mvResolution,
       eq:               item.eq,
       grade:            item.grade,
       lutId:            item.lutId,
@@ -308,6 +319,11 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     titleBg:          clip.titleBg,
     titlePosition:    clip.titlePosition,
     titleAnimation:   clip.titleAnimation,
+    mvFormat:         clip.mvFormat,
+    mvAccent:         clip.mvAccent,
+    mvBg:             clip.mvBg,
+    mvMatchTheme:     clip.mvMatchTheme,
+    mvResolution:     clip.mvResolution,
     eq:               clip.eq,
     grade:            clip.grade,
     lutId:            clip.lutId,

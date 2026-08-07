@@ -122,6 +122,14 @@ export interface TimelineItem {
   titleBg?: string             // hex or 'transparent', default 'transparent'
   titlePosition?: 'upper' | 'center' | 'lower-third'  // default 'center'
   titleAnimation?: 'none' | 'fade' | 'slide-up'       // default 'none'
+  // Music-visual overlay (contentType === 'musicviz') — a live audio-reactive
+  // visual (waveform / EQ bars / radial spectrum) rendered over the video below,
+  // driven by the timeline's audio. See lib/music-viz.ts.
+  mvFormat?: string                 // MUSIC_VIZ_FORMAT_IDS (default 'waveform')
+  mvAccent?: string                 // hex — the visual's main colour
+  mvBg?: [string, string] | null    // two-stop gradient bg, or null/absent = transparent overlay
+  mvMatchTheme?: boolean            // pull the accent from the editor's Workshop theme (--accent)
+  mvResolution?: number             // render short-side px (quality), default = project frame height
   // Per-clip audio EQ (gain in dB: -12 to +12, 0 = flat)
   eq?: { low: number; mid: number; high: number }
   // Per-clip color grade — composes ON TOP of the project-wide adjustments,

@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react'
 import { formatDisplayTime } from '@/lib/captions'
 import type { TimelineItem, VideoAdjustments, TransitionType, ClipFlag, CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
+import { MUSIC_VIZ_FORMATS } from '@/lib/music-viz'
 import type { Caption, Output, ChapterMarker } from '@/lib/types'
 
 type TranscribeStatus = 'idle' | 'transcribing' | 'done' | 'error'
@@ -953,6 +954,64 @@ export default function Inspector({
                         </select>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* MUSIC VISUAL CLIP */}
+                {selectedItem.contentType === 'musicviz' && (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>MUSIC VISUAL</p>
+                    <div>
+                      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Visual</p>
+                      <select value={selectedItem.mvFormat ?? 'waveform'} onChange={e => patchClip({ mvFormat: e.target.value })}
+                        className="w-full px-2 py-1.5 rounded text-xs"
+                        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', color: 'var(--text-primary)', outline: 'none' }}>
+                        {MUSIC_VIZ_FORMATS.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+                      <input type="checkbox" checked={selectedItem.mvMatchTheme ?? false} onChange={e => patchClip({ mvMatchTheme: e.target.checked })} />
+                      Match editor accent color
+                    </label>
+                    {!selectedItem.mvMatchTheme && (
+                      <div>
+                        <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Color</p>
+                        <input type="color" value={selectedItem.mvAccent ?? '#a78bfa'} onChange={e => patchClip({ mvAccent: e.target.value })}
+                          className="w-full h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                      </div>
+                    )}
+                    <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+                      <input type="checkbox" checked={!!selectedItem.mvBg} onChange={e => patchClip({ mvBg: e.target.checked ? ['#0a0912', '#050409'] : null })} />
+                      Solid background (off = transparent over video)
+                    </label>
+                    {selectedItem.mvBg && (
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>BG Top</p>
+                          <input type="color" value={selectedItem.mvBg[0]} onChange={e => patchClip({ mvBg: [e.target.value, selectedItem.mvBg![1]] })}
+                            className="w-full h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>BG Bottom</p>
+                          <input type="color" value={selectedItem.mvBg[1]} onChange={e => patchClip({ mvBg: [selectedItem.mvBg![0], e.target.value] })}
+                            className="w-full h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Resolution</p>
+                      <select value={String(selectedItem.mvResolution ?? '')} onChange={e => patchClip({ mvResolution: e.target.value ? Number(e.target.value) : undefined })}
+                        className="w-full px-2 py-1.5 rounded text-xs"
+                        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', color: 'var(--text-primary)', outline: 'none' }}>
+                        <option value="">Auto (match preview)</option>
+                        <option value="480">480p</option>
+                        <option value="720">720p</option>
+                        <option value="1080">1080p</option>
+                      </select>
+                    </div>
+                    <p className="text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+                      Reacts to the timeline audio. Opacity &amp; blend mode are in the clip’s general settings above.
+                    </p>
                   </div>
                 )}
 

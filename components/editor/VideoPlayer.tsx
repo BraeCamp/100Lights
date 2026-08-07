@@ -5,6 +5,7 @@ import { Play, Pause, SkipBack, Mic, Film, ZoomIn, ZoomOut } from 'lucide-react'
 import type { Caption, ContentType } from '@/lib/types'
 import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } from '@/lib/editor-types'
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
+import MusicVizOverlay from './MusicVizOverlay'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
 import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
@@ -91,6 +92,9 @@ interface Props {
   seekHints?: Record<string, ClipHint>
   showOriginal?: boolean
   // New props
+  /** Music-visual overlays active at the playhead — canvas visuals rendered over
+   *  the video, reacting to the media analyser. */
+  musicViz?: Array<{ id: string; format: string; accent: string; bg: [string, string] | null; resolution?: number; opacity?: number; blendMode?: string }>
   clipTransform?: ClipTransform
   viewerZoom?: number
   showSafeAreas?: boolean
@@ -214,6 +218,7 @@ export default function VideoPlayer({
   projectAspect = '16:9',
   transition,
   underLayers = [],
+  musicViz = [],
   captionStyle = DEFAULT_CAPTION_STYLE,
   clipGradeFilter = '',
   lutData = null,
@@ -1080,6 +1085,22 @@ export default function VideoPlayer({
             </div>
           )
         })()}
+
+        {/* Music-visual overlays — canvas visuals over the video, reacting to the
+            media analyser (falls back to an idle animation when it's silent). */}
+        {musicViz.map(mv => (
+          <div key={mv.id} style={{ position: 'absolute', inset: 0, zIndex: 9, pointerEvents: 'none' }}>
+            <MusicVizOverlay
+              format={mv.format}
+              accent={mv.accent}
+              bg={mv.bg}
+              resolution={mv.resolution}
+              opacity={mv.opacity}
+              blendMode={mv.blendMode}
+              getAnalyser={() => analyserRef.current}
+            />
+          </div>
+        ))}
 
         {/* ── Overlays (always above video) ── */}
 
