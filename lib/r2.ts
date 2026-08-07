@@ -14,10 +14,13 @@ function client() {
 
 const BUCKET = () => process.env.R2_BUCKET!
 
-export async function presignUpload(key: string, contentType: string, expiresIn = 3600) {
+export async function presignUpload(key: string, contentType: string, expiresIn = 3600, contentLength?: number) {
+  // When a byte length is given, sign it into the URL: R2 then rejects any PUT
+  // whose real body length differs, so the client-declared size (used by the
+  // storage-cap accounting) can't be under-reported to sneak past the limit.
   return getSignedUrl(
     client(),
-    new PutObjectCommand({ Bucket: BUCKET(), Key: key, ContentType: contentType }),
+    new PutObjectCommand({ Bucket: BUCKET(), Key: key, ContentType: contentType, ...(contentLength && contentLength > 0 ? { ContentLength: contentLength } : {}) }),
     { expiresIn },
   )
 }

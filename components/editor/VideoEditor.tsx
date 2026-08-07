@@ -1897,9 +1897,9 @@ export default function VideoEditor({
   // Audio fingerprint of the last render per link key — lets a re-sync skip the
   // bounce when the source's sound is unchanged. See dawAudioFingerprint.
   const lastRenderFpRef = useRef<Map<string, string>>(new Map())
-  // Per-track stem PCM cache per link key, so a re-sync re-renders only the
+  // Per-track stem cache per link key, so a re-sync re-renders only the
   // tracks whose audio changed (see renderProjectMixCached).
-  const stemCacheRef = useRef<Map<string, Map<string, Float32Array[]>>>(new Map())
+  const stemCacheRef = useRef<Map<string, Map<string, import('@/lib/song-video/render-audio').StemEntry>>>(new Map())
 
   // Re-uploads of a linked mix wait for the edits to settle (8 s after the
   // last refresh) so a burst of live changes doesn't push transient renders

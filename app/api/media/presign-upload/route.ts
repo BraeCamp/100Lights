@@ -96,7 +96,9 @@ export async function POST(req: Request) {
   const contentType = resolvedType
 
   // Presign for 15 minutes — the browser uploads immediately after receiving this
-  const uploadUrl = await presignUpload(key, contentType, 900)
+  // Sign the byte length into the URL so the client can't upload more (or fewer)
+  // bytes than the `size` the cap check was computed from.
+  const uploadUrl = await presignUpload(key, contentType, 900, size)
   if (clerkId && size > 0) {
     try {
       await ensureUploadLog()

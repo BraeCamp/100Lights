@@ -928,9 +928,11 @@ export default function Timeline({
                     onPointerDown={(e) => {
                       // Draw Focus: drag on empty area to create a new focus range
                       if (track.type === 'drawfocus' && !bladeCursor) {
+                        // The lane scrolls with the content, so rect.left already
+                        // reflects scroll — clientX-rect.left is content-space; do
+                        // NOT add scrollLeft again (that double-counted the offset).
                         const rect = e.currentTarget.getBoundingClientRect()
-                        const scrollLeft = trackAreaRef.current?.scrollLeft ?? 0
-                        const x0 = e.clientX - rect.left + scrollLeft
+                        const x0 = e.clientX - rect.left
                         const tHit = xToTime(x0)
                         const hitClip = trackItems.find(i => tHit >= i.startTime && tHit < i.startTime + (i.outPoint - i.inPoint))
                         if (!hitClip) {
@@ -938,7 +940,7 @@ export default function Timeline({
                           let x1 = x0
                           setCreatingFocus({ trackId: track.id, x0, x1 })
                           const onMove = (ev: PointerEvent) => {
-                            x1 = ev.clientX - rect.left + (trackAreaRef.current?.scrollLeft ?? 0)
+                            x1 = ev.clientX - rect.left
                             setCreatingFocus({ trackId: track.id, x0, x1 })
                           }
                           const onUp = () => {
@@ -967,7 +969,7 @@ export default function Timeline({
                       if (track.locked || track.type === 'drawfocus') return
                       e.preventDefault(); e.dataTransfer.dropEffect = 'copy'
                       const rect = e.currentTarget.getBoundingClientRect()
-                      setDropIndicator({ trackId: track.id, x: e.clientX - rect.left + (trackAreaRef.current?.scrollLeft ?? 0) })
+                      setDropIndicator({ trackId: track.id, x: e.clientX - rect.left })
                     }}
                     onDragLeave={() => setDropIndicator(null)}
                     onDrop={(e) => {
@@ -976,7 +978,7 @@ export default function Timeline({
                       const mediaId = e.dataTransfer.getData('mediaId')
                       if (!mediaId) return
                       const rect = e.currentTarget.getBoundingClientRect()
-                      onDropMedia(mediaId, track.id, xToTime(e.clientX - rect.left + (trackAreaRef.current?.scrollLeft ?? 0)))
+                      onDropMedia(mediaId, track.id, xToTime(e.clientX - rect.left))
                     }}
                     onClick={(e) => { if (e.target === e.currentTarget && !bladeCursor) onSelectItem(null) }}
                     onContextMenu={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); e.stopPropagation(); onContextMenu(e, getAreaMenu(track.id)) } }}

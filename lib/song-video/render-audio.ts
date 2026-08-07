@@ -159,7 +159,34 @@ function trackStemFingerprint(project: DawProject, trackId: string, timingKey: s
   return hash(json)
 }
 
-const MEM_CAP_BYTES = 220 * 1024 * 1024
+// Stems are cached as PEAK-NORMALIZED 16-bit PCM (half the memory of Float32, and
+// normalization means a loud dry stem — which can exceed ±1 before the compressor
+// — never clips). Reconstructing to Float32 for the sum reintroduces only 16-bit
+// (~-96 dB) quantization, imperceptible in a summed mix. `gain` is the stem's peak.
+export interface StemEntry { chans: Int16Array[]; gain: number }
+
+function toStem(channels: Float32Array[]): StemEntry {
+  let peak = 1e-6
+  for (const ch of channels) for (let i = 0; i < ch.length; i++) { const a = ch[i] < 0 ? -ch[i] : ch[i]; if (a > peak) peak = a }
+  const inv = 32767 / peak
+  const chans = channels.map(ch => {
+    const o = new Int16Array(ch.length)
+    for (let i = 0; i < ch.length; i++) o[i] = Math.round(ch[i] * inv)   // in [-32767,32767] since peak is the max
+    return o
+  })
+  return { chans, gain: peak }
+}
+
+// Decode a 16-bit stem back to float and add it into the running sum.
+function addStem(sumL: Float32Array, sumR: Float32Array, stem: StemEntry, len: number): void {
+  const l = stem.chans[0], r = stem.chans[1] ?? stem.chans[0]
+  const g = stem.gain / 32767
+  const n = Math.min(len, l.length)
+  for (let i = 0; i < n; i++) { sumL[i] += l[i] * g; sumR[i] += r[i] * g }
+}
+
+// 16-bit stems halve per-stem memory, so a higher cap still fits many stems.
+const MEM_CAP_BYTES = 512 * 1024 * 1024
 
 // Full-mix render with a per-track stem CACHE. Re-renders only the tracks whose
 // audio changed since last time and reuses cached stems for the rest, then sums
@@ -169,7 +196,7 @@ const MEM_CAP_BYTES = 220 * 1024 * 1024
 export async function renderProjectMixCached(
   project: DawProject,
   opts: { startBeat: number; endBeat: number; userId?: string | null },
-  cache: Map<string, Float32Array[]>,
+  cache: Map<string, StemEntry>,
 ): Promise<RenderedMix> {
   const t0 = performance.now()
   await ensureSeeded(opts.userId)
@@ -182,7 +209,9 @@ export async function renderProjectMixCached(
     !t.mute && (!hasSolo || t.solo) &&
     (project.arrangementClips ?? []).some(c => c.trackId === t.id))
 
-  const memEstimate = (audible.length + 1) * len * 2 * 4
+  // 16-bit → 2 bytes/sample/channel; +1 for stems that momentarily co-reside with
+  // stale ones before eviction below.
+  const memEstimate = (audible.length + 1) * len * 2 * 2
   if (!stemSafe(project) || audible.length < 2 || memEstimate > MEM_CAP_BYTES) {
     cache.clear()
     return renderProjectAudioBlob(project, opts)
@@ -196,17 +225,16 @@ export async function renderProjectMixCached(
   for (const t of audible) {
     const fp = trackStemFingerprint(project, t.id, timingKey)
     live.add(fp)
-    let ch = cache.get(fp)
-    if (!ch) {
-      ch = (await renderChannels(project, opts, { soloTrackId: t.id, dryMaster: true })).channels
-      cache.set(fp, ch)
+    let stem = cache.get(fp)
+    if (!stem) {
+      const { channels } = await renderChannels(project, opts, { soloTrackId: t.id, dryMaster: true })
+      stem = toStem(channels)
+      cache.set(fp, stem)
       rendered++
     } else {
       reused++
     }
-    const l = ch[0], r = ch[1] ?? ch[0]
-    const n = Math.min(len, l.length)
-    for (let i = 0; i < n; i++) { sumL[i] += l[i]; sumR[i] += r[i] }
+    addStem(sumL, sumR, stem, len)
   }
   for (const k of Array.from(cache.keys())) if (!live.has(k)) cache.delete(k)
 
