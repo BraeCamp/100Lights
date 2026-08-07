@@ -1599,27 +1599,28 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   onResizeLeft={(newStartRaw, alt) => {
                     if (frozen) return
                     const origEnd = clip.startBeat + clip.durationBeats
-                    // Loop unit: MIDI pattern length (or its set loop length), audio native length.
-                    let L = 0
+                    // Free resize from the LEFT edge — the right edge stays put. Drag
+                    // left to grow the clip, right to shrink it, grid-snapped (Alt =
+                    // no snap), so it responds to any drag instead of only jumping in
+                    // whole loop-lengths. The content stays pattern-relative, so a
+                    // loop/beat just shows more or fewer repeats.
+                    let newStart = alt ? newStartRaw : snapBeat(newStartRaw, snap, project.timeSignatureNum, meterSegments(project))
+                    if (!alt) newStart = snapToClipEdges(newStart, new Set([clip.id]), 8 / beatW, project.arrangementClips)
+                    newStart = Math.max(0, Math.min(newStart, origEnd - 0.125))
+                    if (Math.abs(newStart - clip.startBeat) < 0.001) return
+                    const newDur = origEnd - newStart
+                    const patch: Record<string, unknown> = { startBeat: newStart, durationBeats: newDur }
+                    // Loop-tile to fill when the window is longer than one pattern /
+                    // the audio's native length, so growing left repeats instead of
+                    // leaving silence.
                     if (isMidiClip(clip)) {
                       const barBeats = project.timeSignatureNum || 4
                       const contentEnd = clip.notes.length ? Math.max(...clip.notes.map(n => n.startBeat + n.durationBeats)) : barBeats
-                      L = clip.loopLengthBeats ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
+                      const L = clip.loopLengthBeats ?? Math.max(barBeats, Math.ceil(contentEnd / barBeats) * barBeats)
+                      if (newDur > L + 0.001) { patch.loopEnabled = true; patch.loopLengthBeats = L }
                     } else if (isAudioClip(clip) && clip.bufferDuration) {
-                      L = engine.secondsToBeats(clip.bufferDuration - clip.trimStart - clip.trimEnd)
-                    }
-                    if (L <= 0.01) return
-                    // Extend/shrink the START in whole loop-lengths anchored to the
-                    // (fixed) right edge, so the loop tiles align and the end never
-                    // moves. Drag left = more loops, drag right = fewer (min 1).
-                    const reqStart = alt ? newStartRaw : snapBeat(newStartRaw, snap, project.timeSignatureNum, meterSegments(project))
-                    const loops = Math.max(1, Math.round((origEnd - reqStart) / L))
-                    const newStart = Math.max(0, origEnd - loops * L)
-                    if (Math.abs(newStart - clip.startBeat) < 0.01) return
-                    const patch: Record<string, unknown> = { startBeat: newStart, durationBeats: origEnd - newStart }
-                    if (loops > 1 || clip.loopEnabled) {
-                      patch.loopEnabled = true
-                      if (isMidiClip(clip)) patch.loopLengthBeats = L
+                      const nativeSec = clip.bufferDuration - clip.trimStart - clip.trimEnd
+                      if (engine.beatsToSeconds(newDur) > nativeSec + 0.001) patch.loopEnabled = true
                     }
                     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch })
                   }}

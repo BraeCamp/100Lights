@@ -168,15 +168,17 @@ function normalizeGroups(tracks: DawTrack[]): DawTrack[] {
   return out
 }
 
-// A MIDI clip grows to fit its notes: adding or moving a note past the clip
-// end extends the clip to the next bar boundary. Looped clips are exempt —
-// their duration means "number of repeats", not content length.
-function growToFitNotes(clip: MidiClip, timeSignatureNum: number): MidiClip {
+// A MIDI clip grows to fit a note the user just added/moved PAST the clip end
+// (extends to the next bar boundary). It only ever grows for the note in hand —
+// NOT the max of every note — so a clip the user deliberately contracted stays
+// contracted when they add a note inside it (notes beyond the end are just a
+// hidden tail, not a reason to snap back to full length). Looped clips are
+// exempt — their duration means "number of repeats", not content length.
+function growToFitNoteEnd(clip: MidiClip, noteEnd: number, timeSignatureNum: number): MidiClip {
   if (clip.loopEnabled) return clip
+  if (noteEnd <= clip.durationBeats) return clip
   const bar = timeSignatureNum || 4
-  const contentEnd = clip.notes.reduce((m, n) => Math.max(m, n.startBeat + n.durationBeats), 0)
-  if (contentEnd <= clip.durationBeats) return clip
-  return { ...clip, durationBeats: Math.ceil(contentEnd / bar) * bar }
+  return { ...clip, durationBeats: Math.ceil(noteEnd / bar) * bar }
 }
 
 export function reducer(project: DawProject, action: DawAction): DawProject {
@@ -474,7 +476,8 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'ADD_MIDI_NOTE': {
       const clips = project.arrangementClips.map(c => {
         if (c.id !== action.clipId || c.kind !== 'midi') return c
-        return growToFitNotes({ ...c, notes: [...c.notes, action.note] } as MidiClip, project.timeSignatureNum)
+        const noteEnd = action.note.startBeat + action.note.durationBeats
+        return growToFitNoteEnd({ ...c, notes: [...c.notes, action.note] } as MidiClip, noteEnd, project.timeSignatureNum)
       })
       return { ...project, arrangementClips: clips }
     }
@@ -490,7 +493,10 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'UPDATE_MIDI_NOTE': {
       const clips = project.arrangementClips.map(c => {
         if (c.id !== action.clipId || c.kind !== 'midi') return c
-        return growToFitNotes({ ...c, notes: c.notes.map(n => n.id === action.noteId ? { ...n, ...action.patch } : n) } as MidiClip, project.timeSignatureNum)
+        const notes = c.notes.map(n => n.id === action.noteId ? { ...n, ...action.patch } : n)
+        const moved = notes.find(n => n.id === action.noteId)
+        const noteEnd = moved ? moved.startBeat + moved.durationBeats : 0
+        return growToFitNoteEnd({ ...c, notes } as MidiClip, noteEnd, project.timeSignatureNum)
       })
       return { ...project, arrangementClips: clips }
     }
