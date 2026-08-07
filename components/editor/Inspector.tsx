@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2, X, Wrench, Palette, Download } from 'lucide-react'
+import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2, X, Wrench, Palette, Download, AudioLines } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { formatDisplayTime } from '@/lib/captions'
 import type { TimelineItem, VideoAdjustments, TransitionType, ClipFlag, CaptionStyle } from '@/lib/editor-types'
@@ -19,6 +19,8 @@ interface Props {
   onAdjustmentsChange: (a: VideoAdjustments) => void
   onTransitionChange: (id: string, type: TransitionType | undefined, duration: number) => void
   onClipChange: (id: string, patch: Partial<TimelineItem>) => void
+  /** Add a music-visual overlay (waveform / EQ / spectrum) at the playhead. */
+  onAddMusicViz?: () => void
   importedFile: File | null
   transcribeStatus: TranscribeStatus
   transcribeProgress?: number
@@ -43,6 +45,8 @@ interface Props {
   captionStyle?: CaptionStyle
   onCaptionStyleChange?: (style: CaptionStyle) => void
   onCaptionEdit?: (index: number, text: string) => void
+  /** Draw-focus clips this project has, offered as follow targets. */
+  focusClips?: Array<{ id: string; label: string }>
 }
 
 type Tab = 'clip' | 'color' | 'outputs' | 'tools' | 'transcript'
@@ -298,7 +302,7 @@ function ColorWheel({ label, value, min, max, defaultVal, onChange }: {
 }
 
 export default function Inspector({
-  selectedItem, adjustments, outputs, onAdjustmentsChange, onTransitionChange, onClipChange,
+  selectedItem, adjustments, outputs, onAdjustmentsChange, onTransitionChange, onClipChange, onAddMusicViz,
   importedFile, transcribeStatus, transcribeProgress = 0, transcribeError, onTranscribe,
   captions, currentTime = 0, onSeek,
   silenceTrimStatus, silenceThreshold, onSilenceThresholdChange, onSilenceTrim,
@@ -311,6 +315,7 @@ export default function Inspector({
   captionStyle = DEFAULT_CAPTION_STYLE,
   onCaptionStyleChange,
   onCaptionEdit,
+  focusClips,
 }: Props) {
   const [tab, setTab] = useState<Tab>('tools')
   const [transcriptSearch, setTranscriptSearch] = useState('')
@@ -773,6 +778,27 @@ export default function Inspector({
                       <button onClick={() => patchClip({ cropZoom: undefined, cropX: undefined, cropY: undefined })}
                         className="text-xs text-left mt-0.5" style={{ color: 'var(--accent-light)' }}>Reset crop</button>
                     )}
+                    {selectedItem.contentType !== 'title' && selectedItem.contentType !== 'musicviz' && focusClips && focusClips.length > 0 && (
+                      <div className="flex flex-col gap-1 mt-1">
+                        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Follow focus dot</span>
+                        <select
+                          value={selectedItem.followFocusClipId ?? ''}
+                          onChange={e => {
+                            const id = e.target.value
+                            if (!id) { patchClip({ followFocusClipId: undefined }); return }
+                            // Give the pan some headroom if the clip isn't zoomed in yet.
+                            patchClip({ followFocusClipId: id, cropZoom: (selectedItem.cropZoom ?? 100) === 100 ? 150 : selectedItem.cropZoom })
+                          }}
+                          className="w-full px-2 py-1 rounded text-xs"
+                          style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                          <option value="">None</option>
+                          {focusClips.map(fc => (
+                            <option key={fc.id} value={fc.id}>{fc.label}</option>
+                          ))}
+                        </select>
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Zoom in for room to follow.</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -902,6 +928,16 @@ export default function Inspector({
                         onChange={v => patchClip({ eq: { low: selectedItem.eq?.low ?? 0, mid: selectedItem.eq?.mid ?? 0, high: v } })} />
                     </div>
                   </div>
+                )}
+
+                {/* Add a music visual driven by the audio (moved off the toolbar —
+                    it's a per-audio option now). */}
+                {selectedItem.contentType === 'audio' && onAddMusicViz && (
+                  <button onClick={onAddMusicViz}
+                    className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-xs font-medium"
+                    style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', color: 'var(--text-primary)' }}>
+                    <AudioLines size={13} /> Add Music Visual
+                  </button>
                 )}
 
                 {/* TITLE CLIP */}

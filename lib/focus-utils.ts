@@ -20,6 +20,43 @@ export function interpolateFocusKF(kf: FocusKeyframe[], localTime: number): { x:
   return { x: cr(p0.x, p1.x, p2.x, p3.x), y: cr(p0.y, p1.y, p2.y, p3.y) }
 }
 
+/** Minimal shape followPan needs — satisfied by TimelineItem (framework-free so
+ *  the compositor can import it too). */
+type FollowClip = {
+  id: string
+  startTime?: number
+  focusX?: number
+  focusY?: number
+  focusKeyframes?: FocusKeyframe[]
+}
+type FollowTarget = {
+  cropZoom?: number
+  followFocusClipId?: string
+}
+
+/**
+ * The cropX/cropY override that makes `clip` pan to keep its linked drawfocus
+ * dot centered at `currentTime`. Returns null when the clip isn't following (or
+ * the target is missing). Shared verbatim by preview + export so they agree.
+ * Panning uses the clip's zoom headroom, so Z must be >100 to actually move.
+ */
+export function followPan(
+  clip: FollowTarget,
+  items: FollowClip[],
+  currentTime: number,
+): { cropX: number; cropY: number } | null {
+  if (!clip.followFocusClipId) return null
+  const fc = items.find(i => i.id === clip.followFocusClipId)
+  if (!fc) return null
+  const localT = currentTime - (fc.startTime ?? 0)
+  const p = (fc.focusKeyframes && fc.focusKeyframes.length)
+    ? interpolateFocusKF(fc.focusKeyframes, localT)
+    : { x: fc.focusX ?? 0.5, y: fc.focusY ?? 0.5 }
+  const Z = clip.cropZoom ?? 100
+  const clamp = (v: number) => Math.max(-50, Math.min(50, v))
+  return { cropX: clamp((0.5 - p.x) * (Z - 100)), cropY: clamp((0.5 - p.y) * (Z - 100)) }
+}
+
 // Convert Catmull-Rom keyframes to an SVG path string using cubic bezier commands.
 // Coordinates are in 0–1 range (caller must apply viewBox="0 0 1 1").
 export function buildFocusSVGPath(kf: FocusKeyframe[]): string {

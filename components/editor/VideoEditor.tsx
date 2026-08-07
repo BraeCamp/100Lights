@@ -3,8 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
-import { ArrowLeft, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers, SwatchBook } from 'lucide-react'
-import Link from 'next/link'
+import { Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers, SwatchBook, FolderOpen, Clapperboard } from 'lucide-react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
 import VideoPlayer from '@/components/editor/VideoPlayer'
@@ -12,6 +11,8 @@ import AudioWaveform from '@/components/editor/AudioWaveform'
 import Timeline from '@/components/editor/Timeline'
 import MediaLibrary from '@/components/editor/MediaLibrary'
 import ContextMenu from '@/components/editor/ContextMenu'
+import { LogoMark } from '@/components/Logo'
+import { useResizable, ResizeHandle } from '@/components/editor/daw/useResizable'
 import { saveProject } from '@/lib/project-store'
 import { projectPath } from '@/lib/project-url'
 import type { LutData } from '@/lib/lut-parser'
@@ -79,7 +80,7 @@ import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
 import { useUpgradeModal } from '@/components/UpgradeModal'
 import posthog from 'posthog-js'
-import { interpolateFocusKF } from '@/lib/focus-utils'
+import { interpolateFocusKF, followPan } from '@/lib/focus-utils'
 
 const CLIP_COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#9333ea']
 
@@ -141,7 +142,6 @@ function generateVideoThumbnail(url: string): Promise<string | undefined> {
     video.addEventListener('loadedmetadata', () => { video.currentTime = 0 }, { once: true })
   })
 }
-const MIN_LEFT = 140; const MAX_LEFT = 420
 const MIN_RIGHT = 160; const MAX_RIGHT = 400
 const MIN_TL = 120;  const MAX_TL = 480
 const FRAME_DURATION = 1 / 30  // 30fps — matches the export pipeline (EXPORT_FPS)
@@ -647,8 +647,11 @@ export default function VideoEditor({
   }, [pushHistory])
 
   // Panel sizes
-  const [leftW, setLeftW]     = useState(200)
   const [rightW, setRightW]   = useState(224)
+  // Left media panel — icon-rail + openable panel, mirroring the audio editor.
+  const [videoLeftTab, setVideoLeftTab] = useState<'media' | null>('media')
+  const [videoSidebarOpen, setVideoSidebarOpen] = useState(true)
+  const videoLeftPanel = useResizable({ key: 'video-left-panel', initial: 220, min: 180, max: 520, axis: 'x' })
   const [tlHeight, setTlHeight] = useState(() =>
     TOOLBAR_HEIGHT + RULER_HEIGHT + TRACK_HEIGHT * 2 + 4
   )
@@ -918,6 +921,16 @@ export default function VideoEditor({
     return null
   }, [timelineItems, tracks, currentTime])
 
+  // On-canvas move/resize gizmo config — only when the selected clip is the one
+  // on screen and it's a media clip (not a title/musicviz overlay). Drives the
+  // clip's cropX/cropY/cropZoom through handleClipChange (same path as Inspector).
+  const gizmo = useMemo(() => (
+    selectedItem && viewerClip && selectedItem.id === viewerClip.id
+      && selectedItem.contentType !== 'title' && selectedItem.contentType !== 'musicviz'
+      ? { cropZoom: selectedItem.cropZoom ?? 100, cropX: selectedItem.cropX ?? 0, cropY: selectedItem.cropY ?? 0 }
+      : null
+  ), [selectedItem, viewerClip])
+
   // Music-visual overlays active at the playhead — rendered OVER the video (not
   // as a replacement), each reacting to the timeline audio via the player's
   // analyser. mvMatchTheme pulls the accent from the editor's Workshop theme.
@@ -1056,6 +1069,11 @@ export default function VideoEditor({
       cropX    = kb.fromX   + (kb.toX   - kb.fromX)   * s
       cropY    = kb.fromY   + (kb.toY   - kb.fromY)   * s
     }
+    // Follow-focus: pan to keep the linked dot centered (shared helper = export parity).
+    if (clip.followFocusClipId) {
+      const fp = followPan(clip, timelineItems, currentTime)
+      if (fp) { cropX = fp.cropX; cropY = fp.cropY }
+    }
 
     return {
       opacity: clip.opacity ?? 100,
@@ -1067,7 +1085,8 @@ export default function VideoEditor({
     }
   }, [viewerClip?.id, viewerClip?.opacity, viewerClip?.flipH, viewerClip?.flipV, // eslint-disable-line
       viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY, viewerClip?.fitMode,
-      viewerClip?.fadeIn, viewerClip?.fadeOut, viewerClip?.kenBurns, currentTime]) // eslint-disable-line
+      viewerClip?.fadeIn, viewerClip?.fadeOut, viewerClip?.kenBurns,
+      viewerClip?.followFocusClipId, timelineItems, currentTime]) // eslint-disable-line
 
   // Transition-in of the active clip: the clip that occupied the SAME TRACK
   // just before this one becomes the frozen frame the transition blends from.
@@ -1122,7 +1141,7 @@ export default function VideoEditor({
         continue
       }
       if (clip.contentType === 'audio' || !clip.url) continue
-      const tf = computeClipTransform(clip, currentTime)
+      const tf = computeClipTransform(clip, currentTime, timelineItems)
       const gradeFilter = buildClipGradeFilter(clip)
       const globalFilter = buildFilterCss(adjustments)
       layers.push({
@@ -1136,6 +1155,14 @@ export default function VideoEditor({
     }
     return layers
   }, [timelineItems, tracks, currentTime, adjustments])
+
+  // Draw-focus clips available as follow targets (for the Inspector's "Follow focus dot").
+  const focusClips = useMemo(() => {
+    const focusTrackIds = new Set(tracks.filter(t => t.type === 'drawfocus').map(t => t.id))
+    return timelineItems
+      .filter(i => focusTrackIds.has(i.trackId))
+      .map(i => ({ id: i.id, label: i.label || 'Focus' }))
+  }, [timelineItems, tracks])
 
   // Converts timeline time ↔ source clip time:  clipTime = timelineTime − offset
   const clipTimeOffset = viewerClip ? viewerClip.startTime - viewerClip.inPoint : 0
@@ -1696,7 +1723,7 @@ export default function VideoEditor({
         e.preventDefault()
         const totalDur = timelineItems.reduce((m, i) => Math.max(m, i.startTime + (i.outPoint - i.inPoint)), 0)
         if (totalDur > 0) {
-          const availW = window.innerWidth - leftW - rightW - 60
+          const availW = window.innerWidth - ((videoSidebarOpen ? videoLeftPanel.size : 0) + 40) - rightW - 60
           setZoomLevel(Math.max(0.01, Math.min(10, availW / (totalDur * PIXELS_PER_SECOND))))
         }
         return
@@ -2698,6 +2725,8 @@ export default function VideoEditor({
     handleSeek(at)
   }
 
+  // Temporarily unused: the Music-Visual toolbar button was removed pending a
+  // re-wire into the new media-panel flow. Keep the function for that follow-up.
   function addMusicVizClip() {
     const track = tracks.find(t => t.type === 'media' || t.type === 'video') ?? tracks[0]
     const trackId = track?.id ?? 'v1'
@@ -3161,7 +3190,6 @@ export default function VideoEditor({
     setChapters(prev => prev.filter(c => c.id !== id))
   }
 
-  const clampLeft   = (d: number) => setLeftW(w => Math.max(MIN_LEFT, Math.min(MAX_LEFT, w + d)))
   const clampRight  = (d: number) => setRightW(w => Math.max(MIN_RIGHT, Math.min(MAX_RIGHT, w - d)))
   const clampTl     = (d: number) => setTlHeight(h => Math.max(MIN_TL, Math.min(MAX_TL, h - d)))
   const clampAudioH = (d: number) => setAudioSplitH(h => Math.max(80, Math.min(320, h + d)))
@@ -3179,10 +3207,6 @@ export default function VideoEditor({
 
       {/* ── Header ───────────────────────────────────────────── */}
       <div className="electron-drag-container flex items-center gap-3 px-4 shrink-0" style={{ height: 40, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', paddingLeft: isElectronMac ? 80 : 16 }}>
-        <Link href="/dashboard" className="flex items-center gap-1.5 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-          <ArrowLeft size={12} /> Dashboard
-        </Link>
-        <div className="w-px h-4 shrink-0" style={{ background: 'var(--border)' }} />
         {/* Import a project (.cfproj) straight into the video editor */}
         <input ref={projectFileRef} type="file" accept=".cfproj,application/json" onChange={handleOpenProjectFile} className="hidden" />
         <button
@@ -3255,18 +3279,6 @@ export default function VideoEditor({
             style={{ color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)' }}
           >
             <Type size={12} /> Title
-          </button>
-        )}
-
-        {/* Insert a music-visual overlay (waveform / EQ / radial) */}
-        {activePage === 'edit' && (
-          <button
-            onClick={addMusicVizClip}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
-            title="Add a music visual (waveform / EQ / spectrum) at the playhead"
-            style={{ color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)' }}
-          >
-            <AudioLines size={12} /> Music Visual
           </button>
         )}
 
@@ -3486,31 +3498,122 @@ export default function VideoEditor({
         <>
           {/* Work area — three panels */}
           <div className="flex overflow-hidden min-h-0" style={{ flex: '1 1 0' }}>
-            <div className="shrink-0 overflow-hidden" style={{ width: leftW }}>
-              <MediaLibrary
-                items={mediaItems} selectedId={selectedMediaId}
-                onSelect={setSelectedMediaId}
-                onImport={handleFileImport}
-                onBounceDawMix={hasDawProject ? handleBounceDawMix : undefined}
-                onLinkProject={() => openProjectPicker('link')}
-                onSendProject={hasDawProject ? () => openProjectPicker('send') : undefined}
-                linkedSources={linkedSourceIds.map(id => ({ id, name: sourceNamesRef.current.get(id) || 'Linked project', syncing: bounceStatus === 'working' }))}
-                onOpenSource={(id) => window.open(`/projects/${id}`, '_blank')}
-                onResyncSource={(id) => { void resyncSource(id) }}
-                dawTracks={dawTracks}
-                bounceStatus={bounceStatus}
-                onAddToTimeline={addMediaToTimeline}
-                onRemove={(id) => setMediaItems(prev => {
-                  const m = prev.find(x => x.id === id)
-                  if (m?.url?.startsWith('blob:')) { try { URL.revokeObjectURL(m.url) } catch { /* already revoked */ } }
-                  return prev.filter(x => x.id !== id)
+            {/* ── Left: file-cabinet rail + collapsible media panel ─── */}
+            <div style={{ display: 'flex', flexShrink: 0, borderRight: '1px solid var(--border)' }}>
+
+              {/* Rail — always visible */}
+              <div style={{
+                width: 40, flexShrink: 0,
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', paddingTop: 8, gap: 2,
+                background: 'var(--bg-surface)',
+                borderRight: videoSidebarOpen ? '1px solid var(--border)' : 'none',
+              }}>
+                {/* Logo — takes the user straight home */}
+                <a
+                  href="/dashboard"
+                  title="Home"
+                  data-help-id="home"
+                  style={{
+                    width: 28, height: 28, marginBottom: 4, flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none',
+                  }}
+                >
+                  <LogoMark size={22} />
+                </a>
+                {/* Return to the projects list */}
+                <a
+                  href="/projects"
+                  title="Return to projects"
+                  data-help-id="return-to-projects"
+                  style={{
+                    width: 28, height: 28, borderRadius: 6, marginBottom: 6, flexShrink: 0, cursor: 'pointer', textDecoration: 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'transparent', color: 'var(--text-muted)',
+                    transition: 'background 0.12s, color 0.12s',
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+                >
+                  <FolderOpen size={15} />
+                </a>
+                {/* Media library toggle */}
+                {([
+                  { tab: 'media' as const, Icon: Clapperboard, label: 'Media library', help: 'media-library' },
+                ]).map(({ tab, Icon, label, help }) => {
+                  const isActive = videoSidebarOpen && videoLeftTab === tab
+                  return (
+                    <button
+                      key={tab}
+                      onClick={() => { if (isActive) setVideoSidebarOpen(false); else { setVideoLeftTab(tab); setVideoSidebarOpen(true) } }}
+                      title={label}
+                      data-help-id={help}
+                      style={{
+                        width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: isActive ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent',
+                        color: isActive ? 'var(--accent)' : 'var(--text-muted)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'background 0.12s, color 0.12s',
+                      }}
+                    >
+                      <Icon size={14} />
+                    </button>
+                  )
                 })}
-                onContextMenu={openCtx}
-                onAddFromLibrary={handleAddFromLibrary}
-                onRetryUpload={handleRetryUpload}
-              />
+                {/* Appearance / theme customization — always available */}
+                <button
+                  onClick={() => setShowAppearance(true)}
+                  title="Customize appearance"
+                  data-help-id="appearance"
+                  style={{
+                    width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',
+                    marginTop: 'auto', marginBottom: 8, background: 'transparent',
+                    color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'background 0.12s, color 0.12s',
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+                >
+                  <Palette size={14} />
+                </button>
+              </div>
+
+              {/* Collapsible media panel */}
+              <div style={{
+                width: videoSidebarOpen ? videoLeftPanel.size : 0,
+                flexShrink: 0,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                transition: videoLeftPanel.dragging ? 'none' : 'width 0.15s ease',
+                background: 'var(--bg-surface)',
+                position: 'relative',
+              }}>
+                {videoSidebarOpen && <ResizeHandle axis="x" edge="right" onPointerDown={videoLeftPanel.handleProps.onPointerDown} />}
+                <MediaLibrary
+                  items={mediaItems} selectedId={selectedMediaId}
+                  onSelect={setSelectedMediaId}
+                  onImport={handleFileImport}
+                  onBounceDawMix={hasDawProject ? handleBounceDawMix : undefined}
+                  onLinkProject={() => openProjectPicker('link')}
+                  onSendProject={hasDawProject ? () => openProjectPicker('send') : undefined}
+                  linkedSources={linkedSourceIds.map(id => ({ id, name: sourceNamesRef.current.get(id) || 'Linked project', syncing: bounceStatus === 'working' }))}
+                  onOpenSource={(id) => window.open(`/projects/${id}`, '_blank')}
+                  onResyncSource={(id) => { void resyncSource(id) }}
+                  dawTracks={dawTracks}
+                  bounceStatus={bounceStatus}
+                  onAddToTimeline={addMediaToTimeline}
+                  onRemove={(id) => setMediaItems(prev => {
+                    const m = prev.find(x => x.id === id)
+                    if (m?.url?.startsWith('blob:')) { try { URL.revokeObjectURL(m.url) } catch { /* already revoked */ } }
+                    return prev.filter(x => x.id !== id)
+                  })}
+                  onContextMenu={openCtx}
+                  onAddFromLibrary={handleAddFromLibrary}
+                  onRetryUpload={handleRetryUpload}
+                />
+              </div>
             </div>
-            <VResizeHandle onDelta={clampLeft} />
 
             {/* ── Center: viewport tabs + content ─────────────── */}
             <div className="flex-1 overflow-hidden min-w-0 flex flex-col" style={{ position: 'relative' }}>
@@ -3667,6 +3770,8 @@ export default function VideoEditor({
                       clipTransform={clipTransform}
                       viewerZoom={viewerZoom}
                       onViewerZoomChange={setViewerZoom}
+                      gizmo={gizmo}
+                      onGizmoChange={(patch) => selectedItem && handleClipChange(selectedItem.id, patch)}
                       showSafeAreas={showSafeAreas}
                       projectAspect={projectAspect}
                       transition={viewerTransition}
@@ -3748,6 +3853,8 @@ export default function VideoEditor({
                       clipTransform={clipTransform}
                       viewerZoom={viewerZoom}
                       onViewerZoomChange={setViewerZoom}
+                      gizmo={gizmo}
+                      onGizmoChange={(patch) => selectedItem && handleClipChange(selectedItem.id, patch)}
                       showSafeAreas={showSafeAreas}
                       projectAspect={projectAspect}
                       transition={viewerTransition}
@@ -3816,6 +3923,7 @@ export default function VideoEditor({
                 onAdjustmentsChange={setAdjustmentsWithHistory}
                 onTransitionChange={handleTransitionChange}
                 onClipChange={handleClipChange}
+                onAddMusicViz={addMusicVizClip}
                 importedFile={importedFile}
                 transcribeStatus={transcribeStatus}
                 transcribeProgress={transcribeProgress}
@@ -3840,6 +3948,7 @@ export default function VideoEditor({
                 captionStyle={captionStyle}
                 onCaptionStyleChange={setCaptionStyle}
                 onCaptionEdit={handleCaptionEdit}
+                focusClips={focusClips}
               />
             </div>
           </div>

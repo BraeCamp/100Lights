@@ -159,6 +159,9 @@ export interface TimelineItem {
   focusY?: number      // 0–1 vertical position (default 0.5)
   focusRadius?: number // radius as fraction of container height (default 0.2)
   focusKeyframes?: Array<{ time: number; x: number; y: number }>  // time = seconds since clip startTime
+  // Follow-focus: this media clip auto-pans (via cropX/cropY, within its zoom
+  // headroom) to keep the referenced drawfocus clip's dot centered as it moves.
+  followFocusClipId?: string
 }
 
 export interface Track {

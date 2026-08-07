@@ -137,6 +137,10 @@ interface Props {
   focusClipStartTime?: number
   onFocusKeyframeMove?: (index: number, x: number, y: number) => void
   onViewerZoomChange?: (z: number) => void
+  /** On-canvas move/resize gizmo for the selected media clip — drives the
+   *  clip's cropX/cropY/cropZoom fields. Null when no gizmo should show. */
+  gizmo?: { cropZoom: number; cropX: number; cropY: number } | null
+  onGizmoChange?: (patch: { cropZoom?: number; cropX?: number; cropY?: number }) => void
 }
 
 function buildFilter(adj?: VideoAdjustments): string {
@@ -244,6 +248,8 @@ export default function VideoPlayer({
   focusClipStartTime = 0,
   onFocusKeyframeMove,
   onViewerZoomChange,
+  gizmo = null,
+  onGizmoChange,
 }: Props) {
   // Tracks cumulative full-loop offsets so onTimeUpdate reports monotonically
   // increasing timeline time even as video.currentTime wraps back to 0.
@@ -492,6 +498,12 @@ export default function VideoPlayer({
   // Monitor container ref for stage sizing; stage = the aspect-locked frame box
   const monitorRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
+  // Gizmo drag state (move + uniform resize of the selected clip's transform)
+  const gizmoDragRef = useRef<
+    | { mode: 'move'; startX: number; startY: number; baseX: number; baseY: number; zoom: number; rect: DOMRect }
+    | { mode: 'resize'; cx: number; cy: number; startDist: number; baseZoom: number }
+    | null
+  >(null)
   const [monitorSize, setMonitorSize] = useState({ w: 640, h: 360 })
   useEffect(() => {
     const el = monitorRef.current
@@ -1232,6 +1244,107 @@ export default function VideoPlayer({
             }}
           />
         )}
+
+        {/* ── Move / uniform-resize gizmo for the selected media clip ──────
+            Writes the clip's cropX/cropY/cropZoom via onGizmoChange. Only
+            renders for media clips (not title/musicviz/drawfocus). */}
+        {gizmo && onGizmoChange && (() => {
+          const clamp = (lo: number, hi: number, v: number) => Math.min(hi, Math.max(lo, v))
+          const round2 = (v: number) => Math.round(v * 100) / 100
+          // Box tracks the clip's on-screen transform (scale about center + pan).
+          const boxTransform = `scale(${gizmo.cropZoom / 100}) translate(${gizmo.cropX}%, ${gizmo.cropY}%)`
+          const startMove = (e: React.PointerEvent) => {
+            const rect = stageRef.current?.getBoundingClientRect()
+            if (!rect) return
+            e.currentTarget.setPointerCapture(e.pointerId)
+            gizmoDragRef.current = {
+              mode: 'move',
+              startX: e.clientX, startY: e.clientY,
+              baseX: gizmo.cropX, baseY: gizmo.cropY,
+              zoom: gizmo.cropZoom, rect,
+            }
+          }
+          const startResize = (e: React.PointerEvent) => {
+            e.stopPropagation()
+            const rect = stageRef.current?.getBoundingClientRect()
+            if (!rect) return
+            const cx = rect.left + rect.width / 2
+            const cy = rect.top + rect.height / 2
+            const startDist = Math.hypot(e.clientX - cx, e.clientY - cy)
+            if (startDist <= 4) return
+            e.currentTarget.setPointerCapture(e.pointerId)
+            gizmoDragRef.current = { mode: 'resize', cx, cy, startDist, baseZoom: gizmo.cropZoom }
+          }
+          const onMove = (e: React.PointerEvent) => {
+            const d = gizmoDragRef.current
+            if (!d) return
+            if (d.mode === 'move') {
+              const dxPx = e.clientX - d.startX
+              const dyPx = e.clientY - d.startY
+              const newX = clamp(-50, 50, d.baseX + (100 * dxPx) / ((d.zoom / 100) * d.rect.width))
+              const newY = clamp(-50, 50, d.baseY + (100 * dyPx) / ((d.zoom / 100) * d.rect.height))
+              onGizmoChange({ cropX: round2(newX), cropY: round2(newY) })
+            } else {
+              const dist = Math.hypot(e.clientX - d.cx, e.clientY - d.cy)
+              const newZoom = clamp(100, 400, d.baseZoom * (dist / d.startDist))
+              onGizmoChange({ cropZoom: round2(newZoom) })
+            }
+          }
+          const endDrag = (e: React.PointerEvent) => {
+            if (gizmoDragRef.current) {
+              try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {}
+              gizmoDragRef.current = null
+            }
+          }
+          const handle = (corner: 'nw' | 'ne' | 'sw' | 'se'): React.CSSProperties => {
+            const size = 11
+            const pos: React.CSSProperties = { position: 'absolute' }
+            if (corner === 'nw') { pos.top = -size / 2; pos.left = -size / 2 }
+            if (corner === 'ne') { pos.top = -size / 2; pos.right = -size / 2 }
+            if (corner === 'sw') { pos.bottom = -size / 2; pos.left = -size / 2 }
+            if (corner === 'se') { pos.bottom = -size / 2; pos.right = -size / 2 }
+            return {
+              ...pos,
+              width: size, height: size,
+              background: 'var(--accent)',
+              border: '1px solid rgba(255,255,255,0.85)',
+              borderRadius: 2,
+              pointerEvents: 'auto',
+              cursor: corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize',
+              touchAction: 'none',
+            }
+          }
+          return (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 9, pointerEvents: 'none' }}>
+              <div
+                style={{
+                  position: 'absolute', inset: 0,
+                  transform: boxTransform, transformOrigin: 'center',
+                  border: '1.5px solid var(--accent)',
+                  boxSizing: 'border-box',
+                  pointerEvents: 'auto',
+                  cursor: 'move',
+                  touchAction: 'none',
+                }}
+                onPointerDown={startMove}
+                onPointerMove={onMove}
+                onPointerUp={endDrag}
+                onPointerCancel={endDrag}
+              >
+                {(['nw', 'ne', 'sw', 'se'] as const).map(c => (
+                  <div
+                    key={c}
+                    style={handle(c)}
+                    onPointerDown={startResize}
+                    onPointerMove={onMove}
+                    onPointerUp={endDrag}
+                    onPointerCancel={endDrag}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Video overlays (labels, captions) */}
         {src && contentType === 'video' && (

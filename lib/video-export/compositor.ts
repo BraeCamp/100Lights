@@ -26,6 +26,7 @@ import { captionWords } from '@/lib/captions'
 import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
+import { followPan } from '@/lib/focus-utils'
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -110,7 +111,7 @@ interface ClipTransform {
 }
 
 // ── Ported from VideoEditor.clipTransform (fade envelope + Ken Burns) ──────────
-export function computeClipTransform(clip: TimelineItem, t: number): ClipTransform {
+export function computeClipTransform(clip: TimelineItem, t: number, items?: TimelineItem[]): ClipTransform {
   const clipDur = clip.outPoint - clip.inPoint
   const local   = t - clip.startTime
   let fadeOpacity = 1
@@ -130,6 +131,13 @@ export function computeClipTransform(clip: TimelineItem, t: number): ClipTransfo
     cropZoom = kb.fromZoom + (kb.toZoom - kb.fromZoom) * s
     cropX    = kb.fromX    + (kb.toX    - kb.fromX)    * s
     cropY    = kb.fromY    + (kb.toY    - kb.fromY)    * s
+  }
+  // Follow-focus override: pan cropX/cropY to keep the linked dot centered.
+  // Uses the (static) cropZoom for headroom — Ken-Burns zoom animation isn't
+  // reflected in the pan amount (v1 limitation).
+  if (clip.followFocusClipId && items) {
+    const fp = followPan(clip, items, t)
+    if (fp) { cropX = fp.cropX; cropY = fp.cropY }
   }
   return {
     opacity: clip.opacity ?? 100,
@@ -297,7 +305,7 @@ function drawVideoClip(
   if (!v || v.videoWidth === 0) return
   const { width: W, height: H, adjustments } = state
 
-  const tf = computeClipTransform(clip, t)
+  const tf = computeClipTransform(clip, t, state.items)
   const rect = fitRect(v.videoWidth, v.videoHeight, W, H, clip.fitMode ?? 'contain')
 
   // LUT: route the frame through the GPU applier first; the graded canvas
