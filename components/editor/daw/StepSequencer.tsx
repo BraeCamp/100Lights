@@ -248,23 +248,34 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
   }
 
   const [tall, setTall] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Contain wheel scrolling: this is a horizontal-only surface, so translate the
-  // wheel to horizontal scroll and preventDefault (native, non-passive — a React
-  // onWheel is passive in React 19 and can't preventDefault) so scrolling the
-  // sequencer never scrolls the whole page.
+  // Contain wheel scrolling to the grid so it never leaks into the arrangement's
+  // horizontal scroll (which would drag the tracks) or the page. Attached to the
+  // whole sequencer (rootRef) so wheeling over the header counts too, but it
+  // always scrolls the grid (scrollRef). The grid scrolls BOTH axes: a vertical
+  // gesture scrolls the lanes, and only falls back to horizontal when the lanes
+  // already fit (nothing to scroll vertically). Native, non-passive — a React
+  // onWheel is passive in React 19 and can't preventDefault.
   useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
+    const root = rootRef.current
+    if (!root) return
     const onWheel = (e: WheelEvent) => {
-      const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
-      if (d === 0) return
-      el.scrollLeft += d
-      e.preventDefault()
+      const el = scrollRef.current
+      if (!el) return
+      const canX = el.scrollWidth - el.clientWidth > 1
+      const canY = el.scrollHeight - el.clientHeight > 1
+      const horiz = Math.abs(e.deltaX) > Math.abs(e.deltaY)
+      if (horiz) {
+        if (canX && e.deltaX !== 0) { el.scrollLeft += e.deltaX; e.preventDefault() }
+      } else if (e.deltaY !== 0) {
+        if (canY) { el.scrollTop += e.deltaY; e.preventDefault() }
+        else if (canX) { el.scrollLeft += e.deltaY; e.preventDefault() }   // lanes fit → wheel scrolls steps
+      }
     }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
+    root.addEventListener('wheel', onWheel, { passive: false })
+    return () => root.removeEventListener('wheel', onWheel)
   }, [])
 
   // Pins the left label column so drum/lane names stay put while steps scroll.
@@ -280,9 +291,9 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
   }
 
   return (
-    <div style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
+    <div ref={rootRef} style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '7px 12px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '7px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--accent-light)' }}>◼ STEP SEQUENCER</span>
         <span style={{ fontSize: 10, color: 'var(--text-muted)', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip.name}</span>
 
@@ -341,7 +352,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
       </div>
 
       {smartOpen && (
-        <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6, letterSpacing: '0.06em' }}>SMART DRUMS — drag: → busier · ↑ louder</div>
           <div onPointerDown={e => { try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ok */ } handleSmart(e) }} onPointerMove={e => { if (e.buttons) handleSmart(e) }}
             style={{ position: 'relative', width: '100%', maxWidth: 300, height: 150, borderRadius: 12, border: '1px solid var(--border)', background: 'linear-gradient(135deg, rgb(var(--accent-rgb) / 0.12), rgba(59,130,246,0.06))', touchAction: 'none', cursor: 'crosshair', margin: '0 auto' }}>
@@ -354,13 +365,15 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
       )}
 
       {!isDrum && (
-        <div style={{ padding: '6px 12px', fontSize: 10, color: '#f59e0b' }}>
+        <div style={{ padding: '6px 12px', fontSize: 10, color: '#f59e0b', flexShrink: 0 }}>
           This track isn’t a drum kit yet — pick a KIT above so the hits sound like drums.
         </div>
       )}
 
-      {/* Grid */}
-      <div ref={scrollRef} style={{ overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', padding: '10px 12px', maxHeight: tall ? 420 : 300 }}>
+      {/* Grid — the one scroll owner: both axes (lanes vertically, steps
+          horizontally), height driven by the flex parent so it fills the panel
+          and never clips lanes. */}
+      <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', padding: '10px 12px' }}>
         <div style={{ display: 'inline-block', minWidth: '100%' }}>
           {/* Step numbers */}
           <div style={{ display: 'grid', gridTemplateColumns: `150px repeat(${steps}, minmax(20px, 1fr))`, gap: 3, marginBottom: 3 }}>
@@ -429,7 +442,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
           </div>
         </div>
       </div>
-      <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: 0, padding: '0 12px 10px', lineHeight: 1.5 }}>
+      <p style={{ fontSize: 9.5, color: 'var(--text-muted)', margin: 0, padding: '8px 12px 10px', lineHeight: 1.5, flexShrink: 0, borderTop: '1px solid var(--border)' }}>
         Click a cell to place a hit; drag across the VELOCITY row to shape the accents. The ◎ on a lane loads a sample onto it — the audio bakes into the kit, so saving the kit (＋ next to KIT) keeps it and it travels when you share.
       </p>
 

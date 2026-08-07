@@ -2054,7 +2054,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{seqClip.name}</span>
               <button onClick={() => setExpandedStepSeqClipId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '0 2px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close step sequencer"><X size={12} /></button>
             </div>
-            <div style={{ flex: 1, height: seqResize.size, overflowY: 'auto', overflowX: 'hidden' }}>
+            <div style={{ flex: 1, height: seqResize.size, overflow: 'hidden' }}>
               <StepSequencer clipId={seqClip.id} />
             </div>
           </div>
