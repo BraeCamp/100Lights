@@ -396,7 +396,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, onSaveLocal, isSaving, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, onSaveLocal, isSaving, dawDirty, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
   const isMobile = useIsMobile()
   // Meter map for bar-snapping: 'bar' snap honors time-signature changes. Falls
   // back to uniform (project.timeSignatureNum) when there are no meter markers.
@@ -1666,7 +1666,7 @@ export default function ArrangementView() {
             >PUBLISH</button>
           </>
         )}
-        {!isGuest && <ProjectSwitcher currentId={project.id} label="Projects" />}
+        {!isGuest && <ProjectSwitcher currentId={project.id} label="Projects" dirty={dawDirty} />}
         {onSave && (
           <div ref={saveDropdownRef} style={{ position: 'relative', display: 'flex', marginLeft: 4 }}>
             <button

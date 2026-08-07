@@ -488,6 +488,11 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [isOffline, setIsOffline] = useState(false)
   const restoreResolvedRef = useRef(false)
   const autosaveTimerRef = useRef<number | null>(null)
+  // Unsaved-changes indicator (shown by the header ProjectSwitcher). Set on a
+  // user edit, cleared once the local snapshot lands — same transient semantics
+  // as the video editor's isDirty.
+  const [dawDirty, setDawDirty] = useState(false)
+  const dirtyReadyRef = useRef(false)   // skip the first post-load settle
   // Offline sync (Phase C): a pending 3-way merge whose conflicts need resolving.
   const [pendingMerge, setPendingMerge] = useState<{ merged: DawProject; conflicts: MergeConflict[] } | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -546,9 +551,14 @@ export default function AudioEditor(props: AudioEditorProps) {
   // initial (empty) project can't clobber a recoverable snapshot
   useEffect(() => {
     if (!restoreResolvedRef.current) return
+    // The first run after the restore resolves is the loaded project settling —
+    // not a user edit — so don't light the dot for it.
+    if (!dirtyReadyRef.current) dirtyReadyRef.current = true
+    else setDawDirty(true)
     if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current)
     autosaveTimerRef.current = window.setTimeout(() => {
       void saveSnapshot(snapshotKey, projectRef.current).catch(() => {})
+      setDawDirty(false)   // recoverable now
     }, 1500)
     return () => { if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current) }
   }, [project, snapshotKey])
@@ -1643,6 +1653,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     onSave: onSave ? () => { if (props.isGuest) requireAccountRef.current('save'); else void handleSaveRef.current() } : undefined,
     onSaveLocal: props.onSaveLocal ? () => void handleSaveLocalRef.current() : undefined,
     isSaving,
+    dawDirty,
     isGuest: !!props.isGuest,
     requireAccount: (action: 'save' | 'export') => requireAccountRef.current(action),
     resumeExport,
@@ -1660,7 +1671,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     selectedEffectIds,
     playing, recording, position, setPosition, metronome, showPads,
-    expandedPianoRollClipId, expandedStepSeqClipId, loopToolArmed, onSave, isSaving, podcastMeta, blinkIds, triggerBlink,
+    expandedPianoRollClipId, expandedStepSeqClipId, loopToolArmed, onSave, isSaving, dawDirty, podcastMeta, blinkIds, triggerBlink,
     collabPeers, notifyLocked, pendingMerge, props.isGuest, resumeExport,
   ])
 

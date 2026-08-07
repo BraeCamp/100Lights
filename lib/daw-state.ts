@@ -795,6 +795,7 @@ export interface DawContextValue {
    *  alternative to cloud save (no project limit), available to everyone. */
   onSaveLocal?: () => void | Promise<void>
   isSaving: boolean
+  dawDirty?: boolean   // unsaved-changes indicator for the header switcher
   isGuest?: boolean
   requireAccount?: (action: 'save' | 'export') => void
   resumeExport?: boolean
