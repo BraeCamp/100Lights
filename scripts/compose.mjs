@@ -91,6 +91,35 @@ function rootFor(numeral, root, scale, octave) {
   const deg = ROMAN[numeral.toLowerCase()] ?? 0
   return root + SCALES[scale][deg % 7] + octave * 12
 }
+// ── Voice leading ────────────────────────────────────────────────────────────
+// chordFor stacks each chord up from its scale degree, so a VI or VII chord lands
+// far higher than a i chord and the progression LEAPS low→high. voiceLead re-voices
+// the progression so each chord's tones take the octave NEAREST the previous chord
+// (nearest-tone voice leading) and the chord's centre stays inside ±`band` of the
+// first chord — the harmony glides like a slow wave instead of jumping. A small
+// band = a calm, narrow progression; a wider band lets energetic parts open up.
+function nearestOctave(pc, target) {          // MIDI of pitch-class `pc` nearest `target`
+  const base = ((pc % 12) + 12) % 12
+  return base + Math.round((target - base) / 12) * 12
+}
+function voiceLead(chords, band) {
+  if (!chords.length) return chords
+  const centre = chords[0].reduce((a, b) => a + b, 0) / chords[0].length
+  let anchor = centre
+  return chords.map(raw => {
+    const pcs = [...new Set(raw.map(p => ((p % 12) + 12) % 12))]
+    // Place each tone near the running anchor, then push collisions up an octave
+    // so it's a real ascending chord (no unison doubling).
+    const voiced = pcs.map(pc => nearestOctave(pc, anchor)).sort((a, b) => a - b)
+    for (let i = 1; i < voiced.length; i++) while (voiced[i] <= voiced[i - 1]) voiced[i] += 12
+    // Keep the whole chord within ±band of the section's opening register.
+    let cen = voiced.reduce((a, b) => a + b, 0) / voiced.length
+    while (cen > centre + band) { for (let i = 0; i < voiced.length; i++) voiced[i] -= 12; cen -= 12 }
+    while (cen < centre - band) { for (let i = 0; i < voiced.length; i++) voiced[i] += 12; cen += 12 }
+    anchor = cen                                 // follow the chord — the "wave"
+    return voiced
+  })
+}
 // Snap any pitch to the nearest in-key note (keeps passing tones diatonic).
 function snapToScale(pitch, root, scale) {
   const pc = ((pitch - root) % 12 + 12) % 12
@@ -1222,8 +1251,11 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     let seq = sectionNumerals(recipe, sec.bars, appearance, scale)
     // Sparse sections hold long: reduce to the first two chords, doubled.
     if (sparse) { const a = seq[0], b = seq[Math.min(2, seq.length - 1)]; seq = Array.from({ length: sec.bars }, (_, i) => [a, b][Math.floor(i / 2) % 2]) }
-    const chords = seq.map(nu => chordFor(nu, secRoot, scale, 4, ext))
-    const padCh = seq.map(nu => chordFor(nu, secRoot, scale, 4, e > 0.8 ? ext : 0))
+    // Voice-lead the progression so chords don't leap low→high. The band tracks
+    // energy: calm sections stay narrow and glide (a slow wave); energetic ones
+    // open up. Pads sit a touch tighter — they're the sustained wave under it all.
+    const chords = voiceLead(seq.map(nu => chordFor(nu, secRoot, scale, 4, ext)), 3 + e * 9)
+    const padCh = voiceLead(seq.map(nu => chordFor(nu, secRoot, scale, 4, e > 0.8 ? ext : 0)), 2 + e * 4)
     const roots = seq.map(nu => snapToScale(rootFor(nu, secRoot, scale, 2), secRoot, scale))
 
     const peak = /chorus|hook|drop/.test(sec.role)
