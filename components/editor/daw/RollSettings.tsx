@@ -18,7 +18,7 @@ import type { DawAction } from '@/lib/daw-state'
 import { useDaw } from '@/lib/daw-state'
 import EqCurve, { type EqVals } from './EqCurve'
 import { fxHasAudibleField, FX_FIELDS, FX_FIELD_BY_KEY, fieldIsSet } from '@/lib/roll-fx'
-import { getPresets } from '@/lib/midi-presets'
+import { getPresets, combinePresets, getGroupedPresets, noteRangeLabel } from '@/lib/midi-presets'
 import { tonesForGroup, applyTone, toneMatches } from '@/lib/tone-presets'
 import { articOptions } from '@/lib/articulation'
 import { copySound, getCopiedSound, countSetFields, SOUND_CLIPBOARD_EVENT } from '@/lib/fx-clipboard'
@@ -101,6 +101,9 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   retargetOnClipClick?: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
+  // Open state for the built-in "Change Sound" preset picker (below). Uses the
+  // project + engine already pulled from useDaw() further down.
+  const [presetPickerOpen, setPresetPickerOpen] = useState(false)
 
   // Basic vs advanced — remembered across panel instances via localStorage.
   const [mode, setMode] = useState<'basic' | 'advanced'>(() => {
@@ -149,7 +152,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
     // focus the panel so Escape works regardless of what else listens on document
     panelRef.current?.focus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [anchor, effectiveMode])
+  }, [anchor, effectiveMode, presetPickerOpen])
 
   useEffect(() => {
     function onDown(e: Event) {
@@ -438,25 +441,60 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
 
       {/* (Rename moved to the clip's right-click menu — item 11.) */}
 
-      {/* Sound / preset (single MIDI clip only) */}
+      {/* Sound / preset (single MIDI clip only) — "Change Sound" lives here now:
+          the row's name opens a built-in preset picker (or an external handler
+          when one is supplied, e.g. the piano roll's own picker). */}
       {showPreset && (
         <div style={{ ...row, paddingTop: 9 }}>
           <span style={label}>Sound</span>
-          {onChangeSound ? (
-            <button onClick={onChangeSound} title="Change the sound preset"
-              style={{ flex: 1, minWidth: 0, textAlign: 'left', fontSize: 10, color: 'var(--text-primary)', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline', textDecorationColor: 'var(--border-light)', textUnderlineOffset: 2 }}>
-              {presetLabel}
-            </button>
-          ) : (
-            <span style={{ flex: 1, fontSize: 10, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{presetLabel}</span>
-          )}
-          {onChangeSound && <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>tap to change</span>}
+          <button onClick={() => onChangeSound ? onChangeSound() : setPresetPickerOpen(v => !v)} title="Change the sound preset"
+            style={{ flex: 1, minWidth: 0, textAlign: 'left', fontSize: 10, color: 'var(--text-primary)', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline', textDecorationColor: 'var(--border-light)', textUnderlineOffset: 2 }}>
+            {presetLabel}
+          </button>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>tap to change</span>
           {canPreview && onPreviewSound && (
             <button onClick={onPreviewSound} title="Listen — plays middle C"
               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: 'transparent', color: CYAN, cursor: 'pointer', fontSize: 11, padding: '2px 4px', flexShrink: 0 }}><Play size={12} /></button>
           )}
         </div>
       )}
+      {/* Built-in preset picker (opened by the Sound row when no external
+          onChangeSound is wired). Scrolls inside the panel. */}
+      {showPreset && presetPickerOpen && !onChangeSound && isMidiClip(clip) && (() => {
+        const allPresets = combinePresets(project.presets)
+        const track = project.tracks.find(t => t.id === clip.trackId)
+        const cur = (clip as MidiClip).presetId
+        const pick = (presetId: string | undefined) => {
+          dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId } })
+          engine.setPresets(allPresets)
+          setPresetPickerOpen(false)
+        }
+        const pickRow = (active: boolean): React.CSSProperties => ({ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left', padding: '4px 12px 4px 18px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: active ? 'var(--accent-light)' : 'var(--text-primary)' })
+        return (
+          <div style={{ maxHeight: 240, overflowY: 'auto', margin: '2px 0 6px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-surface)' }}>
+            {track && track.instrument.type !== 'none' && (
+              <button onClick={() => pick(undefined)} style={pickRow(!cur)}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+                Track instrument
+              </button>
+            )}
+            {getGroupedPresets(allPresets).map(({ group, presets: gp }) => (
+              <div key={group}>
+                <div style={{ padding: '4px 12px 2px', fontSize: 8, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
+                {gp.map(p => (
+                  <button key={p.id} onClick={() => pick(p.id)} style={pickRow(cur === p.id)}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}>
+                    <span>{p.name}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 8.5, color: 'var(--text-muted)' }}>{noteRangeLabel(p)}</span>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        )
+      })()}
       {/* Tone — one button that opens the flavour options (single MIDI clip).
           A tone applies its whole character bag (drive, EQ, distortion…) and the
           engine renders all of it, so it transforms the sound in EVERY UI tier —

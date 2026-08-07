@@ -6,7 +6,6 @@ import { Settings, Crop, Crosshair, ArrowLeftRight, AudioLines, Piano, Grid3x3 }
 import type { DawTrack, DawClip, AudioClip, MidiClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { useDaw } from '@/lib/daw-state'
-import { getPresets, combinePresets, getGroupedPresets, noteRangeLabel } from '@/lib/midi-presets'
 import { shareRecipe } from '@/lib/community'
 import { ShareCommunityDialog, saveUserRecipe } from '../SoundCreate'
 import { encodeWav } from '@/lib/wav-codec'
@@ -105,7 +104,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   const [ctxPos, setCtxPos] = useState<{ x: number; y: number; beat: number } | null>(null)
   // Which submenu the ctx menu is showing: edit ops, clip tools/sound extras,
   // or the preset picker. null = the top level.
-  const [ctxSub, setCtxSub] = useState<null | 'edit' | 'more' | 'presets'>(null)
+  const [ctxSub, setCtxSub] = useState<null | 'more'>(null)
 
   // Menus open upward/leftward instead of running off the screen edge
   useLayoutEffect(() => {
@@ -514,6 +513,24 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     })(),
   ]
 
+  // Library + Community actions — shared by both clip kinds, they live at the
+  // bottom of the "More" submenu.
+  const saveLibraryItem: MenuItem = {
+    label: justSaved ? 'Saved ✓' : isMidiClip(clip) ? 'Save Recipe to Library' : 'Save Sample to Library',
+    color: justSaved ? '#22c55e' : undefined,
+    keepOpen: true,
+    fn: () => {
+      if (justSaved) return
+      void saveClipToLibrary()
+        .then(() => {
+          setJustSaved(true)
+          setTimeout(() => { setCtxPos(null); setJustSaved(false) }, 1000)
+        })
+        .catch(() => { setCtxPos(null) })
+    },
+  }
+  const shareItem: MenuItem = { label: 'Share to Community…', fn: () => setShareOpen(true) }
+
   const moreItems: MenuItem[] = isAudioClip(clip) ? [
     back('← Back'),
     { label: isCropping ? 'Exit Crop' : 'Crop', fn: onCrop },
@@ -522,9 +539,11 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     { label: 'Spectral Editor', fn: () => onSpectral?.() },
     { label: 'Split at Transients', fn: () => { setCtxPos(null); void handleSplitAtTransients() } },
     { label: 'Slice to Library', fn: () => { setCtxPos(null); void handleSliceToLibrary() } },
+    { separator: true },
+    saveLibraryItem,
+    shareItem,
   ] : [
     back('← Back'),
-    { label: 'Change Sound…', fn: () => setCtxSub('presets'), keepOpen: true },
     { label: 'Export MIDI (.mid)', fn: () => {
       void import('@/lib/midi-file').then(({ writeMidiFile }) => {
         const m = clip as MidiClip
@@ -536,6 +555,9 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         setTimeout(() => URL.revokeObjectURL(a.href), 5000)
       })
     } },
+    { separator: true },
+    saveLibraryItem,
+    shareItem,
   ]
 
   const menuItems: MenuItem[] = ctxSub === 'more' ? moreItems : [
@@ -562,23 +584,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
             : []),
         ]),
     dragEditItems[1], // Change Dragging Type → Loop/Expand
-    { label: isAudioClip(clip) ? 'Tools ▸' : 'Sound ▸', fn: () => setCtxSub('more'), keepOpen: true },
-    // Library & Community actions live together
-    {
-      label: justSaved ? 'Saved ✓' : isMidiClip(clip) ? 'Save Recipe to Library' : 'Save Sample to Library',
-      color: justSaved ? '#22c55e' : undefined,
-      keepOpen: true,
-      fn: () => {
-        if (justSaved) return
-        void saveClipToLibrary()
-          .then(() => {
-            setJustSaved(true)
-            setTimeout(() => { setCtxPos(null); setJustSaved(false) }, 1000)
-          })
-          .catch(() => { setCtxPos(null) })
-      },
-    },
-    { label: 'Share to Community…', fn: () => setShareOpen(true) },
+    // Save to Library / Share to Community / Export MIDI now live in here.
+    { label: 'More ▸', fn: () => setCtxSub('more'), keepOpen: true },
     { separator: true },
     // Delete lives at the very bottom, away from the other actions
     { label: isMulti ? 'Delete Selected' : 'Delete', color: '#ef4444', fn: () => isMulti ? onDeleteAll!() : onDelete() },
@@ -908,7 +915,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
         // lane's mousedown — that starts a zero-distance rubber band which
         // clears the selection region before the menu action runs
         <div ref={menuRef} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} style={{ position: 'fixed', zIndex: 1000, left: ctxPos.x, top: ctxPos.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 160, boxShadow: '0 4px 20px rgba(0,0,0,0.5)', maxHeight: '85vh', overflowY: 'auto' }}>
-          {ctxSub !== 'presets' && menuItems.map((it, i) => (
+          {menuItems.map((it, i) => (
             'separator' in it ? (
               <div key={`sep-${i}`} style={{ height: 1, background: 'var(--border)', margin: '4px 8px' }} />
             ) : (
@@ -919,43 +926,6 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
             >{it.label}</button>
             )
           ))}
-          {ctxSub === 'presets' && !isAudioClip(clip) && (() => {
-            const presets = combinePresets(project.presets)
-            const pick = (presetId: string | undefined) => {
-              dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId } })
-              engine.setPresets(presets)
-              setCtxSub(null); setCtxPos(null)
-            }
-            return (
-              <>
-                <button onClick={() => setCtxSub('more')}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 10, cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-muted)' }}>
-                  ← Back
-                </button>
-                {track.instrument.type !== 'none' && (
-                  <button onClick={() => pick(undefined)}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '5px 12px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: clip.presetId ? 'var(--text-primary)' : 'var(--accent-light)' }}>
-                    Track instrument
-                  </button>
-                )}
-                {getGroupedPresets(presets).map(({ group, presets: gp }) => (
-                  <div key={group}>
-                    <div style={{ padding: '4px 12px 2px', fontSize: 8, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</div>
-                    {gp.map(p => (
-                      <button key={p.id} onClick={() => pick(p.id)}
-                        style={{ display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', textAlign: 'left', padding: '4px 12px 4px 18px', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none', color: clip.presetId === p.id ? 'var(--accent-light)' : 'var(--text-primary)' }}
-                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
-                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-                      >
-                        <span>{p.name}</span>
-                        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: 'var(--text-muted)' }}>{noteRangeLabel(p)}</span>
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </>
-            )
-          })()}
         </div>
       )}
 
