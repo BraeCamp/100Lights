@@ -19,6 +19,7 @@ let _lastCopied: 'clips' | 'effects' | null = null
 import { runSpectralMorph } from '@/lib/spectral-morph'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
 import { useUITierOptional } from '../UITierProvider'
+import ProjectSwitcher from '../ProjectSwitcher'
 import { tempoSegments, meterSegments, secondsToBeat, beatToSeconds, barLines, nearestBarBeat } from '@/lib/tempo-map'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import { CommentComposer, CommentThread } from './TimelineComments'
@@ -1665,6 +1666,7 @@ export default function ArrangementView() {
             >PUBLISH</button>
           </>
         )}
+        {!isGuest && <ProjectSwitcher currentId={project.id} label="Projects" />}
         {onSave && (
           <div ref={saveDropdownRef} style={{ position: 'relative', display: 'flex', marginLeft: 4 }}>
             <button

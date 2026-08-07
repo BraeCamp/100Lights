@@ -24,6 +24,7 @@ const ExportModal   = dynamic(() => import('@/components/editor/ExportModal'),  
 // Same appearance/theme panel the audio editor uses — one customization system
 // across both editors (see the shared WorkshopThemeProvider in ProjectEditor).
 const AppearancePanel = dynamic(() => import('@/components/editor/daw/AppearancePanel'), { ssr: false })
+const ProjectSwitcher = dynamic(() => import('@/components/editor/ProjectSwitcher'), { ssr: false })
 const StoryboardView = dynamic(() => import('@/components/editor/StoryboardView'), { ssr: false })
 const DawMixSync    = dynamic(() => import('@/components/editor/DawMixSync'),    { ssr: false })
 
@@ -3151,26 +3152,29 @@ export default function VideoEditor({
           <Upload size={12} /> Open
         </button>
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border)' }} />
-        {editingName ? (
-          <input
-            autoFocus
-            value={nameInput}
-            onChange={e => setNameInput(e.target.value)}
-            onBlur={commitName}
-            onKeyDown={e => { if (e.key === 'Enter') commitName(); if (e.key === 'Escape') { setNameInput(localProjectName); setEditingName(false) } }}
-            className="text-xs font-semibold bg-transparent outline-none border-b flex-1 min-w-0"
-            style={{ color: 'var(--text-primary)', borderColor: 'var(--accent)', maxWidth: 240 }}
-          />
-        ) : (
-          <button
-            onClick={() => { setNameInput(localProjectName); setEditingName(true) }}
-            className="text-xs font-semibold truncate flex-1 text-left hover:opacity-70 transition-opacity"
-            style={{ color: 'var(--text-primary)', maxWidth: 240 }}
-            title="Click to rename project"
-          >
-            {localProjectName}
-          </button>
-        )}
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          {editingName ? (
+            <input
+              autoFocus
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={e => { if (e.key === 'Enter') commitName(); if (e.key === 'Escape') { setNameInput(localProjectName); setEditingName(false) } }}
+              className="text-xs font-semibold bg-transparent outline-none border-b flex-1 min-w-0"
+              style={{ color: 'var(--text-primary)', borderColor: 'var(--accent)', maxWidth: 240 }}
+            />
+          ) : (
+            <button
+              onClick={() => { setNameInput(localProjectName); setEditingName(true) }}
+              className="text-xs font-semibold truncate text-left hover:opacity-70 transition-opacity"
+              style={{ color: 'var(--text-primary)', maxWidth: 240 }}
+              title="Click to rename project"
+            >
+              {localProjectName}
+            </button>
+          )}
+          {projectId && <ProjectSwitcher currentId={savedProjectId} dirty={isDirty} />}
+        </div>
 
         {/* Undo / Redo */}
         <div className="flex items-center gap-0.5">
