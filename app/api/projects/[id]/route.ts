@@ -75,7 +75,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  const body = await req.json().catch(() => ({})) as { name?: string }
+  const body = await req.json().catch(() => ({})) as { name?: string; folderId?: string | null }
+
+  // Move a project to a folder (or out of one with folderId: null).
+  if (body.folderId !== undefined) {
+    try { await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS folder_id TEXT` } catch { /* ignore */ }
+    const rows = await sql`
+      UPDATE projects SET folder_id = ${body.folderId}
+      WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL
+      RETURNING folder_id
+    `
+    if (rows.length === 0) return Response.json({ error: 'Project not found' }, { status: 404 })
+    return Response.json({ folderId: rows[0].folder_id ?? null })
+  }
 
   if (body.name !== undefined) {
     const name = body.name.trim().slice(0, 200)

@@ -7,11 +7,12 @@ import { useUser } from '@clerk/nextjs'
 import {
   Film, AudioLines, Palette,
   ArrowRight, AlertCircle, RefreshCw, CheckCircle2, X,
-  Star, Pencil, ExternalLink, Clock, LogIn, Users,
+  Star, Pencil, ExternalLink, Clock, LogIn, Users, Upload,
 } from 'lucide-react'
 import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import { projectPath } from '@/lib/project-url'
+import { openProjectsFromFile } from '@/lib/project-serializer'
 import StarterCodeBanner from '@/components/StarterCodeBanner'
 import { useIsMobile } from '@/lib/use-is-mobile'
 
@@ -169,6 +170,30 @@ export default function DashboardPage() {
   const [renameValue, setRenameValue] = useState('')
   const [ctxMenu, setCtxMenu] = useState<{ id: string; name: string; x: number; y: number } | null>(null)
   const ctxRef = useRef<HTMLDivElement>(null)
+  const [importing, setImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState<string | null>(null)
+  const flashImport = (msg: string) => { setImportMsg(msg); setTimeout(() => setImportMsg(null), 6000) }
+
+  // Import 100Lights project files (.cfproj / Firefly .zip) straight into the
+  // cloud list — the same flow the All Projects page offers.
+  async function handleImport() {
+    setImporting(true)
+    let read
+    try { read = await openProjectsFromFile() } catch { setImporting(false); return } finally { setImporting(false) }
+    const files = read.projects
+    if (!files.length) { if (read.errors.length) flashImport('Nothing imported.'); return }
+    setImporting(true)
+    let ok = 0, fail = 0, limit = false
+    for (const cf of files) {
+      try {
+        const r = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cf) })
+        if (r.ok) ok++; else { fail++; if (r.status === 403) limit = true }
+      } catch { fail++ }
+    }
+    setImporting(false)
+    flashImport(`Imported ${ok} project${ok !== 1 ? 's' : ''}${fail ? ` — ${fail} failed${limit ? ' (project limit reached)' : ''}` : ''}.`)
+    loadProjects()
+  }
 
   // Platform flags — modules hidden in admin never appear on the dashboard
   const [enabledModules, setEnabledModules] = useState<string[]>(['audio'])
@@ -312,10 +337,27 @@ export default function DashboardPage() {
             <h2 style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
               Recent Projects
             </h2>
-            <Link href="/projects" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}>
-              View all <ArrowRight size={11} />
-            </Link>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              {isSignedIn && (
+                <button
+                  onClick={handleImport}
+                  disabled={importing}
+                  title="Import 100Lights project files (.cfproj / .zip) into your projects"
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--accent-light)', background: 'none', border: 'none', cursor: importing ? 'default' : 'pointer', opacity: importing ? 0.6 : 1, padding: 0 }}
+                >
+                  <Upload size={11} /> {importing ? 'Importing…' : 'Import files'}
+                </button>
+              )}
+              <Link href="/projects" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}>
+                View all <ArrowRight size={11} />
+              </Link>
+            </div>
           </div>
+          {importMsg && (
+            <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-secondary)' }}>
+              {importMsg}
+            </div>
+          )}
 
           {!isSignedIn && isLoaded ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderRadius: 12, border: '1px solid rgba(139,92,246,0.25)', background: 'linear-gradient(135deg, rgba(139,92,246,0.07), rgba(59,130,246,0.05))' }}>

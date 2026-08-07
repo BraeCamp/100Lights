@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, Cloud, HardDrive, FileX } from 'lucide-react'
+import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { openProjectsFromFile, readProjectFile } from '@/lib/project-serializer'
 import { projectPath } from '@/lib/project-url'
@@ -21,7 +21,10 @@ interface CloudSummary {
   thumbnail: string | null
   slug: string | null
   username: string | null
+  folderId: string | null
 }
+
+interface FolderRec { id: string; name: string }
 
 interface LocalFileHandle {
   name: string
@@ -31,7 +34,7 @@ interface LocalFileHandle {
 
 // One row in the unified list — either a cloud project or a local file.
 type Row =
-  | { source: 'cloud'; key: string; ts: number; name: string; id: string; starred: boolean; clips: number; media: number; thumbnail: string | null; slug: string | null; username: string | null }
+  | { source: 'cloud'; key: string; ts: number; name: string; id: string; starred: boolean; clips: number; media: number; thumbnail: string | null; slug: string | null; username: string | null; folderId: string | null }
   | { source: 'local'; key: string; ts: number; name: string; file: LocalFileHandle }
 
 // Link straight to the canonical /@username/slug-code URL so opening a project
@@ -57,8 +60,36 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
   const [localLoading, setLocalLoading] = useState(true)
 
   const [opening, setOpening]   = useState<string | null>(null)
-  const [ctxMenu, setCtxMenu]   = useState<{ id: string; starred: boolean; x: number; y: number; href: string } | null>(null)
+  const [ctxMenu, setCtxMenu]   = useState<{ id: string; starred: boolean; x: number; y: number; href: string; folderId: string | null } | null>(null)
   const [confirmDel, setConfirmDel] = useState<{ kind: 'cloud'; id: string; name: string } | { kind: 'local'; name: string } | null>(null)
+
+  // ── Folders (cloud, per-user) ──
+  const [folders, setFolders]   = useState<FolderRec[]>([])
+  const [activeFolder, setActiveFolder] = useState<string | null>(null)   // null = All
+  const [folderMenu, setFolderMenu] = useState<boolean>(false)   // "Move to folder" submenu open in ctx menu
+  const loadFolders = useCallback(() => {
+    if (!isSignedIn) return
+    fetch('/api/folders').then(r => (r.ok ? r.json() : [])).then((d: FolderRec[]) => setFolders(Array.isArray(d) ? d : [])).catch(() => {})
+  }, [isSignedIn])
+  useEffect(() => { loadFolders() }, [loadFolders, reloadKey])
+
+  async function createFolder() {
+    const name = window.prompt('Folder name:')?.trim()
+    if (!name) return
+    const r = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    if (r.ok) loadFolders()
+  }
+  async function deleteFolder(id: string) {
+    if (!window.confirm('Delete this folder? Projects inside it stay, just unfiled.')) return
+    await fetch(`/api/folders?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+    if (activeFolder === id) setActiveFolder(null)
+    setCloud(prev => prev.map(p => p.folderId === id ? { ...p, folderId: null } : p))
+    loadFolders()
+  }
+  function moveToFolder(projectId: string, folderId: string | null) {
+    setCloud(prev => prev.map(p => p.id === projectId ? { ...p, folderId } : p))
+    fetch(`/api/projects/${projectId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folderId }) }).catch(() => {})
+  }
 
   // ── Cloud ──
   const loadCloud = useCallback(() => {
@@ -183,8 +214,12 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
 
   // ── Merge + sort (starred cloud first, then newest across both) ──
   const rows: Row[] = [
-    ...cloud.map((p): Row => ({ source: 'cloud', key: `c:${p.id}`, ts: Date.parse(p.savedAt) || 0, name: p.name, id: p.id, starred: p.starred, clips: p.clips, media: p.media, thumbnail: p.thumbnail, slug: p.slug, username: p.username })),
-    ...local.map((f): Row => ({ source: 'local', key: `l:${f.name}`, ts: f.modifiedAt ?? 0, name: f.name.replace(/\.(cfproj|zip)$/i, ''), file: f })),
+    // When a folder is selected, show only its cloud projects (local files aren't
+    // folder-able). "All" shows everything.
+    ...cloud
+      .filter(p => activeFolder === null || p.folderId === activeFolder)
+      .map((p): Row => ({ source: 'cloud', key: `c:${p.id}`, ts: Date.parse(p.savedAt) || 0, name: p.name, id: p.id, starred: p.starred, clips: p.clips, media: p.media, thumbnail: p.thumbnail, slug: p.slug, username: p.username, folderId: p.folderId })),
+    ...(activeFolder === null ? local.map((f): Row => ({ source: 'local', key: `l:${f.name}`, ts: f.modifiedAt ?? 0, name: f.name.replace(/\.(cfproj|zip)$/i, ''), file: f })) : []),
   ].sort((a, b) => {
     const aStar = a.source === 'cloud' && a.starred ? 1 : 0
     const bStar = b.source === 'cloud' && b.starred ? 1 : 0
@@ -233,6 +268,24 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
         </div>
       )}
 
+      {/* Folder filter — All + each folder + New. Right-click a folder to delete. */}
+      {isSignedIn && (
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <button onClick={() => setActiveFolder(null)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg" style={{ border: '1px solid var(--border)', background: activeFolder === null ? 'var(--accent-subtle)' : 'var(--bg-card)', color: activeFolder === null ? 'var(--accent-light)' : 'var(--text-secondary)' }}>All</button>
+          {folders.map(f => {
+            const on = activeFolder === f.id
+            return (
+              <button key={f.id} onClick={() => setActiveFolder(f.id)} onContextMenu={(e) => { e.preventDefault(); deleteFolder(f.id) }} title="Click to filter · right-click to delete" className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg" style={{ border: '1px solid var(--border)', background: on ? 'var(--accent-subtle)' : 'var(--bg-card)', color: on ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                <Folder size={12} /> {f.name}
+              </button>
+            )
+          })}
+          <button onClick={createFolder} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg" style={{ border: '1px dashed var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <FolderPlus size={12} /> New folder
+          </button>
+        </div>
+      )}
+
       {rows.length === 0 ? (
         <EmptyState isSignedIn={isSignedIn} hasFolder={!!folder} onConnect={connectFolder} />
       ) : (
@@ -242,7 +295,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
               key={row.key}
               className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
               style={{ background: 'var(--bg-card)', borderColor: row.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)' }}
-              onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ id: row.id, starred: row.starred, x: e.clientX, y: e.clientY, href: cloudHref(row) }) }}
+              onContextMenu={(e) => { e.preventDefault(); setFolderMenu(false); setCtxMenu({ id: row.id, starred: row.starred, x: e.clientX, y: e.clientY, href: cloudHref(row), folderId: row.folderId }) }}
             >
               {/* Hard navigation (plain <a>): a full load reliably hits the
                   canonical server route, avoiding client-router quirks with the
@@ -308,6 +361,28 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
             <Star size={14} fill={ctxMenu.starred ? '#f59e0b' : 'none'} color={ctxMenu.starred ? '#f59e0b' : 'currentColor'} />
             {ctxMenu.starred ? 'Unstar' : 'Star'}
           </button>
+          {/* Move to folder */}
+          <button onClick={() => setFolderMenu(v => !v)} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
+            <Folder size={14} /> Move to folder…
+          </button>
+          {folderMenu && (
+            <div className="mx-1 mb-1 rounded-md py-1" style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', maxHeight: 200, overflowY: 'auto' }}>
+              {ctxMenu.folderId && (
+                <button onClick={() => { moveToFolder(ctxMenu.id, null); setCtxMenu(null) }} className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-left" style={{ color: 'var(--text-muted)' }}>
+                  <X size={12} /> None (unfile)
+                </button>
+              )}
+              {folders.length === 0 && <div className="px-3 py-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>No folders yet.</div>}
+              {folders.map(f => (
+                <button key={f.id} onClick={() => { moveToFolder(ctxMenu.id, f.id); setCtxMenu(null) }} className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-left" style={{ color: ctxMenu.folderId === f.id ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                  <Folder size={12} /> {f.name}
+                </button>
+              ))}
+              <button onClick={() => { setCtxMenu(null); createFolder() }} className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-left" style={{ color: 'var(--accent-light)', borderTop: '1px solid var(--border)' }}>
+                <FolderPlus size={12} /> New folder…
+              </button>
+            </div>
+          )}
           <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
           <button onClick={() => { const id = ctxMenu.id; setCtxMenu(null); requestDeleteCloud(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: '#ef4444' }}>
             <Trash2 size={14} /> Delete
