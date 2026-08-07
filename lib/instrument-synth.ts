@@ -248,7 +248,9 @@ export function playSynth(
     osc2.start(when); osc2.stop(when + 0.22)
 
   } else if (variant === 'synth-strings') {
-    // Strings: slow attack, long sustain, 4 detuned saws with LFO vibrato
+    // Strings: slow attack, long sustain, 4 statically-detuned saws for ensemble
+    // width. NO vibrato by design — the tone stays straight (like the bowed
+    // violin/viola) so users add their own vibrato via effects (pitch LFO).
     filter.frequency.setValueAtTime(900, when)
     filter.frequency.linearRampToValueAtTime(2000, when + 0.8)
     filter.Q.value = 0.8
@@ -257,14 +259,11 @@ export function playSynth(
     masterGain.gain.setValueAtTime(velocity * 0.26, when + 3.2)
     masterGain.gain.linearRampToValueAtTime(0.001, when + 4.5)
 
+    // Static detune only (unison spread), no LFO on the pitch → no vibrato.
     const detunes = [-14, -5, 5, 14]
     for (const det of detunes) {
       const osc = ctx.createOscillator(); osc.type = 'sawtooth'
       osc.frequency.value = hz; osc.detune.value = det
-      const lfo = ctx.createOscillator(); lfo.frequency.value = 5.2
-      const lfoGain = ctx.createGain(); lfoGain.gain.value = 5
-      lfo.connect(lfoGain); lfoGain.connect(osc.detune)
-      lfo.start(when + 0.3); lfo.stop(when + 4.6)
       osc.connect(filter)
       osc.start(when); osc.stop(when + 4.6)
     }

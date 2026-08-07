@@ -469,7 +469,7 @@ const PAL = {
   rnb: { keys: 'builtin-2', bass: 'builtin-18', pad: 'builtin-30', lead: 'builtin-36', kit: 'pop', ext: 9, bassStyle: 'walk', leadStyle: 'melody', keyRhythm: 'lofi' },
   funk: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-5', lead: 'builtin-15', kit: 'funk', ext: 9, bassStyle: 'walk', leadStyle: 'riff', keyRhythm: 'offstab' },
   disco: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-9', lead: 'builtin-15', kit: 'disco', ext: 7, bassStyle: 'octarp', leadStyle: 'riff', keyRhythm: 'offstab' },
-  pop: { keys: 'builtin-26', bass: 'builtin-18', pad: 'builtin-28', lead: 'builtin-40', kit: 'pop', ext: 7, bassStyle: 'rootfifth', leadStyle: 'melody', keyRhythm: 'stab' },
+  pop: { keys: 'builtin-26', bass: 'builtin-18', pad: 'builtin-28', lead: 'builtin-10', kit: 'pop', ext: 7, bassStyle: 'rootfifth', leadStyle: 'melody', keyRhythm: 'stab' },
   rock: { keys: 'builtin-26', bass: 'builtin-18', pad: 'builtin-28', lead: 'builtin-15', kit: 'rock', ext: 0, bassStyle: 'rootfifth', leadStyle: 'riff', keyRhythm: 'sustain' },
   'bossa-nova': { keys: 'builtin-2', bass: 'builtin-19', pad: 'builtin-16', lead: 'builtin-24', kit: 'studio', ext: 9, bassStyle: 'bossa', leadStyle: 'melody', keyRhythm: 'offstab' },
   afrobeat: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-5', lead: 'builtin-21', kit: 'disco', ext: 9, bassStyle: 'walk', leadStyle: 'riff', keyRhythm: 'offstab' },
@@ -480,11 +480,11 @@ const PAL = {
 // composer used to ignore. Ids are builtin-N (see lib/midi-presets.ts).
 const LEAD_ALTS = {
   // melodic leads: mallets, winds, strings, plucks — bright, singable voices
-  melody: ['builtin-36', 'builtin-40', 'builtin-24', 'builtin-2', 'builtin-38', 'builtin-31', 'builtin-37', 'builtin-39', 'builtin-42', 'builtin-25', 'builtin-10', 'builtin-35', 'builtin-16'],
+  melody: ['builtin-36', 'builtin-24', 'builtin-2', 'builtin-38', 'builtin-31', 'builtin-37', 'builtin-39', 'builtin-42', 'builtin-25', 'builtin-10', 'builtin-35', 'builtin-16'],
   arp:    ['builtin-3', 'builtin-8', 'builtin-12', 'builtin-39', 'builtin-38', 'builtin-36'],
   riff:   ['builtin-15', 'builtin-3', 'builtin-21', 'builtin-34', 'builtin-35', 'builtin-22'],
   stab:   ['builtin-3', 'builtin-1', 'builtin-8', 'builtin-21', 'builtin-45'],
-  sustained: ['builtin-43', 'builtin-24', 'builtin-30', 'builtin-40', 'builtin-28', 'builtin-42'],
+  sustained: ['builtin-43', 'builtin-24', 'builtin-30', 'builtin-10', 'builtin-28', 'builtin-42'],
 }
 // Alternate keys / pad / bass timbres (role-appropriate), seed-picked so songs
 // don't all use the one house voice per role.
@@ -877,13 +877,19 @@ function chordToneAt(chord, idx) {
 // 4), which was Brae's "always very high pitched".
 function fillLead(clip, rand, bar0, chords, hook, base, style, root, scale, arpDir = 'up', rate = 2, reg = 0, motion = 0.7) {
   const steps = SCALES[scale], N = steps.length
+  // Register is a whole-octave concern: a non-octave `reg` (e.g. the counter's
+  // old -5) shifts every non-chord-tone OFF the key. Snap it to octaves once here
+  // so no caller can detune the line, then place notes relative to it.
+  reg = 12 * Math.round(reg / 12)
   const degPitch = d => root + 60 + reg + steps[((d % N) + N) % N] + 12 * Math.floor(d / N)
 
   if (style === 'arp') {
-    // Arp register follows the mood: the old fixed +12 push (on top of the +12
-    // upper tones) is what read as "constantly ascending & high". Low motion
-    // slows it to 8ths so it pulses rather than runs.
-    const aReg = Math.max(-12, 6 + reg)
+    // Arp register: `reg` is already octave-snapped above, so this stays on the
+    // chord's pitch classes (the old `6 + reg` was a TRITONE that put the whole arp
+    // out of key against the pad). Sit it in the chord's own octave — the
+    // `chord[1]+12, chord[2]+12` doublings still give sparkle up top; lower than the
+    // old +12 that read as "high", and in-key. Low motion slows it to 8ths.
+    const aReg = Math.max(-12, reg)
     const aRate = motion < 0.4 ? Math.max(rate, 4) : rate
     chords.forEach((chord, b) => {
       const bt = (bar0 + b) * 4
@@ -1296,7 +1302,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
       else if (leadPolicy === 'featured' && !has('arp') && (sec.build || (/chorus|drop/.test(sec.role) && e >= 0.9))) { const c = secClip('lead', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 56, 'arp', secRoot, scale, arpDir, arpRate, leadRegShift, leadMotion); push(c) }
     }
     // Counter — a second melodic line at peaks (its own hook, lower register)
-    if (has('counter') && peak && e >= 0.9 && !sparse && leadPolicy !== 'none') { const c = secClip('counter', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook2, 48, 'melody', secRoot, scale, 'up', 2, leadRegShift - 5, leadMotion * 0.8); humanizeClip(c, humanize, rand); push(c) }
+    if (has('counter') && peak && e >= 0.9 && !sparse && leadPolicy !== 'none') { const c = secClip('counter', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook2, 48, 'melody', secRoot, scale, 'up', 2, leadRegShift - 12, leadMotion * 0.8); humanizeClip(c, humanize, rand); push(c) }
     bar += sec.bars
   }
   const totalBeats = bar * 4

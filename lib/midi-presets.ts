@@ -78,7 +78,7 @@ const BUILT_IN: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>[] = [
   { name: 'Marimba',         folder: 'Marimba – All Notes',             loNote: 45, hiNote: 96,  category: 'other',          group: 'Mallets'   },
   { name: 'Glockenspiel',    folder: 'Glockenspiel – All Notes',        loNote: 72, hiNote: 108, category: 'other',          group: 'Mallets'   },
   { name: 'Kalimba',         folder: 'Kalimba – All Notes',             loNote: 48, hiNote: 84,  category: 'other',          group: 'Mallets'   },
-  { name: 'Violin',          folder: 'Solo Violin – All Notes',         loNote: 55, hiNote: 100, category: 'violin',         group: 'Strings'   },
+  { name: 'Violin (Vibrato)', folder: 'Solo Violin – All Notes',        loNote: 55, hiNote: 100, category: 'violin',         group: 'Strings'   },
   { name: 'Pizzicato',       folder: 'Pizzicato Strings – All Notes',   loNote: 36, hiNote: 96,  category: 'other',          group: 'Strings'   },
   { name: 'Oboe',            folder: 'Oboe – All Notes',                loNote: 58, hiNote: 91,  category: 'other',          group: 'Woodwinds' },
   { name: 'Pan Flute',       folder: 'Pan Flute – All Notes',           loNote: 60, hiNote: 96,  category: 'other',          group: 'Woodwinds' },

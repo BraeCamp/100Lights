@@ -9,7 +9,7 @@
     "validate:articles": "node scripts/validate-articles.mjs",
     "build-tutorial-song": "tsc lib/daw-types.ts --outDir .fixture-build --rootDir lib --target es2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck && node scripts/build-tutorial-song.mjs",
     "capture-tutorials": "node scripts/capture-tutorials.mjs",
-    "prebuild": "node scripts/validate-articles.mjs",
+    "prebuild": "node scripts/validate-articles.mjs && node scripts/check-presets.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

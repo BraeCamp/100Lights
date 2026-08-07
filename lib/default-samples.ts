@@ -20,7 +20,7 @@ import type { LibraryCategory } from './sound-library'
 // ── Seed keys (bump version to force re-seed) ─────────────────────────────────
 
 const SEEDED_KEY          = '100lights-audio-seeded-v8'  // v8: longer/gentler piano release + smoother guitar synth
-const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v8'  // v8: re-render keyboard notes with the improved piano envelope
+const NOTES_SEEDED_KEY    = '100lights-notes-seeded-v9'  // v9: synth-strings re-render with the vibrato LFO removed (steady tone)
 const DARKWAVE_SEEDED_KEY = '100lights-darkwave-seeded-v4'
 const STRINGS_SEEDED_KEY  = '100lights-strings-seeded-v7'  // v7: violin AND viola render as synth bowed string with the vibrato LFO removed
 const PERCUSSION_SEEDED_KEY = '100lights-percussion-seeded-v3'
