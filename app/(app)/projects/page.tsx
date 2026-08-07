@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X } from 'lucide-react'
+import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { openProjectsFromFile, readProjectFile } from '@/lib/project-serializer'
 import { projectPath } from '@/lib/project-url'
@@ -63,10 +63,24 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
   const [ctxMenu, setCtxMenu]   = useState<{ id: string; starred: boolean; x: number; y: number; href: string; folderId: string | null } | null>(null)
   const [confirmDel, setConfirmDel] = useState<{ kind: 'cloud'; id: string; name: string } | { kind: 'local'; name: string } | null>(null)
 
+  // ── Search / sort ──
+  const [search, setSearch] = useState('')
+  const [sort, setSort]     = useState<'recent' | 'name' | 'oldest'>('recent')
+  const [dragId, setDragId] = useState<string | null>(null)     // project being dragged onto a folder
+  const [dropFolder, setDropFolder] = useState<string | null | 'all'>(null)   // folder chip hovered during drag
+
   // ── Folders (cloud, per-user) ──
   const [folders, setFolders]   = useState<FolderRec[]>([])
   const [activeFolder, setActiveFolder] = useState<string | null>(null)   // null = All
   const [folderMenu, setFolderMenu] = useState<boolean>(false)   // "Move to folder" submenu open in ctx menu
+  const [folderCtx, setFolderCtx] = useState<{ id: string; name: string; x: number; y: number } | null>(null)
+  const folderCount = useCallback((id: string) => cloud.filter(p => p.folderId === id).length, [cloud])
+  async function renameFolder(id: string, current: string) {
+    const n = window.prompt('Rename folder:', current)?.trim().slice(0, 60)
+    if (!n || n === current) return
+    setFolders(prev => prev.map(f => f.id === id ? { ...f, name: n } : f))
+    await fetch('/api/folders', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name: n }) }).catch(() => {})
+  }
   const loadFolders = useCallback(() => {
     if (!isSignedIn) return
     fetch('/api/folders').then(r => (r.ok ? r.json() : [])).then((d: FolderRec[]) => setFolders(Array.isArray(d) ? d : [])).catch(() => {})
@@ -197,9 +211,9 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
 
   // Close the right-click menu on any click, scroll, or Escape
   useEffect(() => {
-    if (!ctxMenu) return
-    const close = () => setCtxMenu(null)
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCtxMenu(null) }
+    if (!ctxMenu && !folderCtx) return
+    const close = () => { setCtxMenu(null); setFolderCtx(null) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setCtxMenu(null); setFolderCtx(null) } }
     window.addEventListener('click', close)
     window.addEventListener('scroll', close, true)
     window.addEventListener('keydown', onKey)
@@ -208,11 +222,12 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
       window.removeEventListener('scroll', close, true)
       window.removeEventListener('keydown', onKey)
     }
-  }, [ctxMenu])
+  }, [ctxMenu, folderCtx])
 
   const loading = cloudLoading || localLoading
 
   // ── Merge + sort (starred cloud first, then newest across both) ──
+  const q = search.trim().toLowerCase()
   const rows: Row[] = [
     // When a folder is selected, show only its cloud projects (local files aren't
     // folder-able). "All" shows everything.
@@ -220,12 +235,17 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
       .filter(p => activeFolder === null || p.folderId === activeFolder)
       .map((p): Row => ({ source: 'cloud', key: `c:${p.id}`, ts: Date.parse(p.savedAt) || 0, name: p.name, id: p.id, starred: p.starred, clips: p.clips, media: p.media, thumbnail: p.thumbnail, slug: p.slug, username: p.username, folderId: p.folderId })),
     ...(activeFolder === null ? local.map((f): Row => ({ source: 'local', key: `l:${f.name}`, ts: f.modifiedAt ?? 0, name: f.name.replace(/\.(cfproj|zip)$/i, ''), file: f })) : []),
-  ].sort((a, b) => {
-    const aStar = a.source === 'cloud' && a.starred ? 1 : 0
-    const bStar = b.source === 'cloud' && b.starred ? 1 : 0
-    if (aStar !== bStar) return bStar - aStar
-    return b.ts - a.ts
-  })
+  ]
+    .filter(r => !q || r.name.toLowerCase().includes(q))
+    .sort((a, b) => {
+      if (sort === 'name')   return a.name.localeCompare(b.name)
+      if (sort === 'oldest') return a.ts - b.ts
+      // recent (default): starred cloud first, then newest.
+      const aStar = a.source === 'cloud' && a.starred ? 1 : 0
+      const bStar = b.source === 'cloud' && b.starred ? 1 : 0
+      if (aStar !== bStar) return bStar - aStar
+      return b.ts - a.ts
+    })
 
   if (loading) {
     return (
@@ -268,15 +288,64 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
         </div>
       )}
 
-      {/* Folder filter — All + each folder + New. Right-click a folder to delete. */}
+      {/* Search + sort */}
+      {isSignedIn && (
+        <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 flex-1 px-3 py-2 rounded-lg" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+            <Search size={14} color="var(--text-muted)" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search projects…"
+              className="flex-1 bg-transparent text-sm outline-none"
+              style={{ color: 'var(--text-primary)' }}
+            />
+            {search && <button onClick={() => setSearch('')} title="Clear" style={{ color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex' }}><X size={13} /></button>}
+          </div>
+          <select
+            value={sort}
+            onChange={e => setSort(e.target.value as typeof sort)}
+            title="Sort"
+            className="text-sm rounded-lg px-3 py-2"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer' }}
+          >
+            <option value="recent">Recent</option>
+            <option value="name">Name A–Z</option>
+            <option value="oldest">Oldest</option>
+          </select>
+        </div>
+      )}
+
+      {/* Folder filter — All + each folder + New. Drag a project onto a folder to
+          file it; right-click a folder to rename/delete. */}
       {isSignedIn && (
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <button onClick={() => setActiveFolder(null)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg" style={{ border: '1px solid var(--border)', background: activeFolder === null ? 'var(--accent-subtle)' : 'var(--bg-card)', color: activeFolder === null ? 'var(--accent-light)' : 'var(--text-secondary)' }}>All</button>
+          <button
+            onClick={() => setActiveFolder(null)}
+            onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder('all') }}
+            onDragLeave={() => setDropFolder(null)}
+            onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, null); setDropFolder(null); setDragId(null) }}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
+            style={{ border: `1px solid ${dropFolder === 'all' ? 'var(--accent)' : 'var(--border)'}`, background: activeFolder === null ? 'var(--accent-subtle)' : 'var(--bg-card)', color: activeFolder === null ? 'var(--accent-light)' : 'var(--text-secondary)' }}
+          >All</button>
           {folders.map(f => {
             const on = activeFolder === f.id
+            const n = folderCount(f.id)
+            const over = dropFolder === f.id
             return (
-              <button key={f.id} onClick={() => setActiveFolder(f.id)} onContextMenu={(e) => { e.preventDefault(); deleteFolder(f.id) }} title="Click to filter · right-click to delete" className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg" style={{ border: '1px solid var(--border)', background: on ? 'var(--accent-subtle)' : 'var(--bg-card)', color: on ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+              <button
+                key={f.id}
+                onClick={() => setActiveFolder(f.id)}
+                onContextMenu={(e) => { e.preventDefault(); setFolderCtx({ id: f.id, name: f.name, x: e.clientX, y: e.clientY }) }}
+                onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder(f.id) }}
+                onDragLeave={() => setDropFolder(null)}
+                onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, f.id); setDropFolder(null); setDragId(null) }}
+                title="Click to filter · drag a project here to file it · right-click to rename/delete"
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
+                style={{ border: `1px solid ${over ? 'var(--accent)' : 'var(--border)'}`, background: on ? 'var(--accent-subtle)' : 'var(--bg-card)', color: on ? 'var(--accent-light)' : 'var(--text-secondary)' }}
+              >
                 <Folder size={12} /> {f.name}
+                {n > 0 && <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{n}</span>}
               </button>
             )
           })}
@@ -293,17 +362,20 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
           {rows.map(row => row.source === 'cloud' ? (
             <div
               key={row.key}
+              draggable
+              onDragStart={(e) => { setDragId(row.id); e.dataTransfer.effectAllowed = 'move' }}
+              onDragEnd={() => { setDragId(null); setDropFolder(null) }}
               className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
-              style={{ background: 'var(--bg-card)', borderColor: row.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)' }}
+              style={{ background: 'var(--bg-card)', borderColor: row.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)', opacity: dragId === row.id ? 0.5 : 1, cursor: 'default' }}
               onContextMenu={(e) => { e.preventDefault(); setFolderMenu(false); setCtxMenu({ id: row.id, starred: row.starred, x: e.clientX, y: e.clientY, href: cloudHref(row), folderId: row.folderId }) }}
             >
               {/* Hard navigation (plain <a>): a full load reliably hits the
                   canonical server route, avoiding client-router quirks with the
                   @-prefixed path. Opening a project reloads the editor anyway. */}
-              <a href={cloudHref(row)} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
-                {row.thumbnail ? <img src={row.thumbnail} className="w-full h-full object-cover" alt="" /> : <Film size={16} color="var(--text-secondary)" />}
+              <a href={cloudHref(row)} draggable={false} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
+                {row.thumbnail ? <img src={row.thumbnail} draggable={false} className="w-full h-full object-cover" alt="" /> : <Film size={16} color="var(--text-secondary)" />}
               </a>
-              <a href={cloudHref(row)} className="flex-1 min-w-0">
+              <a href={cloudHref(row)} draggable={false} className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{row.name}</span>
                   <SourceBadge source="cloud" />
@@ -385,6 +457,23 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
           )}
           <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
           <button onClick={() => { const id = ctxMenu.id; setCtxMenu(null); requestDeleteCloud(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: '#ef4444' }}>
+            <Trash2 size={14} /> Delete
+          </button>
+        </div>
+      )}
+
+      {/* Folder right-click menu — rename / delete */}
+      {folderCtx && (
+        <div
+          className="fixed z-50 min-w-[150px] rounded-lg border py-1 shadow-xl"
+          style={{ left: folderCtx.x, top: folderCtx.y, background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button onClick={() => { const { id, name } = folderCtx; setFolderCtx(null); renameFolder(id, name) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
+            <Pencil size={14} /> Rename
+          </button>
+          <button onClick={() => { const id = folderCtx.id; setFolderCtx(null); deleteFolder(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: '#ef4444' }}>
             <Trash2 size={14} /> Delete
           </button>
         </div>
