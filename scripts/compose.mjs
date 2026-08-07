@@ -34,7 +34,7 @@
 //   e.g.  node scripts/compose.mjs boombap "Eb minor" --seed=4
 
 import { execFileSync } from 'node:child_process'
-import { writeFileSync, mkdirSync, mkdtempSync } from 'node:fs'
+import { writeFileSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -102,9 +102,11 @@ function nearestOctave(pc, target) {          // MIDI of pitch-class `pc` neares
   const base = ((pc % 12) + 12) % 12
   return base + Math.round((target - base) / 12) * 12
 }
-function voiceLead(chords, band) {
+function voiceLead(chords, band, centreShift = 0) {
   if (!chords.length) return chords
-  const centre = chords[0].reduce((a, b) => a + b, 0) / chords[0].length
+  // centreShift lets a part sit in its OWN register band (e.g. the pad below the
+  // keys) so two chord layers don't pile into the same octave and muddy up.
+  const centre = chords[0].reduce((a, b) => a + b, 0) / chords[0].length + centreShift
   let anchor = centre
   return chords.map(raw => {
     const pcs = [...new Set(raw.map(p => ((p % 12) + 12) % 12))]
@@ -785,14 +787,22 @@ function voiceChord(chord, style) {
   if (style === 'drop2' && c.length >= 3) { const a = [...c]; a[a.length - 2] -= 12; return a.sort((x, y) => x - y) }
   return chord
 }
-function fillChords(clip, rand, bar0, chords, patStr, base, ring, spread, strum = 0, voicing = 'close') {
+// maxVoices thins a chord to its top N notes (a light comp, not a full stack);
+// density (0..1) drops whole bars and inner hits so a SECOND chord layer becomes
+// occasional punctuation between the other parts instead of a constant wall.
+function fillChords(clip, rand, bar0, chords, patStr, base, ring, spread, strum = 0, voicing = 'close', maxVoices = 99, density = 1) {
   const on = [...patStr].map((c, i) => (c === 'o' ? i : -1)).filter(i => i >= 0)
   chords.forEach((chord, b) => {
+    // Occasional-comp: sometimes skip a whole bar so it plays "here and there".
+    if (density < 1 && b > 0 && rand.chance((1 - density) * 0.7)) return
     for (let k = 0; k < on.length; k++) {
       const i = on[k]
+      // Thin inner hits (keep the bar's first) so it punctuates, not fills.
+      if (density < 1 && i > 0 && rand.chance((1 - density) * 0.6)) continue
       const nxt = k + 1 < on.length ? on[k + 1] : 16
       const len = (ring ?? (nxt - i)) * STEP
-      const voiced = spread ? [chord[0] - 12, ...chord.slice(1)] : voiceChord(chord, voicing)
+      let voiced = spread ? [chord[0] - 12, ...chord.slice(1)] : voiceChord(chord, voicing)
+      if (maxVoices < voiced.length) { const s = [...voiced].sort((a, b2) => a - b2); voiced = s.slice(s.length - maxVoices) }
       const roll = strum > 0 && i === 0 && voiced.length > 1
       const seq = roll ? [...voiced].sort((a, b2) => a - b2) : voiced
       seq.forEach((p, vi) => {
@@ -1255,7 +1265,9 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     // energy: calm sections stay narrow and glide (a slow wave); energetic ones
     // open up. Pads sit a touch tighter — they're the sustained wave under it all.
     const chords = voiceLead(seq.map(nu => chordFor(nu, secRoot, scale, 4, ext)), 3 + e * 9)
-    const padCh = voiceLead(seq.map(nu => chordFor(nu, secRoot, scale, 4, e > 0.8 ? ext : 0)), 2 + e * 4)
+    // Pad sits a register BELOW the keys (centreShift −7) so the two chord layers
+    // occupy different octaves instead of doubling into a muddy block.
+    const padCh = voiceLead(seq.map(nu => chordFor(nu, secRoot, scale, 4, e > 0.8 ? ext : 0)), 2 + e * 4, -7)
     const roots = seq.map(nu => snapToScale(rootFor(nu, secRoot, scale, 2), secRoot, scale))
 
     const peak = /chorus|hook|drop/.test(sec.role)
@@ -1272,7 +1284,7 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
         if (remBars < 1) return
         const st = secStart + sb * 4
         if (role === 'pad') { const c = secClip('pad', st, remBars, e * 0.85); fillPadLong(c, rand, 0, padCh.slice(sb), 42); push(c) }
-        else if (role === 'keys') { const c = secClip('keys', st, remBars, Math.min(e, 0.6)); fillChords(c, rand, 0, chords.slice(sb), keyRhythm, 52, null, false, 0, voicing); push(c) }
+        else if (role === 'keys') { const c = secClip('keys', st, remBars, Math.min(e, 0.6)); const wp = has('pad'); fillChords(c, rand, 0, chords.slice(sb), wp ? KEY_RHYTHMS.stab : keyRhythm, 52, wp ? 3 : null, false, 0, voicing, wp ? 3 : 99, wp ? (0.3 + e * 0.3) : 1); push(c) }
         else if (role === 'arp') { const c = secClip('arp', st, remBars, Math.min(e, 0.6)); fillLead(c, rand, 0, chords.slice(sb), hook, 50, 'arp', secRoot, scale, arpDir, arpRate, leadRegShift, leadMotion); push(c) }
         else if (role === 'bass') { const c = secClip('bass', st, remBars, 0.5); fillBass(c, rand, 0, roots.slice(sb), pal.bassStyle, 68, secRoot, scale, 0.5, bassMotif); push(c) }
         else if (role === 'drums') { const c = secClip('drums', st, remBars, 0.55); fillDrums(c, rand, 0, remBars, { kick: [], snare: [], hat: feel.hat, oh: [], clap: [] }, { energy: 0.6, role: 'intro' }); push(c) }
@@ -1307,7 +1319,16 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
     if (has('bass') && L.bass) { const c = secClip('bass', secStart, sec.bars, e); fillBass(c, rand, 0, roots, sparse ? 'pedal' : pal.bassStyle, 78, secRoot, scale, e, bassMotif); push(c) }
     // Keys — rhythmic chords (voiced per the song's voicing; swaps timbre in the
     // bridge for a mid-song "development" when this song drew useSwap).
-    if (has('keys') && e >= 0.45 && !sparse) { const c = secClip('keys', secStart, sec.bars, e, sec.role === 'bridge' ? swapPreset : null); fillChords(c, rand, 0, chords, keyRhythm, Math.round(44 + e * 30), null, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0, voicing); humanizeClip(c, humanize, rand); push(c) }
+    if (has('keys') && e >= 0.45 && !sparse) { const c = secClip('keys', secStart, sec.bars, e, sec.role === 'bridge' ? swapPreset : null)
+      // When a PAD already holds the harmony, the keys become OCCASIONAL, thin,
+      // SHORT stabs (top 3 voices, ~2 short hits/bar, many bars/hits dropped) — a
+      // chord here and there between the other parts, not a second full chord
+      // wall. Playing alone (no pad), they keep the genre's full rhythmic comp.
+      const withPad = has('pad')
+      const kPat = withPad ? KEY_RHYTHMS.stab : keyRhythm
+      const kRing = withPad ? 3 : null
+      const kMax = withPad ? 3 : 99, kDens = withPad ? (0.3 + e * 0.3) : 1   // calmer → more occasional
+      fillChords(c, rand, 0, chords, kPat, Math.round(44 + e * 30), kRing, false, useRolls && e >= 0.85 ? rand.pick([0.035, 0.05, 0.065]) : 0, voicing, kMax, kDens); humanizeClip(c, humanize, rand); push(c) }
     // Arp — a rolling 16th layer, its own track when the ensemble has one. Mood
     // register/motion keep it from being a constant high ascending run.
     if (has('arp') && e >= 0.5 && !sparse && leadPolicy !== 'none') { const c = secClip('arp', secStart, sec.bars, e); fillLead(c, rand, 0, chords, hook, 54, 'arp', secRoot, scale, arpDir, arpRate, leadRegShift, leadMotion); humanizeClip(c, humanize, rand); push(c) }
@@ -1545,6 +1566,21 @@ async function main() {
     keyStr = pos[1] || st.key
     opts = { tempo: st.bpm, sig: st.sig, styleName: styleArg.split('=')[1] }
   }
+  // AI CREATIVE-DIRECTOR brief (from scripts/compose-ai.mjs): an LLM's decisions
+  // that OVERRIDE the genre's defaults — genre/key/tempo, per-role instrument
+  // presets, form family, and a character signature. The composer's recipe stays
+  // the RECOMMENDATION; the brief is the AI's free creative choice on top of it.
+  const briefArg = argv.find(a => a.startsWith('--brief='))
+  if (briefArg) {
+    let brief
+    try { brief = JSON.parse(readFileSync(briefArg.split('=')[1], 'utf8')) } catch (e) { console.error('bad --brief file:', e.message); process.exit(1) }
+    if (brief.genre) genreId = brief.genre
+    if (brief.key) keyStr = brief.key
+    // Only the composer-understood opts (presets/formFamily/sig/tempo/moodName);
+    // extra keys like `rationale` are harmlessly ignored by compose().
+    opts = { ...opts, ...brief.opts, ...(brief.presets ? { presets: brief.presets } : {}), ...(brief.formFamily ? { formFamily: brief.formFamily } : {}), ...(brief.sig ? { sig: brief.sig } : {}), ...(brief.tempo ? { tempo: brief.tempo } : {}), ...(brief.moodName ? { moodName: brief.moodName } : {}) }
+  }
+
   // SELF-SELECT: with --best=K, generate K candidates and keep the one whose
   // arrangement scores highest (score minus a penalty per flat-spot flag). The
   // composer critiquing its own output and picking the most dynamic take.
