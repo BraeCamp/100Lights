@@ -14,6 +14,7 @@ import ContextMenu from '@/components/editor/ContextMenu'
 import { LogoMark } from '@/components/Logo'
 import { useResizable, ResizeHandle } from '@/components/editor/daw/useResizable'
 import { usePerfMode } from '@/lib/perf-mode'
+import { useRegisterCommands } from '@/lib/commands'
 import { readWorkspace, writeWorkspace } from '@/lib/editor-workspace'
 import { saveProject } from '@/lib/project-store'
 import { projectPath } from '@/lib/project-url'
@@ -3248,6 +3249,22 @@ export default function VideoEditor({
     ...(hasAudio ? [{ id: 'audio'   as const, label: 'Audio',   icon: Music   }] : []),
     ...(hasVideo ? [{ id: 'deliver' as const, label: 'Deliver', icon: Package }] : []),
   ]
+
+  // ── Command palette (⌘K): existing video actions, no new logic ─
+  useRegisterCommands([
+    { id: 'video.addTitle', group: 'Video', label: 'Add Title', keywords: 'text clip caption', when: () => activePage === 'edit', run: () => addTitleClip() },
+    { id: 'video.addMusicViz', group: 'Video', label: 'Add Music Visual', keywords: 'visualizer audio waveform', when: () => activePage === 'edit', run: () => addMusicVizClip() },
+    { id: 'video.export', group: 'Video', label: 'Export', keywords: 'render deliver output', shortcut: '⌘E', run: () => setShowExport(true) },
+    { id: 'video.save', group: 'Video', label: 'Save', keywords: 'cloud persist', shortcut: '⌘S', run: () => { void saveToCloud() } },
+    ...PAGES.map((p): import('@/lib/commands').Command => ({
+      id: `video.page.${p.id}`,
+      group: 'Video Pages',
+      label: `Go to ${p.label}`,
+      keywords: 'page tab view',
+      when: () => activePage !== p.id,
+      run: () => setActivePage(p.id),
+    })),
+  ], [activePage, hasVideo, hasAudio])
 
   return (
     <div data-editor="true" data-editor-kind="video" className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>

@@ -1,311 +1,173 @@
-'use client';
+'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+// ⌘K / Ctrl-K command palette for the editor. A searchable overlay that runs
+// any registered command (see lib/commands.ts) — a keyboard-first way to trigger
+// existing editor actions and navigate a feature-dense UI.
+//
+// Open: ⌘K / Ctrl-K (verified free in the editor), or ⌘/Ctrl-Shift-P as a
+// fallback. Close: Esc / click-out. Filter: case-insensitive substring over
+// label + keywords. Nav: ↑/↓ (wrap), Enter runs the highlighted command then
+// closes; click runs too. Renders nothing when closed.
 
-interface CommandAction {
-  id: string;
-  label: string;
-  group?: string;
-  keywords?: string[];
-  shortcut?: string;
-  action: () => void;
-}
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCommands, type Command } from '@/lib/commands'
 
-interface CommandPaletteProps {
-  open: boolean;
-  onClose: () => void;
-  actions: CommandAction[];
-}
+export default function CommandPalette() {
+  const commands = useCommands()
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const [active, setActive] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-type FilteredItem =
-  | { kind: 'header'; group: string }
-  | { kind: 'action'; action: CommandAction; matchScore: number };
-
-function scoreMatch(action: CommandAction, query: string): number | null {
-  const q = query.toLowerCase();
-  const label = action.label.toLowerCase();
-  const keywords = (action.keywords ?? []).map((k) => k.toLowerCase());
-
-  if (label.startsWith(q)) return 0;
-  if (label.includes(q)) return 1;
-  if (keywords.some((k) => k.startsWith(q))) return 2;
-  if (keywords.some((k) => k.includes(q))) return 3;
-  return null;
-}
-
-function buildList(actions: CommandAction[], query: string): FilteredItem[] {
-  const q = query.trim();
-
-  if (q === '') {
-    const grouped: Record<string, CommandAction[]> = {};
-    const ungrouped: CommandAction[] = [];
-
-    for (const a of actions) {
-      if (a.group) {
-        if (!grouped[a.group]) grouped[a.group] = [];
-        grouped[a.group].push(a);
-      } else {
-        ungrouped.push(a);
+  // ── Global open/close shortcut ────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase()
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && k === 'k') {
+        e.preventDefault()
+        setOpen(o => !o)
+      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && k === 'p') {
+        e.preventDefault()
+        setOpen(o => !o)
+      } else if (e.key === 'Escape' && open) {
+        setOpen(false)
       }
     }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
 
-    const items: FilteredItem[] = [];
-    for (const [group, groupActions] of Object.entries(grouped)) {
-      items.push({ kind: 'header', group });
-      for (const a of groupActions) {
-        items.push({ kind: 'action', action: a, matchScore: 0 });
-      }
+  // Reset + focus each time it opens.
+  useEffect(() => {
+    if (!open) return
+    setQ('')
+    setActive(0)
+    const t = setTimeout(() => inputRef.current?.focus(), 20)
+    return () => clearTimeout(t)
+  }, [open])
+
+  // ── Filter (label + keywords, respecting `when`) ──────────
+  const filtered = useMemo<Command[]>(() => {
+    const term = q.trim().toLowerCase()
+    return commands.filter(c => {
+      if (c.when && !c.when()) return false
+      if (!term) return true
+      return `${c.label} ${c.keywords ?? ''}`.toLowerCase().includes(term)
+    })
+  }, [commands, q])
+
+  // Keep the highlight in range as the list shrinks.
+  useEffect(() => {
+    if (active >= filtered.length) setActive(0)
+  }, [filtered.length, active])
+
+  function run(cmd: Command | undefined) {
+    if (!cmd) return
+    setOpen(false)
+    try {
+      cmd.run()
+    } catch (err) {
+      console.error('[command-palette]', cmd.id, err)
     }
-    for (const a of ungrouped) {
-      items.push({ kind: 'action', action: a, matchScore: 0 });
-    }
-    return items;
   }
 
-  const scored: Array<{ action: CommandAction; matchScore: number }> = [];
-  for (const a of actions) {
-    const score = scoreMatch(a, q);
-    if (score !== null) scored.push({ action: a, matchScore: score });
-  }
-  scored.sort((a, b) => a.matchScore - b.matchScore);
-
-  return scored.slice(0, 50).map((s) => ({
-    kind: 'action' as const,
-    action: s.action,
-    matchScore: s.matchScore,
-  }));
-}
-
-function actionItems(list: FilteredItem[]): Array<{ action: CommandAction; index: number }> {
-  const result: Array<{ action: CommandAction; index: number }> = [];
-  let idx = 0;
-  for (const item of list) {
-    if (item.kind === 'action') {
-      result.push({ action: item.action, index: idx });
-      idx++;
+  function onInputKey(e: React.KeyboardEvent) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActive(a => (filtered.length ? (a + 1) % filtered.length : 0))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActive(a => (filtered.length ? (a - 1 + filtered.length) % filtered.length : 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      run(filtered[active])
     }
   }
-  return result;
-}
 
-export default function CommandPalette({ open, onClose, actions }: CommandPaletteProps) {
-  const [query, setQuery] = useState('');
-  const [focusedIndex, setFocusedIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  if (!open) return null
 
-  const list = buildList(actions, query);
-  const flat = actionItems(list);
-  const total = flat.length;
-
-  const execute = useCallback(
-    (idx: number) => {
-      const item = flat[idx];
-      if (item) {
-        item.action.action();
-        onClose();
-      }
-    },
-    [flat, onClose],
-  );
-
-  useEffect(() => {
-    if (open) {
-      setQuery('');
-      setFocusedIndex(0);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setFocusedIndex((i) => Math.min(i + 1, total - 1));
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setFocusedIndex((i) => Math.max(i - 1, 0));
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        execute(focusedIndex);
-      }
-    };
-
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [open, focusedIndex, total, execute, onClose]);
-
-  // Scroll focused row into view
-  useEffect(() => {
-    if (!listRef.current) return;
-    const focused = listRef.current.querySelector<HTMLElement>('[data-focused="true"]');
-    focused?.scrollIntoView({ block: 'nearest' });
-  }, [focusedIndex]);
-
-  // Reset focused index when list changes
-  useEffect(() => {
-    setFocusedIndex(0);
-  }, [query]);
-
-  if (!open) return null;
-
-  let actionCounter = -1;
+  // Group while keeping a flat index so keyboard nav lines up with render order.
+  const groups: { group: string; items: { cmd: Command; index: number }[] }[] = []
+  filtered.forEach((cmd, index) => {
+    const g = cmd.group || 'Commands'
+    let bucket = groups.find(b => b.group === g)
+    if (!bucket) { bucket = { group: g, items: [] }; groups.push(bucket) }
+    bucket.items.push({ cmd, index })
+  })
 
   return (
     <div
-      onClick={onClose}
-className="electron-nodrag"
-style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.6)',
-        backdropFilter: 'blur(4px)',
-        WebkitBackdropFilter: 'blur(4px)',
-        zIndex: 9999,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+      className="electron-nodrag"
+      onClick={() => setOpen(false)}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 3000,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        paddingTop: '12vh', paddingLeft: 16, paddingRight: 16,
       }}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
         style={{
-          width: 560,
-          maxHeight: 420,
-          background: 'var(--bg-card)',
-          border: '1px solid var(--border)',
-          borderRadius: 10,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+          width: 560, maxWidth: '100%',
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 14, overflow: 'hidden',
+          boxShadow: '0 24px 70px rgba(0,0,0,0.5)',
+          display: 'flex', flexDirection: 'column', maxHeight: '70vh',
         }}
       >
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Type a command…"
-          style={{
-            width: '100%',
-            boxSizing: 'border-box',
-            fontSize: 14,
-            padding: '12px',
-            background: 'var(--bg-surface)',
-            border: 'none',
-            borderBottom: '1px solid var(--border)',
-            color: 'var(--text-primary)',
-            outline: 'none',
-            flexShrink: 0,
-          }}
-        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0 }}>⌘K</span>
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={e => { setQ(e.target.value); setActive(0) }}
+            onKeyDown={onInputKey}
+            placeholder="Type a command or search…"
+            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 15, minWidth: 0 }}
+          />
+          <kbd style={{ fontSize: 10, color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px', flexShrink: 0 }}>esc</kbd>
+        </div>
 
-        <div
-          ref={listRef}
-          style={{
-            overflowY: 'auto',
-            maxHeight: 340,
-          }}
-        >
-          {list.length === 0 && (
-            <div
-              style={{
-                padding: '20px 14px',
-                fontSize: 13,
-                color: 'var(--text-muted)',
-                textAlign: 'center',
-              }}
-            >
-              No commands found
-            </div>
+        <div style={{ overflowY: 'auto', padding: 6 }}>
+          {filtered.length === 0 && (
+            <div style={{ padding: '18px 12px', fontSize: 13, color: 'var(--text-muted)' }}>No matching commands.</div>
           )}
-
-          {list.map((item, i) => {
-            if (item.kind === 'header') {
-              return (
-                <div
-                  key={`header-${item.group}`}
-                  style={{
-                    padding: '4px 14px 2px',
-                    fontSize: 10,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                    color: 'var(--text-muted)',
-                    userSelect: 'none',
-                  }}
-                >
-                  {item.group}
-                </div>
-              );
-            }
-
-            actionCounter++;
-            const idx = actionCounter;
-            const isFocused = focusedIndex === idx;
-
-            return (
-              <div
-                key={item.action.id}
-                data-focused={isFocused ? 'true' : undefined}
-                onMouseEnter={() => setFocusedIndex(idx)}
-                onClick={() => execute(idx)}
-                style={{
-                  padding: '8px 14px',
-                  fontSize: 13,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  cursor: 'pointer',
-                  background: isFocused ? 'rgba(139,92,246,0.15)' : 'transparent',
-                  color: isFocused ? 'rgba(167,139,250,1)' : 'var(--text-primary)',
-                  userSelect: 'none',
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {item.action.label}
-                </span>
-
-                <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0, marginLeft: 12 }}>
-                  {item.action.group && query.trim() !== '' && (
-                    <span
-                      style={{
-                        fontSize: 10,
-                        padding: '2px 6px',
-                        borderRadius: 4,
-                        background: 'var(--accent-subtle)',
-                        color: 'var(--text-muted)',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.06em',
-                      }}
-                    >
-                      {item.action.group}
-                    </span>
-                  )}
-                  {item.action.shortcut && (
-                    <span
-                      style={{
-                        fontSize: 11,
-                        padding: '2px 6px',
-                        borderRadius: 4,
-                        background: 'var(--bg-surface)',
-                        color: 'var(--text-muted)',
-                        border: '1px solid var(--border)',
-                        fontFamily: 'monospace',
-                      }}
-                    >
-                      {item.action.shortcut}
-                    </span>
-                  )}
-                </span>
+          {groups.map(bucket => (
+            <div key={bucket.group}>
+              <div style={{ padding: '8px 10px 4px', fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                {bucket.group}
               </div>
-            );
-          })}
+              {bucket.items.map(({ cmd, index }) => {
+                const on = index === active
+                return (
+                  <button
+                    key={cmd.id}
+                    onMouseMove={() => setActive(index)}
+                    onClick={() => run(cmd)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      width: '100%', textAlign: 'left', padding: '9px 10px',
+                      borderRadius: 8, border: 'none', cursor: 'pointer',
+                      background: on ? 'var(--accent)' : 'transparent',
+                      color: on ? 'var(--accent-contrast)' : 'var(--text-primary)',
+                    }}
+                  >
+                    <span style={{ fontSize: 13.5, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {cmd.label}
+                    </span>
+                    {cmd.shortcut && (
+                      <kbd style={{ fontSize: 10, color: on ? 'var(--accent-contrast)' : 'var(--text-muted)', border: `1px solid ${on ? 'var(--accent-contrast)' : 'var(--border)'}`, borderRadius: 5, padding: '1px 6px', flexShrink: 0, opacity: on ? 0.9 : 1 }}>
+                        {cmd.shortcut}
+                      </kbd>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
         </div>
       </div>
     </div>
-  );
+  )
 }

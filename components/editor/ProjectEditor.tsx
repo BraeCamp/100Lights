@@ -18,11 +18,15 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '@clerk/nextjs'
+import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import type { Caption, Output } from '@/lib/types'
 import { projectPath } from '@/lib/project-url'
 import type { ModuleKey, AudioTrackInit } from '@/lib/editor-types'
 import { ALL_MODULE_KEYS, MODULE_DEFS, DEFAULT_ADJUSTMENTS } from '@/lib/editor-types'
+import { useRegisterCommands } from '@/lib/commands'
+import { setPerfMode, getPerfMode } from '@/lib/perf-mode'
+import CommandPalette from './CommandPalette'
 import type { CfProjFile, SerializedAudioMedia, SerializedMedia } from '@/lib/project-serializer'
 import { saveProjectLocally } from '@/lib/project-serializer'
 import type { DawProject } from '@/lib/daw-types'
@@ -293,8 +297,20 @@ style={{
 
 // ── Main component ────────────────────────────────────────────
 
-export default function ProjectEditor({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId, fixtureId, demoProjectId, templateId }: ProjectEditorProps) {
+// Outer shell: mounts the command palette once so ⌘K works across every editor
+// module. The inner component owns all editor state + command registration.
+export default function ProjectEditor(props: ProjectEditorProps) {
+  return (
+    <>
+      <ProjectEditorInner {...props} />
+      <CommandPalette />
+    </>
+  )
+}
+
+function ProjectEditorInner({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId, fixtureId, demoProjectId, templateId }: ProjectEditorProps) {
   const isNewProject = !projectId
+  const router = useRouter()
   const [activeModules, setActiveModules] = useState<ModuleKey[] | null>(
     isNewProject ? (moduleProp ?? ['video']) : null
   )
@@ -616,6 +632,33 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     setActiveModules(newModules)
     save({ modules: newModules }).catch(() => {})
   }
+
+  // ── Command palette: navigation + global (⌘K) ─────────────
+  // A new way to trigger existing actions — router nav, perf-mode toggle, and a
+  // "Switch to <Module>" per loaded module (reuses handleModulesChange).
+  useRegisterCommands([
+    { id: 'nav.dashboard', group: 'Navigate', label: 'Go to Dashboard', keywords: 'home', run: () => router.push('/dashboard') },
+    { id: 'nav.projects', group: 'Navigate', label: 'Go to Projects', keywords: 'files list', run: () => router.push('/projects') },
+    {
+      id: 'global.perf-mode',
+      group: 'Global',
+      label: 'Toggle Performance mode',
+      keywords: 'perf fps smooth lightweight',
+      run: () => setPerfMode(!getPerfMode()),
+    },
+    ...(activeModules ?? []).map((key): import('@/lib/commands').Command => {
+      const def = MODULE_DEFS.find(m => m.key === key)
+      return {
+        id: `module.switch.${key}`,
+        group: 'Modules',
+        label: `Switch to ${def?.label ?? key}`,
+        keywords: 'module view',
+        // Hide when this module is already the sole active one (no-op).
+        when: () => !((activeModules ?? []).length === 1 && (activeModules ?? [])[0] === key),
+        run: () => handleModulesChange([key]),
+      }
+    }),
+  ], [router, activeModules])
 
   // ── Sync modal callbacks ──────────────────────────────────
   async function handleSyncConfirm(selected: SerializedAudioMedia[]) {

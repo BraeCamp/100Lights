@@ -36,6 +36,7 @@ import { InspectButton } from './daw/InspectMode'
 import PracticeButton from './daw/PracticeButton'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
+import { useRegisterCommands } from '@/lib/commands'
 import SendToProjectButton from './SendToProjectButton'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
@@ -1702,6 +1703,23 @@ export default function AudioEditor(props: AudioEditorProps) {
     expandedPianoRollClipId, expandedStepSeqClipId, loopToolArmed, onSave, isSaving, dawDirty, podcastMeta, blinkIds, triggerBlink,
     collabPeers, notifyLocked, pendingMerge, props.isGuest, resumeExport,
   ])
+
+  // ── Command palette (⌘K): existing audio actions only ────────
+  useRegisterCommands([
+    {
+      id: 'audio.save', group: 'Audio', label: 'Save', keywords: 'cloud persist', shortcut: '⌘S',
+      when: () => !!props.onSave && !props.readOnly,
+      run: () => { void handleSaveRef.current() },
+    },
+    { id: 'audio.view.session',     group: 'Audio', label: 'Switch to Session view',     keywords: 'clips scenes', when: () => !isPodcast && view !== 'session',     run: () => setView('session') },
+    { id: 'audio.view.arrangement', group: 'Audio', label: 'Switch to Arrangement view', keywords: 'timeline',      when: () => view !== 'arrangement', run: () => setView('arrangement') },
+    { id: 'audio.view.mixer',       group: 'Audio', label: 'Switch to Mixer view',       keywords: 'channels faders', when: () => view !== 'mixer',       run: () => setView('mixer') },
+    {
+      id: 'audio.library', group: 'Audio', label: 'Open Sound Library', keywords: 'instruments sounds browser', shortcut: 'B',
+      when: () => !isPodcast,
+      run: () => { setSidebarOpen(true); setLeftTab('library') },
+    },
+  ], [view, isPodcast, props.onSave, props.readOnly])
 
   // ── Render ───────────────────────────────────────────────────────────────────
   const editorContent = (
