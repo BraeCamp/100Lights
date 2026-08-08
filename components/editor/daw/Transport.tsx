@@ -2,13 +2,15 @@
 
 import { uploadRecordingBlob } from '@/lib/record-upload'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type Dispatch } from 'react'
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, Zap, RotateCcw } from 'lucide-react'
 import { TbMetronome } from 'react-icons/tb'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
 import { usePlan } from '@/hooks/usePlan'
-import { useDaw, formatBeat, makeAudioClip, migrateProject } from '@/lib/daw-state'
+import { useDaw, formatBeat, makeAudioClip, migrateProject, type DawAction } from '@/lib/daw-state'
+import { tempoSegments, tempoAt, clampBpm } from '@/lib/tempo-map'
+import type { DawProject } from '@/lib/daw-types'
 import { openProjectInStudio } from '@/lib/open-in-studio'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { useUITierOptional } from '../UITierProvider'
@@ -525,7 +527,9 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
 
   function handleBpmCommit(value: string) {
     const n = parseFloat(value)
-    if (!isNaN(n) && n > 0) applyTempo(n)
+    // Commit only a real number; clamp to the app's tempo range (40–300).
+    // Invalid/empty input reverts (the readout falls back to the current tempo).
+    if (Number.isFinite(n)) applyTempo(clampBpm(n))
     setEditingBpm(false)
   }
 
@@ -893,7 +897,11 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
 
       {/* BPM */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 3 }} data-help-id="bpm">
-        {editingBpm ? (
+        {tempoSegments(project).length > 1 ? (
+          // Multiple tempos (a tempo map is in play): the single field becomes a
+          // per-section dropdown so each section's BPM is editable in one place.
+          <BpmSectionMenu project={project} dispatch={dispatch} engine={engine} monoDisplay={monoDisplay} inputStyle={inputStyle} />
+        ) : editingBpm ? (
           <input
             autoFocus
             type="number"
@@ -901,6 +909,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
             max={300}
             value={bpmDraft}
             onChange={e => setBpmDraft(e.target.value)}
+            onFocus={e => e.currentTarget.select()}
             onBlur={() => handleBpmCommit(bpmDraft)}
             onKeyDown={e => {
               if (e.key === 'Enter') handleBpmCommit(bpmDraft)
@@ -1241,6 +1250,139 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           <MaskingPanel />
         </div>,
         document.body
+      )}
+    </div>
+  )
+}
+
+// Clean numeric BPM field: a free-typed string draft (no clamping mid-type),
+// select-all on focus so typing replaces instead of appends, and clamp+commit
+// only on blur / Enter. Invalid or empty input at commit reverts to `value`.
+function BpmField({ value, onCommit, style, title, ariaLabel }: {
+  value: number
+  onCommit: (bpm: number) => void
+  style?: React.CSSProperties
+  title?: string
+  ariaLabel?: string
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  function commit() {
+    if (draft !== null) {
+      const n = parseFloat(draft)
+      if (Number.isFinite(n)) onCommit(clampBpm(n))
+    }
+    setDraft(null)
+  }
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={draft ?? String(value)}
+      title={title}
+      aria-label={ariaLabel}
+      onChange={e => setDraft(e.target.value)}
+      onFocus={e => { setDraft(String(value)); e.currentTarget.select() }}
+      onBlur={commit}
+      onKeyDown={e => {
+        e.stopPropagation()
+        if (e.key === 'Enter') e.currentTarget.blur()
+        else if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur() }
+      }}
+      style={style}
+    />
+  )
+}
+
+// Per-section tempo dropdown — shown in place of the single BPM field whenever a
+// tempo map is in play (project.tempoMarkers present). Each row edits one segment
+// from tempoSegments(): the synthesized beat-0 segment (no marker) drives the
+// global tempo via SET_TEMPO; a segment matching a marker edits/removes that
+// marker. The section under the playhead is highlighted.
+function BpmSectionMenu({ project, dispatch, engine, monoDisplay, inputStyle }: {
+  project: DawProject
+  dispatch: Dispatch<DawAction>
+  engine: DawEngine
+  monoDisplay: React.CSSProperties
+  inputStyle: React.CSSProperties
+}) {
+  const [open, setOpen] = useState(false)
+  const [playheadBeat, setPlayheadBeat] = useState(() => engine.currentBeat)
+  // Sample the playhead only while the menu is open (keeps the highlight live
+  // without forcing transport re-renders when it's closed).
+  useEffect(() => {
+    if (!open) return
+    const raf = requestAnimationFrame(() => setPlayheadBeat(engine.currentBeat))
+    const id = window.setInterval(() => setPlayheadBeat(engine.currentBeat), 120)
+    return () => { cancelAnimationFrame(raf); window.clearInterval(id) }
+  }, [open, engine])
+
+  const segs = tempoSegments(project)
+  const markers = project.tempoMarkers ?? []
+  const activeBpm = tempoAt(playheadBeat, segs)
+  const beatsPerBar = Math.max(1, project.timeSignatureNum)
+
+  return (
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ ...monoDisplay, minWidth: 52, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}
+        title="Tempo by section — this song changes BPM. Click to edit each section."
+      >
+        {Math.round(activeBpm)}<ChevronDown size={11} />
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1400 }} />
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, marginTop: 6, zIndex: 1401,
+            background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
+            padding: 10, boxShadow: '0 14px 34px rgba(0,0,0,0.7)',
+            display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220,
+          }}>
+            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)' }}>TEMPO BY SECTION</div>
+            {segs.map((seg, i) => {
+              const marker = markers.find(m => Math.abs(m.beat - seg.beat) < 0.01)
+              const nextBeat = i + 1 < segs.length ? segs[i + 1].beat : Infinity
+              const isActive = playheadBeat >= seg.beat - 1e-6 && playheadBeat < nextBeat - 1e-6
+              const bar = Math.floor(seg.beat / beatsPerBar) + 1
+              return (
+                <div key={marker?.id ?? `seg-${seg.beat}`} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '3px 5px', borderRadius: 6,
+                  background: isActive ? 'var(--accent-subtle)' : 'transparent',
+                  border: isActive ? '1px solid var(--accent)' : '1px solid transparent',
+                }}>
+                  <span style={{ fontSize: 10, color: isActive ? 'var(--accent-light)' : 'var(--text-muted)', fontFamily: 'monospace', width: 52, flexShrink: 0 }}>
+                    {seg.beat < 0.01 ? 'Start' : `Bar ${bar}`}
+                  </span>
+                  <BpmField
+                    value={seg.bpm}
+                    ariaLabel={`Tempo for ${seg.beat < 0.01 ? 'the opening section' : `bar ${bar}`}`}
+                    onCommit={bpm => {
+                      if (marker) {
+                        dispatch({ type: 'UPDATE_TEMPO_MARKER', markerId: marker.id, tempo: bpm })
+                        // keep the global tempo (transport read-out, count-in, JAM) in
+                        // sync when editing the opening section's marker
+                        if (seg.beat < 0.01) dispatch({ type: 'PATCH_PROJECT', patch: { tempo: bpm } })
+                      } else {
+                        dispatch({ type: 'SET_TEMPO', tempo: bpm })
+                      }
+                    }}
+                    style={{ ...inputStyle, width: 54 }}
+                  />
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.08em' }}>BPM</span>
+                  {marker && marker.beat > 0.01 && (
+                    <button
+                      onClick={() => dispatch({ type: 'REMOVE_TEMPO_MARKER', markerId: marker.id })}
+                      aria-label="Remove this tempo change"
+                      title="Remove this tempo change"
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, marginLeft: 'auto', display: 'inline-flex', alignItems: 'center' }}
+                    ><X size={12} /></button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </>
       )}
     </div>
   )

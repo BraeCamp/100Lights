@@ -7,6 +7,39 @@ import type { TimelineItem, Track, TransitionType, MediaItem, BeatGrid } from '@
 import { PIXELS_PER_SECOND, RULER_HEIGHT, TOOLBAR_HEIGHT, beatDur, nearestBeat } from '@/lib/editor-types'
 import type { EditorTool } from './VideoEditor'
 import type { ContextMenuItem } from './ContextMenu'
+import { clampBpm } from '@/lib/tempo-map'
+
+// Beat-grid BPM box using the studio's clean numeric-input pattern: a free-typed
+// string draft (no clamping mid-type), select-all on focus, and clamp (40–300) +
+// commit only on blur / Enter. Invalid or empty input reverts to the current bpm.
+function BeatGridBpmInput({ bpm, onCommit }: { bpm: number; onCommit: (bpm: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  function commit() {
+    if (draft !== null) {
+      const n = parseFloat(draft)
+      if (Number.isFinite(n)) onCommit(clampBpm(n))
+    }
+    setDraft(null)
+  }
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={draft ?? String(bpm)}
+      onChange={e => setDraft(e.target.value)}
+      onFocus={e => { setDraft(String(bpm)); e.currentTarget.select() }}
+      onBlur={commit}
+      onKeyDown={e => {
+        e.stopPropagation()
+        if (e.key === 'Enter') e.currentTarget.blur()
+        else if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur() }
+      }}
+      className="text-xs font-mono rounded px-1"
+      style={{ width: 52, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', height: 20 }}
+      title="Beat grid BPM"
+    />
+  )
+}
 
 interface Props {
   items: TimelineItem[]
@@ -656,17 +689,7 @@ export default function Timeline({
         {onBeatGridChange && (beatGrid ? (
           <div className="flex items-center gap-1">
             <Music2 size={11} color="var(--accent-light)" />
-            <input
-              type="number" min={20} max={300} step={0.1}
-              value={beatGrid.bpm}
-              onChange={e => {
-                const v = Number(e.target.value)
-                if (Number.isFinite(v)) onBeatGridChange({ ...beatGrid, bpm: Math.max(20, Math.min(300, v)) })
-              }}
-              className="text-xs font-mono rounded px-1"
-              style={{ width: 52, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', height: 20 }}
-              title="Beat grid BPM"
-            />
+            <BeatGridBpmInput bpm={beatGrid.bpm} onCommit={bpm => onBeatGridChange({ ...beatGrid, bpm })} />
             <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>BPM</span>
             <button
               onClick={handleTapTempo}

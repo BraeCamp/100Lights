@@ -20,7 +20,7 @@ import { runSpectralMorph } from '@/lib/spectral-morph'
 import TrackRow, { HDR_W, SnapMode, snapBeat } from './TrackRow'
 import { useUITierOptional } from '../UITierProvider'
 import ProjectSwitcher from '../ProjectSwitcher'
-import { tempoSegments, meterSegments, secondsToBeat, beatToSeconds, barLines, nearestBarBeat } from '@/lib/tempo-map'
+import { tempoSegments, meterSegments, secondsToBeat, beatToSeconds, barLines, nearestBarBeat, clampBpm } from '@/lib/tempo-map'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import { CommentComposer, CommentThread } from './TimelineComments'
 import VersionHistory from './VersionHistory'
@@ -450,6 +450,22 @@ export default function ArrangementView({ onGenerateMusic }: { onGenerateMusic?:
   const [openComment, setOpenComment]   = useState<{ id: string; x: number; y: number } | null>(null)
   const [newCommentAt, setNewCommentAt] = useState<{ beat: number; x: number; y: number } | null>(null)
   const [tsDraftBpm, setTsDraftBpm] = useState(120)
+  // Raw text the user is typing into the popover's BPM box. Kept separate from the
+  // committed numeric `tsDraftBpm` so mid-type states (empty, "6", "12") aren't
+  // clamped/rewritten on every keystroke; parsed + clamped only on blur/Enter.
+  const [tsDraftBpmText, setTsDraftBpmText] = useState('120')
+  // Parse the current BPM text, clamping to 40–300; falls back to the last
+  // committed value on empty/invalid input.
+  const parseTsBpm = () => {
+    const n = parseFloat(tsDraftBpmText)
+    return Number.isFinite(n) ? clampBpm(n) : tsDraftBpm
+  }
+  const commitTsBpm = () => {
+    const b = parseTsBpm()
+    setTsDraftBpm(b)
+    setTsDraftBpmText(String(b))
+    return b
+  }
   const [tsDraftNum, setTsDraftNum] = useState(project.timeSignatureNum)
   const [tsDraftDen, setTsDraftDen] = useState(project.timeSignatureDen)
   // Group track fold state: set of group track IDs that are folded
@@ -746,6 +762,7 @@ export default function ArrangementView({ onGenerateMusic }: { onGenerateMusic?:
     setTsDraftNum(project.timeSignatureNum)
     setTsDraftDen(project.timeSignatureDen)
     setTsDraftBpm(project.tempo)
+    setTsDraftBpmText(String(project.tempo))
     setTsPopover({ x: e.clientX, y: e.clientY, beat })
   }
 
@@ -2003,9 +2020,11 @@ export default function ArrangementView({ onGenerateMusic }: { onGenerateMusic?:
           </div>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.06em', marginTop: 2 }}>TEMPO</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="number" min={20} max={300} value={tsDraftBpm}
-              onChange={e => setTsDraftBpm(Math.max(20, Math.min(300, parseFloat(e.target.value) || 120)))}
-              onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: tsDraftBpm }); setTsPopover(null) } }}
+            <input type="text" inputMode="decimal" value={tsDraftBpmText}
+              onChange={e => setTsDraftBpmText(e.target.value)}
+              onFocus={e => e.currentTarget.select()}
+              onBlur={commitTsBpm}
+              onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { const bpm = commitTsBpm(); dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: bpm }); setTsPopover(null) } }}
               style={{ width: 62, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'monospace', borderRadius: 3, padding: '3px 5px', outline: 'none', textAlign: 'center' }}
             />
             <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>BPM</span>
@@ -2032,12 +2051,12 @@ export default function ArrangementView({ onGenerateMusic }: { onGenerateMusic?:
           </button>
           <button
             onClick={() => {
-              dispatch({ type: 'ADD_TEMPO_MARKER', marker: { id: crypto.randomUUID(), beat: tsPopover?.beat ?? 0, tempo: tsDraftBpm } })
+              dispatch({ type: 'ADD_TEMPO_MARKER', marker: { id: crypto.randomUUID(), beat: tsPopover?.beat ?? 0, tempo: commitTsBpm() } })
               setTsPopover(null)
             }}
             title="Playback switches to this BPM when the playhead reaches this bar"
             style={{ background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.45)', color: '#fb923c', fontSize: 10.5, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 700 }}>
-            ♩ Tempo change here → {tsDraftBpm} BPM
+            ♩ Tempo change here → {parseTsBpm()} BPM
           </button>
           <button
             onClick={() => {
@@ -2051,7 +2070,7 @@ export default function ArrangementView({ onGenerateMusic }: { onGenerateMusic?:
             𝄞 Time-sig change here → {tsDraftNum}/{tsDraftDen}
           </button>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => { dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: tsDraftBpm }); setTsPopover(null) }}
+            <button onClick={() => { const bpm = commitTsBpm(); dispatch({ type: 'SET_TIME_SIG', num: tsDraftNum, den: tsDraftDen }); dispatch({ type: 'SET_TEMPO', tempo: bpm }); setTsPopover(null) }}
               style={{ flex: 1, background: 'var(--accent)', border: 'none', color: 'var(--accent-contrast)', fontSize: 11, borderRadius: 3, padding: '5px 0', cursor: 'pointer', fontWeight: 600 }}>
               Apply
             </button>
