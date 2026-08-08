@@ -367,6 +367,17 @@ export default function Inspector({
     if (selectedItem) onClipChange(selectedItem.id, patch)
   }
 
+  // Inset crop edge setter — each edge is a fraction 0..0.45; `v` is a percent
+  // (0–45) from the slider. Clamps opposing pairs so l+r ≤ 0.9 and t+b ≤ 0.9.
+  function setCropEdge(edge: 'l' | 't' | 'r' | 'b', v: number) {
+    if (!selectedItem) return
+    const cur = selectedItem.crop ?? { l: 0, t: 0, r: 0, b: 0 }
+    const next = { ...cur, [edge]: Math.max(0, Math.min(0.45, v / 100)) }
+    if (next.l + next.r > 0.9) { if (edge === 'l') next.r = 0.9 - next.l; else next.l = 0.9 - next.r }
+    if (next.t + next.b > 0.9) { if (edge === 't') next.b = 0.9 - next.t; else next.t = 0.9 - next.b }
+    patchClip({ crop: next })
+  }
+
   function addFlag(color: string) {
     if (!selectedItem) return
     const flags = [...(selectedItem.flags ?? []), { id: crypto.randomUUID(), color }]
@@ -776,7 +787,21 @@ export default function Inspector({
                     <Slider label="Pan Y" value={selectedItem.cropY ?? 0} min={-50} max={50} unit="%" onChange={v => patchClip({ cropY: v })} />
                     {((selectedItem.cropZoom ?? 100) !== 100 || (selectedItem.cropX ?? 0) !== 0 || (selectedItem.cropY ?? 0) !== 0) && (
                       <button onClick={() => patchClip({ cropZoom: undefined, cropX: undefined, cropY: undefined })}
-                        className="text-xs text-left mt-0.5" style={{ color: 'var(--accent-light)' }}>Reset crop</button>
+                        className="text-xs text-left mt-0.5" style={{ color: 'var(--accent-light)' }}>Reset zoom/pan</button>
+                    )}
+                    {/* Edge crop — inset each edge; cropped edges become transparent */}
+                    {selectedItem.contentType !== 'title' && selectedItem.contentType !== 'musicviz' && (
+                      <div className="flex flex-col gap-2 mt-1 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+                        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Edge crop</span>
+                        <Slider label="Crop L" value={Math.round((selectedItem.crop?.l ?? 0) * 100)} min={0} max={45} unit="%" onChange={v => setCropEdge('l', v)} />
+                        <Slider label="Crop T" value={Math.round((selectedItem.crop?.t ?? 0) * 100)} min={0} max={45} unit="%" onChange={v => setCropEdge('t', v)} />
+                        <Slider label="Crop R" value={Math.round((selectedItem.crop?.r ?? 0) * 100)} min={0} max={45} unit="%" onChange={v => setCropEdge('r', v)} />
+                        <Slider label="Crop B" value={Math.round((selectedItem.crop?.b ?? 0) * 100)} min={0} max={45} unit="%" onChange={v => setCropEdge('b', v)} />
+                        {selectedItem.crop && (selectedItem.crop.l || selectedItem.crop.t || selectedItem.crop.r || selectedItem.crop.b) ? (
+                          <button onClick={() => patchClip({ crop: undefined })}
+                            className="text-xs text-left" style={{ color: 'var(--accent-light)' }}>Reset edge crop</button>
+                        ) : null}
+                      </div>
                     )}
                     {selectedItem.contentType !== 'title' && selectedItem.contentType !== 'musicviz' && focusClips && focusClips.length > 0 && (
                       <div className="flex flex-col gap-1 mt-1">

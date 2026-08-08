@@ -25,6 +25,7 @@ export interface ClipTransform {
   cropY: number         // -50 to 50
   fadeOpacity: number   // 0–1, computed from fade in/out
   fitMode?: 'contain' | 'cover'   // how the clip fills the project frame
+  crop?: { l: number; t: number; r: number; b: number }  // inset crop (fractions of the element box)
 }
 
 export const DEFAULT_CLIP_TRANSFORM: ClipTransform = {
@@ -139,8 +140,8 @@ interface Props {
   onViewerZoomChange?: (z: number) => void
   /** On-canvas move/resize gizmo for the selected media clip — drives the
    *  clip's cropX/cropY/cropZoom fields. Null when no gizmo should show. */
-  gizmo?: { cropZoom: number; cropX: number; cropY: number } | null
-  onGizmoChange?: (patch: { cropZoom?: number; cropX?: number; cropY?: number }) => void
+  gizmo?: { cropZoom: number; cropX: number; cropY: number; crop?: { l: number; t: number; r: number; b: number } } | null
+  onGizmoChange?: (patch: { cropZoom?: number; cropX?: number; cropY?: number; crop?: { l: number; t: number; r: number; b: number } }) => void
 }
 
 function buildFilter(adj?: VideoAdjustments): string {
@@ -173,11 +174,19 @@ function buildClipStyle(t: ClipTransform): React.CSSProperties {
   if (t.cropX !== 0 || t.cropY !== 0) parts.push(`translate(${t.cropX}%, ${t.cropY}%)`)
   if (t.flipH) parts.push('scaleX(-1)')
   if (t.flipV) parts.push('scaleY(-1)')
-  return {
+  const style: React.CSSProperties = {
     transform: parts.length ? parts.join(' ') : 'none',
     transformOrigin: 'center',
     opacity: (t.opacity / 100) * t.fadeOpacity,
   }
+  // Inset crop — applied in the element's LOCAL box (before the transform above,
+  // which then carries it), so it matches the export's ctx.clip in the same
+  // transformed W×H space. CSS inset order is top right bottom left.
+  const c = t.crop
+  if (c && (c.l || c.t || c.r || c.b)) {
+    style.clipPath = `inset(${(c.t * 100).toFixed(3)}% ${(c.r * 100).toFixed(3)}% ${(c.b * 100).toFixed(3)}% ${(c.l * 100).toFixed(3)}%)`
+  }
+  return style
 }
 
 // The stage is the project frame: an aspect-locked box centered in the monitor.
@@ -502,6 +511,7 @@ export default function VideoPlayer({
   const gizmoDragRef = useRef<
     | { mode: 'move'; startX: number; startY: number; baseX: number; baseY: number; zoom: number; rect: DOMRect }
     | { mode: 'resize'; cx: number; cy: number; startDist: number; baseZoom: number }
+    | { mode: 'crop'; edge: 'l' | 't' | 'r' | 'b'; startX: number; startY: number; base: { l: number; t: number; r: number; b: number }; zoom: number; rect: DOMRect }
     | null
   >(null)
   const [monitorSize, setMonitorSize] = useState({ w: 640, h: 360 })
@@ -1275,6 +1285,22 @@ export default function VideoPlayer({
             e.currentTarget.setPointerCapture(e.pointerId)
             gizmoDragRef.current = { mode: 'resize', cx, cy, startDist, baseZoom: gizmo.cropZoom }
           }
+          // Edge-handle drag → adjusts the clip's inset crop. stopPropagation so it
+          // doesn't also begin a move. Insets are fractions of the element box; the
+          // box is drawn scaled by cropZoom/100, so a screen delta maps to an inset
+          // delta of Δpx / ((cropZoom/100) * stageDim).
+          const startCrop = (edge: 'l' | 't' | 'r' | 'b') => (e: React.PointerEvent) => {
+            e.stopPropagation()
+            const rect = stageRef.current?.getBoundingClientRect()
+            if (!rect) return
+            e.currentTarget.setPointerCapture(e.pointerId)
+            const base = gizmo.crop ?? { l: 0, t: 0, r: 0, b: 0 }
+            gizmoDragRef.current = {
+              mode: 'crop', edge,
+              startX: e.clientX, startY: e.clientY,
+              base: { ...base }, zoom: gizmo.cropZoom, rect,
+            }
+          }
           const onMove = (e: React.PointerEvent) => {
             const d = gizmoDragRef.current
             if (!d) return
@@ -1284,10 +1310,22 @@ export default function VideoPlayer({
               const newX = clamp(-50, 50, d.baseX + (100 * dxPx) / ((d.zoom / 100) * d.rect.width))
               const newY = clamp(-50, 50, d.baseY + (100 * dyPx) / ((d.zoom / 100) * d.rect.height))
               onGizmoChange({ cropX: round2(newX), cropY: round2(newY) })
-            } else {
+            } else if (d.mode === 'resize') {
               const dist = Math.hypot(e.clientX - d.cx, e.clientY - d.cy)
               const newZoom = clamp(100, 400, d.baseZoom * (dist / d.startDist))
               onGizmoChange({ cropZoom: round2(newZoom) })
+            } else {
+              const zf = d.zoom / 100
+              const dxF = (e.clientX - d.startX) / (zf * d.rect.width)
+              const dyF = (e.clientY - d.startY) / (zf * d.rect.height)
+              let { l, t, r, b } = d.base
+              if (d.edge === 'l') l = clamp(0, 0.45, d.base.l + dxF)
+              if (d.edge === 'r') r = clamp(0, 0.45, d.base.r - dxF)
+              if (d.edge === 't') t = clamp(0, 0.45, d.base.t + dyF)
+              if (d.edge === 'b') b = clamp(0, 0.45, d.base.b - dyF)
+              if (l + r > 0.9) { if (d.edge === 'l') l = 0.9 - r; else r = 0.9 - l }
+              if (t + b > 0.9) { if (d.edge === 't') t = 0.9 - b; else b = 0.9 - t }
+              onGizmoChange({ crop: { l: round2(l), t: round2(t), r: round2(r), b: round2(b) } })
             }
           }
           const endDrag = (e: React.PointerEvent) => {
@@ -1314,6 +1352,25 @@ export default function VideoPlayer({
               touchAction: 'none',
             }
           }
+          // Edge (crop) handle — an accent bar at the midpoint of each side,
+          // inset by the current crop so it sits on the cropped edge.
+          const cr = gizmo.crop ?? { l: 0, t: 0, r: 0, b: 0 }
+          const cropped = !!(cr.l || cr.t || cr.r || cr.b)
+          const edgeHandle = (edge: 'l' | 't' | 'r' | 'b'): React.CSSProperties => {
+            const thick = 4, long = 22
+            const base: React.CSSProperties = {
+              position: 'absolute',
+              background: 'var(--accent)',
+              border: '1px solid rgba(255,255,255,0.85)',
+              borderRadius: 2,
+              pointerEvents: 'auto',
+              touchAction: 'none',
+            }
+            if (edge === 'l') return { ...base, left: `${cr.l * 100}%`, top: '50%', transform: 'translate(-50%,-50%)', width: thick, height: long, cursor: 'ew-resize' }
+            if (edge === 'r') return { ...base, right: `${cr.r * 100}%`, top: '50%', transform: 'translate(50%,-50%)', width: thick, height: long, cursor: 'ew-resize' }
+            if (edge === 't') return { ...base, top: `${cr.t * 100}%`, left: '50%', transform: 'translate(-50%,-50%)', width: long, height: thick, cursor: 'ns-resize' }
+            return { ...base, bottom: `${cr.b * 100}%`, left: '50%', transform: 'translate(-50%,50%)', width: long, height: thick, cursor: 'ns-resize' }
+          }
           return (
             <div style={{ position: 'absolute', inset: 0, zIndex: 9, pointerEvents: 'none' }}>
               <div
@@ -1336,6 +1393,28 @@ export default function VideoPlayer({
                     key={c}
                     style={handle(c)}
                     onPointerDown={startResize}
+                    onPointerMove={onMove}
+                    onPointerUp={endDrag}
+                    onPointerCancel={endDrag}
+                  />
+                ))}
+                {/* Crop-region outline — dashed inner box on the cropped edges */}
+                {cropped && (
+                  <div style={{
+                    position: 'absolute',
+                    left: `${cr.l * 100}%`, top: `${cr.t * 100}%`,
+                    right: `${cr.r * 100}%`, bottom: `${cr.b * 100}%`,
+                    border: '1px dashed rgba(255,255,255,0.7)',
+                    boxSizing: 'border-box',
+                    pointerEvents: 'none',
+                  }} />
+                )}
+                {/* Edge (crop) handles — drag to inset each edge */}
+                {(['l', 't', 'r', 'b'] as const).map(edge => (
+                  <div
+                    key={edge}
+                    style={edgeHandle(edge)}
+                    onPointerDown={startCrop(edge)}
                     onPointerMove={onMove}
                     onPointerUp={endDrag}
                     onPointerCancel={endDrag}

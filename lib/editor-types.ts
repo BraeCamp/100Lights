@@ -162,6 +162,12 @@ export interface TimelineItem {
   // Follow-focus: this media clip auto-pans (via cropX/cropY, within its zoom
   // headroom) to keep the referenced drawfocus clip's dot centered as it moves.
   followFocusClipId?: string
+  // Per-clip rectangular inset crop. Each edge is a fraction 0..0.45 of the clip's
+  // frame box; 0/absent = no crop. Cropped edges become transparent (revealing the
+  // layers below / black). Applied in the clip element's local W×H box in the SAME
+  // transformed space in preview (CSS clip-path) and export (ctx.clip), so the two
+  // stay pixel-identical. Constraint: l+r ≤ 0.9 and t+b ≤ 0.9.
+  crop?: { l: number; t: number; r: number; b: number }
 }
 
 export interface Track {

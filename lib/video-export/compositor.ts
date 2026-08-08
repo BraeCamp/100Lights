@@ -328,6 +328,22 @@ function drawVideoClip(
   if (tf.flipV) ctx.scale(1, -1)
   ctx.translate(-W / 2, -H / 2)
 
+  // Per-clip inset crop — clip the transformed ctx to the un-cropped region of
+  // the W×H element box. This is the SAME box/space the preview's CSS clip-path
+  // insets (local element box, BEFORE its transform, then transforms with it), so
+  // preview and export clip identically. Cropped edges reveal the black/layers
+  // below because we simply don't paint them.
+  const cr = clip.crop
+  if (cr && (cr.l || cr.t || cr.r || cr.b)) {
+    const cl = Math.max(0, Math.min(0.45, cr.l || 0))
+    const ct = Math.max(0, Math.min(0.45, cr.t || 0))
+    const crr = Math.max(0, Math.min(0.45, cr.r || 0))
+    const cb = Math.max(0, Math.min(0.45, cr.b || 0))
+    ctx.beginPath()
+    ctx.rect(cl * W, ct * H, (1 - cl - crr) * W, (1 - ct - cb) * H)
+    ctx.clip()
+  }
+
   // Colour grade + motion blur, exactly as the preview builds them.
   let filter = buildFilter(adjustments)
   const clipGrade = buildClipGradeFilter(clip)

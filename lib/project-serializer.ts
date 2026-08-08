@@ -87,6 +87,7 @@ export interface SerializedClip {
   focusRadius?: number
   focusKeyframes?: Array<{ time: number; x: number; y: number }>
   followFocusClipId?: string
+  crop?: { l: number; t: number; r: number; b: number }
 }
 
 export interface SerializedOutput {
@@ -240,6 +241,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       focusRadius:      item.focusRadius,
       focusKeyframes:   item.focusKeyframes,
       followFocusClipId: item.followFocusClipId,
+      crop:             item.crop,
     })),
     adjustments: snap.adjustments,
     aspect: snap.aspect,
@@ -340,6 +342,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     focusRadius:      clip.focusRadius,
     focusKeyframes:   clip.focusKeyframes,
     followFocusClipId: clip.followFocusClipId,
+    crop:             clip.crop,
     // url is intentionally absent — media is offline until re-linked
   }))
 
