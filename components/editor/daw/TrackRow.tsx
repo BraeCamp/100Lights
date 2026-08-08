@@ -589,6 +589,29 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       }
       return
     }
+    // Sheet music dropped from the desktop → transcribed to a MIDI clip.
+    // MusicXML (.musicxml/.xml/.mxl) parses exactly; an image/PDF of a score is
+    // read by AI (Claude vision) via /api/sheet-music. Both land as a MIDI clip.
+    const sheetFile = [...(e.dataTransfer.files ?? [])].find(f =>
+      /\.(musicxml|mxl|xml|png|jpe?g|webp|pdf)$/i.test(f.name) || f.type.startsWith('image/') || f.type === 'application/pdf')
+    if (sheetFile) {
+      try {
+        const { importSheetMusic } = await import('@/lib/sheet-music')
+        const parsed = await importSheetMusic(sheetFile)
+        if (parsed.notes.length === 0) return
+        const bar = project.timeSignatureNum || 4
+        const contentEnd = Math.max(...parsed.notes.map(n => n.startBeat + n.durationBeats))
+        const clip = makeMidiClip(track.id, parsed.name || sheetFile.name.replace(/\.[^.]+$/, ''), snapBeat(beatX, snap, bar, meterSegments(project)), Math.max(bar, Math.ceil(contentEnd / bar) * bar), { isDrumClip: false })
+        clip.notes = parsed.notes.map(n => ({ ...n, id: crypto.randomUUID() }))
+        dispatch({ type: 'ADD_CLIP', clip })
+        setSelectedClipId(clip.id)
+        setExpandedPianoRollClipId(clip.id)
+      } catch (err) {
+        console.warn('Sheet-music import failed:', err)
+        if (typeof window !== 'undefined') window.alert(err instanceof Error ? err.message : 'Could not read that sheet music.')
+      }
+      return
+    }
     // Audio or video files dropped from the desktop → an audio clip (video keeps
     // only its audio track). Placed on this lane at the drop position.
     const mediaFile = [...(e.dataTransfer.files ?? [])].find(f =>
