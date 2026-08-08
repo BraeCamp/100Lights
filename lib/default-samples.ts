@@ -31,6 +31,7 @@ const DARKKIT_SEEDED_KEY  = '100lights-darkkit-seeded-v1'  // 808/ride/shaker + 
 const BRASS_SEEDED_KEY    = '100lights-brass-seeded-v1'
 const WIND_SEEDED_KEY     = '100lights-wind-seeded-v1'
 const REAL_SF_SEEDED_KEY  = '100lights-real-sf-seeded-v2'  // v2: + harp/guitars/mallets/violin/pizz/winds/organ/harpsichord
+const AI_INSTR_SEEDED_KEY = '100lights-ai-instruments-seeded-v1'  // ElevenLabs-sampled AI instrument packs (public/ai-instruments/*.js)
 const DEDUP_KEY           = '100lights-dedup-v5'  // v5: prefer deterministic seed ids over legacy random-id built-ins
 const MIGRATION_V7_KEY    = '100lights-migration-v7'
 
@@ -780,6 +781,7 @@ export async function seedDefaultSamples(): Promise<void> {
     seedBrass().catch(() => {})
     seedWind().catch(() => {})
     seedRealInstruments().catch(() => {})
+    seedAiInstruments().catch(() => {})
     return
   }
 
@@ -810,6 +812,7 @@ export async function seedDefaultSamples(): Promise<void> {
   seedBrass().catch(() => {})
   seedWind().catch(() => {})
   seedRealInstruments().catch(() => {})
+  seedAiInstruments().catch(() => {})
 }
 
 // ── Individual seed functions ─────────────────────────────────────────────────
@@ -1003,4 +1006,37 @@ export async function seedRealInstruments(): Promise<void> {
   const packs = SOUNDFONT_PACKS.filter(p => REAL_SF_FOLDERS.has(p.folder))
   for (const pack of packs) await seedSoundfontPack(pack, now)
   localStorage.setItem(sk(REAL_SF_SEEDED_KEY), '1')
+}
+
+// ── AI instrument packs ────────────────────────────────────────────────────────
+// Multisample instruments extracted from ElevenLabs solo-instrument clips by
+// scripts/build-ai-instruments.mjs. Each pack is a sparse set of root samples in
+// the midi-js-soundfont text format; importSoundfontToLibrary() bakes every
+// semitone across the captured range. Packs are hosted as static files (kept out
+// of the JS bundle) and fetched at seed time. Folders MUST match the BUILT_IN
+// preset folders in lib/midi-presets.ts.
+const AI_INSTRUMENT_PACKS: Array<{ slug: string; folder: string }> = [
+  { slug: 'grand-piano',     folder: 'Grand Piano (AI) – All Notes' },
+  { slug: 'electric-guitar', folder: 'Electric Guitar (AI) – All Notes' },
+  { slug: 'electric-bass',   folder: 'Electric Bass (AI) – All Notes' },
+  { slug: 'fretless-bass',   folder: 'Fretless Bass (AI) – All Notes' },
+  { slug: 'synth-bass',      folder: 'Synth Bass (AI) – All Notes' },
+]
+
+export async function seedAiInstruments(): Promise<void> {
+  if (typeof window === 'undefined') return
+  if (localStorage.getItem(sk(AI_INSTR_SEEDED_KEY))) return
+  for (const inst of AI_INSTRUMENT_PACKS) {
+    try {
+      const resp = await fetch(`/ai-instruments/${inst.slug}.js`)
+      if (!resp.ok) continue
+      const text = await resp.text()
+      // Bakes an entry for every semitone across the pack's captured range,
+      // pitch-shifting the nearest root (same routine the "import soundfont" UI
+      // uses). One pack at a time, yielding between, to stay off the main thread.
+      await importSoundfontToLibrary(text, inst.folder)
+      await yieldToIdle()
+    } catch { /* skip this pack, seed the rest */ }
+  }
+  localStorage.setItem(sk(AI_INSTR_SEEDED_KEY), '1')
 }

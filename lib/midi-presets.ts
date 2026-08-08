@@ -90,6 +90,20 @@ const BUILT_IN: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>[] = [
   // Built for held one-note-per-chord basslines (Artemas-style), not repeated hits.
   { name: 'Sub Drone', folder: 'Synth Bass – All Notes', loNote: 24, hiNote: 60, category: 'synth-bass', group: 'Bass',
     sound: { fx: { attack: 0, decay: 0.09, sustainLevel: 0.92, sustain: 0.35, gain: 1.12, filterHz: 2400, filterQ: 1.1, filterEnv: 0.45, drive: 0.18, sub: 0.7, bass: 0.5, pitchEnv: -3, pitchEnvTime: 0.05 } } },
+  // AI multisample instruments — sampled from ElevenLabs solo-instrument clips
+  // (scripts/build-ai-instruments.mjs → public/ai-instruments/*.js, baked by
+  // seedAiInstruments() in default-samples.ts). loNote/hiNote = the captured
+  // pitch span, so every in-range note has an exact baked sample. group drives
+  // articulation: 'Guitar' auto-slides 0.4, 'Bass'+'fretless' name auto-slides
+  // 0.5 (lib/articulation.ts). APPEND ONLY — built-in ids are index-based.
+  // NOTE on coverage: guitar/piano are well-sampled; the basses captured few
+  // distinct pitches (electric 4, fretless 3, synth 2), so their ranges are
+  // deliberately NARROW — wider would be heavy interpolation and sound thin.
+  { name: 'Grand Piano (AI)',     folder: 'Grand Piano (AI) – All Notes',     loNote: 36, hiNote: 69, category: 'piano-grand', group: 'Piano'  },
+  { name: 'Electric Guitar (AI)', folder: 'Electric Guitar (AI) – All Notes', loNote: 42, hiNote: 62, category: 'other',       group: 'Guitar' },
+  { name: 'Electric Bass (AI)',   folder: 'Electric Bass (AI) – All Notes',   loNote: 38, hiNote: 45, category: 'synth-bass',  group: 'Bass'   },
+  { name: 'Fretless Bass (AI)',   folder: 'Fretless Bass (AI) – All Notes',   loNote: 40, hiNote: 44, category: 'synth-bass',  group: 'Bass'   },
+  { name: 'Synth Bass (AI)',      folder: 'Synth Bass (AI) – All Notes',      loNote: 38, hiNote: 50, category: 'synth-bass',  group: 'Bass'   },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
