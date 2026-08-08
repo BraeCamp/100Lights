@@ -745,6 +745,22 @@ async function migrateToV7(): Promise<void> {
   localStorage.setItem(sk(MIGRATION_V7_KEY), '1')
 }
 
+// ── Cooperative yielding ──────────────────────────────────────────────────────
+// A first-time (uncached) seed writes thousands of stub entries via many
+// sequential IndexedDB puts. Yield the main thread back to the browser between
+// small batches so a long first seed can't freeze the UI. This changes NOTHING
+// about what/which entries are written or their order — it only inserts pauses.
+const SEED_BATCH = 32
+function yieldToIdle(): Promise<void> {
+  return new Promise<void>(resolve => {
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(() => resolve(), { timeout: 200 })
+    } else {
+      setTimeout(resolve, 0)
+    }
+  })
+}
+
 // ── Public seed entry point ───────────────────────────────────────────────────
 
 export async function seedDefaultSamples(): Promise<void> {
@@ -894,12 +910,14 @@ export async function seedStrings(): Promise<void> {
   // Both use the synthesized bowed string: steady, vibrato-free — users add
   // their own vibrato with full control.
   const stringPresets = KEYBOARD_PRESETS.filter(p => p.type === 'violin' || p.type === 'viola')
+  let n = 0
   for (const preset of stringPresets) {
     for (let midi = preset.minMidi; midi <= preset.maxMidi; midi++) {
       const [letter, full] = noteTags(midi)
       const spec = { kind: 'melodic' as const, beatType: preset.type, midiNote: midi, duration: preset.duration, channels: preset.channels }
       await libraryAdd(makeStub(midiNoteName(midi), preset.type as LibraryCategory, spec,
         preset.folder, now, [...preset.typeTags, ...preset.charTags, letter, full], preset.parentGroup))
+      if (++n % SEED_BATCH === 0) await yieldToIdle()
     }
   }
 
@@ -920,6 +938,7 @@ export async function seedKeyboardNotes(): Promise<void> {
   const nonStringPresets = KEYBOARD_PRESETS.filter(p =>
     p.type !== 'violin' && p.type !== 'viola'
   )
+  let n = 0
   for (const preset of nonStringPresets) {
     for (let midi = preset.minMidi; midi <= preset.maxMidi; midi++) {
       const [letter, full] = noteTags(midi)
@@ -927,6 +946,7 @@ export async function seedKeyboardNotes(): Promise<void> {
         kind: 'melodic', beatType: preset.type, midiNote: midi,
         duration: preset.duration, channels: preset.channels,
       }, preset.folder, now, [...preset.typeTags, ...preset.charTags, letter, full], preset.parentGroup))
+      if (++n % SEED_BATCH === 0) await yieldToIdle()
     }
   }
 
@@ -935,12 +955,14 @@ export async function seedKeyboardNotes(): Promise<void> {
 
 /** Seeds a soundfont-based instrument pack (bass, brass, wind) */
 async function seedSoundfontPack(pack: SoundfontPack, now: string): Promise<void> {
+  let n = 0
   for (let midi = pack.minMidi; midi <= pack.maxMidi; midi++) {
     const [letter, full] = noteTags(midi)
     await libraryAdd(makeStub(midiNoteName(midi), pack.category, {
       kind: 'soundfont', beatType: pack.category, midiNote: midi,
       duration: 5.0, channels: 2, soundfontUrl: pack.url,
     }, pack.folder, now, [...pack.typeTags, ...pack.charTags, letter, full], pack.parentGroup))
+    if (++n % SEED_BATCH === 0) await yieldToIdle()
   }
 }
 

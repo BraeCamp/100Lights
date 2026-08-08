@@ -1136,7 +1136,23 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     // library on every page load.
     if (!isLoaded) return
     initLibrary(user?.id ?? null)
-    seedDefaultSamples().catch(() => {})
+    // Defer sample seeding off the critical path: a first-time seed writes
+    // thousands of library stubs, so kick it off once the browser is idle rather
+    // than during mount, keeping first paint/interaction jank-free. Seeding is
+    // idempotent + gated, and playback renders on demand, so a brief delay is
+    // safe. Cancel on unmount so a fast open/close doesn't leave a stray task.
+    const kick = () => { seedDefaultSamples().catch(() => {}) }
+    let idleHandle: number | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    if (typeof window.requestIdleCallback === 'function') {
+      idleHandle = window.requestIdleCallback(kick, { timeout: 2000 })
+    } else {
+      timer = setTimeout(kick, 1500)
+    }
+    return () => {
+      if (idleHandle !== undefined && typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idleHandle)
+      if (timer !== undefined) clearTimeout(timer)
+    }
   }, [isLoaded, user?.id])
 
   const [libTab,           setLibTab]           = useState<'samples' | 'presets'>('samples')
