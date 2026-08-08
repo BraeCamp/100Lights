@@ -91,6 +91,41 @@ function rootFor(numeral, root, scale, octave) {
   const deg = ROMAN[numeral.toLowerCase()] ?? 0
   return root + SCALES[scale][deg % 7] + octave * 12
 }
+// AI-director safety: sanitize an LLM-supplied roman-numeral progression into the
+// numeral set the composer understands. Unknown/garbled numerals fall back to the
+// tonic (i / I, preserving the major/minor case intent) so bad input can NEVER
+// break generation or leave the key. Returns null (→ keep the random recipe) when
+// absent or too short to be a progression.
+function sanitizeProgression(arr) {
+  if (!Array.isArray(arr) || arr.length < 2) return null
+  const out = arr.slice(0, 16).map(raw => {
+    const letters = String(raw).trim().replace(/[^a-zA-Z]/g, '')     // drop accidentals/qualities
+    if (letters.toLowerCase() in ROMAN) return letters                // valid roman → keep case
+    return /[A-Z]/.test(String(raw)) ? 'I' : 'i'                       // unknown → tonic
+  })
+  return out.length >= 2 ? out : null
+}
+// AI-director safety: map an LLM hook (array of [beatOffset 0..3.99, scaleDegree])
+// into the composer's motif shape [slot (16th 0..15), step (scale-degrees from the
+// bar anchor)]. Degrees are scale-degree indices, so they're diatonic by
+// construction; we only guard array shape + finite numbers and clamp to a sane
+// range. Returns null (→ random SHAPE) if fewer than 2 usable notes.
+function aiMotifFrom(pairs) {
+  if (!Array.isArray(pairs)) return null
+  const seen = new Set()
+  const m = []
+  for (const p of pairs) {
+    if (!Array.isArray(p) || p.length < 2) continue
+    const beat = Number(p[0]), deg = Number(p[1])
+    if (!Number.isFinite(beat) || !Number.isFinite(deg)) continue
+    let slot = Math.max(0, Math.min(15, Math.round(beat * 4)))
+    if (seen.has(slot)) continue                    // one note per 16th slot
+    seen.add(slot)
+    m.push([slot, Math.max(-12, Math.min(12, Math.round(deg)))])
+  }
+  m.sort((a, b) => a[0] - b[0])
+  return m.length >= 2 ? m : null
+}
 // ── Voice leading ────────────────────────────────────────────────────────────
 // chordFor stacks each chord up from its scale degree, so a VI or VII chord lands
 // far higher than a i chord and the progression LEAPS low→high. voiceLead re-voices
@@ -850,7 +885,7 @@ function fillPadLong(clip, rand, bar0, chords, base) {
 // fillLead applies it: strong beats anchor to a chord tone (outline the harmony),
 // weak beats step through the scale — so the line is melodic AND consonant, and
 // the same phrase recurs like a real hook instead of random notes.
-function makeHook(rand) {
+function makeHook(rand, aiHook) {
   const bars = rand.pick([2, 2, 4])
   // A MOTIF is a short contour: [slot (16th), step] where `step` is scale-degrees
   // ABOVE the bar's anchor tone. These are real melodic shapes (arch, rise-and-
@@ -869,7 +904,12 @@ function makeHook(rand) {
     [[0, 0], [4, 0], [8, 1], [12, 0]],                 // call: repeated note, tiny lift
     [[0, 2], [3, 2], [6, 1], [8, 0], [12, -1]],        // sighing descent
   ]
-  const motifA = rand.pick(SHAPES)
+  // The AI director can supply the actual melodic hook; if present + valid it
+  // becomes the statement motif (motifA), replacing the random SHAPE. The
+  // contrasting motif (motifB) and the development plan still come from the seed,
+  // so the AI phrase drives the hook while the arrangement develops it as usual.
+  const aiMotif = aiMotifFrom(aiHook)
+  const motifA = aiMotif || rand.pick(SHAPES)
   let motifB = rand.pick(SHAPES)
   for (let g = 0; g < 4 && motifB === motifA; g++) motifB = rand.pick(SHAPES)
   // A per-bar DEVELOPMENT plan so the hook grows instead of looping one shape:
@@ -1075,12 +1115,19 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   let recB = pickByDarkness(liftBank, liftT, rand); if (recKey(recB) === recKey(recA)) recB = pickByDarkness(liftBank, liftT, rand)
   const recC = rand.pick(bridgeBank.filter(r => recKey(r) !== recKey(recA) && recKey(r) !== recKey(recB))) || rand.pick(bridgeBank)
   const progs = { A: recA, B: recB, C: recC }
+  // AI DIRECTOR progression (from --brief): the LLM's roman-numeral backbone drives
+  // the MAIN sections — verse (A) and chorus (B) — while the section logic still
+  // varies/extends it (turnarounds, sparse holds). The bridge (C) stays free to
+  // contrast. Sanitized so it can never break generation or leave the key; absent
+  // → the seed-picked recipes above are used unchanged.
+  const aiProg = sanitizeProgression(opts.progression)
+  if (aiProg) { const r = { chords: aiProg, bars: aiProg.length }; progs.A = r; progs.B = r }
   const seen = { A: 0, B: 0, C: 0 }   // section-appearance counter → development
 
   const form = buildForm(opts.formFamily || FORM_FAMILY[genreId] || 'loop', rand)
   // Template "lengthen": stretch each section so slow/spacious templates breathe.
   if (opts.lengthen && opts.lengthen !== 1) for (const s of form) s.bars = Math.max(2, Math.min(24, Math.round(s.bars * opts.lengthen)))
-  const hook = makeHook(rand)
+  const hook = makeHook(rand, opts.hook)
   let leadPreset = rand.pick(LEAD_ALTS[pal.leadStyle] || [pal.lead])
   if (opts.sig === 'guitar') leadPreset = 'builtin-15'   // electric guitar lead (Artemas)
   if (opts.presets?.lead) leadPreset = opts.presets.lead   // template variant forces a lead timbre
@@ -1188,7 +1235,17 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   const tracks = TK.map(t => ({ id: uid('t'), name: t.name, instrument: t.instr, volume: t.vol, pan: t.pan, effects: trackFx(t.fx, pal, genreId, rand, () => uid('e')) }))
   // Style signature — stamp the artist flavor onto the racks.
   if (opts.sig === 'space') for (const t of tracks) if (/Pad|Lead/.test(t.name)) { const rv = t.effects.find(e => e.type === 'reverb'); if (rv) { rv.params.wet = Math.min(0.75, rv.params.wet + 0.22); rv.params.decay = Math.max(rv.params.decay, 3.6) } else t.effects.push({ id: uid('e'), type: 'reverb', params: { enabled: true, wet: 0.5, decay: 3.8, preDelay: 0.03 } }) }
-  if (opts.sig === 'crush') for (const t of tracks) if (/Bass|Lead/.test(t.name)) { if (!t.effects.some(e => e.type === 'saturator')) t.effects.unshift({ id: uid('e'), type: 'saturator', params: { enabled: true, drive: 0.32, color: 0.35, output: 0 } }); if (!t.effects.some(e => e.type === 'redux')) t.effects.push({ id: uid('e'), type: 'redux', params: { enabled: true, bitDepth: 11, sampleRate: 16000 } }) }
+  // 'crush' = grit on bass/lead. HEAVY (saturation + hard bit-crush) suits aggressive
+  // genres; on mellow genres the bit-crush reads as harsh digital "feedback", so there
+  // we keep only light saturation. Scales with genre, not just the sig label.
+  if (opts.sig === 'crush') {
+    const HEAVY_CRUSH = new Set(['dubstep', 'trap', 'dnb', 'future-bass', 'techno'])
+    const heavy = HEAVY_CRUSH.has(genreId)
+    for (const t of tracks) if (/Bass|Lead/.test(t.name)) {
+      if (!t.effects.some(e => e.type === 'saturator')) t.effects.unshift({ id: uid('e'), type: 'saturator', params: { enabled: true, drive: heavy ? 0.32 : 0.18, color: heavy ? 0.35 : 0.25, output: 0 } })
+      if (heavy && !t.effects.some(e => e.type === 'redux')) t.effects.push({ id: uid('e'), type: 'redux', params: { enabled: true, bitDepth: 11, sampleRate: 16000 } })
+    }
+  }
   if (opts.sig === 'pump') for (const t of tracks) if (/Keys|Pad/.test(t.name)) { if (!t.effects.some(e => e.type === 'chorus')) t.effects.push({ id: uid('e'), type: 'chorus', params: { enabled: true, type: 'phaser', rate: 0.4, depth: 0.5, feedback: 0.3, mix: 0.35, stages: 4 } }) }
   const tid = Object.fromEntries(TK.map((t, i) => [t.key, tracks[i].id]))
   const byKey = Object.fromEntries(TK.map(t => [t.key, t]))
@@ -1578,7 +1635,11 @@ async function main() {
     if (brief.key) keyStr = brief.key
     // Only the composer-understood opts (presets/formFamily/sig/tempo/moodName);
     // extra keys like `rationale` are harmlessly ignored by compose().
-    opts = { ...opts, ...brief.opts, ...(brief.presets ? { presets: brief.presets } : {}), ...(brief.formFamily ? { formFamily: brief.formFamily } : {}), ...(brief.sig ? { sig: brief.sig } : {}), ...(brief.tempo ? { tempo: brief.tempo } : {}), ...(brief.moodName ? { moodName: brief.moodName } : {}) }
+    opts = { ...opts, ...brief.opts, ...(brief.presets ? { presets: brief.presets } : {}), ...(brief.formFamily ? { formFamily: brief.formFamily } : {}), ...(brief.sig ? { sig: brief.sig } : {}), ...(brief.tempo ? { tempo: brief.tempo } : {}), ...(brief.moodName ? { moodName: brief.moodName } : {}),
+      // AI DIRECTOR musical MATERIAL — the LLM's own chord progression + melodic
+      // hook. compose() sanitizes both (see sanitizeProgression / aiMotifFrom), so
+      // absent/invalid values simply fall back to the seed-driven random recipe.
+      ...(Array.isArray(brief.progression) ? { progression: brief.progression } : {}), ...(Array.isArray(brief.hook) ? { hook: brief.hook } : {}) }
   }
 
   // SELF-SELECT: with --best=K, generate K candidates and keep the one whose

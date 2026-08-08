@@ -72,34 +72,66 @@ Choose from these palettes:
   · bass: ${PALETTE.bass}
   · lead: ${PALETTE.lead}
 - character signature (optional): ${Object.entries(SIGS).map(([k, v]) => `${k} = ${v}`).join('; ')}
+  · Use "crush" ONLY for aggressive, heavy styles (trap, dubstep, dnb, future-bass, phonk, hyperpop). For mellow, minimal, clean, dreamy, or ambient songs it sounds harshly distorted — omit sig or use "space" instead.
+
+You ALSO write the actual musical MATERIAL — the composer realizes it into editable notes:
+- progression: an array of roman numerals, the harmonic backbone (drives the verse + chorus). 4 or 8 chords. Use lowercase for minor triads and UPPERCASE for major (the composer treats case as a diatonic-stacking hint). Diatonic to your chosen key/mode — use only i ii iii iv v vi vii (any case). e.g. ["i","VI","III","VII"] or ["i","iv","v","i"].
+- hook: a short, singable melodic hook as an array of [beatOffset, scaleDegree] pairs. beatOffset is 0..3.99 within one bar; scaleDegree is an integer scale-degree index (0 = the tonic, negative or >6 reach other octaves). 4-8 notes, mostly stepwise with ONE leap, resolving toward the tonic. e.g. [[0,0],[1,2],[2,4],[3,2]].
 
 Reply with ONLY a JSON object (no prose, no markdown fence):
-{"genre":"<id>","key":"<Root mode>","tempo":<bpm or omit for the genre default>,"presets":{"keys":"builtin-N","pad":"builtin-N","bass":"builtin-N","lead":"builtin-N"},"sig":"<one of the signatures or omit>","moodName":"<2-4 word mood label>","rationale":"<one sentence on the creative intent>"}`
+{"genre":"<id>","key":"<Root mode>","tempo":<bpm or omit for the genre default>,"presets":{"keys":"builtin-N","pad":"builtin-N","bass":"builtin-N","lead":"builtin-N"},"sig":"<one of the signatures or omit>","progression":["i","VI","III","VII"],"hook":[[0,0],[1,2],[2,4],[3,2]],"moodName":"<2-4 word mood label>","rationale":"<ONE short sentence, max 20 words>"}
+Keep the rationale to ONE short sentence — a long rationale can truncate the JSON.`
 
 const userMsg = direction
   ? `Design a song around this direction: ${direction}`
   : `Design a distinctive song of your own choosing — surprise me, avoid the obvious default for the genre you pick.`
 
+// The director occasionally emits a long rationale that trips the token cap (or,
+// rarely, a flaky/empty response), truncating the JSON. Give it generous headroom
+// and retry up to 3× on any no-JSON / truncated / bad-genre response.
 console.log('▸ asking the director…')
-const res = await fetch('https://api.anthropic.com/v1/messages', {
-  method: 'POST',
-  headers: { 'x-api-key': KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-  body: JSON.stringify({ model, max_tokens: 1024, system, messages: [{ role: 'user', content: userMsg }] }),
-  signal: AbortSignal.timeout(60_000),
-}).catch(e => { console.error('could not reach Anthropic API:', e.message); return null })
-if (!res) process.exit(2)
-if (!res.ok) { console.error(`Anthropic API ${res.status}:`, (await res.text().catch(() => '')).slice(0, 300)); process.exit(2) }
-const data = await res.json()
-const text = (data.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n')
-const jsonStr = (text.match(/\{[\s\S]*\}/) || [])[0]
-if (!jsonStr) { console.error('director returned no JSON:\n', text.slice(0, 400)); process.exit(3) }
-let brief
-try { brief = JSON.parse(jsonStr) } catch (e) { console.error('bad brief JSON:', e.message, '\n', jsonStr.slice(0, 400)); process.exit(3) }
+let brief = null
+for (let attempt = 1; attempt <= 3 && !brief; attempt++) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model, max_tokens: 2048, system, messages: [{ role: 'user', content: userMsg }] }),
+    signal: AbortSignal.timeout(60_000),
+  }).catch(e => { console.error(`  attempt ${attempt}: could not reach Anthropic API — ${e.message}`); return null })
+  if (!res) continue
+  if (!res.ok) { console.error(`  attempt ${attempt}: Anthropic API ${res.status} — ${(await res.text().catch(() => '')).slice(0, 200)}`); continue }
+  const data = await res.json()
+  if (data.stop_reason === 'max_tokens') { console.error(`  attempt ${attempt}: response hit the token cap (truncated) — retrying…`); continue }
+  const text = (data.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n')
+  const jsonStr = (text.match(/\{[\s\S]*\}/) || [])[0]
+  if (!jsonStr) { console.error(`  attempt ${attempt}: director returned no JSON — retrying…`); continue }
+  let parsed
+  try { parsed = JSON.parse(jsonStr) } catch (e) { console.error(`  attempt ${attempt}: bad brief JSON (${e.message}) — retrying…`); continue }
+  if (!GENRES.some(([g]) => g === parsed.genre)) { console.error(`  attempt ${attempt}: unknown genre "${parsed.genre}" — retrying…`); continue }
+  brief = parsed
+}
+if (!brief) { console.error('director failed to return a valid brief after 3 attempts.'); process.exit(3) }
 
-// Validate genre; drop it (fall back) if the director hallucinated one.
-if (!GENRES.some(([g]) => g === brief.genre)) { console.error(`director picked unknown genre "${brief.genre}"`); process.exit(3) }
+// Validate the musical MATERIAL. Both are OPTIONAL — if missing or malformed we
+// OMIT them so the composer falls back to its own random recipe/hook (that path
+// must keep working). The composer also sanitizes defensively; this is the first
+// gate so we only ever hand it well-formed material.
+const ROMAN_OK = new Set(['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii'])
+const okProg = Array.isArray(brief.progression)
+  && (brief.progression.length === 4 || brief.progression.length === 8)
+  && brief.progression.every(n => typeof n === 'string' && ROMAN_OK.has(n.trim().replace(/[^a-zA-Z]/g, '').toLowerCase()))
+const okHook = Array.isArray(brief.hook)
+  && brief.hook.length >= 4 && brief.hook.length <= 8
+  && brief.hook.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)
+    && p[0] >= 0 && p[0] < 4)
+if (!okProg && brief.progression !== undefined) console.log(`  (dropped invalid progression → composer will use its own)`)
+if (!okHook && brief.hook !== undefined) console.log(`  (dropped invalid hook → composer will use its own)`)
+if (!okProg) delete brief.progression
+if (!okHook) delete brief.hook
 
 console.log(`▸ director: ${brief.genre}${brief.tempo ? ' @' + brief.tempo : ''} · ${brief.key} · ${brief.moodName || ''}`)
+if (brief.progression) console.log(`  progression: ${brief.progression.join(' ')}`)
+if (brief.hook) console.log(`  hook: ${brief.hook.map(([b, d]) => `${b}:${d}`).join(' ')}`)
 console.log(`  presets: ${JSON.stringify(brief.presets || {})}${brief.sig ? ' · sig:' + brief.sig : ''}`)
 console.log(`  “${brief.rationale || ''}”`)
 
