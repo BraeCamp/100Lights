@@ -37,6 +37,7 @@ import PracticeButton from './daw/PracticeButton'
 import { VUMeter } from './daw/TrackRow'
 import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
+import GenerateMusicModal from './GenerateMusicModal'
 import SendToProjectButton from './SendToProjectButton'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
@@ -1302,6 +1303,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     writeWorkspace('audio', { leftTab, sidebarOpen, view })
   }, [leftTab, sidebarOpen, view])
   const [showAppearance, setShowAppearance] = useState(false)
+  const [genMusicOpen, setGenMusicOpen] = useState(false)
   const leftResize = useResizable({ key: 'left-panel', initial: 240, min: 180, max: 520, axis: 'x' })
   const bottomResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })
 
@@ -1719,6 +1721,11 @@ export default function AudioEditor(props: AudioEditorProps) {
       when: () => !isPodcast,
       run: () => { setSidebarOpen(true); setLeftTab('library') },
     },
+    {
+      id: 'audio.generate-music', group: 'Audio', label: 'Generate music with AI', keywords: 'ai generate song elevenlabs prompt stems create',
+      when: () => !isPodcast && !props.readOnly,
+      run: () => setGenMusicOpen(true),
+    },
   ], [view, isPodcast, props.onSave, props.readOnly])
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -1738,6 +1745,7 @@ export default function AudioEditor(props: AudioEditorProps) {
         }}
       >
         {showAppearance && <AppearancePanel onClose={() => setShowAppearance(false)} editorKind="audio" />}
+        <GenerateMusicModal open={genMusicOpen} onClose={() => setGenMusicOpen(false)} />
         {props.projectId && <SessionRecap projectId={props.projectId} />}
         {/* Pre-save Share: saves the project, then CollabInvite opens */}
         {!props.projectId && props.onSave && !props.readOnly && (
@@ -2088,7 +2096,7 @@ export default function AudioEditor(props: AudioEditorProps) {
             {/* Active view */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
               {view === 'session' && <SessionView />}
-              {view === 'arrangement' && <ArrangementView />}
+              {view === 'arrangement' && <ArrangementView onGenerateMusic={() => setGenMusicOpen(true)} />}
               {view === 'mixer' && <Mixer />}
             </div>
 
