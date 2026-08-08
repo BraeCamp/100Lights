@@ -1198,9 +1198,17 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   }, [engineForRender]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // RAF loop: update positionBeatRef every frame, flush to state every ~100ms
+  // RAF loop: update positionBeatRef every frame, flush to state every ~100ms.
+  // Only runs while the transport is playing — when stopped, the playhead only
+  // moves via explicit seeks (setPosition), so the loop would be pure waste.
   const positionBeatRef = useRef(0)
   useEffect(() => {
+    if (!playing) {
+      // One final flush so the paused playhead reflects the stop position.
+      positionBeatRef.current = engineRef.current!.currentBeat
+      setPositionState(positionBeatRef.current)
+      return
+    }
     let lastFlush = 0
     let raf: number
 
@@ -1214,7 +1222,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
     raf = requestAnimationFrame(frame)
     return () => cancelAnimationFrame(raf)
-  }, [])
+  }, [playing])
 
   const setPosition = useCallback((b: number) => {
     engineRef.current!.seek(b)

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Circle, SlidersHorizontal, X, Pencil, Disc } from 'lucide-react'
-import { useDaw } from '@/lib/daw-state'
+import { useDaw, useEnginePlaying } from '@/lib/daw-state'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import type { DawTrack, ReturnTrack, AutoPoint } from '@/lib/daw-types'
 import DrawnGraphModal from './DrawnGraphModal'
@@ -154,6 +154,7 @@ function EqGraphModal({ trackName, color, value, onChange, onChangeAll, onClose 
 
 function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isMaster?: boolean; onOpenDetail?: (id: string) => void }) {
   const { project, dispatch, engine, selectedTrackId, setSelectedTrackId } = useDaw()
+  const playing = useEnginePlaying()
   const isMobile = useIsMobile()
   const [editing, setEditing]   = useState(false)
   const [nameDraft, setNameDraft] = useState(track?.name ?? 'MASTER')
@@ -236,12 +237,14 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
         setLufsValue(Math.round(avg * 10) / 10)
       }
 
-      lufsRafRef.current = requestAnimationFrame(measure)
+      // Only keep the loop alive while the transport is sounding; when stopped
+      // the single measure above is the final frame.
+      if (playing) lufsRafRef.current = requestAnimationFrame(measure)
     }
 
-    lufsRafRef.current = requestAnimationFrame(measure)
+    measure()
     return () => cancelAnimationFrame(lufsRafRef.current)
-  }, [isMaster, engine])
+  }, [isMaster, engine, playing])
 
   // Mini spectrum analyzer for regular track strips
   useEffect(() => {
@@ -269,11 +272,12 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
         ctx2!.fillRect(i * barW, canvas.height - h, barW - 1, h)
       }
 
-      specRafRef.current = requestAnimationFrame(draw)
+      // Idle when stopped; the single draw above is the final frame.
+      if (playing) specRafRef.current = requestAnimationFrame(draw)
     }
     draw()
     return () => cancelAnimationFrame(specRafRef.current)
-  }, [track?.id, engine, isMaster]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [track?.id, engine, isMaster, playing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // LUFS color coding: blue=quiet, green=good, yellow=hot, red=too loud
   const lufsColor = lufsValue === null ? '#555'
@@ -464,7 +468,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
           color={isMaster ? 'var(--accent)' : color}
           onChange={setVol}
         />
-        <LevelMeter trackId={isMaster ? undefined : track?.id} width={6} height={110} />
+        <LevelMeter trackId={isMaster ? undefined : track?.id} width={6} height={110} playing={playing} />
       </div>
       {/* MIDI-learn badge */}
       {(midi.armed || midi.cc != null) && (

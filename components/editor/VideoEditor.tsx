@@ -845,9 +845,11 @@ export default function VideoEditor({
   }
 
   useEffect(() => {
-    if (!audioDuckingEnabled) {
+    if (!audioDuckingEnabled || !isPlaying) {
       if (duckingRafRef.current !== null) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null }
-      if (audioChainRef.current) audioChainRef.current.duckGain.gain.value = 1  // release the duck
+      // Release the duck to unity as the one final frame — ducking only makes
+      // sense while audio is running, so a paused frame is always un-ducked.
+      if (audioChainRef.current) audioChainRef.current.duckGain.gain.value = 1
       return
     }
     const chain = ensureAudioChain()
@@ -872,7 +874,7 @@ export default function VideoEditor({
     return () => {
       if (duckingRafRef.current !== null) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null }
     }
-  }, [audioDuckingEnabled]) // eslint-disable-line
+  }, [audioDuckingEnabled, isPlaying]) // eslint-disable-line
 
   // LUT data keyed by MediaItem id
   const [lutMap, setLutMap] = useState<Map<string, LutData>>(new Map())
@@ -927,16 +929,22 @@ export default function VideoEditor({
   const gizmo = useMemo(() => (
     selectedItem && viewerClip && selectedItem.id === viewerClip.id
       && selectedItem.contentType !== 'title' && selectedItem.contentType !== 'musicviz'
-      ? { cropZoom: selectedItem.cropZoom ?? 100, cropX: selectedItem.cropX ?? 0, cropY: selectedItem.cropY ?? 0 }
+      ? { cropZoom: selectedItem.cropZoom ?? 100, cropX: selectedItem.cropX ?? 0, cropY: selectedItem.cropY ?? 0, crop: selectedItem.crop }
       : null
   ), [selectedItem, viewerClip])
+
+  // Workshop theme accent, read once (theme rarely changes mid-session). Hoisted
+  // out of the currentTime-dependent memo below so we don't force a synchronous
+  // getComputedStyle/style read on every playhead tick.
+  const themeAccent = useMemo(() => (
+    (typeof window !== 'undefined'
+      && getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()) || '#a78bfa'
+  ), [])
 
   // Music-visual overlays active at the playhead — rendered OVER the video (not
   // as a replacement), each reacting to the timeline audio via the player's
   // analyser. mvMatchTheme pulls the accent from the editor's Workshop theme.
   const activeMusicViz = useMemo(() => {
-    const themeAccent = (typeof window !== 'undefined'
-      && getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()) || '#a78bfa'
     return timelineItems
       .filter(i => i.contentType === 'musicviz' && i.enabled !== false
         && currentTime >= i.startTime && currentTime < i.startTime + (i.outPoint - i.inPoint))
@@ -949,7 +957,7 @@ export default function VideoEditor({
         opacity: i.opacity,
         blendMode: i.blendMode,
       }))
-  }, [timelineItems, currentTime])
+  }, [timelineItems, currentTime, themeAccent])
 
   // Real-time speed: interpolates velocity curve if the clip has speedPoints
   const rampSpeed = useMemo(() => {
@@ -1082,9 +1090,10 @@ export default function VideoEditor({
       cropZoom, cropX, cropY,
       fadeOpacity,
       fitMode: clip.fitMode,
+      crop: clip.crop,
     }
   }, [viewerClip?.id, viewerClip?.opacity, viewerClip?.flipH, viewerClip?.flipV, // eslint-disable-line
-      viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY, viewerClip?.fitMode,
+      viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY, viewerClip?.fitMode, viewerClip?.crop,
       viewerClip?.fadeIn, viewerClip?.fadeOut, viewerClip?.kenBurns,
       viewerClip?.followFocusClipId, timelineItems, currentTime]) // eslint-disable-line
 
@@ -1148,7 +1157,7 @@ export default function VideoEditor({
         kind: 'video', id: clip.id, src: clip.url,
         startTime: clip.startTime, inPoint: clip.inPoint, outPoint: clip.outPoint,
         speed: clip.speed, speedPoints: clip.speedPoints,
-        transform: { ...tf, fitMode: clip.fitMode },
+        transform: { ...tf, fitMode: clip.fitMode, crop: clip.crop },
         blendMode: clip.blendMode,
         filter: [globalFilter === 'none' ? '' : globalFilter, gradeFilter].filter(Boolean).join(' '),
       })
@@ -1477,6 +1486,7 @@ export default function VideoEditor({
   // When a video IS active, it fires onTimeUpdate itself and RAF is dormant.
   const rafRef      = useRef<number | null>(null)
   const rafPrevRef  = useRef<number | null>(null)
+  const rafLastEmitRef = useRef(0)
   const effectiveUrlRef = useRef(effectiveUrl)
   useEffect(() => { effectiveUrlRef.current = effectiveUrl }, [effectiveUrl])
 
@@ -1484,19 +1494,29 @@ export default function VideoEditor({
     const cancel = () => {
       if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
       rafPrevRef.current = null
+      // Land the state on the exact ref position so nothing that reads
+      // `currentTime` (memos) is left up to a frame behind the smooth ref.
+      setCurrentTime(currentTimeRef.current)
     }
     if (!isPlaying || effectiveUrl) { cancel(); return }
+    rafLastEmitRef.current = 0
 
-    // No active video — tick the clock ourselves
+    // No active video — tick the clock ourselves. currentTimeRef advances every
+    // frame (smooth), but we only push React state at ~30Hz so the per-tick
+    // `currentTime` memos don't re-run 60×/s.
     function tick(ts: number) {
       if (rafPrevRef.current !== null) {
         const dt = (ts - rafPrevRef.current) / 1000
-        setCurrentTime(t => {
-          const next = t + dt
-          // Stop at end of last clip
-          if (next >= (effectiveUrlRef.current ? Infinity : duration)) return t
-          return next
-        })
+        const cap = effectiveUrlRef.current ? Infinity : duration
+        const next = currentTimeRef.current + dt
+        // Stop at end of last clip
+        if (next < cap) {
+          currentTimeRef.current = next
+          if (ts - rafLastEmitRef.current >= 33) {
+            setCurrentTime(next)
+            rafLastEmitRef.current = ts
+          }
+        }
       }
       rafPrevRef.current = ts
       // Stop if a video took over
@@ -2731,9 +2751,8 @@ export default function VideoEditor({
     const track = tracks.find(t => t.type === 'media' || t.type === 'video') ?? tracks[0]
     const trackId = track?.id ?? 'v1'
     const at = currentTimeRef.current
-    // Default accent = the editor's Workshop accent, so it matches the user's theme.
-    const themeAccent = (typeof window !== 'undefined'
-      && getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()) || '#a78bfa'
+    // Default accent = the editor's Workshop accent (memoized above), so it
+    // matches the user's theme.
     const newItem: TimelineItem = {
       id: crypto.randomUUID(),
       label: 'Music Visual',

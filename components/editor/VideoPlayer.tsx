@@ -385,9 +385,13 @@ export default function VideoPlayer({
 
     function scheduleNext() {
       if ((video as any).requestVideoFrameCallback) {
+        // RVFC only fires when the video paints a new frame, so it's already
+        // idle while paused — no play-gate needed here.
         blendRvfcRef.current = (video as any).requestVideoFrameCallback(processFrame)
-      } else {
-        // RAF fallback for Firefox/Safari (fires at display rate, not video frame rate)
+      } else if (isPlayingRef.current) {
+        // RAF fallback for Firefox/Safari (fires at display rate, not video frame
+        // rate). A paused frame doesn't change, so stop scheduling when stopped;
+        // the effect re-runs (isPlaying dep) to redraw + resume on play.
         blendRafRef.current = requestAnimationFrame(processFrame)
       }
     }
@@ -404,7 +408,7 @@ export default function VideoPlayer({
         blendRafRef.current = null
       }
     }
-  }, [blendActive, src]) // eslint-disable-line
+  }, [blendActive, src, isPlaying]) // eslint-disable-line
 
   // Optical flow — multi-frame ring-buffer temporal blend
   // Keeps 4 consecutive frames; blends with Gaussian weights for smoother slow-mo
@@ -412,6 +416,7 @@ export default function VideoPlayer({
   const optFlowRingRef    = useRef<Uint8ClampedArray[]>([])
   const optFlowRvfcRef    = useRef<number | null>(null)
   const optFlowRafRef     = useRef<number | null>(null)
+  const optFlowOutRef     = useRef<ImageData | null>(null)
 
   const optFlowActive = opticalFlowEnabled && clipSpeed < 1 && !!src && contentType === 'video' && !blendActive
 
@@ -467,8 +472,13 @@ export default function VideoPlayer({
       ring.unshift(new Uint8ClampedArray(frame.data))
       if (ring.length > RING_SIZE) ring.pop()
 
-      // Blend ring frames with weights into output
-      const out = new Uint8ClampedArray(n)
+      // Blend ring frames with weights into a reused output buffer (no per-frame
+      // Uint8ClampedArray/ImageData allocation → zero GC churn in the loop).
+      if (!optFlowOutRef.current || optFlowOutRef.current.width !== vw || optFlowOutRef.current.height !== vh) {
+        optFlowOutRef.current = new ImageData(vw, vh)
+      }
+      const outImg = optFlowOutRef.current
+      const out = outImg.data
       for (let i = 0; i < n; i += 4) {
         let r = 0, g = 0, b = 0
         for (let k = 0; k < ring.length; k++) {
@@ -479,14 +489,17 @@ export default function VideoPlayer({
         }
         out[i] = r; out[i+1] = g; out[i+2] = b; out[i+3] = 255
       }
-      ctx.putImageData(new ImageData(out, vw, vh), 0, 0)
+      ctx.putImageData(outImg, 0, 0)
       schedule()
     }
 
     function schedule() {
       if ((video as any).requestVideoFrameCallback) {
+        // RVFC is naturally idle when paused (no new video frames).
         optFlowRvfcRef.current = (video as any).requestVideoFrameCallback(processFrame)
-      } else {
+      } else if (isPlayingRef.current) {
+        // RAF fallback: a paused frame doesn't change, so stop scheduling when
+        // stopped; the effect re-runs (isPlaying dep) to resume on play.
         optFlowRafRef.current = requestAnimationFrame(processFrame)
       }
     }
@@ -502,7 +515,7 @@ export default function VideoPlayer({
         optFlowRafRef.current = null
       }
     }
-  }, [optFlowActive, src]) // eslint-disable-line
+  }, [optFlowActive, src, isPlaying]) // eslint-disable-line
 
   // Monitor container ref for stage sizing; stage = the aspect-locked frame box
   const monitorRef = useRef<HTMLDivElement>(null)
@@ -737,7 +750,9 @@ export default function VideoPlayer({
 
   // VU meter — connect Web Audio API and read levels via RAF
   useEffect(() => {
-    if (!showVUMeter || !src) {
+    // Only read levels while playing — a paused clip produces no audio, so the
+    // VU sits at zero (the one final frame) and the loop is parked.
+    if (!showVUMeter || !src || !isPlaying) {
       if (vuRafRef.current) { cancelAnimationFrame(vuRafRef.current); vuRafRef.current = null }
       setVuLevels([0, 0])
       return
@@ -777,49 +792,64 @@ export default function VideoPlayer({
     }
     vuRafRef.current = requestAnimationFrame(tick)
     return () => { if (vuRafRef.current) { cancelAnimationFrame(vuRafRef.current); vuRafRef.current = null } }
-  }, [showVUMeter, src])
+  }, [showVUMeter, src, isPlaying])
 
-  // RAF loop: drive focus marker at 60fps by reading video.currentTime directly,
-  // bypassing React's ~4Hz currentTime state updates.
+  // Drive the focus marker by reading video.currentTime directly, bypassing
+  // React's throttled currentTime state. Gated: the loop only runs while
+  // playing (interpolating keyframes) or while a live focus recording is in
+  // progress. When idle we position the marker ONCE for the current time and
+  // stop scheduling — a paused marker doesn't move on its own.
   useEffect(() => {
-    let rafId: number
-    const tick = () => {
+    const position = () => {
       const marker = focusMarkerRef.current
-      if (marker) {
-        const livePos = focusLivePosRef.current
-        if (livePos) {
-          // Recording: show live pointer position
-          marker.style.left = `${livePos.x * 100}%`
-          marker.style.top  = `${livePos.y * 100}%`
+      if (!marker) return
+      const livePos = focusLivePosRef.current
+      if (livePos) {
+        // Recording: show live pointer position
+        marker.style.left = `${livePos.x * 100}%`
+        marker.style.top  = `${livePos.y * 100}%`
+        marker.style.display = 'block'
+        return
+      }
+      const kf = focusKeyframesRef.current
+      const video = src ? poolRef.current.get(src) : null
+      if (kf && kf.length > 0 && video) {
+        // Playback: interpolate at current video time
+        const tlTime = loopBaseRef.current + video.currentTime + timeOffset
+        const localTime = tlTime - focusClipStartTimeRef.current
+        const pos = interpolateFocusKF(kf, localTime)
+        marker.style.left = `${pos.x * 100}%`
+        marker.style.top  = `${pos.y * 100}%`
+        marker.style.display = 'block'
+      } else {
+        const fallback = activeFocusClipRef.current
+        if (fallback) {
+          marker.style.left = `${fallback.x * 100}%`
+          marker.style.top  = `${fallback.y * 100}%`
           marker.style.display = 'block'
         } else {
-          const kf = focusKeyframesRef.current
-          const video = src ? poolRef.current.get(src) : null
-          if (kf && kf.length > 0 && video) {
-            // Playback: interpolate at current video time
-            const tlTime = loopBaseRef.current + video.currentTime + timeOffset
-            const localTime = tlTime - focusClipStartTimeRef.current
-            const pos = interpolateFocusKF(kf, localTime)
-            marker.style.left = `${pos.x * 100}%`
-            marker.style.top  = `${pos.y * 100}%`
-            marker.style.display = 'block'
-          } else {
-            const fallback = activeFocusClipRef.current
-            if (fallback) {
-              marker.style.left = `${fallback.x * 100}%`
-              marker.style.top  = `${fallback.y * 100}%`
-              marker.style.display = 'block'
-            } else {
-              marker.style.display = 'none'
-            }
-          }
+          marker.style.display = 'none'
         }
       }
-      rafId = requestAnimationFrame(tick)
     }
+
+    const hasFocusData = !!activeFocusClip || (focusKeyframes?.length ?? 0) > 0
+    const shouldRun = isRecordingFocus || (isPlaying && hasFocusData)
+
+    if (!shouldRun) {
+      // One final positioning write for the current (paused) time, then idle.
+      position()
+      return
+    }
+
+    let rafId: number
+    const tick = () => { position(); rafId = requestAnimationFrame(tick) }
     rafId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(rafId)
-  }, [src, timeOffset]) // eslint-disable-line — reads via refs; src/timeOffset are the only deps that affect pool lookups
+    // reads live values via refs; the extra dep (currentTime only while paused)
+    // re-runs the single static write when the user scrubs a stopped playhead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, timeOffset, isPlaying, isRecordingFocus, activeFocusClip, focusKeyframes, isPlaying ? 0 : currentTime])
 
   const activeCaption = captions.find(c => currentTime >= c.start && currentTime <= c.end) ?? null
 
@@ -1120,6 +1150,7 @@ export default function VideoPlayer({
               opacity={mv.opacity}
               blendMode={mv.blendMode}
               getAnalyser={() => analyserRef.current}
+              isPlaying={isPlaying}
             />
           </div>
         ))}

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { createContext, useContext, type Dispatch } from 'react'
+import React, { createContext, useContext, useEffect, useState, type Dispatch } from 'react'
 import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget,
@@ -838,6 +838,36 @@ export function useDaw(): DawContextValue {
 }
 
 // ── Helper hooks ─────────────────────────────────────────────────────────
+
+/** Reactive "is the engine producing audio" flag, for gating meter/analyser
+ *  RAF loops so they idle when the transport is stopped. Tracks the arrangement
+ *  transport (the 'transport' event) AND session/pad launches (the
+ *  'session-state' event), so meters stay live in every playback mode but stop
+ *  churning when nothing is sounding. */
+export function useEnginePlaying(): boolean {
+  const { engine } = useDaw()
+  const [playing, setPlaying] = useState<boolean>(() => engine.isPlaying)
+  useEffect(() => {
+    const active = new Set<string>()
+    const sync = () => setPlaying(engine.isPlaying || active.size > 0)
+    const onTransport = () => sync()
+    const onSession = (e: Event) => {
+      const d = (e as CustomEvent<{ clipId?: string; state?: string }>).detail
+      if (!d?.clipId) return
+      if (d.state === 'playing') active.add(d.clipId)
+      else if (d.state === 'idle') active.delete(d.clipId)
+      sync()
+    }
+    engine.addEventListener('transport', onTransport)
+    engine.addEventListener('session-state', onSession)
+    sync()
+    return () => {
+      engine.removeEventListener('transport', onTransport)
+      engine.removeEventListener('session-state', onSession)
+    }
+  }, [engine])
+  return playing
+}
 
 export function useTrack(trackId: string): DawTrack | undefined {
   const { project } = useDaw()

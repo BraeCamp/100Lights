@@ -22,9 +22,12 @@ export interface MusicVizOverlayProps {
   resolution?: number
   opacity?: number      // 0–100
   blendMode?: string
+  /** Gate the render loop. When false (transport stopped) we draw ONE idle
+   *  frame and park the loop, resuming when playback restarts. */
+  isPlaying?: boolean
 }
 
-export default function MusicVizOverlay({ format, accent, bg, getAnalyser, resolution, opacity = 100, blendMode }: MusicVizOverlayProps) {
+export default function MusicVizOverlay({ format, accent, bg, getAnalyser, resolution, opacity = 100, blendMode, isPlaying = true }: MusicVizOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const freqRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
   const waveRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
@@ -40,6 +43,8 @@ export default function MusicVizOverlay({ format, accent, bg, getAnalyser, resol
     let raf = 0
     const t0 = performance.now()
 
+    // Canvas pixel size is cached and only recomputed on resize (via a
+    // ResizeObserver), so the frame loop performs no layout read.
     const sizeCanvas = () => {
       const r = canvas.getBoundingClientRect()
       const dpr = Math.min(2, window.devicePixelRatio || 1)
@@ -49,9 +54,12 @@ export default function MusicVizOverlay({ format, accent, bg, getAnalyser, resol
       const h = resolution ? resolution : Math.max(2, Math.round(r.height * dpr))
       if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h }
     }
+    sizeCanvas()
+    const ro = new ResizeObserver(() => sizeCanvas())
+    ro.observe(canvas)
 
-    const frame = () => {
-      sizeCanvas()
+    // Draw one frame at time `t` (seconds), sampling the live analyser if any.
+    const drawFrame = (t: number) => {
       let audio = null
       const analyser = getAnalyser()
       if (analyser) {
@@ -61,14 +69,46 @@ export default function MusicVizOverlay({ format, accent, bg, getAnalyser, resol
         analyser.getByteTimeDomainData(waveRef.current)
         audio = { freq: freqRef.current, wave: waveRef.current }
       }
-      viz.draw(ctx, canvas.width, canvas.height, (performance.now() - t0) / 1000, audio)
+      viz.draw(ctx, canvas.width, canvas.height, t, audio)
+    }
+
+    // Only animate while playing AND the tab is visible. Otherwise render one
+    // static idle frame (no audio) and don't schedule.
+    const active = () => isPlaying && document.visibilityState === 'visible'
+
+    // Throttle the loop to ~30fps.
+    const FRAME_MS = 1000 / 30
+    let lastDraw = 0
+    const frame = () => {
+      const now = performance.now()
+      if (now - lastDraw >= FRAME_MS) {
+        drawFrame((now - t0) / 1000)
+        lastDraw = now
+      }
       raf = requestAnimationFrame(frame)
     }
-    raf = requestAnimationFrame(frame)
-    return () => cancelAnimationFrame(raf)
-    // getAnalyser is read live each frame; only the look/format deps re-init.
+
+    const onVisibility = () => { start() }
+    function start() {
+      if (raf) { cancelAnimationFrame(raf); raf = 0 }
+      if (active()) {
+        raf = requestAnimationFrame(frame)
+      } else {
+        // Single static idle frame reflecting the paused state.
+        drawFrame((performance.now() - t0) / 1000)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    start()
+
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      ro.disconnect()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+    // getAnalyser is read live each frame; only the look/format/gate deps re-init.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [format, accent, bg, resolution])
+  }, [format, accent, bg, resolution, isPlaying])
 
   return (
     <canvas
