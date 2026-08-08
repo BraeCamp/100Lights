@@ -13,6 +13,8 @@ import MediaLibrary from '@/components/editor/MediaLibrary'
 import ContextMenu from '@/components/editor/ContextMenu'
 import { LogoMark } from '@/components/Logo'
 import { useResizable, ResizeHandle } from '@/components/editor/daw/useResizable'
+import { usePerfMode } from '@/lib/perf-mode'
+import { readWorkspace, writeWorkspace } from '@/lib/editor-workspace'
 import { saveProject } from '@/lib/project-store'
 import { projectPath } from '@/lib/project-url'
 import type { LutData } from '@/lib/lut-parser'
@@ -493,7 +495,25 @@ export default function VideoEditor({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [zoomLevel, setZoomLevel] = useState(1)
   const [tracks, setTracks] = useState<Track[]>(DEFAULT_TRACKS)
-  const [activePage, setActivePage] = useState<EditorPage>('edit')
+  // Remember workspace — restore the last-used layout (page / left sidebar /
+  // viewport tab). Panel SIZES persist separately via useResizable. Read once,
+  // client-only, SSR-safe, and validated so a corrupt blob falls back to defaults.
+  const wsInit = useMemo(() => {
+    const w = readWorkspace('video', {
+      activePage: 'edit' as EditorPage,
+      videoSidebarOpen: true,
+      videoLeftTab: 'media' as 'media' | null,
+      viewportTab: 'video' as 'video' | 'audio',
+    })
+    const pages: EditorPage[] = ['edit', 'color', 'audio', 'deliver']
+    return {
+      activePage: pages.includes(w.activePage) ? w.activePage : 'edit',
+      videoSidebarOpen: typeof w.videoSidebarOpen === 'boolean' ? w.videoSidebarOpen : true,
+      videoLeftTab: (w.videoLeftTab === 'media' || w.videoLeftTab === null) ? w.videoLeftTab : 'media',
+      viewportTab: (w.viewportTab === 'video' || w.viewportTab === 'audio') ? w.viewportTab : 'video',
+    }
+  }, [])
+  const [activePage, setActivePage] = useState<EditorPage>(wsInit.activePage)
   const [activeTool, setActiveTool] = useState<EditorTool>('select')
   const [snapEnabled, setSnapEnabled] = useState(true)
   const [inPoint, setInPoint] = useState<number | null>(null)   // I key
@@ -649,8 +669,8 @@ export default function VideoEditor({
   // Panel sizes
   const [rightW, setRightW]   = useState(224)
   // Left media panel — icon-rail + openable panel, mirroring the audio editor.
-  const [videoLeftTab, setVideoLeftTab] = useState<'media' | null>('media')
-  const [videoSidebarOpen, setVideoSidebarOpen] = useState(true)
+  const [videoLeftTab, setVideoLeftTab] = useState<'media' | null>(wsInit.videoLeftTab)
+  const [videoSidebarOpen, setVideoSidebarOpen] = useState(wsInit.videoSidebarOpen)
   const videoLeftPanel = useResizable({ key: 'video-left-panel', initial: 220, min: 180, max: 520, axis: 'x' })
   const [tlHeight, setTlHeight] = useState(() =>
     TOOLBAR_HEIGHT + RULER_HEIGHT + TRACK_HEIGHT * 2 + 4
@@ -717,8 +737,12 @@ export default function VideoEditor({
   const [showShortcuts, setShowShortcuts] = useState(false)
 
   // Viewport layout
-  const [viewportTab, setViewportTab] = useState<'video' | 'audio'>('video')
+  const [viewportTab, setViewportTab] = useState<'video' | 'audio'>(wsInit.viewportTab)
   const [audioLayout, setAudioLayout] = useState<'tab' | 'below'>('tab')
+  // Persist the workspace layout on any change (Remember workspace).
+  useEffect(() => {
+    writeWorkspace('video', { activePage, videoSidebarOpen, videoLeftTab, viewportTab })
+  }, [activePage, videoSidebarOpen, videoLeftTab, viewportTab])
   const [audioSplitH, setAudioSplitH] = useState(160)
 
   // Edit tool state
@@ -791,6 +815,8 @@ export default function VideoEditor({
   const [motionBlurGlobal, setMotionBlurGlobal] = useState(false)
   const [showColorScopes, setShowColorScopes] = useState(false)
   const [colorScopesType, setColorScopesType] = useState<'waveform' | 'vectorscope' | 'histogram' | 'parade' | 'spectrum'>('waveform')
+  // Performance mode — when on, suppress the heavy optional visualizers below.
+  const [perfMode] = usePerfMode()
   const [showRenderQueue, setShowRenderQueue] = useState(false)
   // Preview-overlay toggles are grouped under one "Overlays ▾" menu to de-clutter
   // the viewport toolbar (fixed-positioned so it escapes the clipped bar).
@@ -1016,7 +1042,9 @@ export default function VideoEditor({
   // is active, lazily download the active clip's source and swap in a blob URL
   // — same trick the export capture uses.
   const localizedUrlsRef = useRef<Map<string, string | 'pending'>>(new Map())
-  const pixelFeatureActive = showColorScopes || frameBlendEnabled || opticalFlowEnabled || !!activeLut
+  // LUT still renders in perf mode (it's a grade, not a visualizer), so it keeps
+  // needing readable frames; the suppressed visualizers don't.
+  const pixelFeatureActive = (!perfMode && (showColorScopes || frameBlendEnabled || opticalFlowEnabled)) || !!activeLut
   useEffect(() => {
     // On bucket-allowlisted origins the elements load with crossOrigin and
     // frames are readable directly — no download needed.
@@ -3805,6 +3833,7 @@ export default function VideoEditor({
                       motionBlurEnabled={motionBlurGlobal || (viewerClip?.motionBlurEnabled ?? false)}
                       currentClipSpeed={rampSpeed}
                       opticalFlowEnabled={opticalFlowEnabled}
+                      perfMode={perfMode}
                       blendMode={viewerClip?.blendMode}
                       loopDuration={viewerLoopDuration}
                       clipInPoint={viewerClip?.inPoint ?? 0}
@@ -3888,6 +3917,7 @@ export default function VideoEditor({
                       motionBlurEnabled={motionBlurGlobal || (viewerClip?.motionBlurEnabled ?? false)}
                       currentClipSpeed={rampSpeed}
                       opticalFlowEnabled={opticalFlowEnabled}
+                      perfMode={perfMode}
                       blendMode={viewerClip?.blendMode}
                       loopDuration={viewerLoopDuration}
                       clipInPoint={viewerClip?.inPoint ?? 0}
@@ -3913,7 +3943,7 @@ export default function VideoEditor({
                       onFocusKeyframeMove={selectedDrawFocusItem ? handleFocusKeyframeMove : undefined}
                     />
                   </div>
-                  {showColorScopes && (
+                  {showColorScopes && !perfMode && (
                     <div style={{ height: 140, flexShrink: 0, borderTop: '1px solid var(--border)' }}>
                       <ColorScopes videoRef={videoRef} isPlaying={isPlaying} scope={colorScopesType} onScopeChange={setColorScopesType} />
                     </div>

@@ -114,6 +114,10 @@ interface Props {
   motionBlurEnabled?: boolean
   currentClipSpeed?: number             // real-time speed (may differ from clipSpeed via ramp)
   opticalFlowEnabled?: boolean
+  /** Performance mode — when true, suppress the expensive optional visualizers
+   *  (frame blend, optical flow, motion blur, VU meter, live music-viz
+   *  animation). Preview-only; never affects export. */
+  perfMode?: boolean
   blendMode?: string         // CSS mix-blend-mode
   loopDuration?: number      // when set, clip loops; each cycle plays clipInPoint→(clipInPoint+loopDuration)
   clipInPoint?: number       // inPoint of the active clip (used for loop reset position)
@@ -242,6 +246,7 @@ export default function VideoPlayer({
   motionBlurEnabled = false,
   currentClipSpeed = 1,
   opticalFlowEnabled = false,
+  perfMode = false,
   blendMode,
   loopDuration,
   clipInPoint = 0,
@@ -296,7 +301,7 @@ export default function VideoPlayer({
   const blendRvfcRef    = useRef<number | null>(null)
   const blendRafRef     = useRef<number | null>(null)
 
-  const blendActive = frameBlendEnabled && clipSpeed < 1 && !!src && contentType === 'video'
+  const blendActive = frameBlendEnabled && !perfMode && clipSpeed < 1 && !!src && contentType === 'video'
 
   useEffect(() => {
     const canvas = blendCanvasRef.current
@@ -418,7 +423,7 @@ export default function VideoPlayer({
   const optFlowRafRef     = useRef<number | null>(null)
   const optFlowOutRef     = useRef<ImageData | null>(null)
 
-  const optFlowActive = opticalFlowEnabled && clipSpeed < 1 && !!src && contentType === 'video' && !blendActive
+  const optFlowActive = opticalFlowEnabled && !perfMode && clipSpeed < 1 && !!src && contentType === 'video' && !blendActive
 
   useEffect(() => {
     const canvas = optFlowCanvasRef.current
@@ -752,7 +757,7 @@ export default function VideoPlayer({
   useEffect(() => {
     // Only read levels while playing — a paused clip produces no audio, so the
     // VU sits at zero (the one final frame) and the loop is parked.
-    if (!showVUMeter || !src || !isPlaying) {
+    if (!showVUMeter || perfMode || !src || !isPlaying) {
       if (vuRafRef.current) { cancelAnimationFrame(vuRafRef.current); vuRafRef.current = null }
       setVuLevels([0, 0])
       return
@@ -792,7 +797,7 @@ export default function VideoPlayer({
     }
     vuRafRef.current = requestAnimationFrame(tick)
     return () => { if (vuRafRef.current) { cancelAnimationFrame(vuRafRef.current); vuRafRef.current = null } }
-  }, [showVUMeter, src, isPlaying])
+  }, [showVUMeter, perfMode, src, isPlaying])
 
   // Drive the focus marker by reading video.currentTime directly, bypassing
   // React's throttled currentTime state. Gated: the loop only runs while
@@ -862,7 +867,7 @@ export default function VideoPlayer({
   if (clipGradeFilter && !showOriginal) {
     baseFilter = baseFilter === 'none' ? clipGradeFilter : `${baseFilter} ${clipGradeFilter}`
   }
-  const motionBlurPx = motionBlurEnabled
+  const motionBlurPx = motionBlurEnabled && !perfMode
     ? Math.min(6, Math.max(0, (Math.abs(currentClipSpeed - 1)) * 2.5))
     : 0
   const effectiveFilter = motionBlurPx > 0.1
@@ -1150,7 +1155,7 @@ export default function VideoPlayer({
               opacity={mv.opacity}
               blendMode={mv.blendMode}
               getAnalyser={() => analyserRef.current}
-              isPlaying={isPlaying}
+              isPlaying={isPlaying && !perfMode}
             />
           </div>
         ))}
@@ -1539,7 +1544,7 @@ export default function VideoPlayer({
         )}
 
         {/* VU Meter — left side so right-side toolbars stay clear */}
-        {showVUMeter && (
+        {showVUMeter && !perfMode && (
           <div style={{ position: 'absolute', left: 8, top: 8, bottom: 8, zIndex: 6, display: 'flex', gap: 3, alignItems: 'flex-end', pointerEvents: 'none' }}>
             {vuLevels.map((lvl, i) => (
               <div key={i} style={{ width: 8, height: '100%', background: 'rgba(0,0,0,0.5)', borderRadius: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>

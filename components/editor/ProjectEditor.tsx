@@ -442,6 +442,40 @@ export default function ProjectEditor({ projectId, projectName, modules: moduleP
     return () => { alive = false }
   }, [projectId, authLoaded]) // eslint-disable-line
 
+  // ── Idle-prefetch the other editor + export bundle ────────
+  // Once the active editor is up, quietly warm the chunk the user is most likely
+  // to reach next (the other of video/audio) and the export bundle, so the first
+  // switch or export doesn't cold-load. Runs once per mount, on idle, and skips
+  // slow / data-saver connections.
+  const prefetchedRef = useRef(false)
+  useEffect(() => {
+    if (!activeModules || prefetchedRef.current) return
+    const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection
+    if (conn?.saveData) return
+    const run = () => {
+      if (prefetchedRef.current) return
+      prefetchedRef.current = true
+      // Fire-and-forget: failures are harmless (the real import retries on demand).
+      const warmOther = activeModules.includes('video')
+        ? import('./AudioEditor')
+        : import('./VideoEditor')
+      void warmOther.catch(() => {})
+      void import('@/lib/exporter').catch(() => {})
+    }
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void) => number
+      cancelIdleCallback?: (id: number) => void
+    }
+    let idleId: number | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    if (typeof w.requestIdleCallback === 'function') idleId = w.requestIdleCallback(run)
+    else timer = setTimeout(run, 2000)
+    return () => {
+      if (idleId !== undefined && typeof w.cancelIdleCallback === 'function') w.cancelIdleCallback(idleId)
+      if (timer) clearTimeout(timer)
+    }
+  }, [activeModules])
+
   // ── Save ──────────────────────────────────────────────────
   // Demo projects (no projectId, allowImport=false) are read-only — never persisted
   const isDemo = !projectId && !allowImport

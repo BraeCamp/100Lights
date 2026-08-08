@@ -11,6 +11,7 @@ import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
 import { consumeStudioSeed } from '@/lib/open-in-studio'
+import { readWorkspace, writeWorkspace } from '@/lib/editor-workspace'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
@@ -1255,7 +1256,22 @@ export default function AudioEditor(props: AudioEditorProps) {
     })
   }
 
-  const [view, setView] = useState<DawView>('arrangement')
+  // Remember workspace — restore the last-used view / left tab / sidebar state.
+  // Panel SIZES persist separately via useResizable. Read once, client-only,
+  // SSR-safe, and validated (a corrupt blob or a view invalid for the current
+  // mode falls back to defaults; never throws).
+  const wsInit = useMemo(() => {
+    const leftTabs = ['library', 'code', 'episode', 'setup', 'guests'] as const
+    const views: DawView[] = isPodcast ? ['arrangement', 'mixer'] : ['session', 'arrangement', 'mixer']
+    const defTab = (isPodcast ? 'setup' : 'library') as typeof leftTabs[number]
+    const w = readWorkspace('audio', { leftTab: defTab, sidebarOpen: false, view: 'arrangement' as DawView })
+    return {
+      leftTab: leftTabs.includes(w.leftTab) ? w.leftTab : defTab,
+      sidebarOpen: typeof w.sidebarOpen === 'boolean' ? w.sidebarOpen : false,
+      view: views.includes(w.view) ? w.view : 'arrangement',
+    }
+  }, [isPodcast])
+  const [view, setView] = useState<DawView>(wsInit.view)
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [selectedTrackId_,  setSelectedTrackId_]  = useState<string | null>(null)
   const [selectedReturnId_, setSelectedReturnId_] = useState<string | null>(null)
@@ -1276,10 +1292,14 @@ export default function AudioEditor(props: AudioEditorProps) {
   })
   const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set())
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
-  const [leftTab,     setLeftTab]     = useState<'library' | 'code' | 'episode' | 'setup' | 'guests'>(isPodcast ? 'setup' : 'library')
+  const [leftTab,     setLeftTab]     = useState<'library' | 'code' | 'episode' | 'setup' | 'guests'>(wsInit.leftTab)
   // Start closed so the rail (logo + toggle) is all that shows on load; the
   // open/hide button reveals the panel on demand rather than it always being there.
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(wsInit.sidebarOpen)
+  // Persist the workspace layout on any change (Remember workspace).
+  useEffect(() => {
+    writeWorkspace('audio', { leftTab, sidebarOpen, view })
+  }, [leftTab, sidebarOpen, view])
   const [showAppearance, setShowAppearance] = useState(false)
   const leftResize = useResizable({ key: 'left-panel', initial: 240, min: 180, max: 520, axis: 'x' })
   const bottomResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })

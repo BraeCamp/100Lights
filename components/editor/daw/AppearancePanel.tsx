@@ -7,6 +7,7 @@ import { useWorkshopTheme } from '../WorkshopThemeProvider'
 import { shareTheme } from '@/lib/community'
 import { usePlan } from '@/hooks/usePlan'
 import { useUpgradeModal } from '@/components/UpgradeModal'
+import { usePerfMode } from '@/lib/perf-mode'
 import {
   THEME_COLOR_KEYS, THEME_COLOR_LABELS, PATTERN_TYPES, BUILTIN_PRESETS,
   DEFAULT_TRACK_PALETTE, resolveColor, contrastWarnings, autoTextTokens,
@@ -18,6 +19,7 @@ const TEXT_KEYS: ThemeColorKey[] = ['textPrimary', 'textSecondary', 'textMuted']
 
 export default function AppearancePanel({ onClose, editorKind }: { onClose: () => void; editorKind?: EditorKind }) {
   const { theme, setTheme, update, reset, isSignedIn } = useWorkshopTheme()
+  const [perfMode, setPerfMode] = usePerfMode()
   const { isPro, ent } = usePlan()
   const { showUpgrade } = useUpgradeModal()
   const [userPresets, setUserPresets] = useState<SavedPreset[]>(() => getUserPresets())
@@ -113,6 +115,25 @@ export default function AppearancePanel({ onClose, editorKind }: { onClose: () =
         {flash && (
           <div style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text-primary)', background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border)' }}>{flash}</div>
         )}
+
+        {/* Performance mode — global editor setting (both editors) */}
+        <div style={section}>
+          <p style={label}>Performance</p>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={perfMode}
+              onChange={e => setPerfMode(e.target.checked)}
+              style={{ accentColor: 'var(--accent)', marginTop: 2, flexShrink: 0 }}
+            />
+            <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>Performance mode</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                Turns off scopes, motion blur, optical flow, and the live music visual for smoother editing on slower machines.
+              </span>
+            </span>
+          </label>
+        </div>
 
         {/* Presets */}
         <div style={section}>
