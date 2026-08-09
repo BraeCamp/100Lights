@@ -619,6 +619,13 @@ export class LivePitchDetector {
   private silFrames = 0
   private mediaRec:  MediaRecorder | null      = null
   private recChunks: Blob[]                    = []
+  // Raw uncompressed PCM capture (only when captureAudio is true). MediaRecorder
+  // above records lossy Opus; these tap the SAME pre-gain source with a
+  // ScriptProcessorNode so the offline backfill can analyze lossless audio.
+  private srcNode:    MediaStreamAudioSourceNode | null = null
+  private scriptNode: ScriptProcessorNode | null        = null
+  private zeroGain:   GainNode | null                   = null
+  private pcmChunks:  Float32Array[]                    = []
 
   // Sensitivity fields — defaults preserve the original hardcoded behavior.
   private gain     = 1
@@ -669,21 +676,47 @@ export class LivePitchDetector {
     // Insert a GainNode so quiet inputs can be boosted:  source → gain → analyser
     this.gainNode = this.ctx.createGain()
     this.gainNode.gain.value = this.gain
-    this.ctx.createMediaStreamSource(this.stream).connect(this.gainNode)
+    const source = this.ctx.createMediaStreamSource(this.stream)
+    this.srcNode = source
+    source.connect(this.gainNode)
     this.gainNode.connect(this.analyser)
     this.buf      = new Float32Array(HANN_SIZE)
     this.win      = new Float32Array(HANN_SIZE)
     this.smoothHz = null
     this.silFrames = 0
     this.recChunks = []
+    this.pcmChunks = []
 
     if (captureAudio) {
+      // (a) Lossy Opus blob — kept for backward-compat / fallback (stopAndGetAudio).
       try {
         const mr = new MediaRecorder(this.stream)
         mr.ondataavailable = (e) => { if (e.data.size > 0) this.recChunks.push(e.data) }
         mr.start(200)
         this.mediaRec = mr
       } catch { /* capture unavailable on this browser */ }
+
+      // (b) Raw uncompressed PCM — tap the SAME pre-gain source with a
+      // ScriptProcessorNode so the offline backfill gets lossless audio (matching
+      // what the LIVE detector analyzed). Routed through a zero-gain node into the
+      // destination so the graph runs without any audible feedback.
+      // (ScriptProcessorNode is deprecated but universally available; an
+      // AudioWorklet would need a separately-loadable module, which is unreliable
+      // in this custom Next build — capture is a fine use for ScriptProcessor.)
+      try {
+        const sp = this.ctx.createScriptProcessor(4096, 1, 1)
+        sp.onaudioprocess = (e) => {
+          // COPY channel-0 — the event buffer is reused across callbacks.
+          this.pcmChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+        }
+        const zg = this.ctx.createGain()
+        zg.gain.value = 0
+        source.connect(sp)
+        sp.connect(zg)
+        zg.connect(this.ctx.destination)
+        this.scriptNode = sp
+        this.zeroGain   = zg
+      } catch { /* ScriptProcessorNode unavailable — blob path remains */ }
     }
 
     const SR = this.ctx.sampleRate
@@ -788,6 +821,35 @@ export class LivePitchDetector {
     return blob
   }
 
+  /**
+   * Return the RAW uncompressed PCM captured during the take (mono, at the capture
+   * AudioContext's sampleRate), or null if PCM capture was unavailable/off. Feeds
+   * the offline backfill lossless audio — no Opus decode, so offline pitch matches
+   * what the live detector heard on the raw stream.
+   *
+   * Synchronous: call it BEFORE stop()/stopAndGetAudio() (which tear the context
+   * down). It also stops further capture so the returned buffer is final, but leaves
+   * the rest of the graph alone for a subsequent stopAndGetAudio() fallback.
+   */
+  stopAndGetPcm(): { samples: Float32Array; sampleRate: number } | null {
+    const chunks = this.pcmChunks
+    const sr     = this.ctx?.sampleRate ?? 0
+    // Halt capture (leave full teardown to stop()/stopAndGetAudio()).
+    if (this.scriptNode) { this.scriptNode.onaudioprocess = null; try { this.scriptNode.disconnect() } catch { /* ok */ } }
+    try { this.zeroGain?.disconnect() } catch { /* ok */ }
+    this.scriptNode = null
+    this.zeroGain   = null
+    if (chunks.length === 0 || !(sr > 0)) return null
+
+    let total = 0
+    for (const c of chunks) total += c.length
+    const samples = new Float32Array(total)
+    let off = 0
+    for (const c of chunks) { samples.set(c, off); off += c.length }
+    this.pcmChunks = []
+    return { samples, sampleRate: sr }
+  }
+
   stop(): void {
     if (this.mediaRec && this.mediaRec.state !== 'inactive') {
       try { this.mediaRec.stop() } catch { /* ok */ }
@@ -799,11 +861,15 @@ export class LivePitchDetector {
 
   private _teardown(): void {
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null }
+    if (this.scriptNode) { this.scriptNode.onaudioprocess = null; try { this.scriptNode.disconnect() } catch { /* ok */ } }
+    this.zeroGain?.disconnect()
+    this.srcNode?.disconnect()
     this.analyser?.disconnect()
     this.gainNode?.disconnect()
     this.stream?.getTracks().forEach(t => t.stop())
     this.ctx?.close().catch(() => {})
     this.ctx = null; this.analyser = null; this.gainNode = null; this.stream = null; this.smoothHz = null
+    this.scriptNode = null; this.zeroGain = null; this.srcNode = null
   }
 }
 

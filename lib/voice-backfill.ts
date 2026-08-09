@@ -588,3 +588,35 @@ export function alignToGrid(
   }
   return out
 }
+
+/**
+ * Grid-conditional refinement of an offline take.
+ *
+ * Grid-snapping is only meaningful when the singer actually recorded to a click:
+ * then the true onsets lie on the phase-anchored beat grid they HEARD, and
+ * alignToGrid confirms/corrects toward it. Without a metronome the grid phase/BPM
+ * are arbitrary (default 0 / the tempo field), so snapping would drag onsets onto
+ * meaningless beat lines — producing notes where nothing was sung. So:
+ *
+ *   • metronome was ON  → align to the grid; expose the un-aligned notes as `rawRefined`.
+ *   • metronome was OFF → keep the offline notes' REAL onsets (no snap); `rawRefined` is
+ *     null (the "Refined" view IS already the accurate, un-snapped take). The manual
+ *     Quantize button still lets the user snap deliberately.
+ *
+ * Pure/deterministic — never throws (falls back to the un-aligned notes on any grid
+ * failure), so a take is never made worse.
+ */
+export function conditionalGridAlign(
+  offlineNotes: BackfillNote[],
+  metroWasOn: boolean,
+  grid: GridOptions,
+): { refined: BackfillNote[]; rawRefined: BackfillNote[] | null; aligned: boolean } {
+  if (!metroWasOn || offlineNotes.length === 0) {
+    return { refined: offlineNotes, rawRefined: null, aligned: false }
+  }
+  try {
+    const aligned = alignToGrid(offlineNotes, grid)
+    if (aligned.length > 0) return { refined: aligned, rawRefined: offlineNotes, aligned: true }
+  } catch { /* fall through to un-aligned */ }
+  return { refined: offlineNotes, rawRefined: null, aligned: false }
+}

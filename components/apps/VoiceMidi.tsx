@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LivePitchDetector, type LivePitchResult, type LiveLevel, type LiveSensitivity, type PitchFrame } from '@/lib/pitch-detector'
-import { notesFromBuffer, notesFromBufferAsync, analyzeBuffer, analyzeBufferAsync, buildPitchCurve, alignToGrid, type BufferAnalysis } from '@/lib/voice-backfill'
+import { notesFromBuffer, notesFromBufferAsync, analyzeBuffer, analyzeBufferAsync, buildPitchCurve, alignToGrid, conditionalGridAlign, type BufferAnalysis } from '@/lib/voice-backfill'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import {
   getPresets, getGroupedPresets, midiNoteLabel, clampToPreset,
@@ -228,6 +228,10 @@ export default function VoiceMidi() {
   // the beat grid the singer actually heard.
   const recBpmRef = useRef(bpm)
   const recPhaseRef = useRef(0)
+  // Whether the metronome was actually running when this take started. Grid
+  // alignment is only meaningful when the singer sang to a click — see
+  // conditionalGridAlign. (Ref, not state, so the deps-[] stopRecording reads it.)
+  const recMetroOnRef = useRef(false)
   const rawEvents = useRef<RecNote[]>([])
   const curEvent = useRef<{ startSec: number; midi: number; velocity: number } | null>(null)
   const liveMidi = useRef<number | null>(null)
@@ -258,15 +262,24 @@ export default function VoiceMidi() {
       __voiceBackfill?: typeof notesFromBuffer
       __voiceBackfillAsync?: typeof notesFromBufferAsync
       __voiceAnalyzeBuffer?: typeof analyzeBuffer
+      __voiceAnalyzeBufferAsync?: typeof analyzeBufferAsync
       __voiceBuildPitchCurve?: typeof buildPitchCurve
       __voiceAlignToGrid?: typeof alignToGrid
+      __voiceConditionalGridAlign?: typeof conditionalGridAlign
+      __VoiceLivePitchDetector?: typeof LivePitchDetector
       __voiceSampleProbe?: (folder: string, midi: number) => Promise<unknown>
     }
     w.__voiceBackfill = notesFromBuffer
     w.__voiceBackfillAsync = notesFromBufferAsync
     w.__voiceAnalyzeBuffer = analyzeBuffer
+    w.__voiceAnalyzeBufferAsync = analyzeBufferAsync
     w.__voiceBuildPitchCurve = buildPitchCurve
     w.__voiceAlignToGrid = alignToGrid
+    w.__voiceConditionalGridAlign = conditionalGridAlign
+    // Expose the live detector class so a headless page can drive a real
+    // live+PCM capture (feeding an overridden getUserMedia tone stream) and compare
+    // live vs offline-PCM pitch — proving the offline detector matches live quality.
+    w.__VoiceLivePitchDetector = LivePitchDetector
     // Headless proof hook: seed the AI packs, resolve+fulfill+decode one baked
     // sample for `folder` at `midi`, and report its peak level. Mirrors the exact
     // resolve path playSampledNotes uses (folder + engine note-name → fulfill → decode).
@@ -289,8 +302,9 @@ export default function VoiceMidi() {
     }
     return () => {
       delete w.__voiceBackfill; delete w.__voiceBackfillAsync
-      delete w.__voiceAnalyzeBuffer
+      delete w.__voiceAnalyzeBuffer; delete w.__voiceAnalyzeBufferAsync
       delete w.__voiceBuildPitchCurve; delete w.__voiceAlignToGrid
+      delete w.__voiceConditionalGridAlign; delete w.__VoiceLivePitchDetector
       delete w.__voiceSampleProbe
     }
   }, [])
@@ -611,6 +625,10 @@ export default function VoiceMidi() {
     // onsets to the grid the singer heard.
     recBpmRef.current = bpmRef.current
     recPhaseRef.current = captureGridPhase(c.currentTime)
+    // Grid-align the offline take ONLY if a click was actually running (same check
+    // captureGridPhase uses). Without it the phase is arbitrary and snapping would
+    // displace onsets onto meaningless beat lines.
+    recMetroOnRef.current = metroTimer.current !== null
     setRawNotes([])
     setQuantized(false)
     setLive(null)
@@ -670,13 +688,30 @@ export default function VoiceMidi() {
     setRefineProgress(0)
     setRefineMsg(null)
     try {
-      const blob = await det.stopAndGetAudio()
-      if (!blob) {
-        // Capture unavailable on this browser — keep the live take, no error.
-        setRefineMsg('Live take — refine not supported in this browser')
-        return
+      // Prefer RAW uncompressed PCM (lossless) so the offline detector analyzes the
+      // SAME audio the live detector heard. The old path decoded a lossy Opus blob,
+      // which handicapped offline detection below the live quality. Fall back to the
+      // blob only when PCM capture is unavailable on this browser.
+      let analysis: BufferAnalysis
+      const pcm = det.stopAndGetPcm()
+      if (pcm && pcm.samples.length > 0) {
+        det.stop()   // done with the mic; we already hold the lossless PCM
+        // The ScriptProcessor tapped the PRE-gain source (like MediaRecorder), so
+        // re-apply the user's sensitivity gain + RMS gate offline — same as the blob path.
+        analysis = await analyzeBufferAsync(pcm.samples, pcm.sampleRate, {
+          gain: paramsRef.current.gain,
+          rmsGate: paramsRef.current.rmsGate,
+          minDuration: 0.08,
+        }, setRefineProgress)
+      } else {
+        const blob = await det.stopAndGetAudio()
+        if (!blob) {
+          // Capture unavailable on this browser — keep the live take, no error.
+          setRefineMsg('Live take — refine not supported in this browser')
+          return
+        }
+        analysis = await backfillFromBlob(blob, paramsRef.current, setRefineProgress)
       }
-      const analysis = await backfillFromBlob(blob, paramsRef.current, setRefineProgress)
       const refinedRaw = analysis.notes
       // Stash the pitch curves + this take's grid anchor for the debug overlay.
       // (These describe the recorded audio, so they apply to whichever take view is
@@ -686,25 +721,22 @@ export default function VoiceMidi() {
       setTakeBpm(recBpmRef.current)
       setTakePhase(recPhaseRef.current)
       if (refinedRaw.length > 0) {
-        // Confirm/correct the offline onsets against the metronome's beat grid —
-        // the whole point of backfill: the take was sung to a click at a known
-        // BPM, so real-time detection doesn't have to be perfect. Fall back to the
-        // un-aligned notes on any grid failure; never throw, never make it worse.
-        let gridCorrected = refinedRaw
-        try {
-          const aligned = alignToGrid(refinedRaw, {
-            bpm:      recBpmRef.current,
-            phaseSec: recPhaseRef.current,
-            division: divisionRef.current,
-          })
-          if (aligned.length > 0) gridCorrected = aligned
-        } catch { /* keep un-aligned refinedRaw */ }
-
-        setRefinedRawTake(refinedRaw)
-        setRefinedTake(gridCorrected)
-        setRawNotes(gridCorrected)          // grid-corrected is the default "Refined"
+        // Grid-correct the offline onsets ONLY when a click was actually running.
+        // Sung to a metronome, the true onsets lie on the grid the singer heard, so
+        // alignToGrid confirms/corrects toward it. With NO metronome the phase is
+        // arbitrary, so snapping would displace notes onto meaningless beat lines —
+        // conditionalGridAlign keeps the real onsets instead. (Manual Quantize still
+        // works for deliberate snapping.)
+        const { refined, rawRefined, aligned } = conditionalGridAlign(
+          refinedRaw,
+          recMetroOnRef.current,
+          { bpm: recBpmRef.current, phaseSec: recPhaseRef.current, division: divisionRef.current },
+        )
+        setRefinedRawTake(rawRefined)       // un-aligned view, only when a click was used
+        setRefinedTake(refined)             // the default "Refined" take
+        setRawNotes(refined)
         setTakeSource('refined')
-        setRefineMsg(`Refined — ${gridCorrected.length} note${gridCorrected.length === 1 ? '' : 's'}, grid-aligned`)
+        setRefineMsg(`Refined — ${refined.length} note${refined.length === 1 ? '' : 's'}${aligned ? ', grid-aligned' : ''}`)
       } else {
         // Backfill found nothing — never make the take worse silently.
         setRefineMsg(
