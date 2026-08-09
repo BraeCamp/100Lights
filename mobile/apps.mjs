@@ -46,6 +46,7 @@ export const MOBILE_APPS = [
   // Promote a /apps mini-app to its own native app by uncommenting + tailoring an entry.
   // Make each genuinely distinct (own identity, own native value) — see mobile/AUTOMATION.md.
   // { slug: 'voicemidi', appId: 'com.hundredlights.voicemidi', appName: 'Sing to Instrument', serverUrl: 'https://100lights.com/apps/voicemidi', tagline: 'Hum a line; hear any instrument.' },
+  // { slug: 'sheetmusic', appId: 'com.hundredlights.sheetmusic', appName: 'Hear Sheet Music', serverUrl: 'https://100lights.com/apps/sheetmusic', tagline: 'Upload a score; hear it played.' },
   // { slug: 'beatmaker', appId: 'com.hundredlights.beatmaker', appName: 'Beat Maker',          serverUrl: 'https://100lights.com/apps/beatmaker', tagline: 'Tap out a drum pattern fast.' },
   // { slug: 'autotune',  appId: 'com.hundredlights.autotune',  appName: 'Autotune',            serverUrl: 'https://100lights.com/apps/autotune',  tagline: 'Snap a vocal to key.' },
 ]

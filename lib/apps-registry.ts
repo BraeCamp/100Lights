@@ -32,6 +32,14 @@ export const MINI_APPS: MiniApp[] = [
     status: 'live',
   },
   {
+    slug: 'sheetmusic',
+    title: 'Hear Sheet Music',
+    tagline: 'Upload a score; hear it played back.',
+    description: 'Turn a photo, PDF, or MusicXML of sheet music into sound — it transcribes the notes and plays them on any instrument, then lets you open the piece in the studio or export WAV/MIDI.',
+    href: '/apps/sheetmusic',
+    status: 'live',
+  },
+  {
     slug: 'voicemidi',
     title: 'Voice → Instrument',
     tagline: 'Hum or sing a line; hear it played back on any instrument.',
