@@ -634,6 +634,13 @@ export class LivePitchDetector {
   // in exactly the missing tail, so the returned PCM length ≈ record-duration × sr.
   private tailAnalyser:    AnalyserNode | null = null
   private captureStartTime = 0
+  // Acoustic-timeline zero of the raw PCM capture: the AudioContext time (and a
+  // wall-clock performance.now() companion) of the FIRST captured sample. Note times
+  // from the offline analysis are relative to this instant (PCM sample 0), so the
+  // widget anchors the beat grid HERE instead of to a separately-captured record-start
+  // — removing the constant startup-latency slide between the grid and the notes.
+  private pcmStartTime = 0
+  private pcmStartPerf = 0
 
   // Sensitivity fields — defaults preserve the original hardcoded behavior.
   private gain     = 1
@@ -714,8 +721,18 @@ export class LivePitchDetector {
       try {
         const sp = this.ctx.createScriptProcessor(4096, 1, 1)
         sp.onaudioprocess = (e) => {
+          const block = e.inputBuffer.getChannelData(0)
+          // The FIRST delivered block is the acoustic zero of the recording. A
+          // ScriptProcessor only fires once it has filled a whole block, so sample 0
+          // was actually captured one block-duration BEFORE this callback — back-date
+          // the timestamps so pcmStart marks the true instant of PCM sample 0.
+          if (this.pcmChunks.length === 0 && this.ctx) {
+            const blockDur = block.length / this.ctx.sampleRate
+            this.pcmStartTime = this.ctx.currentTime - blockDur
+            this.pcmStartPerf = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - blockDur * 1000
+          }
           // COPY channel-0 — the event buffer is reused across callbacks.
-          this.pcmChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+          this.pcmChunks.push(new Float32Array(block))
         }
         const zg = this.ctx.createGain()
         zg.gain.value = 0
@@ -850,8 +867,12 @@ export class LivePitchDetector {
    * Synchronous: call it BEFORE stop()/stopAndGetAudio() (which tear the context
    * down). It also stops further capture so the returned buffer is final, but leaves
    * the rest of the graph alone for a subsequent stopAndGetAudio() fallback.
+   *
+   * Also returns `startTime` (capture-context AudioContext time of PCM sample 0) and
+   * `startPerf` (its performance.now() wall-clock companion). Back-compatible: existing
+   * callers that read only { samples, sampleRate } are unaffected.
    */
-  stopAndGetPcm(opts?: { reconstructTail?: boolean }): { samples: Float32Array; sampleRate: number } | null {
+  stopAndGetPcm(opts?: { reconstructTail?: boolean }): { samples: Float32Array; sampleRate: number; startTime: number; startPerf: number } | null {
     const reconstructTail = opts?.reconstructTail !== false
     const chunks = this.pcmChunks
     const sr     = this.ctx?.sampleRate ?? 0
@@ -895,7 +916,10 @@ export class LivePitchDetector {
     for (const c of chunks) { samples.set(c, off); off += c.length }
     if (tail) { samples.set(tail, off); off += tail.length }
     this.pcmChunks = []
-    return { samples, sampleRate: sr }
+    // startTime = capture AudioContext time of PCM sample 0; startPerf = its wall-clock
+    // (performance.now) companion, used to reference-align a beat grid captured against a
+    // DIFFERENT AudioContext (the metronome's) to this recording's acoustic zero.
+    return { samples, sampleRate: sr, startTime: this.pcmStartTime, startPerf: this.pcmStartPerf }
   }
 
   stop(): void {

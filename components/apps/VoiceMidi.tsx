@@ -81,6 +81,25 @@ const DEBUG_KEY = 'voicemidi-debug'
 const SEGMENTER_KEY = 'voicemidi-segmenter'
 type Segmenter = 'onset' | 'hmm'
 const DEFAULT_SEGMENTER: Segmenter = 'hmm'
+// ── Latency compensation ──────────────────────────────────────────────────────
+// The click is HEARD `outputLatency` after it's scheduled, and the mic delivers the
+// voice `inputLatency` after it happened, so sung onsets lag the scheduled clicks by
+// ~the round-trip. We shift the beat grid forward by that amount so a note whose
+// acoustic onset matched a heard beat snaps to that beat's line. outputLatency comes
+// from the AudioContext; inputLatency has no reliable API, so we seed a few-ms default
+// and expose a user "Timing offset (ms)" dial (persisted) as the final device-specific
+// correction — the control value IS the total compensation, pre-filled with the auto
+// estimate below.
+const TIMING_OFFSET_KEY = 'voicemidi-timing-offset'
+const INPUT_LATENCY_DEFAULT_MS = 3
+const TIMING_OFFSET_MIN = -100
+const TIMING_OFFSET_MAX = 100
+// Auto estimate (ms) that seeds the Timing-offset control's default: output latency of
+// the click context + a small input-latency default.
+function autoLatencyMs(c: AudioContext | null): number {
+  const out = c ? (c.outputLatency || c.baseLatency || 0) : 0
+  return Math.round((out + INPUT_LATENCY_DEFAULT_MS / 1000) * 1000)
+}
 function paramsForSensitivity(s: number): Required<LiveSensitivity> {
   const t = clamp(s, 0, 1)
   return {
@@ -183,6 +202,10 @@ export default function VoiceMidi() {
   const [refinedRawTake, setRefinedRawTake] = useState<RecNote[] | null>(null)
   const [refinedTake, setRefinedTake] = useState<RecNote[] | null>(null)
   const [takeSource, setTakeSource] = useState<TakeSource>('live')
+  // Refs mirror the un-aligned offline notes + the shown take, so the Timing-offset dial
+  // can re-align the LAST take instantly (no pitch re-analysis) from the deps-[] handler.
+  const refinedRawTakeRef = useRef<RecNote[] | null>(null)
+  const takeSourceRef = useRef<TakeSource>('live')
 
   // ── Debug: "what it heard" pitch-curve overlay ───────────────────────────────
   // The offline analysis (analyzeBufferAsync) also returns the raw + corrected
@@ -216,6 +239,18 @@ export default function VoiceMidi() {
   const segmenterRef = useRef<Segmenter>(DEFAULT_SEGMENTER)
   const lastAudioRef = useRef<{ samples: Float32Array; sampleRate: number } | null>(null)
 
+  // ── Timing offset (latency-compensation dial) ────────────────────────────────
+  // The total grid-shift compensation in ms (output + input latency, device-tunable).
+  // Seeded with the auto estimate once a context exists; persisted; only relevant when
+  // the metronome was used. A ref mirrors it so the deps-[] align/re-run flows read live.
+  const [timingOffsetMs, setTimingOffsetMs] = useState(0)
+  const timingOffsetRef = useRef(0)
+  const timingUserSetRef = useRef(false)   // true once persisted/user-moved — stops the auto default from overwriting
+  const autoAppliedRef = useRef(false)      // ensures the auto default is applied at most once
+  // Whether the LAST take was recorded with the metronome running — gates the control's
+  // visibility together with metroOn (state, so the UI re-renders).
+  const [takeUsedMetro, setTakeUsedMetro] = useState(false)
+
   // ── Test / calibrate ─────────────────────────────────────────────────────────
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENS)
   // Mirror in a ref so the record→refine / segmenter-toggle flows (deps []) thread the LIVE
@@ -244,9 +279,19 @@ export default function VoiceMidi() {
   const calibMaxRef = useRef(0)
 
   const recStart = useRef(0)
+  // performance.now() companion of recStart, so the offline PCM's wall-clock zero
+  // (stopAndGetPcm().startPerf) can be reference-aligned to the metronome grid — the
+  // two live in DIFFERENT AudioContext clocks, and performance.now() is their bridge.
+  const recStartPerfRef = useRef(0)
   // Grid anchor captured at record start, so the offline pass can align onsets to
   // the beat grid the singer actually heard.
   const recBpmRef = useRef(bpm)
+  // recPhaseRawRef = seconds from record-start to the next heard downbeat (metro-clock).
+  // recPhaseRef    = that phase RE-REFERENCED to the PCM acoustic zero at stop (minus the
+  //                  capture-startup delay Δ). Latency compensation + the user Timing
+  //                  offset are layered on at ALIGN time (applyAnalysis), not baked here,
+  //                  so nudging the offset re-aligns the last take without a re-record.
+  const recPhaseRawRef = useRef(0)
   const recPhaseRef = useRef(0)
   // Whether the metronome was actually running when this take started. Grid
   // alignment is only meaningful when the singer sang to a click — see
@@ -289,10 +334,14 @@ export default function VoiceMidi() {
       __VoiceLivePitchDetector?: typeof LivePitchDetector
       __voiceSampleProbe?: (folder: string, midi: number) => Promise<unknown>
       __voiceGetSegmenter?: () => Segmenter
+      __voiceGetTimingOffsetMs?: () => number
     }
     // Report the current in-app segmenter choice so a headless page can confirm the
     // toggle's persisted default and that flipping it takes effect.
     w.__voiceGetSegmenter = () => segmenterRef.current
+    // Report the live Timing-offset (ms) so a headless page can confirm the persisted
+    // default / auto estimate and that changing it takes effect.
+    w.__voiceGetTimingOffsetMs = () => timingOffsetRef.current
     w.__voiceBackfill = notesFromBuffer
     w.__voiceBackfillAsync = notesFromBufferAsync
     w.__voiceAnalyzeBuffer = analyzeBuffer
@@ -330,6 +379,7 @@ export default function VoiceMidi() {
       delete w.__voiceBuildPitchCurve; delete w.__voiceAlignToGrid
       delete w.__voiceConditionalGridAlign; delete w.__VoiceLivePitchDetector
       delete w.__voiceSampleProbe; delete w.__voiceGetSegmenter
+      delete w.__voiceGetTimingOffsetMs
     }
   }, [])
 
@@ -345,6 +395,23 @@ export default function VoiceMidi() {
       if (s === 'onset' || s === 'hmm') { setSegmenter(s); segmenterRef.current = s }
     } catch { /* ignore */ }
   }, [])
+
+  // Restore the persisted Timing offset. If none is saved, the auto estimate is applied
+  // once a context exists (see ensureCtx); a saved value marks the dial user-set so the
+  // auto default never clobbers it.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(TIMING_OFFSET_KEY)
+      if (raw !== null) {
+        const v = parseFloat(raw)
+        if (Number.isFinite(v)) {
+          const c = clamp(Math.round(v), TIMING_OFFSET_MIN, TIMING_OFFSET_MAX)
+          setTimingOffsetMs(c); timingOffsetRef.current = c
+          timingUserSetRef.current = true; autoAppliedRef.current = true
+        }
+      }
+    } catch { /* ignore */ }
+  }, [])
   const toggleDebug = useCallback(() => {
     setShowDebug(v => {
       const next = !v
@@ -355,6 +422,8 @@ export default function VoiceMidi() {
 
   const selected = useMemo(() => presets.find(p => p.id === selectedId) ?? null, [presets, selectedId])
   useEffect(() => { selRef.current = selected }, [selected])
+  useEffect(() => { refinedRawTakeRef.current = refinedRawTake }, [refinedRawTake])
+  useEffect(() => { takeSourceRef.current = takeSource }, [takeSource])
 
   // Synth presets keep their canonical instrument groups; the sampled AI packs get
   // their own distinct "AI Instruments" optgroup at the end.
@@ -444,6 +513,15 @@ export default function VoiceMidi() {
         return b
       }
       metroBufs.current = { down: build(1800, 1), up: build(900, 0.5) }
+    }
+    // Seed the Timing-offset dial with the auto latency estimate the first time a real
+    // context (with outputLatency) exists — but only if the user hasn't set it and nothing
+    // was persisted, so an explicit choice is never overwritten.
+    if (!timingUserSetRef.current && !autoAppliedRef.current) {
+      autoAppliedRef.current = true
+      const est = clamp(autoLatencyMs(ctxRef.current), TIMING_OFFSET_MIN, TIMING_OFFSET_MAX)
+      timingOffsetRef.current = est
+      setTimingOffsetMs(est)
     }
     return ctxRef.current
   }, [])
@@ -653,15 +731,19 @@ export default function VoiceMidi() {
     curEvent.current = null
     liveMidi.current = null
     recStart.current = c.currentTime
+    recStartPerfRef.current = (typeof performance !== 'undefined' ? performance.now() : Date.now())
     // ── Anchor the grid to this take ──────────────────────────────────────────
     // Freeze the tempo, and capture the beat phase so the offline pass can snap
-    // onsets to the grid the singer heard.
+    // onsets to the grid the singer heard. The raw (metro-clock) phase is finalized
+    // in stopRecording, where it's re-referenced to the PCM acoustic zero.
     recBpmRef.current = bpmRef.current
-    recPhaseRef.current = captureGridPhase(c.currentTime)
+    recPhaseRawRef.current = captureGridPhase(c.currentTime)
+    recPhaseRef.current = recPhaseRawRef.current   // provisional until PCM-referenced at stop
     // Grid-align the offline take ONLY if a click was actually running (same check
     // captureGridPhase uses). Without it the phase is arbitrary and snapping would
     // displace onsets onto meaningless beat lines.
     recMetroOnRef.current = metroTimer.current !== null
+    setTakeUsedMetro(recMetroOnRef.current)
     setRawNotes([])
     setQuantized(false)
     setLive(null)
@@ -711,14 +793,17 @@ export default function VoiceMidi() {
     setPitchDelta(analysis.pitchDelta ?? null)
     setRecovered(analysis.recovered ?? null)
     setTakeBpm(recBpmRef.current)
-    setTakePhase(recPhaseRef.current)
+    // Compensated grid phase = PCM-referenced beat phase + latency/user Timing offset.
+    // Layered on HERE (not baked at record) so the Timing dial re-aligns without a re-record.
+    const phaseSec = recPhaseRef.current + timingOffsetRef.current / 1000
+    setTakePhase(phaseSec)
     const refinedRaw = analysis.notes
     const tag = segmenterRef.current === 'hmm' ? 'HMM' : 'Onset'
     if (refinedRaw.length > 0) {
       const { refined, rawRefined, aligned } = conditionalGridAlign(
         refinedRaw,
         recMetroOnRef.current,
-        { bpm: recBpmRef.current, phaseSec: recPhaseRef.current, division: divisionRef.current },
+        { bpm: recBpmRef.current, phaseSec, division: divisionRef.current },
       )
       setRefinedRawTake(rawRefined)
       setRefinedTake(refined)
@@ -765,6 +850,33 @@ export default function VoiceMidi() {
     if (lastAudioRef.current && !recording && !refining) void rerunSegmenter()
   }, [recording, refining, rerunSegmenter])
 
+  // Re-align the LAST take's offline notes to the grid at the CURRENT compensated phase —
+  // cheap (no pitch re-analysis), so the Timing-offset slider updates live while dragging.
+  // Only meaningful when the take was recorded to a click (un-aligned offline notes exist).
+  const realignLastTake = useCallback(() => {
+    const raw = refinedRawTakeRef.current
+    if (!raw || raw.length === 0 || !recMetroOnRef.current) return
+    const phaseSec = recPhaseRef.current + timingOffsetRef.current / 1000
+    const { refined } = conditionalGridAlign(
+      raw, true, { bpm: recBpmRef.current, phaseSec, division: divisionRef.current },
+    )
+    setTakePhase(phaseSec)
+    setRefinedTake(refined)
+    // Reflect the re-alignment in the shown notes only when the Refined take is selected.
+    if (takeSourceRef.current === 'refined') setRawNotes(refined)
+  }, [])
+
+  // Timing-offset dial: persist + mirror, then re-align the last take on the spot.
+  const onTimingOffsetChange = useCallback((ms: number) => {
+    const v = clamp(Math.round(ms), TIMING_OFFSET_MIN, TIMING_OFFSET_MAX)
+    setTimingOffsetMs(v)
+    timingOffsetRef.current = v
+    timingUserSetRef.current = true
+    autoAppliedRef.current = true
+    try { localStorage.setItem(TIMING_OFFSET_KEY, String(v)) } catch { /* ignore */ }
+    if (!recording && !refining) realignLastTake()
+  }, [recording, refining, realignLastTake])
+
   const stopRecording = useCallback(async () => {
     const det = detectorRef.current
     detectorRef.current = null
@@ -805,6 +917,16 @@ export default function VoiceMidi() {
       const pcm = det.stopAndGetPcm()
       if (pcm && pcm.samples.length > 0) {
         det.stop()   // done with the mic; we already hold the lossless PCM
+        // ── Reference-align the grid to the PCM acoustic zero ──────────────────
+        // The metronome grid phase was captured in the metronome context, anchored to
+        // record-start. The offline note times are relative to PCM sample 0, which the
+        // capture context delivers Δ seconds later (mic/context startup). The heard beats
+        // therefore sit Δ EARLIER in the PCM timeline, so subtract Δ. Bridge the two
+        // AudioContext clocks via their performance.now() companions.
+        if (typeof pcm.startPerf === 'number' && pcm.startPerf > 0 && recStartPerfRef.current > 0) {
+          const delta = Math.max(0, (pcm.startPerf - recStartPerfRef.current) / 1000)
+          recPhaseRef.current = recPhaseRawRef.current - delta
+        }
         src = { samples: pcm.samples, sampleRate: pcm.sampleRate }
       } else {
         const blob = await det.stopAndGetAudio()
@@ -1094,6 +1216,45 @@ export default function VoiceMidi() {
             {metroOn ? '● Metronome on' : 'Metronome'}
           </button>
         </div>
+
+        {/* Timing offset — latency-compensation dial. Only relevant once a click is/was
+            used: shifts the beat grid so sung notes land on the beats they were heard on.
+            Persisted; re-aligns the last take live as it's nudged. */}
+        {(metroOn || takeUsedMetro) && (
+          <div style={{ marginTop: 12 }} data-testid="vm-timing-offset-control">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ width: 84, flexShrink: 0, fontSize: 10.5, color: 'var(--text-muted)', letterSpacing: '0.07em', textTransform: 'uppercase' }}>
+                Timing offset
+              </span>
+              <input
+                type="range"
+                min={TIMING_OFFSET_MIN} max={TIMING_OFFSET_MAX} step={1}
+                value={timingOffsetMs}
+                onChange={e => onTimingOffsetChange(parseFloat(e.target.value))}
+                aria-label="Timing offset in milliseconds"
+                data-testid="vm-timing-offset-slider"
+                style={{ flex: 1, accentColor: 'var(--accent)', cursor: 'pointer' }}
+              />
+              <input
+                type="number"
+                min={TIMING_OFFSET_MIN} max={TIMING_OFFSET_MAX} step={1}
+                value={timingOffsetMs}
+                onChange={e => onTimingOffsetChange(parseFloat(e.target.value))}
+                aria-label="Timing offset in milliseconds (number)"
+                data-testid="vm-timing-offset-number"
+                style={{
+                  width: 56, fontSize: 13, fontWeight: 700, textAlign: 'center', padding: '5px 4px',
+                  background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 8,
+                  color: 'var(--text-primary)', outline: 'none', fontVariantNumeric: 'tabular-nums',
+                }}
+              />
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>ms</span>
+            </div>
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+              Nudge if your sung notes land just off the click — accounts for your device&apos;s audio latency.
+            </p>
+          </div>
+        )}
       </Row>
 
       {/* Test / Calibrate */}
