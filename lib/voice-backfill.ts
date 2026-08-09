@@ -327,6 +327,21 @@ const SCOOP_MERGE_MAX_GAP_SEC = 0.05
 // whereas a real rest between notes drops the amplitude to ~0. A legato re-hit with no
 // silence is instead caught by the onset gate (it carries an energy attack → an onset).
 const SCOOP_MERGE_SILENCE_AMP = 0.04
+// ── De-fragment regimes beyond the ~1-semitone attack scoop (derived from real user
+//    corrections: held notes broken up, glide/transition ghosts, and octave errors) ──────────
+// OCTAVE/HARMONIC ghost: YIN briefly locks onto a harmonic (an octave — or two — up) of the
+// true pitch for a few frames, which the segmenter splits off as a short WRONG-OCTAVE note.
+// A short, no-onset, voiced-contiguous fragment sitting ~a whole octave from its neighbour is
+// that slip → fold it in and snap to the FUNDAMENTAL (the lower pitch), since the error is
+// almost always octave-UP. Octaves only (not fifths) to avoid collapsing real interval leaps.
+const SCOOP_MERGE_HARMONIC_SEMI = [12, 24]
+const SCOOP_MERGE_HARMONIC_TOL  = 1.5
+// GLIDE fragment: a transition between two notes that the pitch swept through, split off as a
+// short note up to this many semitones off. Folded ONLY into a neighbour that clearly DOMINATES
+// its duration (it's a sub-part of that note, not a peer melodic step), so real short melodic
+// steps — which are peers, not dominated fragments — are never swallowed.
+const SCOOP_MERGE_GLIDE_SEMI      = 3.5
+const SCOOP_MERGE_GLIDE_DOMINANCE = 2.5
 // Spectral flux is summed into this many linear frequency BANDS before differencing.
 // Band-summing averages out the per-bin leakage jitter a steady tone otherwise shows
 // (which made a held note's raw per-bin flux spike erratically), so a sustained note
@@ -1313,17 +1328,33 @@ function mergeScoopFragments(
   const dominantPitch = (a: BackfillNote, b: BackfillNote): number =>
     (a.durSec >= b.durSec ? a : b).midi
 
-  // `a` precedes `b`. Return the merged note when the pair qualifies, else null.
+  // `a` precedes `b`. Return the merged note when the pair qualifies, else null. Three pitch
+  // regimes, in order of confidence — all still gated by voiced-contiguity + no boundary onset
+  // (a real re-articulation always carries an onset and is thus protected):
+  //   · SCOOP    — |Δ| ≤ 1.5 st: the attack settle. Merged pitch = the sustained neighbour.
+  //   · HARMONIC — |Δ| ≈ an octave: a YIN octave slip. Merged pitch = the FUNDAMENTAL (lower).
+  //   · GLIDE    — |Δ| ≤ 3.5 st into a neighbour ≥2.5× longer: a swept transition sub-part.
   const tryMerge = (a: BackfillNote, b: BackfillNote): BackfillNote | null => {
-    if (Math.abs(a.midi - b.midi) > SCOOP_MERGE_SEMI_TOL) return null
+    const dMidi   = Math.abs(a.midi - b.midi)
+    const longer  = a.durSec >= b.durSec ? a : b
+    const shorter = a.durSec >= b.durSec ? b : a
+    const dominates = longer.durSec >= SCOOP_MERGE_GLIDE_DOMINANCE * shorter.durSec
+
+    const isScoop    = dMidi <= SCOOP_MERGE_SEMI_TOL
+    const isHarmonic = SCOOP_MERGE_HARMONIC_SEMI.some(h => Math.abs(dMidi - h) <= SCOOP_MERGE_HARMONIC_TOL)
+    const isGlide    = dMidi <= SCOOP_MERGE_GLIDE_SEMI && dominates
+    if (!isScoop && !isHarmonic && !isGlide) return null
     if (!voicedContiguous(a.startSec + a.durSec, b.startSec)) return null
     if (hasOnsetAt(b.startSec)) return null                       // real re-articulation → keep split
+
+    // Scoop/glide take the sustained neighbour's pitch; an octave slip snaps to the fundamental.
+    const midi     = isHarmonic && !isScoop ? Math.min(a.midi, b.midi) : dominantPitch(a, b)
     const startSec = a.startSec
     const endSec   = Math.max(a.startSec + a.durSec, b.startSec + b.durSec)
     const durSec   = Math.max(minDuration, endSec - startSec)
     return {
       startSec,
-      midi:     dominantPitch(a, b),
+      midi,
       durSec,
       velocity: Math.max(a.velocity, b.velocity),
       ...(a.recovered || b.recovered ? { recovered: true } : {}),
