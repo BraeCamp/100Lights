@@ -626,6 +626,14 @@ export class LivePitchDetector {
   private scriptNode: ScriptProcessorNode | null        = null
   private zeroGain:   GainNode | null                   = null
   private pcmChunks:  Float32Array[]                    = []
+  // Tail-recovery: a large-window AnalyserNode tapping the SAME pre-gain source as
+  // the ScriptProcessor. A ScriptProcessorNode only delivers audio in whole blocks
+  // (4096 samples ≈ 93ms) and never flushes the partially-filled final block on
+  // teardown, so ~1 block of the take's END is lost (a prior take captured 2.88s of
+  // 3.0s). At stop we read the analyser's most-recent time-domain samples and splice
+  // in exactly the missing tail, so the returned PCM length ≈ record-duration × sr.
+  private tailAnalyser:    AnalyserNode | null = null
+  private captureStartTime = 0
 
   // Sensitivity fields — defaults preserve the original hardcoded behavior.
   private gain     = 1
@@ -716,6 +724,18 @@ export class LivePitchDetector {
         zg.connect(this.ctx.destination)
         this.scriptNode = sp
         this.zeroGain   = zg
+        // Tail-recovery analyser on the SAME pre-gain source. 16384-sample window
+        // (~372ms @44.1k) — comfortably longer than the ~120ms the ScriptProcessor
+        // drops — read at stop to splice the missing final block back in. Time-domain
+        // data is un-smoothed, so it matches the raw chunks exactly (no gain applied).
+        try {
+          const ta = this.ctx.createAnalyser()
+          ta.fftSize = 16384
+          ta.smoothingTimeConstant = 0
+          source.connect(ta)
+          this.tailAnalyser = ta
+          this.captureStartTime = this.ctx.currentTime
+        } catch { /* analyser tail-recovery unavailable — chunks still returned */ }
       } catch { /* ScriptProcessorNode unavailable — blob path remains */ }
     }
 
@@ -831,21 +851,49 @@ export class LivePitchDetector {
    * down). It also stops further capture so the returned buffer is final, but leaves
    * the rest of the graph alone for a subsequent stopAndGetAudio() fallback.
    */
-  stopAndGetPcm(): { samples: Float32Array; sampleRate: number } | null {
+  stopAndGetPcm(opts?: { reconstructTail?: boolean }): { samples: Float32Array; sampleRate: number } | null {
+    const reconstructTail = opts?.reconstructTail !== false
     const chunks = this.pcmChunks
     const sr     = this.ctx?.sampleRate ?? 0
+
+    // ── Recover the dropped tail BEFORE tearing anything down ──────────────────
+    // The ScriptProcessor never delivered its final partial block. Estimate how many
+    // samples are missing (elapsed capture time × sr − samples already delivered) and
+    // splice that many of the tail analyser's most-recent samples onto the end. This
+    // is read here, synchronously, while the graph is still live.
+    let tail: Float32Array | null = null
+    if (reconstructTail && this.tailAnalyser && this.ctx && sr > 0 && chunks.length > 0) {
+      let captured = 0
+      for (const c of chunks) captured += c.length
+      const elapsed  = this.ctx.currentTime - this.captureStartTime
+      const expected = Math.round(elapsed * sr)
+      const missing  = expected - captured
+      if (missing > 0) {
+        const fftSize = this.tailAnalyser.fftSize
+        const tbuf    = new Float32Array(fftSize)
+        // Newest sample is at index fftSize-1; take the last `missing` samples.
+        this.tailAnalyser.getFloatTimeDomainData(tbuf)
+        const take = Math.min(missing, fftSize)
+        tail = tbuf.slice(fftSize - take)
+      }
+    }
+
     // Halt capture (leave full teardown to stop()/stopAndGetAudio()).
     if (this.scriptNode) { this.scriptNode.onaudioprocess = null; try { this.scriptNode.disconnect() } catch { /* ok */ } }
     try { this.zeroGain?.disconnect() } catch { /* ok */ }
-    this.scriptNode = null
-    this.zeroGain   = null
+    try { this.tailAnalyser?.disconnect() } catch { /* ok */ }
+    this.scriptNode  = null
+    this.zeroGain    = null
+    this.tailAnalyser = null
     if (chunks.length === 0 || !(sr > 0)) return null
 
     let total = 0
     for (const c of chunks) total += c.length
+    if (tail) total += tail.length
     const samples = new Float32Array(total)
     let off = 0
     for (const c of chunks) { samples.set(c, off); off += c.length }
+    if (tail) { samples.set(tail, off); off += tail.length }
     this.pcmChunks = []
     return { samples, sampleRate: sr }
   }
@@ -863,13 +911,14 @@ export class LivePitchDetector {
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null }
     if (this.scriptNode) { this.scriptNode.onaudioprocess = null; try { this.scriptNode.disconnect() } catch { /* ok */ } }
     this.zeroGain?.disconnect()
+    this.tailAnalyser?.disconnect()
     this.srcNode?.disconnect()
     this.analyser?.disconnect()
     this.gainNode?.disconnect()
     this.stream?.getTracks().forEach(t => t.stop())
     this.ctx?.close().catch(() => {})
     this.ctx = null; this.analyser = null; this.gainNode = null; this.stream = null; this.smoothHz = null
-    this.scriptNode = null; this.zeroGain = null; this.srcNode = null
+    this.scriptNode = null; this.zeroGain = null; this.srcNode = null; this.tailAnalyser = null
   }
 }
 

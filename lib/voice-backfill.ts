@@ -120,6 +120,44 @@ export interface BackfillOptions {
    *  over a local flux window: HIGHER sensitivity ⇒ lower k ⇒ more onsets detected (more
    *  splits); lower ⇒ stricter (fewer). Default 0.5. */
   onsetSensitivity?: number
+
+  // ── Problem 1: tail coverage ────────────────────────────────────────────────
+  /** Also analyze a FINAL window anchored at buf.length−win so the trailing <win
+   *  samples the `off+win <= length` loop skips are covered. Without it the last
+   *  ~one window of audio is never scanned and a note ending within ~a window of the
+   *  buffer end is dropped. Default true. Pass false to A/B the drop. */
+  scanTailWindow?: boolean
+
+  // ── Problem 2: adaptive analysis window for low notes ───────────────────────
+  /** Per-frame adaptive YIN window: the short `winSize` is kept for time resolution,
+   *  but on frames whose spectral energy is dominated by LOW frequencies (a low sung
+   *  note, where ~60ms is too few periods for YIN to lock) the pitch is measured from a
+   *  longer window (up to `lowWinSec`). RMS/flux/onset features stay on the short window,
+   *  so quick mid/high notes are untouched. Default true. Pass false to A/B. */
+  adaptiveWindow?: boolean
+  /** Longer window (seconds) used to re-detect a low frame. Capped at the YIN core's
+   *  4096-sample ceiling. Default 0.12 (~120ms → ~13 periods of A2). */
+  lowWinSec?: number
+  /** Short-window pitch (Hz) at/below which a frame is re-detected on the longer window
+   *  (a failed-but-energetic short read also triggers it). Higher = more frames take the
+   *  2nd pass. Default 165 (~E3). */
+  adaptiveLowHz?: number
+
+  // ── Problem 3: volume-envelope cues ─────────────────────────────────────────
+  /** Use the RMS volume envelope as extra note evidence: (1) split at volume VALLEYS
+   *  (local RMS minima between swells) so a legato scale — pitch gliding but each note
+   *  re-swelling — segments per swell; (2) an EXISTENCE gate that drops notes whose peak
+   *  volume is negligible vs the take's loudest (phantom notes in near-silence); (3) fold
+   *  volume into the clarity weighting when assigning a note's pitch (loud, clear frames
+   *  dominate). Only active on the onset-aware path. Default true. Pass false to A/B. */
+  useVolumeCues?: boolean
+  /** Minimum relative depth of a volume valley (0→1) to treat it as a note boundary:
+   *  (min(neighbourPeakL,R) − valley) ÷ peak must exceed this. Higher = only deep dips
+   *  split. Default 0.22. */
+  volumeValleyDepth?: number
+  /** Existence gate: a note is dropped when its PEAK amplitude is below this fraction of
+   *  the take's peak amplitude (near-silence phantom). Default 0.12. Set 0 to disable. */
+  volumeExistFrac?: number
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -144,6 +182,16 @@ const DEFAULT_RELEASE_SKIP_SEC = 0.01
 const MIN_STABLE_FRAMES        = 3
 // Onset peak-pick sensitivity default (0→1; higher = more onsets). See BackfillOptions.
 const DEFAULT_ONSET_SENS       = 0.5
+// Adaptive-window defaults (Problem 2). The long window (~120ms ≈ 13 periods of A2)
+// only engages on low-dominated frames; the YIN core caps the window at 4096 samples.
+const DEFAULT_LOW_WIN_SEC      = 0.12
+// A short-window pitch at/below this (Hz) triggers the longer-window re-detect. ~165Hz
+// (~E3) covers the low male/female chest range where ~60ms is too few periods to lock.
+const DEFAULT_ADAPTIVE_LOW_HZ  = 165
+const YIN_MAX_WIN              = 4096   // detectBufferPitch's HANN_SIZE ceiling
+// Volume-cue defaults (Problem 3).
+const DEFAULT_VALLEY_DEPTH     = 0.22
+const DEFAULT_EXIST_FRAC       = 0.12
 // Cap on the FFT size used for the per-window spectral-flux (perf; power of 2).
 const FLUX_MAX_FFT             = 2048
 // Spectral flux is summed into this many linear frequency BANDS before differencing.
@@ -188,7 +236,31 @@ export function resampleMono(
   return { buf: out, rate: dstRate }
 }
 
-interface ScanParams { win: number; rmsGate: number; sampleRate: number }
+interface ScanParams {
+  win:           number
+  rmsGate:       number
+  sampleRate:    number
+  // Adaptive-window (Problem 2): when `adaptive`, a frame whose short-window pitch reads
+  // below `lowHz` (or fails) is re-detected on the longer `lowWin`.
+  adaptive: boolean
+  lowWin:   number
+  lowHz:    number
+}
+
+// Build the per-scan parameter block from options. Shared by scanBuffer and the async
+// scan so both honour the same adaptive-window / gate config.
+function scanParamsFrom(opts: BackfillOptions, sampleRate: number): ScanParams {
+  const win    = opts.winSize ?? defaultWin(sampleRate)
+  const lowWin = Math.min(YIN_MAX_WIN, Math.max(win, Math.round((opts.lowWinSec ?? DEFAULT_LOW_WIN_SEC) * sampleRate)))
+  return {
+    win,
+    rmsGate:  opts.rmsGate ?? 0.006,
+    sampleRate,
+    adaptive: opts.adaptiveWindow !== false,
+    lowWin,
+    lowHz:    opts.adaptiveLowHz ?? DEFAULT_ADAPTIVE_LOW_HZ,
+  }
+}
 
 // Largest power of two ≤ n (≥1). Used to size the flux FFT to fit inside the
 // analysis window while satisfying the radix-2 FFT's power-of-2 length requirement.
@@ -232,19 +304,12 @@ function scanFeatureFrame(buf: Float32Array, off: number, p: ScanParams, st: Sca
   const rms = Math.sqrt(sq / seg.length)
   const amplitude = Math.min(1, rms * 4)   // scaling extractNoteEvents' 0.025 gate assumes
 
-  let freq: number | null = null
-  let midi: number | null = null
-  let clarity = 0
-  if (rms >= p.rmsGate) {
-    const det = detectBufferPitch(seg as Float32Array, p.sampleRate, 0)
-    if (det) { freq = det.hz; midi = det.midi; clarity = det.confidence }
-  }
-
-  // Spectral flux: FFT this window (Hann), sum bin magnitudes into FLUX_BANDS linear
-  // bands, then half-wave-rectify the per-BAND increase vs the previous window. Banding
-  // averages out per-bin leakage jitter so a sustained note reads ~0 flux (only a real
-  // attack moves the bands). Zero-padded if the window runs past the buffer end (only
-  // possible for a tiny custom winSize; the default win ≥ fftSize).
+  // Spectral flux (onset strength) + a cheap low-band energy estimate for the adaptive
+  // window. FFT this window (Hann), sum bin magnitudes into FLUX_BANDS linear bands, then
+  // half-wave-rectify the per-BAND increase vs the previous window. Banding averages out
+  // per-bin leakage jitter so a sustained note reads ~0 flux (only a real attack moves the
+  // bands). The same magnitude pass accumulates the fraction of energy below
+  // ADAPTIVE_LOW_HZ, which drives the per-frame window length below.
   const { fftSize, hann, re, im, band, prevBand } = st
   const half = fftSize >> 1
   for (let i = 0; i < fftSize; i++) { re[i] = (off + i < buf.length ? buf[off + i] : 0) * hann[i]; im[i] = 0 }
@@ -266,12 +331,58 @@ function scanFeatureFrame(buf: Float32Array, off: number, p: ScanParams, st: Sca
   // so it can't dominate the adaptive threshold (the note still opens on the first voiced frame).
   if (st.first) { flux = 0; st.first = false }
 
+  // ── Pitch, with an adaptive window for low content (Problem 2) ──────────────
+  // A short (~60ms) window gives few periods of a low fundamental, so YIN's CMND
+  // minimum is shallow → low confidence → the note is gated out entirely. We first
+  // detect on the short window (best time resolution, unchanged for mid/high notes);
+  // only when that short read is LOW (< lowHz) or FAILS on an energetic frame do we
+  // re-detect on the longer window — those extra periods deepen the minimum and lift
+  // confidence, recovering the low note. Quick mid/high notes never pay the 2nd pass.
+  let freq: number | null = null
+  let midi: number | null = null
+  let clarity = 0
+  if (rms >= p.rmsGate) {
+    let det = detectBufferPitch(seg as Float32Array, p.sampleRate, 0)
+    if (p.adaptive && p.lowWin > p.win && (det === null || det.hz < p.lowHz)) {
+      // Anchor the long window to the buffer end near the tail so a low END note still
+      // gets a full window; otherwise it starts at this frame's offset.
+      let pStart = off, pEnd = off + p.lowWin
+      if (pEnd > buf.length) { pEnd = buf.length; pStart = Math.max(0, pEnd - p.lowWin) }
+      if (pEnd - pStart >= TAIL_MIN_SAMPLES) {
+        const longDet = detectBufferPitch(buf.subarray(pStart, pEnd) as Float32Array, p.sampleRate, 0)
+        // Take the long read when the short one failed, or when it's at least as
+        // confident (it usually is on low content) — keeps the fundamental, not an octave.
+        if (longDet && (det === null || longDet.confidence >= det.confidence)) det = longDet
+      }
+    }
+    if (det) { freq = det.hz; midi = det.midi; clarity = det.confidence }
+  }
+
   const energyDelta = rms - st.prevRms
   st.prevRms = rms
   const pitchDelta = (midi !== null && st.prevMidi !== null) ? Math.abs(midi - st.prevMidi) : 0
   st.prevMidi = midi
 
   return { time: off / p.sampleRate, freq, amplitude, midi, flux, clarity, energyDelta, pitchDelta, rms }
+}
+
+// Analysis floor for a tail window: keep detectBufferPitch's ≥1024-sample requirement.
+const TAIL_MIN_SAMPLES = 1024
+
+// Emit the FINAL windows the main scan loop skipped (Problem 1). The loop's
+// `off+win <= length` bound stops emitting frames once a FULL window no longer fits, so
+// frame TIMES stop ~one window before the buffer end — a note living in that last window
+// is measured ~win too short and, if short, drops below minDuration entirely. Here we
+// continue at the same hop through the offsets where `off+win > length`, analyzing the
+// samples that remain (scanFeatureFrame clamps the slice; the flux FFT zero-pads), while
+// keeping ≥1024 samples so YIN can still lock. This restores the trailing note's real
+// duration/onset instead of truncating it. No-op when the buffer end is already covered.
+function appendTailFrames(frames: FeatureFrame[], buf: Float32Array, p: ScanParams, st: ScanState, hop: number, enabled: boolean): void {
+  if (!enabled || buf.length < p.win) return
+  const lastOff = frames.length ? Math.round(frames[frames.length - 1].time * p.sampleRate) : -hop
+  for (let off = lastOff + hop; off + p.win > buf.length && off + TAIL_MIN_SAMPLES <= buf.length; off += hop) {
+    frames.push(scanFeatureFrame(buf, off, p, st))
+  }
 }
 
 // Median filter over the MIDI track (ignoring unvoiced neighbors). Offline we can
@@ -366,17 +477,16 @@ function scanBuffer(
   opts: BackfillOptions,
 ): FeatureFrame[] {
   const gain    = opts.gain ?? 1
-  const rmsGate = opts.rmsGate ?? 0.006
-  const win     = opts.winSize ?? defaultWin(sampleRate)
   const hop     = Math.max(1, Math.round((opts.hopSec ?? DEFAULT_HOP_SEC) * sampleRate))
 
+  const p   = scanParamsFrom(opts, sampleRate)
   const buf = applyGain(samples, gain)
-  if (buf.length < win) return []
+  if (buf.length < p.win) return []
 
-  const p: ScanParams = { win, rmsGate, sampleRate }
-  const st = makeScanState(win)
+  const st = makeScanState(p.win)
   const frames: FeatureFrame[] = []
-  for (let off = 0; off + win <= buf.length; off += hop) frames.push(scanFeatureFrame(buf, off, p, st))
+  for (let off = 0; off + p.win <= buf.length; off += hop) frames.push(scanFeatureFrame(buf, off, p, st))
+  appendTailFrames(frames, buf, p, st, hop, opts.scanTailWindow !== false)
   return frames
 }
 
@@ -595,6 +705,46 @@ function detectOnsetFrames(frames: FeatureFrame[], hopSec: number, sensitivity: 
   return onsets
 }
 
+// ── Volume-valley detection (Problem 3) ────────────────────────────────────────
+/**
+ * Find note BOUNDARIES at volume VALLEYS — local minima of the (lightly smoothed) RMS
+ * envelope that sit meaningfully below the swell peaks on both sides. On a LEGATO scale
+ * the pitch glides continuously (no clean pitch-split) and there's no re-attack transient
+ * (no flux onset), but each note still re-swells in volume, so the dip BETWEEN swells is
+ * the only reliable boundary. Emits frame indices (ascending) to arm a split, exactly like
+ * onsets. Shallow ripple (vibrato tremolo) is rejected by `depthFrac`; true silence gaps
+ * (unvoiced frames) are left to the segmenter's own silence rule.
+ */
+function detectVolumeValleys(frames: FeatureFrame[], hopSec: number, minDurSec: number, depthFrac: number): number[] {
+  const n = frames.length
+  if (n < 5) return []
+  // 3-frame moving-average of RMS to suppress single-frame jitter minima.
+  const rms = new Float64Array(n)
+  for (let i = 0; i < n; i++) {
+    let s = 0, c = 0
+    for (let k = -1; k <= 1; k++) { const g = frames[i + k]; if (g) { s += g.rms; c++ } }
+    rms[i] = c > 0 ? s / c : frames[i].rms
+  }
+  const V     = Math.max(1, Math.round(0.03 / hopSec))   // ±~30ms local-min neighbourhood
+  const span  = Math.max(V, Math.round(0.12 / hopSec))   // ±~120ms to find the flanking peaks
+  const refr  = Math.max(1, Math.round(Math.max(minDurSec, 0.05) / hopSec))
+  const out: number[] = []
+  let last = -1e9
+  for (let i = V; i < n - V; i++) {
+    if (frames[i].midi === null) continue                // only split WITHIN voiced audio
+    let isMin = true
+    for (let k = -V; k <= V; k++) if (rms[i + k] < rms[i] - 1e-9) { isMin = false; break }
+    if (!isMin) continue
+    let pl = 0; for (let k = Math.max(0, i - span); k < i; k++)              if (rms[k] > pl) pl = rms[k]
+    let pr = 0; for (let k = i + 1; k <= Math.min(n - 1, i + span); k++)     if (rms[k] > pr) pr = rms[k]
+    const peak = Math.min(pl, pr)
+    if (peak <= 0 || (peak - rms[i]) / peak < depthFrac) continue            // dip too shallow
+    if (i - last < refr) continue
+    out.push(i); last = i
+  }
+  return out
+}
+
 // ── Onset-aware combined segmenter (backfill-local; NOT extractNoteEvents) ─────
 // Threshold above which a clarity-weighted running-mean pitch move opens a new note
 // (semitones). Kept > a semitone-and-a-half of typical vibrato so a held/vibrato note
@@ -619,30 +769,47 @@ const SEG_CLARITY_GATE = 0.5
  * eventsToNotes → repitchNotes path (and thus re-pitch-from-stable-portion) is unchanged.
  * Does NOT touch extractNoteEvents — this is the additive onset-aware path.
  */
-function segmentWithOnsets(curve: FeatureFrame[], onsetIdx: number[], minDuration: number): NoteEvent[] {
+function segmentWithOnsets(
+  curve: FeatureFrame[],
+  splitIdx: number[],
+  minDuration: number,
+  useVolume: boolean,
+  existFrac: number,
+): NoteEvent[] {
   if (curve.length < 2) return []
-  const onsetSet = new Set(onsetIdx)
+  const onsetSet = new Set(splitIdx)
   const AMP_GATE = 0.025
   const hopSec = curve[1].time - curve[0].time || 0.012
   const maxSilence = Math.ceil(0.06 / hopSec)
 
+  // Existence gate reference: the take's peak amplitude. A note whose own peak is a tiny
+  // fraction of this is a near-silence phantom (Problem 3) and is dropped in flush().
+  let globalPeakAmp = 0
+  for (const f of curve) if (f.amplitude > globalPeakAmp) globalPeakAmp = f.amplitude
+  const existGate = useVolume ? existFrac * globalPeakAmp : 0
+
   const events: NoteEvent[] = []
   let startIdx = -1, startTime = 0
-  let vSum = 0, wSum = 0            // clarity-weighted fractional-MIDI accumulators
-  let ampSum = 0, ampCount = 0, silence = 0
+  let vSum = 0, wSum = 0            // clarity-(and volume-)weighted fractional-MIDI accumulators
+  let ampSum = 0, ampCount = 0, silence = 0, ampPeak = 0
   // A detected onset frequently lands on the UNVOICED attack transient (YIN can't lock
   // during the sharp re-hit), so we can't split on it in the voiced branch alone. Instead
   // we ARM a pending split at the onset and consume it at the next voiced frame — that's
   // where the re-articulated note truly (re)starts.
   let pendingOnset = false
 
+  // Frame pitch-weight: clarity, optionally scaled by volume so the loud, settled body
+  // of a swell outvotes its quiet, pitch-ambiguous edges (Problem 3, cue 3).
+  const frameW = (f: FeatureFrame) =>
+    Math.max(1e-3, f.clarity) * (useVolume ? Math.max(0.05, f.amplitude) : 1)
+
   const open = (i: number, f: FeatureFrame) => {
-    const fm = fractionalMidi(f), w = Math.max(1e-3, f.clarity)
+    const fm = fractionalMidi(f), w = frameW(f)
     startIdx = i; startTime = f.time
-    vSum = fm * w; wSum = w; ampSum = f.amplitude; ampCount = 1; silence = 0
+    vSum = fm * w; wSum = w; ampSum = f.amplitude; ampCount = 1; silence = 0; ampPeak = f.amplitude
   }
   const flush = (endTime: number) => {
-    if (startIdx >= 0 && endTime - startTime >= minDuration) {
+    if (startIdx >= 0 && endTime - startTime >= minDuration && ampPeak >= existGate) {
       events.push({
         start: startTime, end: endTime,
         midi: Math.round(vSum / wSum),
@@ -669,8 +836,9 @@ function segmentWithOnsets(curve: FeatureFrame[], onsetIdx: number[], minDuratio
         open(i, f)            // … and start the re-articulated/new note here
         pendingOnset = false
       } else {
-        const w = Math.max(1e-3, f.clarity)
+        const w = frameW(f)
         vSum += fm * w; wSum += w; ampSum += f.amplitude; ampCount++; silence = 0
+        if (f.amplitude > ampPeak) ampPeak = f.amplitude
       }
     } else if (startIdx >= 0) {
       silence++
@@ -694,11 +862,21 @@ function finalizeAnalysis(
 ): BufferAnalysis {
   const curve = refinePitchTrack(rawCurve, rMed, octR)
   const useOnsets = opts.useOnsets !== false
+  const useVolume = opts.useVolumeCues !== false
   const hopSec = curve.length > 1 ? Math.max(1e-4, curve[1].time - curve[0].time) : (opts.hopSec ?? DEFAULT_HOP_SEC)
   const sens = clamp(opts.onsetSensitivity ?? DEFAULT_ONSET_SENS, 0, 1)
   const onsetIdx = useOnsets ? detectOnsetFrames(curve, hopSec, sens) : []
+  // Volume-valley boundaries (Problem 3): merged with the flux onsets into one ascending
+  // split set so a legato swell-scale segments per swell. Only on the onset-aware path.
+  const valleyIdx = (useOnsets && useVolume)
+    ? detectVolumeValleys(curve, hopSec, minDuration, opts.volumeValleyDepth ?? DEFAULT_VALLEY_DEPTH)
+    : []
+  const splitIdx = useOnsets
+    ? Array.from(new Set([...onsetIdx, ...valleyIdx])).sort((a, b) => a - b)
+    : []
+  const existFrac = Math.max(0, opts.volumeExistFrac ?? DEFAULT_EXIST_FRAC)
   const events = useOnsets
-    ? segmentWithOnsets(curve, onsetIdx, minDuration)
+    ? segmentWithOnsets(curve, splitIdx, minDuration, useVolume, existFrac)
     : extractNoteEvents(curve, minDuration)
   let notes = eventsToNotes(events, minDuration)
   if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
@@ -782,19 +960,17 @@ export async function analyzeBufferAsync(
   const { buf: ds, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
 
   const gain    = opts.gain ?? 1
-  const rmsGate = opts.rmsGate ?? 0.006
-  const win     = opts.winSize ?? defaultWin(rate)
   const hop     = Math.max(1, Math.round((opts.hopSec ?? DEFAULT_HOP_SEC) * rate))
+  const p       = scanParamsFrom(opts, rate)
   const buf     = applyGain(ds, gain)
 
-  if (buf.length < win) { onProgress?.(1); return { notes: [], curve: [], rawCurve: [], onsets: [], flux: [], clarity: [] } }
+  if (buf.length < p.win) { onProgress?.(1); return { notes: [], curve: [], rawCurve: [], onsets: [], flux: [], clarity: [] } }
 
-  const p: ScanParams = { win, rmsGate, sampleRate: rate }
-  const st = makeScanState(win)
+  const st = makeScanState(p.win)
   const rawCurve: FeatureFrame[] = []
-  const end = buf.length - win
+  const end = buf.length - p.win
   let lastYield = nowMs()
-  for (let off = 0; off + win <= buf.length; off += hop) {
+  for (let off = 0; off + p.win <= buf.length; off += hop) {
     rawCurve.push(scanFeatureFrame(buf, off, p, st))
     if (nowMs() - lastYield >= 12) {          // ~12ms work budget between yields
       onProgress?.(Math.min(0.97, end > 0 ? off / end : 1))
@@ -802,6 +978,7 @@ export async function analyzeBufferAsync(
       lastYield = nowMs()
     }
   }
+  appendTailFrames(rawCurve, buf, p, st, hop, opts.scanTailWindow !== false)
   const analysis = finalizeAnalysis(rawCurve, opts, minDuration, rMed, octR)
   onProgress?.(1)
   return analysis
