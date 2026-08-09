@@ -226,6 +226,20 @@ export interface BackfillOptions {
   /** Toggle the beatGrid prior. Default ON whenever a `beatGrid` is provided; pass false to
    *  A/B the raw (un-gridded) detection against the grid-informed one on the same audio. */
   useBeatGrid?: boolean
+
+  // ── Multi-band "Detect EQ" pitch source ─────────────────────────────────────
+  /** Where the per-frame PITCH (freq/midi/clarity) fed into refine → segmentation comes from:
+   *   · 'full' — the full-signal YIN scan (the historical behavior). DEFAULT.
+   *   · 'eq'   — split the take into frequency bands (analyzeBands), pick the DOMINANT band by
+   *              perceptual-loudness × clarity, and take the pitch from THAT band's per-frame
+   *              YIN read. Isolating the fundamental's band de-confuses octave errors that
+   *              harmonics + breath noise in other bands cause on the full signal.
+   *  EQ mode swaps ONLY the pitch source: amplitude/flux/rms/onset evidence stays full-signal,
+   *  so every downstream stage (refine, onset/HMM segmentation, recovery, grid) is unchanged.
+   *  Voicing is kept from the full-signal scan (a frame the full scan called unvoiced stays
+   *  unvoiced), so EQ only RE-PITCHES the voiced frames. Default 'full' — passing 'full' is
+   *  byte-identical to omitting it. */
+  pitchSource?: 'full' | 'eq'
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -353,6 +367,82 @@ const segClarityGateFor = (opts: BackfillOptions) => clamp(SEG_CLARITY_GATE - 0.
 // lock, whereas 60ms keeps every quick-note gain AND those low sustains.
 const defaultWin = (sr: number) => Math.max(1024, Math.round(sr * 0.06))
 
+// ── Multi-band "Detect EQ" analysis ─────────────────────────────────────────────
+// Split the take into these frequency bands (Hz), detect pitch in each independently, and
+// pick the DOMINANT band by perceptual-loudness × clarity as the note basis. Vocal defaults,
+// tunable: sub rumble, the bass fundamental range, the mid (most vocal fundamentals + low
+// harmonics), and treble (harmonics + breath air). Isolating the fundamental's band gives a
+// cleaner pitch than the full signal, whose harmonics + breath noise cause octave errors.
+export interface BandSpec { name: string; lo: number; hi: number }
+export const VOCAL_BANDS: BandSpec[] = [
+  { name: 'sub',    lo: 20,   hi: 100  },
+  { name: 'bass',   lo: 100,  hi: 300  },
+  { name: 'mid',    lo: 300,  hi: 1000 },
+  { name: 'treble', lo: 1000, hi: 6000 },
+]
+// Fundamental / octave-coherence preference (see computeBandReadings). When the loudest×clarity
+// band is really the 2nd harmonic, we drop to a LOWER band that reads ~an octave below it —
+// but only if that lower band is genuinely PITCHED (not noise). A lower band qualifies as the
+// fundamental when: its median pitch is within FUND_OCTAVE_TOL_SEMI of a whole octave below the
+// score-leader, its clarity is ≥ FUND_CLARITY_FRAC of the leader's AND ≥ FUND_CLARITY_ABS
+// absolute (the noise guard — noise never clears this), and its score is ≥ FUND_SCORE_FRAC of
+// the leader's (the fundamental can be far quieter than its own 2nd harmonic, so this is small).
+const FUND_OCTAVE_TOL_SEMI = 1.5
+const FUND_CLARITY_FRAC    = 0.85
+const FUND_CLARITY_ABS     = 0.5
+const FUND_SCORE_FRAC      = 0.03
+
+// A-weighting (IEC 61672) linear gain at frequency f. Models how loud the ear PERCEIVES a
+// tone at f: it crushes sub-bass rumble (~−28 dB at 45 Hz) and rolls off lows, is ~flat 1–4 kHz
+// (peak ear sensitivity), so a band's raw RMS is converted to a PERCEIVED loudness before
+// scoring — otherwise sub rumble / treble air (frequency-biased energy) would skew the pick.
+// Returns a linear multiplier (A(1 kHz) ≈ 1). We evaluate it at each band's geometric center.
+export function aWeightingGain(f: number): number {
+  if (!(f > 0)) return 0
+  const f2 = f * f
+  const num = 12194 * 12194 * f2 * f2
+  const den = (f2 + 20.6 * 20.6)
+            * Math.sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9))
+            * (f2 + 12194 * 12194)
+  const ra = num / den
+  const db = 20 * Math.log10(ra) + 2.00           // +2.00 dB normalizes A(1 kHz) → 0 dB
+  return Math.pow(10, db / 20)
+}
+
+// Geometric center of a band — the right "typical frequency" for a log-spaced audio band.
+const bandCenter = (b: BandSpec) => Math.sqrt(Math.max(1e-6, b.lo * b.hi))
+
+// RBJ-cookbook band-pass biquad (constant 0 dB peak), Q from the band's bandwidth. Coeffs are
+// pre-normalized by a0. Q is floored at 0.5 so the widest bands stay stable.
+interface BiquadCoeffs { b0: number; b1: number; b2: number; a1: number; a2: number }
+function bandpassCoeffs(lo: number, hi: number, sr: number): BiquadCoeffs {
+  const fc    = Math.sqrt(Math.max(1e-6, lo * hi))
+  const w0    = 2 * Math.PI * Math.min(fc, sr * 0.49) / sr
+  const cw    = Math.cos(w0), sw = Math.sin(w0)
+  const Q     = Math.max(0.5, fc / Math.max(1, hi - lo))
+  const alpha = sw / (2 * Q)
+  const a0    = 1 + alpha
+  return { b0: alpha / a0, b1: 0, b2: -alpha / a0, a1: (-2 * cw) / a0, a2: (1 - alpha) / a0 }
+}
+// Direct-form-I biquad over the whole buffer (single pass). Never mutates the input.
+function applyBiquad(x: Float32Array, c: BiquadCoeffs): Float32Array {
+  const y = new Float32Array(x.length)
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0
+  for (let i = 0; i < x.length; i++) {
+    const xi = x[i]
+    const yi = c.b0 * xi + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2
+    x2 = x1; x1 = xi; y2 = y1; y1 = yi
+    y[i] = yi
+  }
+  return y
+}
+// Band-pass a mono buffer, cascading the biquad TWICE for steeper skirts — better isolation of
+// the fundamental from its 2nd harmonic (the octave-error case). Pure; never mutates input.
+export function bandpassFilter(x: Float32Array, lo: number, hi: number, sr: number): Float32Array {
+  const c = bandpassCoeffs(lo, hi, sr)
+  return applyBiquad(applyBiquad(x, c), c)
+}
+
 /**
  * Box-average decimation to a lower sample rate. The averaging is a cheap
  * anti-alias low-pass — fine for pitch, which lives well below 1kHz. No-op when
@@ -440,6 +530,37 @@ function makeScanState(win: number): ScanState {
   }
 }
 
+// RMS-gated YIN pitch for ONE analysis window, with the adaptive long-window re-detect for
+// low content (Problem 2). Pulled out of scanFeatureFrame so the multi-band pitch scan reuses
+// the exact same detection (short window → optional longer window on low/failed reads). `seg`
+// is buf.subarray(off, off+win); `rms` is that window's already-computed RMS (a frame below
+// p.rmsGate reads unvoiced).
+//
+// A short (~60ms) window gives few periods of a low fundamental, so YIN's CMND minimum is
+// shallow → low confidence → the note gates out. We detect on the short window first (best
+// time resolution, unchanged for mid/high notes); only when that read is LOW (< lowHz) or
+// FAILS on an energetic frame do we re-detect on the longer window — the extra periods deepen
+// the minimum and lift confidence, recovering the low note. Quick mid/high notes never pay it.
+function detectFramePitch(
+  buf: Float32Array, off: number, seg: Float32Array, rms: number, p: ScanParams,
+): { freq: number | null; midi: number | null; clarity: number } {
+  if (rms < p.rmsGate) return { freq: null, midi: null, clarity: 0 }
+  let det = detectBufferPitch(seg, p.sampleRate, 0, p.confFloor)
+  if (p.adaptive && p.lowWin > p.win && (det === null || det.hz < p.lowHz)) {
+    // Anchor the long window to the buffer end near the tail so a low END note still
+    // gets a full window; otherwise it starts at this frame's offset.
+    let pStart = off, pEnd = off + p.lowWin
+    if (pEnd > buf.length) { pEnd = buf.length; pStart = Math.max(0, pEnd - p.lowWin) }
+    if (pEnd - pStart >= TAIL_MIN_SAMPLES) {
+      const longDet = detectBufferPitch(buf.subarray(pStart, pEnd) as Float32Array, p.sampleRate, 0, p.confFloor)
+      // Take the long read when the short one failed, or when it's at least as
+      // confident (it usually is on low content) — keeps the fundamental, not an octave.
+      if (longDet && (det === null || longDet.confidence >= det.confidence)) det = longDet
+    }
+  }
+  return det ? { freq: det.hz, midi: det.midi, clarity: det.confidence } : { freq: null, midi: null, clarity: 0 }
+}
+
 // One analysis window → one FeatureFrame: the YIN pitch (RMS-gated, via
 // detectBufferPitch, now also exposing its confidence as `clarity`) PLUS the acoustic
 // evidence — spectral flux (onset strength), energyDelta (attack), pitchDelta (glide vs
@@ -478,32 +599,10 @@ function scanFeatureFrame(buf: Float32Array, off: number, p: ScanParams, st: Sca
   // so it can't dominate the adaptive threshold (the note still opens on the first voiced frame).
   if (st.first) { flux = 0; st.first = false }
 
-  // ── Pitch, with an adaptive window for low content (Problem 2) ──────────────
-  // A short (~60ms) window gives few periods of a low fundamental, so YIN's CMND
-  // minimum is shallow → low confidence → the note is gated out entirely. We first
-  // detect on the short window (best time resolution, unchanged for mid/high notes);
-  // only when that short read is LOW (< lowHz) or FAILS on an energetic frame do we
-  // re-detect on the longer window — those extra periods deepen the minimum and lift
-  // confidence, recovering the low note. Quick mid/high notes never pay the 2nd pass.
-  let freq: number | null = null
-  let midi: number | null = null
-  let clarity = 0
-  if (rms >= p.rmsGate) {
-    let det = detectBufferPitch(seg as Float32Array, p.sampleRate, 0, p.confFloor)
-    if (p.adaptive && p.lowWin > p.win && (det === null || det.hz < p.lowHz)) {
-      // Anchor the long window to the buffer end near the tail so a low END note still
-      // gets a full window; otherwise it starts at this frame's offset.
-      let pStart = off, pEnd = off + p.lowWin
-      if (pEnd > buf.length) { pEnd = buf.length; pStart = Math.max(0, pEnd - p.lowWin) }
-      if (pEnd - pStart >= TAIL_MIN_SAMPLES) {
-        const longDet = detectBufferPitch(buf.subarray(pStart, pEnd) as Float32Array, p.sampleRate, 0, p.confFloor)
-        // Take the long read when the short one failed, or when it's at least as
-        // confident (it usually is on low content) — keeps the fundamental, not an octave.
-        if (longDet && (det === null || longDet.confidence >= det.confidence)) det = longDet
-      }
-    }
-    if (det) { freq = det.hz; midi = det.midi; clarity = det.confidence }
-  }
+  // Pitch, with an adaptive window for low content (Problem 2). Factored into
+  // detectFramePitch so the multi-band scan (analyzeBands / EQ pitch source) reuses the
+  // IDENTICAL logic — keeping the 'full' path byte-for-byte unchanged.
+  const { freq, midi, clarity } = detectFramePitch(buf, off, seg, rms, p)
 
   const energyDelta = rms - st.prevRms
   st.prevRms = rms
@@ -1474,6 +1573,175 @@ function finalizeAnalysis(
   }
 }
 
+// ── Multi-band pitch analysis (Detect EQ) ───────────────────────────────────────
+/** One band's per-frame pitch read (aligned to the full-signal scan frames). */
+export interface BandPitchPoint { time: number; freq: number | null; midi: number | null; clarity: number }
+
+/** One band's aggregate reading + its per-frame pitch track. */
+export interface BandReading {
+  name:   string
+  loFreq: number
+  hiFreq: number
+  /** A-weighted (perceived) band loudness over the take's voiced portion — band RMS scaled by
+   *  the A-weighting gain at the band's center, so sub rumble / treble air don't skew it. */
+  perceptualLoudness: number
+  /** Mean YIN clarity over the band's voiced frames (0 when the band never locks). */
+  meanClarity: number
+  /** Dominance score = perceptualLoudness × meanClarity. The highest wins the note basis. */
+  score: number
+  /** Per-frame pitch read on this band, index-aligned with the full-signal scan frames. */
+  pitchTrack: BandPitchPoint[]
+}
+
+export interface BandsAnalysis {
+  bands:  BandReading[]
+  /** Name of the highest-scoring band = the note basis for EQ mode. Empty on empty input. */
+  winner: string
+}
+
+// Core band computation shared by the public analyzeBands and the EQ pitch-source overlay.
+// `gained` is the (already gain-applied, already downsampled) mono buffer; `frames` is the
+// full-signal scan whose TIMES and VOICING drive band scoring/alignment. For each band we
+// band-pass filter, read YIN pitch per frame (only where the full scan is voiced — the "voiced
+// portion"), and aggregate perceptual loudness × clarity into a score. Returns the readings +
+// the winning band's index-aligned pitch track (so the overlay can swap it straight in).
+function computeBandReadings(
+  gained: Float32Array,
+  rate: number,
+  frames: FeatureFrame[],
+  p: ScanParams,
+): { readings: BandReading[]; winnerIdx: number } {
+  const nF = frames.length
+  // "Voiced portion" of the take = frames the full-signal scan pitched. Fall back to the RMS
+  // gate if the full scan pitched nothing (so loudness still aggregates over sounding frames).
+  const voiced = new Uint8Array(nF)
+  let anyVoiced = false
+  for (let i = 0; i < nF; i++) { if (frames[i].midi !== null) { voiced[i] = 1; anyVoiced = true } }
+  if (!anyVoiced) for (let i = 0; i < nF; i++) if (frames[i].rms >= p.rmsGate) voiced[i] = 1
+  // Detect band pitch WITHOUT re-applying the full-signal RMS gate (a band carries a fraction
+  // of the energy, so its RMS is naturally lower) — voicing is already decided by the full scan.
+  const pBand: ScanParams = { ...p, rmsGate: 0 }
+
+  const readings: BandReading[] = VOCAL_BANDS.map(spec => {
+    const band = bandpassFilter(gained, spec.lo, spec.hi, rate)
+    const aW   = aWeightingGain(bandCenter(spec))
+    const track: BandPitchPoint[] = new Array(nF)
+    let sumSq = 0, nRms = 0, sumClar = 0, nClar = 0
+    for (let i = 0; i < nF; i++) {
+      const f   = frames[i]
+      const off = Math.round(f.time * rate)
+      const win = Math.min(p.win, Math.max(0, band.length - off))
+      const seg = band.subarray(off, off + win)
+      let sq = 0
+      for (let j = 0; j < seg.length; j++) sq += seg[j] * seg[j]
+      const bandRms = seg.length ? Math.sqrt(sq / seg.length) : 0
+      let pt: BandPitchPoint = { time: f.time, freq: null, midi: null, clarity: 0 }
+      if (voiced[i] && win >= TAIL_MIN_SAMPLES) {
+        const det = detectFramePitch(band, off, seg, bandRms, pBand)
+        pt = { time: f.time, freq: det.freq, midi: det.midi, clarity: det.clarity }
+        sumSq += bandRms * bandRms; nRms++
+        if (det.clarity > 0) { sumClar += det.clarity; nClar++ }
+      }
+      track[i] = pt
+    }
+    const bandRmsAgg        = nRms > 0 ? Math.sqrt(sumSq / nRms) : 0
+    const perceptualLoudness = aW * bandRmsAgg
+    const meanClarity        = nClar > 0 ? sumClar / nClar : 0
+    return {
+      name: spec.name, loFreq: spec.lo, hiFreq: spec.hi,
+      perceptualLoudness, meanClarity,
+      score: perceptualLoudness * meanClarity,
+      pitchTrack: track,
+    }
+  })
+
+  // 1) Highest-scoring band by perceptual loudness × clarity (the spec's dominance score).
+  let scoreIdx = 0
+  for (let i = 1; i < readings.length; i++) if (readings[i].score > readings[scoreIdx].score) scoreIdx = i
+
+  // 2) Fundamental / octave-coherence preference. The classic octave-ambiguity case has the
+  //    2nd harmonic LOUDER than the fundamental, so the raw score crowns the HARMONIC band —
+  //    which reads (and would impose) a pitch an octave HIGH, the opposite of the fix. But the
+  //    fundamental lives in a LOWER band with comparably high clarity. So: if a lower band is
+  //    (a) about as clear as the score-leader, (b) not negligible, and (c) reads ~a whole number
+  //    of octaves BELOW it (i.e. the leader is a harmonic of it), prefer that lower band as the
+  //    note basis. Walk from the LOWEST band up so the true fundamental (not an intermediate
+  //    harmonic) is chosen. Noise bands are excluded by the clarity gate (noise ⇒ low clarity).
+  const medMidi = (r: BandReading): number | null => {
+    const ms = r.pitchTrack.map(p => p.midi).filter((m): m is number => m !== null).sort((a, b) => a - b)
+    return ms.length ? ms[Math.floor(ms.length / 2)] : null
+  }
+  const winMidi = medMidi(readings[scoreIdx])
+  let winnerIdx = scoreIdx
+  if (winMidi !== null) {
+    for (let i = 0; i < scoreIdx; i++) {           // lower bands only (VOCAL_BANDS ascending)
+      const bm = medMidi(readings[i])
+      if (bm === null) continue
+      const semisBelow = winMidi - bm
+      const octs = Math.round(semisBelow / 12)
+      const octaveBelow = octs >= 1 && Math.abs(semisBelow - octs * 12) <= FUND_OCTAVE_TOL_SEMI
+      const clearEnough = readings[i].meanClarity >= FUND_CLARITY_FRAC * readings[scoreIdx].meanClarity
+                       && readings[i].meanClarity >= FUND_CLARITY_ABS
+      const loudEnough  = readings[i].score >= FUND_SCORE_FRAC * readings[scoreIdx].score
+      if (octaveBelow && clearEnough && loudEnough) { winnerIdx = i; break }
+    }
+  }
+  return { readings, winnerIdx }
+}
+
+/**
+ * Split a mono take into frequency bands, detect pitch in each independently, and pick the
+ * DOMINANT band = perceptual-loudness × clarity (NOT raw energy — that's frequency-biased).
+ *
+ * Returns each band's perceptual loudness, mean clarity, dominance score, and per-frame pitch
+ * track, plus the winning band's name. Pure/deterministic (same downsample + scan + gates as
+ * analyzeBuffer), so it's headlessly testable and the "Detect EQ" panel can show WHY a band won.
+ */
+export function analyzeBands(
+  samples: Float32Array,
+  sampleRate: number,
+  opts: BackfillOptions = {},
+): BandsAnalysis {
+  const { buf, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
+  const p      = scanParamsFrom(opts, rate)
+  const gained = applyGain(buf, opts.gain ?? 1)
+  const frames = scanBuffer(buf, rate, opts)
+  if (frames.length === 0 || gained.length < p.win) {
+    const bands: BandReading[] = VOCAL_BANDS.map(spec => ({
+      name: spec.name, loFreq: spec.lo, hiFreq: spec.hi,
+      perceptualLoudness: 0, meanClarity: 0, score: 0, pitchTrack: [],
+    }))
+    return { bands, winner: '' }
+  }
+  const { readings, winnerIdx } = computeBandReadings(gained, rate, frames, p)
+  return { bands: readings, winner: readings[winnerIdx]?.name ?? '' }
+}
+
+// Overlay the WINNER band's per-frame pitch onto an existing full-signal FeatureFrame[] — the
+// EQ pitch-source swap. Only the pitch fields (freq/midi/clarity) of VOICED frames change; the
+// full-signal amplitude/flux/rms/onset evidence is untouched, so downstream is unchanged. When
+// the winner band failed to lock at a voiced frame, that frame KEEPS its full-signal pitch (a
+// safe fallback — EQ never DROPS a note the full signal found). Mutates `frames` in place and
+// recomputes pitchDelta from the swapped MIDI. `gained` must be the gain-applied downsampled buf.
+function applyEqPitchSource(frames: FeatureFrame[], gained: Float32Array, rate: number, p: ScanParams): void {
+  if (frames.length === 0 || gained.length < p.win) return
+  const { readings, winnerIdx } = computeBandReadings(gained, rate, frames, p)
+  const track = readings[winnerIdx]?.pitchTrack
+  if (!track) return
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i]
+    if (f.midi === null) continue                 // keep full-signal voicing decisions
+    const w = track[i]
+    if (w && w.midi !== null) { f.freq = w.freq; f.midi = w.midi; f.clarity = w.clarity }
+  }
+  // pitchDelta is derived from consecutive voiced MIDI — recompute after the swap.
+  let prevMidi: number | null = null
+  for (const f of frames) {
+    f.pitchDelta = (f.midi !== null && prevMidi !== null) ? Math.abs(f.midi - prevMidi) : 0
+    prevMidi = f.midi
+  }
+}
+
 /**
  * Full offline pass returning BOTH the notes and the pitch curves they came from:
  * mono Float32 buffer → { notes, curve (post-refine), rawCurve (pre-refine) }.
@@ -1497,6 +1765,12 @@ export function analyzeBuffer(
   const octR = Math.max(0, opts.octaveRadius ?? DEFAULT_OCTAVE_RADIUS)
   const { buf, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
   const rawCurve = scanBuffer(buf, rate, opts)
+  // EQ pitch source: swap each voiced frame's pitch for the dominant band's read (Detect EQ).
+  // 'full' (default) leaves rawCurve exactly as the full-signal scan produced it.
+  if (opts.pitchSource === 'eq') {
+    const p = scanParamsFrom(opts, rate)
+    applyEqPitchSource(rawCurve, applyGain(buf, opts.gain ?? 1), rate, p)
+  }
   // Refine → onset-aware segment → re-pitch, and package with the onset/flux/clarity
   // evidence. Re-pitch changes the NOTES only — the curve/rawCurve stay as-detected.
   return finalizeAnalysis(rawCurve, opts, minDuration, rMed, octR)
@@ -1562,6 +1836,10 @@ export async function analyzeBufferAsync(
     }
   }
   appendTailFrames(rawCurve, buf, p, st, hop, opts.scanTailWindow !== false)
+  // EQ pitch source: swap each voiced frame's pitch for the dominant band's read (Detect EQ).
+  // 'full' (default) leaves rawCurve exactly as the full-signal scan produced it. `buf` is the
+  // already gain-applied downsampled buffer here.
+  if (opts.pitchSource === 'eq') applyEqPitchSource(rawCurve, buf, rate, p)
   const analysis = finalizeAnalysis(rawCurve, opts, minDuration, rMed, octR)
   onProgress?.(1)
   return analysis

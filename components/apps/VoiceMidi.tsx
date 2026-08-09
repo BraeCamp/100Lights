@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LivePitchDetector, type LivePitchResult, type LiveLevel, type LiveSensitivity, type PitchFrame } from '@/lib/pitch-detector'
-import { notesFromBuffer, notesFromBufferAsync, analyzeBuffer, analyzeBufferAsync, buildPitchCurve, alignToGrid, conditionalGridAlign, type BufferAnalysis } from '@/lib/voice-backfill'
+import { notesFromBuffer, notesFromBufferAsync, analyzeBuffer, analyzeBufferAsync, analyzeBands, buildPitchCurve, alignToGrid, conditionalGridAlign, type BufferAnalysis, type BandsAnalysis } from '@/lib/voice-backfill'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import {
   getPresets, getGroupedPresets, midiNoteLabel, clampToPreset,
@@ -91,6 +91,11 @@ const EDITOR_SNAP_KEY = 'voicemidi-editor-snap'
 const SEGMENTER_KEY = 'voicemidi-segmenter'
 type Segmenter = 'onset' | 'hmm'
 const DEFAULT_SEGMENTER: Segmenter = 'hmm'
+// Persisted "Use EQ band for detection" preference. Default 'full' (existing full-signal
+// pitch); 'eq' swaps the pitch source to the dominant frequency band (see analyzeBands).
+const PITCH_SOURCE_KEY = 'voicemidi-pitch-source'
+type PitchSource = 'full' | 'eq'
+const DEFAULT_PITCH_SOURCE: PitchSource = 'full'
 // ── Latency compensation ──────────────────────────────────────────────────────
 // The click is HEARD `outputLatency` after it's scheduled, and the mic delivers the
 // voice `inputLatency` after it happened, so sung onsets lag the scheduled clicks by
@@ -145,6 +150,13 @@ export function quantizeNotes(notes: RecNote[], bpm: number, division: number): 
     startSec: Math.round(n.startSec / step) * step,
     durSec: Math.max(step, Math.round(n.durSec / step) * step),
   }))
+}
+
+// Representative pitch of a band's per-frame track = the median MIDI over its voiced frames
+// (robust to the odd octave-flicker frame). Null when the band never locked a pitch.
+function bandDisplayMidi(track: { midi: number | null }[]): number | null {
+  const vals = track.map(p => p.midi).filter((m): m is number => m !== null).sort((a, b) => a - b)
+  return vals.length ? vals[Math.floor(vals.length / 2)] : null
 }
 
 // ── Backfill: decode a recorded blob → mono PCM ───────────────────────────────
@@ -251,6 +263,15 @@ export default function VoiceMidi() {
   const [segmenter, setSegmenter] = useState<Segmenter>(DEFAULT_SEGMENTER)
   const segmenterRef = useRef<Segmenter>(DEFAULT_SEGMENTER)
   const lastAudioRef = useRef<{ samples: Float32Array; sampleRate: number } | null>(null)
+
+  // ── EQ pitch source (Detect EQ / dominant-band pitch) ────────────────────────
+  // 'full' (default) = full-signal YIN; 'eq' = swap the pitch to the dominant frequency band
+  // (analyzeBands). Persisted; a ref mirrors it so the record→refine / toggle flows read live.
+  // lastBandsAnalysis holds the last "Detect EQ" reading so the panel can show why a band won.
+  const [pitchSource, setPitchSource] = useState<PitchSource>(DEFAULT_PITCH_SOURCE)
+  const pitchSourceRef = useRef<PitchSource>(DEFAULT_PITCH_SOURCE)
+  const [bandsAnalysis, setBandsAnalysis] = useState<BandsAnalysis | null>(null)
+  const [detectingEq, setDetectingEq] = useState(false)
 
   // ── Timing offset (latency-compensation dial) ────────────────────────────────
   // The total grid-shift compensation in ms (output + input latency, device-tunable).
@@ -370,6 +391,7 @@ export default function VoiceMidi() {
       __voiceBackfillAsync?: typeof notesFromBufferAsync
       __voiceAnalyzeBuffer?: typeof analyzeBuffer
       __voiceAnalyzeBufferAsync?: typeof analyzeBufferAsync
+      __voiceAnalyzeBands?: typeof analyzeBands
       __voiceBuildPitchCurve?: typeof buildPitchCurve
       __voiceAlignToGrid?: typeof alignToGrid
       __voiceConditionalGridAlign?: typeof conditionalGridAlign
@@ -392,6 +414,9 @@ export default function VoiceMidi() {
     w.__voiceBackfillAsync = notesFromBufferAsync
     w.__voiceAnalyzeBuffer = analyzeBuffer
     w.__voiceAnalyzeBufferAsync = analyzeBufferAsync
+    // Multi-band "Detect EQ" analysis — split into bands, score by perceptual loudness ×
+    // clarity, pick the dominant band. Lets a headless page assert 4 bands + a winner.
+    w.__voiceAnalyzeBands = analyzeBands
     w.__voiceBuildPitchCurve = buildPitchCurve
     w.__voiceAlignToGrid = alignToGrid
     w.__voiceConditionalGridAlign = conditionalGridAlign
@@ -422,6 +447,7 @@ export default function VoiceMidi() {
     return () => {
       delete w.__voiceBackfill; delete w.__voiceBackfillAsync
       delete w.__voiceAnalyzeBuffer; delete w.__voiceAnalyzeBufferAsync
+      delete w.__voiceAnalyzeBands
       delete w.__voiceBuildPitchCurve; delete w.__voiceAlignToGrid
       delete w.__voiceConditionalGridAlign; delete w.__VoiceLivePitchDetector
       delete w.__voiceSampleProbe; delete w.__voiceGetSegmenter
@@ -445,6 +471,14 @@ export default function VoiceMidi() {
     try {
       const s = localStorage.getItem(SEGMENTER_KEY)
       if (s === 'onset' || s === 'hmm') { setSegmenter(s); segmenterRef.current = s }
+    } catch { /* ignore */ }
+  }, [])
+
+  // Restore the persisted EQ pitch-source choice (default = 'full', full-signal detection).
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem(PITCH_SOURCE_KEY)
+      if (s === 'full' || s === 'eq') { setPitchSource(s); pitchSourceRef.current = s }
     } catch { /* ignore */ }
   }, [])
 
@@ -1077,6 +1111,7 @@ export default function VoiceMidi() {
         minDuration: minDurForSensitivity(sensitivityRef.current),
         sensitivity: sensitivityRef.current,
         segmenter: segmenterRef.current,
+        pitchSource: pitchSourceRef.current,
         beatGrid: beatGridForTake(),
       }, setRefineProgress)
       applyAnalysis(analysis, liveTake?.length ?? 0)
@@ -1095,6 +1130,38 @@ export default function VoiceMidi() {
     try { localStorage.setItem(SEGMENTER_KEY, seg) } catch { /* ignore */ }
     if (lastAudioRef.current && !recording && !refining) void rerunSegmenter()
   }, [recording, refining, rerunSegmenter])
+
+  // "Use EQ band for detection" toggle: persist + mirror the ref, then re-run the refine on the
+  // last take with the new pitch source (full-signal vs dominant band) — the same re-run the
+  // Tracker toggle uses, so full-signal and EQ-band detection can be A/B'd on the same take.
+  const onPitchSourceChange = useCallback((src: PitchSource) => {
+    setPitchSource(src)
+    pitchSourceRef.current = src
+    try { localStorage.setItem(PITCH_SOURCE_KEY, src) } catch { /* ignore */ }
+    if (lastAudioRef.current && !recording && !refining) void rerunSegmenter()
+  }, [recording, refining, rerunSegmenter])
+
+  // "Detect EQ": run the multi-band analysis on the last take's stashed audio and stash the
+  // reading so the panel shows each band's perceptual loudness / clarity / pitch + the winner.
+  const runDetectEq = useCallback(async () => {
+    const audio = lastAudioRef.current
+    if (!audio || detectingEq) return
+    setDetectingEq(true)
+    try {
+      // Yield once so the button's disabled/pending state paints before the (sync) analysis.
+      await new Promise<void>(r => setTimeout(r, 0))
+      const bands = analyzeBands(audio.samples, audio.sampleRate, {
+        gain: paramsRef.current.gain,
+        rmsGate: paramsRef.current.rmsGate,
+        sensitivity: sensitivityRef.current,
+      })
+      setBandsAnalysis(bands)
+    } catch {
+      setBandsAnalysis(null)
+    } finally {
+      setDetectingEq(false)
+    }
+  }, [detectingEq])
 
   // Re-align the LAST take's offline notes to the grid at the CURRENT compensated phase —
   // cheap (no pitch re-analysis), so the Timing-offset slider updates live while dragging.
@@ -1150,6 +1217,7 @@ export default function VoiceMidi() {
     setSelNote(null)
     setSaveMsg(null)
     setTakeGridAligned(false)
+    setBandsAnalysis(null)   // stale — belongs to the previous take
 
     if (!det) return
 
@@ -1199,6 +1267,7 @@ export default function VoiceMidi() {
         minDuration: minDurForSensitivity(sensitivityRef.current),
         sensitivity: sensitivityRef.current,
         segmenter: segmenterRef.current,
+        pitchSource: pitchSourceRef.current,
         beatGrid: beatGridForTake(),
       }, setRefineProgress)
       // Grid-conditional align + set the take views + debug curves (shared with the toggle).
@@ -1796,6 +1865,7 @@ export default function VoiceMidi() {
       <div style={{ textAlign: 'center', margin: '22px 0 14px' }}>
         <button
           onClick={toggleRecord}
+          data-testid="vm-record"
           style={{
             padding: '15px 40px', borderRadius: 14, border: 'none', fontSize: 17, fontWeight: 800, cursor: 'pointer',
             background: recording ? '#dc2626' : 'var(--accent)', color: '#fff',
@@ -1895,6 +1965,97 @@ export default function VoiceMidi() {
               Show detected pitch <span style={{ opacity: 0.7 }}>(debug)</span>
             </label>
           </div>
+
+          {/* ── Detect EQ: multi-band pitch source ──────────────────────────────────
+              A "Detect EQ" button runs analyzeBands on the last take and shows each band's
+              perceptual-loudness bar / clarity / detected pitch with the WINNER highlighted;
+              the toggle re-runs the refine with the dominant band as the pitch source. */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+            <button
+              onClick={() => void runDetectEq()}
+              disabled={detectingEq || refining || !lastAudioRef.current}
+              data-testid="vm-detect-eq"
+              title="Split the take into frequency bands and show which band's pitch is most trustworthy (loudness × clarity). Isolating the fundamental's band de-confuses octave errors."
+              style={{
+                padding: '5px 11px', borderRadius: 7, fontSize: 11.5, fontWeight: 700,
+                border: '1px solid var(--border)',
+                background: 'var(--bg-elevated, transparent)', color: 'var(--text-secondary)',
+                cursor: (detectingEq || refining || !lastAudioRef.current) ? 'default' : 'pointer',
+                opacity: (refining || !lastAudioRef.current) ? 0.5 : 1,
+              }}
+            >{detectingEq ? 'Detecting EQ…' : 'Detect EQ'}</button>
+            <label
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', cursor: refining ? 'default' : 'pointer', userSelect: 'none' }}
+              title="Detect pitch from the dominant frequency band (loudness × clarity) instead of the full signal. Isolating the fundamental's band fixes octave errors from harmonics + breath noise. Re-analyzes the last take."
+            >
+              <input
+                type="checkbox"
+                checked={pitchSource === 'eq'}
+                onChange={e => onPitchSourceChange(e.target.checked ? 'eq' : 'full')}
+                disabled={refining}
+                aria-label="Use EQ band for detection"
+                data-testid="vm-pitch-source-eq"
+                style={{ accentColor: 'var(--accent)', cursor: refining ? 'default' : 'pointer' }}
+              />
+              Use EQ band for detection
+            </label>
+          </div>
+
+          {bandsAnalysis && (
+            <div
+              data-testid="vm-eq-panel"
+              style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', marginBottom: 10, background: 'var(--bg-base)' }}
+            >
+              <div style={{ fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>
+                Detect EQ — dominant band = perceptual loudness × clarity
+              </div>
+              {(() => {
+                const maxLoud = Math.max(1e-9, ...bandsAnalysis.bands.map(b => b.perceptualLoudness))
+                return bandsAnalysis.bands.map(b => {
+                  const won  = b.name === bandsAnalysis.winner
+                  const midi = bandDisplayMidi(b.pitchTrack)
+                  return (
+                    <div
+                      key={b.name}
+                      data-testid={`vm-eq-band-${b.name}`}
+                      data-eq-winner={won ? '1' : '0'}
+                      style={{
+                        display: 'grid', gridTemplateColumns: '92px 1fr 62px 58px', alignItems: 'center', gap: 8,
+                        padding: '4px 6px', borderRadius: 6, marginBottom: 3,
+                        background: won ? 'rgba(124,58,237,0.16)' : 'transparent',
+                        border: won ? '1px solid var(--accent)' : '1px solid transparent',
+                      }}
+                    >
+                      <span style={{ fontSize: 11, fontWeight: won ? 700 : 500, color: won ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                        {b.name}
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 4 }}>{b.loFreq}–{b.hiFreq}Hz</span>
+                        {won && <span style={{ fontSize: 9, marginLeft: 4 }}>◄ won</span>}
+                      </span>
+                      {/* Perceptual loudness bar (A-weighted band RMS, relative to the loudest band). */}
+                      <span style={{ position: 'relative', height: 10, borderRadius: 5, background: 'var(--bg-elevated, rgba(127,127,127,0.15))', overflow: 'hidden' }}>
+                        <span style={{
+                          position: 'absolute', left: 0, top: 0, bottom: 0,
+                          width: `${Math.round((b.perceptualLoudness / maxLoud) * 100)}%`,
+                          background: won ? 'var(--accent)' : 'var(--text-muted)', borderRadius: 5,
+                        }} />
+                      </span>
+                      <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }} title="Mean YIN clarity in this band">
+                        clr {b.meanClarity.toFixed(2)}
+                      </span>
+                      <span style={{ fontSize: 10.5, color: 'var(--text-secondary)', textAlign: 'right' }} title="Median detected pitch in this band">
+                        {midi !== null ? midiNoteLabel(midi) : '—'}
+                      </span>
+                    </div>
+                  )
+                })
+              })()}
+              <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '6px 0 0' }}>
+                {pitchSource === 'eq'
+                  ? 'Detection is using the dominant band above.'
+                  : 'Turn on “Use EQ band for detection” to transcribe from the winning band.'}
+              </p>
+            </div>
+          )}
 
           <NoteStrip
             notes={displayNotes}
