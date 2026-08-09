@@ -6,12 +6,13 @@
 // not just live singing; fully client-side (no sign-in). Monophonic — best on a single melody line.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, Mic } from 'lucide-react'
-import { analyzeBufferAsync, type BackfillNote } from '@/lib/voice-backfill'
+import { analyzeBufferAsync } from '@/lib/voice-backfill'
 import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
 import { writeMidiFile } from '@/lib/midi-file'
 import { DawEngine } from '@/lib/daw-engine'
 import { POLY_PRESETS, type MidiNote, type TrackInstrument, defaultPolyInstrument } from '@/lib/daw-types'
 import AppChrome from '@/components/apps/AppChrome'
+import NoteEditor from '@/components/apps/NoteEditor'
 
 const INSTRUMENTS = ['Default', 'Super Saw', 'Glass Pluck', 'Cold Pad', 'Brass Pad', 'Darkwave Lead']
 
@@ -24,7 +25,7 @@ export default function Transcribe() {
 }
 
 function TranscribeApp() {
-  const [secNotes, setSecNotes] = useState<BackfillNote[]>([])  // detection result, in SECONDS
+  const [notes, setNotes] = useState<MidiNote[]>([])  // editable detection result
   const [tempo, setTempo] = useState(100)
   const [name, setName] = useState('Transcription')
   const [inst, setInst] = useState('Default')
@@ -41,21 +42,17 @@ function TranscribeApp() {
     () => (inst === 'Default' ? defaultPolyInstrument() : { type: 'poly', params: POLY_PRESETS[inst] }),
     [inst],
   )
-  // Seconds → beats at the chosen tempo (playback timing is faithful either way; tempo sets the grid).
-  const notes = useMemo<MidiNote[]>(() => secNotes.map(n => ({
-    id: crypto.randomUUID(), pitch: n.midi,
-    startBeat: (n.startSec * tempo) / 60,
-    durationBeats: Math.max(0.0625, (n.durSec * tempo) / 60),
-    velocity: n.velocity <= 1 ? Math.max(1, Math.round(n.velocity * 127)) : Math.round(n.velocity),
-  })), [secNotes, tempo])
+  const tempoRef = useRef(tempo); tempoRef.current = tempo
   const project = useMemo(() => buildSketchProject(notes, [], { tempo, name, voice: { instrument } }), [notes, tempo, name, instrument])
   const lenBeats = useMemo(() => Math.max(4, ...notes.map(n => n.startBeat + n.durationBeats), 4), [notes])
-  const has = secNotes.length > 0
+  const has = notes.length > 0
 
   const analyze = useCallback(async (samples: Float32Array, sr: number, sens: number) => {
     const a = await analyzeBufferAsync(samples, sr, { sensitivity: sens, minDuration: 0.08, segmenter: 'hmm' })
-    setSecNotes(a.notes)
-    if (!a.notes.length) setError('No clear melody detected. Try a cleaner, single-line recording.')
+    const t = tempoRef.current
+    const mapped: MidiNote[] = a.notes.map(n => ({ id: crypto.randomUUID(), pitch: n.midi, startBeat: (n.startSec * t) / 60, durationBeats: Math.max(0.0625, (n.durSec * t) / 60), velocity: n.velocity <= 1 ? Math.max(1, Math.round(n.velocity * 127)) : Math.round(n.velocity) }))
+    setNotes(mapped)
+    if (!mapped.length) setError('No clear melody detected. Try a cleaner, single-line recording.')
   }, [])
 
   const ingest = useCallback(async (buf: ArrayBuffer, label: string) => {
@@ -145,7 +142,7 @@ function TranscribeApp() {
 
         {has && (
           <section style={{ marginTop: 24 }}>
-            <PianoRoll notes={notes} />
+            <NoteEditor notes={notes} onChange={setNotes} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, margin: '18px 0' }}>
               <button type="button" onClick={togglePlay} aria-label={playing ? 'Stop' : 'Play'} style={{ display: 'grid', placeItems: 'center', width: 54, height: 54, borderRadius: 999, border: 'none', background: 'var(--accent)', color: '#0e0d12', cursor: 'pointer', flexShrink: 0 }}>
                 {playing ? <Square size={20} fill="#0e0d12" /> : <Play size={22} fill="#0e0d12" style={{ marginLeft: 2 }} />}
@@ -207,32 +204,6 @@ function UploadZone({ busy, onFile, hasResult }: { busy: boolean; onFile: (f: Fi
   )
 }
 
-function PianoRoll({ notes }: { notes: MidiNote[] }) {
-  const ref = useRef<HTMLCanvasElement>(null)
-  useEffect(() => {
-    const cv = ref.current; if (!cv) return
-    const ctx = cv.getContext('2d'); if (!ctx) return
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
-    const W = cv.clientWidth, H = 150
-    cv.width = W * dpr; cv.height = H * dpr; ctx.scale(dpr, dpr)
-    ctx.clearRect(0, 0, W, H)
-    if (!notes.length) return
-    const end = Math.max(...notes.map(n => n.startBeat + n.durationBeats), 1)
-    const pits = notes.map(n => n.pitch)
-    const lo = Math.min(...pits) - 1, hi = Math.max(...pits) + 1
-    const span = Math.max(6, hi - lo)
-    const accent = getComputedStyle(cv).getPropertyValue('--accent').trim() || '#3d8fef'
-    const pad = 6
-    for (const n of notes) {
-      const x = pad + (n.startBeat / end) * (W - 2 * pad)
-      const w = Math.max(2, (n.durationBeats / end) * (W - 2 * pad) - 1)
-      const y = pad + (1 - (n.pitch - lo) / span) * (H - 2 * pad)
-      ctx.fillStyle = accent
-      ctx.fillRect(x, y - 3, w, 6)
-    }
-  }, [notes])
-  return <canvas ref={ref} style={{ width: '100%', height: 150, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }} />
-}
 
 function Label({ children }: { children: React.ReactNode }) {
   return <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, var(--text-secondary))', margin: '0 0 9px' }}>{children}</p>

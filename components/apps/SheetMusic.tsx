@@ -13,6 +13,7 @@ import { writeMidiFile } from '@/lib/midi-file'
 import { DawEngine } from '@/lib/daw-engine'
 import { POLY_PRESETS, type MidiNote, type TrackInstrument, defaultPolyInstrument } from '@/lib/daw-types'
 import AppChrome from '@/components/apps/AppChrome'
+import NoteEditor from '@/components/apps/NoteEditor'
 
 const INSTRUMENTS = ['Default', 'Super Saw', 'Glass Pluck', 'Cold Pad', 'Brass Pad', 'Darkwave Lead']
 
@@ -117,7 +118,7 @@ function SheetMusicApp() {
 
         {has && (
           <section style={{ marginTop: 26 }}>
-            <PianoRoll notes={notes} />
+            <NoteEditor notes={notes} onChange={setNotes} />
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, margin: '18px 0' }}>
               <button type="button" onClick={togglePlay} aria-label={playing ? 'Stop' : 'Play'} style={{ display: 'grid', placeItems: 'center', width: 54, height: 54, borderRadius: 999, border: 'none', background: 'var(--accent)', color: '#0e0d12', cursor: 'pointer', flexShrink: 0 }}>
@@ -180,33 +181,6 @@ function UploadZone({ busy, onFile, accept, hasResult }: { busy: boolean; onFile
   )
 }
 
-// Tiny piano-roll of the transcribed notes (x = time, y = pitch).
-function PianoRoll({ notes }: { notes: MidiNote[] }) {
-  const ref = useRef<HTMLCanvasElement>(null)
-  useEffect(() => {
-    const cv = ref.current; if (!cv) return
-    const ctx = cv.getContext('2d'); if (!ctx) return
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
-    const W = cv.clientWidth, H = 150
-    cv.width = W * dpr; cv.height = H * dpr; ctx.scale(dpr, dpr)
-    ctx.clearRect(0, 0, W, H)
-    if (!notes.length) return
-    const end = Math.max(...notes.map(n => n.startBeat + n.durationBeats), 1)
-    const pits = notes.map(n => n.pitch)
-    const lo = Math.min(...pits) - 1, hi = Math.max(...pits) + 1
-    const span = Math.max(6, hi - lo)
-    const accent = getComputedStyle(cv).getPropertyValue('--accent').trim() || '#3d8fef'
-    const pad = 6
-    for (const n of notes) {
-      const x = pad + (n.startBeat / end) * (W - 2 * pad)
-      const w = Math.max(2, (n.durationBeats / end) * (W - 2 * pad) - 1)
-      const y = pad + (1 - (n.pitch - lo) / span) * (H - 2 * pad)
-      ctx.fillStyle = accent
-      ctx.fillRect(x, y - 3, w, 6)
-    }
-  }, [notes])
-  return <canvas ref={ref} style={{ width: '100%', height: 150, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }} />
-}
 
 function Label({ children }: { children: React.ReactNode }) {
   return <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, var(--text-secondary))', margin: '0 0 9px' }}>{children}</p>
