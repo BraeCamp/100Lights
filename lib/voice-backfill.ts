@@ -61,6 +61,22 @@ export interface BackfillOptions {
    *  under 1 kHz, so ~22 kHz keeps full YIN resolution across the vocal range while
    *  still being cheaper than 44.1k. Pass 0 / >= source rate to skip. Default 22050. */
   targetSampleRate?: number
+  /** Re-pitch each segmented note from its STABLE (post-attack) portion instead of
+   *  trusting the onset frame. A sung note's attack scoops — it starts sharp/flat and
+   *  slides into the true pitch over the first tens of ms — and extractNoteEvents locks
+   *  the note pitch to that first frame, so short notes (mostly attack) come out ~1
+   *  semitone off. This post-pass ignores the attack transient and recomputes a robust
+   *  center pitch. Default true. Pass false to get the raw onset-locked pitch. */
+  repitch?:        boolean
+  /** Seconds of the note ONSET to skip when re-pitching (the scoop lives here). Capped
+   *  at maxSkipFrac of the note's duration so short notes keep their majority. Default 0.04. */
+  attackSkipSec?:  number
+  /** Cap on the attack (and release) skip as a FRACTION of the note's duration, so a
+   *  very short note still keeps a stable majority to pitch from. Default 0.35. */
+  maxSkipFrac?:    number
+  /** Seconds of the note RELEASE (tail) to also drop when re-pitching (pitch often sags
+   *  as a note dies). Capped at maxSkipFrac of the duration. Default 0.01. */
+  releaseSkipSec?: number
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -72,6 +88,15 @@ const DEFAULT_TARGET_SR = 22050
 const DEFAULT_HOP_SEC = 0.010
 // Neighbourhood (frames) for the octave-consistency correction.
 const DEFAULT_OCTAVE_RADIUS = 6
+// Onset window to ignore when re-pitching a note (the sung attack scoops here).
+const DEFAULT_ATTACK_SKIP_SEC  = 0.04
+// Never skip more than this fraction of a note's duration (keeps short notes usable).
+const DEFAULT_MAX_SKIP_FRAC    = 0.35
+// Release tail to also drop when re-pitching (pitch tends to sag as a note dies).
+const DEFAULT_RELEASE_SKIP_SEC = 0.01
+// Minimum stable frames needed before we trust the post-attack window; below this we
+// fall back to the median of ALL the note's voiced frames.
+const MIN_STABLE_FRAMES        = 3
 
 // Window that spans ~90ms and is at least 1024 samples (detectBufferPitch's
 // minimum). ~90ms covers 6+ periods of 70Hz — long enough that YIN locks the true
@@ -279,6 +304,88 @@ function eventsToNotes(
   }))
 }
 
+// Fractional (un-rounded) MIDI for a voiced frame. The refine pipeline snaps
+// PitchFrame.midi to whole semitones, but for a robust CENTER we want the finer
+// pitch: derive it from the frame's exact Hz when present, else the integer midi.
+function fractionalMidi(f: PitchFrame): number {
+  if (f.freq !== null && f.freq > 0) return 69 + 12 * Math.log2(f.freq / 440)
+  return f.midi ?? 0
+}
+
+// Amplitude-weighted median of {value, weight} pairs. The median is robust to the
+// scoop/outlier frames a mean would be dragged by; weighting by amplitude lets the
+// loud, settled body of the note outvote quiet edge frames.
+function weightedMedian(pairs: { v: number; w: number }[]): number {
+  if (pairs.length === 0) return 0
+  const sorted = pairs.slice().sort((a, b) => a.v - b.v)
+  const total  = sorted.reduce((s, x) => s + x.w, 0)
+  if (!(total > 0)) return sorted[Math.floor(sorted.length / 2)].v   // all-zero weights → plain median
+  const half = total / 2
+  let cum = 0
+  for (const x of sorted) {
+    cum += x.w
+    if (cum >= half) return x.v
+  }
+  return sorted[sorted.length - 1].v
+}
+
+/**
+ * Re-pitch each note from its STABLE (settled) portion, ignoring the attack scoop.
+ *
+ * WHY: a sung note's onset scoops — it starts sharp/flat and slides into the true
+ * pitch over the first tens of ms (worst on a high→low jump). extractNoteEvents locks
+ * a note's pitch to its FIRST voiced frame, which lands squarely in that transient, so
+ * short notes (mostly attack) come out ~1 semitone off. Instead of trusting the onset,
+ * we look at the note's body.
+ *
+ * For each note we:
+ *   1. gather the voiced curve frames inside [startSec, startSec+durSec],
+ *   2. drop the first `attackSkipSec` (the scoop) — but never more than `maxSkipFrac`
+ *      of the note's duration, so a short note keeps its majority — and optionally the
+ *      last `releaseSkipSec` (the dying tail),
+ *   3. from the remaining "stable" frames take an amplitude-weighted median of the
+ *      fractional MIDI (robust to any residual scoop) and round to the nearest semitone.
+ * If too few stable frames survive (very short note), we fall back to the median of ALL
+ * the note's voiced frames — still better than the single onset frame.
+ *
+ * Operates on the OCTAVE-CORRECTED curve. Pure/deterministic. Only the notes' `midi`
+ * changes; start/dur/velocity — and the displayed curves — are untouched, so the debug
+ * view keeps showing the scoop while the notes now sit on the settled pitch.
+ */
+export function repitchNotes(
+  notes: BackfillNote[],
+  curve: PitchFrame[],
+  opts: BackfillOptions = {},
+): BackfillNote[] {
+  const attackSkipSec  = Math.max(0, opts.attackSkipSec  ?? DEFAULT_ATTACK_SKIP_SEC)
+  const maxSkipFrac    = clamp(opts.maxSkipFrac ?? DEFAULT_MAX_SKIP_FRAC, 0, 0.49)
+  const releaseSkipSec = Math.max(0, opts.releaseSkipSec ?? DEFAULT_RELEASE_SKIP_SEC)
+  if (curve.length === 0) return notes.map(n => ({ ...n }))
+
+  const EPS = 1e-9
+  return notes.map(n => {
+    const start = n.startSec
+    const end   = n.startSec + n.durSec
+    const dur   = Math.max(0, n.durSec)
+    const cap   = maxSkipFrac * dur
+    const skip  = Math.min(attackSkipSec,  cap)
+    const rel   = Math.min(releaseSkipSec, cap)
+    const stableStart = start + skip
+    const stableEnd   = end   - rel
+
+    // All voiced frames inside the note span (the fallback pool).
+    const inSpan = curve.filter(f => f.midi !== null && f.time >= start - EPS && f.time <= end + EPS)
+    if (inSpan.length === 0) return { ...n }
+
+    // Post-attack, pre-release "stable" frames; fall back to the whole span if too few.
+    let stable = inSpan.filter(f => f.time >= stableStart - EPS && f.time <= stableEnd + EPS)
+    if (stable.length < MIN_STABLE_FRAMES) stable = inSpan
+
+    const center = weightedMedian(stable.map(f => ({ v: fractionalMidi(f), w: Math.max(1e-6, f.amplitude) })))
+    return { ...n, midi: Math.round(center) }
+  })
+}
+
 /**
  * Full offline pass returning BOTH the notes and the pitch curves they came from:
  * mono Float32 buffer → { notes, curve (post-refine), rawCurve (pre-refine) }.
@@ -303,7 +410,10 @@ export function analyzeBuffer(
   const { buf, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
   const rawCurve = scanBuffer(buf, rate, opts)
   const curve    = refinePitchTrack(rawCurve, rMed, octR)
-  const notes    = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
+  let   notes    = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
+  // Re-pitch from each note's settled portion (ignore the onset scoop). Changes the
+  // NOTES only — the curve/rawCurve stay as-detected so the debug view still shows it.
+  if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
   return { notes, curve, rawCurve }
 }
 
@@ -368,7 +478,8 @@ export async function analyzeBufferAsync(
     }
   }
   const curve = refinePitchTrack(rawCurve, rMed, octR)
-  const notes = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
+  let   notes = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
+  if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
   onProgress?.(1)
   return { notes, curve, rawCurve }
 }

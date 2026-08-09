@@ -777,7 +777,7 @@ export default function VoiceMidi() {
       try {
         master.gain.cancelScheduledValues(now)
         master.gain.setValueAtTime(master.gain.value, now)
-        master.gain.setTargetAtTime(0, now, 0.02)
+        master.gain.linearRampToValueAtTime(0, now + 0.03)   // definitive click-safe cut to EXACTLY 0 (setTargetAtTime only asymptotes)
       } catch { /* param already detached */ }
     }
 
@@ -1185,7 +1185,7 @@ export default function VoiceMidi() {
                   {opts.map(o => (
                     <button
                       key={o.src}
-                      onClick={() => selectTake(o.src)}
+                      onClick={() => { stopPlayback(); selectTake(o.src) }}
                       style={{
                         padding: '6px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
                         background: takeSource === o.src ? 'var(--accent)' : 'transparent',
