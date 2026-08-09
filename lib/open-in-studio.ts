@@ -56,35 +56,37 @@ export function openMidiInStudio(notes: MidiNote[], opts: { tempo?: number; name
   openProjectInStudio(project)
 }
 
+/** Per-track settings the Firefly editor controls. */
+export interface SketchTrackOpts { volume?: number; mute?: boolean; instrument?: TrackInstrument }
+export interface SketchOpts { tempo?: number; name?: string; voice?: SketchTrackOpts; beat?: SketchTrackOpts }
+
 /**
- * Open the studio with a TWO-track sketch: a melodic (voice) track and a drum (beat) track,
- * each notes beat-based. Used by the Firefly sketchpad's "Open in 100Lights" — either list may
- * be empty (only the non-empty tracks are added). Both clips span the same rounded bar length.
+ * Build the two-track Firefly sketch as a DawProject: a melodic (voice) track and a drum (beat)
+ * track, notes beat-based. Either list may be empty (only non-empty tracks are added). Shared by
+ * in-app playback (DawEngine), export, and append-to-existing-project. Per-track volume/mute +
+ * the voice instrument come from `opts`. Returns a project with 0 tracks if both lists are empty.
  */
-export function openSketchInStudio(
-  melody: MidiNote[],
-  beat: MidiNote[],
-  opts: { tempo?: number; name?: string } = {},
-) {
+export function buildSketchProject(melody: MidiNote[], beat: MidiNote[], opts: SketchOpts = {}): DawProject {
   const base = defaultProject()
   const end = [...melody, ...beat].reduce((m, n) => Math.max(m, n.startBeat + n.durationBeats), 0)
   const len = Math.max(4, Math.ceil((end || 4) / 4) * 4)
 
   const tracks: DawTrack[] = []
   const clips: DawProject['arrangementClips'] = []
-  const addTrack = (name: string, instrument: TrackInstrument, notes: MidiNote[], isDrum: boolean) => {
+  const addTrack = (name: string, instrument: TrackInstrument, notes: MidiNote[], isDrum: boolean, ts?: SketchTrackOpts) => {
     if (!notes.length) return
     const track = makeTrack(name, instrument)
+    if (typeof ts?.volume === 'number') track.volume = ts.volume
+    if (typeof ts?.mute === 'boolean') track.mute = ts.mute
     const clip = makeMidiClip(track.id, name, 0, len, { isDrumClip: isDrum })
     clip.notes = notes.map(n => ({ ...n, id: crypto.randomUUID() }))
     tracks.push(track)
     clips.push(clip)
   }
-  addTrack('Voice', defaultPolyInstrument(), melody, false)
-  addTrack('Beat', defaultDrumInstrument(), beat, true)
-  if (!tracks.length) return
+  addTrack('Voice', opts.voice?.instrument ?? defaultPolyInstrument(), melody, false, opts.voice)
+  addTrack('Beat', defaultDrumInstrument(), beat, true, opts.beat)
 
-  const project: DawProject = {
+  return {
     ...base,
     id: crypto.randomUUID(),
     name: opts.name ?? 'Firefly sketch',
@@ -92,5 +94,10 @@ export function openSketchInStudio(
     tracks,
     arrangementClips: clips,
   }
-  openProjectInStudio(project)
+}
+
+/** Build the sketch project and open it in the studio as a NEW project. */
+export function openSketchInStudio(melody: MidiNote[], beat: MidiNote[], opts: SketchOpts = {}) {
+  const project = buildSketchProject(melody, beat, opts)
+  if (project.tracks.length) openProjectInStudio(project)
 }
