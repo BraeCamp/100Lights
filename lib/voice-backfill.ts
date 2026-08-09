@@ -21,7 +21,35 @@ import {
   extractNoteEvents,
   midiToFreq,
   type PitchFrame,
+  type NoteEvent,
 } from '@/lib/pitch-detector'
+// Reuse the existing radix-2 FFT (no new dep) for per-window spectral flux.
+import { fft } from '@/scripts/listen-analyzer.mjs'
+
+/**
+ * A PitchFrame plus the per-frame ACOUSTIC evidence the onset-aware segmenter uses
+ * to decide note boundaries beyond pitch alone. It's a strict SUPERSET of PitchFrame
+ * (time/freq/amplitude/midi), so a FeatureFrame[] flows unchanged into extractNoteEvents
+ * and the existing curve consumers — the extra fields are simply ignored there.
+ *
+ *  · flux         spectral flux / onset strength: half-wave-rectified sum of the
+ *                 per-bin magnitude INCREASE vs the previous window's FFT. Spikes at
+ *                 an attack (even when the pitch doesn't change) — the re-articulation cue.
+ *  · clarity      the YIN confidence for this frame (0 when unvoiced). Higher = the
+ *                 detected pitch is more trustworthy; used to weight/ignore pitch.
+ *  · energyDelta  RMS(frame) − RMS(prevFrame): a fast attack detector that complements
+ *                 flux (loudness jump on a re-hit).
+ *  · pitchDelta   |midi − prevMidi| in semitones across consecutive voiced frames
+ *                 (glide vs held) — 0 when either frame is unvoiced.
+ *  · rms          the raw (pre-scaling) RMS of the window.
+ */
+export interface FeatureFrame extends PitchFrame {
+  flux:        number
+  clarity:     number
+  energyDelta: number
+  pitchDelta:  number
+  rms:         number
+}
 
 export interface BackfillNote {
   startSec:  number
@@ -83,6 +111,15 @@ export interface BackfillOptions {
   /** Seconds of the note RELEASE (tail) to also drop when re-pitching (pitch often sags
    *  as a note dies). Capped at maxSkipFrac of the duration. Default 0.01. */
   releaseSkipSec?: number
+  /** Use the ONSET-AWARE segmenter (combine spectral-flux/energy onsets WITH the pitch
+   *  rule) instead of the pitch-only baseline. This is what recovers RE-ARTICULATIONS —
+   *  the same/adjacent pitch sung again with no gap, which pitch-alone merges into one
+   *  note. Default true. Pass false to A/B against the pure pitch-only segmentation. */
+  useOnsets?:      boolean
+  /** Onset peak-pick sensitivity, 0→1. Maps to the adaptive threshold k = mean + k·std
+   *  over a local flux window: HIGHER sensitivity ⇒ lower k ⇒ more onsets detected (more
+   *  splits); lower ⇒ stricter (fewer). Default 0.5. */
+  onsetSensitivity?: number
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -105,6 +142,15 @@ const DEFAULT_RELEASE_SKIP_SEC = 0.01
 // Minimum stable frames needed before we trust the post-attack window; below this we
 // fall back to the median of ALL the note's voiced frames.
 const MIN_STABLE_FRAMES        = 3
+// Onset peak-pick sensitivity default (0→1; higher = more onsets). See BackfillOptions.
+const DEFAULT_ONSET_SENS       = 0.5
+// Cap on the FFT size used for the per-window spectral-flux (perf; power of 2).
+const FLUX_MAX_FFT             = 2048
+// Spectral flux is summed into this many linear frequency BANDS before differencing.
+// Band-summing averages out the per-bin leakage jitter a steady tone otherwise shows
+// (which made a held note's raw per-bin flux spike erratically), so a sustained note
+// reads as ~zero flux while a real attack — which moves every band — still spikes.
+const FLUX_BANDS               = 32
 
 // Window that spans ~60ms and is at least 1024 samples (detectBufferPitch's
 // minimum). ~60ms still covers 6 periods of ~100Hz (typical voice f0) so YIN locks
@@ -144,8 +190,42 @@ export function resampleMono(
 
 interface ScanParams { win: number; rmsGate: number; sampleRate: number }
 
-// One analysis window → one PitchFrame (RMS gate + YIN core via detectBufferPitch).
-function scanFrame(buf: Float32Array, off: number, p: ScanParams): PitchFrame {
+// Largest power of two ≤ n (≥1). Used to size the flux FFT to fit inside the
+// analysis window while satisfying the radix-2 FFT's power-of-2 length requirement.
+function pow2Down(n: number): number { let p = 1; while (p * 2 <= n) p *= 2; return p }
+
+// Rolling state for the feature scan: the flux FFT is comparative (this window's
+// magnitude spectrum vs the previous window's), so we carry prevMag/prevRms/prevMidi
+// across frames. Scratch FFT buffers (re/im) are reused to avoid per-frame allocation.
+interface ScanState {
+  fftSize: number
+  hann:    Float64Array
+  re:      Float64Array
+  im:      Float64Array
+  band:    Float64Array   // scratch: this window's per-band magnitude sums
+  prevBand: Float64Array  // previous window's per-band sums (for the flux difference)
+  prevRms: number
+  prevMidi: number | null
+  first:   boolean
+}
+
+function makeScanState(win: number): ScanState {
+  const fftSize = Math.min(FLUX_MAX_FFT, Math.max(256, pow2Down(win)))
+  const hann = new Float64Array(fftSize)
+  for (let i = 0; i < fftSize; i++) hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1))
+  return {
+    fftSize, hann,
+    re: new Float64Array(fftSize), im: new Float64Array(fftSize),
+    band: new Float64Array(FLUX_BANDS), prevBand: new Float64Array(FLUX_BANDS),
+    prevRms: 0, prevMidi: null, first: true,
+  }
+}
+
+// One analysis window → one FeatureFrame: the YIN pitch (RMS-gated, via
+// detectBufferPitch, now also exposing its confidence as `clarity`) PLUS the acoustic
+// evidence — spectral flux (onset strength), energyDelta (attack), pitchDelta (glide vs
+// held). `st` MUST be advanced frame-by-frame in time order (flux/energyDelta are deltas).
+function scanFeatureFrame(buf: Float32Array, off: number, p: ScanParams, st: ScanState): FeatureFrame {
   const seg = buf.subarray(off, off + p.win)
   let sq = 0
   for (let i = 0; i < seg.length; i++) sq += seg[i] * seg[i]
@@ -154,17 +234,50 @@ function scanFrame(buf: Float32Array, off: number, p: ScanParams): PitchFrame {
 
   let freq: number | null = null
   let midi: number | null = null
+  let clarity = 0
   if (rms >= p.rmsGate) {
     const det = detectBufferPitch(seg as Float32Array, p.sampleRate, 0)
-    if (det) { freq = det.hz; midi = det.midi }
+    if (det) { freq = det.hz; midi = det.midi; clarity = det.confidence }
   }
-  return { time: off / p.sampleRate, freq, amplitude, midi }
+
+  // Spectral flux: FFT this window (Hann), sum bin magnitudes into FLUX_BANDS linear
+  // bands, then half-wave-rectify the per-BAND increase vs the previous window. Banding
+  // averages out per-bin leakage jitter so a sustained note reads ~0 flux (only a real
+  // attack moves the bands). Zero-padded if the window runs past the buffer end (only
+  // possible for a tiny custom winSize; the default win ≥ fftSize).
+  const { fftSize, hann, re, im, band, prevBand } = st
+  const half = fftSize >> 1
+  for (let i = 0; i < fftSize; i++) { re[i] = (off + i < buf.length ? buf[off + i] : 0) * hann[i]; im[i] = 0 }
+  fft(re, im)
+  const nb = band.length
+  band.fill(0)
+  const binsPerBand = (half - 1) / nb
+  for (let i = 1; i < half; i++) {
+    const b = Math.min(nb - 1, Math.floor((i - 1) / binsPerBand))
+    band[b] += Math.sqrt(re[i] * re[i] + im[i] * im[i])
+  }
+  let flux = 0
+  for (let b = 0; b < nb; b++) {
+    const d = band[b] - prevBand[b]
+    if (d > 0) flux += d
+    prevBand[b] = band[b]
+  }
+  // The first frame has no predecessor — its "flux" would be the whole spectrum; zero it
+  // so it can't dominate the adaptive threshold (the note still opens on the first voiced frame).
+  if (st.first) { flux = 0; st.first = false }
+
+  const energyDelta = rms - st.prevRms
+  st.prevRms = rms
+  const pitchDelta = (midi !== null && st.prevMidi !== null) ? Math.abs(midi - st.prevMidi) : 0
+  st.prevMidi = midi
+
+  return { time: off / p.sampleRate, freq, amplitude, midi, flux, clarity, energyDelta, pitchDelta, rms }
 }
 
 // Median filter over the MIDI track (ignoring unvoiced neighbors). Offline we can
 // afford this stricter smoothing to kill single-frame octave flickers the
 // real-time detector's IIR would pass through.
-function medianFilterMidi(frames: PitchFrame[], rMed: number): PitchFrame[] {
+function medianFilterMidi<T extends PitchFrame>(frames: T[], rMed: number): T[] {
   if (rMed === 0) return frames
   return frames.map((f, i) => {
     if (f.midi === null) return f
@@ -176,7 +289,7 @@ function medianFilterMidi(frames: PitchFrame[], rMed: number): PitchFrame[] {
     if (vals.length === 0) return f
     vals.sort((a, b) => a - b)
     const med = vals[Math.floor(vals.length / 2)]
-    return med === f.midi ? f : { ...f, midi: med, freq: midiToFreq(med) }
+    return med === f.midi ? f : { ...f, midi: med, freq: midiToFreq(med) } as T
   })
 }
 
@@ -197,7 +310,7 @@ function medianFilterMidi(frames: PitchFrame[], rMed: number): PitchFrame[] {
  * Offline-only: it needs the whole track's context, so it never runs in the live
  * detector (which must stay causal/real-time).
  */
-function correctOctaves(frames: PitchFrame[], radius: number): PitchFrame[] {
+function correctOctaves<T extends PitchFrame>(frames: T[], radius: number): T[] {
   if (radius <= 0) return frames
   // Snapshot the pre-correction MIDIs so each decision uses the ORIGINAL
   // neighbourhood (not one already being rewritten left-to-right).
@@ -219,7 +332,7 @@ function correctOctaves(frames: PitchFrame[], radius: number): PitchFrame[] {
     // melodic intervals (3rds, 5ths, …) alone.
     if (octaves !== 0 && Math.abs(diff - octaves * 12) <= 1) {
       const snapped = f.midi - octaves * 12
-      return { ...f, midi: snapped, freq: midiToFreq(snapped) }
+      return { ...f, midi: snapped, freq: midiToFreq(snapped) } as T
     }
     return f
   })
@@ -229,7 +342,7 @@ function correctOctaves(frames: PitchFrame[], radius: number): PitchFrame[] {
 // flickers) → octave fold (kill multi-frame harmonic jumps) → median again
 // (smooth any residual at the fold boundaries). Order matters: the octave pass
 // wants an already-de-flickered track so its neighbour medians are clean.
-function refinePitchTrack(frames: PitchFrame[], rMed: number, octaveRadius: number): PitchFrame[] {
+function refinePitchTrack<T extends PitchFrame>(frames: T[], rMed: number, octaveRadius: number): T[] {
   let out = medianFilterMidi(frames, rMed)
   out = correctOctaves(out, octaveRadius)
   out = medianFilterMidi(out, rMed)
@@ -251,7 +364,7 @@ function scanBuffer(
   samples: Float32Array,
   sampleRate: number,
   opts: BackfillOptions,
-): PitchFrame[] {
+): FeatureFrame[] {
   const gain    = opts.gain ?? 1
   const rmsGate = opts.rmsGate ?? 0.006
   const win     = opts.winSize ?? defaultWin(sampleRate)
@@ -261,8 +374,9 @@ function scanBuffer(
   if (buf.length < win) return []
 
   const p: ScanParams = { win, rmsGate, sampleRate }
-  const frames: PitchFrame[] = []
-  for (let off = 0; off + win <= buf.length; off += hop) frames.push(scanFrame(buf, off, p))
+  const st = makeScanState(win)
+  const frames: FeatureFrame[] = []
+  for (let off = 0; off + win <= buf.length; off += hop) frames.push(scanFeatureFrame(buf, off, p, st))
   return frames
 }
 
@@ -302,6 +416,16 @@ export interface BufferAnalysis {
   /** PRE-refine per-frame pitch (raw YIN output) — octave jumps/flicker intact, so
    *  divergence from `curve` shows what the correction fixed. `freq` is exact Hz. */
   rawCurve: PitchFrame[]
+  /** Detected onset times (seconds, same time base as the curves/notes) — where the
+   *  onset-aware segmenter decided a note (re)starts. Empty when useOnsets is off.
+   *  Optional so older callers keep type-checking. */
+  onsets?:  number[]
+  /** Per-frame onset-strength (spectral flux), NORMALIZED to 0–1, aligned index-for-index
+   *  with `curve` — the evidence lane the debug overlay draws. Optional/back-compat. */
+  flux?:    number[]
+  /** Per-frame YIN clarity/confidence (0–1), aligned index-for-index with `curve`. Lets
+   *  the overlay fade low-confidence frames. Optional/back-compat. */
+  clarity?: number[]
 }
 
 function eventsToNotes(
@@ -399,6 +523,196 @@ export function repitchNotes(
   })
 }
 
+// ── Onset detection (backfill-local) ──────────────────────────────────────────
+/**
+ * Adaptive peak-pick over spectral flux, CORROBORATED by an energy attack, to find note
+ * (re)starts.
+ *
+ * Two evidence layers combine (a flux spike ALONE isn't enough):
+ *   1. FLUX peak — a local max of the (max-normalized) spectral flux that also clears a
+ *      moving threshold (mean + k·std over a ±~100ms window), a small absolute floor, and
+ *      a local-baseline ratio, at least a refractory gap (~70ms) after the last onset.
+ *   2. ENERGY corroboration — a real note (re)start carries a fresh ATTACK: the short-term
+ *      RMS RISES across the frame, or there's a brief RMS DIP right at it (the note
+ *      momentarily lets go before the re-hit). A SUSTAINED tone has neither, so its
+ *      periodic flux-leakage ripple (which banding alone can't fully suppress) is rejected
+ *      — this is what prevents a held note from over-splitting.
+ *
+ * Returns FRAME INDICES (into `frames`), ascending. k is derived from `sensitivity`
+ * (higher sensitivity ⇒ lower k ⇒ more onsets).
+ */
+function detectOnsetFrames(frames: FeatureFrame[], hopSec: number, sensitivity: number): number[] {
+  const n = frames.length
+  if (n < 3) return []
+
+  // Max-normalize the flux → the onset-strength signal `os`.
+  let fluxMax = 1e-9, peakRms = 1e-9
+  for (const f of frames) {
+    if (f.flux > fluxMax) fluxMax = f.flux
+    if (f.rms > peakRms) peakRms = f.rms
+  }
+  const os = new Float64Array(n)
+  for (let i = 0; i < n; i++) os[i] = frames[i].flux / fluxMax
+
+  const W          = Math.max(3, Math.round(0.10 / hopSec))   // ±~100ms threshold window
+  const k          = 2.2 - 2.0 * clamp(sensitivity, 0, 1)     // 0→2.2 strict … 1→0.2 loose
+  const refractory = Math.max(1, Math.round(0.07 / hopSec))   // ~70ms: one attack = one onset
+  const FLOOR      = 0.06                                     // ignore near-silence wiggle
+  // A peak must also exceed the LOCAL baseline by this factor (normalization-by-max alone
+  // inflates a quiet track's ripple; a real attack is many× the local baseline).
+  const MIN_RATIO  = 1.8
+  const RISE_THR   = 0.05 * peakRms                           // energy-rise significance
+  const ER         = Math.max(1, Math.round(0.04 / hopSec))   // ±~40ms energy compare span
+
+  const meanRms = (lo: number, hi: number) => {
+    let s = 0, c = 0
+    for (let j = lo; j <= hi; j++) { s += frames[j].rms; c++ }
+    return c > 0 ? s / c : 0
+  }
+
+  const onsets: number[] = []
+  let last = -1e9
+  for (let i = 1; i < n - 1; i++) {
+    const v = os[i]
+    if (v < FLOOR || v < os[i - 1] || v <= os[i + 1]) continue   // must be a local peak
+    if (i - last < refractory) continue
+    // (1) Local moving mean+std over [i-W, i+W].
+    const lo = Math.max(0, i - W), hi = Math.min(n - 1, i + W)
+    let sum = 0, sum2 = 0, cnt = 0
+    for (let j = lo; j <= hi; j++) { sum += os[j]; sum2 += os[j] * os[j]; cnt++ }
+    const mean = sum / cnt
+    const std  = Math.sqrt(Math.max(0, sum2 / cnt - mean * mean))
+    if (!(v > mean + k * std && v > mean * MIN_RATIO)) continue
+    // (2) Energy corroboration: a rise across the frame OR a local RMS dip (a re-hit).
+    const rmsBefore = meanRms(Math.max(0, i - ER), i - 1)
+    const rmsAfter  = meanRms(i + 1, Math.min(n - 1, i + ER))
+    let mn = Infinity
+    for (let j = Math.max(0, i - 1); j <= Math.min(n - 1, i + 1); j++) if (frames[j].rms < mn) mn = frames[j].rms
+    const rise = (rmsAfter - rmsBefore) > RISE_THR
+    const dip  = mn < 0.82 * Math.min(rmsBefore, rmsAfter)
+    if (rise || dip) { onsets.push(i); last = i }
+  }
+  return onsets
+}
+
+// ── Onset-aware combined segmenter (backfill-local; NOT extractNoteEvents) ─────
+// Threshold above which a clarity-weighted running-mean pitch move opens a new note
+// (semitones). Kept > a semitone-and-a-half of typical vibrato so a held/vibrato note
+// doesn't over-split, while a real melodic step still fires. The onset path is what
+// catches SAME-pitch and adjacent re-articulations that this pitch rule can't see.
+const PITCH_SPLIT_SEMI = 0.7
+// A note younger than this can't be split by an onset — prevents the note's OWN attack
+// (which is an onset) from immediately closing it, and suppresses double-triggers.
+const MIN_ONSET_SPLIT_SEC = 0.05
+// Below this clarity a frame's pitch is untrusted for the pitch-change decision (it can
+// still extend a note by amplitude), so YIN wobble on breathy frames won't split a note.
+const SEG_CLARITY_GATE = 0.5
+
+/**
+ * Segment a refined FeatureFrame[] into notes by COMBINING the pitch rule with onsets.
+ * A new note starts on EITHER a confident pitch change (> PITCH_SPLIT_SEMI, clarity-gated)
+ * OR a detected onset (even at ~unchanged pitch — the re-articulation case). A note closes
+ * on sustained silence/unvoiced or at the next onset. Pitch is accumulated clarity-weighted
+ * so low-confidence frames don't drag the running estimate.
+ *
+ * Returns NoteEvent[] in the SAME shape extractNoteEvents produces, so the existing
+ * eventsToNotes → repitchNotes path (and thus re-pitch-from-stable-portion) is unchanged.
+ * Does NOT touch extractNoteEvents — this is the additive onset-aware path.
+ */
+function segmentWithOnsets(curve: FeatureFrame[], onsetIdx: number[], minDuration: number): NoteEvent[] {
+  if (curve.length < 2) return []
+  const onsetSet = new Set(onsetIdx)
+  const AMP_GATE = 0.025
+  const hopSec = curve[1].time - curve[0].time || 0.012
+  const maxSilence = Math.ceil(0.06 / hopSec)
+
+  const events: NoteEvent[] = []
+  let startIdx = -1, startTime = 0
+  let vSum = 0, wSum = 0            // clarity-weighted fractional-MIDI accumulators
+  let ampSum = 0, ampCount = 0, silence = 0
+  // A detected onset frequently lands on the UNVOICED attack transient (YIN can't lock
+  // during the sharp re-hit), so we can't split on it in the voiced branch alone. Instead
+  // we ARM a pending split at the onset and consume it at the next voiced frame — that's
+  // where the re-articulated note truly (re)starts.
+  let pendingOnset = false
+
+  const open = (i: number, f: FeatureFrame) => {
+    const fm = fractionalMidi(f), w = Math.max(1e-3, f.clarity)
+    startIdx = i; startTime = f.time
+    vSum = fm * w; wSum = w; ampSum = f.amplitude; ampCount = 1; silence = 0
+  }
+  const flush = (endTime: number) => {
+    if (startIdx >= 0 && endTime - startTime >= minDuration) {
+      events.push({
+        start: startTime, end: endTime,
+        midi: Math.round(vSum / wSum),
+        amplitude: Math.min(0.9, (ampSum / ampCount) * 0.9),
+      })
+    }
+    startIdx = -1
+  }
+
+  for (let i = 0; i < curve.length; i++) {
+    const f = curve[i]
+    const voiced = f.midi !== null && f.amplitude > AMP_GATE
+    // Arm a pending split for any onset that's far enough into the current note (so the
+    // note's OWN attack onset can't immediately close it). Held whether voiced or not.
+    if (onsetSet.has(i) && startIdx >= 0 && (f.time - startTime) >= MIN_ONSET_SPLIT_SEC) pendingOnset = true
+
+    if (voiced) {
+      const fm = fractionalMidi(f)
+      if (startIdx < 0) { open(i, f); pendingOnset = false; continue }
+      const curPitch  = vSum / wSum
+      const pitchJump = f.clarity >= SEG_CLARITY_GATE && Math.abs(fm - curPitch) > PITCH_SPLIT_SEMI
+      if (pitchJump || pendingOnset) {
+        flush(f.time)         // close at the boundary …
+        open(i, f)            // … and start the re-articulated/new note here
+        pendingOnset = false
+      } else {
+        const w = Math.max(1e-3, f.clarity)
+        vSum += fm * w; wSum += w; ampSum += f.amplitude; ampCount++; silence = 0
+      }
+    } else if (startIdx >= 0) {
+      silence++
+      if (silence > maxSilence) { flush(f.time); pendingOnset = false }
+    }
+  }
+  flush(curve[curve.length - 1].time + 0.02)
+  return events
+}
+
+// Shared tail of the offline pass: refine the raw feature track, detect onsets, segment
+// (onset-aware or pitch-only baseline per opts.useOnsets), re-pitch, and package the
+// analysis WITH the onset/flux/clarity evidence for the debug overlay. Both the sync and
+// async entries build the rawCurve (differing only in yielding) then delegate here.
+function finalizeAnalysis(
+  rawCurve: FeatureFrame[],
+  opts: BackfillOptions,
+  minDuration: number,
+  rMed: number,
+  octR: number,
+): BufferAnalysis {
+  const curve = refinePitchTrack(rawCurve, rMed, octR)
+  const useOnsets = opts.useOnsets !== false
+  const hopSec = curve.length > 1 ? Math.max(1e-4, curve[1].time - curve[0].time) : (opts.hopSec ?? DEFAULT_HOP_SEC)
+  const sens = clamp(opts.onsetSensitivity ?? DEFAULT_ONSET_SENS, 0, 1)
+  const onsetIdx = useOnsets ? detectOnsetFrames(curve, hopSec, sens) : []
+  const events = useOnsets
+    ? segmentWithOnsets(curve, onsetIdx, minDuration)
+    : extractNoteEvents(curve, minDuration)
+  let notes = eventsToNotes(events, minDuration)
+  if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
+
+  let fluxMax = 1e-9
+  for (const f of curve) if (f.flux > fluxMax) fluxMax = f.flux
+  return {
+    notes, curve, rawCurve,
+    onsets:  onsetIdx.map(i => curve[i].time),
+    flux:    curve.map(f => Math.min(1, f.flux / fluxMax)),
+    clarity: curve.map(f => f.clarity),
+  }
+}
+
 /**
  * Full offline pass returning BOTH the notes and the pitch curves they came from:
  * mono Float32 buffer → { notes, curve (post-refine), rawCurve (pre-refine) }.
@@ -422,12 +736,9 @@ export function analyzeBuffer(
   const octR = Math.max(0, opts.octaveRadius ?? DEFAULT_OCTAVE_RADIUS)
   const { buf, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
   const rawCurve = scanBuffer(buf, rate, opts)
-  const curve    = refinePitchTrack(rawCurve, rMed, octR)
-  let   notes    = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
-  // Re-pitch from each note's settled portion (ignore the onset scoop). Changes the
-  // NOTES only — the curve/rawCurve stay as-detected so the debug view still shows it.
-  if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
-  return { notes, curve, rawCurve }
+  // Refine → onset-aware segment → re-pitch, and package with the onset/flux/clarity
+  // evidence. Re-pitch changes the NOTES only — the curve/rawCurve stay as-detected.
+  return finalizeAnalysis(rawCurve, opts, minDuration, rMed, octR)
 }
 
 /**
@@ -476,25 +787,24 @@ export async function analyzeBufferAsync(
   const hop     = Math.max(1, Math.round((opts.hopSec ?? DEFAULT_HOP_SEC) * rate))
   const buf     = applyGain(ds, gain)
 
-  if (buf.length < win) { onProgress?.(1); return { notes: [], curve: [], rawCurve: [] } }
+  if (buf.length < win) { onProgress?.(1); return { notes: [], curve: [], rawCurve: [], onsets: [], flux: [], clarity: [] } }
 
   const p: ScanParams = { win, rmsGate, sampleRate: rate }
-  const rawCurve: PitchFrame[] = []
+  const st = makeScanState(win)
+  const rawCurve: FeatureFrame[] = []
   const end = buf.length - win
   let lastYield = nowMs()
   for (let off = 0; off + win <= buf.length; off += hop) {
-    rawCurve.push(scanFrame(buf, off, p))
+    rawCurve.push(scanFeatureFrame(buf, off, p, st))
     if (nowMs() - lastYield >= 12) {          // ~12ms work budget between yields
       onProgress?.(Math.min(0.97, end > 0 ? off / end : 1))
       await new Promise<void>(r => setTimeout(r, 0))
       lastYield = nowMs()
     }
   }
-  const curve = refinePitchTrack(rawCurve, rMed, octR)
-  let   notes = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
-  if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
+  const analysis = finalizeAnalysis(rawCurve, opts, minDuration, rMed, octR)
   onProgress?.(1)
-  return { notes, curve, rawCurve }
+  return analysis
 }
 
 /**

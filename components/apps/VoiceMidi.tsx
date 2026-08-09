@@ -195,6 +195,12 @@ export default function VoiceMidi() {
   // the curves and shows the notes. Purely visual; playback/quantize are untouched.
   const [curve, setCurve] = useState<PitchFrame[] | null>(null)
   const [rawCurve, setRawCurve] = useState<PitchFrame[] | null>(null)
+  // Onset-aware evidence for the debug overlay: onset times (note (re)starts), the
+  // normalized onset-strength (flux) envelope, and per-frame YIN clarity — all aligned
+  // to `curve`'s time base. Null/empty on live-only takes (no offline pass).
+  const [onsets, setOnsets] = useState<number[] | null>(null)
+  const [flux, setFlux] = useState<number[] | null>(null)
+  const [clarity, setClarity] = useState<number[] | null>(null)
   const [takeBpm, setTakeBpm] = useState<number | null>(null)
   const [takePhase, setTakePhase] = useState(0)
   const [showDebug, setShowDebug] = useState(false)
@@ -640,6 +646,9 @@ export default function VoiceMidi() {
     // Drop any previous take's pitch curves (a live-only take has none).
     setCurve(null)
     setRawCurve(null)
+    setOnsets(null)
+    setFlux(null)
+    setClarity(null)
     setTakeBpm(null)
     setTakePhase(0)
     try {
@@ -718,6 +727,9 @@ export default function VoiceMidi() {
       // shown — live/refined/raw all come from the same performance.)
       setCurve(analysis.curve)
       setRawCurve(analysis.rawCurve)
+      setOnsets(analysis.onsets ?? null)
+      setFlux(analysis.flux ?? null)
+      setClarity(analysis.clarity ?? null)
       setTakeBpm(recBpmRef.current)
       setTakePhase(recPhaseRef.current)
       if (refinedRaw.length > 0) {
@@ -1179,7 +1191,8 @@ export default function VoiceMidi() {
             notes={displayNotes}
             playhead={playhead}
             debug={showDebug && curve && curve.length > 0
-              ? { curve, rawCurve: rawCurve ?? [], bpm: takeBpm ?? recBpmRef.current, phaseSec: takePhase, division }
+              ? { curve, rawCurve: rawCurve ?? [], bpm: takeBpm ?? recBpmRef.current, phaseSec: takePhase, division,
+                  onsets: onsets ?? [], flux: flux ?? [], clarity: clarity ?? [] }
               : null}
           />
           {showDebug && !(curve && curve.length > 0) && (
@@ -1278,6 +1291,9 @@ interface DebugCurves {
   bpm:      number
   phaseSec: number
   division: number
+  onsets:   number[]       // detected onset times (sec) — where a note (re)starts
+  flux:     number[]       // normalized onset-strength per curve frame (0–1)
+  clarity:  number[]       // YIN clarity per curve frame (0–1)
 }
 
 // Fractional MIDI (with cents) from a frame's exact Hz, so vibrato/glide read as
@@ -1348,9 +1364,14 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
   const noteOpacity   = dbg ? 0.35 : 0.9      // let the curves read on top in debug
   const voicedRaw     = dbg ? dbg.rawCurve.reduce((a, f) => a + (frameMidi(f) !== null ? 1 : 0), 0) : 0
 
+  // Onset X positions (where the segmenter decided a note (re)starts).
+  const onsetXs = dbg ? dbg.onsets.map(timeToX) : []
+
   const C_RAW = '#60a5fa'        // raw (heard) — blue, dashed, faint
   const C_COR = '#22c55e'        // corrected — green, solid
   const C_GRID = 'var(--border)' // beat grid — subtle
+  const C_ONSET = '#f43f5e'      // onset ticks — rose (distinct from grid/playhead/curves)
+  const C_FLUX = '#a78bfa'       // flux envelope — violet
 
   return (
     <div>
@@ -1382,6 +1403,13 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
             points={pts} fill="none" stroke={C_COR} strokeWidth={1.2}
             vectorEffect="non-scaling-stroke" />
         ))}
+        {/* Onset ticks — a small top-anchored tick where a note (re)starts. Distinct
+            colour so the re-articulation splits (same-pitch re-hits) are visible. */}
+        {onsetXs.map((x, i) => (
+          <line key={`o${i}`} data-testid="vm-onset-tick"
+            x1={x} y1={0} x2={x} y2={H} stroke={C_ONSET} strokeWidth={0.9}
+            opacity={0.85} vectorEffect="non-scaling-stroke" />
+        ))}
         {playhead !== null && (
           <line
             x1={(playhead / total) * W} y1={0} x2={(playhead / total) * W} y2={H}
@@ -1390,6 +1418,39 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
         )}
       </svg>
 
+      {/* Secondary evidence lane: the onset-strength (flux) envelope, with each frame's
+          opacity faded by its YIN clarity (faint where low-confidence), plus the same
+          onset ticks — so the acoustic evidence behind each note (re)start is visible. */}
+      {dbg && (
+        <svg viewBox="0 0 100 100" width="100%" preserveAspectRatio="none"
+          data-testid="vm-flux-lane"
+          style={{ height: 34, marginTop: 3, background: 'var(--bg-base)', borderRadius: 8, border: '1px solid var(--border)', display: 'block' }}>
+          {(() => {
+            const n = Math.min(dbg.curve.length, dbg.flux.length)
+            if (n === 0) return null
+            const stride = Math.max(1, Math.ceil(n / 320))
+            const bars: React.ReactNode[] = []
+            const bw = Math.max(0.25, (100 / n) * stride * 0.9)
+            for (let i = 0; i < n; i += stride) {
+              const h  = Math.max(0, Math.min(1, dbg.flux[i] ?? 0))
+              const cl = Math.max(0, Math.min(1, dbg.clarity[i] ?? 0))
+              if (h <= 0) continue
+              const x = timeToX(dbg.curve[i].time)
+              bars.push(
+                <rect key={`f${i}`} x={x - bw / 2} y={100 - h * 100} width={bw} height={h * 100}
+                  fill={C_FLUX} opacity={0.3 + 0.6 * cl} />,
+              )
+            }
+            return bars
+          })()}
+          {/* Onset ticks in the lane, aligned with the ticks on the pitch plot above. */}
+          {onsetXs.map((x, i) => (
+            <line key={`fo${i}`} x1={x} y1={0} x2={x} y2={100} stroke={C_ONSET}
+              strokeWidth={0.9} opacity={0.85} vectorEffect="non-scaling-stroke" />
+          ))}
+        </svg>
+      )}
+
       {/* Legend + take stats (debug only) */}
       {dbg && (
         <div data-testid="vm-debug-legend"
@@ -1397,9 +1458,11 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
           <LegendSwatch color={C_COR} label="corrected" />
           <LegendSwatch color={C_RAW} label="raw (heard)" dashed />
           <LegendSwatch color="var(--accent)" label="notes" solidBox />
+          <LegendSwatch color={C_ONSET} label="onsets" />
+          <LegendSwatch color={C_FLUX} label="flux" solidBox />
           <LegendSwatch color={C_GRID} label="beats" dashed />
           <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
-            {notes.length} note{notes.length === 1 ? '' : 's'} · {total.toFixed(1)}s · {Math.round(dbg.bpm)} BPM · {voicedRaw} voiced frames
+            {notes.length} note{notes.length === 1 ? '' : 's'} · {total.toFixed(1)}s · {Math.round(dbg.bpm)} BPM · {voicedRaw} voiced · {dbg.onsets.length} onset{dbg.onsets.length === 1 ? '' : 's'}
           </span>
         </div>
       )}
