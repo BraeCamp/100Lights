@@ -61,16 +61,21 @@ the Fastfile auto-loads it, so there are no manual `export`s. `ASC_KEY_ID`, `ASC
 `APPLE_TEAM_ID` are already filled (reused from Firefly); you only paste the **Issuer ID**.
 
 ```bash
-# 1. Pick the app (studio already targets https://100lights.com/m)
-npm run app:select -- studio
+# 1. Pick the app (studio already targets https://100lights.com/m) + generate the native project
+#    (app:add-ios runs select → cap add ios → sync → the Info.plist patch below)
+APP=studio npm run app:add-ios && (cd ios/App && pod install)
 
-# 2. Generate the native iOS project from config
-npx cap add ios && npx cap sync ios && (cd ios/App && pod install)
+# 2. Verify creds + that the app record exists (read-only — no build, no upload):
+npm run beta:check
 
-# 3. In .env.local, set ASC_ISSUER_ID=<App Store Connect → Users and Access → Integrations → Issuer ID>
-#    then ship to TestFlight (Fastlane reads .env.local automatically):
+# 3. When beta:check is green and you're ready, ship to TestFlight (reads .env.local automatically):
 npm run beta
 ```
+
+`npm run beta:check` (the `preflight` lane) authenticates with `.env.local` and reports whether the
+selected app's App Store Connect record exists — run it any time to see exactly what's left.
+`scripts/ios-postsync.mjs` (run automatically by `app:add-ios`) sets `ITSAppUsesNonExemptEncryption`
++ the mic usage string on the regenerated Info.plist, so uploads don't stall and mic access won't crash.
 
 That builds, signs (Xcode automatic signing — no match repo needed for this local run), and uploads.
 The build appears under **TestFlight** in App Store Connect after Apple finishes processing (a few

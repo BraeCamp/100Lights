@@ -37,6 +37,7 @@ jobs:
         run: |
           npx cap add ios
           npx cap sync ios
+          node scripts/ios-postsync.mjs
           (cd ios/App && pod install)
 
       - name: Write App Store Connect API key

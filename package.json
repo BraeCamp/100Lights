@@ -17,8 +17,9 @@
     "cap:ios": "cap sync ios && cap open ios",
     "cap:android": "cap sync android && cap open android",
     "app:select": "node scripts/cap-select.mjs",
-    "app:add-ios": "node scripts/cap-select.mjs $APP && cap add ios && cap sync ios",
-    "beta": "fastlane ios beta"
+    "app:add-ios": "node scripts/cap-select.mjs $APP && cap add ios && cap sync ios && node scripts/ios-postsync.mjs",
+    "beta": "bundle exec fastlane ios beta",
+    "beta:check": "bundle exec fastlane ios preflight"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1067.0",

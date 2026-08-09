@@ -68,4 +68,24 @@ platform :ios do
 
     UI.success("Uploaded #{bundle_id} to TestFlight — it'll appear once Apple finishes processing.")
   end
+
+  desc 'Preflight: verify creds authenticate + the selected app exists on App Store Connect (no build, no upload)'
+  lane :preflight do
+    require 'spaceship'
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV.fetch('ASC_KEY_ID'),
+      issuer_id: ENV.fetch('ASC_ISSUER_ID'),
+      filepath: File.expand_path(ENV.fetch('ASC_KEY_PATH')),
+    )
+    bundle_id = CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier)
+    UI.success('Authenticated to App Store Connect ✓')
+
+    app = Spaceship::ConnectAPI::App.find(bundle_id)
+    if app
+      UI.success("App record EXISTS: \"#{app.name}\" (#{bundle_id}) — ready for `npm run beta`.")
+    else
+      UI.important("No App Store Connect record for #{bundle_id} yet.")
+      UI.important('Create it: App Store Connect → Apps → + → New App (that bundle id), then rerun preflight.')
+    end
+  end
 end
