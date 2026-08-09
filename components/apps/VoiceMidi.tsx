@@ -22,8 +22,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LivePitchDetector, type LivePitchResult, type LiveLevel, type LiveSensitivity } from '@/lib/pitch-detector'
-import { notesFromBuffer, notesFromBufferAsync, buildPitchCurve, alignToGrid } from '@/lib/voice-backfill'
+import { LivePitchDetector, type LivePitchResult, type LiveLevel, type LiveSensitivity, type PitchFrame } from '@/lib/pitch-detector'
+import { notesFromBuffer, notesFromBufferAsync, analyzeBuffer, analyzeBufferAsync, buildPitchCurve, alignToGrid, type BufferAnalysis } from '@/lib/voice-backfill'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import {
   getPresets, getGroupedPresets, midiNoteLabel, clampToPreset,
@@ -74,6 +74,8 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 // so a quiet singer gets boosted and the silence/confidence floors drop.
 const SENS_KEY = 'voicemidi-sensitivity'
 const DEFAULT_SENS = 0.5
+// Persisted "Show detected pitch (debug)" overlay preference.
+const DEBUG_KEY = 'voicemidi-debug'
 function paramsForSensitivity(s: number): Required<LiveSensitivity> {
   const t = clamp(s, 0, 1)
   return {
@@ -114,7 +116,7 @@ async function backfillFromBlob(
   blob: Blob,
   params: Required<LiveSensitivity>,
   onProgress?: (frac: number) => void,
-): Promise<RecNote[]> {
+): Promise<BufferAnalysis> {
   const arr = await blob.arrayBuffer()
   const ac = new AudioContext()
   try {
@@ -135,7 +137,9 @@ async function backfillFromBlob(
     // Mirror the live signal chain: the MediaRecorder captured the RAW pre-gain
     // mic stream, so re-apply the user's sensitivity gain + RMS gate offline.
     // Async + downsampled: keeps the UI responsive and drives a real progress %.
-    return notesFromBufferAsync(mono, audio.sampleRate, {
+    // analyzeBufferAsync returns the notes AND the pitch curves (raw + corrected)
+    // so the debug view can overlay what the detector heard against what it wrote.
+    return analyzeBufferAsync(mono, audio.sampleRate, {
       gain: params.gain,
       rmsGate: params.rmsGate,
       minDuration: 0.08,
@@ -182,6 +186,18 @@ export default function VoiceMidi() {
   const [refinedRawTake, setRefinedRawTake] = useState<RecNote[] | null>(null)
   const [refinedTake, setRefinedTake] = useState<RecNote[] | null>(null)
   const [takeSource, setTakeSource] = useState<TakeSource>('live')
+
+  // ── Debug: "what it heard" pitch-curve overlay ───────────────────────────────
+  // The offline analysis (analyzeBufferAsync) also returns the raw + corrected
+  // per-frame pitch tracks; we keep them (plus the take's grid anchor) so the debug
+  // overlay can draw them on the SAME axes as the note strip. Live-only takes (no
+  // recorded audio / refine unsupported) leave these null — the overlay just skips
+  // the curves and shows the notes. Purely visual; playback/quantize are untouched.
+  const [curve, setCurve] = useState<PitchFrame[] | null>(null)
+  const [rawCurve, setRawCurve] = useState<PitchFrame[] | null>(null)
+  const [takeBpm, setTakeBpm] = useState<number | null>(null)
+  const [takePhase, setTakePhase] = useState(0)
+  const [showDebug, setShowDebug] = useState(false)
 
   // ── Test / calibrate ─────────────────────────────────────────────────────────
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENS)
@@ -241,12 +257,14 @@ export default function VoiceMidi() {
     const w = window as unknown as {
       __voiceBackfill?: typeof notesFromBuffer
       __voiceBackfillAsync?: typeof notesFromBufferAsync
+      __voiceAnalyzeBuffer?: typeof analyzeBuffer
       __voiceBuildPitchCurve?: typeof buildPitchCurve
       __voiceAlignToGrid?: typeof alignToGrid
       __voiceSampleProbe?: (folder: string, midi: number) => Promise<unknown>
     }
     w.__voiceBackfill = notesFromBuffer
     w.__voiceBackfillAsync = notesFromBufferAsync
+    w.__voiceAnalyzeBuffer = analyzeBuffer
     w.__voiceBuildPitchCurve = buildPitchCurve
     w.__voiceAlignToGrid = alignToGrid
     // Headless proof hook: seed the AI packs, resolve+fulfill+decode one baked
@@ -271,9 +289,22 @@ export default function VoiceMidi() {
     }
     return () => {
       delete w.__voiceBackfill; delete w.__voiceBackfillAsync
+      delete w.__voiceAnalyzeBuffer
       delete w.__voiceBuildPitchCurve; delete w.__voiceAlignToGrid
       delete w.__voiceSampleProbe
     }
+  }, [])
+
+  // Restore the persisted "Show detected pitch" debug preference (off by default).
+  useEffect(() => {
+    try { setShowDebug(localStorage.getItem(DEBUG_KEY) === '1') } catch { /* ignore */ }
+  }, [])
+  const toggleDebug = useCallback(() => {
+    setShowDebug(v => {
+      const next = !v
+      try { localStorage.setItem(DEBUG_KEY, next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
   }, [])
 
   const selected = useMemo(() => presets.find(p => p.id === selectedId) ?? null, [presets, selectedId])
@@ -588,6 +619,11 @@ export default function VoiceMidi() {
     setRefinedRawTake(null)
     setLiveTake(null)
     setTakeSource('live')
+    // Drop any previous take's pitch curves (a live-only take has none).
+    setCurve(null)
+    setRawCurve(null)
+    setTakeBpm(null)
+    setTakePhase(0)
     try {
       const d = new LivePitchDetector()
       detectorRef.current = d
@@ -640,7 +676,15 @@ export default function VoiceMidi() {
         setRefineMsg('Live take — refine not supported in this browser')
         return
       }
-      const refinedRaw = await backfillFromBlob(blob, paramsRef.current, setRefineProgress)
+      const analysis = await backfillFromBlob(blob, paramsRef.current, setRefineProgress)
+      const refinedRaw = analysis.notes
+      // Stash the pitch curves + this take's grid anchor for the debug overlay.
+      // (These describe the recorded audio, so they apply to whichever take view is
+      // shown — live/refined/raw all come from the same performance.)
+      setCurve(analysis.curve)
+      setRawCurve(analysis.rawCurve)
+      setTakeBpm(recBpmRef.current)
+      setTakePhase(recPhaseRef.current)
       if (refinedRaw.length > 0) {
         // Confirm/correct the offline onsets against the metronome's beat grid —
         // the whole point of backfill: the take was sung to a click at a known
@@ -694,8 +738,69 @@ export default function VoiceMidi() {
   const playRaf = useRef<number | null>(null)
   // Pending disconnect timers for per-note gate GainNodes (see play()).
   const playTimers = useRef<number[]>([])
+  // A per-session teardown surface so Stop can silence EVERYTHING at once:
+  //   • playMasterRef  — the single master GainNode all notes route through, so one
+  //                      fast gain-cut kills scheduled synth oscillators (which have
+  //                      no stop handle) and any in-flight tails together.
+  //   • playSourcesRef — every AudioBufferSourceNode (sampled path) so Stop can .stop() them.
+  //   • playGatesRef   — every per-note gate GainNode so Stop can disconnect them now
+  //                      instead of waiting on their (cancelled) disconnect timers.
+  const playMasterRef  = useRef<GainNode | null>(null)
+  const playSourcesRef = useRef<AudioBufferSourceNode[]>([])
+  const playGatesRef   = useRef<GainNode[]>([])
+
+  // Begin a play session: a fresh master gain into the destination + empty
+  // tracking arrays. Every note connects its gate to this master.
+  const startPlaySession = useCallback((c: AudioContext): GainNode => {
+    const master = c.createGain()
+    master.gain.setValueAtTime(1, c.currentTime)
+    master.connect(c.destination)
+    playMasterRef.current  = master
+    playSourcesRef.current = []
+    playGatesRef.current   = []
+    playTimers.current     = []
+    return master
+  }, [])
+
   const stopPlayback = useCallback(() => {
+    // (e) stop the playhead animation.
     if (playRaf.current) { cancelAnimationFrame(playRaf.current); playRaf.current = null }
+
+    const c      = ctxRef.current
+    const master = playMasterRef.current
+    playMasterRef.current = null
+
+    // (a) fast-fade the master to silence — kills the un-stoppable synth
+    // oscillators without a click (they finish rendering into a muted bus).
+    if (c && master) {
+      const now = c.currentTime
+      try {
+        master.gain.cancelScheduledValues(now)
+        master.gain.setValueAtTime(master.gain.value, now)
+        master.gain.setTargetAtTime(0, now, 0.02)
+      } catch { /* param already detached */ }
+    }
+
+    // (b) hard-stop every tracked buffer source (sampled path).
+    for (const src of playSourcesRef.current) {
+      try { src.stop() } catch { /* not started / already stopped */ }
+      try { src.disconnect() } catch { /* already torn down */ }
+    }
+    playSourcesRef.current = []
+
+    // (c) cancel the pending gate-disconnect timers and disconnect the gates now.
+    playTimers.current.forEach(id => clearTimeout(id))
+    playTimers.current = []
+    for (const g of playGatesRef.current) {
+      try { g.disconnect() } catch { /* already torn down */ }
+    }
+    playGatesRef.current = []
+
+    // (d) drop the master after the fade settles (~200ms).
+    if (master) {
+      window.setTimeout(() => { try { master.disconnect() } catch { /* ok */ } }, 200)
+    }
+
     setPlaying(false)
     setPlayhead(null)
   }, [])
@@ -719,9 +824,8 @@ export default function VoiceMidi() {
   // route each note through its own GainNode and ramp it to silence at note-off
   // (~35ms release), then disconnect after it settles. Plucky voices already
   // shorter than durSec are unaffected (gain still 1 there).
-  const playSynthNotes = useCallback((c: AudioContext, preset: MidiPreset, notes: RecNote[]) => {
+  const playSynthNotes = useCallback((c: AudioContext, preset: MidiPreset, notes: RecNote[], master: GainNode) => {
     const when0 = c.currentTime + 0.12
-    playTimers.current = []
     for (const n of notes) {
       const start   = when0 + n.startSec
       const noteOff = start + n.durSec
@@ -729,7 +833,8 @@ export default function VoiceMidi() {
       g.gain.setValueAtTime(1, start)
       g.gain.setValueAtTime(1, noteOff)
       g.gain.setTargetAtTime(0, noteOff, 0.012)   // exponential release, ~35ms to silence
-      g.connect(c.destination)
+      g.connect(master)                            // → master → destination (Stop cuts here)
+      playGatesRef.current.push(g)
       playMelodicNote(c, preset.category as BeatType, clampToPreset(preset, n.midi), start, n.velocity, g)
       const disc = window.setTimeout(
         () => { try { g.disconnect() } catch { /* already torn down */ } },
@@ -746,24 +851,27 @@ export default function VoiceMidi() {
   // start+dur with the SAME ~35ms release as the synth path. No playbackRate shift:
   // samples are baked per-semitone, so we play the exact note's sample. Out-of-range
   // notes clamp to loNote..hiNote (AI presets are otherwise silent past their span).
-  const playSampledNotes = useCallback(async (c: AudioContext, preset: MidiPreset, notes: RecNote[]) => {
+  const playSampledNotes = useCallback(async (c: AudioContext, preset: MidiPreset, notes: RecNote[], master: GainNode) => {
     setInstrLoading(true)
     setInstrMsg('Loading instrument…')
     const ok = await ensureSeeded()
+    // A Stop during the async seed/load must abort this scheduling pass — the
+    // master was already detached by stopPlayback, so bail rather than build on it.
+    if (playMasterRef.current !== master) { setInstrLoading(false); return }
     const pitches = [...new Set(notes.map(n => clampToPreset(preset, n.midi)))]
     const bufs = new Map<number, AudioBuffer | null>()
     await Promise.all(pitches.map(async p => { bufs.set(p, await loadSampleBuffer(c, preset, p)) }))
+    if (playMasterRef.current !== master) { setInstrLoading(false); return }
     setInstrLoading(false)
     const anyBuf = [...bufs.values()].some(Boolean)
     if (!ok || !anyBuf) {
       // Seeding/fulfill unavailable → fall back to a synth voice so the take still sounds.
       setInstrMsg('Sampled instrument unavailable — using a synth voice')
-      playSynthNotes(c, preset, notes)
+      playSynthNotes(c, preset, notes, master)
       return
     }
     setInstrMsg(null)
     const when0 = c.currentTime + 0.12
-    playTimers.current = []
     for (const n of notes) {
       const clamped = clampToPreset(preset, n.midi)
       const buf     = bufs.get(clamped)
@@ -774,7 +882,8 @@ export default function VoiceMidi() {
       g.gain.setValueAtTime(v, start)
       g.gain.setValueAtTime(v, noteOff)
       g.gain.setTargetAtTime(0, noteOff, 0.012)   // ~35ms release, same gate as the synth path
-      g.connect(c.destination)
+      g.connect(master)                            // → master → destination (Stop cuts here)
+      playGatesRef.current.push(g)
       if (buf) {
         const src = c.createBufferSource()
         src.buffer = buf
@@ -782,6 +891,7 @@ export default function VoiceMidi() {
         src.start(start)
         src.stop(noteOff + 0.3)                    // let the release tail through, then hard-stop
         src.onended = () => { try { src.disconnect() } catch { /* already torn down */ } }
+        playSourcesRef.current.push(src)           // tracked so Stop can .stop() it early
       } else {
         // A pitch that resolved no sample (shouldn't happen post-clamp) → synth voice.
         playMelodicNote(c, preset.category as BeatType, clamped, start, v, g)
@@ -798,11 +908,14 @@ export default function VoiceMidi() {
   const play = useCallback(() => {
     const preset = selRef.current
     if (!preset || displayNotes.length === 0) return
+    // Starting a new take must never overlap/leak a still-playing one.
+    stopPlayback()
     const c = ensureCtx()
     void c.resume()
-    if (isSampledPreset(preset)) void playSampledNotes(c, preset, displayNotes)
-    else playSynthNotes(c, preset, displayNotes)
-  }, [displayNotes, ensureCtx, playSampledNotes, playSynthNotes])
+    const master = startPlaySession(c)
+    if (isSampledPreset(preset)) void playSampledNotes(c, preset, displayNotes, master)
+    else playSynthNotes(c, preset, displayNotes, master)
+  }, [displayNotes, ensureCtx, playSampledNotes, playSynthNotes, stopPlayback, startPlaySession])
 
   // ── Cleanup ──────────────────────────────────────────────────────────────────
   useEffect(() => () => {
@@ -811,6 +924,8 @@ export default function VoiceMidi() {
     stopMetro()
     if (playRaf.current) cancelAnimationFrame(playRaf.current)
     playTimers.current.forEach(id => clearTimeout(id))
+    playSourcesRef.current.forEach(src => { try { src.stop() } catch { /* ok */ } })
+    try { playMasterRef.current?.disconnect() } catch { /* ok */ }
     void ctxRef.current?.close()
   }, [stopMetro])
 
@@ -1011,7 +1126,35 @@ export default function VoiceMidi() {
       {/* Note strip + take controls */}
       {hasTake && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-          <NoteStrip notes={displayNotes} playhead={playhead} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <label
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}
+              title="Overlay the raw per-frame pitch the detector heard against the notes it wrote"
+            >
+              <input
+                type="checkbox"
+                checked={showDebug}
+                onChange={toggleDebug}
+                aria-label="Show detected pitch (debug)"
+                data-testid="vm-debug-toggle"
+                style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
+              />
+              Show detected pitch <span style={{ opacity: 0.7 }}>(debug)</span>
+            </label>
+          </div>
+
+          <NoteStrip
+            notes={displayNotes}
+            playhead={playhead}
+            debug={showDebug && curve && curve.length > 0
+              ? { curve, rawCurve: rawCurve ?? [], bpm: takeBpm ?? recBpmRef.current, phaseSec: takePhase, division }
+              : null}
+          />
+          {showDebug && !(curve && curve.length > 0) && (
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>
+              No detected-pitch curve for this take (live-only capture — sing a take with refine to see it).
+            </p>
+          )}
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
             <button
@@ -1094,32 +1237,152 @@ export default function VoiceMidi() {
   )
 }
 
-// ── Mini piano-roll: time on X, pitch on Y ────────────────────────────────────
-function NoteStrip({ notes, playhead }: { notes: RecNote[]; playhead: number | null }) {
+// ── Debug pitch-curve overlay data ────────────────────────────────────────────
+// The offline analysis' pitch curves + the take's grid anchor, all on the SAME
+// time (seconds) base as the note startSecs, so the overlay shares the note axes.
+interface DebugCurves {
+  curve:    PitchFrame[]   // corrected (post-refine) — what produced the notes
+  rawCurve: PitchFrame[]   // raw (pre-refine) — what the detector actually heard
+  bpm:      number
+  phaseSec: number
+  division: number
+}
+
+// Fractional MIDI (with cents) from a frame's exact Hz, so vibrato/glide read as
+// wobble/ramps instead of semitone stairs. null when the frame is unvoiced.
+const frameMidi = (f: PitchFrame): number | null =>
+  f.freq && f.freq > 0 ? 69 + 12 * Math.log2(f.freq / 440) : null
+
+// Split a pitch track into contiguous voiced runs → SVG polyline point strings,
+// so unvoiced gaps break the line instead of drawing a spurious connector.
+function curveSegments(
+  frames: PitchFrame[],
+  timeToX: (t: number) => number,
+  midiToY: (m: number) => number,
+): string[] {
+  const segs: string[] = []
+  let cur: string[] = []
+  const flush = () => { if (cur.length > 1) segs.push(cur.join(' ')); cur = [] }
+  for (const f of frames) {
+    const m = frameMidi(f)
+    if (m === null) { flush(); continue }
+    cur.push(`${timeToX(f.time).toFixed(2)},${midiToY(m).toFixed(2)}`)
+  }
+  flush()
+  return segs
+}
+
+// ── Mini piano-roll: time on X, pitch on Y (+ optional debug pitch overlay) ────
+function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: number | null; debug?: DebugCurves | null }) {
   const W = 100, H = 120 // viewBox units; scales to container width
   if (notes.length === 0) return null
-  const total = Math.max(...notes.map(n => n.startSec + n.durSec), 0.001)
-  const loMidi = Math.min(...notes.map(n => n.midi))
-  const hiMidi = Math.max(...notes.map(n => n.midi))
+  const dbg = debug ?? null
+
+  // Time span: notes, extended to cover the curve tail when debugging.
+  let total = 0.001
+  for (const n of notes) total = Math.max(total, n.startSec + n.durSec)
+  if (dbg) {
+    for (const f of dbg.curve)    total = Math.max(total, f.time)
+    for (const f of dbg.rawCurve) total = Math.max(total, f.time)
+  }
+
+  // Pitch range: notes, extended to cover voiced curve frames (fractional MIDI) so
+  // the curve is never clipped and octave excursions in the raw track stay visible.
+  let loMidi = Infinity, hiMidi = -Infinity
+  for (const n of notes) { if (n.midi < loMidi) loMidi = n.midi; if (n.midi > hiMidi) hiMidi = n.midi }
+  if (dbg) {
+    for (const f of [...dbg.curve, ...dbg.rawCurve]) {
+      const m = frameMidi(f)
+      if (m !== null) { if (m < loMidi) loMidi = m; if (m > hiMidi) hiMidi = m }
+    }
+  }
   const span = Math.max(4, hiMidi - loMidi + 2) // pad a little vertically
   const midiToY = (m: number) => H - ((m - (loMidi - 1)) / span) * H
+  const timeToX = (t: number) => (t / total) * W
+
+  // Beat-grid vertical lines at phaseSec + k*step (light) — onset-vs-grid alignment.
+  const gridXs: number[] = []
+  if (dbg && dbg.bpm > 0 && dbg.division > 0) {
+    const step = 60 / dbg.bpm / dbg.division
+    if (Number.isFinite(step) && step > 0) {
+      const kStart = Math.ceil((0 - dbg.phaseSec) / step)
+      const kEnd   = Math.floor((total - dbg.phaseSec) / step)
+      for (let k = kStart; k <= kEnd && gridXs.length < 400; k++) gridXs.push(timeToX(dbg.phaseSec + k * step))
+    }
+  }
+
+  const correctedSegs = dbg ? curveSegments(dbg.curve, timeToX, midiToY) : []
+  const rawSegs       = dbg ? curveSegments(dbg.rawCurve, timeToX, midiToY) : []
+  const noteOpacity   = dbg ? 0.35 : 0.9      // let the curves read on top in debug
+  const voicedRaw     = dbg ? dbg.rawCurve.reduce((a, f) => a + (frameMidi(f) !== null ? 1 : 0), 0) : 0
+
+  const C_RAW = '#60a5fa'        // raw (heard) — blue, dashed, faint
+  const C_COR = '#22c55e'        // corrected — green, solid
+  const C_GRID = 'var(--border)' // beat grid — subtle
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="none"
-      style={{ height: 130, background: 'var(--bg-base)', borderRadius: 10, border: '1px solid var(--border)', display: 'block' }}>
-      {notes.map((n, i) => {
-        const x = (n.startSec / total) * W
-        const w = Math.max(0.8, (n.durSec / total) * W)
-        const y = midiToY(n.midi)
-        return <rect key={i} x={x} y={y - 4} width={w} height={7} rx={1.5} fill="var(--accent)" opacity={0.9} />
-      })}
-      {playhead !== null && (
-        <line
-          x1={(playhead / total) * W} y1={0} x2={(playhead / total) * W} y2={H}
-          stroke="#f97316" strokeWidth={0.6}
-        />
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="none"
+        data-testid="vm-note-strip"
+        style={{ height: 130, background: 'var(--bg-base)', borderRadius: 10, border: '1px solid var(--border)', display: 'block' }}>
+        {/* Beat grid (behind everything) */}
+        {gridXs.map((x, i) => (
+          <line key={`g${i}`} data-testid="vm-grid-line"
+            x1={x} y1={0} x2={x} y2={H} stroke={C_GRID} strokeWidth={0.5}
+            strokeDasharray="2 2" opacity={0.7} vectorEffect="non-scaling-stroke" />
+        ))}
+        {/* Notes (semi-transparent under the curves in debug) */}
+        {notes.map((n, i) => {
+          const x = (n.startSec / total) * W
+          const w = Math.max(0.8, (n.durSec / total) * W)
+          const y = midiToY(n.midi)
+          return <rect key={i} x={x} y={y - 4} width={w} height={7} rx={1.5} fill="var(--accent)" opacity={noteOpacity} />
+        })}
+        {/* Raw pitch track — what the detector heard (before octave/median fix) */}
+        {rawSegs.map((pts, i) => (
+          <polyline key={`r${i}`} data-testid="vm-curve-raw"
+            points={pts} fill="none" stroke={C_RAW} strokeWidth={1} strokeDasharray="3 2"
+            opacity={0.55} vectorEffect="non-scaling-stroke" />
+        ))}
+        {/* Corrected pitch track — what produced the notes */}
+        {correctedSegs.map((pts, i) => (
+          <polyline key={`c${i}`} data-testid="vm-curve-corrected"
+            points={pts} fill="none" stroke={C_COR} strokeWidth={1.2}
+            vectorEffect="non-scaling-stroke" />
+        ))}
+        {playhead !== null && (
+          <line
+            x1={(playhead / total) * W} y1={0} x2={(playhead / total) * W} y2={H}
+            stroke="#f97316" strokeWidth={0.6} vectorEffect="non-scaling-stroke"
+          />
+        )}
+      </svg>
+
+      {/* Legend + take stats (debug only) */}
+      {dbg && (
+        <div data-testid="vm-debug-legend"
+          style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginTop: 8, fontSize: 10.5, color: 'var(--text-muted)' }}>
+          <LegendSwatch color={C_COR} label="corrected" />
+          <LegendSwatch color={C_RAW} label="raw (heard)" dashed />
+          <LegendSwatch color="var(--accent)" label="notes" solidBox />
+          <LegendSwatch color={C_GRID} label="beats" dashed />
+          <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+            {notes.length} note{notes.length === 1 ? '' : 's'} · {total.toFixed(1)}s · {Math.round(dbg.bpm)} BPM · {voicedRaw} voiced frames
+          </span>
+        </div>
       )}
-    </svg>
+    </div>
+  )
+}
+
+function LegendSwatch({ color, label, dashed, solidBox }: { color: string; label: string; dashed?: boolean; solidBox?: boolean }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+      {solidBox
+        ? <span style={{ width: 12, height: 8, background: color, opacity: 0.5, borderRadius: 1.5, display: 'inline-block' }} />
+        : <span style={{ width: 14, height: 0, borderTop: `2px ${dashed ? 'dashed' : 'solid'} ${color}`, display: 'inline-block' }} />}
+      {label}
+    </span>
   )
 }
 

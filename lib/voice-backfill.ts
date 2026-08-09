@@ -42,26 +42,41 @@ export interface BackfillOptions {
   rmsGate?:      number
   /** Minimum note length in seconds. Default 0.08. */
   minDuration?:  number
-  /** Analysis hop in seconds (time resolution of the pitch curve). Default 0.015 (15ms). */
+  /** Analysis hop in seconds (time resolution of the pitch curve). Default 0.010 (10ms) —
+   *  a fine hop so onsets aren't smeared even with the larger stability window. */
   hopSec?:       number
   /** Analysis window size in samples. Default scales to the (downsampled) rate,
-   *  ~64ms and ≥1024, YIN-safe down to ~70 Hz. */
+   *  ~90ms and ≥1024, YIN-safe down to ~70 Hz. A longer window trades onset
+   *  precision (the fine hop keeps that) for pitch STABILITY so vibrato inside a
+   *  note doesn't fragment it. */
   winSize?:      number
-  /** Half-width of the median filter over the MIDI track (kills octave flickers). Default 2 → 5-frame median. */
+  /** Half-width of the median filter over the MIDI track (kills octave flickers). Default 3 → 7-frame median. */
   medianRadius?: number
+  /** Half-width (in frames) of the neighbourhood used by the octave-consistency
+   *  pass. A voiced frame that sits ~12 semitones (±1) off its neighbours' median
+   *  is snapped back to their octave (voice harmonics make YIN octave-jump). Pass 0
+   *  to disable. Default 6 (~±60ms at the default 10ms hop). */
+  octaveRadius?: number
   /** Downsample target rate (Hz) applied before the pitch scan. Voice pitch is well
-   *  under 1 kHz, so ~16 kHz keeps YIN accurate while shrinking the window ~2.75× and
-   *  YIN's per-window cost ~7×. Pass 0 / >= source rate to skip. Default 16000. */
+   *  under 1 kHz, so ~22 kHz keeps full YIN resolution across the vocal range while
+   *  still being cheaper than 44.1k. Pass 0 / >= source rate to skip. Default 22050. */
   targetSampleRate?: number
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
-const DEFAULT_TARGET_SR = 16000
+// 22.05 kHz keeps full pitch resolution across the vocal range (voice f0 << 1 kHz)
+// while halving the sample count vs 44.1k. Higher fidelity than the old 16 kHz.
+const DEFAULT_TARGET_SR = 22050
+// Fine hop (10ms) so onsets stay crisp; the long window handles stability.
+const DEFAULT_HOP_SEC = 0.010
+// Neighbourhood (frames) for the octave-consistency correction.
+const DEFAULT_OCTAVE_RADIUS = 6
 
-// Window that spans ~64ms and is at least 1024 samples (detectBufferPitch's
-// minimum). ~64ms covers 4+ periods of 70Hz, so YIN stays accurate at the low end.
-const defaultWin = (sr: number) => Math.max(1024, Math.round(sr * 0.064))
+// Window that spans ~90ms and is at least 1024 samples (detectBufferPitch's
+// minimum). ~90ms covers 6+ periods of 70Hz — long enough that YIN locks the true
+// fundamental instead of a vibrato-instant, so a wobbling note stays one pitch.
+const defaultWin = (sr: number) => Math.max(1024, Math.round(sr * 0.09))
 
 /**
  * Box-average decimation to a lower sample rate. The averaging is a cheap
@@ -127,10 +142,91 @@ function medianFilterMidi(frames: PitchFrame[], rMed: number): PitchFrame[] {
   })
 }
 
+/**
+ * Octave-consistency correction — the single biggest real-voice accuracy win.
+ *
+ * A sung vowel is harmonic-rich, so YIN (and any autocorrelation method) will
+ * occasionally lock onto the 2nd harmonic and report a pitch an octave HIGH (or,
+ * on a strong sub-fundamental, an octave LOW) for a stretch of frames. A small
+ * median filter can't fix a jump that persists across several frames.
+ *
+ * For each voiced frame we take the median MIDI of its voiced neighbours and, if
+ * this frame sits ~12 semitones (±1, to tolerate detection wobble) — or ~24 — off
+ * that median, we fold it back by whole octaves toward the neighbourhood. Frames
+ * genuinely a different note (not an octave multiple away) are left untouched, so
+ * real melodic leaps survive; only octave doublings are collapsed.
+ *
+ * Offline-only: it needs the whole track's context, so it never runs in the live
+ * detector (which must stay causal/real-time).
+ */
+function correctOctaves(frames: PitchFrame[], radius: number): PitchFrame[] {
+  if (radius <= 0) return frames
+  // Snapshot the pre-correction MIDIs so each decision uses the ORIGINAL
+  // neighbourhood (not one already being rewritten left-to-right).
+  const orig = frames.map(f => f.midi)
+  return frames.map((f, i) => {
+    if (f.midi === null) return f
+    const vals: number[] = []
+    for (let k = -radius; k <= radius; k++) {
+      if (k === 0) continue
+      const m = orig[i + k]
+      if (m !== null && m !== undefined) vals.push(m)
+    }
+    if (vals.length < 2) return f                       // not enough context to trust
+    vals.sort((a, b) => a - b)
+    const med     = vals[Math.floor(vals.length / 2)]
+    const diff    = f.midi - med
+    const octaves = Math.round(diff / 12)
+    // Fold only when the offset is (near) a whole number of octaves — leave true
+    // melodic intervals (3rds, 5ths, …) alone.
+    if (octaves !== 0 && Math.abs(diff - octaves * 12) <= 1) {
+      const snapped = f.midi - octaves * 12
+      return { ...f, midi: snapped, freq: midiToFreq(snapped) }
+    }
+    return f
+  })
+}
+
+// Offline refine pipeline over the raw MIDI track: median (kill single-frame
+// flickers) → octave fold (kill multi-frame harmonic jumps) → median again
+// (smooth any residual at the fold boundaries). Order matters: the octave pass
+// wants an already-de-flickered track so its neighbour medians are clean.
+function refinePitchTrack(frames: PitchFrame[], rMed: number, octaveRadius: number): PitchFrame[] {
+  let out = medianFilterMidi(frames, rMed)
+  out = correctOctaves(out, octaveRadius)
+  out = medianFilterMidi(out, rMed)
+  return out
+}
+
 // Apply gain into a working copy (soft-clamped so an extreme boost can't produce
 // out-of-range samples). Never mutates the caller's buffer.
 const applyGain = (samples: Float32Array, gain: number): Float32Array =>
   gain === 1 ? samples : Float32Array.from(samples, v => clamp(v * gain, -1, 1))
+
+// RAW per-frame pitch scan (pre-refine): apply gain, then one PitchFrame per
+// analysis window at the fine hop. This is the "what the detector actually heard"
+// track — before the median/octave-fold correction — so octave jumps and flicker
+// are still present. Shared by buildPitchCurve, analyzeBuffer, and the async pass.
+//
+// NOTE: scans at `sampleRate` as-is — the downsample lives in the callers.
+function scanBuffer(
+  samples: Float32Array,
+  sampleRate: number,
+  opts: BackfillOptions,
+): PitchFrame[] {
+  const gain    = opts.gain ?? 1
+  const rmsGate = opts.rmsGate ?? 0.006
+  const win     = opts.winSize ?? defaultWin(sampleRate)
+  const hop     = Math.max(1, Math.round((opts.hopSec ?? DEFAULT_HOP_SEC) * sampleRate))
+
+  const buf = applyGain(samples, gain)
+  if (buf.length < win) return []
+
+  const p: ScanParams = { win, rmsGate, sampleRate }
+  const frames: PitchFrame[] = []
+  for (let off = 0; off + win <= buf.length; off += hop) frames.push(scanFrame(buf, off, p))
+  return frames
+}
 
 /**
  * Scan a mono buffer at a fine hop, running the YIN core (detectBufferPitch) per
@@ -145,19 +241,29 @@ export function buildPitchCurve(
   sampleRate: number,
   opts: BackfillOptions = {},
 ): PitchFrame[] {
-  const gain    = opts.gain ?? 1
-  const rmsGate = opts.rmsGate ?? 0.006
-  const win     = opts.winSize ?? defaultWin(sampleRate)
-  const hop     = Math.max(1, Math.round((opts.hopSec ?? 0.015) * sampleRate))
-  const rMed    = Math.max(0, opts.medianRadius ?? 2)
+  const rMed = Math.max(0, opts.medianRadius ?? 3)
+  const octR = Math.max(0, opts.octaveRadius ?? DEFAULT_OCTAVE_RADIUS)
+  return refinePitchTrack(scanBuffer(samples, sampleRate, opts), rMed, octR)
+}
 
-  const buf = applyGain(samples, gain)
-  if (buf.length < win) return []
-
-  const p: ScanParams = { win, rmsGate, sampleRate }
-  const frames: PitchFrame[] = []
-  for (let off = 0; off + win <= buf.length; off += hop) frames.push(scanFrame(buf, off, p))
-  return medianFilterMidi(frames, rMed)
+/**
+ * Result of a full offline analysis pass — both the notes AND the pitch curves the
+ * segmentation was built from, so a debug view can overlay "what it heard" against
+ * "what it wrote".
+ *
+ * TIME BASE: every PitchFrame.time is seconds from the take start (it's off/rate
+ * after the downsample), identical to how each BackfillNote.startSec is measured —
+ * so the curves align 1:1 on a shared time axis with the notes without any rescale.
+ */
+export interface BufferAnalysis {
+  /** Discrete notes (the offline transcription) — same as notesFromBuffer. */
+  notes:    BackfillNote[]
+  /** POST-refine pitch track (median → octave-fold → median) — the exact curve
+   *  that fed segmentation. Its `freq`/`midi` are semitone-snapped by the refine. */
+  curve:    PitchFrame[]
+  /** PRE-refine per-frame pitch (raw YIN output) — octave jumps/flicker intact, so
+   *  divergence from `curve` shows what the correction fixed. `freq` is exact Hz. */
+  rawCurve: PitchFrame[]
 }
 
 function eventsToNotes(
@@ -174,34 +280,102 @@ function eventsToNotes(
 }
 
 /**
+ * Full offline pass returning BOTH the notes and the pitch curves they came from:
+ * mono Float32 buffer → { notes, curve (post-refine), rawCurve (pre-refine) }.
+ *
+ * The buffer is downsampled to ~22kHz first (voice pitch << 1kHz), scanned into a
+ * raw PitchFrame[] (rawCurve), refined (median → octave-fold → median → curve),
+ * then segmented into notes. Because the scan runs on the DOWNSAMPLED buffer, every
+ * frame time is already in seconds and shares the notes' time base (see BufferAnalysis).
+ *
+ * This is the single analysis core: notesFromBuffer delegates to it for its notes,
+ * and the debug pitch-curve view reads its curve/rawCurve. Pure + deterministic —
+ * safe to unit-test headlessly on synthesized audio.
+ */
+export function analyzeBuffer(
+  samples: Float32Array,
+  sampleRate: number,
+  opts: BackfillOptions = {},
+): BufferAnalysis {
+  const minDuration = opts.minDuration ?? 0.08
+  const rMed = Math.max(0, opts.medianRadius ?? 3)
+  const octR = Math.max(0, opts.octaveRadius ?? DEFAULT_OCTAVE_RADIUS)
+  const { buf, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
+  const rawCurve = scanBuffer(buf, rate, opts)
+  const curve    = refinePitchTrack(rawCurve, rMed, octR)
+  const notes    = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
+  return { notes, curve, rawCurve }
+}
+
+/**
  * Full offline pass: mono Float32 buffer → discrete notes in the widget's shape
  * ({ startSec, midi, durSec, velocity }). Velocity is derived from the note's
  * average amplitude, clamped to a musical range.
  *
- * The buffer is downsampled to ~16kHz first (voice pitch << 1kHz), which shrinks
- * the YIN analysis window ~2.75× and its per-window cost ~7×.
+ * The buffer is downsampled to ~22kHz first (voice pitch << 1kHz), then scanned
+ * with a long stability window + fine hop, a median filter, and an octave-fold
+ * pass. Higher fidelity than the old 16kHz/64ms setup — slower, but more accurate.
  *
  * Pure + deterministic — safe to unit-test headlessly on synthesized audio.
+ * Delegates to analyzeBuffer (which also exposes the pitch curves).
  */
 export function notesFromBuffer(
   samples: Float32Array,
   sampleRate: number,
   opts: BackfillOptions = {},
 ): BackfillNote[] {
-  const minDuration = opts.minDuration ?? 0.08
-  const { buf, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
-  const curve = buildPitchCurve(buf, rate, opts)
-  return eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
+  return analyzeBuffer(samples, sampleRate, opts).notes
 }
 
 const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 
 /**
- * Non-blocking variant of notesFromBuffer. Identical analysis (same downsample →
- * YIN scan → median → segment), but the per-window loop yields to the event loop
- * on a time budget so the UI stays responsive, and reports fractional progress
- * (0→1) via onProgress. Use this from the browser; notesFromBuffer stays as the
- * pure, synchronous unit-test entry point.
+ * Non-blocking variant of analyzeBuffer. Identical analysis (same downsample → YIN
+ * scan → median → octave-fold → segment) returning notes + both pitch curves, but
+ * the per-window scan loop yields to the event loop on a time budget so the UI stays
+ * responsive, and reports fractional progress (0→1) via onProgress. Use this from
+ * the browser; analyzeBuffer/notesFromBuffer stay as the pure, synchronous entries.
+ */
+export async function analyzeBufferAsync(
+  samples: Float32Array,
+  sampleRate: number,
+  opts: BackfillOptions = {},
+  onProgress?: (frac: number) => void,
+): Promise<BufferAnalysis> {
+  const minDuration = opts.minDuration ?? 0.08
+  const rMed        = Math.max(0, opts.medianRadius ?? 3)
+  const octR        = Math.max(0, opts.octaveRadius ?? DEFAULT_OCTAVE_RADIUS)
+  const { buf: ds, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
+
+  const gain    = opts.gain ?? 1
+  const rmsGate = opts.rmsGate ?? 0.006
+  const win     = opts.winSize ?? defaultWin(rate)
+  const hop     = Math.max(1, Math.round((opts.hopSec ?? DEFAULT_HOP_SEC) * rate))
+  const buf     = applyGain(ds, gain)
+
+  if (buf.length < win) { onProgress?.(1); return { notes: [], curve: [], rawCurve: [] } }
+
+  const p: ScanParams = { win, rmsGate, sampleRate: rate }
+  const rawCurve: PitchFrame[] = []
+  const end = buf.length - win
+  let lastYield = nowMs()
+  for (let off = 0; off + win <= buf.length; off += hop) {
+    rawCurve.push(scanFrame(buf, off, p))
+    if (nowMs() - lastYield >= 12) {          // ~12ms work budget between yields
+      onProgress?.(Math.min(0.97, end > 0 ? off / end : 1))
+      await new Promise<void>(r => setTimeout(r, 0))
+      lastYield = nowMs()
+    }
+  }
+  const curve = refinePitchTrack(rawCurve, rMed, octR)
+  const notes = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
+  onProgress?.(1)
+  return { notes, curve, rawCurve }
+}
+
+/**
+ * Non-blocking variant of notesFromBuffer — the notes-only projection of
+ * analyzeBufferAsync (kept for callers that don't need the pitch curves).
  */
 export async function notesFromBufferAsync(
   samples: Float32Array,
@@ -209,34 +383,7 @@ export async function notesFromBufferAsync(
   opts: BackfillOptions = {},
   onProgress?: (frac: number) => void,
 ): Promise<BackfillNote[]> {
-  const minDuration = opts.minDuration ?? 0.08
-  const rMed        = Math.max(0, opts.medianRadius ?? 2)
-  const { buf: ds, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
-
-  const gain    = opts.gain ?? 1
-  const rmsGate = opts.rmsGate ?? 0.006
-  const win     = opts.winSize ?? defaultWin(rate)
-  const hop     = Math.max(1, Math.round((opts.hopSec ?? 0.015) * rate))
-  const buf     = applyGain(ds, gain)
-
-  if (buf.length < win) { onProgress?.(1); return [] }
-
-  const p: ScanParams = { win, rmsGate, sampleRate: rate }
-  const frames: PitchFrame[] = []
-  const end = buf.length - win
-  let lastYield = nowMs()
-  for (let off = 0; off + win <= buf.length; off += hop) {
-    frames.push(scanFrame(buf, off, p))
-    if (nowMs() - lastYield >= 12) {          // ~12ms work budget between yields
-      onProgress?.(Math.min(0.97, end > 0 ? off / end : 1))
-      await new Promise<void>(r => setTimeout(r, 0))
-      lastYield = nowMs()
-    }
-  }
-  const curve = medianFilterMidi(frames, rMed)
-  const notes = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
-  onProgress?.(1)
-  return notes
+  return (await analyzeBufferAsync(samples, sampleRate, opts, onProgress)).notes
 }
 
 export interface GridOptions {
