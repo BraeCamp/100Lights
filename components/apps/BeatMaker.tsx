@@ -28,6 +28,7 @@ import {
 } from '@/lib/drum-synth'
 import { writeMidiFile } from '@/lib/midi-file'
 import { audioBufferToWav } from '@/lib/wav-encoder'
+import type { MidiNote } from '@/lib/daw-types'
 import type { DrumPadSettings } from '@/lib/daw-types'
 
 const MIN_BPM = 40
@@ -100,7 +101,10 @@ function laneVoicing(kit: DrumKit): Record<string, { gain: number; rate: number 
 const LS_KEY = 'beatmaker-v1'
 const SWING_MAX = 0.5
 
-export default function BeatMaker() {
+// `onPattern` (optional) surfaces the current grid as beat-based MidiNotes so a host app — the
+// Firefly sketchpad — can fold the beat into a project. The standalone /apps/beatmaker page
+// passes nothing, so its behavior is unchanged.
+export default function BeatMaker({ onPattern }: { onPattern?: (notes: MidiNote[]) => void } = {}) {
   const [grid, setGrid] = useState<Grid>(emptyGrid)
   const [bpm, setBpm] = useState(120)
   const [bpmText, setBpmText] = useState('120')
@@ -112,6 +116,20 @@ export default function BeatMaker() {
   const [loaded, setLoaded] = useState(false)
 
   const kit = useMemo(() => DRUM_KITS.find(k => k.id === kitId) ?? DEFAULT_KIT, [kitId])
+
+  // Surface the grid to an embedding host (Firefly) as beat-based drum MidiNotes (GM pitches,
+  // 16th-note grid). No-op on the standalone page.
+  useEffect(() => {
+    if (!onPattern) return
+    const notes: MidiNote[] = []
+    for (const lane of DRUM_LANES) {
+      const row = grid[lane.key] || []
+      for (let s = 0; s < row.length; s++) {
+        if (row[s]) notes.push({ id: crypto.randomUUID(), pitch: lane.pitch, startBeat: s * STEP_BEATS, durationBeats: STEP_BEATS, velocity: 100 })
+      }
+    }
+    onPattern(notes)
+  }, [grid, onPattern])
 
   // ── Refs the scheduler/rAF read without re-subscribing ────────────────────────
   const ctxRef = useRef<AudioContext | null>(null)

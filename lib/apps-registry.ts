@@ -24,6 +24,14 @@ export interface MiniApp {
 
 export const MINI_APPS: MiniApp[] = [
   {
+    slug: 'firefly',
+    title: 'Firefly',
+    tagline: 'Sketch a song with your voice, finish it in the studio.',
+    description: 'A voice-first sketchpad: hum a melody into playable notes, add a beat underneath, then open the whole sketch in the 100Lights studio to produce it. Catch the idea now, finish later.',
+    href: '/apps/firefly',
+    status: 'live',
+  },
+  {
     slug: 'voicemidi',
     title: 'Voice → Instrument',
     tagline: 'Hum or sing a line; hear it played back on any instrument.',

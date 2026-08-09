@@ -57,7 +57,7 @@ function isSampledPreset(p: MidiPreset): boolean {
 }
 
 // ── A recorded note ───────────────────────────────────────────────────────────
-interface RecNote { startSec: number; midi: number; durSec: number; velocity: number }
+export interface RecNote { startSec: number; midi: number; durSec: number; velocity: number }
 
 // Which version of the take is shown/played.
 //   'live'       real-time capture
@@ -187,7 +187,11 @@ async function decodeBlobToMono(blob: Blob): Promise<{ samples: Float32Array; sa
   }
 }
 
-export default function VoiceMidi() {
+// `onNotes` (optional) lets a host app — e.g. the Firefly sketchpad at /apps/firefly — read
+// the final melody OUT of this flow without forking the tuned capture/edit/playback UI. Fired
+// with the current display notes + tempo whenever they change. The standalone /apps/voicemidi
+// page passes nothing, so its behavior is unchanged.
+export default function VoiceMidi({ onNotes }: { onNotes?: (notes: RecNote[], bpm: number) => void } = {}) {
   const [presets, setPresets] = useState<MidiPreset[]>([])
   const [selectedId, setSelectedId] = useState<string>('')
   const [bpm, setBpm] = useState(100)
@@ -592,6 +596,9 @@ export default function VoiceMidi() {
     () => (quantized ? quantizeNotes(rawNotes, bpm, division) : rawNotes),
     [rawNotes, quantized, bpm, division],
   )
+
+  // Surface the final notes to an embedding host (Firefly). No-op on the standalone page.
+  useEffect(() => { onNotes?.(displayNotes, bpm) }, [displayNotes, bpm, onNotes])
 
   // ── Shared AudioContext ──────────────────────────────────────────────────────
   const ensureCtx = useCallback((): AudioContext => {

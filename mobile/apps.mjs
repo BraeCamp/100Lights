@@ -33,6 +33,16 @@ export const MOBILE_APPS = [
     serverUrl: 'https://100lights.com/m',
     tagline: 'The full touch studio — beats, melodies, mixing.',
   },
+  {
+    // Firefly = the voice-first sketchpad (supersedes the old standalone Flutter app). Reuses
+    // its EXISTING App Store identity (com.hundredlights.firefly) so the web build continues
+    // that listing rather than starting a new one.
+    slug: 'firefly',
+    appId: 'com.hundredlights.firefly',
+    appName: 'Firefly',
+    serverUrl: 'https://100lights.com/apps/firefly',
+    tagline: 'Sing a melody, add a beat, finish it in the studio.',
+  },
   // Promote a /apps mini-app to its own native app by uncommenting + tailoring an entry.
   // Make each genuinely distinct (own identity, own native value) — see mobile/AUTOMATION.md.
   // { slug: 'voicemidi', appId: 'com.hundredlights.voicemidi', appName: 'Sing to Instrument', serverUrl: 'https://100lights.com/apps/voicemidi', tagline: 'Hum a line; hear any instrument.' },
