@@ -1599,18 +1599,37 @@ export interface BandsAnalysis {
   winner: string
 }
 
-// Core band computation shared by the public analyzeBands and the EQ pitch-source overlay.
-// `gained` is the (already gain-applied, already downsampled) mono buffer; `frames` is the
-// full-signal scan whose TIMES and VOICING drive band scoring/alignment. For each band we
-// band-pass filter, read YIN pitch per frame (only where the full scan is voiced — the "voiced
-// portion"), and aggregate perceptual loudness × clarity into a score. Returns the readings +
-// the winning band's index-aligned pitch track (so the overlay can swap it straight in).
-function computeBandReadings(
-  gained: Float32Array,
-  rate: number,
-  frames: FeatureFrame[],
-  p: ScanParams,
-): { readings: BandReading[]; winnerIdx: number } {
+// ── Band computation core (shared by analyzeBands, the EQ overlay, and the async EQ pass) ──────
+//
+// SPEED: YIN is the bottleneck, and the historical pass ran it 4× (once per band) over EVERY
+// voiced frame. But the overlay only ever consumes the WINNER band's full per-frame track, and
+// winner SELECTION needs only each band's meanClarity + median MIDI. So:
+//   · perceptualLoudness (band RMS × A-weight — cheap, no YIN) is aggregated over ALL voiced
+//     frames, exactly as before;
+//   · meanClarity + the median MIDI are computed on a SUBSAMPLE of the voiced frames (a stride
+//     capping each band at ~BAND_SCORE_CAP scoring YINs — a steady tone's clarity/median are
+//     stable under subsampling). SHORT takes (fewer voiced frames than the cap) use stride 1 and
+//     are scored EXACTLY as before;
+//   · the full index-aligned per-frame pitch track is then computed ONLY for the winning band.
+// This cuts the band YIN from ~4×V to ~(4×V/stride + 1×V). The sync `computeBandReadings` and the
+// async `computeBandReadingsAsync` share every step below — only the async one interleaves yields.
+
+// Max scoring frames per band for the subsampled meanClarity/median-MIDI pass. Takes with fewer
+// voiced frames than this use stride 1 (identical to the historical full scoring).
+const BAND_SCORE_CAP = 100
+
+// Which frames each band is scored on, precomputed once. Band buffers all share `gained`'s length,
+// so a frame's sample offset/window — hence whether it "qualifies" (voiced AND enough samples for
+// YIN) — is band-independent.
+interface BandPlan {
+  qIdx:      number[]     // qualifying frame indices: full-scan voiced AND window ≥ TAIL_MIN_SAMPLES
+  qualifies: Uint8Array   // per-frame qualifying flag (length = frames.length)
+  offs:      Int32Array   // per-frame sample offset round(time*rate)
+  wins:      Int32Array   // per-frame usable window length at that offset
+  subIdx:    number[]     // stride-subsampled qIdx used for the YIN scoring pass (≤ ~BAND_SCORE_CAP)
+}
+
+function planBandVoicing(gained: Float32Array, rate: number, frames: FeatureFrame[], p: ScanParams): BandPlan {
   const nF = frames.length
   // "Voiced portion" of the take = frames the full-signal scan pitched. Fall back to the RMS
   // gate if the full scan pitched nothing (so loudness still aggregates over sounding frames).
@@ -1618,64 +1637,94 @@ function computeBandReadings(
   let anyVoiced = false
   for (let i = 0; i < nF; i++) { if (frames[i].midi !== null) { voiced[i] = 1; anyVoiced = true } }
   if (!anyVoiced) for (let i = 0; i < nF; i++) if (frames[i].rms >= p.rmsGate) voiced[i] = 1
-  // Detect band pitch WITHOUT re-applying the full-signal RMS gate (a band carries a fraction
-  // of the energy, so its RMS is naturally lower) — voicing is already decided by the full scan.
-  const pBand: ScanParams = { ...p, rmsGate: 0 }
+  const offs = new Int32Array(nF), wins = new Int32Array(nF), qualifies = new Uint8Array(nF)
+  const qIdx: number[] = []
+  for (let i = 0; i < nF; i++) {
+    const off = Math.round(frames[i].time * rate)
+    const win = Math.min(p.win, Math.max(0, gained.length - off))
+    offs[i] = off; wins[i] = win
+    if (voiced[i] && win >= TAIL_MIN_SAMPLES) { qualifies[i] = 1; qIdx.push(i) }
+  }
+  const stride = Math.max(1, Math.floor(qIdx.length / BAND_SCORE_CAP))
+  const subIdx: number[] = []
+  for (let k = 0; k < qIdx.length; k += stride) subIdx.push(qIdx[k])
+  return { qIdx, qualifies, offs, wins, subIdx }
+}
 
-  const readings: BandReading[] = VOCAL_BANDS.map(spec => {
-    const band = bandpassFilter(gained, spec.lo, spec.hi, rate)
-    const aW   = aWeightingGain(bandCenter(spec))
-    const track: BandPitchPoint[] = new Array(nF)
-    let sumSq = 0, nRms = 0, sumClar = 0, nClar = 0
-    for (let i = 0; i < nF; i++) {
-      const f   = frames[i]
-      const off = Math.round(f.time * rate)
-      const win = Math.min(p.win, Math.max(0, band.length - off))
-      const seg = band.subarray(off, off + win)
-      let sq = 0
-      for (let j = 0; j < seg.length; j++) sq += seg[j] * seg[j]
-      const bandRms = seg.length ? Math.sqrt(sq / seg.length) : 0
-      let pt: BandPitchPoint = { time: f.time, freq: null, midi: null, clarity: 0 }
-      if (voiced[i] && win >= TAIL_MIN_SAMPLES) {
-        const det = detectFramePitch(band, off, seg, bandRms, pBand)
-        pt = { time: f.time, freq: det.freq, midi: det.midi, clarity: det.clarity }
-        sumSq += bandRms * bandRms; nRms++
-        if (det.clarity > 0) { sumClar += det.clarity; nClar++ }
-      }
-      track[i] = pt
-    }
-    const bandRmsAgg        = nRms > 0 ? Math.sqrt(sumSq / nRms) : 0
-    const perceptualLoudness = aW * bandRmsAgg
-    const meanClarity        = nClar > 0 ? sumClar / nClar : 0
-    return {
-      name: spec.name, loFreq: spec.lo, hiFreq: spec.hi,
-      perceptualLoudness, meanClarity,
-      score: perceptualLoudness * meanClarity,
-      pitchTrack: track,
-    }
-  })
+// Detect band pitch WITHOUT re-applying the full-signal RMS gate (a band carries a fraction of the
+// energy, so its RMS is naturally lower) — voicing is already decided by the full scan.
+const bandScanParams = (p: ScanParams): ScanParams => ({ ...p, rmsGate: 0 })
 
-  // 1) Highest-scoring band by perceptual loudness × clarity (the spec's dominance score).
+// Band-pitch read for ONE frame on an already-band-passed buffer. Shared by the scoring subsample
+// and the winner's full track, so both use the IDENTICAL detection the full path used before.
+function detectBandFrame(band: Float32Array, plan: BandPlan, i: number, pBand: ScanParams, time: number): BandPitchPoint {
+  const off = plan.offs[i], win = plan.wins[i]
+  const seg = band.subarray(off, off + win)
+  let sq = 0
+  for (let j = 0; j < seg.length; j++) sq += seg[j] * seg[j]
+  const bandRms = seg.length ? Math.sqrt(sq / seg.length) : 0
+  const det = detectFramePitch(band, off, seg, bandRms, pBand)
+  return { time, freq: det.freq, midi: det.midi, clarity: det.clarity }
+}
+
+// A-weighted (perceived) band loudness over ALL qualifying frames — cheap band RMS, no YIN.
+// Identical aggregate to the historical inline loop (bandRms² summed over the voiced portion).
+function bandLoudness(band: Float32Array, plan: BandPlan, aW: number): number {
+  let sumSq = 0
+  for (const i of plan.qIdx) {
+    const off = plan.offs[i], win = plan.wins[i]
+    const end = off + win
+    let sq = 0
+    for (let j = off; j < end; j++) sq += band[j] * band[j]
+    if (win > 0) sumSq += sq / win
+  }
+  const bandRmsAgg = plan.qIdx.length > 0 ? Math.sqrt(sumSq / plan.qIdx.length) : 0
+  return aW * bandRmsAgg
+}
+
+// One band's aggregate reading: full-frame loudness + subsampled meanClarity, with a SUBSAMPLED
+// pitch track (its median is all winner selection + the panel need from a non-winner band). Sync.
+function buildBandReading(band: Float32Array, spec: BandSpec, plan: BandPlan, pBand: ScanParams, frames: FeatureFrame[]): BandReading {
+  const perceptualLoudness = bandLoudness(band, plan, aWeightingGain(bandCenter(spec)))
+  let sumClar = 0, nClar = 0
+  const subTrack: BandPitchPoint[] = new Array(plan.subIdx.length)
+  for (let k = 0; k < plan.subIdx.length; k++) {
+    const pt = detectBandFrame(band, plan, plan.subIdx[k], pBand, frames[plan.subIdx[k]].time)
+    if (pt.clarity > 0) { sumClar += pt.clarity; nClar++ }
+    subTrack[k] = pt
+  }
+  const meanClarity = nClar > 0 ? sumClar / nClar : 0
+  return {
+    name: spec.name, loFreq: spec.lo, hiFreq: spec.hi,
+    perceptualLoudness, meanClarity,
+    score: perceptualLoudness * meanClarity,
+    pitchTrack: subTrack,
+  }
+}
+
+// Median MIDI of a (possibly subsampled) pitch track — the winner-selection signal.
+function medMidiOf(track: BandPitchPoint[]): number | null {
+  const ms = track.map(p => p.midi).filter((m): m is number => m !== null).sort((a, b) => a - b)
+  return ms.length ? ms[Math.floor(ms.length / 2)] : null
+}
+
+// Winner selection (pure): highest score, then the fundamental / octave-coherence preference.
+//   1) Highest-scoring band by perceptual loudness × clarity (the spec's dominance score).
+//   2) The classic octave-ambiguity case has the 2nd harmonic LOUDER than the fundamental, so the
+//      raw score crowns the HARMONIC band — which reads (and would impose) a pitch an octave HIGH,
+//      the opposite of the fix. But the fundamental lives in a LOWER band with comparably high
+//      clarity. So if a lower band is (a) about as clear as the score-leader, (b) not negligible,
+//      and (c) reads ~a whole number of octaves BELOW it, prefer that lower band. Walk from the
+//      LOWEST band up so the true fundamental (not an intermediate harmonic) is chosen. Noise bands
+//      are excluded by the clarity gate (noise ⇒ low clarity). Uses the subsampled track medians.
+function selectWinnerIdx(readings: BandReading[]): number {
   let scoreIdx = 0
   for (let i = 1; i < readings.length; i++) if (readings[i].score > readings[scoreIdx].score) scoreIdx = i
-
-  // 2) Fundamental / octave-coherence preference. The classic octave-ambiguity case has the
-  //    2nd harmonic LOUDER than the fundamental, so the raw score crowns the HARMONIC band —
-  //    which reads (and would impose) a pitch an octave HIGH, the opposite of the fix. But the
-  //    fundamental lives in a LOWER band with comparably high clarity. So: if a lower band is
-  //    (a) about as clear as the score-leader, (b) not negligible, and (c) reads ~a whole number
-  //    of octaves BELOW it (i.e. the leader is a harmonic of it), prefer that lower band as the
-  //    note basis. Walk from the LOWEST band up so the true fundamental (not an intermediate
-  //    harmonic) is chosen. Noise bands are excluded by the clarity gate (noise ⇒ low clarity).
-  const medMidi = (r: BandReading): number | null => {
-    const ms = r.pitchTrack.map(p => p.midi).filter((m): m is number => m !== null).sort((a, b) => a - b)
-    return ms.length ? ms[Math.floor(ms.length / 2)] : null
-  }
-  const winMidi = medMidi(readings[scoreIdx])
+  const winMidi = medMidiOf(readings[scoreIdx].pitchTrack)
   let winnerIdx = scoreIdx
   if (winMidi !== null) {
     for (let i = 0; i < scoreIdx; i++) {           // lower bands only (VOCAL_BANDS ascending)
-      const bm = medMidi(readings[i])
+      const bm = medMidiOf(readings[i].pitchTrack)
       if (bm === null) continue
       const semisBelow = winMidi - bm
       const octs = Math.round(semisBelow / 12)
@@ -1686,6 +1735,89 @@ function computeBandReadings(
       if (octaveBelow && clearEnough && loudEnough) { winnerIdx = i; break }
     }
   }
+  return winnerIdx
+}
+
+// Fill the winner band's FULL index-aligned per-frame pitch track for frame indices [from, to).
+// Qualifying frames get their YIN read; the rest get a null point (matching the historical track,
+// which applyEqPitchSource only overlays where BOTH the full scan and this band are voiced).
+// Returns the count of qualifying frames processed (for progress accounting). Sync/pure.
+function fillWinnerTrack(band: Float32Array, plan: BandPlan, pBand: ScanParams, frames: FeatureFrame[], out: BandPitchPoint[], from: number, to: number): number {
+  let detected = 0
+  for (let i = from; i < to; i++) {
+    if (plan.qualifies[i]) { out[i] = detectBandFrame(band, plan, i, pBand, frames[i].time); detected++ }
+    else out[i] = { time: frames[i].time, freq: null, midi: null, clarity: 0 }
+  }
+  return detected
+}
+
+// Core band computation shared by the public analyzeBands and the EQ pitch-source overlay.
+// `gained` is the (already gain-applied, already downsampled) mono buffer; `frames` is the
+// full-signal scan whose TIMES and VOICING drive band scoring/alignment. Returns the readings +
+// the winning band's index-aligned pitch track (so the overlay can swap it straight in).
+function computeBandReadings(
+  gained: Float32Array,
+  rate: number,
+  frames: FeatureFrame[],
+  p: ScanParams,
+): { readings: BandReading[]; winnerIdx: number } {
+  const plan  = planBandVoicing(gained, rate, frames, p)
+  const pBand = bandScanParams(p)
+  const bandBufs = VOCAL_BANDS.map(spec => bandpassFilter(gained, spec.lo, spec.hi, rate))
+  const readings = VOCAL_BANDS.map((spec, b) => buildBandReading(bandBufs[b], spec, plan, pBand, frames))
+  const winnerIdx = selectWinnerIdx(readings)
+  // Winner's full index-aligned track (what applyEqPitchSource overlays / the panel shows).
+  const full: BandPitchPoint[] = new Array(frames.length)
+  fillWinnerTrack(bandBufs[winnerIdx], plan, pBand, frames, full, 0, frames.length)
+  readings[winnerIdx] = { ...readings[winnerIdx], pitchTrack: full }
+  return { readings, winnerIdx }
+}
+
+// Async twin of computeBandReadings for the responsive EQ pass. Same result via the SAME shared
+// helpers (planBandVoicing / buildBandReading / selectWinnerIdx / fillWinnerTrack), but it yields
+// to the event loop on a ~12ms budget (mirroring the main scan loop) and reports 0→1 progress via
+// `report`, so the "Refining…" bar keeps moving through the band pass instead of freezing at 97%.
+// The yield/progress plumbing is the ONLY difference from the sync path — no scoring/winner drift.
+async function computeBandReadingsAsync(
+  gained: Float32Array,
+  rate: number,
+  frames: FeatureFrame[],
+  p: ScanParams,
+  report?: (frac: number) => void,
+): Promise<{ readings: BandReading[]; winnerIdx: number }> {
+  const plan  = planBandVoicing(gained, rate, frames, p)
+  const pBand = bandScanParams(p)
+  const nF    = frames.length
+  // Progress denominator = the YIN work: 4 bands × subsample + the winner's qualifying frames.
+  const totalWork = Math.max(1, VOCAL_BANDS.length * plan.subIdx.length + plan.qIdx.length)
+  let done = 0, lastYield = nowMs()
+  const tick = async (units: number) => {
+    done += units
+    if (nowMs() - lastYield >= 12) {
+      report?.(Math.min(0.99, done / totalWork))
+      await new Promise<void>(r => setTimeout(r, 0))
+      lastYield = nowMs()
+    }
+  }
+
+  const bandBufs: Float32Array[] = new Array(VOCAL_BANDS.length)
+  const readings: BandReading[]  = new Array(VOCAL_BANDS.length)
+  for (let b = 0; b < VOCAL_BANDS.length; b++) {
+    bandBufs[b] = bandpassFilter(gained, VOCAL_BANDS[b].lo, VOCAL_BANDS[b].hi, rate)
+    readings[b] = buildBandReading(bandBufs[b], VOCAL_BANDS[b], plan, pBand, frames)
+    await tick(plan.subIdx.length)
+  }
+  const winnerIdx = selectWinnerIdx(readings)
+
+  // Winner's full index-aligned track, chunked so a long take can't monopolize the loop.
+  const full: BandPitchPoint[] = new Array(nF)
+  const CHUNK = 64
+  for (let from = 0; from < nF; from += CHUNK) {
+    const detected = fillWinnerTrack(bandBufs[winnerIdx], plan, pBand, frames, full, from, Math.min(nF, from + CHUNK))
+    await tick(detected)
+  }
+  readings[winnerIdx] = { ...readings[winnerIdx], pitchTrack: full }
+  report?.(1)
   return { readings, winnerIdx }
 }
 
@@ -1723,10 +1855,10 @@ export function analyzeBands(
 // the winner band failed to lock at a voiced frame, that frame KEEPS its full-signal pitch (a
 // safe fallback — EQ never DROPS a note the full signal found). Mutates `frames` in place and
 // recomputes pitchDelta from the swapped MIDI. `gained` must be the gain-applied downsampled buf.
-function applyEqPitchSource(frames: FeatureFrame[], gained: Float32Array, rate: number, p: ScanParams): void {
-  if (frames.length === 0 || gained.length < p.win) return
-  const { readings, winnerIdx } = computeBandReadings(gained, rate, frames, p)
-  const track = readings[winnerIdx]?.pitchTrack
+// Overlay the winner band's per-frame pitch onto the full-signal frames (shared by the sync and
+// async EQ paths so the swap logic can't drift). Only VOICED frames change, and only where the
+// winner band also locked; pitchDelta is recomputed from the swapped MIDI. Mutates `frames`.
+function overlayWinnerPitch(frames: FeatureFrame[], track: BandPitchPoint[] | undefined): void {
   if (!track) return
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i]
@@ -1740,6 +1872,21 @@ function applyEqPitchSource(frames: FeatureFrame[], gained: Float32Array, rate: 
     f.pitchDelta = (f.midi !== null && prevMidi !== null) ? Math.abs(f.midi - prevMidi) : 0
     prevMidi = f.midi
   }
+}
+
+function applyEqPitchSource(frames: FeatureFrame[], gained: Float32Array, rate: number, p: ScanParams): void {
+  if (frames.length === 0 || gained.length < p.win) return
+  const { readings, winnerIdx } = computeBandReadings(gained, rate, frames, p)
+  overlayWinnerPitch(frames, readings[winnerIdx]?.pitchTrack)
+}
+
+// Async twin of applyEqPitchSource — the responsive EQ overlay used by analyzeBufferAsync. Same
+// swap (overlayWinnerPitch) over the winner band's track, but the band computation yields on a
+// ~12ms budget and reports 0→1 progress via `report`. `gained` = gain-applied downsampled buffer.
+async function applyEqPitchSourceAsync(frames: FeatureFrame[], gained: Float32Array, rate: number, p: ScanParams, report?: (frac: number) => void): Promise<void> {
+  if (frames.length === 0 || gained.length < p.win) { report?.(1); return }
+  const { readings, winnerIdx } = await computeBandReadingsAsync(gained, rate, frames, p, report)
+  overlayWinnerPitch(frames, readings[winnerIdx]?.pitchTrack)
 }
 
 /**
@@ -1826,11 +1973,15 @@ export async function analyzeBufferAsync(
   const st = makeScanState(p.win)
   const rawCurve: FeatureFrame[] = []
   const end = buf.length - p.win
+  // In EQ mode the band pass is a second heavy stage, so reserve the progress budget: the
+  // full-signal scan maps to 0→0.4 and the band pass to 0.4→~0.99 (below). 'full' mode has no
+  // band pass, so its scan keeps the whole 0→0.97 range — progress behavior is unchanged.
+  const scanCap = opts.pitchSource === 'eq' ? 0.4 : 0.97
   let lastYield = nowMs()
   for (let off = 0; off + p.win <= buf.length; off += hop) {
     rawCurve.push(scanFeatureFrame(buf, off, p, st))
     if (nowMs() - lastYield >= 12) {          // ~12ms work budget between yields
-      onProgress?.(Math.min(0.97, end > 0 ? off / end : 1))
+      onProgress?.(Math.min(scanCap, end > 0 ? off / end : 1))
       await new Promise<void>(r => setTimeout(r, 0))
       lastYield = nowMs()
     }
@@ -1838,8 +1989,11 @@ export async function analyzeBufferAsync(
   appendTailFrames(rawCurve, buf, p, st, hop, opts.scanTailWindow !== false)
   // EQ pitch source: swap each voiced frame's pitch for the dominant band's read (Detect EQ).
   // 'full' (default) leaves rawCurve exactly as the full-signal scan produced it. `buf` is the
-  // already gain-applied downsampled buffer here.
-  if (opts.pitchSource === 'eq') applyEqPitchSource(rawCurve, buf, rate, p)
+  // already gain-applied downsampled buffer here. The async overlay yields on a ~12ms budget and
+  // drives progress across 0.4→~0.99 so the bar keeps moving through the band pass.
+  if (opts.pitchSource === 'eq') {
+    await applyEqPitchSourceAsync(rawCurve, buf, rate, p, frac => onProgress?.(0.4 + 0.59 * frac))
+  }
   const analysis = finalizeAnalysis(rawCurve, opts, minDuration, rMed, octR)
   onProgress?.(1)
   return analysis
