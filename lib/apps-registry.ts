@@ -40,6 +40,14 @@ export const MINI_APPS: MiniApp[] = [
     status: 'live',
   },
   {
+    slug: 'transcribe',
+    title: 'Transcribe',
+    tagline: 'Turn audio into editable MIDI notes.',
+    description: 'Upload an audio file or record a melody line and the pitch detector turns it into MIDI notes — hear them on any instrument, then open in the studio or export WAV/MIDI. Best on a single melody.',
+    href: '/apps/transcribe',
+    status: 'live',
+  },
+  {
     slug: 'voicemidi',
     title: 'Voice → Instrument',
     tagline: 'Hum or sing a line; hear it played back on any instrument.',
