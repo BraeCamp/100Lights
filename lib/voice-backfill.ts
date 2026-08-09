@@ -211,6 +211,21 @@ export interface BackfillOptions {
    *  median over the merged span, reusing the re-pitch helper) and spans start(first)→end(last).
    *  Default true. Pass false to A/B the drop. */
   mergeScoops?: boolean
+
+  // ── Beat-grid prior (metronome-gated, beat-informed DETECTION) ────────────────
+  /** When the take was sung TO A CLICK, the 16th-note grid is a strong prior on where
+   *  notes start. Unlike alignToGrid (a post-snap of the FINAL onsets), this INFORMS the
+   *  offline note set: it (a) snaps onsets to the nearest grid subdivision within ~half a
+   *  subdivision, (b) suppresses/merges OFF-GRID spurious fragments (an over-split of a held
+   *  note whose split lands far from any grid line is folded into its grid-aligned neighbour —
+   *  complements the scoop-merge), and (c) quantizes durations to whole grid steps (min one).
+   *  A grid line sits at `phaseSec + k*(60/bpm/subdiv)` for every integer k. `subdiv` = 4 →
+   *  sixteenths (the recommended detection grid). ONLY provide this when the metronome was ON —
+   *  rubato singing must never be forced to a grid (see the metro-OFF gate in the widget). */
+  beatGrid?: { bpm: number; phaseSec: number; subdiv: number }
+  /** Toggle the beatGrid prior. Default ON whenever a `beatGrid` is provided; pass false to
+   *  A/B the raw (un-gridded) detection against the grid-informed one on the same audio. */
+  useBeatGrid?: boolean
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -1244,6 +1259,128 @@ function mergeScoopFragments(
   return work
 }
 
+// ── Beat-grid prior (metronome-gated, beat-informed DETECTION) ──────────────────
+/**
+ * Use the sung-to click's subdivision grid as a PRIOR on the detected note set. This is a
+ * stronger form of alignToGrid: alignToGrid post-snaps the FINAL onsets, whereas this runs
+ * inside the analysis and lets the grid inform DETECTION —
+ *
+ *   1. SUPPRESS off-grid over-splits. A SHORT note (< ~one subdivision) whose onset sits far
+ *      from every grid line (> half a subdiv) is a spurious fragment — the kind a held note
+ *      over-splits into. It's folded into a contiguous, grid-aligned neighbour (the neighbour
+ *      keeps its on-grid onset + pitch; the span extends). Only merges across CONTINUOUS
+ *      phonation (no true silence gap between them, keyed on amplitude — a real rest is a
+ *      distinct note). Complements the scoop-merge (which is pitch-driven; this is grid-driven).
+ *   2. SNAP surviving onsets to the nearest grid subdivision, but ONLY within ~half a subdiv —
+ *      a note far from every line (a deliberate off-beat / syncopation, or a mis-detect) is left
+ *      where it is and flagged `offGrid`, never yanked onto a beat it was never near.
+ *   3. QUANTIZE durations to whole grid steps (min one subdivision).
+ *   4. MERGE collisions: two notes on the same grid line + pitch collapse to one (louder /
+ *      longer wins), so the prior can't spawn duplicates.
+ *
+ * Metronome-gated at the CALLER (only invoked when opts.beatGrid is set, which the widget
+ * supplies only when the take was recorded to a click). Pure/deterministic; never throws.
+ */
+// A note shorter than this many grid steps is a suppress-merge fragment candidate (an
+// over-split of a held note; a real melodic subdivision note is ~one step or longer).
+const GRID_FRAG_MAX_STEPS = 1.0
+function applyBeatGridPrior(
+  notes: BackfillNote[],
+  curve: FeatureFrame[],
+  grid: { bpm: number; phaseSec: number; subdiv: number },
+  minDuration: number,
+): BackfillNote[] {
+  const step = 60 / grid.bpm / Math.max(1, grid.subdiv)
+  if (!Number.isFinite(step) || step <= 0 || notes.length === 0) return notes.map(n => ({ ...n }))
+  const phase = Number.isFinite(grid.phaseSec) ? grid.phaseSec : 0
+  // Two tolerances. SNAP is generous (half a subdivision) — pull any onset already near a line
+  // onto it. The "cleanly ON a subdivision" test is TIGHTER: because 16th lines are only half a
+  // step apart, EVERY time is within half a step of SOME line, so the fragment/neighbour grid
+  // test needs a tight window to mean "landed on a subdivision" (within jitter) rather than
+  // "arbitrary phase between subdivisions" (a spurious over-split).
+  const snapTol = 0.5 * step
+  const gridTol = Math.min(0.35 * step, 0.05)    // ~one third of a subdivision, ≤50ms
+  const resid = (t: number) => Math.abs(t - (phase + Math.round((t - phase) / step) * step))
+  const onGridTight = (t: number) => resid(t) <= gridTol
+
+  // A true SILENCE gap (amplitude ~0) strictly between two notes ⇒ distinct notes, not an
+  // over-split — mirrors the scoop-merge silence check (a brief clarity dropout does NOT block).
+  const voicedContiguous = (aEnd: number, bStart: number): boolean => {
+    if (bStart - aEnd > SCOOP_MERGE_MAX_GAP_SEC) return false
+    for (const f of curve) {
+      if (f.time <= aEnd + step * 0.25) continue
+      if (f.time >= bStart - step * 0.25) break
+      if (f.amplitude <= SCOOP_MERGE_SILENCE_AMP) return false
+    }
+    return true
+  }
+
+  // 1) Suppress off-grid fragments — fold each into its grid-aligned neighbour, longest first.
+  let work = notes.slice().sort((a, b) => a.startSec - b.startSec)
+  let safety = work.length * 2 + 4
+  while (safety-- > 0) {
+    let best: { lo: number; hi: number; merged: BackfillNote; score: number } | null = null
+    for (let i = 0; i < work.length; i++) {
+      const frag = work[i]
+      // Only a SHORT note whose onset sits between subdivisions (off the tight grid) is a
+      // suppression candidate — a clean-on-a-subdivision short note is a real 16th, kept.
+      if (frag.durSec >= GRID_FRAG_MAX_STEPS * step || onGridTight(frag.startSec)) continue
+      const prev = work[i - 1], next = work[i + 1]
+      const consider = (lo: number, hi: number, a: BackfillNote, b: BackfillNote) => {
+        // `a` precedes `b`; the neighbour is the NON-fragment of the pair.
+        const neigh = a === frag ? b : a
+        if (!onGridTight(neigh.startSec)) return                  // fold into a CLEAN grid-aligned neighbour
+        if (!voicedContiguous(a.startSec + a.durSec, b.startSec)) return
+        const start = Math.min(a.startSec, neigh.startSec)        // keep the neighbour's (earlier, on-grid) start when it leads
+        const end   = Math.max(a.startSec + a.durSec, b.startSec + b.durSec)
+        const merged: BackfillNote = {
+          startSec: neigh.startSec <= frag.startSec ? neigh.startSec : start,
+          midi:     neigh.midi,                                   // the sustained neighbour's pitch wins
+          durSec:   Math.max(minDuration, end - (neigh.startSec <= frag.startSec ? neigh.startSec : start)),
+          velocity: Math.max(a.velocity, b.velocity),
+          ...(a.recovered || b.recovered ? { recovered: true } : {}),
+        }
+        const score = neigh.durSec
+        if (!best || score > best.score) best = { lo, hi, merged, score }
+      }
+      if (prev) consider(i - 1, i, prev, frag)
+      if (next) consider(i, i + 1, frag, next)
+    }
+    if (!best) break
+    const b = best as { lo: number; hi: number; merged: BackfillNote; score: number }
+    work = [...work.slice(0, b.lo), b.merged, ...work.slice(b.hi + 1)]
+  }
+
+  // 2) Snap surviving onsets to the nearest grid line (within tol) + 3) quantize durations.
+  const snapped: BackfillNote[] = work.map(n => {
+    const k        = Math.round((n.startSec - phase) / step)
+    const gridLine = phase + k * step
+    const near     = Math.abs(n.startSec - gridLine) <= snapTol
+    return {
+      ...n,
+      startSec: near ? gridLine : n.startSec,
+      durSec:   Math.max(step, Math.round(n.durSec / step) * step),
+      offGrid:  !near,
+    }
+  })
+
+  // 4) Deterministic order + collision merge (same grid line + pitch → keep louder + longer).
+  snapped.sort((a, b) => a.startSec - b.startSec || a.midi - b.midi)
+  const eps = step * 1e-6
+  const out: BackfillNote[] = []
+  for (const n of snapped) {
+    const prev = out[out.length - 1]
+    if (prev && prev.midi === n.midi && Math.abs(prev.startSec - n.startSec) <= eps) {
+      prev.velocity = Math.max(prev.velocity, n.velocity)
+      prev.durSec   = Math.max(prev.durSec, n.durSec)
+      prev.offGrid  = prev.offGrid && n.offGrid
+      continue
+    }
+    out.push({ ...n })
+  }
+  return out
+}
+
 // Shared tail of the offline pass: refine the raw feature track, detect onsets, segment
 // (HMM / onset-aware / pitch-only baseline per opts.segmenter+opts.useOnsets), re-pitch,
 // and package the analysis WITH the onset/flux/clarity evidence for the debug overlay.
@@ -1311,6 +1448,15 @@ function finalizeAnalysis(
   // Prioritizes not-missing over a few extras. Sensitivity-scaled (looser as it rises).
   if (opts.recoverNotes !== false) {
     notes = recoverMissedNotes(notes, curve, opts, minDuration, existFrac)
+  }
+
+  // ── Beat-grid prior: metronome-gated grid-informed detection ──────────────────
+  // Only when a click-anchored grid was supplied (the widget passes it ONLY for takes
+  // recorded to a click). Snaps onsets to the 16th grid within tolerance, suppresses
+  // off-grid over-split fragments, and quantizes durations. Metronome OFF ⇒ no beatGrid ⇒
+  // this is skipped entirely, so rubato singing is never forced to a grid.
+  if (opts.beatGrid && opts.useBeatGrid !== false) {
+    notes = applyBeatGridPrior(notes, curve, opts.beatGrid, minDuration)
   }
 
   let fluxMax = 1e-9, rmsPeak = 1e-9

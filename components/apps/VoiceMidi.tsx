@@ -329,6 +329,20 @@ export default function VoiceMidi() {
   const curEvent = useRef<{ startSec: number; midi: number; velocity: number } | null>(null)
   const liveMidi = useRef<number | null>(null)
 
+  // ── Live recording visualization (scrolling pitch + beat grid) ────────────────
+  // onPitch pushes each detector frame {absolute-ctx-time, fractional MIDI incl. cents |
+  // null when unvoiced} into pitchTrailRef; the RAF canvas loop (effect below, keyed on
+  // recording) reads + prunes it, scrolls it right→left with a playhead at the right edge,
+  // auto-centers Y on the recent sung pitch, and — when the metronome is ON — overlays beat
+  // grid lines from the SAME metronome clock (metroNext/metroBeat/bpm, AudioContext time), so
+  // the singer watches their pitch land on the beat. vizStatsRef mirrors draw stats for the
+  // headless verify hook (proves the canvas draws + that beat lines appear with the metro on).
+  const pitchTrailRef = useRef<Array<{ t: number; midi: number | null }>>([])
+  const vizCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const vizRaf = useRef<number | null>(null)
+  const vizYCenterRef = useRef<number | null>(null)   // smoothed Y-center (semitones) to steady the auto-range
+  const vizStatsRef = useRef({ active: false, frames: 0, trailPoints: 0, gridLines: 0, metroOn: false, width: 0, height: 0 })
+
   // Live values the mic callback reads without re-subscribing.
   const selRef = useRef<MidiPreset | null>(null)
 
@@ -363,7 +377,11 @@ export default function VoiceMidi() {
       __voiceSampleProbe?: (folder: string, midi: number) => Promise<unknown>
       __voiceGetSegmenter?: () => Segmenter
       __voiceGetTimingOffsetMs?: () => number
+      __voiceGetVizState?: () => typeof vizStatsRef.current
     }
+    // Report the live-recording viz draw stats so a headless page can confirm the canvas is
+    // drawing (frames advancing, trail points) and that beat lines appear with the metro on.
+    w.__voiceGetVizState = () => ({ ...vizStatsRef.current })
     // Report the current in-app segmenter choice so a headless page can confirm the
     // toggle's persisted default and that flipping it takes effect.
     w.__voiceGetSegmenter = () => segmenterRef.current
@@ -407,7 +425,7 @@ export default function VoiceMidi() {
       delete w.__voiceBuildPitchCurve; delete w.__voiceAlignToGrid
       delete w.__voiceConditionalGridAlign; delete w.__VoiceLivePitchDetector
       delete w.__voiceSampleProbe; delete w.__voiceGetSegmenter
-      delete w.__voiceGetTimingOffsetMs
+      delete w.__voiceGetTimingOffsetMs; delete w.__voiceGetVizState
     }
   }, [])
 
@@ -633,6 +651,162 @@ export default function VoiceMidi() {
     return Number.isFinite(phase) && phase >= 0 ? phase : 0
   }, [])
 
+  // ── Live recording viz: RAF canvas loop (scrolling pitch + beat grid) ─────────
+  // Runs ONLY while recording; re-created when the metronome toggles (so beat lines
+  // appear/disappear live). Cancels its RAF on teardown. Draws in CSS-pixel space (DPR-scaled
+  // backing store) at ~60fps: background, beat/plain time grid, the fading pitch trail, and a
+  // bright dot + playhead at the right edge.
+  useEffect(() => {
+    if (!recording) return
+    const canvas = vizCanvasRef.current
+    if (!canvas) return
+    const DPR = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1)
+    const WINDOW_SEC = 4                     // visible time span (past … now at the right edge)
+    // Theme-consistent colours pulled from the app's CSS custom properties (canvas can't use
+    // var() directly). Custom props inherit onto the canvas, so getComputedStyle reads them.
+    const cs = getComputedStyle(canvas)
+    const cvar = (name: string, fallback: string) => (cs.getPropertyValue(name).trim() || fallback)
+    const COL_BG     = cvar('--bg-base', '#0e0e14')
+    const COL_ACCENT = cvar('--accent', '#7c3aed')
+    const COL_TRAIL  = '#a78bfa'
+    const COL_DOT    = '#e9d5ff'
+    let frameCount = vizStatsRef.current.frames
+
+    const draw = () => {
+      const c = ctxRef.current
+      const g = canvas.getContext('2d')
+      if (!g || !c) { vizRaf.current = requestAnimationFrame(draw); return }
+      const cssW = canvas.clientWidth || 480
+      const cssH = canvas.clientHeight || 150
+      const pxW = Math.max(1, Math.round(cssW * DPR)), pxH = Math.max(1, Math.round(cssH * DPR))
+      if (canvas.width !== pxW || canvas.height !== pxH) { canvas.width = pxW; canvas.height = pxH }
+      g.setTransform(DPR, 0, 0, DPR, 0, 0)
+
+      const nowT = c.currentTime
+      const t0   = nowT - WINDOW_SEC
+      const timeToX = (t: number) => cssW - ((nowT - t) / WINDOW_SEC) * cssW
+
+      // Background.
+      g.clearRect(0, 0, cssW, cssH)
+      g.fillStyle = COL_BG
+      g.fillRect(0, 0, cssW, cssH)
+
+      // Prune trail to a little past the window; gather the recent voiced pitches for auto-range.
+      const trail = pitchTrailRef.current
+      while (trail.length > 2 && trail[0].t < t0 - 0.5) trail.shift()
+      let lo = Infinity, hi = -Infinity
+      for (const p of trail) {
+        if (p.midi === null || p.t < t0) continue
+        if (p.midi < lo) lo = p.midi
+        if (p.midi > hi) hi = p.midi
+      }
+      // Auto-center Y on the recent sung pitch with a few semitones of headroom; smoothed so
+      // the range doesn't jitter frame-to-frame.
+      const MIN_SPAN = 7                     // semitones visible (a few of headroom either side)
+      let center: number
+      if (lo <= hi) center = (lo + hi) / 2
+      else center = vizYCenterRef.current ?? 64   // no voiced pitch yet → hold last / middle C-ish
+      vizYCenterRef.current = vizYCenterRef.current === null ? center : vizYCenterRef.current + (center - vizYCenterRef.current) * 0.08
+      const yc = vizYCenterRef.current
+      const span = Math.max(MIN_SPAN, (lo <= hi ? hi - lo : 0) + 4)
+      const pad = 10
+      const midiToY = (m: number) => (cssH - pad) - ((m - (yc - span / 2)) / span) * (cssH - 2 * pad)
+
+      // ── Grid ──────────────────────────────────────────────────────────────────
+      let gridLines = 0
+      const secPerBeat = 60 / bpmRef.current
+      if (metroOn && Number.isFinite(secPerBeat) && secPerBeat > 0 && Number.isFinite(metroNext.current)) {
+        // The AudioContext time of beat index 0 (stable across the take at constant BPM).
+        const beat0 = metroNext.current - metroBeat.current * secPerBeat
+        const six   = secPerBeat / 4                 // sixteenth-note step
+        const nStart = Math.ceil((t0 - beat0) / six)
+        const nEnd   = Math.floor((nowT - beat0) / six)
+        for (let n = nStart; n <= nEnd && gridLines < 512; n++) {
+          const t = beat0 + n * six
+          const x = timeToX(t)
+          const isBeat     = n % 4 === 0
+          const isDownbeat = isBeat && ((n / 4) % BEATS_PER_BAR === 0)
+          const isEighth   = n % 2 === 0 && !isBeat
+          // strong on the beat (brightest on the downbeat), medium on eighths, faint on sixteenths.
+          const alpha = isDownbeat ? 0.55 : isBeat ? 0.38 : isEighth ? 0.20 : 0.10
+          const wdt   = isBeat ? 1.4 : isEighth ? 1 : 0.75
+          g.strokeStyle = `rgba(148,163,184,${alpha})`
+          g.lineWidth = wdt
+          g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, cssH); g.stroke()
+          gridLines++
+        }
+        // Pulse/highlight the CURRENT beat: a fading accent band that's freshest right at the beat.
+        const curBeatIdx  = Math.floor((nowT - beat0) / secPerBeat)
+        const curBeatTime = beat0 + curBeatIdx * secPerBeat
+        const phaseInBeat = (nowT - curBeatTime) / secPerBeat     // 0 at the beat → 1 just before the next
+        const pulse = Math.max(0, 1 - phaseInBeat)
+        const bx = timeToX(curBeatTime)
+        g.strokeStyle = COL_ACCENT
+        g.globalAlpha = 0.25 + 0.6 * pulse
+        g.lineWidth = 2.5
+        g.beginPath(); g.moveTo(bx + 0.5, 0); g.lineTo(bx + 0.5, cssH); g.stroke()
+        g.globalAlpha = 1
+      } else {
+        // Metronome OFF → a plain, evenly-spaced time grid (no beat semantics).
+        const STEP = 0.5
+        const nStart = Math.ceil(t0 / STEP)
+        const nEnd   = Math.floor(nowT / STEP)
+        g.strokeStyle = 'rgba(148,163,184,0.14)'
+        g.lineWidth = 0.75
+        for (let n = nStart; n <= nEnd; n++) {
+          const x = timeToX(n * STEP)
+          g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, cssH); g.stroke()
+          gridLines++
+        }
+      }
+
+      // ── Pitch trail (fading; broken across unvoiced gaps) + head dot ──────────
+      let trailPoints = 0
+      let prev: { t: number; midi: number } | null = null
+      let lastVoiced: { t: number; midi: number } | null = null
+      g.lineWidth = 2
+      g.lineJoin = 'round'
+      g.lineCap = 'round'
+      for (const p of trail) {
+        if (p.t < t0) { prev = null; continue }
+        if (p.midi === null) { prev = null; continue }
+        const x = timeToX(p.t), y = midiToY(p.midi)
+        if (prev) {
+          const age = (nowT - p.t) / WINDOW_SEC              // 0 (now) → 1 (window edge)
+          g.strokeStyle = COL_TRAIL
+          g.globalAlpha = Math.max(0.1, 1 - age * 0.85)      // older = fainter
+          g.beginPath(); g.moveTo(timeToX(prev.t), midiToY(prev.midi)); g.lineTo(x, y); g.stroke()
+        }
+        prev = { t: p.t, midi: p.midi }
+        lastVoiced = prev
+        trailPoints++
+      }
+      g.globalAlpha = 1
+      // Bright head dot at the most-recent voiced pitch.
+      if (lastVoiced) {
+        const x = timeToX(lastVoiced.t), y = midiToY(lastVoiced.midi)
+        g.fillStyle = COL_DOT
+        g.beginPath(); g.arc(x, y, 4.5, 0, Math.PI * 2); g.fill()
+        g.fillStyle = COL_ACCENT
+        g.beginPath(); g.arc(x, y, 2.2, 0, Math.PI * 2); g.fill()
+      }
+      // Playhead at the right edge (now).
+      g.strokeStyle = 'rgba(249,115,22,0.7)'
+      g.lineWidth = 1
+      g.beginPath(); g.moveTo(cssW - 0.5, 0); g.lineTo(cssW - 0.5, cssH); g.stroke()
+
+      vizStatsRef.current = { active: true, frames: ++frameCount, trailPoints, gridLines, metroOn, width: cssW, height: cssH }
+      vizRaf.current = requestAnimationFrame(draw)
+    }
+
+    vizStatsRef.current.active = true
+    vizRaf.current = requestAnimationFrame(draw)
+    return () => {
+      if (vizRaf.current) { cancelAnimationFrame(vizRaf.current); vizRaf.current = null }
+      vizStatsRef.current.active = false
+    }
+  }, [recording, metroOn])
+
   // ── Mic → real-time instrument + note capture ────────────────────────────────
   const onPitch = useCallback((r: LivePitchResult | null) => {
     const c = ctxRef.current
@@ -641,6 +815,9 @@ export default function VoiceMidi() {
     const now = c.currentTime - recStart.current
 
     const voiced = r !== null && r.confidence >= widgetTrigGate(paramsRef.current.confidenceGate)
+    // Feed the live scrolling viz on EVERY frame (not just note changes): absolute ctx time +
+    // fractional MIDI (with cents), or null so unvoiced gaps break the trail.
+    pitchTrailRef.current.push({ t: c.currentTime, midi: voiced && r ? r.midi + r.cents / 100 : null })
     if (voiced && r.midi !== liveMidi.current) {
       // Close the note that was sounding.
       const cur = curEvent.current
@@ -771,6 +948,8 @@ export default function VoiceMidi() {
     rawEvents.current = []
     curEvent.current = null
     liveMidi.current = null
+    pitchTrailRef.current = []
+    vizYCenterRef.current = null
     recStart.current = c.currentTime
     recStartPerfRef.current = (typeof performance !== 'undefined' ? performance.now() : Date.now())
     // ── Anchor the grid to this take ──────────────────────────────────────────
@@ -825,6 +1004,20 @@ export default function VoiceMidi() {
       setRecording(false)
     }
   }, [ensureCtx, onPitch, stopTest, onTestLevel])
+
+  // ── Beat-informed detection grid ─────────────────────────────────────────────
+  // The beatGrid PRIOR fed to the offline analysis — ONLY when the take was recorded to a
+  // click (recMetroOn), so rubato takes are never forced to a grid. Uses the same take BPM +
+  // PCM-referenced phase + Timing-offset the grid alignment uses, but at the 16th subdivision
+  // (the detection grid) regardless of the coarser user Quantize division. Returns undefined
+  // when the metronome was off / tempo is unusable → the analysis runs grid-free (unchanged).
+  const beatGridForTake = useCallback((): { bpm: number; phaseSec: number; subdiv: number } | undefined => {
+    if (!recMetroOnRef.current) return undefined
+    const bpm = recBpmRef.current
+    if (!(bpm > 0)) return undefined
+    const phaseSec = recPhaseRef.current + timingOffsetRef.current / 1000
+    return { bpm, phaseSec, subdiv: 4 }
+  }, [])
 
   // Apply an offline analysis to the UI: stash the debug curves + grid anchor, then
   // grid-conditional-align the notes and set the take views. Shared by the initial refine
@@ -884,6 +1077,7 @@ export default function VoiceMidi() {
         minDuration: minDurForSensitivity(sensitivityRef.current),
         sensitivity: sensitivityRef.current,
         segmenter: segmenterRef.current,
+        beatGrid: beatGridForTake(),
       }, setRefineProgress)
       applyAnalysis(analysis, liveTake?.length ?? 0)
     } catch {
@@ -891,7 +1085,7 @@ export default function VoiceMidi() {
     } finally {
       setRefining(false)
     }
-  }, [applyAnalysis, liveTake])
+  }, [applyAnalysis, liveTake, beatGridForTake])
 
   // Tracker toggle: persist the choice + mirror to the ref; re-analyze the last take on the
   // spot when its audio is available and we're not mid-record.
@@ -1005,6 +1199,7 @@ export default function VoiceMidi() {
         minDuration: minDurForSensitivity(sensitivityRef.current),
         sensitivity: sensitivityRef.current,
         segmenter: segmenterRef.current,
+        beatGrid: beatGridForTake(),
       }, setRefineProgress)
       // Grid-conditional align + set the take views + debug curves (shared with the toggle).
       applyAnalysis(analysis, liveNotes.length)
@@ -1013,7 +1208,7 @@ export default function VoiceMidi() {
     } finally {
       setRefining(false)
     }
-  }, [applyAnalysis])
+  }, [applyAnalysis, beatGridForTake])
 
   function toggleRecord() {
     if (recording) void stopRecording()
@@ -1402,6 +1597,7 @@ export default function VoiceMidi() {
     testDetectorRef.current?.stop()
     stopMetro()
     if (playRaf.current) cancelAnimationFrame(playRaf.current)
+    if (vizRaf.current) cancelAnimationFrame(vizRaf.current)
     playTimers.current.forEach(id => clearTimeout(id))
     playSourcesRef.current.forEach(src => { try { src.stop() } catch { /* ok */ } })
     try { playMasterRef.current?.disconnect() } catch { /* ok */ }
@@ -1620,6 +1816,21 @@ export default function VoiceMidi() {
               : <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Listening… sing or hum a melody</span>
           )}
         </div>
+        {/* Live scrolling pitch + beat-grid viz (recording only). Watch your pitch land on the
+            beat lines when the metronome is on. RAF-driven; torn down on stop. */}
+        {recording && (
+          <div style={{ marginTop: 10 }} data-testid="vm-live-viz-wrap">
+            <canvas
+              ref={vizCanvasRef}
+              data-testid="vm-live-viz"
+              aria-label="Live pitch and beat visualization"
+              style={{ width: '100%', height: 150, display: 'block', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-base)' }}
+            />
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '5px 0 0' }}>
+              {metroOn ? 'Sing so your pitch lands on the beat lines.' : 'Your pitch, scrolling in time — turn on the metronome to see the beat grid.'}
+            </p>
+          </div>
+        )}
         {micError && <p style={{ fontSize: 12, color: '#ef4444', margin: '4px 0 0' }}>{micError}</p>}
         {!recording && refining && (
           <p style={{ fontSize: 12, color: 'var(--accent-light)', margin: '6px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
