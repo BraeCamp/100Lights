@@ -56,6 +56,10 @@ Keep the `.p8`, Key ID, and Issuer ID somewhere safe — you'll paste them below
 Prereqs: Xcode installed + signed in (Xcode → Settings → Accounts → your Apple ID), and
 `bundle install` once in the repo.
 
+Credentials live in **`.env.local`** (the same gitignored file as the DB/R2/Stripe secrets) —
+the Fastfile auto-loads it, so there are no manual `export`s. `ASC_KEY_ID`, `ASC_KEY_PATH`, and
+`APPLE_TEAM_ID` are already filled (reused from Firefly); you only paste the **Issuer ID**.
+
 ```bash
 # 1. Pick the app (studio already targets https://100lights.com/m)
 npm run app:select -- studio
@@ -63,11 +67,8 @@ npm run app:select -- studio
 # 2. Generate the native iOS project from config
 npx cap add ios && npx cap sync ios && (cd ios/App && pod install)
 
-# 3. Point Fastlane at your API key, then ship to TestFlight
-export ASC_KEY_ID=XXXXXXXXXX
-export ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-export ASC_KEY_PATH=/absolute/path/to/AuthKey_XXXXXXXXXX.p8
-export APPLE_TEAM_ID=YOURTEAMID          # 10 chars, from the Developer Portal
+# 3. In .env.local, set ASC_ISSUER_ID=<App Store Connect → Users and Access → Integrations → Issuer ID>
+#    then ship to TestFlight (Fastlane reads .env.local automatically):
 npm run beta
 ```
 

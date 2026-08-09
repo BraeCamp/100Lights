@@ -11,6 +11,16 @@
 
 default_platform(:ios)
 
+# Load the repo's gitignored secret store so `npm run beta` needs no manual exports — the same
+# .env.local that holds the DB/R2/Stripe creds now also carries ASC_KEY_ID / ASC_ISSUER_ID /
+# ASC_KEY_PATH / APPLE_TEAM_ID. Missing file (e.g. on CI, which injects env via secrets) is a
+# no-op; real env vars already set always win over the file.
+env_local = File.expand_path('../.env.local', __dir__)
+if File.exist?(env_local)
+  require 'dotenv'
+  Dotenv.load(env_local)
+end
+
 WORKSPACE = 'ios/App/App.xcworkspace'.freeze
 
 platform :ios do
