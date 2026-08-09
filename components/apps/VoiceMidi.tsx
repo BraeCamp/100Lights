@@ -76,6 +76,11 @@ const SENS_KEY = 'voicemidi-sensitivity'
 const DEFAULT_SENS = 0.5
 // Persisted "Show detected pitch (debug)" overlay preference.
 const DEBUG_KEY = 'voicemidi-debug'
+// Persisted note-segmenter choice for the offline refine pass. Default matches the code
+// default in lib/voice-backfill (DEFAULT_SEGMENTER = 'hmm', the A/B winner).
+const SEGMENTER_KEY = 'voicemidi-segmenter'
+type Segmenter = 'onset' | 'hmm'
+const DEFAULT_SEGMENTER: Segmenter = 'hmm'
 function paramsForSensitivity(s: number): Required<LiveSensitivity> {
   const t = clamp(s, 0, 1)
   return {
@@ -109,14 +114,11 @@ export function quantizeNotes(notes: RecNote[], bpm: number, division: number): 
   }))
 }
 
-// ── Backfill: decode a recorded blob → refined notes ──────────────────────────
-// Browser-only glue (decode + stereo downmix); the actual pitch→note analysis is
-// the pure, testable notesFromBuffer() in lib/voice-backfill.ts.
-async function backfillFromBlob(
-  blob: Blob,
-  params: Required<LiveSensitivity>,
-  onProgress?: (frac: number) => void,
-): Promise<BufferAnalysis> {
+// ── Backfill: decode a recorded blob → mono PCM ───────────────────────────────
+// Browser-only glue (decode + stereo downmix). The actual pitch→note analysis is
+// the pure, testable analyzeBufferAsync() in lib/voice-backfill.ts, run by the caller
+// so the SAME mono buffer can be re-analyzed with a different segmenter (A/B toggle).
+async function decodeBlobToMono(blob: Blob): Promise<{ samples: Float32Array; sampleRate: number }> {
   const arr = await blob.arrayBuffer()
   const ac = new AudioContext()
   try {
@@ -134,16 +136,7 @@ async function backfillFromBlob(
         for (let i = 0; i < n; i++) mono[i] += data[i] / ch
       }
     }
-    // Mirror the live signal chain: the MediaRecorder captured the RAW pre-gain
-    // mic stream, so re-apply the user's sensitivity gain + RMS gate offline.
-    // Async + downsampled: keeps the UI responsive and drives a real progress %.
-    // analyzeBufferAsync returns the notes AND the pitch curves (raw + corrected)
-    // so the debug view can overlay what the detector heard against what it wrote.
-    return analyzeBufferAsync(mono, audio.sampleRate, {
-      gain: params.gain,
-      rmsGate: params.rmsGate,
-      minDuration: 0.08,
-    }, onProgress)
+    return { samples: mono, sampleRate: audio.sampleRate }
   } finally {
     void ac.close()
   }
@@ -204,6 +197,15 @@ export default function VoiceMidi() {
   const [takeBpm, setTakeBpm] = useState<number | null>(null)
   const [takePhase, setTakePhase] = useState(0)
   const [showDebug, setShowDebug] = useState(false)
+
+  // ── Note segmenter (A/B: HMM vs onset) ───────────────────────────────────────
+  // Which offline note segmenter the refine pass uses. Persisted; default = the code
+  // default 'hmm'. A ref mirrors it so the record→refine flow (deps []) reads the live
+  // value, and lastAudioRef stashes the last take's mono PCM so flipping the toggle can
+  // re-analyze the SAME performance under the other segmenter (live A/B with the overlay).
+  const [segmenter, setSegmenter] = useState<Segmenter>(DEFAULT_SEGMENTER)
+  const segmenterRef = useRef<Segmenter>(DEFAULT_SEGMENTER)
+  const lastAudioRef = useRef<{ samples: Float32Array; sampleRate: number } | null>(null)
 
   // ── Test / calibrate ─────────────────────────────────────────────────────────
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENS)
@@ -274,7 +276,11 @@ export default function VoiceMidi() {
       __voiceConditionalGridAlign?: typeof conditionalGridAlign
       __VoiceLivePitchDetector?: typeof LivePitchDetector
       __voiceSampleProbe?: (folder: string, midi: number) => Promise<unknown>
+      __voiceGetSegmenter?: () => Segmenter
     }
+    // Report the current in-app segmenter choice so a headless page can confirm the
+    // toggle's persisted default and that flipping it takes effect.
+    w.__voiceGetSegmenter = () => segmenterRef.current
     w.__voiceBackfill = notesFromBuffer
     w.__voiceBackfillAsync = notesFromBufferAsync
     w.__voiceAnalyzeBuffer = analyzeBuffer
@@ -311,13 +317,21 @@ export default function VoiceMidi() {
       delete w.__voiceAnalyzeBuffer; delete w.__voiceAnalyzeBufferAsync
       delete w.__voiceBuildPitchCurve; delete w.__voiceAlignToGrid
       delete w.__voiceConditionalGridAlign; delete w.__VoiceLivePitchDetector
-      delete w.__voiceSampleProbe
+      delete w.__voiceSampleProbe; delete w.__voiceGetSegmenter
     }
   }, [])
 
   // Restore the persisted "Show detected pitch" debug preference (off by default).
   useEffect(() => {
     try { setShowDebug(localStorage.getItem(DEBUG_KEY) === '1') } catch { /* ignore */ }
+  }, [])
+
+  // Restore the persisted note-segmenter choice (default = the code default 'hmm').
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem(SEGMENTER_KEY)
+      if (s === 'onset' || s === 'hmm') { setSegmenter(s); segmenterRef.current = s }
+    } catch { /* ignore */ }
   }, [])
   const toggleDebug = useCallback(() => {
     setShowDebug(v => {
@@ -668,6 +682,69 @@ export default function VoiceMidi() {
     }
   }, [ensureCtx, onPitch, stopTest, onTestLevel])
 
+  // Apply an offline analysis to the UI: stash the debug curves + grid anchor, then
+  // grid-conditional-align the notes and set the take views. Shared by the initial refine
+  // (stopRecording) and the segmenter-toggle re-analyze, so both render identically.
+  const applyAnalysis = useCallback((analysis: BufferAnalysis, liveLen: number) => {
+    setCurve(analysis.curve)
+    setRawCurve(analysis.rawCurve)
+    setOnsets(analysis.onsets ?? null)
+    setFlux(analysis.flux ?? null)
+    setClarity(analysis.clarity ?? null)
+    setTakeBpm(recBpmRef.current)
+    setTakePhase(recPhaseRef.current)
+    const refinedRaw = analysis.notes
+    const tag = segmenterRef.current === 'hmm' ? 'HMM' : 'Onset'
+    if (refinedRaw.length > 0) {
+      const { refined, rawRefined, aligned } = conditionalGridAlign(
+        refinedRaw,
+        recMetroOnRef.current,
+        { bpm: recBpmRef.current, phaseSec: recPhaseRef.current, division: divisionRef.current },
+      )
+      setRefinedRawTake(rawRefined)
+      setRefinedTake(refined)
+      setRawNotes(refined)
+      setTakeSource('refined')
+      setRefineMsg(`Refined · ${tag} — ${refined.length} note${refined.length === 1 ? '' : 's'}${aligned ? ', grid-aligned' : ''}`)
+    } else {
+      setRefinedRawTake(null)
+      setRefinedTake(null)
+      setRefineMsg(liveLen > 0 ? `Kept live take — ${tag} refine found no clear notes` : 'No pitched notes found')
+    }
+  }, [])
+
+  // Re-run the offline refine on the LAST take's stashed audio with the current segmenter,
+  // so flipping the Tracker toggle compares HMM vs onset on the same real performance.
+  const rerunSegmenter = useCallback(async () => {
+    const audio = lastAudioRef.current
+    if (!audio) return
+    setRefining(true)
+    setRefineProgress(0)
+    setRefineMsg(null)
+    try {
+      const analysis = await analyzeBufferAsync(audio.samples, audio.sampleRate, {
+        gain: paramsRef.current.gain,
+        rmsGate: paramsRef.current.rmsGate,
+        minDuration: 0.08,
+        segmenter: segmenterRef.current,
+      }, setRefineProgress)
+      applyAnalysis(analysis, liveTake?.length ?? 0)
+    } catch {
+      setRefineMsg('Re-analyze failed')
+    } finally {
+      setRefining(false)
+    }
+  }, [applyAnalysis, liveTake])
+
+  // Tracker toggle: persist the choice + mirror to the ref; re-analyze the last take on the
+  // spot when its audio is available and we're not mid-record.
+  const onSegmenterChange = useCallback((seg: Segmenter) => {
+    setSegmenter(seg)
+    segmenterRef.current = seg
+    try { localStorage.setItem(SEGMENTER_KEY, seg) } catch { /* ignore */ }
+    if (lastAudioRef.current && !recording && !refining) void rerunSegmenter()
+  }, [recording, refining, rerunSegmenter])
+
   const stopRecording = useCallback(async () => {
     const det = detectorRef.current
     detectorRef.current = null
@@ -701,17 +778,14 @@ export default function VoiceMidi() {
       // SAME audio the live detector heard. The old path decoded a lossy Opus blob,
       // which handicapped offline detection below the live quality. Fall back to the
       // blob only when PCM capture is unavailable on this browser.
-      let analysis: BufferAnalysis
+      // Obtain the mono PCM to analyze: prefer lossless PCM, else decode the blob. We stash
+      // it (lastAudioRef) so the Tracker toggle can re-analyze the SAME audio under the other
+      // segmenter. The offline segmenter is chosen by segmenterRef (the in-app Tracker toggle).
+      let src: { samples: Float32Array; sampleRate: number } | null = null
       const pcm = det.stopAndGetPcm()
       if (pcm && pcm.samples.length > 0) {
         det.stop()   // done with the mic; we already hold the lossless PCM
-        // The ScriptProcessor tapped the PRE-gain source (like MediaRecorder), so
-        // re-apply the user's sensitivity gain + RMS gate offline — same as the blob path.
-        analysis = await analyzeBufferAsync(pcm.samples, pcm.sampleRate, {
-          gain: paramsRef.current.gain,
-          rmsGate: paramsRef.current.rmsGate,
-          minDuration: 0.08,
-        }, setRefineProgress)
+        src = { samples: pcm.samples, sampleRate: pcm.sampleRate }
       } else {
         const blob = await det.stopAndGetAudio()
         if (!blob) {
@@ -719,50 +793,26 @@ export default function VoiceMidi() {
           setRefineMsg('Live take — refine not supported in this browser')
           return
         }
-        analysis = await backfillFromBlob(blob, paramsRef.current, setRefineProgress)
+        src = await decodeBlobToMono(blob)
       }
-      const refinedRaw = analysis.notes
-      // Stash the pitch curves + this take's grid anchor for the debug overlay.
-      // (These describe the recorded audio, so they apply to whichever take view is
-      // shown — live/refined/raw all come from the same performance.)
-      setCurve(analysis.curve)
-      setRawCurve(analysis.rawCurve)
-      setOnsets(analysis.onsets ?? null)
-      setFlux(analysis.flux ?? null)
-      setClarity(analysis.clarity ?? null)
-      setTakeBpm(recBpmRef.current)
-      setTakePhase(recPhaseRef.current)
-      if (refinedRaw.length > 0) {
-        // Grid-correct the offline onsets ONLY when a click was actually running.
-        // Sung to a metronome, the true onsets lie on the grid the singer heard, so
-        // alignToGrid confirms/corrects toward it. With NO metronome the phase is
-        // arbitrary, so snapping would displace notes onto meaningless beat lines —
-        // conditionalGridAlign keeps the real onsets instead. (Manual Quantize still
-        // works for deliberate snapping.)
-        const { refined, rawRefined, aligned } = conditionalGridAlign(
-          refinedRaw,
-          recMetroOnRef.current,
-          { bpm: recBpmRef.current, phaseSec: recPhaseRef.current, division: divisionRef.current },
-        )
-        setRefinedRawTake(rawRefined)       // un-aligned view, only when a click was used
-        setRefinedTake(refined)             // the default "Refined" take
-        setRawNotes(refined)
-        setTakeSource('refined')
-        setRefineMsg(`Refined — ${refined.length} note${refined.length === 1 ? '' : 's'}${aligned ? ', grid-aligned' : ''}`)
-      } else {
-        // Backfill found nothing — never make the take worse silently.
-        setRefineMsg(
-          liveNotes.length > 0
-            ? 'Kept live take — refine found no clear notes'
-            : 'No pitched notes found',
-        )
-      }
+      lastAudioRef.current = src
+      // The ScriptProcessor / MediaRecorder tapped the PRE-gain source, so re-apply the
+      // user's sensitivity gain + RMS gate offline. analyzeBufferAsync returns the notes AND
+      // the pitch curves (raw + corrected) + onset/flux/clarity for the debug overlay.
+      const analysis = await analyzeBufferAsync(src.samples, src.sampleRate, {
+        gain: paramsRef.current.gain,
+        rmsGate: paramsRef.current.rmsGate,
+        minDuration: 0.08,
+        segmenter: segmenterRef.current,
+      }, setRefineProgress)
+      // Grid-conditional align + set the take views + debug curves (shared with the toggle).
+      applyAnalysis(analysis, liveNotes.length)
     } catch {
       setRefineMsg('Kept live take — refine failed')
     } finally {
       setRefining(false)
     }
-  }, [])
+  }, [applyAnalysis])
 
   function toggleRecord() {
     if (recording) void stopRecording()
@@ -1170,7 +1220,31 @@ export default function VoiceMidi() {
       {/* Note strip + take controls */}
       {hasTake && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+            {/* Tracker (note segmenter) A/B toggle — re-runs the refine on the last take. */}
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}
+              title="Note segmenter used by the offline refine. HMM = note-level Viterbi tracker (default, best on vibrato/noisy pitch); Onset = onset-aware segmenter. Flipping re-analyzes the last take."
+            >
+              <span style={{ letterSpacing: '0.06em', textTransform: 'uppercase' }}>Tracker</span>
+              <div style={{ display: 'flex', gap: 3, padding: 2, borderRadius: 7, border: '1px solid var(--border)' }}>
+                {(['hmm', 'onset'] as Segmenter[]).map(s => (
+                  <button
+                    key={s}
+                    onClick={() => onSegmenterChange(s)}
+                    disabled={refining}
+                    data-testid={`vm-tracker-${s}`}
+                    aria-pressed={segmenter === s}
+                    style={{
+                      padding: '4px 9px', borderRadius: 5, fontSize: 11, fontWeight: 700,
+                      cursor: refining ? 'default' : 'pointer', border: 'none',
+                      background: segmenter === s ? 'var(--accent)' : 'transparent',
+                      color: segmenter === s ? '#fff' : 'var(--text-muted)',
+                    }}
+                  >{s === 'hmm' ? 'HMM' : 'Onset'}</button>
+                ))}
+              </div>
+            </div>
             <label
               style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}
               title="Overlay the raw per-frame pitch the detector heard against the notes it wrote"

@@ -128,7 +128,11 @@ const offline = await page.evaluate(() => {
     return render(start + dur + 0.05, freqAt, ampAt)
   }
 
-  const analyze = (buf, opts) => window.__voiceAnalyzeBuffer(buf, SR, { minDuration: 0.08, ...opts }).notes
+  // These cases validate the ONSET-AWARE path's features (tail, adaptive window, existence
+  // gate, volume valleys, re-articulation) so pin segmenter:'onset' — the default is now
+  // 'hmm' (see scripts/verify-voice-segmenter-ab.mjs for the onset-vs-hmm A/B). opts can
+  // still override the segmenter per-case.
+  const analyze = (buf, opts) => window.__voiceAnalyzeBuffer(buf, SR, { minDuration: 0.08, segmenter: 'onset', ...opts }).notes
   const seq = notes => notes.map(n => n.midi)
   const uniqSorted = a => [...new Set(a)].sort((x, y) => x - y)
   // ordered contour equality within ±1 (dedupe consecutive equals first)
@@ -277,7 +281,7 @@ const offline = await page.evaluate(() => {
     const total = notes[notes.length - 1].start + notes[notes.length - 1].dur
     const buf = renderMelody(notes, total)
     const t0 = performance.now()
-    const n = window.__voiceAnalyzeBuffer(buf, SR, { minDuration: 0.08 }).notes.length
+    const n = window.__voiceAnalyzeBuffer(buf, SR, { minDuration: 0.08, segmenter: 'onset' }).notes.length
     const ms = performance.now() - t0
     results.timing = { bufferSec: +total.toFixed(1), ms: +ms.toFixed(1), notes: n }
   }
@@ -295,7 +299,7 @@ async function livePass(reconstructTail) {
     const pcm = det.stopAndGetPcm({ reconstructTail })
     det.stop()
     if (!pcm) return { ok: false }
-    const analysis = await window.__voiceAnalyzeBufferAsync(pcm.samples, pcm.sampleRate, { gain: 1, rmsGate: 0.006, minDuration: 0.08 })
+    const analysis = await window.__voiceAnalyzeBufferAsync(pcm.samples, pcm.sampleRate, { gain: 1, rmsGate: 0.006, minDuration: 0.08, segmenter: 'onset' })
     return {
       ok: true,
       length: pcm.samples.length, sampleRate: pcm.sampleRate,

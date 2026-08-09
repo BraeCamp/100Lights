@@ -23,6 +23,9 @@ import {
   type PitchFrame,
   type NoteEvent,
 } from '@/lib/pitch-detector'
+// Note-level HMM / Viterbi tracker — the alternative note SEGMENTER (A/B winner, default).
+// PURE module (no DOM/audio/deps); we feed it mapped FeatureFrame→HmmFrame observations.
+import { trackNotesHMM, type HmmFrame } from '@/lib/voice-hmm'
 // Reuse the existing radix-2 FFT (no new dep) for per-window spectral flux.
 import { fft } from '@/scripts/listen-analyzer.mjs'
 
@@ -114,8 +117,24 @@ export interface BackfillOptions {
   /** Use the ONSET-AWARE segmenter (combine spectral-flux/energy onsets WITH the pitch
    *  rule) instead of the pitch-only baseline. This is what recovers RE-ARTICULATIONS —
    *  the same/adjacent pitch sung again with no gap, which pitch-alone merges into one
-   *  note. Default true. Pass false to A/B against the pure pitch-only segmentation. */
+   *  note. Default true. Pass false to A/B against the pure pitch-only segmentation.
+   *  IGNORED when `segmenter` is 'hmm' (the HMM path has its own re-articulation model),
+   *  but the flux/onset EVIDENCE is still detected & returned for the debug overlay. */
   useOnsets?:      boolean
+
+  /** Which NOTE SEGMENTER turns the refined pitch/feature track into discrete notes:
+   *   · 'onset' — the hand-tuned onset-aware segmenter (segmentWithOnsets): pitch-rule +
+   *               flux/energy onsets + volume valleys/existence gate. The prior default.
+   *   · 'hmm'   — the note-level Viterbi tracker (lib/voice-hmm trackNotesHMM) over the
+   *               mapped FeatureFrame→HmmFrame observations: joint most-likely note
+   *               sequence (bounded pitch emission smooths noisy/breathy frames, self-loop
+   *               holds vibrato, onset-gated attack sub-state splits re-articulations,
+   *               auto global-tuning). It decides each note's pitch itself, so the
+   *               attack-scoop re-pitch pass is redundant on this path (see HMM_REPITCH).
+   *  Default 'hmm' — the A/B winner (see scripts/verify-voice-segmenter-ab.mjs): equal or
+   *  better on noisy/breathy pitch, re-articulation, adjacent steps, low scale, tail, held,
+   *  scoop, and contour, with no regression on quick notes. */
+  segmenter?:      'onset' | 'hmm'
   /** Onset peak-pick sensitivity, 0→1. Maps to the adaptive threshold k = mean + k·std
    *  over a local flux window: HIGHER sensitivity ⇒ lower k ⇒ more onsets detected (more
    *  splits); lower ⇒ stricter (fewer). Default 0.5. */
@@ -194,6 +213,30 @@ const DEFAULT_VALLEY_DEPTH     = 0.22
 const DEFAULT_EXIST_FRAC       = 0.12
 // Cap on the FFT size used for the per-window spectral-flux (perf; power of 2).
 const FLUX_MAX_FFT             = 2048
+// ── Note segmenter (Problem: onset-aware vs HMM) ────────────────────────────────
+// Default note segmenter. 'hmm' won the A/B (scripts/verify-voice-segmenter-ab.mjs):
+// equal-or-better on the noisy/breathy, re-articulation, adjacent, low-scale, tail,
+// held, scoop, and contour cases with no quick-note regression.
+const DEFAULT_SEGMENTER: 'onset' | 'hmm' = 'hmm'
+// Flux → HMM onset normalization. The onset CHANNEL fed to trackNotesHMM carries the SAME
+// energy-corroborated onset frames the onset-aware path detects (detectOnsetFrames + volume
+// valleys): those frames get onset 1.0 (the HMM's re-articulation gate needs onset ≳ 0.93,
+// so a corroborated attack fires a re-articulation split). NON-onset frames get a small flux-
+// derived value CAPPED below that gate (HMM_ONSET_FLOOR) — enough to give a real note change a
+// mild transition bonus, but never enough to re-articulate on raw flux alone. This is what
+// keeps a wobble/pitch-jitter frame (which spikes flux WITHOUT an energy attack) from
+// fragmenting a held note: only true, energy-backed re-hits split. HMM_ONSET_SAT sets the
+// flux value that maps to the floor cap (attacks ≥ this fraction of peak flux reach the cap).
+const HMM_ONSET_SAT = 0.5
+// Cap on the onset value of a NON-corroborated (raw-flux-only) frame — kept below the HMM's
+// re-articulation gate so wobble/jitter flux can't spawn spurious notes; corroborated onset
+// frames still get a full 1.0. Also the ceiling for the note-change transition bonus off flux.
+const HMM_ONSET_FLOOR = 0.5
+// Re-pitch on the HMM path? The Viterbi tracker already assigns each note its own tuned
+// pitch (auto global-tuning + bounded emission absorb the attack scoop), so the extra
+// re-pitch-from-stable-portion pass is redundant here — verified on the scoop case (HMM
+// nails 61→60 = 60 without it). Left false; the 'onset' path keeps re-pitch as before.
+const HMM_REPITCH = false
 // Spectral flux is summed into this many linear frequency BANDS before differencing.
 // Band-summing averages out the per-bin leakage jitter a steady tone otherwise shows
 // (which made a held note's raw per-bin flux spike erratically), so a sustained note
@@ -849,10 +892,58 @@ function segmentWithOnsets(
   return events
 }
 
+// ── HMM segmenter path (lib/voice-hmm) ─────────────────────────────────────────
+/**
+ * Map a refined FeatureFrame[] → HmmFrame[] for the note-level Viterbi tracker.
+ *
+ * Per the module author's integration note:
+ *   time  → time (frames are evenly spaced at the hop)
+ *   midi  → FRACTIONAL pitch 69+12·log2(freq/440) (not the semitone-rounded `midi`), null
+ *           when unvoiced. We take it from the OCTAVE-CORRECTED curve's freq, so the
+ *           harmonic octave jumps the refine already folded don't reach the decoder.
+ *   conf  → clarity (YIN confidence, 0 when unvoiced)
+ *   onset → flux normalized to 0–1, SATURATED at HMM_ONSET_SAT·peak so real attacks land
+ *           ~1.0 (see HMM_ONSET_SAT) and the onset-gated re-articulation split fires
+ *   energy→ rms normalized 0–1 by the take's peak rms (silence ⇒ ~0 ⇒ silence state wins)
+ */
+function curveToHmmFrames(curve: FeatureFrame[], onsetSet: Set<number>): HmmFrame[] {
+  let fluxMax = 1e-9, rmsPeak = 1e-9
+  for (const f of curve) {
+    if (f.flux > fluxMax) fluxMax = f.flux
+    if (f.rms  > rmsPeak) rmsPeak = f.rms
+  }
+  const fluxSat = Math.max(1e-9, HMM_ONSET_SAT * fluxMax)
+  return curve.map((f, i) => ({
+    time:   f.time,
+    midi:   (f.freq !== null && f.freq > 0) ? 69 + 12 * Math.log2(f.freq / 440) : null,
+    conf:   f.clarity,
+    // Corroborated onset frame ⇒ full 1.0 (fires re-articulation); otherwise a small
+    // flux-derived value capped below the re-artic gate (raw flux alone can't split).
+    onset:  onsetSet.has(i) ? 1 : Math.min(HMM_ONSET_FLOOR, f.flux / fluxSat),
+    energy: Math.min(1, f.rms / rmsPeak),
+  }))
+}
+
+// Segment via the note-level HMM: map → trackNotesHMM → BackfillNote shape. `onsetSet` is
+// the energy-corroborated onset/valley frame set from the onset-aware path, reused as the
+// HMM's re-articulation trigger. minDuration is passed through as the HMM's minDurationSec
+// so both paths honour the same floor.
+function segmentWithHmm(curve: FeatureFrame[], minDuration: number, onsetSet: Set<number>): BackfillNote[] {
+  if (curve.length < 2) return []
+  const notes = trackNotesHMM(curveToHmmFrames(curve, onsetSet), { minDurationSec: minDuration })
+  return notes.map(n => ({
+    startSec: n.startSec,
+    midi:     n.midi,
+    durSec:   Math.max(minDuration, n.durSec),
+    velocity: clamp(n.velocity, 0.3, 1),
+  }))
+}
+
 // Shared tail of the offline pass: refine the raw feature track, detect onsets, segment
-// (onset-aware or pitch-only baseline per opts.useOnsets), re-pitch, and package the
-// analysis WITH the onset/flux/clarity evidence for the debug overlay. Both the sync and
-// async entries build the rawCurve (differing only in yielding) then delegate here.
+// (HMM / onset-aware / pitch-only baseline per opts.segmenter+opts.useOnsets), re-pitch,
+// and package the analysis WITH the onset/flux/clarity evidence for the debug overlay.
+// Both the sync and async entries build the rawCurve (differing only in yielding) then
+// delegate here.
 function finalizeAnalysis(
   rawCurve: FeatureFrame[],
   opts: BackfillOptions,
@@ -861,25 +952,42 @@ function finalizeAnalysis(
   octR: number,
 ): BufferAnalysis {
   const curve = refinePitchTrack(rawCurve, rMed, octR)
+  const segmenter = opts.segmenter ?? DEFAULT_SEGMENTER
   const useOnsets = opts.useOnsets !== false
   const useVolume = opts.useVolumeCues !== false
+  // The HMM path reuses the SAME corroborated onset/valley evidence as its re-articulation
+  // trigger, so detect onsets whenever EITHER path needs them.
+  const wantOnsets = useOnsets || segmenter === 'hmm'
   const hopSec = curve.length > 1 ? Math.max(1e-4, curve[1].time - curve[0].time) : (opts.hopSec ?? DEFAULT_HOP_SEC)
   const sens = clamp(opts.onsetSensitivity ?? DEFAULT_ONSET_SENS, 0, 1)
-  const onsetIdx = useOnsets ? detectOnsetFrames(curve, hopSec, sens) : []
+  const onsetIdx = wantOnsets ? detectOnsetFrames(curve, hopSec, sens) : []
   // Volume-valley boundaries (Problem 3): merged with the flux onsets into one ascending
-  // split set so a legato swell-scale segments per swell. Only on the onset-aware path.
-  const valleyIdx = (useOnsets && useVolume)
+  // split set so a legato swell-scale segments per swell. Active on the onset-aware AND HMM
+  // paths (both use it: the onset path to split, the HMM path as a re-articulation trigger).
+  const valleyIdx = (wantOnsets && useVolume)
     ? detectVolumeValleys(curve, hopSec, minDuration, opts.volumeValleyDepth ?? DEFAULT_VALLEY_DEPTH)
     : []
-  const splitIdx = useOnsets
+  const splitIdx = wantOnsets
     ? Array.from(new Set([...onsetIdx, ...valleyIdx])).sort((a, b) => a - b)
     : []
   const existFrac = Math.max(0, opts.volumeExistFrac ?? DEFAULT_EXIST_FRAC)
-  const events = useOnsets
-    ? segmentWithOnsets(curve, splitIdx, minDuration, useVolume, existFrac)
-    : extractNoteEvents(curve, minDuration)
-  let notes = eventsToNotes(events, minDuration)
-  if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
+  let notes: BackfillNote[]
+  if (segmenter === 'hmm') {
+    // Note-level Viterbi: it decides each note's pitch itself (auto-tuning + bounded
+    // emission absorb the attack scoop), so re-pitch is redundant here — default OFF
+    // (HMM_REPITCH); pass repitch:true explicitly to force it on for A/B. The corroborated
+    // onset/valley frames (splitIdx) are the HMM's re-articulation triggers.
+    notes = segmentWithHmm(curve, minDuration, new Set(splitIdx))
+    if (opts.repitch === true || (opts.repitch !== false && HMM_REPITCH)) {
+      notes = repitchNotes(notes, curve, opts)
+    }
+  } else {
+    const events = useOnsets
+      ? segmentWithOnsets(curve, splitIdx, minDuration, useVolume, existFrac)
+      : extractNoteEvents(curve, minDuration)
+    notes = eventsToNotes(events, minDuration)
+    if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
+  }
 
   let fluxMax = 1e-9
   for (const f of curve) if (f.flux > fluxMax) fluxMax = f.flux
