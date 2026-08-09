@@ -41,6 +41,10 @@ export interface DrumKit {
   name: string
   desc: string
   instrument: TrackInstrument
+  /** Synth VOICE timbres (BeatMaker / Firefly synth playback): distinct kick(pack)/snare/hat per
+   *  kit so kits differ in character, not just per-pad volume/pitch. The sample-based studio path
+   *  ignores this. snare: 'acoustic'|'tight'|'fat'; hat: 'normal'|'tight'|'loose'. */
+  voices?: { snare?: 'acoustic' | 'tight' | 'fat'; hat?: 'normal' | 'tight' | 'loose' }
   builtIn?: boolean    // seeded kit — can't be deleted
   createdAt?: string
 }
@@ -50,31 +54,33 @@ const d = (volume = 0.8, pitch = 0, pan = 0): DrumPadSettings => ({ volume, pitc
 
 // Pitches used below: 36 kick · 38 snare · 39 clap · 42 closed hat · 46 open hat
 // · 49 crash · 41/45/48 toms · 51 rim.
+// Curated to 8 kits that sound genuinely DISTINCT — each combines a kick pack (synth vs 808),
+// a snare timbre, and a hat timbre (the `voices` field), not just per-pad volume/pitch tweaks.
 export const DRUM_KITS: DrumKit[] = [
   { id: 'studio',   name: 'Studio',    desc: 'Clean, balanced acoustic kit',
-    instrument: { type: 'drum', params: { pack: 'synth' } } },
-  { id: 'boombap',  name: 'Boom Bap',  desc: 'Punchy dusty hip-hop kit',
-    instrument: { type: 'drum', params: { pack: 'synth', pads: { 36: d(0.95, -2), 38: d(0.9, -1), 42: d(0.6) } } } },
-  { id: 'trap808',  name: '808 Trap',  desc: 'Deep 808 sub kick, crisp snare',
-    instrument: { type: 'drum', params: { pack: '808', pads: { 36: d(0.95, -4), 38: d(0.85, 1), 42: d(0.6) } } } },
-  { id: 'traphard', name: 'Trap Hard', desc: 'Very deep sub, tight tops',
-    instrument: { type: 'drum', params: { pack: '808', pads: { 36: d(1, -7), 38: d(0.8, 2), 42: d(0.55) } } } },
-  { id: 'drill',    name: 'Drill',     desc: 'Sliding sub, sparse and dark',
-    instrument: { type: 'drum', params: { pack: '808', pads: { 36: d(0.95, -5), 38: d(0.8), 42: d(0.5) } } } },
-  { id: 'house',    name: 'House',     desc: 'Four-on-the-floor, bright hats',
-    instrument: { type: 'drum', params: { pack: 'synth', pads: { 36: d(0.9), 46: d(0.85, 2), 39: d(0.8) } } } },
-  { id: 'techno',   name: 'Techno',    desc: 'Hard kick, minimal and driving',
-    instrument: { type: 'drum', params: { pack: '808', pads: { 36: d(1, -1), 42: d(0.55), 38: d(0.7) } } } },
-  { id: 'disco',    name: 'Disco',     desc: 'Open hats and claps up front',
-    instrument: { type: 'drum', params: { pack: 'synth', pads: { 46: d(0.95, 3), 39: d(0.9), 42: d(0.75) } } } },
-  { id: 'rock',     name: 'Rock',      desc: 'Loud snare and kick, big toms',
-    instrument: { type: 'drum', params: { pack: 'synth', pads: { 36: d(1, -1), 38: d(1), 48: d(0.9), 45: d(0.9), 41: d(0.9) } } } },
-  { id: 'pop',      name: 'Pop',       desc: 'Balanced with an emphasised clap',
-    instrument: { type: 'drum', params: { pack: 'synth', pads: { 39: d(0.95), 38: d(0.85), 42: d(0.7) } } } },
+    instrument: { type: 'drum', params: { pack: 'synth' } },
+    voices: { snare: 'acoustic', hat: 'normal' } },
+  { id: 'boombap',  name: 'Boom Bap',  desc: 'Dusty hip-hop — fat snare, loose hats',
+    instrument: { type: 'drum', params: { pack: 'synth', pads: { 36: d(0.98, -3), 38: d(0.9, -2), 42: d(0.6) } } },
+    voices: { snare: 'fat', hat: 'loose' } },
+  { id: 'rock',     name: 'Rock',      desc: 'Big room — loud tight snare + toms',
+    instrument: { type: 'drum', params: { pack: 'synth', pads: { 36: d(1, -1), 38: d(1, 1), 48: d(0.9), 45: d(0.9), 41: d(0.9) } } },
+    voices: { snare: 'tight', hat: 'normal' } },
+  { id: 'pop',      name: 'Pop',       desc: 'Balanced, clap-forward, crisp tops',
+    instrument: { type: 'drum', params: { pack: 'synth', pads: { 39: d(0.95), 38: d(0.85), 42: d(0.72) } } },
+    voices: { snare: 'acoustic', hat: 'tight' } },
+  { id: 'house',    name: 'House',     desc: 'Four-on-the-floor, open hats + claps',
+    instrument: { type: 'drum', params: { pack: 'synth', pads: { 36: d(0.95), 46: d(0.9, 2), 39: d(0.85), 42: d(0.7) } } },
+    voices: { snare: 'tight', hat: 'tight' } },
   { id: 'lofi',     name: 'Lo-Fi',     desc: 'Soft, dark, laid-back',
-    instrument: { type: 'drum', params: { pack: 'synth', pads: { 36: d(0.8, -3), 38: d(0.7, -2), 42: d(0.45), 46: d(0.5) } } } },
-  { id: 'minimal',  name: 'Minimal',   desc: 'Tight and quiet, room to breathe',
-    instrument: { type: 'drum', params: { pack: '808', pads: { 36: d(0.85, -2), 38: d(0.65), 42: d(0.4) } } } },
+    instrument: { type: 'drum', params: { pack: 'synth', pads: { 36: d(0.78, -4), 38: d(0.68, -3), 42: d(0.42), 46: d(0.5) } } },
+    voices: { snare: 'fat', hat: 'loose' } },
+  { id: 'trap808',  name: '808 Trap',  desc: 'Deep 808 sub kick, bright snare, tight hats',
+    instrument: { type: 'drum', params: { pack: '808', pads: { 36: d(0.98, -4), 38: d(0.85, 2), 42: d(0.6) } } },
+    voices: { snare: 'tight', hat: 'tight' } },
+  { id: 'techno',   name: 'Techno',    desc: 'Hard driving 808 kick, raw and minimal',
+    instrument: { type: 'drum', params: { pack: '808', pads: { 36: d(1, -1), 42: d(0.55), 38: d(0.7) } } },
+    voices: { snare: 'acoustic', hat: 'normal' } },
 ]
 
 export const DEFAULT_KIT = DRUM_KITS[0]

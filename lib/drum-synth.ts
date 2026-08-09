@@ -21,27 +21,37 @@ export function synthKick(sampleRate: number): Float32Array {
 }
 
 // ── Snare ─────────────────────────────────────────────────────────────────
-// White noise (crack) + low sine body, one-pole highpass for brightness.
-export function synthSnare(sampleRate: number): Float32Array {
-  const n = Math.floor(sampleRate * 0.28)
+// White noise (crack) + low sine body, one-pole highpass for brightness. The
+// `variant` gives kits a distinct snare TIMBRE (not just volume/pitch): 'tight'
+// = short + bright cracker, 'fat' = low + long body, 'acoustic' = the neutral.
+export type SnareVariant = 'acoustic' | 'tight' | 'fat'
+export function synthSnare(sampleRate: number, variant: SnareVariant = 'acoustic'): Float32Array {
+  const V = {
+    acoustic: { dur: 0.28, body: 180, decayN: 22, decayB: 20, hp: 0.94,  bodyGain: 0.35, gain: 0.9 },
+    tight:    { dur: 0.17, body: 235, decayN: 36, decayB: 34, hp: 0.965, bodyGain: 0.28, gain: 0.92 },
+    fat:      { dur: 0.34, body: 135, decayN: 15, decayB: 13, hp: 0.9,   bodyGain: 0.48, gain: 0.95 },
+  }[variant]
+  const n = Math.floor(sampleRate * V.dur)
   const data = new Float32Array(n)
   let xp = 0, yp = 0
   for (let i = 0; i < n; i++) {
     const t = i / sampleRate
     const noise = Math.random() * 2 - 1
-    // One-pole highpass ~1kHz
-    const y = noise - xp + 0.94 * yp;  xp = noise;  yp = y
-    const body = Math.sin(2 * Math.PI * 180 * t) * 0.35
-    data[i] = (y * Math.exp(-22 * t) * 0.72 + body * Math.exp(-20 * t)) * 0.9
+    const y = noise - xp + V.hp * yp;  xp = noise;  yp = y
+    const body = Math.sin(2 * Math.PI * V.body * t) * V.bodyGain
+    data[i] = (y * Math.exp(-V.decayN * t) * 0.72 + body * Math.exp(-V.decayB * t)) * V.gain
   }
   return data
 }
 
-// ── Hi-hat (closed) ───────────────────────────────────────────────────────
-// Two cascaded highpasses for metallic sheen, very short decay.
-export function synthHat(sampleRate: number, open = false): Float32Array {
-  const dur   = open ? 0.38 : 0.048
-  const decay = open ? 13   : 160
+// ── Hi-hat (closed / open) ─────────────────────────────────────────────────
+// Two cascaded highpasses for metallic sheen. `variant` shapes the CLOSED hat:
+// 'tight' = ultra-short tick, 'loose' = longer sizzle, 'normal' = neutral.
+export type HatVariant = 'normal' | 'tight' | 'loose'
+export function synthHat(sampleRate: number, open = false, variant: HatVariant = 'normal'): Float32Array {
+  const closed = { normal: { dur: 0.048, decay: 160 }, tight: { dur: 0.03, decay: 280 }, loose: { dur: 0.082, decay: 92 } }[variant]
+  const dur   = open ? 0.38 : closed.dur
+  const decay = open ? 13   : closed.decay
   const n     = Math.floor(sampleRate * dur)
   const data  = new Float32Array(n)
   let x1 = 0, y1 = 0, x2 = 0, y2 = 0

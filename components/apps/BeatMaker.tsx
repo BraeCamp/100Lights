@@ -55,14 +55,14 @@ const gridFromPattern = (p: DrumPattern): Grid => {
 }
 
 // ── Lane → pure-synth voice (rendered once per AudioContext sample rate) ────────
-// Pack-aware: an '808' kit swaps the KICK lane for the deep 808 sub — the defining
-// timbral difference between the kits (the rest is per-pad volume/pitch voicing).
-function synthLaneData(laneKey: string, sr: number, pack: string): Float32Array {
+// Kit-aware: the kick lane uses the deep 808 sub for '808' packs, and the snare/hat lanes use
+// the kit's VOICE timbre — so kits differ in character, not just per-pad volume/pitch.
+function synthLaneData(laneKey: string, sr: number, pack: string, voices?: DrumKit['voices']): Float32Array {
   switch (laneKey) {
     case 'kick':      return pack === '808' ? synth808(sr) : synthKick(sr)
-    case 'snare':     return synthSnare(sr)
-    case 'closedHat': return synthHat(sr, false)
-    case 'openHat':   return synthHat(sr, true)
+    case 'snare':     return synthSnare(sr, voices?.snare ?? 'acoustic')
+    case 'closedHat': return synthHat(sr, false, voices?.hat ?? 'normal')
+    case 'openHat':   return synthHat(sr, true, voices?.hat ?? 'normal')
     case 'clap':      return synthClap(sr)
     case 'crash':     return synthCrash(sr)
     case 'rim':       return synthRim(sr)
@@ -73,12 +73,12 @@ function synthLaneData(laneKey: string, sr: number, pack: string): Float32Array 
   }
 }
 
-/** Build one AudioBuffer per lane for a given context + pack (works online + offline). */
-function buildLaneBuffers(ctx: BaseAudioContext, pack: string): Map<string, AudioBuffer> {
+/** Build one AudioBuffer per lane for a given context + kit voices (works online + offline). */
+function buildLaneBuffers(ctx: BaseAudioContext, pack: string, voices?: DrumKit['voices']): Map<string, AudioBuffer> {
   const sr = ctx.sampleRate
   const m = new Map<string, AudioBuffer>()
   for (const l of DRUM_LANES) {
-    const data = synthLaneData(l.key, sr, pack)
+    const data = synthLaneData(l.key, sr, pack, voices)
     const buf = ctx.createBuffer(1, data.length, sr)
     buf.getChannelData(0).set(data)
     m.set(l.key, buf)
@@ -141,14 +141,19 @@ export default function BeatMaker({ onPattern }: { onPattern?: (notes: MidiNote[
   const swingRef = useRef(swing); useEffect(() => { swingRef.current = swing }, [swing])
   const voicingRef = useRef(laneVoicing(kit))
   useEffect(() => { voicingRef.current = laneVoicing(kit) }, [kit])
-  // The kit's sound PACK ('synth' | '808') decides the kick voice. Mirror it in a ref and rebuild
-  // the lane buffers whenever it changes so switching to an 808 kit actually swaps in the sub kick.
+  // The kit's PACK ('synth'|'808') + VOICE timbres (snare/hat) decide the synth voices. Mirror
+  // them in refs and rebuild the lane buffers whenever the kit changes so switching kits actually
+  // swaps the kick/snare/hat character (per-pad volume/pitch stays live via voicingRef).
   const pack = useMemo(() => ((kit.instrument.params as { pack?: string }).pack === '808' ? '808' : 'synth'), [kit])
   const packRef = useRef(pack)
+  const voicesRef = useRef(kit.voices)
+  const buildSig = `${pack}|${kit.voices?.snare ?? 'acoustic'}|${kit.voices?.hat ?? 'normal'}`
   useEffect(() => {
     packRef.current = pack
-    if (ctxRef.current) buffersRef.current = buildLaneBuffers(ctxRef.current, pack)
-  }, [pack])
+    voicesRef.current = kit.voices
+    if (ctxRef.current) buffersRef.current = buildLaneBuffers(ctxRef.current, pack, kit.voices)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildSig])
 
   const timerRef = useRef<number | null>(null)
   const rafRef = useRef<number | null>(null)
@@ -187,7 +192,7 @@ export default function BeatMaker({ onPattern }: { onPattern?: (notes: MidiNote[
     if (!ctxRef.current) {
       const c = new AudioContext()
       ctxRef.current = c
-      buffersRef.current = buildLaneBuffers(c, packRef.current)
+      buffersRef.current = buildLaneBuffers(c, packRef.current, voicesRef.current)
     }
     return ctxRef.current
   }, [])
@@ -336,7 +341,7 @@ export default function BeatMaker({ onPattern }: { onPattern?: (notes: MidiNote[
     const total = bars * STEPS_PER_BAR * secPerStep + 1.4   // + tail for cymbals/808
     const offline = new OfflineAudioContext(2, Math.ceil(total * sr), sr)
     const thePack = (theKit.instrument.params as { pack?: string }).pack === '808' ? '808' : 'synth'
-    const buffers = buildLaneBuffers(offline, thePack)
+    const buffers = buildLaneBuffers(offline, thePack, theKit.voices)
     const voicing = laneVoicing(theKit)
     const master = offline.createGain()
     master.gain.value = 0.9
