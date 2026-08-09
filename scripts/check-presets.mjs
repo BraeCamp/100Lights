@@ -13,7 +13,7 @@
 //
 //   node scripts/check-presets.mjs         (exit 1 if anything is broken)
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -40,14 +40,21 @@ const sfEntries = [...sfRegion.matchAll(/\{\s*name:\s*['"]([^'"]+)['"][^}]*?url:
 const sfFolders = new Set(sfEntries.map(e => e.folder))
 // url consts must be defined and non-empty (a broken/empty URL = silent soundfont).
 const urlDefined = (v) => new RegExp(`const ${v}\\s*=\\s*[\`'"]?\\S`).test(ds)
-const seededFolders = new Set([...synthFolders, ...sfFolders])
+// AI instrument packs (AI_INSTRUMENT_PACKS): sparse-root packs seeded from
+// public/ai-instruments/<slug>.js via importSoundfontToLibrary. A folder here is
+// seeded as long as its pack file actually ships.
+const aiRegion = slice('const AI_INSTRUMENT_PACKS', 'export async function seedAiInstruments')
+const aiEntries = [...aiRegion.matchAll(/\{\s*slug:\s*['"]([^'"]+)['"]\s*,\s*folder:\s*['"]([^'"]+)['"]/g)]
+  .map(m => ({ slug: m[1], folder: m[2] }))
+const aiFolders = new Set(aiEntries.map(e => e.folder))
+const seededFolders = new Set([...synthFolders, ...sfFolders, ...aiFolders])
 
 // ── Preset ids the composer references (STYLE_PRESETS / LEAD_ALTS / hardcoded) ─
 const comp = read('scripts/compose.mjs')
 const composerIds = new Set([...comp.matchAll(/['"]builtin-(\d+)['"]/g)].map(m => Number(m[1])))
 
 const problems = []
-let nSynth = 0, nSf = 0
+let nSynth = 0, nSf = 0, nAi = 0
 
 // 1 · every BUILT_IN preset's folder must have a real generation source
 for (const p of BUILT_IN) {
@@ -58,14 +65,21 @@ for (const p of BUILT_IN) {
     if (e && !urlDefined(e.urlVar)) problems.push(`preset ${p.id} "${p.name}" → soundfont url const ${e.urlVar} is missing/empty (silent)`)
     continue
   }
-  problems.push(`preset ${p.id} "${p.name}" → folder "${p.folder}" has NO generation source (not in KEYBOARD_PRESETS or SOUNDFONT_PACKS) → silent`)
+  if (aiFolders.has(p.folder)) {
+    nAi++
+    const e = aiEntries.find(x => x.folder === p.folder)
+    if (e && !existsSync(join(ROOT, 'public', 'ai-instruments', `${e.slug}.js`)))
+      problems.push(`preset ${p.id} "${p.name}" → AI pack public/ai-instruments/${e.slug}.js is missing (silent)`)
+    continue
+  }
+  problems.push(`preset ${p.id} "${p.name}" → folder "${p.folder}" has NO generation source (not in KEYBOARD_PRESETS, SOUNDFONT_PACKS, or AI_INSTRUMENT_PACKS) → silent`)
 }
 // 2 · every composer preset id must be a real BUILT_IN index
 for (const n of [...composerIds].sort((a, b) => a - b)) {
   if (n < 0 || n >= BUILT_IN.length) problems.push(`compose.mjs references builtin-${n}, but only builtin-0..${BUILT_IN.length - 1} exist (track would fall back / be silent)`)
 }
 
-console.log(`Presets: ${BUILT_IN.length} built-in (${nSynth} synth-rendered · ${nSf} soundfont) · composer uses ${composerIds.size} distinct ids (max builtin-${Math.max(...composerIds)})`)
+console.log(`Presets: ${BUILT_IN.length} built-in (${nSynth} synth-rendered · ${nSf} soundfont · ${nAi} AI-sampled) · composer uses ${composerIds.size} distinct ids (max builtin-${Math.max(...composerIds)})`)
 if (problems.length) {
   console.log(`\n✗ ${problems.length} problem(s):`)
   for (const p of problems) console.log('  · ' + p)
