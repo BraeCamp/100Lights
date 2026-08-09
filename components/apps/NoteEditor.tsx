@@ -7,8 +7,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MidiNote } from '@/lib/daw-types'
 
-export default function NoteEditor({ notes, onChange, height = 172 }: {
+export default function NoteEditor({ notes, onChange, height = 172, confidence, confidenceThreshold = 0.55 }: {
   notes: MidiNote[]; onChange: (n: MidiNote[]) => void; height?: number
+  /** Optional per-note-id confidence (0..1); notes below the threshold render in a warning colour. */
+  confidence?: Record<string, number>; confidenceThreshold?: number
 }) {
   const cvRef = useRef<HTMLCanvasElement>(null)
   const [sel, setSel] = useState<string | null>(null)
@@ -41,13 +43,16 @@ export default function NoteEditor({ notes, onChange, height = 172 }: {
     ctx.clearRect(0, 0, g.W, g.H)
     const cs = getComputedStyle(cv)
     const accent = cs.getPropertyValue('--accent').trim() || '#3d8fef'
+    const warn = '#f59e0b'  // low-confidence notes (would route to the smarter/AI pass)
     const h = Math.max(4, g.rowH * 0.8)
     for (const n of notesRef.current) {
       const x = g.x(n.startBeat), w = g.w(n.durationBeats), y = g.y(n.pitch)
-      if (n.id === sel) { ctx.fillStyle = '#fff'; ctx.fillRect(x, y - h / 2, w, h); ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.strokeRect(x - 1.5, y - h / 2 - 1.5, w + 3, h + 3) }
-      else { ctx.fillStyle = accent; ctx.fillRect(x, y - h / 2, w, h) }
+      const low = confidence && confidence[n.id] !== undefined && confidence[n.id] < confidenceThreshold
+      const col = low ? warn : accent
+      if (n.id === sel) { ctx.fillStyle = '#fff'; ctx.fillRect(x, y - h / 2, w, h); ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.strokeRect(x - 1.5, y - h / 2 - 1.5, w + 3, h + 3) }
+      else { ctx.fillStyle = col; ctx.fillRect(x, y - h / 2, w, h) }
     }
-  }, [geom, sel])
+  }, [geom, sel, confidence, confidenceThreshold])
   useEffect(() => { draw() }, [draw, notes])
   useEffect(() => { const r = () => draw(); window.addEventListener('resize', r); return () => window.removeEventListener('resize', r) }, [draw])
 

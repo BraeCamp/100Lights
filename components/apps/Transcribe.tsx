@@ -6,7 +6,8 @@
 // not just live singing; fully client-side (no sign-in). Monophonic — best on a single melody line.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, Mic } from 'lucide-react'
-import { analyzeBufferAsync } from '@/lib/voice-backfill'
+import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
+import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
 import { writeMidiFile } from '@/lib/midi-file'
 import { DawEngine } from '@/lib/daw-engine'
@@ -34,6 +35,8 @@ function TranscribeApp() {
   const [recording, setRecording] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
+  const [conf, setConf] = useState<Record<string, number>>({})   // note id → confidence (0..1)
+  const [aiFraction, setAiFraction] = useState(0)                 // share of notes that'd route to AI
 
   const audioRef = useRef<{ samples: Float32Array; sr: number } | null>(null)  // for re-analysis
   const mrRef = useRef<MediaRecorder | null>(null)
@@ -50,8 +53,15 @@ function TranscribeApp() {
   const analyze = useCallback(async (samples: Float32Array, sr: number, sens: number) => {
     const a = await analyzeBufferAsync(samples, sr, { sensitivity: sens, minDuration: 0.08, segmenter: 'hmm' })
     const t = tempoRef.current
-    const mapped: MidiNote[] = a.notes.map(n => ({ id: crypto.randomUUID(), pitch: n.midi, startBeat: (n.startSec * t) / 60, durationBeats: Math.max(0.0625, (n.durSec * t) / 60), velocity: n.velocity <= 1 ? Math.max(1, Math.round(n.velocity * 127)) : Math.round(n.velocity) }))
-    setNotes(mapped)
+    // Hybrid: score every note (clarity + polyphony + stability); only the low-confidence ones
+    // would route to the paid AI pass — the rest are free.
+    const scores = scoreNotes(a.notes, (a.curve || []) as FeatureFrame[], samples, sr)
+    const cmap: Record<string, number> = {}
+    const mapped: MidiNote[] = a.notes.map((n, i) => {
+      const id = crypto.randomUUID(); cmap[id] = scores[i].confidence
+      return { id, pitch: n.midi, startBeat: (n.startSec * t) / 60, durationBeats: Math.max(0.0625, (n.durSec * t) / 60), velocity: n.velocity <= 1 ? Math.max(1, Math.round(n.velocity * 127)) : Math.round(n.velocity) }
+    })
+    setNotes(mapped); setConf(cmap); setAiFraction(lowConfidenceFraction(scores))
     if (!mapped.length) setError('No clear melody detected. Try a cleaner, single-line recording.')
   }, [])
 
@@ -142,7 +152,12 @@ function TranscribeApp() {
 
         {has && (
           <section style={{ marginTop: 24 }}>
-            <NoteEditor notes={notes} onChange={setNotes} />
+            <NoteEditor notes={notes} onChange={setNotes} confidence={conf} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 2px 0', fontSize: 12.5, color: 'var(--text-secondary)' }}>
+              {aiFraction > 0
+                ? <><span style={{ width: 9, height: 9, borderRadius: 3, background: '#f59e0b', flexShrink: 0 }} /><span><strong style={{ color: 'var(--text-primary)' }}>{Math.round(aiFraction * 100)}%</strong> of notes are low-confidence (chords / unclear) — only these would use the paid AI pass. The rest are free.</span></>
+                : <><span style={{ width: 9, height: 9, borderRadius: 3, background: 'var(--accent)', flexShrink: 0 }} /><span>All notes high-confidence — transcribed with <strong style={{ color: 'var(--text-primary)' }}>no AI</strong>.</span></>}
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, margin: '18px 0' }}>
               <button type="button" onClick={togglePlay} aria-label={playing ? 'Stop' : 'Play'} style={{ display: 'grid', placeItems: 'center', width: 54, height: 54, borderRadius: 999, border: 'none', background: 'var(--accent)', color: '#0e0d12', cursor: 'pointer', flexShrink: 0 }}>
                 {playing ? <Square size={20} fill="#0e0d12" /> : <Play size={22} fill="#0e0d12" style={{ marginLeft: 2 }} />}
