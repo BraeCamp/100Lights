@@ -11,15 +11,15 @@ import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
 import { writeMidiFile } from '@/lib/midi-file'
 import { DawEngine } from '@/lib/daw-engine'
 import { POLY_PRESETS, type MidiNote, type TrackInstrument, defaultPolyInstrument } from '@/lib/daw-types'
-import { WorkshopThemeProvider } from '@/components/editor/WorkshopThemeProvider'
+import AppChrome from '@/components/apps/AppChrome'
 
 const INSTRUMENTS = ['Default', 'Super Saw', 'Glass Pluck', 'Cold Pad', 'Brass Pad', 'Darkwave Lead']
 
 export default function Transcribe() {
   return (
-    <WorkshopThemeProvider>
+    <AppChrome>
       <TranscribeApp />
-    </WorkshopThemeProvider>
+    </AppChrome>
   )
 }
 
@@ -125,7 +125,6 @@ function TranscribeApp() {
   const openStudio = useCallback(() => openSketchInStudio(notes, [], { tempo, name, voice: { instrument } }), [notes, tempo, name, instrument])
 
   return (
-    <div data-editor="true" style={{ minHeight: '100dvh', background: 'var(--bg-base)', backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)' }}>
       <main id="main" className="max-w-2xl mx-auto" style={{ padding: '20px 18px 40px' }}>
         <header style={{ marginBottom: 20 }}>
           <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent)', margin: '0 0 10px' }}>100Lights</p>
@@ -173,14 +172,13 @@ function TranscribeApp() {
 
             <Label>Export</Label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              <ExportBtn icon={<Sparkles size={15} />} label="Open in 100Lights" onClick={openStudio} primary />
+              <ExportBtn icon={<Sparkles size={15} />} label="Open in 100Lights" onClick={openStudio} subtle />
               <ExportBtn icon={<Download size={15} />} label="WAV" onClick={exportWav} />
               <ExportBtn icon={<FileMusic size={15} />} label="MIDI" onClick={exportMidi} />
             </div>
           </section>
         )}
       </main>
-    </div>
   )
 }
 
@@ -239,9 +237,9 @@ function PianoRoll({ notes }: { notes: MidiNote[] }) {
 function Label({ children }: { children: React.ReactNode }) {
   return <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, var(--text-secondary))', margin: '0 0 9px' }}>{children}</p>
 }
-function ExportBtn({ icon, label, onClick, primary }: { icon: React.ReactNode; label: string; onClick: () => void; primary?: boolean }) {
+function ExportBtn({ icon, label, onClick, primary, subtle }: { icon: React.ReactNode; label: string; onClick: () => void; primary?: boolean; subtle?: boolean }) {
   return (
-    <button type="button" onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '10px 15px', borderRadius: 11, fontSize: 13.5, fontWeight: 750, cursor: 'pointer', border: primary ? 'none' : '1px solid var(--border)', background: primary ? 'var(--accent)' : 'var(--bg-card)', color: primary ? '#0e0d12' : 'var(--text-primary)' }}>
+    <button type="button" onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '10px 15px', borderRadius: 11, fontSize: 13.5, fontWeight: subtle ? 650 : 750, cursor: 'pointer', border: primary ? 'none' : '1px solid var(--border)', background: primary ? 'var(--accent)' : subtle ? 'transparent' : 'var(--bg-card)', color: primary ? '#0e0d12' : subtle ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
       {icon} {label}
     </button>
   )

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
+import AppChrome from '@/components/apps/AppChrome'
 
 const Autotune = dynamic(() => import('@/components/apps/Autotune'))
 
@@ -18,7 +19,7 @@ export const metadata: Metadata = {
 
 export default function AutotunePage() {
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
+    <AppChrome>
       <main id="main" className="max-w-2xl mx-auto px-6 py-14">
         <header style={{ marginBottom: 28 }}>
           <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>
@@ -48,6 +49,6 @@ export default function AutotunePage() {
           </p>
         </div>
       </main>
-    </div>
+    </AppChrome>
   )
 }

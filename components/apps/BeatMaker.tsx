@@ -28,6 +28,7 @@ import {
 } from '@/lib/drum-synth'
 import { writeMidiFile } from '@/lib/midi-file'
 import { audioBufferToWav } from '@/lib/wav-encoder'
+import { openSketchInStudio } from '@/lib/open-in-studio'
 import type { MidiNote } from '@/lib/daw-types'
 import type { DrumPadSettings } from '@/lib/daw-types'
 
@@ -387,6 +388,13 @@ export default function BeatMaker({ onPattern, restore }: {
     } finally { setRendering(false) }
   }, [hasHits, rendering, grid, bpm, swing, kit, renderWavBlob, download])
 
+  // Hand the beat off to the studio as a drum track (the subtle "power" export).
+  const openStudio = useCallback(() => {
+    if (!hasHits) return
+    const beat = gridToNotes(grid).map(n => ({ ...n, id: crypto.randomUUID() }))
+    openSketchInStudio([], beat, { tempo: bpm, name: `Beat — ${kit.name}` })
+  }, [grid, bpm, kit.name, gridToNotes, hasHits])
+
   // ── Headless test hook (mirrors the __voice* / __daw* convention) ─────────────
   useEffect(() => {
     const w = window as unknown as {
@@ -555,6 +563,12 @@ export default function BeatMaker({ onPattern, restore }: {
           style={{ fontSize: 13.5, fontWeight: 600, padding: '9px 16px', borderRadius: 9, cursor: (hasHits && !rendering) ? 'pointer' : 'not-allowed', opacity: (hasHits && !rendering) ? 1 : 0.5, border: '1px solid var(--border-subtle,#333)', background: 'var(--bg-elevated,#20202a)', color: 'var(--text-primary,#eee)' }}
         >
           {rendering ? 'Rendering…' : `Download WAV (${EXPORT_BARS} bars)`}
+        </button>
+        <button
+          onClick={openStudio} disabled={!hasHits}
+          style={{ fontSize: 13, fontWeight: 600, padding: '9px 14px', borderRadius: 9, cursor: hasHits ? 'pointer' : 'not-allowed', opacity: hasHits ? 1 : 0.5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}
+        >
+          Open in 100Lights
         </button>
         <span style={{ fontSize: 11.5, color: 'var(--text-muted)', alignSelf: 'center' }}>
           {kit.desc}
