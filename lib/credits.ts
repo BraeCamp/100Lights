@@ -10,28 +10,50 @@
 import { sql } from '@/lib/db'
 
 // ── Tiers ────────────────────────────────────────────────────────────────────────────────────
-// All paid tiers are "Pro" for feature access; they differ only in the monthly credit allotment.
+// Prices + monthly credits MIRROR ElevenLabs (2026): our hybrid only partially uses AI, so the
+// same credits go much further here. All paid tiers grant "Pro" feature access; they differ only
+// in the monthly credit allotment.
 export const CREDIT_TIERS = {
-  free:      { price: 0,  monthlyCredits: 0,    label: 'Free' },
-  pro:       { price: 10, monthlyCredits: 500,  label: 'Pro' },
-  studio:    { price: 25, monthlyCredits: 1500, label: 'Studio' },
-  studioMax: { price: 60, monthlyCredits: 4000, label: 'Studio Max' },
+  free:     { price: 0,   monthlyCredits: 10_000,    label: 'Free' },
+  starter:  { price: 6,   monthlyCredits: 30_000,    label: 'Starter' },
+  creator:  { price: 11,  monthlyCredits: 121_000,   label: 'Creator' },
+  pro:      { price: 99,  monthlyCredits: 600_000,   label: 'Pro' },
+  scale:    { price: 299, monthlyCredits: 1_800_000, label: 'Scale' },
+  business: { price: 990, monthlyCredits: 6_000_000, label: 'Business' },
 } as const
 export type CreditTier = keyof typeof CREDIT_TIERS
 
-/** Map a Stripe price id → tier. Fill in once the products exist (env-driven so no secrets in git). */
+/** Map a Stripe price id → tier. Filled by env once the products exist (no secrets in git). */
 export const TIER_BY_PRICE: Record<string, CreditTier> = {
-  ...(process.env.STRIPE_PRO_PRICE_ID ? { [process.env.STRIPE_PRO_PRICE_ID]: 'pro' as const } : {}),
-  ...(process.env.STRIPE_STUDIO_PRICE_ID ? { [process.env.STRIPE_STUDIO_PRICE_ID]: 'studio' as const } : {}),
-  ...(process.env.STRIPE_STUDIO_MAX_PRICE_ID ? { [process.env.STRIPE_STUDIO_MAX_PRICE_ID]: 'studioMax' as const } : {}),
+  ...(process.env.STRIPE_STARTER_PRICE_ID  ? { [process.env.STRIPE_STARTER_PRICE_ID]:  'starter'  as const } : {}),
+  ...(process.env.STRIPE_CREATOR_PRICE_ID  ? { [process.env.STRIPE_CREATOR_PRICE_ID]:  'creator'  as const } : {}),
+  ...(process.env.STRIPE_PRO_PRICE_ID      ? { [process.env.STRIPE_PRO_PRICE_ID]:      'pro'      as const } : {}),
+  ...(process.env.STRIPE_SCALE_PRICE_ID    ? { [process.env.STRIPE_SCALE_PRICE_ID]:    'scale'    as const } : {}),
+  ...(process.env.STRIPE_BUSINESS_PRICE_ID ? { [process.env.STRIPE_BUSINESS_PRICE_ID]: 'business' as const } : {}),
 }
 
-// ── AI action costs (credits). 1 credit ≈ $0.01 at the defaults above — tune to your real cost. ──
+// ── AI action costs (credits). Scaled to the new allotments; the hybrid bills only the AI fraction
+//    (the low-confidence spans), so real spend is far below the nominal cost. Tune freely. ──
 export const CREDIT_COSTS = {
-  transcribeMinute: 5,   // per minute of audio sent to the AI/smarter pass (only low-confidence spans)
-  visionPage: 25,        // per sheet-music image/PDF page (Claude vision)
-  generateClip: 60,      // per AI music generation
-  stems: 40,             // per stem-separation
+  transcribeMinute: 200,   // per minute of audio sent to the AI/smarter pass (only low-confidence spans)
+  visionPage: 500,         // per sheet-music image/PDF page (Claude vision)
+  generateClip: 2000,      // per AI music generation
+  stems: 1500,             // per stem-separation
+}
+
+/** One-time credit top-ups (~ElevenLabs Creator rate). Price ids come from STRIPE_TOPUP_<n>_PRICE_ID. */
+export const CREDIT_TOPUPS = [
+  { credits: 55_000, usd: 5 },
+  { credits: 220_000, usd: 20 },
+] as const
+
+/** Stripe price id for a subscription tier (from env, set by scripts/setup-stripe-products.mjs). */
+export function priceIdForTier(tier: CreditTier): string | undefined {
+  return process.env[`STRIPE_${tier.toUpperCase()}_PRICE_ID`]
+}
+/** Stripe price id for a one-time top-up of `credits`. */
+export function topupPriceId(credits: number): string | undefined {
+  return process.env[`STRIPE_TOPUP_${credits}_PRICE_ID`]
 }
 
 /** Free-tier AI transcription allowance (no credits needed), per rolling 30 days. */

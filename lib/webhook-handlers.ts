@@ -1,6 +1,6 @@
 import { stripe } from './stripe'
 import { upsertSubscription } from './subscription'
-import { CREDITS_ENABLED, applyTierGrant, TIER_BY_PRICE } from './credits'
+import { CREDITS_ENABLED, applyTierGrant, grantCredits, TIER_BY_PRICE } from './credits'
 import { recordInvoiceCommission } from './affiliates'
 import { sql } from './db'
 import type Stripe from 'stripe'
@@ -39,6 +39,13 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session
+      // One-time AI credit top-up (no subscription).
+      if (session.mode === 'payment') {
+        const uid = session.metadata?.userId
+        const credits = Number(session.metadata?.topupCredits || 0)
+        if (CREDITS_ENABLED && uid && credits > 0) await grantCredits(uid, credits, 'credit top-up')
+        break
+      }
       if (session.mode !== 'subscription') break
       const userId = session.metadata?.userId
       if (!userId || !session.customer || !session.subscription) break

@@ -31,15 +31,18 @@ const mode = isLive ? 'LIVE' : 'TEST'
 
 // ── Plan — keep in sync with lib/credits.ts CREDIT_TIERS ────────────────────────────────────────
 // Recurring subscription tiers (monthly). All grant "Pro" access; differ by monthly credit grant.
+// Prices + credits mirror ElevenLabs (2026); keep in sync with lib/credits.ts CREDIT_TIERS.
 const SUBS = [
-  { tier: 'pro',       name: '100Lights Pro',        usd: 10, credits: 500 },
-  { tier: 'studio',    name: '100Lights Studio',     usd: 25, credits: 1500 },
-  { tier: 'studioMax', name: '100Lights Studio Max', usd: 60, credits: 4000 },
+  { tier: 'starter',  name: '100Lights Starter',  usd: 6,   credits: 30000 },
+  { tier: 'creator',  name: '100Lights Creator',  usd: 11,  credits: 121000 },
+  { tier: 'pro',      name: '100Lights Pro',      usd: 99,  credits: 600000 },
+  { tier: 'scale',    name: '100Lights Scale',    usd: 299, credits: 1800000 },
+  { tier: 'business', name: '100Lights Business', usd: 990, credits: 6000000 },
 ]
-// One-time AI credit top-ups.
+// One-time AI credit top-ups (~ElevenLabs' Creator rate, 11k credits/$).
 const TOPUPS = [
-  { name: '100Lights AI Credits — 500',  usd: 5,  credits: 500 },
-  { name: '100Lights AI Credits — 2500', usd: 20, credits: 2500 },
+  { name: '100Lights AI Credits — 55,000',  usd: 5,  credits: 55000 },
+  { name: '100Lights AI Credits — 220,000', usd: 20, credits: 220000 },
 ]
 
 async function findByMeta(metaTier) {
@@ -79,15 +82,13 @@ for (const s of SUBS) {
 }
 console.log(`\nTop-ups (one-time):`)
 const topupIds = []
+const creditsProd = await ensureProduct('credits', '100Lights AI Credits', {})  // one product, many prices
 for (const t of TOPUPS) {
-  const prod = await ensureProduct('credits', '100Lights AI Credits', {})
-  const price = await ensurePrice(prod, t.usd * 100, false, 'credits', t.credits)
+  const price = await ensurePrice(creditsProd, t.usd * 100, false, 'credits', t.credits)
   topupIds.push({ credits: t.credits, id: price.id })
 }
 
 console.log(`\n=== Add to .env.local (${mode}) ===`)
-console.log(`STRIPE_PRO_PRICE_ID=${out.pro || '<pro price id>'}`)
-console.log(`STRIPE_STUDIO_PRICE_ID=${out.studio || '<studio price id>'}`)
-console.log(`STRIPE_STUDIO_MAX_PRICE_ID=${out.studioMax || '<studio-max price id>'}`)
-topupIds.forEach((t, i) => console.log(`STRIPE_TOPUP_${t.credits}_PRICE_ID=${t.id}`))
+for (const s of SUBS) console.log(`STRIPE_${s.tier.toUpperCase()}_PRICE_ID=${out[s.tier] || `<${s.tier} price id>`}`)
+topupIds.forEach(t => console.log(`STRIPE_TOPUP_${t.credits}_PRICE_ID=${t.id}`))
 if (!CREATE) console.log(`\n(dry run — re-run with --create${isLive ? ' --live' : ''} to actually create them)`)
