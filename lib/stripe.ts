@@ -1,7 +1,10 @@
 import Stripe from 'stripe'
 import { ENTITLEMENTS } from './entitlements'
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2026-05-27.dahlia' })
+// In dev, prefer the TEST secret key when present so local billing runs entirely in test mode
+// (production has no STRIPE_TEST_SECRET_KEY set → uses the live key). Keeps live/test separated.
+const stripeKey = (process.env.NODE_ENV !== 'production' && process.env.STRIPE_TEST_SECRET_KEY) || process.env.STRIPE_SECRET_KEY
+export const stripe = new Stripe(stripeKey!, { apiVersion: '2026-05-27.dahlia' })
 
 // App-side limits per plan, derived from the single source of truth in
 // lib/entitlements.ts. Stripe owns the price/product; entitlements.ts owns the
