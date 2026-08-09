@@ -202,7 +202,9 @@ const offline = await page.evaluate(() => {
   // — Idea 3: volume cues — EXISTENCE GATE (the clean, unique win). Two solid notes with
   //   a quiet phantom blip between them (just above the RMS gate). Without volume cues the
   //   phantom transcribes as a real note; the existence gate (peak vol vs the take's peak)
-  //   drops it. —
+  //   drops it. NOTE: the existence gate is now SENSITIVITY-SCALED (default ~0.05, so an
+  //   8–11% soft note survives) — so this case pins sensitivity:0 to exercise the STRICT end
+  //   (existFrac ~0.09) where a ~6.7% phantom is still correctly dropped. —
   {
     const notes = [
       { midi: 69, start: 0.10, dur: 0.35, amp: 0.30 },
@@ -210,8 +212,8 @@ const offline = await page.evaluate(() => {
       { midi: 72, start: 0.85, dur: 0.35, amp: 0.30 },
     ]
     const buf = renderMelody(notes, 1.25)
-    const off = analyze(buf, { useVolumeCues: false })
-    const on  = analyze(buf, { useVolumeCues: true })
+    const off = analyze(buf, { useVolumeCues: false, sensitivity: 0 })
+    const on  = analyze(buf, { useVolumeCues: true, sensitivity: 0 })
     const hasPhantom = ns => uniqSorted(seq(ns)).some(m => Math.abs(m - 74) <= 1)
     results.existGate = {
       offNotes: seq(off), onNotes: seq(on),

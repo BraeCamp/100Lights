@@ -58,13 +58,16 @@ export interface HmmOptions {
   confWeight?: number
   /** Reward weight on `energy` in a note emission. Default 1.0. */
   energyWeight?: number
-  /** Log-penalty for a note state covering an unvoiced (midi===null) frame. Default 8. */
+  /** Log-penalty for a note state covering an unvoiced (midi===null) frame. Default 6.
+   *  (Lowered from 8 — biased toward keeping borderline notes; see `keepBias`.) */
   unvoicedNotePenalty?: number
-  /** Extra penalty for a note covering a frame quieter than `energyGate`. Default 4. */
+  /** Extra penalty for a note covering a frame quieter than `energyGate`. Default 2.5.
+   *  (Lowered from 4 so a quiet/breathy note survives; see `keepBias`.) */
   lowEnergyNotePenalty?: number
   /** Energy floor below which a voiced note frame is treated as "too quiet". Default 0.05. */
   energyGate?: number
-  /** Flat silence baseline. Silence WINS this against a note when the frame is quiet/uncertain. Default 0.5. */
+  /** Flat silence baseline. Silence WINS this against a note when the frame is quiet/uncertain.
+   *  Default 0.35 (lowered from 0.5 to keep more borderline notes; see `keepBias`). */
   silenceBias?: number
   /** How hard a loud+confident+pitched frame pushes silence DOWN (silence should then lose). Default 6. */
   silenceLoudPenalty?: number
@@ -93,8 +96,17 @@ export interface HmmOptions {
    *  the same pitch; no onset ⇒ stays one note. Default 45. */
   reartOnsetBonus?: number
 
-  /** Notes shorter than this are dropped after decoding. Default 0.06. */
+  /** Notes shorter than this are dropped after decoding. Default 0.05 (lowered from 0.06
+   *  so a short-but-real note survives). */
   minDurationSec?: number
+
+  /** Recall knob, 0→1 (default 0). Shifts the whole silence-vs-note balance TOWARD notes
+   *  without touching the self-loop/jump smoothing that keeps vibrato/wobble as one note.
+   *  Higher ⇒ lower effective silenceBias + lower unvoiced/low-energy note penalties, so
+   *  quiet/breathy/borderline notes survive. Driven by the widget's sensitivity slider.
+   *  Deliberately capped so it can never flip a genuinely UNVOICED (silent) frame into a
+   *  note — unvoiced frames keep a large residual note penalty, so silence still wins them. */
+  keepBias?: number
 
   /** Global tuning offset in semitones (e.g. +0.35 = 35 cents sharp), or 'auto' to
    *  estimate it as the median of (midi − round(midi)) over confident voiced frames.
@@ -141,15 +153,24 @@ interface Resolved {
 
 function resolve(o: HmmOptions | undefined): Resolved {
   const d = o ?? {}
+  // Recall knob → note-keeping shifts. Bounded so a truly unvoiced/silent frame can never
+  // become a note (the residual unvoiced penalty stays comfortably above silenceBias).
+  const keepBias = Math.max(0, Math.min(1, d.keepBias ?? 0))
+  const silenceBias0     = d.silenceBias ?? 0.35
+  const unvoicedPenalty0 = d.unvoicedNotePenalty ?? 6
+  const lowEnergyPen0    = d.lowEnergyNotePenalty ?? 2.5
   return {
     sigma: d.sigma ?? 0.6,
     distanceCapSemitones: d.distanceCapSemitones ?? 2.5,
     confWeight: d.confWeight ?? 1.5,
     energyWeight: d.energyWeight ?? 1.0,
-    unvoicedNotePenalty: d.unvoicedNotePenalty ?? 8,
-    lowEnergyNotePenalty: d.lowEnergyNotePenalty ?? 4,
+    // keepBias lowers silence's baseline and the quiet/unvoiced note penalties, tilting
+    // borderline frames toward notes. Unvoiced penalty is floored at 3.5 so an all-unvoiced
+    // (silent) buffer still decodes to silence (3.5 ≫ silenceBias) — no phantom notes.
+    unvoicedNotePenalty: Math.max(3.5, unvoicedPenalty0 - 2.5 * keepBias),
+    lowEnergyNotePenalty: Math.max(0.5, lowEnergyPen0 - 1.5 * keepBias),
     energyGate: d.energyGate ?? 0.05,
-    silenceBias: d.silenceBias ?? 0.5,
+    silenceBias: silenceBias0 - 0.4 * keepBias,
     silenceLoudPenalty: d.silenceLoudPenalty ?? 6,
     selfLoopBonus: d.selfLoopBonus ?? 2,
     enterNotePenalty: d.enterNotePenalty ?? -4,
@@ -159,7 +180,7 @@ function resolve(o: HmmOptions | undefined): Resolved {
     onsetTransitionBonus: d.onsetTransitionBonus ?? 6,
     reartPenalty: d.reartPenalty ?? -40,
     reartOnsetBonus: d.reartOnsetBonus ?? 45,
-    minDurationSec: d.minDurationSec ?? 0.06,
+    minDurationSec: d.minDurationSec ?? 0.05,
     tuning: d.tuning ?? 'auto',
     tuningConfFloor: d.tuningConfFloor ?? 0.5,
     transitionWindow: d.transitionWindow ?? 12,

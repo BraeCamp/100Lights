@@ -93,6 +93,10 @@ function paramsForSensitivity(s: number): Required<LiveSensitivity> {
 // The widget's own re-trigger gate tracks the detector's confidence gate (which
 // already filtered the frame) with a small margin, so we don't double-filter.
 const widgetTrigGate = (confGate: number) => confGate + 0.05
+// Sensitivity-scaled minimum note duration for the OFFLINE pass: higher sensitivity keeps
+// shorter notes. 0 → 0.075s … 0.5 → 0.06s … 1 → 0.045s. So a ~90–110ms real note clears the
+// floor with margin, and turning sensitivity up rescues borderline-short notes end-to-end.
+const minDurForSensitivity = (s: number) => clamp(0.075 - 0.03 * clamp(s, 0, 1), 0.045, 0.075)
 
 const DIVISIONS: Array<{ n: number; label: string }> = [
   { n: 1, label: '1/4' },
@@ -194,6 +198,11 @@ export default function VoiceMidi() {
   const [onsets, setOnsets] = useState<number[] | null>(null)
   const [flux, setFlux] = useState<number[] | null>(null)
   const [clarity, setClarity] = useState<number[] | null>(null)
+  // Volume (RMS) + pitch-change envelopes and the recovery-pass note starts — the extra
+  // decision signals the debug overlay draws as stacked lanes / distinct markers.
+  const [volume, setVolume] = useState<number[] | null>(null)
+  const [pitchDelta, setPitchDelta] = useState<number[] | null>(null)
+  const [recovered, setRecovered] = useState<number[] | null>(null)
   const [takeBpm, setTakeBpm] = useState<number | null>(null)
   const [takePhase, setTakePhase] = useState(0)
   const [showDebug, setShowDebug] = useState(false)
@@ -209,6 +218,9 @@ export default function VoiceMidi() {
 
   // ── Test / calibrate ─────────────────────────────────────────────────────────
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENS)
+  // Mirror in a ref so the record→refine / segmenter-toggle flows (deps []) thread the LIVE
+  // sensitivity into the offline pass (recall gates + HMM keepBias scale off it).
+  const sensitivityRef = useRef(DEFAULT_SENS)
   const [testing, setTesting] = useState(false)
   const [level, setLevel] = useState<LiveLevel | null>(null)
   const [testLive, setTestLive] = useState<LivePitchResult | null>(null)
@@ -544,7 +556,7 @@ export default function VoiceMidi() {
       if (Number.isFinite(saved)) {
         const s = clamp(saved, 0, 1)
         const p = paramsForSensitivity(s)
-        setSensitivity(s); setParams(p); paramsRef.current = p
+        setSensitivity(s); sensitivityRef.current = s; setParams(p); paramsRef.current = p
       }
     } catch { /* localStorage unavailable */ }
   }, [])
@@ -560,6 +572,7 @@ export default function VoiceMidi() {
   const onSensitivityChange = useCallback((s: number) => {
     const clamped = clamp(s, 0, 1)
     setSensitivity(clamped)
+    sensitivityRef.current = clamped
     setCalibMsg(null)                 // moving the slider supersedes a calibration
     applyParams(paramsForSensitivity(clamped))
     try { localStorage.setItem(SENS_KEY, String(clamped)) } catch { /* ignore */ }
@@ -663,6 +676,9 @@ export default function VoiceMidi() {
     setOnsets(null)
     setFlux(null)
     setClarity(null)
+    setVolume(null)
+    setPitchDelta(null)
+    setRecovered(null)
     setTakeBpm(null)
     setTakePhase(0)
     try {
@@ -691,6 +707,9 @@ export default function VoiceMidi() {
     setOnsets(analysis.onsets ?? null)
     setFlux(analysis.flux ?? null)
     setClarity(analysis.clarity ?? null)
+    setVolume(analysis.rms ?? null)
+    setPitchDelta(analysis.pitchDelta ?? null)
+    setRecovered(analysis.recovered ?? null)
     setTakeBpm(recBpmRef.current)
     setTakePhase(recPhaseRef.current)
     const refinedRaw = analysis.notes
@@ -725,7 +744,8 @@ export default function VoiceMidi() {
       const analysis = await analyzeBufferAsync(audio.samples, audio.sampleRate, {
         gain: paramsRef.current.gain,
         rmsGate: paramsRef.current.rmsGate,
-        minDuration: 0.08,
+        minDuration: minDurForSensitivity(sensitivityRef.current),
+        sensitivity: sensitivityRef.current,
         segmenter: segmenterRef.current,
       }, setRefineProgress)
       applyAnalysis(analysis, liveTake?.length ?? 0)
@@ -802,7 +822,8 @@ export default function VoiceMidi() {
       const analysis = await analyzeBufferAsync(src.samples, src.sampleRate, {
         gain: paramsRef.current.gain,
         rmsGate: paramsRef.current.rmsGate,
-        minDuration: 0.08,
+        minDuration: minDurForSensitivity(sensitivityRef.current),
+        sensitivity: sensitivityRef.current,
         segmenter: segmenterRef.current,
       }, setRefineProgress)
       // Grid-conditional align + set the take views + debug curves (shared with the toggle).
@@ -1266,7 +1287,8 @@ export default function VoiceMidi() {
             playhead={playhead}
             debug={showDebug && curve && curve.length > 0
               ? { curve, rawCurve: rawCurve ?? [], bpm: takeBpm ?? recBpmRef.current, phaseSec: takePhase, division,
-                  onsets: onsets ?? [], flux: flux ?? [], clarity: clarity ?? [] }
+                  onsets: onsets ?? [], flux: flux ?? [], clarity: clarity ?? [],
+                  volume: volume ?? [], pitchDelta: pitchDelta ?? [], recovered: recovered ?? [] }
               : null}
           />
           {showDebug && !(curve && curve.length > 0) && (
@@ -1368,6 +1390,9 @@ interface DebugCurves {
   onsets:   number[]       // detected onset times (sec) — where a note (re)starts
   flux:     number[]       // normalized onset-strength per curve frame (0–1)
   clarity:  number[]       // YIN clarity per curve frame (0–1)
+  volume:   number[]       // normalized RMS/volume envelope per curve frame (0–1)
+  pitchDelta: number[]     // normalized pitch-change rate per curve frame (0–1)
+  recovered: number[]      // start times (sec) of recovery-pass notes — marked distinctly
 }
 
 // Fractional MIDI (with cents) from a frame's exact Hz, so vibrato/glide read as
@@ -1440,18 +1465,44 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
 
   // Onset X positions (where the segmenter decided a note (re)starts).
   const onsetXs = dbg ? dbg.onsets.map(timeToX) : []
+  // Recovery-pass note starts (voiced regions the tracker had dropped) — marked distinctly.
+  const recoveredXs = dbg ? dbg.recovered.map(timeToX) : []
+  // Contiguous VOICED spans (post-refine curve has a pitch) → faint shaded bands, so "why was
+  // this kept/dropped" (voiced vs silence) is visible under every lane.
+  const voicedSpans: Array<{ x0: number; x1: number }> = []
+  if (dbg) {
+    let runStart: number | null = null
+    for (let i = 0; i < dbg.curve.length; i++) {
+      const on = frameMidi(dbg.curve[i]) !== null
+      if (on && runStart === null) runStart = dbg.curve[i].time
+      else if (!on && runStart !== null) { voicedSpans.push({ x0: timeToX(runStart), x1: timeToX(dbg.curve[i].time) }); runStart = null }
+    }
+    if (runStart !== null) voicedSpans.push({ x0: timeToX(runStart), x1: timeToX(total) })
+  }
 
   const C_RAW = '#60a5fa'        // raw (heard) — blue, dashed, faint
   const C_COR = '#22c55e'        // corrected — green, solid
   const C_GRID = 'var(--border)' // beat grid — subtle
   const C_ONSET = '#f43f5e'      // onset ticks — rose (distinct from grid/playhead/curves)
   const C_FLUX = '#a78bfa'       // flux envelope — violet
+  const C_VOL = '#38bdf8'        // volume / RMS — sky
+  const C_CLAR = '#f59e0b'       // clarity / confidence — amber
+  const C_PITCHD = '#ec4899'     // pitch-change rate — pink
+  const C_RECOV = '#14b8a6'      // recovered notes — teal
+  const C_VOICED = '#22c55e'     // voiced shading — faint green band
 
   return (
     <div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="none"
         data-testid="vm-note-strip"
         style={{ height: 130, background: 'var(--bg-base)', borderRadius: 10, border: '1px solid var(--border)', display: 'block' }}>
+        {/* Voiced shading (behind everything): faint green bands where the curve is voiced,
+            so silence vs voiced is visible at a glance. */}
+        {voicedSpans.map((s, i) => (
+          <rect key={`v${i}`} data-testid="vm-voiced-band"
+            x={s.x0} y={0} width={Math.max(0.2, s.x1 - s.x0)} height={H}
+            fill={C_VOICED} opacity={0.06} />
+        ))}
         {/* Beat grid (behind everything) */}
         {gridXs.map((x, i) => (
           <line key={`g${i}`} data-testid="vm-grid-line"
@@ -1484,6 +1535,12 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
             x1={x} y1={0} x2={x} y2={H} stroke={C_ONSET} strokeWidth={0.9}
             opacity={0.85} vectorEffect="non-scaling-stroke" />
         ))}
+        {/* Recovered-note markers — a teal triangle at the top where the recovery pass
+            re-added a note the tracker had dropped, so recovered notes are distinguishable. */}
+        {recoveredXs.map((x, i) => (
+          <polygon key={`rc${i}`} data-testid="vm-recovered-mark"
+            points={`${x - 1.1},0 ${x + 1.1},0 ${x},2.6`} fill={C_RECOV} opacity={0.95} />
+        ))}
         {playhead !== null && (
           <line
             x1={(playhead / total) * W} y1={0} x2={(playhead / total) * W} y2={H}
@@ -1492,37 +1549,18 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
         )}
       </svg>
 
-      {/* Secondary evidence lane: the onset-strength (flux) envelope, with each frame's
-          opacity faded by its YIN clarity (faint where low-confidence), plus the same
-          onset ticks — so the acoustic evidence behind each note (re)start is visible. */}
+      {/* ── Stacked evidence lanes (small multiples) — every OTHER signal the note decision
+          uses, on the SAME time-X axis as the pitch plot above: volume/RMS, clarity, the
+          onset-strength (flux) with onset ticks, and pitch-change rate. Faint voiced shading
+          + onset ticks carry through so a dropped/kept note can be read against the signals. */}
       {dbg && (
-        <svg viewBox="0 0 100 100" width="100%" preserveAspectRatio="none"
-          data-testid="vm-flux-lane"
-          style={{ height: 34, marginTop: 3, background: 'var(--bg-base)', borderRadius: 8, border: '1px solid var(--border)', display: 'block' }}>
-          {(() => {
-            const n = Math.min(dbg.curve.length, dbg.flux.length)
-            if (n === 0) return null
-            const stride = Math.max(1, Math.ceil(n / 320))
-            const bars: React.ReactNode[] = []
-            const bw = Math.max(0.25, (100 / n) * stride * 0.9)
-            for (let i = 0; i < n; i += stride) {
-              const h  = Math.max(0, Math.min(1, dbg.flux[i] ?? 0))
-              const cl = Math.max(0, Math.min(1, dbg.clarity[i] ?? 0))
-              if (h <= 0) continue
-              const x = timeToX(dbg.curve[i].time)
-              bars.push(
-                <rect key={`f${i}`} x={x - bw / 2} y={100 - h * 100} width={bw} height={h * 100}
-                  fill={C_FLUX} opacity={0.3 + 0.6 * cl} />,
-              )
-            }
-            return bars
-          })()}
-          {/* Onset ticks in the lane, aligned with the ticks on the pitch plot above. */}
-          {onsetXs.map((x, i) => (
-            <line key={`fo${i}`} x1={x} y1={0} x2={x} y2={100} stroke={C_ONSET}
-              strokeWidth={0.9} opacity={0.85} vectorEffect="non-scaling-stroke" />
-          ))}
-        </svg>
+        <div style={{ marginTop: 3, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <EvidenceLane label="Volume"  color={C_VOL}    values={dbg.volume}     times={dbg.curve} timeToX={timeToX} voicedSpans={voicedSpans} testid="vm-volume-lane" />
+          <EvidenceLane label="Clarity" color={C_CLAR}   values={dbg.clarity}    times={dbg.curve} timeToX={timeToX} voicedSpans={voicedSpans} testid="vm-clarity-lane" />
+          <EvidenceLane label="Flux"    color={C_FLUX}   values={dbg.flux}       times={dbg.curve} timeToX={timeToX} voicedSpans={voicedSpans} testid="vm-flux-lane"
+            fade={dbg.clarity} onsetXs={onsetXs} onsetColor={C_ONSET} bars />
+          <EvidenceLane label="Pitch Δ" color={C_PITCHD} values={dbg.pitchDelta} times={dbg.curve} timeToX={timeToX} voicedSpans={voicedSpans} testid="vm-pitchdelta-lane" onsetXs={onsetXs} onsetColor={C_ONSET} />
+        </div>
       )}
 
       {/* Legend + take stats (debug only) */}
@@ -1533,13 +1571,83 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
           <LegendSwatch color={C_RAW} label="raw (heard)" dashed />
           <LegendSwatch color="var(--accent)" label="notes" solidBox />
           <LegendSwatch color={C_ONSET} label="onsets" />
+          <LegendSwatch color={C_VOL} label="volume" solidBox />
+          <LegendSwatch color={C_CLAR} label="clarity" solidBox />
           <LegendSwatch color={C_FLUX} label="flux" solidBox />
+          <LegendSwatch color={C_PITCHD} label="pitch Δ" solidBox />
+          <LegendSwatch color={C_RECOV} label="recovered" solidBox />
           <LegendSwatch color={C_GRID} label="beats" dashed />
           <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
-            {notes.length} note{notes.length === 1 ? '' : 's'} · {total.toFixed(1)}s · {Math.round(dbg.bpm)} BPM · {voicedRaw} voiced · {dbg.onsets.length} onset{dbg.onsets.length === 1 ? '' : 's'}
+            {notes.length} note{notes.length === 1 ? '' : 's'} · {total.toFixed(1)}s · {Math.round(dbg.bpm)} BPM · {voicedRaw} voiced · {dbg.onsets.length} onset{dbg.onsets.length === 1 ? '' : 's'}{dbg.recovered.length ? ` · ${dbg.recovered.length} recovered` : ''}
           </span>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── One thin labeled evidence lane ─────────────────────────────────────────────
+// Draws a 0–1 signal (per curve frame) as a filled area — or clarity-faded bars — over the
+// SAME time-X axis as the pitch plot, with faint voiced shading, an optional onset-tick
+// overlay, a baseline gridline, and a corner label. Small-multiples building block.
+function EvidenceLane({
+  label, color, values, times, timeToX, voicedSpans, testid,
+  onsetXs, onsetColor, fade, bars,
+}: {
+  label:       string
+  color:       string
+  values:      number[]
+  times:       PitchFrame[]
+  timeToX:     (t: number) => number
+  voicedSpans: Array<{ x0: number; x1: number }>
+  testid:      string
+  onsetXs?:    number[]
+  onsetColor?: string
+  fade?:       number[]     // per-frame 0–1 opacity multiplier (clarity) — bars mode only
+  bars?:       boolean      // draw discrete bars (flux) instead of a filled area
+}) {
+  const LH = 100
+  const n = Math.min(values.length, times.length)
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
+  const stride = Math.max(1, Math.ceil(Math.max(1, n) / 320))
+  const bw = Math.max(0.25, (100 / Math.max(1, n)) * stride * 0.9)
+
+  const barNodes: React.ReactNode[] = []
+  let areaPts = ''
+  if (bars) {
+    for (let i = 0; i < n; i += stride) {
+      const h = clamp01(values[i] ?? 0)
+      if (h <= 0) continue
+      const op = fade ? 0.25 + 0.65 * clamp01(fade[i] ?? 1) : 0.85
+      const x = timeToX(times[i].time)
+      barNodes.push(<rect key={`b${i}`} x={x - bw / 2} y={LH - h * LH} width={bw} height={h * LH} fill={color} opacity={op} />)
+    }
+  } else {
+    const pts: string[] = []
+    for (let i = 0; i < n; i += stride) {
+      pts.push(`${timeToX(times[i].time).toFixed(2)},${(LH - clamp01(values[i] ?? 0) * LH).toFixed(2)}`)
+    }
+    if (pts.length > 0) areaPts = `${timeToX(times[0].time).toFixed(2)},${LH} ${pts.join(' ')} ${timeToX(times[Math.min(n - 1, times.length - 1)].time).toFixed(2)},${LH}`
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <svg viewBox="0 0 100 100" width="100%" preserveAspectRatio="none" data-testid={testid}
+        style={{ height: 30, background: 'var(--bg-base)', borderRadius: 8, border: '1px solid var(--border)', display: 'block' }}>
+        {/* faint voiced shading */}
+        {voicedSpans.map((s, i) => (
+          <rect key={`vs${i}`} x={s.x0} y={0} width={Math.max(0.2, s.x1 - s.x0)} height={100} fill="#22c55e" opacity={0.05} />
+        ))}
+        {/* faint mid gridline for reading amplitude */}
+        <line x1={0} y1={50} x2={100} y2={50} stroke="var(--border)" strokeWidth={0.4} strokeDasharray="2 3" opacity={0.5} vectorEffect="non-scaling-stroke" />
+        {bars
+          ? barNodes
+          : areaPts && <polygon points={areaPts} fill={color} opacity={0.22} stroke={color} strokeWidth={0.8} vectorEffect="non-scaling-stroke" />}
+        {onsetXs?.map((x, i) => (
+          <line key={`ol${i}`} x1={x} y1={0} x2={x} y2={100} stroke={onsetColor ?? '#f43f5e'} strokeWidth={0.9} opacity={0.8} vectorEffect="non-scaling-stroke" />
+        ))}
+      </svg>
+      <span style={{ position: 'absolute', top: 2, left: 5, fontSize: 8.5, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-muted)', pointerEvents: 'none', textTransform: 'uppercase', opacity: 0.85 }}>{label}</span>
     </div>
   )
 }

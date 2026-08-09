@@ -63,6 +63,9 @@ export interface BackfillNote {
    *  confirm, so it was LEFT where it is (a flag, not a blind snap). Absent on
    *  the raw offline pass. */
   offGrid?:  boolean
+  /** True when this note was added by the post-decode recovery pass (a voiced region the
+   *  tracker had left as silence / dropped). Surfaced for the debug overlay. */
+  recovered?: boolean
 }
 
 export interface BackfillOptions {
@@ -175,8 +178,27 @@ export interface BackfillOptions {
    *  split. Default 0.22. */
   volumeValleyDepth?: number
   /** Existence gate: a note is dropped when its PEAK amplitude is below this fraction of
-   *  the take's peak amplitude (near-silence phantom). Default 0.12. Set 0 to disable. */
+   *  the take's peak amplitude (near-silence phantom). Default sensitivity-scaled around
+   *  ~0.05 (see DEFAULT_EXIST_FRAC / existFracFor). Set 0 to disable. When given explicitly
+   *  it OVERRIDES the sensitivity scaling. */
   volumeExistFrac?: number
+
+  // ── Recall / recover-missing-notes (bias toward not dropping) ────────────────
+  /** The widget's 0→1 sensitivity slider, threaded into the offline pass so turning it up
+   *  keeps MORE notes end-to-end: it lowers the offline voicing/clarity floor (more frames
+   *  stay voiced), lowers the existence gate, drives the HMM's `keepBias` recall knob, and
+   *  loosens the recovery pass. Default 0.5 (the widget's default) — already recovers the
+   *  common "missing quiet note" case. Clamped 0→1. */
+  sensitivity?: number
+  /** Offline YIN-confidence floor below which a frame is unvoiced (passed to
+   *  detectBufferPitch — offline only, never touches the live detector). Undefined ⇒
+   *  derived from `sensitivity` (see voicingFloorFor). Lower ⇒ more breathy frames stay
+   *  voiced ⇒ the HMM sees a note instead of silence. */
+  clarityFloor?: number
+  /** Run the post-decode RECOVERY pass: scan for voiced, stable-pitch, energetic regions the
+   *  tracker left as silence (or dropped as sub-minDuration) and re-add them as notes. Biases
+   *  toward not-missing. Default true. Pass false to A/B the drop. */
+  recoverNotes?: boolean
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -210,7 +232,13 @@ const DEFAULT_ADAPTIVE_LOW_HZ  = 165
 const YIN_MAX_WIN              = 4096   // detectBufferPitch's HANN_SIZE ceiling
 // Volume-cue defaults (Problem 3).
 const DEFAULT_VALLEY_DEPTH     = 0.22
-const DEFAULT_EXIST_FRAC       = 0.12
+// Existence-gate base fraction (was 0.12 — too aggressive; dropped soft real notes). Now the
+// low-sensitivity end of the sensitivity-scaled gate (existFracFor); a soft note at ~8–11% of
+// the take's peak now survives at the default sensitivity.
+const DEFAULT_EXIST_FRAC       = 0.05
+// The widget's default sensitivity, mirrored here so the offline pass scales its gates the
+// same way even when a caller doesn't pass one (keeps notesFromBuffer sensible standalone).
+const DEFAULT_SENSITIVITY      = 0.5
 // Cap on the FFT size used for the per-window spectral-flux (perf; power of 2).
 const FLUX_MAX_FFT             = 2048
 // ── Note segmenter (Problem: onset-aware vs HMM) ────────────────────────────────
@@ -242,6 +270,30 @@ const HMM_REPITCH = false
 // (which made a held note's raw per-bin flux spike erratically), so a sustained note
 // reads as ~zero flux while a real attack — which moves every band — still spikes.
 const FLUX_BANDS               = 32
+
+// ── Sensitivity → recall scaling ────────────────────────────────────────────────
+// A single 0→1 sensitivity (the widget's slider) scales every "keep vs drop" lever the
+// SAME direction: higher sensitivity ⇒ keep more. Each helper maps sensitivity → one gate.
+const sensOf = (opts: BackfillOptions) => clamp(opts.sensitivity ?? DEFAULT_SENSITIVITY, 0, 1)
+
+// Existence-gate fraction. sens 0 → 0.09 (strict) … 0.5 → 0.06 … 1 → 0.03 (loose). An
+// explicit volumeExistFrac overrides. A soft note at 8–11% of peak survives at the default.
+function existFracFor(opts: BackfillOptions): number {
+  if (opts.volumeExistFrac !== undefined) return Math.max(0, opts.volumeExistFrac)
+  return clamp(0.09 - 0.06 * sensOf(opts), 0.02, 0.12)
+}
+// Offline YIN-confidence floor (passed to detectBufferPitch). sens 0 → 0.5 (historical-ish)
+// … 0.5 → 0.375 … 1 → 0.25. Lower ⇒ more breathy frames stay voiced. Never below 0.2 so pure
+// noise still reads unvoiced. An explicit clarityFloor overrides.
+function voicingFloorFor(opts: BackfillOptions): number {
+  if (opts.clarityFloor !== undefined) return clamp(opts.clarityFloor, 0.1, 0.9)
+  return clamp(0.5 - 0.25 * sensOf(opts), 0.2, 0.55)
+}
+// HMM recall knob from sensitivity (0→1, passed straight through as keepBias).
+const keepBiasFor = (opts: BackfillOptions) => sensOf(opts)
+// Onset-path pitch-trust clarity gate, sensitivity-scaled around the old constant (0.5).
+// sens 0 → 0.5 … 1 → 0.3. Lower ⇒ breathy frames can still steer the note's pitch.
+const segClarityGateFor = (opts: BackfillOptions) => clamp(SEG_CLARITY_GATE - 0.2 * sensOf(opts), 0.28, 0.5)
 
 // Window that spans ~60ms and is at least 1024 samples (detectBufferPitch's
 // minimum). ~60ms still covers 6 periods of ~100Hz (typical voice f0) so YIN locks
@@ -288,6 +340,9 @@ interface ScanParams {
   adaptive: boolean
   lowWin:   number
   lowHz:    number
+  // Offline YIN-confidence floor (detectBufferPitch confFloor). Sensitivity-scaled so a
+  // higher slider keeps more breathy/quiet frames voiced. Offline-only.
+  confFloor: number
 }
 
 // Build the per-scan parameter block from options. Shared by scanBuffer and the async
@@ -302,6 +357,7 @@ function scanParamsFrom(opts: BackfillOptions, sampleRate: number): ScanParams {
     adaptive: opts.adaptiveWindow !== false,
     lowWin,
     lowHz:    opts.adaptiveLowHz ?? DEFAULT_ADAPTIVE_LOW_HZ,
+    confFloor: voicingFloorFor(opts),
   }
 }
 
@@ -385,14 +441,14 @@ function scanFeatureFrame(buf: Float32Array, off: number, p: ScanParams, st: Sca
   let midi: number | null = null
   let clarity = 0
   if (rms >= p.rmsGate) {
-    let det = detectBufferPitch(seg as Float32Array, p.sampleRate, 0)
+    let det = detectBufferPitch(seg as Float32Array, p.sampleRate, 0, p.confFloor)
     if (p.adaptive && p.lowWin > p.win && (det === null || det.hz < p.lowHz)) {
       // Anchor the long window to the buffer end near the tail so a low END note still
       // gets a full window; otherwise it starts at this frame's offset.
       let pStart = off, pEnd = off + p.lowWin
       if (pEnd > buf.length) { pEnd = buf.length; pStart = Math.max(0, pEnd - p.lowWin) }
       if (pEnd - pStart >= TAIL_MIN_SAMPLES) {
-        const longDet = detectBufferPitch(buf.subarray(pStart, pEnd) as Float32Array, p.sampleRate, 0)
+        const longDet = detectBufferPitch(buf.subarray(pStart, pEnd) as Float32Array, p.sampleRate, 0, p.confFloor)
         // Take the long read when the short one failed, or when it's at least as
         // confident (it usually is on low content) — keeps the fundamental, not an octave.
         if (longDet && (det === null || longDet.confidence >= det.confidence)) det = longDet
@@ -579,6 +635,16 @@ export interface BufferAnalysis {
   /** Per-frame YIN clarity/confidence (0–1), aligned index-for-index with `curve`. Lets
    *  the overlay fade low-confidence frames. Optional/back-compat. */
   clarity?: number[]
+  /** Per-frame VOLUME envelope — RMS normalized 0–1 by the take's peak RMS, aligned with
+   *  `curve`. The debug overlay's volume lane. Optional/back-compat. */
+  rms?: number[]
+  /** Per-frame PITCH-CHANGE rate — |Δsemitone| between consecutive voiced frames, normalized
+   *  0–1 (saturated at ~2 semitones), aligned with `curve`. The debug overlay's pitch-change
+   *  lane. Optional/back-compat. */
+  pitchDelta?: number[]
+  /** Onset times (seconds) of notes added by the RECOVERY pass (voiced regions the tracker
+   *  dropped), so the debug overlay can mark them distinctly. Optional/back-compat. */
+  recovered?: number[]
 }
 
 function eventsToNotes(
@@ -797,8 +863,9 @@ const PITCH_SPLIT_SEMI = 0.7
 // A note younger than this can't be split by an onset — prevents the note's OWN attack
 // (which is an onset) from immediately closing it, and suppresses double-triggers.
 const MIN_ONSET_SPLIT_SEC = 0.05
-// Below this clarity a frame's pitch is untrusted for the pitch-change decision (it can
-// still extend a note by amplitude), so YIN wobble on breathy frames won't split a note.
+// Base clarity below which a frame's pitch is untrusted for the pitch-change decision (it
+// can still extend a note by amplitude), so YIN wobble on breathy frames won't split a note.
+// segClarityGateFor scales DOWN from here with sensitivity (higher slider ⇒ trust more).
 const SEG_CLARITY_GATE = 0.5
 
 /**
@@ -818,6 +885,7 @@ function segmentWithOnsets(
   minDuration: number,
   useVolume: boolean,
   existFrac: number,
+  clarityGate: number,
 ): NoteEvent[] {
   if (curve.length < 2) return []
   const onsetSet = new Set(splitIdx)
@@ -873,7 +941,7 @@ function segmentWithOnsets(
       const fm = fractionalMidi(f)
       if (startIdx < 0) { open(i, f); pendingOnset = false; continue }
       const curPitch  = vSum / wSum
-      const pitchJump = f.clarity >= SEG_CLARITY_GATE && Math.abs(fm - curPitch) > PITCH_SPLIT_SEMI
+      const pitchJump = f.clarity >= clarityGate && Math.abs(fm - curPitch) > PITCH_SPLIT_SEMI
       if (pitchJump || pendingOnset) {
         flush(f.time)         // close at the boundary …
         open(i, f)            // … and start the re-articulated/new note here
@@ -928,15 +996,116 @@ function curveToHmmFrames(curve: FeatureFrame[], onsetSet: Set<number>): HmmFram
 // the energy-corroborated onset/valley frame set from the onset-aware path, reused as the
 // HMM's re-articulation trigger. minDuration is passed through as the HMM's minDurationSec
 // so both paths honour the same floor.
-function segmentWithHmm(curve: FeatureFrame[], minDuration: number, onsetSet: Set<number>): BackfillNote[] {
+function segmentWithHmm(curve: FeatureFrame[], minDuration: number, onsetSet: Set<number>, keepBias: number): BackfillNote[] {
   if (curve.length < 2) return []
-  const notes = trackNotesHMM(curveToHmmFrames(curve, onsetSet), { minDurationSec: minDuration })
+  const notes = trackNotesHMM(curveToHmmFrames(curve, onsetSet), { minDurationSec: minDuration, keepBias })
   return notes.map(n => ({
     startSec: n.startSec,
     midi:     n.midi,
     durSec:   Math.max(minDuration, n.durSec),
     velocity: clamp(n.velocity, 0.3, 1),
   }))
+}
+
+// ── Recovery pass: recover VOICED regions the tracker left as silence / dropped ─────
+/**
+ * "More checks, slower is fine" recall pass. After the segmenter decodes notes, some real
+ * notes are still missing — a breathy/quiet note the HMM scored as silence, or a short note
+ * dropped below minDuration. This scans the refined curve for the regions the notes DON'T
+ * cover, and re-adds any that look like a genuine sung note:
+ *   · VOICED        — the frame has a pitch (midi != null),
+ *   · CLEAR enough  — clarity ≥ a sensitivity-scaled recovery floor (looser than the scan),
+ *   · LOUD enough   — amplitude ≥ existFrac · take-peak (the same existence idea as the gate),
+ *   · STABLE pitch  — the run stays within ~0.7 semitone of its running median (a leap closes
+ *                     the run and opens a new one; a wide-variance/gliding blob is rejected),
+ *   · LONG enough   — run duration ≥ a recovery-min (BELOW minDuration, so a ~90–110ms note
+ *                     the tracker dropped is caught).
+ * Each surviving run becomes one note at its amplitude-weighted median pitch, flagged
+ * `recovered`. Because runs are built only from frames NOT covered by an existing note, a
+ * recovered note sits in a gap — it can't duplicate or overlap a tracked note. A genuinely
+ * silent gap has no voiced frames, so nothing is recovered there (the false-positive guard).
+ */
+function recoverMissedNotes(
+  notes: BackfillNote[],
+  curve: FeatureFrame[],
+  opts: BackfillOptions,
+  minDuration: number,
+  existFrac: number,
+): BackfillNote[] {
+  const n = curve.length
+  if (n < 2) return notes
+  const s = sensOf(opts)
+  const hopSec = Math.max(1e-4, curve[1].time - curve[0].time)
+  // Recovery gates — looser than the main scan, sensitivity-scaled (higher ⇒ recover more).
+  const recovClarity = clamp(0.55 - 0.28 * s, 0.28, 0.6)          // 0.5→0.41
+  const recovMinDur  = clamp(0.10 - 0.035 * s, 0.055, 0.11)       // 0.5→0.0825 (< minDuration)
+  const STABLE_SEMI  = 0.7                                        // run pitch spread ceiling
+  let peakAmp = 0
+  for (const f of curve) if (f.amplitude > peakAmp) peakAmp = f.amplitude
+  const ampFloor = Math.max(existFrac * peakAmp, 1e-4)
+
+  // Mark frames already covered by a decoded note (a small ±half-hop pad on each side).
+  const covered = new Uint8Array(n)
+  const pad = hopSec * 0.5
+  for (const note of notes) {
+    const a = note.startSec - pad, b = note.startSec + note.durSec + pad
+    for (let i = 0; i < n; i++) if (curve[i].time >= a && curve[i].time <= b) covered[i] = 1
+  }
+
+  // A frame is a recovery candidate when it's uncovered, voiced, clear and loud enough.
+  const candidate = (i: number): boolean => {
+    if (covered[i]) return false
+    const f = curve[i]
+    return f.midi !== null && f.clarity >= recovClarity && f.amplitude >= ampFloor
+  }
+
+  const recovered: BackfillNote[] = []
+  let runStart = -1
+  let runMed = 0                    // running median pitch of the open run
+  const runVals: { v: number; w: number }[] = []
+  let runLoV = Infinity, runHiV = -Infinity, runPeak = 0
+
+  const closeRun = (endIdx: number) => {
+    if (runStart < 0) { return }
+    const startT = curve[runStart].time
+    const endT   = curve[endIdx - 1].time + hopSec
+    const dur    = endT - startT
+    // Stable + long + loud enough → emit one note at the weighted-median pitch.
+    if (dur >= recovMinDur && (runHiV - runLoV) <= STABLE_SEMI + 0.5 && runPeak >= ampFloor) {
+      const center = Math.round(weightedMedian(runVals))
+      recovered.push({
+        startSec: startT,
+        midi:     center,
+        durSec:   Math.max(minDuration, dur),
+        velocity: clamp(0.3 + runPeak, 0.3, 1),
+        recovered: true,
+      })
+    }
+    runStart = -1; runVals.length = 0; runLoV = Infinity; runHiV = -Infinity; runPeak = 0
+  }
+
+  for (let i = 0; i < n; i++) {
+    if (!candidate(i)) { closeRun(i); continue }
+    const f  = curve[i]
+    const fm = fractionalMidi(f)
+    if (runStart < 0) {
+      runStart = i; runMed = fm; runVals.length = 0; runLoV = Infinity; runHiV = -Infinity; runPeak = 0
+    } else if (Math.abs(fm - runMed) > STABLE_SEMI) {
+      // Pitch stepped — close the stable run here, start a fresh one at this pitch.
+      closeRun(i)
+      runStart = i; runMed = fm
+    }
+    runVals.push({ v: fm, w: Math.max(1e-3, f.amplitude) })
+    if (fm < runLoV) runLoV = fm
+    if (fm > runHiV) runHiV = fm
+    if (f.amplitude > runPeak) runPeak = f.amplitude
+    // Track a robust running median so a single outlier frame doesn't drag the split test.
+    runMed = weightedMedian(runVals)
+  }
+  closeRun(n)
+
+  if (recovered.length === 0) return notes
+  return [...notes, ...recovered].sort((a, b) => a.startSec - b.startSec)
 }
 
 // Shared tail of the offline pass: refine the raw feature track, detect onsets, segment
@@ -970,32 +1139,45 @@ function finalizeAnalysis(
   const splitIdx = wantOnsets
     ? Array.from(new Set([...onsetIdx, ...valleyIdx])).sort((a, b) => a - b)
     : []
-  const existFrac = Math.max(0, opts.volumeExistFrac ?? DEFAULT_EXIST_FRAC)
+  const existFrac = existFracFor(opts)     // sensitivity-scaled existence gate (~0.05 default)
+  const keepBias  = keepBiasFor(opts)      // sensitivity-driven HMM recall knob
   let notes: BackfillNote[]
   if (segmenter === 'hmm') {
     // Note-level Viterbi: it decides each note's pitch itself (auto-tuning + bounded
     // emission absorb the attack scoop), so re-pitch is redundant here — default OFF
     // (HMM_REPITCH); pass repitch:true explicitly to force it on for A/B. The corroborated
-    // onset/valley frames (splitIdx) are the HMM's re-articulation triggers.
-    notes = segmentWithHmm(curve, minDuration, new Set(splitIdx))
+    // onset/valley frames (splitIdx) are the HMM's re-articulation triggers. keepBias tilts
+    // the silence-vs-note balance toward notes (sensitivity-driven).
+    notes = segmentWithHmm(curve, minDuration, new Set(splitIdx), keepBias)
     if (opts.repitch === true || (opts.repitch !== false && HMM_REPITCH)) {
       notes = repitchNotes(notes, curve, opts)
     }
   } else {
     const events = useOnsets
-      ? segmentWithOnsets(curve, splitIdx, minDuration, useVolume, existFrac)
+      ? segmentWithOnsets(curve, splitIdx, minDuration, useVolume, existFrac, segClarityGateFor(opts))
       : extractNoteEvents(curve, minDuration)
     notes = eventsToNotes(events, minDuration)
     if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
   }
 
-  let fluxMax = 1e-9
-  for (const f of curve) if (f.flux > fluxMax) fluxMax = f.flux
+  // ── Recovery pass: re-add voiced, stable, energetic regions the tracker dropped ──
+  // Prioritizes not-missing over a few extras. Sensitivity-scaled (looser as it rises).
+  if (opts.recoverNotes !== false) {
+    notes = recoverMissedNotes(notes, curve, opts, minDuration, existFrac)
+  }
+
+  let fluxMax = 1e-9, rmsPeak = 1e-9
+  for (const f of curve) { if (f.flux > fluxMax) fluxMax = f.flux; if (f.rms > rmsPeak) rmsPeak = f.rms }
   return {
     notes, curve, rawCurve,
     onsets:  onsetIdx.map(i => curve[i].time),
     flux:    curve.map(f => Math.min(1, f.flux / fluxMax)),
     clarity: curve.map(f => f.clarity),
+    // Volume (RMS) + pitch-change envelopes for the debug overlay — normalized 0–1, aligned
+    // to `curve`. pitchDelta saturates at ~2 semitones so a big leap reads as a full spike.
+    rms:       curve.map(f => Math.min(1, f.rms / rmsPeak)),
+    pitchDelta: curve.map(f => Math.min(1, f.pitchDelta / 2)),
+    recovered: notes.filter(n => n.recovered).map(n => n.startSec),
   }
 }
 

@@ -941,11 +941,18 @@ export function midiToName(midi: number): string {
  * Run YIN pitch detection on a slice of a mono Float32Array.
  * Pass `offset` to skip the attack transient (e.g. 20% into the buffer).
  * Returns detected MIDI note + frequency + YIN confidence, or null if unvoiced.
+ *
+ * `confFloor` is the YIN-confidence floor below which the read is rejected as
+ * unvoiced. It defaults to 0.55 (the historical value) so every existing caller is
+ * unchanged; the OFFLINE backfill scan lowers it (sensitivity-scaled) to keep more
+ * breathy/quiet frames voiced. This is offline-only — the live LivePitchDetector
+ * class calls `yinDetect` directly and is not affected.
  */
 export function detectBufferPitch(
   samples: Float32Array,
   sampleRate: number,
   offset = 0,
+  confFloor = 0.55,
 ): { hz: number; midi: number; confidence: number } | null {
   const size = Math.min(HANN_SIZE, samples.length - offset)
   if (size < 1024) return null
@@ -955,7 +962,7 @@ export function detectBufferPitch(
     windowed[i] = samples[offset + i] * HANN[Math.floor(i * HANN_SIZE / size)]
   }
   const r = yinDetect(windowed, sampleRate)
-  if (!r || r.confidence < 0.55) return null
+  if (!r || r.confidence < confFloor) return null
   const midi = Math.round(69 + 12 * Math.log2(r.hz / 440))
   return { hz: r.hz, midi, confidence: r.confidence }
 }
