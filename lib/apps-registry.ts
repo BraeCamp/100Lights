@@ -40,6 +40,14 @@ export const MINI_APPS: MiniApp[] = [
     status: 'live',
   },
   {
+    slug: 'musicvideo',
+    title: 'Music Video',
+    tagline: 'Turn a video into a music visual.',
+    description: 'Upload a video and its melody becomes a visual overlay synced to playback — falling notes, flowing shapes, colors, and fonts. Transcription is AI-light; tweaking the visuals is free.',
+    href: '/apps/musicvideo',
+    status: 'beta',
+  },
+  {
     slug: 'transcribe',
     title: 'Transcribe',
     tagline: 'Turn audio into editable MIDI notes.',
