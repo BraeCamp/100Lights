@@ -28,6 +28,7 @@ import ContentVideoPanel from './ContentVideoPanel'
 import ContentQueuePanel from './ContentQueuePanel'
 import AppsPanel from './AppsPanel'
 import AppTargetsPanel from './AppTargetsPanel'
+import AppCorrectionsPanel from './AppCorrectionsPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -816,6 +817,19 @@ export default async function AdminPage() {
                 description="Reference audio + descriptions of what the AI should sound like — the sound-side ground truth we tune generation/detection toward."
               />
               <AppTargetsPanel />
+            </>
+          ),
+        },
+        {
+          id: 'corrections',
+          label: 'Corrections',
+          content: (
+            <>
+              <PanelIntro
+                title="Voice Corrections"
+                description="Takes users/you corrected in the voice app — comment on what's wrong (detection or rendering) and the AI tunes to it."
+              />
+              <AppCorrectionsPanel />
             </>
           ),
         },

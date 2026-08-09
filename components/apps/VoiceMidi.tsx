@@ -276,6 +276,8 @@ export default function VoiceMidi() {
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [saveSummary, setSaveSummary] = useState<CorrectionsSummary | null>(null)
   const [savingCorr, setSavingCorr] = useState(false)
+  const [sendingAdmin, setSendingAdmin] = useState(false)     // POST to /api/voice-corrections in flight
+  const [sendMsg, setSendMsg] = useState<string | null>(null)
 
   // ── Test / calibrate ─────────────────────────────────────────────────────────
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENS)
@@ -1077,40 +1079,50 @@ export default function VoiceMidi() {
     }
   }, [curve, clarity, flux, volume, pitchDelta, onsets])
 
-  // Save the current take as a correction/training example: detected baseline +
-  // corrected (edited) ground truth + evidence + 16 kHz audio + settings.
-  const doSaveCorrection = useCallback(async (): Promise<CorrectionRecord | null> => {
+  // Build the current take into a CorrectionRecord (detected baseline + corrected
+  // ground truth + evidence + 16 kHz audio + settings). Shared by the local Save
+  // and the "Send to admin" paths. Includes the selected instrument in `settings`
+  // so rendering feedback has context. Returns null when there's nothing to save.
+  const buildCorrectionRecord = useCallback((): CorrectionRecord | null => {
     if (displayNotes.length === 0 && detected.length === 0) return null
+    const toNote = (n: RecNote) => ({ startSec: n.startSec, midi: n.midi, durSec: n.durSec, velocity: n.velocity })
+    const corrected = displayNotes.map(toNote)
+    const det = detected.map(toNote)
+    const diff = diffNotes(det, corrected)
+    const audioSrc = lastAudioRef.current
+    const audio = audioSrc
+      ? encodeCorrectionAudio(audioSrc.samples, audioSrc.sampleRate)
+      : { sampleRate: 0, samples: 0, durSec: 0, encoding: 'int16' as const, pcmBase64: '' }
+    const sel = selRef.current
+    return {
+      id: `corr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ts: Date.now(),
+      appVersion: CORRECTIONS_APP_VERSION,
+      edited,
+      detected: det,
+      corrected,
+      diff,
+      evidence: buildEvidence(),
+      audio,
+      settings: {
+        sensitivity, tracker: segmenter, key: null, scale: null,
+        bpm, division, timingOffsetMs, gridAligned: takeGridAligned,
+        instrument: sel ? `${sel.name} [${sel.id}]` : null,
+      },
+    }
+  }, [displayNotes, detected, edited, buildEvidence, sensitivity, segmenter, bpm, division, timingOffsetMs, takeGridAligned])
+
+  // Save the current take locally (IndexedDB) as a correction/training example.
+  const doSaveCorrection = useCallback(async (): Promise<CorrectionRecord | null> => {
+    const record = buildCorrectionRecord()
+    if (!record) return null
     setSavingCorr(true)
     try {
-      const toNote = (n: RecNote) => ({ startSec: n.startSec, midi: n.midi, durSec: n.durSec, velocity: n.velocity })
-      const corrected = displayNotes.map(toNote)
-      const det = detected.map(toNote)
-      const diff = diffNotes(det, corrected)
-      const audioSrc = lastAudioRef.current
-      const audio = audioSrc
-        ? encodeCorrectionAudio(audioSrc.samples, audioSrc.sampleRate)
-        : { sampleRate: 0, samples: 0, durSec: 0, encoding: 'int16' as const, pcmBase64: '' }
-      const record: CorrectionRecord = {
-        id: `corr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        ts: Date.now(),
-        appVersion: CORRECTIONS_APP_VERSION,
-        edited,
-        detected: det,
-        corrected,
-        diff,
-        evidence: buildEvidence(),
-        audio,
-        settings: {
-          sensitivity, tracker: segmenter, key: null, scale: null,
-          bpm, division, timingOffsetMs, gridAligned: takeGridAligned,
-        },
-      }
       await saveCorrection(record)
       const all = await listCorrections()
       setSavedCount(all.length)
       setSaveSummary(summarizeCorrections(all))
-      setSaveMsg(`Saved — ${describeDiff(diff)}`)
+      setSaveMsg(`Saved — ${describeDiff(record.diff)}`)
       return record
     } catch {
       setSaveMsg('Save failed')
@@ -1118,7 +1130,28 @@ export default function VoiceMidi() {
     } finally {
       setSavingCorr(false)
     }
-  }, [displayNotes, detected, edited, buildEvidence, sensitivity, segmenter, bpm, division, timingOffsetMs, takeGridAligned])
+  }, [buildCorrectionRecord])
+
+  // Send the current take to the admin store (public /api/voice-corrections), where
+  // the owner comments on it and the AI reads the comments + data. Independent of
+  // the local Save — this take doesn't need to be saved locally first.
+  const doSendToAdmin = useCallback(async () => {
+    const record = buildCorrectionRecord()
+    if (!record) return
+    setSendingAdmin(true); setSendMsg(null)
+    try {
+      const r = await fetch('/api/voice-corrections', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(record),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setSendMsg('Sent to admin ✓')
+    } catch (e) {
+      setSendMsg(e instanceof Error ? `Send failed — ${e.message}` : 'Send failed')
+    } finally {
+      setSendingAdmin(false)
+    }
+  }, [buildCorrectionRecord])
 
   // Export the whole dataset as a downloaded JSON file.
   const doExportCorrections = useCallback(async () => {
@@ -1831,12 +1864,26 @@ export default function VoiceMidi() {
                 }}
                 title="Delete every saved correction"
               >Clear</button>
+              <button
+                onClick={() => void doSendToAdmin()}
+                disabled={sendingAdmin || !hasTake}
+                data-testid="vm-send-admin"
+                style={{
+                  padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  cursor: sendingAdmin || !hasTake ? 'default' : 'pointer', opacity: sendingAdmin || !hasTake ? 0.5 : 1,
+                  border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent-light)',
+                }}
+                title="Send this correction to the admin so it can be reviewed and the detector tuned"
+              >{sendingAdmin ? 'Sending…' : '➦ Send to admin'}</button>
               <span data-testid="vm-corrections-count" style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
                 {savedCount} correction{savedCount === 1 ? '' : 's'} saved
               </span>
             </div>
             {saveMsg && (
               <p data-testid="vm-save-msg" style={{ fontSize: 11.5, color: 'var(--accent-light)', margin: '8px 0 0' }}>{saveMsg}</p>
+            )}
+            {sendMsg && (
+              <p data-testid="vm-send-msg" style={{ fontSize: 11.5, color: sendMsg.includes('✓') ? '#34d399' : '#f59e0b', margin: '6px 0 0' }}>{sendMsg}</p>
             )}
             {saveSummary && saveSummary.count > 0 && (
               (() => {

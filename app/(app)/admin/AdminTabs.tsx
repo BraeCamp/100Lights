@@ -33,7 +33,7 @@ const ICONS: Record<string, LucideIcon> = {
   webhooks: Webhook, storage: HardDrive, audit: ScrollText, links: LinkIcon,
   catalog: Library, 'sound-library': Music, 'midi-presets': Piano,
   'sample-packs': Package, 'beat-corrections': Drum,
-  apps: LayoutGrid, inventory: AppWindow, targets: Target,
+  apps: LayoutGrid, inventory: AppWindow, targets: Target, corrections: MessageSquare,
 }
 function iconFor(tabId: string, subId: string): LucideIcon {
   if (ICONS[subId]) return ICONS[subId]

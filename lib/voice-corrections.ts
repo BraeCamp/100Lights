@@ -74,6 +74,7 @@ export interface CorrectionSettings {
   division:       number
   timingOffsetMs: number
   gridAligned:    boolean
+  instrument?:    string | null   // selected preset ("<name> [<id>]") — rendering context
 }
 
 export interface CorrectionRecord {
