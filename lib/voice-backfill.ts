@@ -42,63 +42,77 @@ export interface BackfillOptions {
   rmsGate?:      number
   /** Minimum note length in seconds. Default 0.08. */
   minDuration?:  number
-  /** Analysis hop in seconds (time resolution of the pitch curve). Default 0.01 (10ms). */
+  /** Analysis hop in seconds (time resolution of the pitch curve). Default 0.015 (15ms). */
   hopSec?:       number
-  /** Analysis window size in samples. Default 2048 (YIN-safe down to ~70 Hz). */
+  /** Analysis window size in samples. Default scales to the (downsampled) rate,
+   *  ~64ms and ≥1024, YIN-safe down to ~70 Hz. */
   winSize?:      number
   /** Half-width of the median filter over the MIDI track (kills octave flickers). Default 2 → 5-frame median. */
   medianRadius?: number
+  /** Downsample target rate (Hz) applied before the pitch scan. Voice pitch is well
+   *  under 1 kHz, so ~16 kHz keeps YIN accurate while shrinking the window ~2.75× and
+   *  YIN's per-window cost ~7×. Pass 0 / >= source rate to skip. Default 16000. */
+  targetSampleRate?: number
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
+const DEFAULT_TARGET_SR = 16000
+
+// Window that spans ~64ms and is at least 1024 samples (detectBufferPitch's
+// minimum). ~64ms covers 4+ periods of 70Hz, so YIN stays accurate at the low end.
+const defaultWin = (sr: number) => Math.max(1024, Math.round(sr * 0.064))
+
 /**
- * Scan a mono buffer at a fine hop, running the YIN core (detectBufferPitch) per
- * window, and build a PitchFrame[] in exactly the shape extractNoteEvents expects:
- *   { time, freq, amplitude(0-1, = min(1, rms*4)), midi }
- * A median filter over the MIDI track removes single-frame octave/semitone jumps.
+ * Box-average decimation to a lower sample rate. The averaging is a cheap
+ * anti-alias low-pass — fine for pitch, which lives well below 1kHz. No-op when
+ * the source is already at/below the target. Never mutates the caller's buffer.
  */
-export function buildPitchCurve(
+export function resampleMono(
   samples: Float32Array,
-  sampleRate: number,
-  opts: BackfillOptions = {},
-): PitchFrame[] {
-  const gain    = opts.gain ?? 1
-  const rmsGate = opts.rmsGate ?? 0.006
-  const win     = opts.winSize ?? 2048
-  const hop     = Math.max(1, Math.round((opts.hopSec ?? 0.01) * sampleRate))
-  const rMed    = Math.max(0, opts.medianRadius ?? 2)
-
-  // Apply gain once into a working copy (soft-clamped so an extreme boost can't
-  // produce out-of-range samples). Never mutate the caller's buffer.
-  const buf = gain === 1
-    ? samples
-    : Float32Array.from(samples, v => clamp(v * gain, -1, 1))
-
-  if (buf.length < win) return []
-
-  const frames: PitchFrame[] = []
-  for (let off = 0; off + win <= buf.length; off += hop) {
-    const seg = buf.subarray(off, off + win)
-    let sq = 0
-    for (let i = 0; i < seg.length; i++) sq += seg[i] * seg[i]
-    const rms = Math.sqrt(sq / seg.length)
-    const amplitude = Math.min(1, rms * 4)   // same scaling extractNoteEvents' 0.025 gate assumes
-
-    let freq: number | null = null
-    let midi: number | null = null
-    if (rms >= rmsGate) {
-      const det = detectBufferPitch(seg as Float32Array, sampleRate, 0)
-      if (det) { freq = det.hz; midi = det.midi }
-    }
-    frames.push({ time: off / sampleRate, freq, amplitude, midi })
+  srcRate: number,
+  dstRate: number,
+): { buf: Float32Array; rate: number } {
+  if (!(dstRate > 0) || dstRate >= srcRate || samples.length === 0) {
+    return { buf: samples, rate: srcRate }
   }
+  const ratio  = srcRate / dstRate
+  const outLen = Math.floor(samples.length / ratio)
+  const out    = new Float32Array(outLen)
+  for (let i = 0; i < outLen; i++) {
+    const s0 = Math.floor(i * ratio)
+    const s1 = Math.min(samples.length, Math.floor((i + 1) * ratio))
+    let sum = 0, cnt = 0
+    for (let j = s0; j < s1; j++) { sum += samples[j]; cnt++ }
+    out[i] = cnt > 0 ? sum / cnt : (samples[s0] ?? 0)
+  }
+  return { buf: out, rate: dstRate }
+}
 
+interface ScanParams { win: number; rmsGate: number; sampleRate: number }
+
+// One analysis window → one PitchFrame (RMS gate + YIN core via detectBufferPitch).
+function scanFrame(buf: Float32Array, off: number, p: ScanParams): PitchFrame {
+  const seg = buf.subarray(off, off + p.win)
+  let sq = 0
+  for (let i = 0; i < seg.length; i++) sq += seg[i] * seg[i]
+  const rms = Math.sqrt(sq / seg.length)
+  const amplitude = Math.min(1, rms * 4)   // scaling extractNoteEvents' 0.025 gate assumes
+
+  let freq: number | null = null
+  let midi: number | null = null
+  if (rms >= p.rmsGate) {
+    const det = detectBufferPitch(seg as Float32Array, p.sampleRate, 0)
+    if (det) { freq = det.hz; midi = det.midi }
+  }
+  return { time: off / p.sampleRate, freq, amplitude, midi }
+}
+
+// Median filter over the MIDI track (ignoring unvoiced neighbors). Offline we can
+// afford this stricter smoothing to kill single-frame octave flickers the
+// real-time detector's IIR would pass through.
+function medianFilterMidi(frames: PitchFrame[], rMed: number): PitchFrame[] {
   if (rMed === 0) return frames
-
-  // Median filter over the MIDI track (ignoring unvoiced neighbors). Offline we
-  // can afford this stricter smoothing to kill single-frame octave flickers that
-  // the real-time detector's IIR would otherwise pass through.
   return frames.map((f, i) => {
     if (f.midi === null) return f
     const vals: number[] = []
@@ -113,10 +127,59 @@ export function buildPitchCurve(
   })
 }
 
+// Apply gain into a working copy (soft-clamped so an extreme boost can't produce
+// out-of-range samples). Never mutates the caller's buffer.
+const applyGain = (samples: Float32Array, gain: number): Float32Array =>
+  gain === 1 ? samples : Float32Array.from(samples, v => clamp(v * gain, -1, 1))
+
+/**
+ * Scan a mono buffer at a fine hop, running the YIN core (detectBufferPitch) per
+ * window, and build a PitchFrame[] in exactly the shape extractNoteEvents expects:
+ *   { time, freq, amplitude(0-1, = min(1, rms*4)), midi }
+ * A median filter over the MIDI track removes single-frame octave/semitone jumps.
+ *
+ * NOTE: this scans at `sampleRate` as-is — the downsample lives in notesFromBuffer.
+ */
+export function buildPitchCurve(
+  samples: Float32Array,
+  sampleRate: number,
+  opts: BackfillOptions = {},
+): PitchFrame[] {
+  const gain    = opts.gain ?? 1
+  const rmsGate = opts.rmsGate ?? 0.006
+  const win     = opts.winSize ?? defaultWin(sampleRate)
+  const hop     = Math.max(1, Math.round((opts.hopSec ?? 0.015) * sampleRate))
+  const rMed    = Math.max(0, opts.medianRadius ?? 2)
+
+  const buf = applyGain(samples, gain)
+  if (buf.length < win) return []
+
+  const p: ScanParams = { win, rmsGate, sampleRate }
+  const frames: PitchFrame[] = []
+  for (let off = 0; off + win <= buf.length; off += hop) frames.push(scanFrame(buf, off, p))
+  return medianFilterMidi(frames, rMed)
+}
+
+function eventsToNotes(
+  events: ReturnType<typeof extractNoteEvents>,
+  minDuration: number,
+): BackfillNote[] {
+  return events.map(e => ({
+    startSec: e.start,
+    midi:     e.midi,
+    durSec:   Math.max(minDuration, e.end - e.start),
+    // e.amplitude is capped at 0.9 by extractNoteEvents; map to a 0.3–1 velocity.
+    velocity: clamp(0.3 + e.amplitude, 0.3, 1),
+  }))
+}
+
 /**
  * Full offline pass: mono Float32 buffer → discrete notes in the widget's shape
  * ({ startSec, midi, durSec, velocity }). Velocity is derived from the note's
  * average amplitude, clamped to a musical range.
+ *
+ * The buffer is downsampled to ~16kHz first (voice pitch << 1kHz), which shrinks
+ * the YIN analysis window ~2.75× and its per-window cost ~7×.
  *
  * Pure + deterministic — safe to unit-test headlessly on synthesized audio.
  */
@@ -126,15 +189,54 @@ export function notesFromBuffer(
   opts: BackfillOptions = {},
 ): BackfillNote[] {
   const minDuration = opts.minDuration ?? 0.08
-  const curve = buildPitchCurve(samples, sampleRate, opts)
-  const events = extractNoteEvents(curve, minDuration)
-  return events.map(e => ({
-    startSec: e.start,
-    midi:     e.midi,
-    durSec:   Math.max(minDuration, e.end - e.start),
-    // e.amplitude is capped at 0.9 by extractNoteEvents; map to a 0.3–1 velocity.
-    velocity: clamp(0.3 + e.amplitude, 0.3, 1),
-  }))
+  const { buf, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
+  const curve = buildPitchCurve(buf, rate, opts)
+  return eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
+}
+
+const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+
+/**
+ * Non-blocking variant of notesFromBuffer. Identical analysis (same downsample →
+ * YIN scan → median → segment), but the per-window loop yields to the event loop
+ * on a time budget so the UI stays responsive, and reports fractional progress
+ * (0→1) via onProgress. Use this from the browser; notesFromBuffer stays as the
+ * pure, synchronous unit-test entry point.
+ */
+export async function notesFromBufferAsync(
+  samples: Float32Array,
+  sampleRate: number,
+  opts: BackfillOptions = {},
+  onProgress?: (frac: number) => void,
+): Promise<BackfillNote[]> {
+  const minDuration = opts.minDuration ?? 0.08
+  const rMed        = Math.max(0, opts.medianRadius ?? 2)
+  const { buf: ds, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
+
+  const gain    = opts.gain ?? 1
+  const rmsGate = opts.rmsGate ?? 0.006
+  const win     = opts.winSize ?? defaultWin(rate)
+  const hop     = Math.max(1, Math.round((opts.hopSec ?? 0.015) * rate))
+  const buf     = applyGain(ds, gain)
+
+  if (buf.length < win) { onProgress?.(1); return [] }
+
+  const p: ScanParams = { win, rmsGate, sampleRate: rate }
+  const frames: PitchFrame[] = []
+  const end = buf.length - win
+  let lastYield = nowMs()
+  for (let off = 0; off + win <= buf.length; off += hop) {
+    frames.push(scanFrame(buf, off, p))
+    if (nowMs() - lastYield >= 12) {          // ~12ms work budget between yields
+      onProgress?.(Math.min(0.97, end > 0 ? off / end : 1))
+      await new Promise<void>(r => setTimeout(r, 0))
+      lastYield = nowMs()
+    }
+  }
+  const curve = medianFilterMidi(frames, rMed)
+  const notes = eventsToNotes(extractNoteEvents(curve, minDuration), minDuration)
+  onProgress?.(1)
+  return notes
 }
 
 export interface GridOptions {

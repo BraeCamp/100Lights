@@ -26,8 +26,8 @@ export default function VoiceMidiPage() {
           </h1>
           <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.65, margin: 0 }}>
             Sing or hum a melody into your mic and hear it back as the instrument you choose — piano,
-            violin, synth, and more. Turn on the metronome to keep time, then quantize your take to snap
-            it to the beat.
+            violin, synth, and real AI-sampled instruments. Turn on the metronome to keep time, then
+            quantize your take to snap it to the beat.
           </p>
         </header>
 
@@ -37,8 +37,8 @@ export default function VoiceMidiPage() {
           <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px' }}>How to use it</h2>
           <p style={{ margin: '0 0 10px' }}>
             Pick an instrument and set your tempo. Hit <strong>Sing a tune</strong> and hum a melody —
-            you&rsquo;ll hear it played back through the instrument in real time, and the detected note
-            shows as you go. Hit <strong>Stop</strong>, then <strong>Play</strong> to hear the whole take.
+            singing stays silent so you&rsquo;re not distracted, and the detected note shows as you go.
+            Hit <strong>Stop</strong>, then <strong>Play</strong> to hear the whole take on your instrument.
             If the timing is loose, tap a grid value and <strong>Quantize</strong> snaps every note onto
             the beat. Your raw take is kept, so you can toggle quantize off anytime.
           </p>

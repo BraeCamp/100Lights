@@ -3,10 +3,18 @@
 /**
  * VoiceMidi — sing/hum a tune and hear it back as a chosen instrument.
  *
- * Everything audio here is pure Web Audio (no DAW engine, no IndexedDB):
+ * Two instrument sound sources:
+ *   • SYNTH presets   — pure Web Audio, lib/instrument-synth.ts playMelodicNote
+ *                       (category ∈ MELODIC_TYPES).
+ *   • SAMPLED presets — the real AI multisample packs (Grand Piano (AI),
+ *                       Electric Guitar (AI), …): one baked sample per semitone in
+ *                       IndexedDB, seeded on demand by seedAiInstruments(). The
+ *                       detected note plays its EXACT baked sample (no pitch-shift).
+ *
+ * Audio plumbing:
  *   • Mic → pitch:  lib/pitch-detector.ts  LivePitchDetector  (YIN, real-time)
- *   • Instrument:   lib/instrument-synth.ts playMelodicNote / MELODIC_TYPES
  *   • Instruments:  lib/midi-presets.ts     getPresets / getGroupedPresets
+ *   • Samples:      lib/default-samples.ts  seedAiInstruments  +  lib/sound-library
  *   • Metronome:    look-ahead scheduler lifted from components/tools/Metronome
  *                   (click recipe from lib/daw-engine _buildMetronomeBuffers)
  *
@@ -15,13 +23,32 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LivePitchDetector, type LivePitchResult, type LiveLevel, type LiveSensitivity } from '@/lib/pitch-detector'
-import { notesFromBuffer, alignToGrid } from '@/lib/voice-backfill'
+import { notesFromBuffer, notesFromBufferAsync, buildPitchCurve, alignToGrid } from '@/lib/voice-backfill'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import {
   getPresets, getGroupedPresets, midiNoteLabel, clampToPreset,
   type MidiPreset,
 } from '@/lib/midi-presets'
+import { seedAiInstruments, libraryFulfill } from '@/lib/default-samples'
+import { libraryGetAll } from '@/lib/sound-library'
 import type { BeatType } from '@/lib/beat-analyzer'
+
+// ── Sampled (AI multisample) instruments ──────────────────────────────────────
+// The AI packs baked by seedAiInstruments() (lib/default-samples.ts). Mirrors
+// AI_INSTRUMENT_PACKS there — each folder holds one sample per semitone across the
+// preset's captured range. Discriminator: a preset is SAMPLED (play its baked
+// sample) iff its folder is one of these; anything else is a SYNTH voice
+// (playMelodicNote). Every AI preset name also ends in "(AI)".
+const AI_SAMPLE_FOLDERS = new Set([
+  'Grand Piano (AI) – All Notes',
+  'Electric Guitar (AI) – All Notes',
+  'Electric Bass (AI) – All Notes',
+  'Fretless Bass (AI) – All Notes',
+  'Synth Bass (AI) – All Notes',
+])
+function isSampledPreset(p: MidiPreset): boolean {
+  return AI_SAMPLE_FOLDERS.has(p.folder)
+}
 
 // ── A recorded note ───────────────────────────────────────────────────────────
 interface RecNote { startSec: number; midi: number; durSec: number; velocity: number }
@@ -83,7 +110,11 @@ export function quantizeNotes(notes: RecNote[], bpm: number, division: number): 
 // ── Backfill: decode a recorded blob → refined notes ──────────────────────────
 // Browser-only glue (decode + stereo downmix); the actual pitch→note analysis is
 // the pure, testable notesFromBuffer() in lib/voice-backfill.ts.
-async function backfillFromBlob(blob: Blob, params: Required<LiveSensitivity>): Promise<RecNote[]> {
+async function backfillFromBlob(
+  blob: Blob,
+  params: Required<LiveSensitivity>,
+  onProgress?: (frac: number) => void,
+): Promise<RecNote[]> {
   const arr = await blob.arrayBuffer()
   const ac = new AudioContext()
   try {
@@ -103,11 +134,12 @@ async function backfillFromBlob(blob: Blob, params: Required<LiveSensitivity>): 
     }
     // Mirror the live signal chain: the MediaRecorder captured the RAW pre-gain
     // mic stream, so re-apply the user's sensitivity gain + RMS gate offline.
-    return notesFromBuffer(mono, audio.sampleRate, {
+    // Async + downsampled: keeps the UI responsive and drives a real progress %.
+    return notesFromBufferAsync(mono, audio.sampleRate, {
       gain: params.gain,
       rmsGate: params.rmsGate,
       minDuration: 0.08,
-    })
+    }, onProgress)
   } finally {
     void ac.close()
   }
@@ -127,6 +159,15 @@ export default function VoiceMidi() {
   const [division, setDivision] = useState(2)
   const [playhead, setPlayhead] = useState<number | null>(null)
 
+  // ── Sampled (AI) instrument loading ──────────────────────────────────────────
+  // Seeding bakes every semitone of the AI packs into IndexedDB (a few seconds on
+  // first use). We seed on selection to mask that latency behind the picker, and
+  // cache decoded AudioBuffers by `folder:midi` so re-plays are instant.
+  const [instrLoading, setInstrLoading] = useState(false)   // seeding/decoding a sampled preset
+  const [instrMsg, setInstrMsg] = useState<string | null>(null)
+  const sampleCache = useRef<Map<string, AudioBuffer | null>>(new Map())
+  const seedPromise = useRef<Promise<boolean> | null>(null)
+
   // ── Backfill (offline accuracy pass) ─────────────────────────────────────────
   // After a take, the RECORDED audio is re-analyzed offline for a cleaner
   // transcription. We keep the live take around so the user can toggle back.
@@ -135,6 +176,7 @@ export default function VoiceMidi() {
   //   refinedRawTake — offline pitch pass (accurate pitch, un-aligned onsets)
   //   refinedTake    — the offline pass CONFIRMED/CORRECTED to the beat grid (default)
   const [refining, setRefining] = useState(false)
+  const [refineProgress, setRefineProgress] = useState(0)
   const [refineMsg, setRefineMsg] = useState<string | null>(null)
   const [liveTake, setLiveTake] = useState<RecNote[] | null>(null)
   const [refinedRawTake, setRefinedRawTake] = useState<RecNote[] | null>(null)
@@ -178,27 +220,127 @@ export default function VoiceMidi() {
   const selRef = useRef<MidiPreset | null>(null)
 
   // ── Load presets (client-only: getPresets reads localStorage) ────────────────
+  // Two kinds are offered: SYNTH voices (category ∈ MELODIC_TYPES, played by
+  // playMelodicNote) and the SAMPLED AI packs (played from their baked samples).
+  // Electric Guitar (AI) has category 'other' so it'd be dropped by the melodic
+  // filter — it's re-added here via isSampledPreset regardless of category.
   useEffect(() => {
-    const melodic = getPresets().filter(p => MELODIC_TYPES.has(p.category as BeatType))
-    setPresets(melodic)
-    // Default to Piano if present, else the first melodic preset.
-    const def = melodic.find(p => p.builtIn && p.name === 'Piano') ?? melodic[0]
+    const all = getPresets()
+    const synth   = all.filter(p => MELODIC_TYPES.has(p.category as BeatType) && !isSampledPreset(p))
+    const sampled = all.filter(isSampledPreset)
+    const combined = [...synth, ...sampled]
+    setPresets(combined)
+    // Default to Piano if present, else the first synth preset (keeps prior behavior).
+    const def = synth.find(p => p.builtIn && p.name === 'Piano') ?? combined[0]
     if (def) setSelectedId(def.id)
   }, [])
 
   // Debug/test hook (same convention as __dawDispatch etc.): lets a headless
   // page exercise the pure offline backfill analysis without a live microphone.
   useEffect(() => {
-    const w = window as unknown as { __voiceBackfill?: typeof notesFromBuffer; __voiceAlignToGrid?: typeof alignToGrid }
+    const w = window as unknown as {
+      __voiceBackfill?: typeof notesFromBuffer
+      __voiceBackfillAsync?: typeof notesFromBufferAsync
+      __voiceBuildPitchCurve?: typeof buildPitchCurve
+      __voiceAlignToGrid?: typeof alignToGrid
+      __voiceSampleProbe?: (folder: string, midi: number) => Promise<unknown>
+    }
     w.__voiceBackfill = notesFromBuffer
+    w.__voiceBackfillAsync = notesFromBufferAsync
+    w.__voiceBuildPitchCurve = buildPitchCurve
     w.__voiceAlignToGrid = alignToGrid
-    return () => { delete w.__voiceBackfill; delete w.__voiceAlignToGrid }
+    // Headless proof hook: seed the AI packs, resolve+fulfill+decode one baked
+    // sample for `folder` at `midi`, and report its peak level. Mirrors the exact
+    // resolve path playSampledNotes uses (folder + engine note-name → fulfill → decode).
+    w.__voiceSampleProbe = async (folder: string, midi: number) => {
+      await seedAiInstruments()
+      const noteName = midiNoteLabel(midi)
+      const entries = await libraryGetAll()
+      const entry = entries.find(e => e.folder === folder && e.name === noteName)
+      if (!entry) return { ok: false, reason: 'no entry', folder, noteName }
+      const fulfilled = await libraryFulfill(entry.id)
+      if (!fulfilled?.audioBlob) return { ok: false, reason: 'no blob', folder, noteName }
+      const ac = new AudioContext()
+      try {
+        const buf = await ac.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+        let max = 0
+        const d = buf.getChannelData(0)
+        for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > max) max = a }
+        return { ok: true, folder, noteName, length: buf.length, sampleRate: buf.sampleRate, max }
+      } finally { void ac.close() }
+    }
+    return () => {
+      delete w.__voiceBackfill; delete w.__voiceBackfillAsync
+      delete w.__voiceBuildPitchCurve; delete w.__voiceAlignToGrid
+      delete w.__voiceSampleProbe
+    }
   }, [])
 
   const selected = useMemo(() => presets.find(p => p.id === selectedId) ?? null, [presets, selectedId])
   useEffect(() => { selRef.current = selected }, [selected])
 
-  const grouped = useMemo(() => getGroupedPresets(presets), [presets])
+  // Synth presets keep their canonical instrument groups; the sampled AI packs get
+  // their own distinct "AI Instruments" optgroup at the end.
+  const grouped = useMemo(() => {
+    const synth   = presets.filter(p => !isSampledPreset(p))
+    const sampled = presets.filter(isSampledPreset)
+    const groups = getGroupedPresets(synth)
+    if (sampled.length) groups.push({ group: 'AI Instruments', presets: sampled })
+    return groups
+  }, [presets])
+
+  const selectedSampled = selected != null && isSampledPreset(selected)
+
+  // Seed the AI packs once (idempotent — seedAiInstruments no-ops if already
+  // baked). Shared promise so concurrent callers (select effect + first Play)
+  // await the same seed. Resolves false if seeding is unavailable/failed, so the
+  // caller can fall back to a synth voice.
+  const ensureSeeded = useCallback((): Promise<boolean> => {
+    if (!seedPromise.current) {
+      seedPromise.current = (async () => {
+        try { await seedAiInstruments(); return true }
+        catch { return false }
+      })()
+    }
+    return seedPromise.current
+  }, [])
+
+  // Seed on selection so the bake latency hides behind the picker, not the first
+  // Play. Guarded/idempotent; switching between AI presets doesn't re-seed.
+  useEffect(() => {
+    if (!selectedSampled) { setInstrLoading(false); setInstrMsg(null); return }
+    let cancelled = false
+    setInstrLoading(true)
+    setInstrMsg('Loading instrument…')
+    void ensureSeeded().then(ok => {
+      if (cancelled) return
+      setInstrLoading(false)
+      setInstrMsg(ok ? null : 'Sampled instrument unavailable — using a synth voice')
+    })
+    return () => { cancelled = true }
+  }, [selectedSampled, selectedId, ensureSeeded])
+
+  // Resolve a preset's baked sample for a note → decoded AudioBuffer. Mirrors the
+  // engine's _loadPresetBuffer: match on folder + engine note-name, fulfill, decode.
+  // Cached by `folder:clampedMidi`; null (no entry) is cached too so we don't retry.
+  const loadSampleBuffer = useCallback(async (c: AudioContext, preset: MidiPreset, midi: number): Promise<AudioBuffer | null> => {
+    const clamped = clampToPreset(preset, midi)
+    const key = `${preset.folder}:${clamped}`
+    const cached = sampleCache.current.get(key)
+    if (cached !== undefined) return cached
+    let buf: AudioBuffer | null = null
+    try {
+      const noteName = midiNoteLabel(clamped)   // e.g. "E2" — same NOTE_NAMES/format as daw-engine
+      const entries = await libraryGetAll()
+      const entry = entries.find(e => e.folder === preset.folder && e.name === noteName)
+      if (entry) {
+        const fulfilled = await libraryFulfill(entry.id)
+        if (fulfilled?.audioBlob) buf = await c.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+      }
+    } catch { buf = null }
+    sampleCache.current.set(key, buf)
+    return buf
+  }, [])
 
   // The notes shown/played: raw take, optionally quantized to the current grid.
   const displayNotes = useMemo(
@@ -310,12 +452,12 @@ export default function VoiceMidi() {
         const dur = now - cur.startSec
         if (dur >= MIN_NOTE_DUR) rawEvents.current.push({ ...cur, durSec: dur })
       }
-      // Open the new note + play it through the instrument in real time.
+      // Open the new note — CAPTURE ONLY. No live audio: singing is silent so the
+      // instrument is heard only on explicit Playback of the take. Visual feedback
+      // (note readout + level meter) still updates below via setLive.
       const velocity = Math.max(0.3, Math.min(1, 0.45 + r.rms))
       curEvent.current = { startSec: now, midi: r.midi, velocity }
       liveMidi.current = r.midi
-      const note = clampToPreset(preset, r.midi)
-      playMelodicNote(c, preset.category as BeatType, note, c.currentTime, velocity)
       setLive({ midi: r.midi, name: r.noteName, cents: r.cents })
     } else if (!voiced && liveMidi.current !== null) {
       // Silence — close the current note.
@@ -489,6 +631,7 @@ export default function VoiceMidi() {
 
     // ── Offline backfill: re-analyze the recorded audio for a cleaner take ──────
     setRefining(true)
+    setRefineProgress(0)
     setRefineMsg(null)
     try {
       const blob = await det.stopAndGetAudio()
@@ -497,7 +640,7 @@ export default function VoiceMidi() {
         setRefineMsg('Live take — refine not supported in this browser')
         return
       }
-      const refinedRaw = await backfillFromBlob(blob, paramsRef.current)
+      const refinedRaw = await backfillFromBlob(blob, paramsRef.current, setRefineProgress)
       if (refinedRaw.length > 0) {
         // Confirm/correct the offline onsets against the metronome's beat grid —
         // the whole point of backfill: the take was sung to a click at a known
@@ -549,22 +692,17 @@ export default function VoiceMidi() {
 
   // ── Playback of the captured take ────────────────────────────────────────────
   const playRaf = useRef<number | null>(null)
+  // Pending disconnect timers for per-note gate GainNodes (see play()).
+  const playTimers = useRef<number[]>([])
   const stopPlayback = useCallback(() => {
     if (playRaf.current) { cancelAnimationFrame(playRaf.current); playRaf.current = null }
     setPlaying(false)
     setPlayhead(null)
   }, [])
 
-  const play = useCallback(() => {
-    const preset = selRef.current
-    if (!preset || displayNotes.length === 0) return
-    const c = ensureCtx()
-    void c.resume()
-    const when0 = c.currentTime + 0.12
-    for (const n of displayNotes) {
-      playMelodicNote(c, preset.category as BeatType, clampToPreset(preset, n.midi), when0 + n.startSec, n.velocity)
-    }
-    const total = Math.max(...displayNotes.map(n => n.startSec + n.durSec)) + 0.4
+  // Drive the playhead animation for a scheduled take (shared by both paths).
+  const runPlayhead = useCallback((c: AudioContext, when0: number, notes: RecNote[]) => {
+    const total = Math.max(...notes.map(n => n.startSec + n.durSec)) + 0.4
     setPlaying(true)
     const tick = () => {
       const t = c.currentTime - when0
@@ -573,7 +711,98 @@ export default function VoiceMidi() {
       playRaf.current = requestAnimationFrame(tick)
     }
     playRaf.current = requestAnimationFrame(tick)
-  }, [displayNotes, ensureCtx, stopPlayback])
+  }, [stopPlayback])
+
+  // SYNTH playback (unchanged behavior). Gate each note off at start+dur.
+  // playMelodicNote has no note-off, so sustained voices (pad/organ/strings/drone)
+  // would otherwise ring their full synth envelope past the note's duration. We
+  // route each note through its own GainNode and ramp it to silence at note-off
+  // (~35ms release), then disconnect after it settles. Plucky voices already
+  // shorter than durSec are unaffected (gain still 1 there).
+  const playSynthNotes = useCallback((c: AudioContext, preset: MidiPreset, notes: RecNote[]) => {
+    const when0 = c.currentTime + 0.12
+    playTimers.current = []
+    for (const n of notes) {
+      const start   = when0 + n.startSec
+      const noteOff = start + n.durSec
+      const g = c.createGain()
+      g.gain.setValueAtTime(1, start)
+      g.gain.setValueAtTime(1, noteOff)
+      g.gain.setTargetAtTime(0, noteOff, 0.012)   // exponential release, ~35ms to silence
+      g.connect(c.destination)
+      playMelodicNote(c, preset.category as BeatType, clampToPreset(preset, n.midi), start, n.velocity, g)
+      const disc = window.setTimeout(
+        () => { try { g.disconnect() } catch { /* already torn down */ } },
+        Math.max(0, (noteOff + 0.25 - c.currentTime) * 1000),
+      )
+      playTimers.current.push(disc)
+    }
+    runPlayhead(c, when0, notes)
+  }, [runPlayhead])
+
+  // SAMPLED playback — the AI multisample path. Pre-load every distinct (clamped)
+  // pitch BEFORE scheduling so timing is tight, then schedule one
+  // AudioBufferSourceNode per note → velocity GainNode → destination, gated OFF at
+  // start+dur with the SAME ~35ms release as the synth path. No playbackRate shift:
+  // samples are baked per-semitone, so we play the exact note's sample. Out-of-range
+  // notes clamp to loNote..hiNote (AI presets are otherwise silent past their span).
+  const playSampledNotes = useCallback(async (c: AudioContext, preset: MidiPreset, notes: RecNote[]) => {
+    setInstrLoading(true)
+    setInstrMsg('Loading instrument…')
+    const ok = await ensureSeeded()
+    const pitches = [...new Set(notes.map(n => clampToPreset(preset, n.midi)))]
+    const bufs = new Map<number, AudioBuffer | null>()
+    await Promise.all(pitches.map(async p => { bufs.set(p, await loadSampleBuffer(c, preset, p)) }))
+    setInstrLoading(false)
+    const anyBuf = [...bufs.values()].some(Boolean)
+    if (!ok || !anyBuf) {
+      // Seeding/fulfill unavailable → fall back to a synth voice so the take still sounds.
+      setInstrMsg('Sampled instrument unavailable — using a synth voice')
+      playSynthNotes(c, preset, notes)
+      return
+    }
+    setInstrMsg(null)
+    const when0 = c.currentTime + 0.12
+    playTimers.current = []
+    for (const n of notes) {
+      const clamped = clampToPreset(preset, n.midi)
+      const buf     = bufs.get(clamped)
+      const start   = when0 + n.startSec
+      const noteOff = start + n.durSec
+      const v = n.velocity
+      const g = c.createGain()
+      g.gain.setValueAtTime(v, start)
+      g.gain.setValueAtTime(v, noteOff)
+      g.gain.setTargetAtTime(0, noteOff, 0.012)   // ~35ms release, same gate as the synth path
+      g.connect(c.destination)
+      if (buf) {
+        const src = c.createBufferSource()
+        src.buffer = buf
+        src.connect(g)
+        src.start(start)
+        src.stop(noteOff + 0.3)                    // let the release tail through, then hard-stop
+        src.onended = () => { try { src.disconnect() } catch { /* already torn down */ } }
+      } else {
+        // A pitch that resolved no sample (shouldn't happen post-clamp) → synth voice.
+        playMelodicNote(c, preset.category as BeatType, clamped, start, v, g)
+      }
+      const disc = window.setTimeout(
+        () => { try { g.disconnect() } catch { /* already torn down */ } },
+        Math.max(0, (noteOff + 0.35 - c.currentTime) * 1000),
+      )
+      playTimers.current.push(disc)
+    }
+    runPlayhead(c, when0, notes)
+  }, [ensureSeeded, loadSampleBuffer, playSynthNotes, runPlayhead])
+
+  const play = useCallback(() => {
+    const preset = selRef.current
+    if (!preset || displayNotes.length === 0) return
+    const c = ensureCtx()
+    void c.resume()
+    if (isSampledPreset(preset)) void playSampledNotes(c, preset, displayNotes)
+    else playSynthNotes(c, preset, displayNotes)
+  }, [displayNotes, ensureCtx, playSampledNotes, playSynthNotes])
 
   // ── Cleanup ──────────────────────────────────────────────────────────────────
   useEffect(() => () => {
@@ -581,6 +810,7 @@ export default function VoiceMidi() {
     testDetectorRef.current?.stop()
     stopMetro()
     if (playRaf.current) cancelAnimationFrame(playRaf.current)
+    playTimers.current.forEach(id => clearTimeout(id))
     void ctxRef.current?.close()
   }, [stopMetro])
 
@@ -603,6 +833,18 @@ export default function VoiceMidi() {
             </optgroup>
           ))}
         </select>
+        {selectedSampled && instrMsg && (
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0', display: 'flex', alignItems: 'center', gap: 6 }}>
+            {instrLoading && (
+              <span style={{
+                width: 11, height: 11, borderRadius: '50%', flexShrink: 0,
+                border: '2px solid var(--border)', borderTopColor: 'var(--accent)',
+                animation: 'vm-spin 0.7s linear infinite', display: 'inline-block',
+              }} />
+            )}
+            {instrMsg}
+          </p>
+        )}
       </Row>
 
       {/* BPM + metronome */}
@@ -753,7 +995,7 @@ export default function VoiceMidi() {
               border: '2px solid var(--border)', borderTopColor: 'var(--accent)',
               animation: 'vm-spin 0.7s linear infinite', display: 'inline-block',
             }} />
-            Refining take…
+            Refining take… {Math.round(refineProgress * 100)}%
           </p>
         )}
         {!recording && !refining && refineMsg && (
@@ -774,12 +1016,15 @@ export default function VoiceMidi() {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
             <button
               onClick={playing ? stopPlayback : play}
+              disabled={instrLoading && !playing}
               style={{
-                padding: '9px 22px', borderRadius: 9, border: 'none', fontSize: 13.5, fontWeight: 700, cursor: 'pointer',
+                padding: '9px 22px', borderRadius: 9, border: 'none', fontSize: 13.5, fontWeight: 700,
+                cursor: instrLoading && !playing ? 'default' : 'pointer',
+                opacity: instrLoading && !playing ? 0.7 : 1,
                 background: playing ? '#dc2626' : 'var(--accent)', color: '#fff',
               }}
             >
-              {playing ? '■ Stop' : '▶ Play'}
+              {playing ? '■ Stop' : instrLoading ? '… Loading' : '▶ Play'}
             </button>
 
             {/* Take toggle — Live / Refined (grid-corrected) / Raw refined.
