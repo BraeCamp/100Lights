@@ -191,7 +191,10 @@ async function decodeBlobToMono(blob: Blob): Promise<{ samples: Float32Array; sa
 // the final melody OUT of this flow without forking the tuned capture/edit/playback UI. Fired
 // with the current display notes + tempo whenever they change. The standalone /apps/voicemidi
 // page passes nothing, so its behavior is unchanged.
-export default function VoiceMidi({ onNotes }: { onNotes?: (notes: RecNote[], bpm: number) => void } = {}) {
+export default function VoiceMidi({ onNotes, restore }: {
+  onNotes?: (notes: RecNote[], bpm: number) => void
+  restore?: { notes: RecNote[]; bpm: number; nonce: number }
+} = {}) {
   const [presets, setPresets] = useState<MidiPreset[]>([])
   const [selectedId, setSelectedId] = useState<string>('')
   const [bpm, setBpm] = useState(100)
@@ -599,6 +602,21 @@ export default function VoiceMidi({ onNotes }: { onNotes?: (notes: RecNote[], bp
 
   // Surface the final notes to an embedding host (Firefly). No-op on the standalone page.
   useEffect(() => { onNotes?.(displayNotes, bpm) }, [displayNotes, bpm, onNotes])
+
+  // Restore a saved take (Firefly "open sketch"): set it as the current refined take + tempo.
+  const restoreNonce = restore?.nonce
+  useEffect(() => {
+    if (!restore) return
+    const ns = restore.notes ?? []
+    setBpm(restore.bpm)
+    setRawNotes(ns)
+    setRefinedTake(ns.length ? ns : null)
+    setRefinedRawTake(ns.length ? ns : null)
+    setDetected(ns)
+    setLiveTake(ns.length ? ns : null)
+    setTakeSource(ns.length ? 'refined' : 'live')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreNonce])
 
   // ── Shared AudioContext ──────────────────────────────────────────────────────
   const ensureCtx = useCallback((): AudioContext => {

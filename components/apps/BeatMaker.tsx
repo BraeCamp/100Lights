@@ -106,7 +106,10 @@ const SWING_MAX = 0.5
 // `onPattern` (optional) surfaces the current grid as beat-based MidiNotes so a host app — the
 // Firefly sketchpad — can fold the beat into a project. The standalone /apps/beatmaker page
 // passes nothing, so its behavior is unchanged.
-export default function BeatMaker({ onPattern }: { onPattern?: (notes: MidiNote[]) => void } = {}) {
+export default function BeatMaker({ onPattern, restore }: {
+  onPattern?: (notes: MidiNote[]) => void
+  restore?: { notes: MidiNote[]; nonce: number }
+} = {}) {
   const [grid, setGrid] = useState<Grid>(emptyGrid)
   const [bpm, setBpm] = useState(120)
   const [bpmText, setBpmText] = useState('120')
@@ -132,6 +135,21 @@ export default function BeatMaker({ onPattern }: { onPattern?: (notes: MidiNote[
     }
     onPattern(notes)
   }, [grid, onPattern])
+
+  // Restore a saved beat grid (Firefly "open sketch") from its drum notes.
+  const restoreNonce = restore?.nonce
+  useEffect(() => {
+    if (!restore) return
+    const g = emptyGrid()
+    for (const n of restore.notes ?? []) {
+      const lane = DRUM_LANES.find(l => l.pitch === n.pitch)
+      if (!lane) continue
+      const step = Math.round(n.startBeat / STEP_BEATS)
+      if (step >= 0 && step < STEPS_PER_BAR) g[lane.key][step] = true
+    }
+    setGrid(g)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreNonce])
 
   // ── Refs the scheduler/rAF read without re-subscribing ────────────────────────
   const ctxRef = useRef<AudioContext | null>(null)

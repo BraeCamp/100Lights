@@ -6,11 +6,12 @@
 // composes the tuned capture surfaces (<VoiceMidi>, <BeatMaker>) + reuses the real audio engine
 // and project model, wrapped in a themed mobile app shell. Supersedes the paused Flutter app.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Palette, X, RotateCcw, Play, Square, VolumeX, Volume2, Download, FolderPlus, Sparkles, ChevronRight } from 'lucide-react'
+import { Palette, X, RotateCcw, Play, Square, VolumeX, Volume2, Download, FolderPlus, Sparkles, ChevronRight, FolderOpen, Save, Trash2 } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import VoiceMidi, { type RecNote } from '@/components/apps/VoiceMidi'
 import BeatMaker from '@/components/apps/BeatMaker'
 import { buildSketchProject, openSketchInStudio, type SketchOpts } from '@/lib/open-in-studio'
+import { saveSketch, listSketches, getSketch, deleteSketch, type FireflySketch, type SketchMeta } from '@/lib/firefly-sketches'
 import { DawEngine } from '@/lib/daw-engine'
 import { defaultPolyInstrument, POLY_PRESETS, type MidiNote, type TrackInstrument } from '@/lib/daw-types'
 import { WorkshopThemeProvider, useWorkshopTheme } from '@/components/editor/WorkshopThemeProvider'
@@ -39,7 +40,12 @@ function FireflyApp() {
   const [beatMute, setBeatMute] = useState(false)
   const [customizing, setCustomizing] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [sketchesOpen, setSketchesOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
+  // Restore signals pushed into the capture surfaces when a saved sketch is opened.
+  const [voiceRestore, setVoiceRestore] = useState<{ notes: RecNote[]; bpm: number; nonce: number }>()
+  const [beatRestore, setBeatRestore] = useState<{ notes: MidiNote[]; nonce: number }>()
+  const restoreNonce = useRef(0)
 
   const onNotes = useCallback((notes: RecNote[], tempo: number) => { setMelody(notes); setBpm(tempo) }, [])
   const onPattern = useCallback((notes: MidiNote[]) => setBeat(notes), [])
@@ -110,6 +116,25 @@ function FireflyApp() {
 
   const openNew = useCallback(() => openSketchInStudio(melodyMidi, beat, sketchOpts), [melodyMidi, beat, sketchOpts])
 
+  const saveCurrentSketch = useCallback(async (name: string) => {
+    await saveSketch({
+      id: crypto.randomUUID(), name: name.trim() || 'Untitled sketch', savedAt: Date.now(),
+      bpm, melody, beat, settings: { voiceVol, voiceMute, voiceInst, beatVol, beatMute },
+    })
+  }, [bpm, melody, beat, voiceVol, voiceMute, voiceInst, beatVol, beatMute])
+
+  const openSavedSketch = useCallback((sk: FireflySketch) => {
+    restoreNonce.current += 1
+    const nonce = restoreNonce.current
+    setBpm(sk.bpm)
+    setVoiceVol(sk.settings.voiceVol); setVoiceMute(sk.settings.voiceMute); setVoiceInst(sk.settings.voiceInst)
+    setBeatVol(sk.settings.beatVol); setBeatMute(sk.settings.beatMute)
+    setMelody(sk.melody); setBeat(sk.beat)
+    setVoiceRestore({ notes: sk.melody, bpm: sk.bpm, nonce })  // push into <VoiceMidi>
+    setBeatRestore({ notes: sk.beat, nonce })                 // push into <BeatMaker>
+    setSketchesOpen(false); setTab('sketch')
+  }, [])
+
   return (
     <div
       data-editor="true"
@@ -124,9 +149,14 @@ function FireflyApp() {
           <span aria-hidden style={{ fontSize: 18, filter: 'drop-shadow(0 0 6px var(--accent))' }}>🔆</span>
           <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>Firefly</span>
         </div>
-        <button type="button" onClick={() => setCustomizing(true)} aria-label="Customize appearance" style={iconBtn}>
-          <Palette size={18} />
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" onClick={() => setSketchesOpen(true)} aria-label="Saved sketches" style={iconBtn}>
+            <FolderOpen size={18} />
+          </button>
+          <button type="button" onClick={() => setCustomizing(true)} aria-label="Customize appearance" style={iconBtn}>
+            <Palette size={18} />
+          </button>
+        </div>
       </header>
 
       <nav style={{ display: 'flex', gap: 6, padding: '12px 16px 4px' }}>
@@ -142,8 +172,8 @@ function FireflyApp() {
       </nav>
 
       <main id="main" style={{ flex: 1, overflowX: 'hidden', padding: '10px 14px 96px' }}>
-        <div style={{ display: tab === 'voice' ? 'block' : 'none' }}><VoiceMidi onNotes={onNotes} /></div>
-        <div style={{ display: tab === 'beat' ? 'block' : 'none' }}><BeatMaker onPattern={onPattern} /></div>
+        <div style={{ display: tab === 'voice' ? 'block' : 'none' }}><VoiceMidi onNotes={onNotes} restore={voiceRestore} /></div>
+        <div style={{ display: tab === 'beat' ? 'block' : 'none' }}><BeatMaker onPattern={onPattern} restore={beatRestore} /></div>
         {tab === 'sketch' && (
           <SketchTab
             hasContent={hasContent} summary={summary} bpm={bpm} playing={playing} onTogglePlay={togglePlay}
@@ -163,6 +193,7 @@ function FireflyApp() {
         </button>
       </div>
 
+      {sketchesOpen && <SketchesSheet onClose={() => setSketchesOpen(false)} hasContent={hasContent} onSave={saveCurrentSketch} onOpen={openSavedSketch} />}
       {customizing && <CustomizeSheet onClose={() => setCustomizing(false)} />}
       {exporting && (
         <ExportSheet
@@ -315,6 +346,61 @@ function ExportRow({ icon, title, sub, onClick, disabled }: { icon: React.ReactN
         <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 1 }}>{sub}</span>
       </span>
     </button>
+  )
+}
+
+// ── Sketches: a local saved-sketch library (persistence) ─────────────────────────────────────
+function SketchesSheet({ onClose, hasContent, onSave, onOpen }: {
+  onClose: () => void; hasContent: boolean
+  onSave: (name: string) => Promise<void>; onOpen: (sk: FireflySketch) => void
+}) {
+  const [list, setList] = useState<SketchMeta[] | null>(null)
+  const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const refresh = useCallback(() => { listSketches().then(setList) }, [])
+  useEffect(() => { refresh() }, [refresh])
+
+  const save = async () => {
+    if (!hasContent || saving) return
+    setSaving(true)
+    try { await onSave(name); setName('') ; refresh() } finally { setSaving(false) }
+  }
+  const open = async (id: string) => { const sk = await getSketch(id); if (sk) onOpen(sk) }
+  const del = async (id: string) => { await deleteSketch(id); refresh() }
+
+  return (
+    <Sheet onClose={onClose} title="Sketches">
+      <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+        <input
+          value={name} onChange={e => setName(e.target.value)} placeholder="Name this sketch"
+          onKeyDown={e => { if (e.key === 'Enter') void save() }}
+          style={{ flex: 1, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', fontSize: 14 }}
+        />
+        <button type="button" onClick={() => void save()} disabled={!hasContent || saving} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 15px', borderRadius: 10, border: 'none', background: hasContent ? 'var(--accent)' : 'var(--border)', color: hasContent ? '#0e0d12' : 'var(--text-muted, var(--text-secondary))', fontSize: 13.5, fontWeight: 750, cursor: hasContent && !saving ? 'pointer' : 'not-allowed' }}>
+          <Save size={15} /> Save
+        </button>
+      </div>
+      {!hasContent && <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: '-10px 0 16px' }}>Record a melody or make a beat to save a sketch.</p>}
+      {list === null ? <p style={{ color: 'var(--text-secondary)', fontSize: 13.5 }}>Loading…</p>
+        : list.length === 0 ? <p style={{ color: 'var(--text-secondary)', fontSize: 13.5 }}>No saved sketches yet.</p>
+          : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '52dvh', overflowY: 'auto' }}>
+              {list.map(s => (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 12px', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--bg-base)' }}>
+                  <button type="button" onClick={() => void open(s.id)} style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', padding: 0 }}>
+                    <span style={{ display: 'block', fontSize: 14.5, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                    <span style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>
+                      {[s.notes ? `${s.notes} notes` : '', s.hits ? `${s.hits} hits` : ''].filter(Boolean).join(' · ') || 'empty'}
+                    </span>
+                  </button>
+                  <button type="button" onClick={() => void del(s.id)} aria-label={`Delete ${s.name}`} style={{ display: 'grid', placeItems: 'center', width: 34, height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0 }}>
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+    </Sheet>
   )
 }
 
