@@ -59,3 +59,12 @@ public/_songgen/
 
 # Session-capture artifact directories (lib/session-capture)
 sessions/
+
+# Mobile / Capacitor native projects (generated per-app by cap add; never committed)
+/ios/
+/android/
+ios/build/
+# Fastlane run artifacts + any signing keys
+fastlane/report.xml
+fastlane/README.md
+**/*.p8

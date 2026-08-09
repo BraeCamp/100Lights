@@ -1,0 +1,56 @@
+# Hands-off TestFlight upload for any app in mobile/apps.mjs.
+# Trigger: Actions tab → "Mobile beta → TestFlight" → Run workflow → pick the app slug.
+# It generates the iOS project fresh each run (nothing native is committed), signs via match,
+# and uploads to TestFlight using the App Store Connect API key. Secrets are listed in
+# mobile/AUTOMATION.md — the workflow is inert until they're set.
+name: Mobile beta → TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'App slug from mobile/apps.mjs'
+        required: true
+        default: 'studio'
+
+jobs:
+  testflight:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Select app → capacitor.config.json
+        run: node scripts/cap-select.mjs "${{ github.event.inputs.app }}"
+
+      - name: Generate + sync the native iOS project
+        run: |
+          npx cap add ios
+          npx cap sync ios
+          (cd ios/App && pod install)
+
+      - name: Write App Store Connect API key
+        run: |
+          printf '%s' "${{ secrets.ASC_KEY_P8 }}" > "$RUNNER_TEMP/asc_key.p8"
+
+      - name: Build + upload to TestFlight
+        env:
+          CI: 'true'
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_PATH: ${{ runner.temp }}/asc_key.p8
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+        run: bundle exec fastlane ios beta

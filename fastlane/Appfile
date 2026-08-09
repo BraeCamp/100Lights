@@ -1,0 +1,16 @@
+# The app identifier comes from the CURRENTLY SELECTED app (capacitor.config.json, written by
+# scripts/cap-select.mjs) so one Fastfile serves every app in mobile/apps.mjs. Override with
+# APP_IDENTIFIER if you ever need to. Team ids come from env so nothing secret lives in git.
+require 'json'
+
+selected =
+  begin
+    JSON.parse(File.read(File.expand_path('../capacitor.config.json', __dir__)))
+  rescue StandardError
+    {}
+  end
+
+app_identifier(ENV['APP_IDENTIFIER'] || selected['appId'])
+apple_id(ENV['APPLE_ID']) if ENV['APPLE_ID']            # your Apple account email (optional when using an API key)
+team_id(ENV['APPLE_TEAM_ID']) if ENV['APPLE_TEAM_ID']  # 10-char Developer Portal team id
+itc_team_id(ENV['ITC_TEAM_ID']) if ENV['ITC_TEAM_ID']  # App Store Connect team id (only if you're on multiple teams)

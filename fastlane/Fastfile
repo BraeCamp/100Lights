@@ -1,0 +1,61 @@
+# Fastlane — build the currently-selected Capacitor app and ship it to TestFlight.
+#
+# One lane serves every app in mobile/apps.mjs: run `node scripts/cap-select.mjs <slug>` first
+# (npm run app:select) so capacitor.config.json + the generated ios/ project carry that app's
+# bundle id, then `fastlane ios beta`. Auth is an App Store Connect API key (no 2FA in CI).
+#
+# Required env (see mobile/AUTOMATION.md for how to get each):
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH   → App Store Connect API key (.p8)
+# Optional:
+#   SCHEME (default "App"), APPLE_TEAM_ID, MATCH_GIT_URL + MATCH_PASSWORD (CI signing)
+
+default_platform(:ios)
+
+WORKSPACE = 'ios/App/App.xcworkspace'.freeze
+
+platform :ios do
+  desc 'Build the selected app and upload it to TestFlight'
+  lane :beta do
+    setup_ci if ENV['CI'] # ephemeral keychain on CI runners; no-op locally
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch('ASC_KEY_ID'),
+      issuer_id: ENV.fetch('ASC_ISSUER_ID'),
+      key_filepath: ENV.fetch('ASC_KEY_PATH'),
+      in_house: false,
+    )
+
+    bundle_id = CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier)
+
+    # Signing:
+    #  · CI / reproducible → set MATCH_GIT_URL (a private repo of encrypted certs). `match`
+    #    creates/fetches the distribution cert + App Store profile for this bundle id.
+    #  · First local run → skip match and let Xcode automatic signing handle it (sign in to
+    #    Xcode once). Set the team so the CLI build can sign non-interactively.
+    if ENV['MATCH_GIT_URL']
+      match(
+        type: 'appstore',
+        app_identifier: [bundle_id],
+        readonly: ENV['CI'] == 'true',
+        api_key: api_key,
+      )
+    end
+
+    build_app(
+      workspace: WORKSPACE,
+      scheme: ENV['SCHEME'] || 'App',
+      export_method: 'app-store',
+      output_directory: 'ios/build',
+      clean: true,
+      xcargs: ENV['APPLE_TEAM_ID'] ? "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}" : nil,
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true, # don't block the run waiting on Apple processing
+      distribute_external: false,              # internal testers only — no extra review
+    )
+
+    UI.success("Uploaded #{bundle_id} to TestFlight — it'll appear once Apple finishes processing.")
+  end
+end
