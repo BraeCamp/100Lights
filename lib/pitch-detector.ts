@@ -590,9 +590,27 @@ function yinDetect(windowed: Float32Array, sr: number): { hz: number; confidence
   return { hz: sr / fine, confidence: 1 - b }
 }
 
+export interface LiveSensitivity {
+  gain?:           number  // input gain multiplier applied before analysis (1 = unity)
+  rmsGate?:        number  // RMS floor below which a frame is treated as silence
+  peakGate?:       number  // peak floor below which a frame is treated as silence
+  confidenceGate?: number  // YIN confidence floor below which pitch is discarded
+}
+
+export interface LiveLevel {
+  rms:  number  // post-gain RMS 0–1
+  peak: number  // post-gain peak 0–1
+  db:   number  // 20·log10(rms), i.e. dBFS (≈ −Infinity clamped to −160 at silence)
+}
+
+export interface LiveStartOptions extends LiveSensitivity {
+  onLevel?: (level: LiveLevel) => void  // called every frame BEFORE the gate, for meters
+}
+
 export class LivePitchDetector {
   private ctx:      AudioContext | null        = null
   private analyser: AnalyserNode | null        = null
+  private gainNode: GainNode | null            = null
   private stream:   MediaStream | null         = null
   private rafId:    number | null              = null
   private buf:      Float32Array<ArrayBuffer>  = new Float32Array(HANN_SIZE)
@@ -602,12 +620,43 @@ export class LivePitchDetector {
   private mediaRec:  MediaRecorder | null      = null
   private recChunks: Blob[]                    = []
 
+  // Sensitivity fields — defaults preserve the original hardcoded behavior.
+  private gain     = 1
+  private rmsGate  = 0.003
+  private peakGate = 0.008
+  private confGate = 0.44
+  private onLevel: ((level: LiveLevel) => void) | null = null
+
+  /**
+   * Adjust sensitivity live, without restarting the mic. Any omitted field is
+   * left unchanged. The gain change is applied to the running GainNode.
+   */
+  setSensitivity(opts: LiveSensitivity): void {
+    if (opts.gain           !== undefined) this.gain     = opts.gain
+    if (opts.rmsGate        !== undefined) this.rmsGate  = opts.rmsGate
+    if (opts.peakGate       !== undefined) this.peakGate = opts.peakGate
+    if (opts.confidenceGate !== undefined) this.confGate = opts.confidenceGate
+    if (this.gainNode) this.gainNode.gain.value = this.gain
+  }
+
   async start(
     onPitch: (r: LivePitchResult | null) => void,
     captureAudio = false,
     stream?: MediaStream,
+    opts?: LiveStartOptions,
   ): Promise<void> {
     this.stop()
+
+    // Apply any sensitivity overrides + level callback before the graph is built.
+    if (opts) {
+      if (opts.gain           !== undefined) this.gain     = opts.gain
+      if (opts.rmsGate        !== undefined) this.rmsGate  = opts.rmsGate
+      if (opts.peakGate       !== undefined) this.peakGate = opts.peakGate
+      if (opts.confidenceGate !== undefined) this.confGate = opts.confidenceGate
+      this.onLevel = opts.onLevel ?? null
+    } else {
+      this.onLevel = null
+    }
 
     this.stream = stream ?? await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
@@ -617,7 +666,11 @@ export class LivePitchDetector {
     this.analyser = this.ctx.createAnalyser()
     this.analyser.fftSize              = HANN_SIZE
     this.analyser.smoothingTimeConstant = 0
-    this.ctx.createMediaStreamSource(this.stream).connect(this.analyser)
+    // Insert a GainNode so quiet inputs can be boosted:  source → gain → analyser
+    this.gainNode = this.ctx.createGain()
+    this.gainNode.gain.value = this.gain
+    this.ctx.createMediaStreamSource(this.stream).connect(this.gainNode)
+    this.gainNode.connect(this.analyser)
     this.buf      = new Float32Array(HANN_SIZE)
     this.win      = new Float32Array(HANN_SIZE)
     this.smoothHz = null
@@ -647,9 +700,15 @@ export class LivePitchDetector {
       }
       rms = Math.sqrt(rms / this.buf.length)
 
-      // Silence gate — low thresholds so guitar/voice ring-out is tracked.
-      // 0.003 RMS ≈ -50 dBFS; 0.008 peak ≈ -42 dBFS.
-      if (rms < 0.003 || peak < 0.008) {
+      // Level callback runs every frame BEFORE the gate so a meter can show
+      // input even during "silence". RMS/peak are on the post-gain buffer.
+      if (this.onLevel) {
+        this.onLevel({ rms, peak, db: 20 * Math.log10(rms || 1e-8) })
+      }
+
+      // Silence gate — thresholds are instance fields (adjustable via
+      // setSensitivity). Defaults: 0.003 RMS ≈ -50 dBFS; 0.008 peak ≈ -42 dBFS.
+      if (rms < this.rmsGate || peak < this.peakGate) {
         this.silFrames++
         if (this.silFrames > 5) {
           this.smoothHz = null
@@ -664,7 +723,7 @@ export class LivePitchDetector {
       for (let i = 0; i < HANN_SIZE; i++) this.win[i] = this.buf[i] * HANN[i]
 
       const det = yinDetect(this.win, SR)
-      if (!det || det.confidence < 0.44) {
+      if (!det || det.confidence < this.confGate) {
         onPitch(null)
         this.rafId = requestAnimationFrame(tick)
         return
@@ -741,9 +800,10 @@ export class LivePitchDetector {
   private _teardown(): void {
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null }
     this.analyser?.disconnect()
+    this.gainNode?.disconnect()
     this.stream?.getTracks().forEach(t => t.stop())
     this.ctx?.close().catch(() => {})
-    this.ctx = null; this.analyser = null; this.stream = null; this.smoothHz = null
+    this.ctx = null; this.analyser = null; this.gainNode = null; this.stream = null; this.smoothHz = null
   }
 }
 
