@@ -212,6 +212,15 @@ export interface BackfillOptions {
    *  Default true. Pass false to A/B the drop. */
   mergeScoops?: boolean
 
+  /** Run the HELD-NOTE de-break pass. The segmenter sometimes splits ONE sustained note into two
+   *  SAME-pitch notes on a spurious onset (a vibrato / amplitude waver — not a real re-hit). This
+   *  post-pass merges adjacent same-MIDI notes when the amplitude between them never dips into a
+   *  real VALLEY (stays > HELD_MERGE_VALLEY_RATIO of the body); a genuine re-articulation dips
+   *  toward silence and is KEPT. Same-MIDI only, so a distinct-pitch neighbour is never touched,
+   *  and deliberate repeated notes (la-la-la — which carry an amplitude dip) survive. Threshold
+   *  calibrated on real user corrections. Default true. Pass false to A/B the drop. */
+  mergeHeldSplits?: boolean
+
   // ── Beat-grid prior (metronome-gated, beat-informed DETECTION) ────────────────
   /** When the take was sung TO A CLICK, the 16th-note grid is a strong prior on where
    *  notes start. Unlike alignToGrid (a post-snap of the FINAL onsets), this INFORMS the
@@ -342,6 +351,17 @@ const SCOOP_MERGE_HARMONIC_TOL  = 1.5
 // steps — which are peers, not dominated fragments — are never swallowed.
 const SCOOP_MERGE_GLIDE_SEMI      = 3.5
 const SCOOP_MERGE_GLIDE_DOMINANCE = 2.5
+// ── Held-note de-break (same-pitch split on a spurious onset) ────────────────────────────────
+// Merge two adjacent SAME-MIDI notes when the amplitude between them never dips into a real
+// valley — i.e. it's one continuously-sounding note the segmenter broke on a vibrato/waver, not
+// two re-articulations. valleyRatio = min amplitude across the boundary / min body amplitude of
+// the pair. Calibrated on real user corrections: held-splits measured ~0.78–1.19, deliberate
+// repeated notes (la-la-la) dip clearly (~0–0.29), and even FAST staccato re-hits (~30ms gaps)
+// still dip to ~0.44 — while real held-splits sit at ~0.78–1.19. So 0.7 keeps re-hits (incl. fast
+// ones) and merges only genuine no-dip held notes.
+const HELD_MERGE_VALLEY_RATIO = 0.7    // > this ⇒ no real dip ⇒ merge
+const HELD_MERGE_MAX_GAP_SEC  = 0.12   // never bridge a larger time gap between the two notes
+const HELD_MERGE_PITCH_TOL    = 0.5    // "same MIDI" — excludes distinct-pitch neighbours (49 vs 50)
 // Spectral flux is summed into this many linear frequency BANDS before differencing.
 // Band-summing averages out the per-bin leakage jitter a steady tone otherwise shows
 // (which made a held note's raw per-bin flux spike erratically), so a sustained note
@@ -1389,6 +1409,59 @@ function mergeScoopFragments(
   return work
 }
 
+/**
+ * Held-note de-break: merge two adjacent SAME-MIDI notes that are really one sustained note the
+ * segmenter split on a spurious onset (vibrato / amplitude waver). The discriminator is the
+ * amplitude VALLEY between them — a held note stays loud across the split (high ratio ⇒ merge),
+ * a genuine re-articulation dips toward silence (low ratio ⇒ keep, so deliberate repeated notes
+ * survive). Same-MIDI only (Δ ≤ HELD_MERGE_PITCH_TOL), so distinct-pitch neighbours are untouched.
+ * Iterates to stability. Pure/deterministic; gated by opts.mergeHeldSplits (default true).
+ */
+function mergeHeldSplits(notes: BackfillNote[], curve: FeatureFrame[], minDuration: number): BackfillNote[] {
+  if (notes.length < 2) return notes
+  // Median amplitude over [s, e] — the note "body" (skip the attack via the caller's start pad).
+  const medAmp = (s: number, e: number): number => {
+    const vals: number[] = []
+    for (const f of curve) { if (f.time >= s && f.time <= e) vals.push(f.amplitude) }
+    if (!vals.length) return 0
+    vals.sort((x, y) => x - y)
+    return vals[Math.floor(vals.length / 2)]
+  }
+  // Deepest amplitude across the boundary region (±30 ms of the junction).
+  const boundaryValley = (aEnd: number, bStart: number): number => {
+    let v = Infinity
+    for (const f of curve) { if (f.time >= aEnd - 0.03 && f.time <= bStart + 0.03) v = Math.min(v, f.amplitude) }
+    return isFinite(v) ? v : 0
+  }
+  const tryMerge = (a: BackfillNote, b: BackfillNote): BackfillNote | null => {
+    if (Math.abs(a.midi - b.midi) > HELD_MERGE_PITCH_TOL) return null
+    const aEnd = a.startSec + a.durSec, bStart = b.startSec
+    if (bStart - aEnd > HELD_MERGE_MAX_GAP_SEC) return null
+    const body = Math.min(medAmp(a.startSec + 0.03, aEnd), medAmp(b.startSec + 0.03, bStart + b.durSec))
+    if (body <= 1e-6) return null
+    if (boundaryValley(aEnd, bStart) / body <= HELD_MERGE_VALLEY_RATIO) return null   // real dip → keep split
+    const endSec = Math.max(aEnd, bStart + b.durSec)
+    return {
+      startSec: a.startSec,
+      midi: (a.durSec >= b.durSec ? a : b).midi,
+      durSec: Math.max(minDuration, endSec - a.startSec),
+      velocity: Math.max(a.velocity, b.velocity),
+      ...(a.recovered || b.recovered ? { recovered: true } : {}),
+    }
+  }
+  let work = notes.slice().sort((x, y) => x.startSec - y.startSec)
+  let safety = work.length * 2 + 4
+  while (safety-- > 0) {
+    let did = false
+    for (let i = 0; i < work.length - 1; i++) {
+      const merged = tryMerge(work[i], work[i + 1])
+      if (merged) { work = [...work.slice(0, i), merged, ...work.slice(i + 2)]; did = true; break }
+    }
+    if (!did) break
+  }
+  return work
+}
+
 // ── Beat-grid prior (metronome-gated, beat-informed DETECTION) ──────────────────
 /**
  * Use the sung-to click's subdivision grid as a PRIOR on the detected note set. This is a
@@ -1572,6 +1645,13 @@ function finalizeAnalysis(
   if (opts.mergeScoops !== false) {
     const onsetTimes = splitIdx.map(i => curve[i].time)
     notes = mergeScoopFragments(notes, curve, onsetTimes, hopSec, minDuration)
+  }
+
+  // ── Held-note de-break: fold a sustained note the segmenter split in two back together ──
+  // Same-MIDI adjacent notes with NO amplitude valley between them are one held note broken on a
+  // spurious onset. A genuine re-articulation (or deliberate repeat) dips in amplitude and stays.
+  if (opts.mergeHeldSplits !== false) {
+    notes = mergeHeldSplits(notes, curve, minDuration)
   }
 
   // ── Recovery pass: re-add voiced, stable, energetic regions the tracker dropped ──
