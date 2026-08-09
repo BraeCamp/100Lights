@@ -82,6 +82,10 @@ const SENS_KEY = 'voicemidi-sensitivity'
 const DEFAULT_SENS = 0.5
 // Persisted "Show detected pitch (debug)" overlay preference.
 const DEBUG_KEY = 'voicemidi-debug'
+// Persisted note-editor grid-snap preference (default ON = current behavior). When
+// OFF, manual horizontal edits (note start / add placement) are free/continuous;
+// pitch always stays semitone-quantized. Does NOT affect the Quantize button.
+const EDITOR_SNAP_KEY = 'voicemidi-editor-snap'
 // Persisted note-segmenter choice for the offline refine pass. Default matches the code
 // default in lib/voice-backfill (DEFAULT_SEGMENTER = 'hmm', the A/B winner).
 const SEGMENTER_KEY = 'voicemidi-segmenter'
@@ -183,6 +187,9 @@ export default function VoiceMidi() {
   const [rawNotes, setRawNotes] = useState<RecNote[]>([])
   const [quantized, setQuantized] = useState(false)
   const [division, setDivision] = useState(2)
+  // Manual-editing grid snap (default ON). Only gates horizontal drag/add snapping in
+  // the note strip; pitch stays semitone-quantized and the Quantize button is separate.
+  const [editorSnap, setEditorSnap] = useState(true)
   const [playhead, setPlayhead] = useState<number | null>(null)
 
   // ── Sampled (AI) instrument loading ──────────────────────────────────────────
@@ -407,6 +414,12 @@ export default function VoiceMidi() {
     try { setShowDebug(localStorage.getItem(DEBUG_KEY) === '1') } catch { /* ignore */ }
   }, [])
 
+  // Restore the persisted editor grid-snap preference (ON by default — only an
+  // explicit '0' turns it off, so first-run keeps the current snapping behavior).
+  useEffect(() => {
+    try { setEditorSnap(localStorage.getItem(EDITOR_SNAP_KEY) !== '0') } catch { /* ignore */ }
+  }, [])
+
   // Restore the persisted note-segmenter choice (default = the code default 'hmm').
   useEffect(() => {
     try {
@@ -430,6 +443,13 @@ export default function VoiceMidi() {
         }
       }
     } catch { /* ignore */ }
+  }, [])
+  const toggleEditorSnap = useCallback(() => {
+    setEditorSnap(v => {
+      const next = !v
+      try { localStorage.setItem(EDITOR_SNAP_KEY, next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
   }, [])
   const toggleDebug = useCallback(() => {
     setShowDebug(v => {
@@ -1642,6 +1662,7 @@ export default function VoiceMidi() {
             onDeleteSelected={deleteSelected}
             snapBpm={bpm}
             snapDivision={division}
+            snapEnabled={editorSnap}
             debug={showDebug && curve && curve.length > 0
               ? { curve, rawCurve: rawCurve ?? [], bpm: takeBpm ?? recBpmRef.current, phaseSec: takePhase, division,
                   onsets: onsets ?? [], flux: flux ?? [], clarity: clarity ?? [],
@@ -1657,6 +1678,20 @@ export default function VoiceMidi() {
                 edited
               </span>
             )}
+            <label
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}
+              title="Snap manual edits to the grid step. Off = drag/place notes freely (continuous timing); pitch still snaps to semitones."
+            >
+              <input
+                type="checkbox"
+                checked={editorSnap}
+                onChange={toggleEditorSnap}
+                aria-label="Snap manual edits to grid"
+                data-testid="vm-editor-snap"
+                style={{ accentColor: 'var(--accent)', cursor: 'pointer' }}
+              />
+              Snap
+            </label>
             {selNote !== null && (
               <button
                 onClick={deleteSelected}
@@ -1875,7 +1910,7 @@ function curveSegments(
 // pitch+start, drag an end to resize, double-click empty space to add, Delete to remove.
 function NoteStrip({
   notes, playhead, debug,
-  editable, selected, onSelect, onNotesChange, onDeleteSelected, snapBpm, snapDivision,
+  editable, selected, onSelect, onNotesChange, onDeleteSelected, snapBpm, snapDivision, snapEnabled,
 }: {
   notes: RecNote[]
   playhead: number | null
@@ -1887,6 +1922,7 @@ function NoteStrip({
   onDeleteSelected?: () => void
   snapBpm?: number
   snapDivision?: number
+  snapEnabled?: boolean
 }) {
   const W = 100, H = 120 // viewBox units; scales to container width
   const svgRef = useRef<SVGSVGElement>(null)
@@ -1925,7 +1961,11 @@ function NoteStrip({
 
   // ── Editing: screen → viewBox → (time, pitch) inversions + hit-test ───────────
   const gStep = (snapBpm && snapDivision) ? 60 / snapBpm / snapDivision : 0
-  const snapT = (t: number) => (gStep > 0 ? Math.round(t / gStep) * gStep : Math.max(0, t))
+  // Snap horizontal timing to the grid step only when enabled (default ON). When off,
+  // starts/durations are continuous (still clamped ≥ 0). Pitch snapping is separate
+  // (always semitone — see Math.round(yToMidi(...)) in the drag/add handlers).
+  const snapOn = snapEnabled !== false && gStep > 0
+  const snapT = (t: number) => (snapOn ? Math.round(t / gStep) * gStep : Math.max(0, t))
   const clientToVB = (clientX: number, clientY: number) => {
     const g = geomRef.current
     const r = svgRef.current?.getBoundingClientRect()
