@@ -199,6 +199,18 @@ export interface BackfillOptions {
    *  tracker left as silence (or dropped as sub-minDuration) and re-add them as notes. Biases
    *  toward not-missing. Default true. Pass false to A/B the drop. */
   recoverNotes?: boolean
+
+  /** Run the de-fragment "scoop" MERGE pass (both segmenter paths). A sung note's ATTACK can
+   *  scoop ~1 semitone off the target and then settle; the segmenter sometimes splits that
+   *  transient into a SHORT, wrong-pitch FRAGMENT sitting right beside the sustained note. This
+   *  post-pass folds such a fragment back into its adjacent note when ALL hold: the fragment is
+   *  short (< SCOOP_MERGE_MAX_DUR), it's within SCOOP_MERGE_SEMI_TOL semitones of that neighbour,
+   *  and there is NO onset at the shared boundary (so it's a within-articulation pitch SETTLE, not
+   *  a real re-articulation — which always carries an onset at its boundary and is thus protected).
+   *  Iterates to stability; the merged note takes the dominant/sustained pitch (amplitude-weighted
+   *  median over the merged span, reusing the re-pitch helper) and spans start(first)→end(last).
+   *  Default true. Pass false to A/B the drop. */
+  mergeScoops?: boolean
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -265,6 +277,27 @@ const HMM_ONSET_FLOOR = 0.5
 // re-pitch-from-stable-portion pass is redundant here — verified on the scoop case (HMM
 // nails 61→60 = 60 without it). Left false; the 'onset' path keeps re-pitch as before.
 const HMM_REPITCH = false
+// ── De-fragment "scoop" merge pass ──────────────────────────────────────────────
+// A short fragment shorter than this (seconds) is a merge candidate — a sung attack's
+// scoop split off as its own note is only tens of ms long; a real quick melodic note is
+// typically ≥ this, so it's protected by duration alone.
+const SCOOP_MERGE_MAX_DUR   = 0.18
+// Max |Δsemitone| between the fragment and the adjacent note to fold into it. A scoop lands
+// ~1 semitone off; 1.5 tolerates detection wobble while still refusing a genuine step (≥2 st).
+const SCOOP_MERGE_SEMI_TOL  = 1.5
+// A boundary "has an onset" (⇒ real re-articulation, NOT merged) when a detected onset time
+// falls within this many analysis HOPS of it.
+const SCOOP_MERGE_ONSET_HOPS = 1.0
+// Coarse backstop: never fold across a time gap larger than this (seconds). The fine
+// discrimination is the silence check below.
+const SCOOP_MERGE_MAX_GAP_SEC = 0.05
+// A frame at/below this amplitude between the two notes is a TRUE SILENCE gap ⇒ they're
+// distinct notes, not a within-articulation settle, so the merge is blocked. Deliberately
+// keyed on AMPLITUDE, not YIN voicing: a brief clarity dropout (midi===null but the voice is
+// still sounding, amp well above this) is continuous phonation and must NOT block the merge,
+// whereas a real rest between notes drops the amplitude to ~0. A legato re-hit with no
+// silence is instead caught by the onset gate (it carries an energy attack → an onset).
+const SCOOP_MERGE_SILENCE_AMP = 0.04
 // Spectral flux is summed into this many linear frequency BANDS before differencing.
 // Band-summing averages out the per-bin leakage jitter a steady tone otherwise shows
 // (which made a held note's raw per-bin flux spike erratically), so a sustained note
@@ -1108,6 +1141,109 @@ function recoverMissedNotes(
   return [...notes, ...recovered].sort((a, b) => a.startSec - b.startSec)
 }
 
+// ── De-fragment scoop merge pass ────────────────────────────────────────────────
+/**
+ * Fold a SHORT wrong-pitch FRAGMENT (a sung note's attack that scooped ~1 semitone off the
+ * target and then settled, which the segmenter split off as its own note) back into its
+ * adjacent note. Runs on BOTH segmenter paths after segmentation + re-pitch.
+ *
+ * A short note is merged into a neighbour when ALL hold:
+ *   · the note is short (durSec < SCOOP_MERGE_MAX_DUR),
+ *   · it's within SCOOP_MERGE_SEMI_TOL semitones of that neighbour,
+ *   · there is NO onset at the SHARED BOUNDARY (the start of the LATER note in the pair) —
+ *     an onset there means a real RE-ARTICULATION (the same/adjacent pitch sung again), which
+ *     must stay split; its absence means a within-articulation pitch SETTLE, which should merge,
+ *   · and the two notes are contiguously VOICED (no real silence gap between them) — a genuine
+ *     rest/re-hit has unvoiced frames in the gap and is a distinct note, not a settle.
+ *
+ * The merged note spans start(first)→end(last) and takes the dominant/sustained pitch: the
+ * amplitude·frame-weighted median over the merged span (reusing repitchNotes, which also skips
+ * the attack scoop), falling back to the LONGER note's pitch. Iterates to stability so a
+ * fragment sitting between two same-pitch notes collapses fully into one.
+ *
+ * `onsetTimes` MUST be the SAME onset set the segmenter used (splitIdx → times), so a real
+ * re-articulation the segmenter split on is exactly the one this pass refuses to re-merge.
+ * Pure/deterministic. Gated by opts.mergeScoops (default true).
+ */
+function mergeScoopFragments(
+  notes: BackfillNote[],
+  curve: FeatureFrame[],
+  onsetTimes: number[],
+  hopSec: number,
+  minDuration: number,
+): BackfillNote[] {
+  if (notes.length < 2) return notes
+  const hop      = Math.max(1e-4, hopSec)
+  const onsetTol = SCOOP_MERGE_ONSET_HOPS * hop
+  const hasOnsetAt = (t: number) => onsetTimes.some(o => Math.abs(o - t) <= onsetTol)
+
+  // A true SILENCE gap (amplitude drops to ~0) strictly between the two notes ⇒ distinct
+  // notes, not a within-articulation settle. A brief clarity dropout (midi null but still
+  // sounding) does NOT block — that's continuous phonation the segmenter happened to break.
+  const voicedContiguous = (aEnd: number, bStart: number): boolean => {
+    if (bStart - aEnd > SCOOP_MERGE_MAX_GAP_SEC) return false
+    for (const f of curve) {
+      if (f.time <= aEnd + hop * 0.5) continue
+      if (f.time >= bStart - hop * 0.5) break
+      if (f.amplitude <= SCOOP_MERGE_SILENCE_AMP) return false
+    }
+    return true
+  }
+
+  // Dominant/sustained pitch of the merged note = the pitch of the LONGER (more sustained) of
+  // the pair. That note's own segmenter-assigned pitch already went through re-pitch (onset
+  // path) / HMM tuning, so it IS the settled pitch; because merges execute longest-neighbour-
+  // first, the longest piece's pitch propagates as short fragments fold in. (An amplitude-
+  // weighted median over the RAW merged span was tried but reads the louder mid-note scoop, so
+  // the longer note's pitch is the more faithful "dominant pitch" here.)
+  const dominantPitch = (a: BackfillNote, b: BackfillNote): number =>
+    (a.durSec >= b.durSec ? a : b).midi
+
+  // `a` precedes `b`. Return the merged note when the pair qualifies, else null.
+  const tryMerge = (a: BackfillNote, b: BackfillNote): BackfillNote | null => {
+    if (Math.abs(a.midi - b.midi) > SCOOP_MERGE_SEMI_TOL) return null
+    if (!voicedContiguous(a.startSec + a.durSec, b.startSec)) return null
+    if (hasOnsetAt(b.startSec)) return null                       // real re-articulation → keep split
+    const startSec = a.startSec
+    const endSec   = Math.max(a.startSec + a.durSec, b.startSec + b.durSec)
+    const durSec   = Math.max(minDuration, endSec - startSec)
+    return {
+      startSec,
+      midi:     dominantPitch(a, b),
+      durSec,
+      velocity: Math.max(a.velocity, b.velocity),
+      ...(a.recovered || b.recovered ? { recovered: true } : {}),
+    }
+  }
+
+  let work = notes.slice().sort((x, y) => x.startSec - y.startSec)
+  let safety = work.length * 2 + 4
+  // Each pass, execute the single BEST-scoring qualifying merge — the pair whose DOMINANT
+  // (longer) note is longest — then repeat. Folding a fragment into the most-sustained
+  // neighbour first means a group of short pieces around one note collapses TOWARD that
+  // note's pitch (a fragment between two same-pitch notes ends up on the sustained pitch),
+  // instead of a greedy left-to-right pass chaining a short note into another short note.
+  while (safety-- > 0) {
+    let best: { lo: number; hi: number; merged: BackfillNote; score: number } | null = null
+    for (let i = 0; i < work.length; i++) {
+      if (work[i].durSec >= SCOOP_MERGE_MAX_DUR) continue         // only a SHORT fragment triggers
+      const n = work[i], prev = work[i - 1], next = work[i + 1]
+      const consider = (lo: number, hi: number, a: BackfillNote, b: BackfillNote) => {
+        const merged = tryMerge(a, b)
+        if (!merged) return
+        const score = Math.max(a.durSec, b.durSec)                // prefer the most-sustained pair
+        if (!best || score > best.score) best = { lo, hi, merged, score }
+      }
+      if (prev) consider(i - 1, i, prev, n)
+      if (next) consider(i, i + 1, n, next)
+    }
+    if (!best) break
+    const b = best as { lo: number; hi: number; merged: BackfillNote; score: number }
+    work = [...work.slice(0, b.lo), b.merged, ...work.slice(b.hi + 1)]
+  }
+  return work
+}
+
 // Shared tail of the offline pass: refine the raw feature track, detect onsets, segment
 // (HMM / onset-aware / pitch-only baseline per opts.segmenter+opts.useOnsets), re-pitch,
 // and package the analysis WITH the onset/flux/clarity evidence for the debug overlay.
@@ -1158,6 +1294,17 @@ function finalizeAnalysis(
       : extractNoteEvents(curve, minDuration)
     notes = eventsToNotes(events, minDuration)
     if (opts.repitch !== false) notes = repitchNotes(notes, curve, opts)
+  }
+
+  // ── De-fragment scoop merge: fold an attack-scoop fragment back into its note ──
+  // After segmentation + re-pitch, both paths can leave a SHORT wrong-pitch fragment (the
+  // sung attack scooped ~1 semitone off then settled) beside the sustained note. Merge it
+  // back when the shared boundary carries NO onset (a within-articulation settle, not a real
+  // re-articulation). Reuses the SAME onset/valley split set the segmenter used, so a real
+  // re-articulation the segmenter split on is exactly what stays split.
+  if (opts.mergeScoops !== false) {
+    const onsetTimes = splitIdx.map(i => curve[i].time)
+    notes = mergeScoopFragments(notes, curve, onsetTimes, hopSec, minDuration)
   }
 
   // ── Recovery pass: re-add voiced, stable, energetic regions the tracker dropped ──
