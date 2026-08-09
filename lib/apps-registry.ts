@@ -1,0 +1,54 @@
+// Registry of the standalone "Mini-Apps" — the small, focused tools that live at
+// /apps/<slug> alongside the full studio. Single source of truth: the admin
+// Apps → Mini-Apps inventory reads this, a future public launcher will read it,
+// and the sound-target `app_slug` keys point back at these slugs.
+//
+// Pure and dependency-free so it can be imported from anywhere (client panels,
+// server routes, and — via the export bridge — the Node pipeline).
+
+export type MiniAppStatus = 'live' | 'beta'
+
+export interface MiniApp {
+  slug: string
+  /** Display name. */
+  title: string
+  /** One-line hook under the title. */
+  tagline: string
+  /** Longer description of what the app does. */
+  description: string
+  /** Where the app lives. Always `/apps/<slug>`. */
+  href: string
+  /** Ship state — omit for live. */
+  status?: MiniAppStatus
+}
+
+export const MINI_APPS: MiniApp[] = [
+  {
+    slug: 'voicemidi',
+    title: 'Voice → Instrument',
+    tagline: 'Hum or sing a line; hear it played back on any instrument.',
+    description: 'Records your voice, detects the pitch of every note, and replays the melody on a chosen instrument preset — turning a hummed idea into playable notes with no keyboard.',
+    href: '/apps/voicemidi',
+    status: 'live',
+  },
+  {
+    slug: 'beatmaker',
+    title: 'Beat Maker',
+    tagline: 'Tap out a drum pattern in seconds.',
+    description: 'A tiny step sequencer — place kick, snare, hats and more on the grid, pick a kit, and loop it. The fastest path from an empty page to a beat.',
+    href: '/apps/beatmaker',
+    status: 'live',
+  },
+  {
+    slug: 'autotune',
+    title: 'Autotune',
+    tagline: 'Snap a vocal to the nearest note in key.',
+    description: 'Pitch-corrects a recorded or uploaded vocal to a chosen scale, from gentle tuning to the hard-snap effect — a focused take on the studio pitch tools.',
+    href: '/apps/autotune',
+    status: 'beta',
+  },
+]
+
+/** Look up a mini-app by its slug. */
+export const bySlug = (slug: string): MiniApp | undefined =>
+  MINI_APPS.find(a => a.slug === slug)

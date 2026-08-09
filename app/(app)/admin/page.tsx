@@ -26,6 +26,8 @@ import ArticleProjectsPanel from './ArticleProjectsPanel'
 import TasksInboxPanel from './TasksInboxPanel'
 import ContentVideoPanel from './ContentVideoPanel'
 import ContentQueuePanel from './ContentQueuePanel'
+import AppsPanel from './AppsPanel'
+import AppTargetsPanel from './AppTargetsPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -784,6 +786,39 @@ export default async function AdminPage() {
       color: '#10b981',
       subtabs: [
         { id: 'overview', label: 'Overview', content: <ComingSoon module="image" /> },
+      ],
+    },
+    {
+      id: 'apps',
+      label: 'Apps',
+      color: '#f59e0b',
+      subtabs: [
+        {
+          id: 'inventory',
+          label: 'Mini-Apps',
+          content: (
+            <>
+              <PanelIntro
+                title="Mini-Apps"
+                description="The standalone tools at /apps/<slug> — the focused single-purpose apps alongside the full studio. Source of truth is lib/apps-registry.ts."
+              />
+              <AppsPanel />
+            </>
+          ),
+        },
+        {
+          id: 'targets',
+          label: 'Sound Targets',
+          content: (
+            <>
+              <PanelIntro
+                title="Sound Targets"
+                description="Reference audio + descriptions of what the AI should sound like — the sound-side ground truth we tune generation/detection toward."
+              />
+              <AppTargetsPanel />
+            </>
+          ),
+        },
       ],
     },
   ]
