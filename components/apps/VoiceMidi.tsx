@@ -263,6 +263,12 @@ export default function VoiceMidi() {
   const [segmenter, setSegmenter] = useState<Segmenter>(DEFAULT_SEGMENTER)
   const segmenterRef = useRef<Segmenter>(DEFAULT_SEGMENTER)
   const lastAudioRef = useRef<{ samples: Float32Array; sampleRate: number } | null>(null)
+  // Memoized offline analyses for the CURRENT take, keyed by the inputs that change the result
+  // (segmenter × pitch-source × sensitivity × grid). Flipping Tracker or "Use EQ band" and then
+  // flipping back is then instant — the take is analyzed once per combination and the rendered
+  // data is kept until a NEW take is recorded or the take is cleared/deleted (never re-refined
+  // on a toggle round-trip). Cleared in stopRecording (new audio) and the Clear handler.
+  const analysisCacheRef = useRef<Map<string, BufferAnalysis>>(new Map())
 
   // ── EQ pitch source (Detect EQ / dominant-band pitch) ────────────────────────
   // 'full' (default) = full-signal YIN; 'eq' = swap the pitch to the dominant frequency band
@@ -998,6 +1004,7 @@ export default function VoiceMidi() {
     // displace onsets onto meaningless beat lines.
     recMetroOnRef.current = metroTimer.current !== null
     setTakeUsedMetro(recMetroOnRef.current)
+    analysisCacheRef.current.clear()   // starting a new take discards the old take's cached analyses
     setRawNotes([])
     setQuantized(false)
     setLive(null)
@@ -1096,11 +1103,27 @@ export default function VoiceMidi() {
     }
   }, [])
 
-  // Re-run the offline refine on the LAST take's stashed audio with the current segmenter,
-  // so flipping the Tracker toggle compares HMM vs onset on the same real performance.
+  // A cache key over the inputs that change the offline analysis (segmenter × pitch-source ×
+  // sensitivity × gain/gate × grid prior). Grid DIVISION and the Timing-offset dial are applied
+  // LATER in applyAnalysis (conditionalGridAlign), so they're deliberately NOT part of the key.
+  const analysisKey = useCallback((seg: Segmenter, src: PitchSource): string => {
+    const pr = paramsRef.current
+    const g = beatGridForTake()
+    return [seg, src, sensitivityRef.current, pr.gain, pr.rmsGate,
+      g ? `${g.bpm.toFixed(2)}:${g.phaseSec.toFixed(4)}:${g.subdiv}` : 'nogrid'].join('|')
+  }, [beatGridForTake])
+
+  // Re-run the offline refine on the LAST take's stashed audio with the current segmenter +
+  // pitch source, so flipping Tracker (HMM/onset) or "Use EQ band" compares them on the same
+  // real performance. Served from the per-take cache when this exact combination was already
+  // computed — flipping back is then INSTANT and never re-refines. Misses compute (with the
+  // progress bar) and are stored until the take is replaced or cleared.
   const rerunSegmenter = useCallback(async () => {
     const audio = lastAudioRef.current
     if (!audio) return
+    const key = analysisKey(segmenterRef.current, pitchSourceRef.current)
+    const cached = analysisCacheRef.current.get(key)
+    if (cached) { applyAnalysis(cached, liveTake?.length ?? 0); return }
     setRefining(true)
     setRefineProgress(0)
     setRefineMsg(null)
@@ -1114,13 +1137,14 @@ export default function VoiceMidi() {
         pitchSource: pitchSourceRef.current,
         beatGrid: beatGridForTake(),
       }, setRefineProgress)
+      analysisCacheRef.current.set(key, analysis)
       applyAnalysis(analysis, liveTake?.length ?? 0)
     } catch {
       setRefineMsg('Re-analyze failed')
     } finally {
       setRefining(false)
     }
-  }, [applyAnalysis, liveTake, beatGridForTake])
+  }, [applyAnalysis, liveTake, beatGridForTake, analysisKey])
 
   // Tracker toggle: persist the choice + mirror to the ref; re-analyze the last take on the
   // spot when its audio is available and we're not mid-record.
@@ -1258,6 +1282,7 @@ export default function VoiceMidi() {
         src = await decodeBlobToMono(blob)
       }
       lastAudioRef.current = src
+      analysisCacheRef.current.clear()   // new take → drop the previous take's cached analyses
       // The ScriptProcessor / MediaRecorder tapped the PRE-gain source, so re-apply the
       // user's sensitivity gain + RMS gate offline. analyzeBufferAsync returns the notes AND
       // the pitch curves (raw + corrected) + onset/flux/clarity for the debug overlay.
@@ -1270,6 +1295,7 @@ export default function VoiceMidi() {
         pitchSource: pitchSourceRef.current,
         beatGrid: beatGridForTake(),
       }, setRefineProgress)
+      analysisCacheRef.current.set(analysisKey(segmenterRef.current, pitchSourceRef.current), analysis)
       // Grid-conditional align + set the take views + debug curves (shared with the toggle).
       applyAnalysis(analysis, liveNotes.length)
     } catch {
@@ -1277,7 +1303,7 @@ export default function VoiceMidi() {
     } finally {
       setRefining(false)
     }
-  }, [applyAnalysis, beatGridForTake])
+  }, [applyAnalysis, beatGridForTake, analysisKey])
 
   function toggleRecord() {
     if (recording) void stopRecording()
