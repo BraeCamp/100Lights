@@ -32,6 +32,12 @@ import {
 import { seedAiInstruments, libraryFulfill } from '@/lib/default-samples'
 import { libraryGetAll } from '@/lib/sound-library'
 import type { BeatType } from '@/lib/beat-analyzer'
+import {
+  saveCorrection, listCorrections, countCorrections, exportCorrections, clearCorrections,
+  diffNotes, describeDiff, summarizeCorrections, encodeCorrectionAudio,
+  CORRECTIONS_APP_VERSION,
+  type CorrectionRecord, type CorrectionEvidence, type CorrectionsSummary,
+} from '@/lib/voice-corrections'
 
 // ── Sampled (AI multisample) instruments ──────────────────────────────────────
 // The AI packs baked by seedAiInstruments() (lib/default-samples.ts). Mirrors
@@ -250,6 +256,19 @@ export default function VoiceMidi() {
   // Whether the LAST take was recorded with the metronome running — gates the control's
   // visibility together with metroOn (state, so the UI re-renders).
   const [takeUsedMetro, setTakeUsedMetro] = useState(false)
+
+  // ── Manual correction + learning capture ─────────────────────────────────────
+  // The tracker's ORIGINAL notes for this take (the training baseline). Set whenever a
+  // take is (re)generated or a take-source is picked; the user's manual edits to
+  // rawNotes become the CORRECTED (ground-truth) set diffed against this.
+  const [detected, setDetected] = useState<RecNote[]>([])
+  const [edited, setEdited] = useState(false)          // true once the user hand-edits
+  const [selNote, setSelNote] = useState<number | null>(null)   // selected note index (edit)
+  const [takeGridAligned, setTakeGridAligned] = useState(false) // last refine grid-aligned?
+  const [savedCount, setSavedCount] = useState(0)
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [saveSummary, setSaveSummary] = useState<CorrectionsSummary | null>(null)
+  const [savingCorr, setSavingCorr] = useState(false)
 
   // ── Test / calibrate ─────────────────────────────────────────────────────────
   const [sensitivity, setSensitivity] = useState(DEFAULT_SENS)
@@ -747,6 +766,11 @@ export default function VoiceMidi() {
     setRawNotes([])
     setQuantized(false)
     setLive(null)
+    setDetected([])
+    setEdited(false)
+    setSelNote(null)
+    setSaveMsg(null)
+    setTakeGridAligned(false)
     setRefineMsg(null)
     setRefinedTake(null)
     setRefinedRawTake(null)
@@ -809,6 +833,12 @@ export default function VoiceMidi() {
       setRefinedTake(refined)
       setRawNotes(refined)
       setTakeSource('refined')
+      // The refined transcription is the detected baseline for a correction.
+      setDetected(refined)
+      setEdited(false)
+      setSelNote(null)
+      setSaveMsg(null)
+      setTakeGridAligned(aligned)
       setRefineMsg(`Refined · ${tag} — ${refined.length} note${refined.length === 1 ? '' : 's'}${aligned ? ', grid-aligned' : ''}`)
     } else {
       setRefinedRawTake(null)
@@ -898,6 +928,12 @@ export default function VoiceMidi() {
     setRawNotes(liveNotes)
     setLiveTake(liveNotes)
     setTakeSource('live')
+    // Fresh take → the live notes are the detected baseline; drop any prior edit state.
+    setDetected(liveNotes)
+    setEdited(false)
+    setSelNote(null)
+    setSaveMsg(null)
+    setTakeGridAligned(false)
 
     if (!det) return
 
@@ -969,7 +1005,160 @@ export default function VoiceMidi() {
     if (!notes) return
     setTakeSource(src)
     setRawNotes(notes)
+    // Switching take baselines the detected set to that take; edits start fresh.
+    setDetected(notes)
+    setEdited(false)
+    setSelNote(null)
+    setSaveMsg(null)
   }, [refinedTake, refinedRawTake, liveTake])
+
+  // ── Manual edit + correction capture ─────────────────────────────────────────
+  // A single write path for every hand-edit (drag/add/delete, or the headless hook):
+  // the edited set becomes the CORRECTED notes, drives playback/export, and turns off
+  // quantize (so what you see is exactly what you edited). Marks the take edited.
+  const applyEdit = useCallback((next: RecNote[]) => {
+    setRawNotes(next)
+    setQuantized(false)
+    setEdited(true)
+    setSaveMsg(null)
+  }, [])
+
+  // Discard manual edits — restore the tracker's detected notes for this take.
+  const resetToDetected = useCallback(() => {
+    setRawNotes(detected)
+    setQuantized(false)
+    setEdited(false)
+    setSelNote(null)
+    setSaveMsg(null)
+  }, [detected])
+
+  // Delete the selected note.
+  const deleteSelected = useCallback(() => {
+    setSelNote(i => {
+      if (i === null) return null
+      setRawNotes(prev => { const n = prev.slice(); n.splice(i, 1); return n })
+      setQuantized(false); setEdited(true); setSaveMsg(null)
+      return null
+    })
+  }, [])
+
+  // Build the per-frame acoustic evidence from the stored analysis curves — every
+  // per-frame array is forced to `curve`'s length so the dataset is length-consistent.
+  const buildEvidence = useCallback((): CorrectionEvidence => {
+    const c = curve ?? []
+    return {
+      time:       c.map(f => f.time),
+      midi:       c.map(f => frameMidi(f)),
+      clarity:    c.map((_, i) => clarity?.[i]    ?? 0),
+      flux:       c.map((_, i) => flux?.[i]       ?? 0),
+      energy:     c.map((_, i) => volume?.[i]     ?? 0),
+      pitchDelta: c.map((_, i) => pitchDelta?.[i] ?? 0),
+      onsets:     onsets ?? [],
+    }
+  }, [curve, clarity, flux, volume, pitchDelta, onsets])
+
+  // Save the current take as a correction/training example: detected baseline +
+  // corrected (edited) ground truth + evidence + 16 kHz audio + settings.
+  const doSaveCorrection = useCallback(async (): Promise<CorrectionRecord | null> => {
+    if (displayNotes.length === 0 && detected.length === 0) return null
+    setSavingCorr(true)
+    try {
+      const toNote = (n: RecNote) => ({ startSec: n.startSec, midi: n.midi, durSec: n.durSec, velocity: n.velocity })
+      const corrected = displayNotes.map(toNote)
+      const det = detected.map(toNote)
+      const diff = diffNotes(det, corrected)
+      const audioSrc = lastAudioRef.current
+      const audio = audioSrc
+        ? encodeCorrectionAudio(audioSrc.samples, audioSrc.sampleRate)
+        : { sampleRate: 0, samples: 0, durSec: 0, encoding: 'int16' as const, pcmBase64: '' }
+      const record: CorrectionRecord = {
+        id: `corr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        ts: Date.now(),
+        appVersion: CORRECTIONS_APP_VERSION,
+        edited,
+        detected: det,
+        corrected,
+        diff,
+        evidence: buildEvidence(),
+        audio,
+        settings: {
+          sensitivity, tracker: segmenter, key: null, scale: null,
+          bpm, division, timingOffsetMs, gridAligned: takeGridAligned,
+        },
+      }
+      await saveCorrection(record)
+      const all = await listCorrections()
+      setSavedCount(all.length)
+      setSaveSummary(summarizeCorrections(all))
+      setSaveMsg(`Saved — ${describeDiff(diff)}`)
+      return record
+    } catch {
+      setSaveMsg('Save failed')
+      return null
+    } finally {
+      setSavingCorr(false)
+    }
+  }, [displayNotes, detected, edited, buildEvidence, sensitivity, segmenter, bpm, division, timingOffsetMs, takeGridAligned])
+
+  // Export the whole dataset as a downloaded JSON file.
+  const doExportCorrections = useCallback(async () => {
+    const blob = await exportCorrections()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `voicemidi-corrections-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+  }, [])
+
+  // Clear the whole dataset (confirmed).
+  const doClearCorrections = useCallback(async () => {
+    if (typeof window !== 'undefined' && !window.confirm('Delete all saved corrections? This cannot be undone.')) return
+    await clearCorrections()
+    setSavedCount(0)
+    setSaveSummary(null)
+    setSaveMsg(null)
+  }, [])
+
+  // Load the saved-count + systematic summary once on mount.
+  useEffect(() => {
+    void listCorrections().then(all => { setSavedCount(all.length); setSaveSummary(summarizeCorrections(all)) }).catch(() => {})
+  }, [])
+
+  // ── Headless verify hook: window.__voiceCorrections (save/list/export/clear) ───
+  // Also exposes edit helpers so a headless page can drive the full loop without the
+  // pointer handlers. Reads latest state via a ref updated each render.
+  const corrApiRef = useRef<{
+    save: () => Promise<CorrectionRecord | null>
+    applyEdit: (n: RecNote[]) => void
+    getNotes: () => RecNote[]
+    getDetected: () => RecNote[]
+  }>({ save: async () => null, applyEdit: () => {}, getNotes: () => [], getDetected: () => [] })
+  useEffect(() => {
+    corrApiRef.current = {
+      save: doSaveCorrection,
+      applyEdit,
+      getNotes: () => displayNotes,
+      getDetected: () => detected,
+    }
+  })
+  useEffect(() => {
+    const w = window as unknown as { __voiceCorrections?: Record<string, unknown> }
+    w.__voiceCorrections = {
+      save:   () => corrApiRef.current.save(),
+      list:   () => listCorrections(),
+      count:  () => countCorrections(),
+      export: () => exportCorrections(),
+      clear:  () => clearCorrections(),
+      // Edit helpers (drive the same write path as the pointer handlers).
+      applyEdit:   (n: RecNote[]) => corrApiRef.current.applyEdit(n),
+      getNotes:    () => corrApiRef.current.getNotes(),
+      getDetected: () => corrApiRef.current.getDetected(),
+    }
+    return () => { delete w.__voiceCorrections }
+  }, [])
 
   // ── Playback of the captured take ────────────────────────────────────────────
   const playRaf = useRef<number | null>(null)
@@ -1446,12 +1635,45 @@ export default function VoiceMidi() {
           <NoteStrip
             notes={displayNotes}
             playhead={playhead}
+            editable
+            selected={selNote}
+            onSelect={setSelNote}
+            onNotesChange={applyEdit}
+            onDeleteSelected={deleteSelected}
+            snapBpm={bpm}
+            snapDivision={division}
             debug={showDebug && curve && curve.length > 0
               ? { curve, rawCurve: rawCurve ?? [], bpm: takeBpm ?? recBpmRef.current, phaseSec: takePhase, division,
                   onsets: onsets ?? [], flux: flux ?? [], clarity: clarity ?? [],
                   volume: volume ?? [], pitchDelta: pitchDelta ?? [], recovered: recovered ?? [] }
               : null}
           />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '6px 0 0' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Drag a note to fix pitch/timing · double-click empty space to add · Delete removes the selected note.
+            </span>
+            {edited && (
+              <span data-testid="vm-edited-badge" style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--accent-light)', background: 'rgba(124,58,237,0.15)', border: '1px solid var(--accent)', borderRadius: 6, padding: '2px 7px' }}>
+                edited
+              </span>
+            )}
+            {selNote !== null && (
+              <button
+                onClick={deleteSelected}
+                data-testid="vm-delete-note"
+                style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 9px', cursor: 'pointer' }}
+                title="Delete the selected note"
+              >✕ Delete note</button>
+            )}
+            {edited && (
+              <button
+                onClick={resetToDetected}
+                data-testid="vm-reset-detected"
+                style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 9px', cursor: 'pointer' }}
+                title="Discard your edits and restore the detected notes"
+              >↺ Reset to detected</button>
+            )}
+          </div>
           {showDebug && !(curve && curve.length > 0) && (
             <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>
               No detected-pitch curve for this take (live-only capture — sing a take with refine to see it).
@@ -1533,6 +1755,74 @@ export default function VoiceMidi() {
               {displayNotes.length} note{displayNotes.length === 1 ? '' : 's'}
             </span>
           </div>
+
+          {/* ── Correction / learning capture ──────────────────────────────────────
+              Save this fixed take as a training example (detected + corrected + evidence
+              + 16 kHz audio + settings), then export the dataset for offline tuning. */}
+          <div style={{ borderTop: '1px solid var(--border)', marginTop: 16, paddingTop: 14 }} data-testid="vm-corrections-panel">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => void doSaveCorrection()}
+                disabled={savingCorr || !hasTake}
+                data-testid="vm-save-correction"
+                style={{
+                  padding: '8px 16px', borderRadius: 8, fontSize: 12.5, fontWeight: 700,
+                  cursor: savingCorr || !hasTake ? 'default' : 'pointer', opacity: savingCorr || !hasTake ? 0.6 : 1,
+                  border: 'none', background: 'var(--accent)', color: '#fff',
+                }}
+                title="Save your fix as a training example the detector can be tuned/trained against"
+              >
+                {savingCorr ? 'Saving…' : edited ? '✔ Save correction' : '✔ Save (confirm detection)'}
+              </button>
+              <button
+                onClick={() => void doExportCorrections()}
+                disabled={savedCount === 0}
+                data-testid="vm-export-corrections"
+                style={{
+                  padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  cursor: savedCount === 0 ? 'default' : 'pointer', opacity: savedCount === 0 ? 0.5 : 1,
+                  border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)',
+                }}
+                title="Download every saved correction as a JSON dataset"
+              >⭳ Export</button>
+              <button
+                onClick={() => void doClearCorrections()}
+                disabled={savedCount === 0}
+                data-testid="vm-clear-corrections"
+                style={{
+                  padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  cursor: savedCount === 0 ? 'default' : 'pointer', opacity: savedCount === 0 ? 0.5 : 1,
+                  border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)',
+                }}
+                title="Delete every saved correction"
+              >Clear</button>
+              <span data-testid="vm-corrections-count" style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+                {savedCount} correction{savedCount === 1 ? '' : 's'} saved
+              </span>
+            </div>
+            {saveMsg && (
+              <p data-testid="vm-save-msg" style={{ fontSize: 11.5, color: 'var(--accent-light)', margin: '8px 0 0' }}>{saveMsg}</p>
+            )}
+            {saveSummary && saveSummary.count > 0 && (
+              (() => {
+                const s = saveSummary
+                const bits: string[] = []
+                if (s.octaveErrors)    bits.push(`${s.octaveErrors} octave error${s.octaveErrors === 1 ? '' : 's'}`)
+                if (s.otherPitchFixes) bits.push(`${s.otherPitchFixes} other pitch fix${s.otherPitchFixes === 1 ? '' : 'es'}`)
+                if (s.added)           bits.push(`${s.added} missed (added)`)
+                if (s.removed)         bits.push(`${s.removed} spurious (removed)`)
+                if (s.timingFixes)     bits.push(`${s.timingFixes} timing fix${s.timingFixes === 1 ? '' : 'es'}`)
+                return (
+                  <p data-testid="vm-corrections-summary" style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '5px 0 0' }}>
+                    Across {s.count} correction{s.count === 1 ? '' : 's'}: {bits.length ? bits.join(' · ') : 'no systematic errors yet'}
+                  </p>
+                )
+              })()
+            )}
+            <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '6px 0 0' }}>
+              Saved locally in your browser (nothing uploaded). Export produces a JSON dataset for offline tuning.
+            </p>
+          </div>
         </div>
       )}
     </div>
@@ -1581,10 +1871,32 @@ function curveSegments(
 }
 
 // ── Mini piano-roll: time on X, pitch on Y (+ optional debug pitch overlay) ────
-function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: number | null; debug?: DebugCurves | null }) {
+// Editable when `onNotesChange` is supplied: click to select, drag the body to move
+// pitch+start, drag an end to resize, double-click empty space to add, Delete to remove.
+function NoteStrip({
+  notes, playhead, debug,
+  editable, selected, onSelect, onNotesChange, onDeleteSelected, snapBpm, snapDivision,
+}: {
+  notes: RecNote[]
+  playhead: number | null
+  debug?: DebugCurves | null
+  editable?: boolean
+  selected?: number | null
+  onSelect?: (i: number | null) => void
+  onNotesChange?: (notes: RecNote[]) => void
+  onDeleteSelected?: () => void
+  snapBpm?: number
+  snapDivision?: number
+}) {
   const W = 100, H = 120 // viewBox units; scales to container width
+  const svgRef = useRef<SVGSVGElement>(null)
+  // Live geometry mirror so the window-level drag handlers read the latest transforms.
+  const geomRef = useRef({ total: 1, loMidi: 0, span: 4, W, H })
+  // Active drag: which note, which handle, and the note's pre-drag geometry.
+  const dragRef = useRef<{ i: number; mode: 'move' | 'left' | 'right'; note: RecNote; startX: number; startY: number } | null>(null)
   if (notes.length === 0) return null
   const dbg = debug ?? null
+  const canEdit = !!editable && !!onNotesChange
 
   // Time span: notes, extended to cover the curve tail when debugging.
   let total = 0.001
@@ -1607,6 +1919,102 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
   const span = Math.max(4, hiMidi - loMidi + 2) // pad a little vertically
   const midiToY = (m: number) => H - ((m - (loMidi - 1)) / span) * H
   const timeToX = (t: number) => (t / total) * W
+
+  // Keep the geometry mirror fresh for the window-level drag handlers below.
+  geomRef.current = { total, loMidi, span, W, H }
+
+  // ── Editing: screen → viewBox → (time, pitch) inversions + hit-test ───────────
+  const gStep = (snapBpm && snapDivision) ? 60 / snapBpm / snapDivision : 0
+  const snapT = (t: number) => (gStep > 0 ? Math.round(t / gStep) * gStep : Math.max(0, t))
+  const clientToVB = (clientX: number, clientY: number) => {
+    const g = geomRef.current
+    const r = svgRef.current?.getBoundingClientRect()
+    if (!r || r.width === 0 || r.height === 0) return { x: 0, y: 0 }
+    return { x: ((clientX - r.left) / r.width) * g.W, y: ((clientY - r.top) / r.height) * g.H }
+  }
+  const xToTime = (x: number) => (x / geomRef.current.W) * geomRef.current.total
+  const yToMidi = (y: number) => {
+    const g = geomRef.current
+    return (g.loMidi - 1) + ((g.H - y) / g.H) * g.span
+  }
+  // Which note is under a viewBox point (topmost wins), and −1 for empty space.
+  const hitTest = (vx: number, vy: number): number => {
+    for (let i = notes.length - 1; i >= 0; i--) {
+      const n = notes[i]
+      const x = timeToX(n.startSec)
+      const w = Math.max(0.8, (n.durSec / total) * W)
+      const y = midiToY(n.midi)
+      if (vx >= x - 0.6 && vx <= x + w + 0.6 && vy >= y - 6 && vy <= y + 6) return i
+    }
+    return -1
+  }
+
+  const onDrag = (e: PointerEvent) => {
+    const d = dragRef.current
+    if (!d || !onNotesChange) return
+    const vb = clientToVB(e.clientX, e.clientY)
+    const dt = xToTime(vb.x) - xToTime(d.startX)
+    let next: RecNote
+    if (d.mode === 'move') {
+      const newMidi = Math.round(yToMidi(vb.y))
+      const newStart = Math.max(0, snapT(d.note.startSec + dt))
+      next = { ...d.note, startSec: newStart, midi: clamp(newMidi, 0, 127) }
+    } else if (d.mode === 'right') {
+      const minDur = gStep > 0 ? gStep : MIN_NOTE_DUR
+      const newDur = Math.max(minDur, snapT(d.note.durSec + dt) || minDur)
+      next = { ...d.note, durSec: newDur }
+    } else {
+      const end = d.note.startSec + d.note.durSec
+      const minDur = gStep > 0 ? gStep : MIN_NOTE_DUR
+      const newStart = clamp(snapT(d.note.startSec + dt), 0, end - minDur)
+      next = { ...d.note, startSec: newStart, durSec: end - newStart }
+    }
+    const prev = notes[d.i]
+    if (prev && prev.startSec === next.startSec && prev.durSec === next.durSec && prev.midi === next.midi) return
+    const arr = notes.slice()
+    arr[d.i] = next
+    onNotesChange(arr)
+  }
+  const endDrag = () => {
+    dragRef.current = null
+    window.removeEventListener('pointermove', onDrag)
+    window.removeEventListener('pointerup', endDrag)
+  }
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (!canEdit) return
+    const vb = clientToVB(e.clientX, e.clientY)
+    const i = hitTest(vb.x, vb.y)
+    if (i < 0) { onSelect?.(null); return }
+    onSelect?.(i)
+    const n = notes[i]
+    const x = timeToX(n.startSec)
+    const w = Math.max(0.8, (n.durSec / total) * W)
+    const endZone = Math.min(2, Math.max(0.8, w * 0.3))
+    const mode: 'move' | 'left' | 'right' =
+      vb.x <= x + endZone ? 'left' : vb.x >= x + w - endZone ? 'right' : 'move'
+    dragRef.current = { i, mode, note: { ...n }, startX: vb.x, startY: vb.y }
+    window.addEventListener('pointermove', onDrag)
+    window.addEventListener('pointerup', endDrag)
+  }
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (!canEdit) return
+    const vb = clientToVB(e.clientX, e.clientY)
+    if (hitTest(vb.x, vb.y) >= 0) return   // double-click on a note is not "add"
+    const midi = clamp(Math.round(yToMidi(vb.y)), 0, 127)
+    const startSec = Math.max(0, snapT(xToTime(vb.x)))
+    const durSec = gStep > 0 ? Math.max(gStep, gStep * 2) : 0.25
+    const arr = notes.slice()
+    arr.push({ startSec, midi, durSec, velocity: 0.8 })
+    onNotesChange?.(arr)
+    onSelect?.(arr.length - 1)
+  }
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!canEdit) return
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selected != null) {
+      e.preventDefault()
+      onDeleteSelected?.()
+    }
+  }
 
   // Beat-grid vertical lines at phaseSec + k*step (light) — onset-vs-grid alignment.
   const gridXs: number[] = []
@@ -1654,28 +2062,45 @@ function NoteStrip({ notes, playhead, debug }: { notes: RecNote[]; playhead: num
 
   return (
     <div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="none"
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="none"
         data-testid="vm-note-strip"
-        style={{ height: 130, background: 'var(--bg-base)', borderRadius: 10, border: '1px solid var(--border)', display: 'block' }}>
+        tabIndex={canEdit ? 0 : undefined}
+        onPointerDown={canEdit ? onPointerDown : undefined}
+        onDoubleClick={canEdit ? onDoubleClick : undefined}
+        onKeyDown={canEdit ? onKeyDown : undefined}
+        style={{ height: 130, background: 'var(--bg-base)', borderRadius: 10, border: '1px solid var(--border)', display: 'block', outline: 'none', cursor: canEdit ? 'crosshair' : 'default', touchAction: canEdit ? 'none' : undefined }}>
+        {/* Transparent capture layer so empty-area clicks/double-clicks reach the svg
+            handler even where no element is painted (edit hit-testing is coordinate-based). */}
+        <rect x={0} y={0} width={W} height={H} fill="transparent" pointerEvents={canEdit ? 'all' : 'none'} />
         {/* Voiced shading (behind everything): faint green bands where the curve is voiced,
             so silence vs voiced is visible at a glance. */}
         {voicedSpans.map((s, i) => (
           <rect key={`v${i}`} data-testid="vm-voiced-band"
             x={s.x0} y={0} width={Math.max(0.2, s.x1 - s.x0)} height={H}
-            fill={C_VOICED} opacity={0.06} />
+            fill={C_VOICED} opacity={0.06} pointerEvents="none" />
         ))}
         {/* Beat grid (behind everything) */}
         {gridXs.map((x, i) => (
           <line key={`g${i}`} data-testid="vm-grid-line"
             x1={x} y1={0} x2={x} y2={H} stroke={C_GRID} strokeWidth={0.5}
-            strokeDasharray="2 2" opacity={0.7} vectorEffect="non-scaling-stroke" />
+            strokeDasharray="2 2" opacity={0.7} vectorEffect="non-scaling-stroke" pointerEvents="none" />
         ))}
-        {/* Notes (semi-transparent under the curves in debug) */}
+        {/* Notes (semi-transparent under the curves in debug). When editing, the selected
+            note is highlighted with a brighter fill + outline. */}
         {notes.map((n, i) => {
           const x = (n.startSec / total) * W
           const w = Math.max(0.8, (n.durSec / total) * W)
           const y = midiToY(n.midi)
-          return <rect key={i} x={x} y={y - 4} width={w} height={7} rx={1.5} fill="var(--accent)" opacity={noteOpacity} />
+          const isSel = canEdit && selected === i
+          return (
+            <rect key={i} data-testid="vm-note-rect"
+              x={x} y={y - 4} width={w} height={7} rx={1.5}
+              fill={isSel ? '#f59e0b' : 'var(--accent)'}
+              opacity={isSel ? 1 : noteOpacity}
+              stroke={isSel ? '#fff' : undefined} strokeWidth={isSel ? 0.5 : undefined}
+              vectorEffect={isSel ? 'non-scaling-stroke' : undefined}
+              pointerEvents="none" />
+          )
         })}
         {/* Raw pitch track — what the detector heard (before octave/median fix) */}
         {rawSegs.map((pts, i) => (
