@@ -114,11 +114,36 @@ export function synthCrash(sampleRate: number): Float32Array {
   return data
 }
 
+// ── 808 sub kick ────────────────────────────────────────────────────────────
+// Long booming sub — a sine dropping 120→46 Hz over ~90 ms with a soft click and
+// gentle drive. The defining voice of the 808 kits (deep + sustained), vs the short
+// punchy synth Kick above. Ported from the realtime canonical voice (lib/drum-samples).
+export function synth808(sampleRate: number): Float32Array {
+  const dur = 0.75
+  const n = Math.floor(sampleRate * (dur + 0.05))
+  const data = new Float32Array(n)
+  let phase = 0
+  for (let i = 0; i < n; i++) {
+    const t = i / sampleRate
+    const freq = t < 0.09 ? 120 * Math.pow(46 / 120, t / 0.09) : 46   // 120→46 Hz drop
+    phase += (2 * Math.PI * freq) / sampleRate
+    const amp = t < 0.006 ? (t / 0.006) * 1.05 : 1.05 * Math.exp(-9.6 * (t - 0.006))
+    let s = Math.sin(phase) * amp
+    if (t < 0.04) {                                                   // click transient
+      const cf = t < 0.02 ? 420 * Math.pow(90 / 420, t / 0.02) : 90
+      s += Math.sin(2 * Math.PI * cf * t) * 0.5 * Math.exp(-120 * t)
+    }
+    data[i] = Math.tanh(s * 1.8) * 0.9                                // soft drive + headroom
+  }
+  return data
+}
+
 // ── Router ────────────────────────────────────────────────────────────────
 // Maps a BeatType string to the right synth function.
 export function synthDrum(type: string, sampleRate: number): Float32Array {
   switch (type) {
     case 'kick':       return synthKick(sampleRate)
+    case '808':        return synth808(sampleRate)
     case 'snare':      return synthSnare(sampleRate)
     case 'hihat':      return synthHat(sampleRate, false)
     case 'open-hihat': return synthHat(sampleRate, true)
