@@ -43,19 +43,25 @@ export interface BackfillOptions {
   /** Minimum note length in seconds. Default 0.08. */
   minDuration?:  number
   /** Analysis hop in seconds (time resolution of the pitch curve). Default 0.010 (10ms) —
-   *  a fine hop so onsets aren't smeared even with the larger stability window. */
+   *  a fine hop so onset/offset boundaries land within ~one frame. */
   hopSec?:       number
   /** Analysis window size in samples. Default scales to the (downsampled) rate,
-   *  ~90ms and ≥1024, YIN-safe down to ~70 Hz. A longer window trades onset
-   *  precision (the fine hop keeps that) for pitch STABILITY so vibrato inside a
-   *  note doesn't fragment it. */
+   *  ~60ms and ≥1024, YIN-safe down to ~90 Hz (6 periods at typical voice f0). This
+   *  is the main time-resolution lever: a SHORTER window (down from ~90ms) lets a
+   *  quick note be pitched from its own samples instead of being averaged with its
+   *  neighbours, at a small cost to stability on the lowest sustains (< ~A2 / ~110Hz). */
   winSize?:      number
-  /** Half-width of the median filter over the MIDI track (kills octave flickers). Default 3 → 7-frame median. */
+  /** Half-width of the median filter over the MIDI track (kills single-frame octave
+   *  flickers). Default 1 → 3-frame median — small enough that a genuine quick note
+   *  change survives, big enough to drop lone flickers. */
   medianRadius?: number
   /** Half-width (in frames) of the neighbourhood used by the octave-consistency
    *  pass. A voiced frame that sits ~12 semitones (±1) off its neighbours' median
-   *  is snapped back to their octave (voice harmonics make YIN octave-jump). Pass 0
-   *  to disable. Default 6 (~±60ms at the default 10ms hop). */
+   *  is snapped back to their octave (voice harmonics make YIN octave-jump). Kept
+   *  LOCAL so a genuinely quick note isn't "corrected" toward its neighbours — only
+   *  true ~±12 harmonic jumps (which persist across a note's body, so a tight
+   *  neighbourhood still sees them) get folded. Pass 0 to disable. Default 2
+   *  (~±20ms at the default 10ms hop). */
   octaveRadius?: number
   /** Downsample target rate (Hz) applied before the pitch scan. Voice pitch is well
    *  under 1 kHz, so ~22 kHz keeps full YIN resolution across the vocal range while
@@ -84,10 +90,12 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 // 22.05 kHz keeps full pitch resolution across the vocal range (voice f0 << 1 kHz)
 // while halving the sample count vs 44.1k. Higher fidelity than the old 16 kHz.
 const DEFAULT_TARGET_SR = 22050
-// Fine hop (10ms) so onsets stay crisp; the long window handles stability.
+// Fine hop (10ms) so onset/offset boundaries land within ~one frame.
 const DEFAULT_HOP_SEC = 0.010
-// Neighbourhood (frames) for the octave-consistency correction.
-const DEFAULT_OCTAVE_RADIUS = 6
+// Neighbourhood (frames) for the octave-consistency correction — kept small/LOCAL
+// (~±20ms) so a real quick note isn't dragged toward its neighbours; a true octave
+// harmonic jump persists across a note's body, so this tight window still catches it.
+const DEFAULT_OCTAVE_RADIUS = 2
 // Onset window to ignore when re-pitching a note (the sung attack scoops here).
 const DEFAULT_ATTACK_SKIP_SEC  = 0.04
 // Never skip more than this fraction of a note's duration (keeps short notes usable).
@@ -98,10 +106,15 @@ const DEFAULT_RELEASE_SKIP_SEC = 0.01
 // fall back to the median of ALL the note's voiced frames.
 const MIN_STABLE_FRAMES        = 3
 
-// Window that spans ~90ms and is at least 1024 samples (detectBufferPitch's
-// minimum). ~90ms covers 6+ periods of 70Hz — long enough that YIN locks the true
-// fundamental instead of a vibrato-instant, so a wobbling note stays one pitch.
-const defaultWin = (sr: number) => Math.max(1024, Math.round(sr * 0.09))
+// Window that spans ~60ms and is at least 1024 samples (detectBufferPitch's
+// minimum). ~60ms still covers 6 periods of ~100Hz (typical voice f0) so YIN locks
+// the fundamental, but is short enough that a quick (~90–120ms) note is pitched from
+// mostly its OWN samples instead of being smeared with its neighbours — the main
+// time-resolution lever (was ~90ms, which averaged short notes with their neighbours).
+// 60ms was picked over 55ms in verification: 55ms recovered no more quick notes but
+// dropped solidly-in-range low SUSTAINED notes (A2/G2/F2, ~87–110Hz) below YIN's
+// lock, whereas 60ms keeps every quick-note gain AND those low sustains.
+const defaultWin = (sr: number) => Math.max(1024, Math.round(sr * 0.06))
 
 /**
  * Box-average decimation to a lower sample rate. The averaging is a cheap
@@ -266,7 +279,7 @@ export function buildPitchCurve(
   sampleRate: number,
   opts: BackfillOptions = {},
 ): PitchFrame[] {
-  const rMed = Math.max(0, opts.medianRadius ?? 3)
+  const rMed = Math.max(0, opts.medianRadius ?? 1)
   const octR = Math.max(0, opts.octaveRadius ?? DEFAULT_OCTAVE_RADIUS)
   return refinePitchTrack(scanBuffer(samples, sampleRate, opts), rMed, octR)
 }
@@ -405,7 +418,7 @@ export function analyzeBuffer(
   opts: BackfillOptions = {},
 ): BufferAnalysis {
   const minDuration = opts.minDuration ?? 0.08
-  const rMed = Math.max(0, opts.medianRadius ?? 3)
+  const rMed = Math.max(0, opts.medianRadius ?? 1)
   const octR = Math.max(0, opts.octaveRadius ?? DEFAULT_OCTAVE_RADIUS)
   const { buf, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
   const rawCurve = scanBuffer(buf, rate, opts)
@@ -453,7 +466,7 @@ export async function analyzeBufferAsync(
   onProgress?: (frac: number) => void,
 ): Promise<BufferAnalysis> {
   const minDuration = opts.minDuration ?? 0.08
-  const rMed        = Math.max(0, opts.medianRadius ?? 3)
+  const rMed        = Math.max(0, opts.medianRadius ?? 1)
   const octR        = Math.max(0, opts.octaveRadius ?? DEFAULT_OCTAVE_RADIUS)
   const { buf: ds, rate } = resampleMono(samples, sampleRate, opts.targetSampleRate ?? DEFAULT_TARGET_SR)
 
