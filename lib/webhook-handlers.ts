@@ -1,5 +1,6 @@
 import { stripe } from './stripe'
 import { upsertSubscription } from './subscription'
+import { CREDITS_ENABLED, applyTierGrant, TIER_BY_PRICE } from './credits'
 import { recordInvoiceCommission } from './affiliates'
 import { sql } from './db'
 import type Stripe from 'stripe'
@@ -104,6 +105,13 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
         currency: invoice.currency ?? 'usd',
         invoiceAt: new Date((invoice.created ?? Math.floor(Date.now() / 1000)) * 1000),
       })
+      // Grant this cycle's AI credit allotment for the paid tier (no-op until CREDITS_ENABLED +
+      // the price→tier map is filled in TIER_BY_PRICE). Fires every cycle incl. the first invoice.
+      if (CREDITS_ENABLED) {
+        const priceId = sub.items?.data?.[0]?.price?.id
+        const tier = priceId ? TIER_BY_PRICE[priceId] : undefined
+        if (tier) await applyTierGrant(userId, tier)
+      }
       break
     }
     // Connect affiliate readiness (V2 recipient accounts) arrives as thin events

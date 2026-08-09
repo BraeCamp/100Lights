@@ -1,4 +1,5 @@
 import { auth } from '@clerk/nextjs/server'
+import { CREDITS_ENABLED, meterAI, CREDIT_COSTS } from '@/lib/credits'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -27,6 +28,12 @@ export async function POST(req: Request) {
   if (!userId) return Response.json({ error: 'Sign in to use sheet-music transcription.' }, { status: 401 })
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return Response.json({ error: 'ANTHROPIC_API_KEY is not set.' }, { status: 501 })
+
+  // Meter credits (no-op until CREDITS_ENABLED — see lib/credits.ts).
+  if (CREDITS_ENABLED) {
+    const m = await meterAI(userId, CREDIT_COSTS.visionPage, 'sheet-music vision')
+    if (!m.ok) return Response.json({ error: 'Not enough credits for AI transcription.', needCredits: true, balance: m.balance }, { status: 402 })
+  }
 
   let body: { data?: string; mediaType?: string }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
