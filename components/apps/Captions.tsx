@@ -17,7 +17,14 @@ export default function Captions() {
   const [now, setNow] = useState(0)
   const [saved, setSaved] = useState<number | null>(null)
   const [showExport, setShowExport] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setDragging(false)
+    const f = Array.from(e.dataTransfer.files).find(x => x.type.startsWith('audio/') || x.type.startsWith('video/'))
+    if (f) pick(f)
+  }
 
   useEffect(() => () => { if (mediaUrl) URL.revokeObjectURL(mediaUrl) }, [mediaUrl])
 
@@ -52,9 +59,18 @@ export default function Captions() {
   const busy = tx.status === 'loading' || tx.status === 'transcribing'
   const done = tx.status === 'done' && tx.captions.length > 0
   const lowN = tx.captions.filter(c => (c.confidence ?? 1) < 0.7).length
+  const activeCaption = tx.captions.find(c => now >= c.start && now < c.end)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+    <div onDragOver={e => { e.preventDefault(); if (!dragging) setDragging(true) }}
+      onDragLeave={e => { if (e.currentTarget === e.target) setDragging(false) }}
+      onDrop={onDrop}
+      style={{ position: 'relative', display: 'flex', flexDirection: 'column', height: '100dvh', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+      {dragging && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, background: 'rgba(124,92,255,0.14)', border: '2px dashed var(--accent)', backdropFilter: 'blur(2px)', pointerEvents: 'none', fontWeight: 700, fontSize: 16 }}>
+          <Upload size={22} /> Drop audio or video to caption
+        </div>
+      )}
       {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', height: 52, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -93,9 +109,25 @@ export default function Captions() {
             <input type="file" accept="audio/*,video/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) pick(f) }} />
           </label>
 
-          {mediaUrl && (isVideo
-            ? <video ref={mediaRef as React.RefObject<HTMLVideoElement>} src={mediaUrl} controls style={{ width: '100%', borderRadius: 10, background: '#000', maxHeight: 200 }} onTimeUpdate={e => setNow(e.currentTarget.currentTime)} />
-            : <audio ref={mediaRef as React.RefObject<HTMLAudioElement>} src={mediaUrl} controls style={{ width: '100%' }} onTimeUpdate={e => setNow(e.currentTarget.currentTime)} />)}
+          {mediaUrl && (
+            <div style={{ position: 'relative' }}>
+              {isVideo
+                ? <video ref={mediaRef as React.RefObject<HTMLVideoElement>} src={mediaUrl} controls style={{ width: '100%', borderRadius: 10, background: '#000', maxHeight: 220, display: 'block' }} onTimeUpdate={e => setNow(e.currentTarget.currentTime)} />
+                : <audio ref={mediaRef as React.RefObject<HTMLAudioElement>} src={mediaUrl} controls style={{ width: '100%' }} onTimeUpdate={e => setNow(e.currentTarget.currentTime)} />}
+              {/* live subtitle burned on the video as it plays — the payoff of a caption tool */}
+              {isVideo && activeCaption && (
+                <div style={{ position: 'absolute', left: 8, right: 8, bottom: 46, textAlign: 'center', pointerEvents: 'none' }}>
+                  <span style={{ background: 'rgba(0,0,0,0.74)', color: '#fff', padding: '3px 8px', borderRadius: 5, fontSize: 13, fontWeight: 600, lineHeight: 1.5, WebkitBoxDecorationBreak: 'clone', boxDecorationBreak: 'clone' }}>{activeCaption.text}</span>
+                </div>
+              )}
+            </div>
+          )}
+          {/* audio has no picture — show the current line prominently so you can still follow along */}
+          {mediaUrl && !isVideo && done && (
+            <div style={{ minHeight: 42, padding: '10px 12px', borderRadius: 10, background: 'var(--bg-card)', border: '1px solid var(--border)', textAlign: 'center', fontSize: 14, fontWeight: 600, color: activeCaption ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+              {activeCaption?.text || 'Play to follow along'}
+            </div>
+          )}
 
           <button onClick={transcribe} disabled={!file || busy}
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: file && !busy ? 'pointer' : 'not-allowed', opacity: file && !busy ? 1 : 0.5 }}>
@@ -103,7 +135,16 @@ export default function Captions() {
             {tx.status === 'loading' ? `Loading model ${tx.progress}%` : tx.status === 'transcribing' ? 'Transcribing…' : tx.captions.length ? 'Re-transcribe' : 'Transcribe'}
           </button>
 
-          {busy && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Running on-device (first run downloads the model, ~40–115 MB). No audio leaves your device.</p>}
+          {busy && (
+            <div>
+              <div style={{ height: 6, borderRadius: 3, background: 'var(--bg-card)', overflow: 'hidden', marginBottom: 6 }}>
+                <div style={{ height: '100%', width: tx.status === 'transcribing' ? '100%' : `${tx.progress}%`, background: 'var(--accent)', borderRadius: 3, transition: 'width 0.2s', opacity: tx.status === 'transcribing' ? 0.55 : 1 }} />
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {tx.status === 'loading' ? `Downloading the model (${tx.progress}%) — first run only, ~40–115 MB.` : 'Transcribing on-device… no audio leaves your device.'}
+              </p>
+            </div>
+          )}
           {tx.error && <p style={{ fontSize: 12, color: '#f87171' }}>{tx.error}</p>}
 
           {done && (
