@@ -4,9 +4,10 @@
 // editor · status bar). The transcription runs through the SHARED useTranscription hook and the SHARED
 // CaptionEditor component — the exact same caption system the video module uses — so they never drift.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Download, Film, Loader2, Wand2, ThumbsUp, Captions as CaptionsIcon, ChevronDown, AlertTriangle, Type } from 'lucide-react'
+import { Upload, Download, Film, Loader2, Wand2, ThumbsUp, Captions as CaptionsIcon, ChevronDown, AlertTriangle, Type, Copy, CheckCheck } from 'lucide-react'
 import CaptionEditor from '@/components/captions/CaptionEditor'
 import CaptionStylePanel from '@/components/captions/CaptionStylePanel'
+import WaveformStrip from '@/components/captions/WaveformStrip'
 import { useTranscription } from '@/lib/use-transcription'
 import { downloadCaptions } from '@/lib/caption-format'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
@@ -19,10 +20,32 @@ export default function Captions() {
   const [now, setNow] = useState(0)
   const [saved, setSaved] = useState<number | null>(null)
   const [showExport, setShowExport] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [style, setStyle] = useState<CaptionStyle>(DEFAULT_CAPTION_STYLE)
   const [showStyle, setShowStyle] = useState(false)
+  const [peaks, setPeaks] = useState<number[]>([])
+  const [dur, setDur] = useState(0)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+
+  // Decode the file once → a downsampled peak array for the waveform strip.
+  useEffect(() => {
+    if (!file) { setPeaks([]); setDur(0); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+        const ac = new AC()
+        const buf = await ac.decodeAudioData(await file.arrayBuffer()); await ac.close()
+        const ch = buf.getChannelData(0), N = 500, block = Math.max(1, Math.floor(ch.length / N))
+        const p: number[] = []
+        for (let i = 0; i < N; i++) { let m = 0; const s = i * block; for (let j = 0; j < block; j++) { const v = Math.abs(ch[s + j] || 0); if (v > m) m = v } p.push(m) }
+        const max = Math.max(0.01, ...p)
+        if (!cancelled) { setPeaks(p.map(v => v / max)); setDur(buf.duration) }
+      } catch { if (!cancelled) { setPeaks([]); setDur(0) } }
+    })()
+    return () => { cancelled = true }
+  }, [file])
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragging(false)
@@ -42,6 +65,28 @@ export default function Captions() {
   const transcribe = () => file && tx.transcribe(file)          // local-only ($0) in the standalone app
   const seek = (t: number) => { if (mediaRef.current) { mediaRef.current.currentTime = t; setNow(t) } }
   const name = file?.name || 'captions'
+
+  const copyTranscript = async () => { try { await navigator.clipboard.writeText(tx.captions.map(c => c.text).join(' ')); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* clipboard blocked */ } }
+  const togglePlay = () => { const m = mediaRef.current; if (!m) return; if (m.paused) m.play(); else m.pause() }
+  const nudgeSeek = (d: number) => { const m = mediaRef.current; if (m) m.currentTime = Math.max(0, Math.min(m.duration || 1e9, m.currentTime + d)) }
+  const confirmAll = () => { setSaved(null); tx.setCaptions(tx.captions.map(c => ({ ...c, confirmed: true }))) }
+
+  // Keyboard shortcuts (ignored while typing in a field): space/k play·pause, j/l ←→ seek, ⌘C copy, ⌘S feedback.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement
+      const typing = !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')
+      const meta = e.metaKey || e.ctrlKey
+      if (meta && e.key.toLowerCase() === 's') { e.preventDefault(); if (tx.captions.length) saveFeedback(); return }
+      if (meta && e.key.toLowerCase() === 'c' && !typing && !window.getSelection()?.toString()) { e.preventDefault(); copyTranscript(); return }
+      if (typing || !mediaRef.current) return
+      if (e.key === ' ' || e.key.toLowerCase() === 'k') { e.preventDefault(); togglePlay() }
+      else if (e.key === 'j' || e.key === 'ArrowLeft') { e.preventDefault(); nudgeSeek(-2) }
+      else if (e.key === 'l' || e.key === 'ArrowRight') { e.preventDefault(); nudgeSeek(2) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [tx.captions]) // eslint-disable-line
 
   const sendToVideo = () => {
     try {
@@ -84,6 +129,9 @@ export default function Captions() {
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {done && <>
+            <button onClick={copyTranscript} title="Copy the full transcript (⌘C)" style={{ ...tbtn, color: copied ? '#34d399' : 'var(--text-secondary)' }}>
+              <Copy size={14} /> {copied ? 'Copied ✓' : 'Copy'}
+            </button>
             <div style={{ position: 'relative' }}>
               <button onClick={() => setShowExport(v => !v)} style={tbtn}><Download size={14} /> Export <ChevronDown size={11} /></button>
               {showExport && (
@@ -138,6 +186,10 @@ export default function Captions() {
             </div>
           )}
 
+          {peaks.length > 0 && dur > 0 && (
+            <WaveformStrip peaks={peaks} duration={dur} captions={tx.captions} currentTime={now} onSeek={seek} />
+          )}
+
           <button onClick={transcribe} disabled={!file || busy}
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: file && !busy ? 'pointer' : 'not-allowed', opacity: file && !busy ? 1 : 0.5 }}>
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
@@ -163,6 +215,9 @@ export default function Captions() {
                 ? <div style={{ color: 'var(--text-muted)' }}>{Math.round((1 - tx.lowFraction) * 100)}% high-confidence.</div>
                 : <div style={{ color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={12} />{lowN} flagged — review the amber lines, or use the video editor's AI for tough audio.</div>}
               <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>Fix wrong words or hit ✓ on right ones, then <strong style={{ color: 'var(--text-primary)' }}>Save feedback</strong>.</div>
+              <button onClick={confirmAll} style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 600, padding: '5px 8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                <CheckCheck size={13} /> Mark all correct
+              </button>
             </div>
           )}
 
@@ -194,7 +249,8 @@ export default function Captions() {
         {done && <span style={{ color: '#34d399' }}>on-device · $0</span>}
         {done && lowN > 0 && <span style={{ color: '#f59e0b' }}>{lowN} flagged</span>}
         {saved != null && saved > 0 && <span style={{ color: '#34d399' }}>feedback saved ✓</span>}
-        <span style={{ marginLeft: 'auto' }}>{file ? file.name : 'no file'}</span>
+        {done && <span style={{ marginLeft: 'auto', opacity: 0.75 }}>␣ play · J/L seek · ⌘C copy · ⌘S feedback</span>}
+        <span style={{ marginLeft: done ? 16 : 'auto' }}>{file ? file.name : 'no file'}</span>
       </footer>
     </div>
   )
