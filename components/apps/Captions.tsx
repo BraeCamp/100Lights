@@ -1,86 +1,46 @@
 'use client'
 
-// Captions — speech → text, in the browser. Drop in audio or a video, get timed captions from the
-// on-device Whisper hybrid (the same local-first STT the video editor uses — $0, no upload, no sign-in
-// for the local pass). Edit the words, then export SRT/VTT/TXT or send them straight to the Video
-// editor to burn onto the clip. This is the standalone home of the speech→text tool; the video module
-// consumes the same captions.
-
+// Captions — the standalone speech→text app. Full app skeleton (toolbar · source sidebar · caption
+// editor · status bar). The transcription runs through the SHARED useTranscription hook and the SHARED
+// CaptionEditor component — the exact same caption system the video module uses — so they never drift.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Download, Film, Loader2, Wand2, Trash2, AlertTriangle, Check, ThumbsUp } from 'lucide-react'
-import type { Caption } from '@/lib/types'
-
-// original = what the model heard (kept so we can tell corrected from confirmed); confirmed = user said
-// "this is right". Both feed /api/stt-corrections so the hybrid learns where its confidence was wrong.
-type EditCaption = Caption & { id: string; original: string; confidence?: number; confirmed?: boolean }
-type Status = 'idle' | 'loading' | 'transcribing' | 'done' | 'error'
-const LOW_CONF = 0.7   // below this = the base + tiny Whisper models disagreed → likely needs an edit
-
-const fmt = (s: number) => {
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
-  return `${h ? String(h).padStart(2, '0') + ':' : ''}${String(m).padStart(2, '0')}:${sec.toFixed(2).padStart(5, '0')}`
-}
-const srtTime = (s: number) => {
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60), ms = Math.round((s % 1) * 1000)
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},${String(ms).padStart(3, '0')}`
-}
-const download = (name: string, text: string, type = 'text/plain') => {
-  const url = URL.createObjectURL(new Blob([text], { type }))
-  const a = Object.assign(document.createElement('a'), { href: url, download: name }); a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
+import { Upload, Download, Film, Loader2, Wand2, ThumbsUp, Captions as CaptionsIcon, ChevronDown, AlertTriangle } from 'lucide-react'
+import CaptionEditor from '@/components/captions/CaptionEditor'
+import { useTranscription } from '@/lib/use-transcription'
+import { downloadCaptions } from '@/lib/caption-format'
 
 export default function Captions() {
+  const tx = useTranscription()
   const [file, setFile] = useState<File | null>(null)
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [isVideo, setIsVideo] = useState(false)
-  const [status, setStatus] = useState<Status>('idle')
-  const [progress, setProgress] = useState(0)     // 0–100 model download / 101 = transcribing
-  const [captions, setCaptions] = useState<EditCaption[]>([])
-  const [lowFrac, setLowFrac] = useState(0)       // share of captions the hybrid flagged uncertain
-  const [saved, setSaved] = useState<number | null>(null)   // feedback records sent
-  const [error, setError] = useState('')
-  const [playing, setPlaying] = useState(false)
   const [now, setNow] = useState(0)
+  const [saved, setSaved] = useState<number | null>(null)
+  const [showExport, setShowExport] = useState(false)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
 
   useEffect(() => () => { if (mediaUrl) URL.revokeObjectURL(mediaUrl) }, [mediaUrl])
 
   const pick = useCallback((f: File) => {
     if (mediaUrl) URL.revokeObjectURL(mediaUrl)
-    setFile(f); setCaptions([]); setError(''); setStatus('idle')
+    setFile(f); setSaved(null); tx.reset()
     setIsVideo(f.type.startsWith('video/'))
     setMediaUrl(URL.createObjectURL(f))
-  }, [mediaUrl])
+  }, [mediaUrl, tx])
 
-  const transcribe = useCallback(async () => {
-    if (!file) return
-    setStatus('loading'); setProgress(0); setError('')
-    try {
-      const { transcribeLocally } = await import('@/lib/local-stt')
-      setStatus('transcribing')
-      const res = await transcribeLocally(file, {
-        onProgress: p => setProgress(p.status === 'transcribing' ? 101 : Math.min(100, Math.round(p.progress ?? 0))),
-      })
-      setCaptions(res.captions.map(c => ({ id: crypto.randomUUID(), start: c.start, end: c.end, text: c.text, words: c.words, speaker: c.speaker, confidence: c.confidence, original: c.text, confirmed: false })))
-      setLowFrac(res.lowConfidenceFraction); setSaved(null)
-      setStatus('done')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Transcription failed. Try a shorter or clearer clip.')
-      setStatus('error')
-    }
-  }, [file])
-
-  const editText = (i: number, text: string) => { setSaved(null); setCaptions(cs => cs.map((c, j) => j === i ? { ...c, text } : c)) }
-  const removeCap = (i: number) => setCaptions(cs => cs.filter((_, j) => j !== i))
-  const toggleConfirm = (i: number) => { setSaved(null); setCaptions(cs => cs.map((c, j) => j === i ? { ...c, confirmed: !c.confirmed } : c)) }
+  const transcribe = () => file && tx.transcribe(file)          // local-only ($0) in the standalone app
   const seek = (t: number) => { if (mediaRef.current) { mediaRef.current.currentTime = t; setNow(t) } }
+  const name = file?.name || 'captions'
 
-  // Send the "it's right" (confirmed) + "I fixed it" (edited) signal so the hybrid learns where its
-  // confidence was off. Only sends captions the user actually touched or confirmed.
+  const sendToVideo = () => {
+    try {
+      sessionStorage.setItem('cf_pending_captions', JSON.stringify({ captions: tx.captions, fileName: file?.name, isVideo, at: Date.now() }))
+      window.location.href = '/new?modules=video&captions=pending'
+    } catch { /* ignore */ }
+  }
   const saveFeedback = async () => {
-    const records = captions
-      .filter(c => c.confirmed || c.text.trim() !== c.original.trim())
+    const records = tx.captions
+      .filter(c => c.confirmed || (c.original != null && c.text.trim() !== c.original.trim()))
       .map(c => ({ id: c.id, source: 'captions', original: c.original, final: c.text, confidence: c.confidence, startSec: c.start, endSec: c.end }))
     if (!records.length) { setSaved(0); return }
     try {
@@ -89,115 +49,95 @@ export default function Captions() {
     } catch { setSaved(records.length) }
   }
 
-  const exportSrt = () => download((file?.name || 'captions').replace(/\.[^.]+$/, '') + '.srt',
-    captions.map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.text}`).join('\n\n'), 'text/plain')
-  const exportVtt = () => download((file?.name || 'captions').replace(/\.[^.]+$/, '') + '.vtt',
-    'WEBVTT\n\n' + captions.map(c => `${srtTime(c.start).replace(',', '.')} --> ${srtTime(c.end).replace(',', '.')}\n${c.text}`).join('\n\n'), 'text/vtt')
-  const exportTxt = () => download((file?.name || 'transcript').replace(/\.[^.]+$/, '') + '.txt', captions.map(c => c.text).join(' '))
-
-  // Hand the captions to the Video editor. The video module reads this stash on load and applies the
-  // captions to the current clip (so this app is the entry point; the editor burns them onto the video).
-  const sendToVideo = () => {
-    try {
-      sessionStorage.setItem('cf_pending_captions', JSON.stringify({ captions, fileName: file?.name, isVideo, at: Date.now() }))
-      window.location.href = '/new?modules=video&captions=pending'
-    } catch { setError('Could not hand off — try exporting SRT and importing it instead.') }
-  }
-
-  const active = captions.findIndex(c => now >= c.start && now < c.end)
-  const busy = status === 'loading' || status === 'transcribing'
+  const busy = tx.status === 'loading' || tx.status === 'transcribing'
+  const done = tx.status === 'done' && tx.captions.length > 0
+  const lowN = tx.captions.filter(c => (c.confidence ?? 1) < 0.7).length
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 16px', color: 'var(--text-primary)' }}>
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0 }}>Captions</h1>
-        <p style={{ color: 'var(--text-muted)', marginTop: 4, fontSize: 14 }}>
-          Speech → timed captions, on-device and free. Drop in audio or a video, edit the words, export SRT/VTT/TXT — or send them to the Video editor.
-        </p>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+      {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
+      <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', height: 52, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <CaptionsIcon size={18} style={{ color: 'var(--accent)' }} />
+          <span style={{ fontWeight: 800, fontSize: 15 }}>Captions</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>speech → timed captions · on-device</span>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {done && <>
+            <div style={{ position: 'relative' }}>
+              <button onClick={() => setShowExport(v => !v)} style={tbtn}><Download size={14} /> Export <ChevronDown size={11} /></button>
+              {showExport && (
+                <div onMouseLeave={() => setShowExport(false)} style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, minWidth: 110, overflow: 'hidden' }}>
+                  {(['srt', 'vtt', 'txt'] as const).map(f => (
+                    <button key={f} onClick={() => { downloadCaptions(name, f, tx.captions); setShowExport(false) }}
+                      style={{ display: 'block', width: '100%', padding: '8px 12px', textAlign: 'left', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>.{f}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button onClick={saveFeedback} title="Tell the transcriber which captions it got right and which you fixed — it calibrates its confidence."
+              style={{ ...tbtn, color: saved != null && saved > 0 ? '#34d399' : 'var(--text-secondary)' }}>
+              <ThumbsUp size={14} /> {saved == null ? 'Save feedback' : saved > 0 ? `Saved ${saved} ✓` : 'Nothing to send'}
+            </button>
+            <button onClick={sendToVideo} style={{ ...tbtn, background: 'var(--accent)', color: '#fff', border: 'none' }}><Film size={14} /> Send to Video editor</button>
+          </>}
+        </div>
       </header>
 
-      {/* Upload */}
-      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 22, border: '1.5px dashed var(--border)', borderRadius: 14, cursor: 'pointer', background: 'var(--bg-card)', marginBottom: 16 }}>
-        <Upload size={18} />
-        <span style={{ fontSize: 14, fontWeight: 600 }}>{file ? file.name : 'Choose an audio or video file'}</span>
-        <input type="file" accept="audio/*,video/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) pick(f) }} />
-      </label>
+      {/* ── Body: source sidebar + caption editor ───────────────────────────── */}
+      <main style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        <aside style={{ width: 320, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', padding: 16, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, border: '1.5px dashed var(--border)', borderRadius: 12, cursor: 'pointer', background: 'var(--bg-card)' }}>
+            <Upload size={16} />
+            <span style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file ? file.name : 'Choose audio or video'}</span>
+            <input type="file" accept="audio/*,video/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) pick(f) }} />
+          </label>
 
-      {/* Media preview */}
-      {mediaUrl && (
-        <div style={{ marginBottom: 16 }}>
-          {isVideo
-            ? <video ref={mediaRef as React.RefObject<HTMLVideoElement>} src={mediaUrl} style={{ width: '100%', borderRadius: 12, background: '#000', maxHeight: 340 }} onTimeUpdate={e => setNow(e.currentTarget.currentTime)} onPause={() => setPlaying(false)} onPlay={() => setPlaying(true)} />
-            : <audio ref={mediaRef as React.RefObject<HTMLAudioElement>} src={mediaUrl} style={{ width: '100%' }} controls onTimeUpdate={e => setNow(e.currentTarget.currentTime)} />}
-        </div>
-      )}
+          {mediaUrl && (isVideo
+            ? <video ref={mediaRef as React.RefObject<HTMLVideoElement>} src={mediaUrl} controls style={{ width: '100%', borderRadius: 10, background: '#000', maxHeight: 200 }} onTimeUpdate={e => setNow(e.currentTarget.currentTime)} />
+            : <audio ref={mediaRef as React.RefObject<HTMLAudioElement>} src={mediaUrl} controls style={{ width: '100%' }} onTimeUpdate={e => setNow(e.currentTarget.currentTime)} />)}
 
-      {/* Actions */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
-        <button onClick={transcribe} disabled={!file || busy}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: file && !busy ? 'pointer' : 'not-allowed', opacity: file && !busy ? 1 : 0.5 }}>
-          {busy ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
-          {status === 'loading' ? `Loading model ${progress}%` : status === 'transcribing' ? 'Transcribing…' : captions.length ? 'Re-transcribe' : 'Transcribe'}
-        </button>
-        {captions.length > 0 && <>
-          <button onClick={exportSrt} style={btn}><Download size={15} /> SRT</button>
-          <button onClick={exportVtt} style={btn}><Download size={15} /> VTT</button>
-          <button onClick={exportTxt} style={btn}><Download size={15} /> Text</button>
-          <button onClick={sendToVideo} style={{ ...btn, background: 'rgba(52,211,153,0.15)', color: '#34d399', borderColor: 'transparent' }}><Film size={15} /> Send to Video editor</button>
-          <button onClick={saveFeedback} title="Tell the transcriber which captions it got right and which you fixed — it uses this to calibrate its confidence."
-            style={{ ...btn, background: saved != null && saved > 0 ? 'rgba(52,211,153,0.15)' : 'var(--bg-card)', color: saved != null && saved > 0 ? '#34d399' : 'var(--text-secondary)' }}>
-            <ThumbsUp size={15} /> {saved == null ? 'Save feedback' : saved > 0 ? `Saved ${saved} ✓` : 'Confirm or edit some first'}
+          <button onClick={transcribe} disabled={!file || busy}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: file && !busy ? 'pointer' : 'not-allowed', opacity: file && !busy ? 1 : 0.5 }}>
+            {busy ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+            {tx.status === 'loading' ? `Loading model ${tx.progress}%` : tx.status === 'transcribing' ? 'Transcribing…' : tx.captions.length ? 'Re-transcribe' : 'Transcribe'}
           </button>
-        </>}
-      </div>
-      {captions.length > 0 && saved == null && (
-        <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: -8, marginBottom: 14 }}>
-          Fix any wrong words (that's a correction) or hit ✓ on lines that are right, then <strong>Save feedback</strong> — it teaches the transcriber where its confidence was off.
-        </p>
-      )}
 
-      {error && <p style={{ color: '#f87171', fontSize: 13, marginBottom: 12 }}>{error}</p>}
-      {status === 'transcribing' && <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Running on-device (first run downloads the model, ~40–115 MB). No audio leaves your device.</p>}
+          {busy && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Running on-device (first run downloads the model, ~40–115 MB). No audio leaves your device.</p>}
+          {tx.error && <p style={{ fontSize: 12, color: '#f87171' }}>{tx.error}</p>}
 
-      {/* Hybrid summary: local Whisper (base + tiny verifier) did this for $0. Confidence tells you what to edit. */}
-      {status === 'done' && captions.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 13, marginBottom: 12 }}>
-          <span style={{ color: '#34d399', fontWeight: 700 }}>{captions.length} captions · on-device · $0 (no AI)</span>
-          <span style={{ color: 'var(--text-muted)' }}>·</span>
-          {lowFrac < 0.15
-            ? <span style={{ color: 'var(--text-muted)' }}>{Math.round((1 - lowFrac) * 100)}% high-confidence.</span>
-            : <span style={{ color: '#f59e0b', display: 'inline-flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={13} />{Math.round(lowFrac * 100)}% flagged (amber) — review those, or use the video editor's AI transcription for tough audio.</span>}
-        </div>
-      )}
-
-      {/* Caption list */}
-      {captions.length > 0 && (
-        <div style={{ border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-          {captions.map((c, i) => {
-            const low = (c.confidence ?? 1) < LOW_CONF   // hybrid flagged this one — the models disagreed
-            const edited = c.text.trim() !== c.original.trim()
-            const leftColor = edited ? '#38bdf8' : low ? '#f59e0b' : 'transparent'   // blue = you corrected it, amber = model unsure
-            return (
-            <div key={c.id} title={edited ? `Corrected (was: "${c.original}")` : low ? `Low confidence (${Math.round((c.confidence ?? 1) * 100)}%) — the two local models disagreed here; check this line.` : undefined}
-              style={{ display: 'flex', gap: 8, padding: '8px 12px', borderLeft: `3px solid ${leftColor}`, borderBottom: i < captions.length - 1 ? '1px solid var(--border)' : 'none', background: i === active ? 'rgba(124,92,255,0.10)' : c.confirmed ? 'rgba(52,211,153,0.07)' : low && !edited ? 'rgba(245,158,11,0.06)' : 'transparent' }}>
-              <button onClick={() => seek(c.start)} title="Jump here"
-                style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontSize: 11, color: 'var(--accent-light)', background: 'none', border: 'none', cursor: 'pointer', width: 62, textAlign: 'left', paddingTop: 3 }}>
-                {fmt(c.start)}
-              </button>
-              <textarea value={c.text} onChange={e => editText(i, e.target.value)} rows={1}
-                style={{ flex: 1, resize: 'vertical', background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 8px', fontSize: 13, fontFamily: 'inherit' }} />
-              {low && !edited && <AlertTriangle size={13} style={{ flexShrink: 0, color: '#f59e0b', marginTop: 6 }} />}
-              <button onClick={() => toggleConfirm(i)} title={c.confirmed ? 'Marked correct — click to undo' : 'Mark this caption correct'}
-                style={{ flexShrink: 0, background: c.confirmed ? '#34d399' : 'none', border: c.confirmed ? 'none' : '1px solid var(--border)', borderRadius: 6, color: c.confirmed ? '#04120b' : 'var(--text-muted)', cursor: 'pointer', marginTop: 3, width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Check size={14} />
-              </button>
-              <button onClick={() => removeCap(i)} title="Delete" style={{ flexShrink: 0, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', marginTop: 3 }}><Trash2 size={14} /></button>
+          {done && (
+            <div style={{ padding: 12, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-card)', fontSize: 12, lineHeight: 1.6 }}>
+              <div style={{ color: '#34d399', fontWeight: 700 }}>{tx.captions.length} captions · $0 (no AI)</div>
+              {tx.lowFraction < 0.15
+                ? <div style={{ color: 'var(--text-muted)' }}>{Math.round((1 - tx.lowFraction) * 100)}% high-confidence.</div>
+                : <div style={{ color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={12} />{lowN} flagged — review the amber lines, or use the video editor's AI for tough audio.</div>}
+              <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>Fix wrong words or hit ✓ on right ones, then <strong style={{ color: 'var(--text-primary)' }}>Save feedback</strong>.</div>
             </div>
-          )})}
-        </div>
-      )}
+          )}
+        </aside>
+
+        {/* Caption editor — the SHARED component the video module uses */}
+        <section style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <CaptionEditor
+            captions={tx.captions} onChange={tx.setCaptions}
+            currentTime={now} onSeek={seek}
+            search confidence feedback deletable
+            emptyHint={file ? 'Hit Transcribe to generate captions.' : 'Choose an audio or video file to begin.'}
+          />
+        </section>
+      </main>
+
+      {/* ── Status bar ──────────────────────────────────────────────────────── */}
+      <footer style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '0 16px', height: 30, borderTop: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0, fontSize: 11, color: 'var(--text-muted)' }}>
+        <span>{tx.captions.length} caption{tx.captions.length === 1 ? '' : 's'}</span>
+        {done && <span style={{ color: '#34d399' }}>on-device · $0</span>}
+        {done && lowN > 0 && <span style={{ color: '#f59e0b' }}>{lowN} flagged</span>}
+        {saved != null && saved > 0 && <span style={{ color: '#34d399' }}>feedback saved ✓</span>}
+        <span style={{ marginLeft: 'auto' }}>{file ? file.name : 'no file'}</span>
+      </footer>
     </div>
   )
 }
 
-const btn: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }
+const tbtn: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }
