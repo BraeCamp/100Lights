@@ -4,10 +4,12 @@
 // editor · status bar). The transcription runs through the SHARED useTranscription hook and the SHARED
 // CaptionEditor component — the exact same caption system the video module uses — so they never drift.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Download, Film, Loader2, Wand2, ThumbsUp, Captions as CaptionsIcon, ChevronDown, AlertTriangle } from 'lucide-react'
+import { Upload, Download, Film, Loader2, Wand2, ThumbsUp, Captions as CaptionsIcon, ChevronDown, AlertTriangle, Type } from 'lucide-react'
 import CaptionEditor from '@/components/captions/CaptionEditor'
+import CaptionStylePanel from '@/components/captions/CaptionStylePanel'
 import { useTranscription } from '@/lib/use-transcription'
 import { downloadCaptions } from '@/lib/caption-format'
+import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
 
 export default function Captions() {
   const tx = useTranscription()
@@ -18,6 +20,8 @@ export default function Captions() {
   const [saved, setSaved] = useState<number | null>(null)
   const [showExport, setShowExport] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [style, setStyle] = useState<CaptionStyle>(DEFAULT_CAPTION_STYLE)
+  const [showStyle, setShowStyle] = useState(false)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
 
   const onDrop = (e: React.DragEvent) => {
@@ -41,7 +45,7 @@ export default function Captions() {
 
   const sendToVideo = () => {
     try {
-      sessionStorage.setItem('cf_pending_captions', JSON.stringify({ captions: tx.captions, fileName: file?.name, isVideo, at: Date.now() }))
+      sessionStorage.setItem('cf_pending_captions', JSON.stringify({ captions: tx.captions, style, fileName: file?.name, isVideo, at: Date.now() }))
       window.location.href = '/new?modules=video&captions=pending'
     } catch { /* ignore */ }
   }
@@ -116,10 +120,11 @@ export default function Captions() {
                 : <audio ref={mediaRef as React.RefObject<HTMLAudioElement>} src={mediaUrl} controls style={{ width: '100%' }} onTimeUpdate={e => setNow(e.currentTarget.currentTime)} />}
               {/* live subtitle burned on the video as it plays — the payoff of a caption tool */}
               {isVideo && activeCaption && (
-                <div style={{ position: 'absolute', left: 8, right: 8, bottom: 46, textAlign: 'center', pointerEvents: 'none' }}>
-                  <span style={{ background: 'rgba(0,0,0,0.74)', color: '#fff', padding: '3px 8px', borderRadius: 5, fontSize: 13, fontWeight: 600, lineHeight: 1.5, WebkitBoxDecorationBreak: 'clone', boxDecorationBreak: 'clone' }}>
-                    {activeCaption.words?.length
-                      ? activeCaption.words.map((w, i) => <span key={i} style={{ color: now >= w.s && now < w.e ? '#ffe08a' : '#fff' }}>{w.w}{i < activeCaption.words!.length - 1 ? ' ' : ''}</span>)
+                <div style={{ position: 'absolute', left: 8, right: 8, textAlign: 'center', pointerEvents: 'none',
+                  ...(style.position === 'top' ? { top: 8 } : style.position === 'center' ? { top: '50%', transform: 'translateY(-50%)' } : { bottom: 46 }) }}>
+                  <span style={{ background: style.bg === 'none' ? 'transparent' : style.bg, color: style.color, padding: style.bg === 'none' ? 0 : '3px 8px', borderRadius: 5, fontSize: Math.round(13 * style.size), fontWeight: 700, lineHeight: 1.5, textShadow: style.bg === 'none' ? '0 1px 3px #000, 0 0 4px #000' : 'none', WebkitBoxDecorationBreak: 'clone', boxDecorationBreak: 'clone' }}>
+                    {style.karaoke && activeCaption.words?.length
+                      ? activeCaption.words.map((w, i) => <span key={i} style={{ color: now >= w.s && now < w.e ? style.highlightColor : style.color }}>{w.w}{i < activeCaption.words!.length - 1 ? ' ' : ''}</span>)
                       : activeCaption.text}
                   </span>
                 </div>
@@ -158,6 +163,16 @@ export default function Captions() {
                 ? <div style={{ color: 'var(--text-muted)' }}>{Math.round((1 - tx.lowFraction) * 100)}% high-confidence.</div>
                 : <div style={{ color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={12} />{lowN} flagged — review the amber lines, or use the video editor's AI for tough audio.</div>}
               <div style={{ color: 'var(--text-muted)', marginTop: 6 }}>Fix wrong words or hit ✓ on right ones, then <strong style={{ color: 'var(--text-primary)' }}>Save feedback</strong>.</div>
+            </div>
+          )}
+
+          {done && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <button onClick={() => setShowStyle(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: 'none', border: 'none', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', padding: 0 }}>
+                <Type size={14} /> Subtitle style
+                <ChevronDown size={13} style={{ marginLeft: 'auto', transform: showStyle ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+              </button>
+              {showStyle && <div style={{ marginTop: 10 }}><CaptionStylePanel style={style} onChange={setStyle} /></div>}
             </div>
           )}
         </aside>

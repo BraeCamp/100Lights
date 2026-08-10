@@ -1242,8 +1242,9 @@ export default function VideoEditor({
       const stash = sessionStorage.getItem('cf_pending_captions')
       if (!stash) return
       sessionStorage.removeItem('cf_pending_captions')
-      const parsed = JSON.parse(stash) as { captions?: Caption[] }
+      const parsed = JSON.parse(stash) as { captions?: Caption[]; style?: CaptionStyle }
       if (parsed.captions?.length) setCaptionsWithHistory(parsed.captions)
+      if (parsed.style) setCaptionStyle(parsed.style)   // carry the burn-in look from the Captions app
     } catch { /* malformed stash — ignore */ }
   }, []) // eslint-disable-line
 
