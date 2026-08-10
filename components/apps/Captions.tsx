@@ -4,7 +4,7 @@
 // editor · status bar). The transcription runs through the SHARED useTranscription hook and the SHARED
 // CaptionEditor component — the exact same caption system the video module uses — so they never drift.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Download, Film, Loader2, Wand2, ThumbsUp, Captions as CaptionsIcon, ChevronDown, AlertTriangle, Type, Copy, CheckCheck } from 'lucide-react'
+import { Upload, Download, Film, Loader2, Wand2, ThumbsUp, Captions as CaptionsIcon, ChevronDown, AlertTriangle, Type, Copy, CheckCheck, History } from 'lucide-react'
 import CaptionEditor from '@/components/captions/CaptionEditor'
 import CaptionStylePanel from '@/components/captions/CaptionStylePanel'
 import WaveformStrip from '@/components/captions/WaveformStrip'
@@ -26,7 +26,21 @@ export default function Captions() {
   const [showStyle, setShowStyle] = useState(false)
   const [peaks, setPeaks] = useState<number[]>([])
   const [dur, setDur] = useState(0)
+  const [restorable, setRestorable] = useState<{ captions: typeof tx.captions; style?: CaptionStyle; fileName?: string; at: number } | null>(null)
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+
+  const SESSION_KEY = 'captions-app-session'
+  // On mount: offer to restore the last session (captions survive a refresh; media has to be re-added).
+  useEffect(() => {
+    try { const raw = localStorage.getItem(SESSION_KEY); if (raw) { const s = JSON.parse(raw); if (s?.captions?.length) setRestorable(s) } } catch { /* ignore */ }
+  }, [])
+  // Auto-save captions + style so a refresh or crash doesn't lose the edits.
+  useEffect(() => {
+    if (!tx.captions.length) return
+    const id = setTimeout(() => { try { localStorage.setItem(SESSION_KEY, JSON.stringify({ captions: tx.captions, style, fileName: file?.name, at: Date.now() })) } catch { /* quota */ } }, 400)
+    return () => clearTimeout(id)
+  }, [tx.captions, style, file])
+  const restore = () => { if (!restorable) return; tx.setCaptions(restorable.captions); if (restorable.style) setStyle(restorable.style); setRestorable(null) }
 
   // Decode the file once → a downsampled peak array for the waveform strip.
   useEffect(() => {
@@ -106,7 +120,7 @@ export default function Captions() {
   }
 
   const busy = tx.status === 'loading' || tx.status === 'transcribing'
-  const done = tx.status === 'done' && tx.captions.length > 0
+  const done = tx.captions.length > 0 && !busy   // true for fresh transcripts AND restored sessions
   const lowN = tx.captions.filter(c => (c.confidence ?? 1) < 0.7).length
   const activeCaption = tx.captions.find(c => now >= c.start && now < c.end)
 
@@ -234,6 +248,16 @@ export default function Captions() {
 
         {/* Caption editor — the SHARED component the video module uses */}
         <section style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          {restorable && !tx.captions.length && !file && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'rgba(124,92,255,0.08)', fontSize: 13 }}>
+              <History size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+              <span>Restore your last session — <strong>{restorable.captions.length} captions</strong>{restorable.fileName ? ` from ${restorable.fileName}` : ''}. (Re-add the media to play it.)</span>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button onClick={restore} style={{ ...tbtn, background: 'var(--accent)', color: '#fff', border: 'none' }}>Restore</button>
+                <button onClick={() => { setRestorable(null); try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ } }} style={tbtn}>Dismiss</button>
+              </div>
+            </div>
+          )}
           <CaptionEditor
             captions={tx.captions} onChange={tx.setCaptions}
             currentTime={now} onSeek={seek}

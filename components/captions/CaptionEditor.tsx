@@ -47,6 +47,11 @@ export default function CaptionEditor({
     !q || c.text.toLowerCase().includes(q.toLowerCase()) || c.speaker?.toLowerCase().includes(q.toLowerCase()))
   const sel = timing && selected != null ? captions[selected] : null
 
+  // Colour each speaker (diarization) consistently so the transcript is easy to follow.
+  const speakers = [...new Set(captions.map(c => c.speaker).filter(Boolean))] as string[]
+  const SPK = ['#38bdf8', '#a78bfa', '#f472b6', '#fbbf24', '#34d399', '#fb7185']
+  const spkColor = (s?: string) => s ? SPK[Math.max(0, speakers.indexOf(s)) % SPK.length] : 'var(--accent-light)'
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       {showSearch && captions.length > 0 && (
@@ -80,7 +85,7 @@ export default function CaptionEditor({
                 style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontSize: 11, color: 'var(--accent-light)', background: 'none', border: 'none', cursor: onSeek ? 'pointer' : 'default', width: 58, textAlign: 'left', paddingTop: 3 }}>
                 {fmtTime(c.start)}
               </button>
-              {c.speaker && <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, color: 'var(--accent-light)', paddingTop: 4, minWidth: 54 }}>{c.speaker}</span>}
+              {c.speaker && <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: spkColor(c.speaker), paddingTop: 4, minWidth: 54 }}>{c.speaker}</span>}
               <textarea value={c.text} onChange={e => setText(i, e.target.value)} onFocus={() => timing && setSelected(i)} rows={1}
                 style={{ flex: 1, resize: 'vertical', background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 8px', fontSize: 13, lineHeight: 1.5, fontFamily: 'inherit' }} />
               {low && !edited && <AlertTriangle size={13} style={{ flexShrink: 0, color: '#f59e0b', marginTop: 6 }} />}
