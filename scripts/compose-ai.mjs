@@ -20,6 +20,12 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const argv = process.argv.slice(2)
+// SILENCED 2026-08-10 (Brae): superseded by Claude authoring music directly in the program
+// (scripts/sheet-accompany.mjs). Kept for reference; pass --force to run.
+if (!argv.includes('--force')) {
+  console.log('\n⏸  compose-ai.mjs is SILENCED (deprecated 2026-08-10) — use the Claude-authored music path (scripts/sheet-accompany.mjs). Pass --force to override.\n')
+  process.exit(0)
+}
 const flag = (n, d) => { const a = argv.find(x => x.startsWith(`--${n}=`)); return a ? a.split('=')[1] : d }
 const direction = argv.filter(a => !a.startsWith('--')).join(' ').trim()
 const seed = flag('seed', String(Math.floor(1 + (Date.now() % 90000))))   // vary by default

@@ -16,6 +16,7 @@ import type { MidiNote } from '@/lib/daw-types'
 import { mountSongVideo } from '@/lib/song-video/engine.mjs'
 import { songVideoData } from '@/lib/song-video/from-project.mjs'
 import { FORMATS } from '@/lib/song-video/formats.mjs'
+import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
@@ -37,6 +38,10 @@ function MusicVideoApp() {
   const [playing, setPlaying] = useState(false)
   const [aiFraction, setAiFraction] = useState(0)
   const [format, setFormat] = useState('falling-notes')
+  const [bgStyle, setBgStyle] = useState('video')   // 'video' = your uploaded video shows through; else a generated bg
+  const [exporting, setExporting] = useState(false)
+  const [bgImageUrls, setBgImageUrls] = useState<string[]>([])   // pooled AI backgrounds (R2): 1 = still, 2+ = keyframe video
+  const [poolBgs, setPoolBgs] = useState<{ key: string; url: string; genre: string }[]>([])
   const [accent, setAccent] = useState('#a78bfa')
   const [font, setFont] = useState('system-ui')
 
@@ -79,19 +84,81 @@ function MusicVideoApp() {
     const cv = canvasRef.current, vid = videoRef.current
     if (!cv || !vid || !song) return
     ctrlRef.current = mountSongVideo(cv, song.data, {
-      media: vid, synth: false, format, accent, font, loopBeats: song.beats, brand: '', meta: '',
+      media: vid, synth: false, format, accent, font, bgStyle, loopBeats: song.beats, brand: '', meta: '',
     }) as Controller
     return () => { ctrlRef.current?.destroy(); ctrlRef.current = null }
   }, [song, videoUrl, format])
 
-  // Live-update colour/font without a remount.
-  useEffect(() => { ctrlRef.current?.update({ accent, font }) }, [accent, font])
+  // Live-update colour/font/background without a remount (the engine reads these each frame).
+  useEffect(() => { ctrlRef.current?.update({ accent, font, bgStyle }) }, [accent, font, bgStyle])
+
+  // The pooled AI backgrounds (generated once, cached in R2 → $0 per video).
+  useEffect(() => { fetch('/api/bg-pool').then(r => (r.ok ? r.json() : null)).then(d => { if (d?.backgrounds) setPoolBgs(d.backgrounds) }).catch(() => {}) }, [])
+  // Load the chosen pooled image(s): 1 → static bgImage, 2+ → keyframe "video" (bgImages). Re-apply
+  // after a remount. All from cached R2 stills → $0 AI per video.
+  useEffect(() => {
+    if (!bgImageUrls.length) { ctrlRef.current?.update({ bgImage: null, bgImages: null }); return }
+    let cancelled = false
+    Promise.all(bgImageUrls.map(url => new Promise<HTMLImageElement | null>(res => {
+      const img = new Image(); img.crossOrigin = 'anonymous'
+      img.onload = () => res(img); img.onerror = () => res(null); img.src = url
+    }))).then(imgs => {
+      if (cancelled) return
+      const loaded = imgs.filter((x): x is HTMLImageElement => !!x)
+      if (loaded.length >= 2) ctrlRef.current?.update({ bgImages: loaded, bgImage: null })
+      else if (loaded.length === 1) ctrlRef.current?.update({ bgImage: loaded[0], bgImages: null })
+      else ctrlRef.current?.update({ bgImage: null, bgImages: null })
+    })
+    return () => { cancelled = true }
+  }, [bgImageUrls, song, format])
 
   const togglePlay = useCallback(() => {
     const vid = videoRef.current; if (!vid) return
     if (playing) { vid.pause(); setPlaying(false) }
     else { vid.play().catch(() => {}); setPlaying(true) }
   }, [playing])
+
+  // Export LOCALLY (no upload, no AI): composite the video frame + the note/background overlay onto an
+  // export canvas each frame, capture it + the video's audio via MediaRecorder, play through once, download.
+  const exportVideo = useCallback(async () => {
+    const vid = videoRef.current, overlay = canvasRef.current
+    if (!vid || !overlay || exporting) return
+    setExporting(true)
+    try {
+      const W = 1280, H = 720
+      const ex = document.createElement('canvas'); ex.width = W; ex.height = H
+      const exCtx = ex.getContext('2d')
+      if (!exCtx) throw new Error('canvas unavailable')
+      const stream = ex.captureStream(30)
+      const vidStream = (vid as unknown as { captureStream?: () => MediaStream }).captureStream?.()
+      for (const t of vidStream?.getAudioTracks() ?? []) stream.addTrack(t)
+      const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
+      const rec = new MediaRecorder(stream, { mimeType: mime })
+      const chunks: BlobPart[] = []
+      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
+      const stopped = new Promise<void>(res => { rec.onstop = () => res() })
+      let raf = 0
+      const draw = () => {
+        const iw = vid.videoWidth || W, ih = vid.videoHeight || H, ir = iw / ih, cr = W / H
+        let dw: number, dh: number
+        if (ir > cr) { dh = H; dw = H * ir } else { dw = W; dh = W / ir }
+        exCtx.fillStyle = '#000'; exCtx.fillRect(0, 0, W, H)
+        exCtx.drawImage(vid, (W - dw) / 2, (H - dh) / 2, dw, dh)  // the user's video (covered when a generated bg is chosen)
+        exCtx.drawImage(overlay, 0, 0, W, H)                       // notes + optional background
+        raf = requestAnimationFrame(draw)
+      }
+      vid.pause(); vid.currentTime = 0
+      await new Promise(res => setTimeout(res, 120))
+      rec.start(100); draw(); setPlaying(true)
+      await vid.play().catch(() => {})
+      await new Promise<void>(res => { const on = () => { vid.removeEventListener('ended', on); res() }; vid.addEventListener('ended', on) })
+      cancelAnimationFrame(raf); rec.stop(); await stopped; setPlaying(false)
+      const blob = new Blob(chunks, { type: 'video/webm' })
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'music-video.webm'
+      document.body.appendChild(a); a.click(); a.remove()
+    } catch (e) { setError(e instanceof Error ? `Export failed: ${e.message}` : 'Export failed') }
+    finally { setExporting(false) }
+  }, [exporting])
 
   return (
     <main id="main" className="max-w-2xl mx-auto" style={{ padding: '20px 18px 40px' }}>
@@ -110,7 +177,7 @@ function MusicVideoApp() {
           <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: '#000', border: '1px solid var(--border)' }}>
             <video ref={videoRef} src={videoUrl} playsInline onEnded={() => setPlaying(false)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
             <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
-            {busy && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.5)', color: '#fff', gap: 8 }}><Loader2 size={26} style={{ animation: 'spin 1s linear infinite' }} /><span style={{ fontSize: 14, fontWeight: 700 }}>Transcribing the audio…</span></div>}
+            {busy && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.5)', color: '#fff', gap: 8 }}><Loader2 size={26} style={{ animation: 'spin 1s linear infinite' }} /><span style={{ fontSize: 14, fontWeight: 700 }}>Detecting the melody…</span></div>}
           </div>
           <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
@@ -137,6 +204,33 @@ function MusicVideoApp() {
               })}
             </div>
           </Section>
+          <Section label="Background">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+              {(['video', 'none', ...BG_STYLES] as string[]).map(key => {
+                const active = !bgImageUrls.length && bgStyle === key
+                const label = key === 'video' ? 'Your video' : key === 'none' ? 'Dark' : key[0].toUpperCase() + key.slice(1)
+                return <button key={key} type="button" onClick={() => { setBgStyle(key); setBgImageUrls([]) }} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: active ? 'var(--accent)' : 'var(--bg-card)', color: active ? '#0e0d12' : 'var(--text-secondary)' }}>{label}</button>
+              })}
+            </div>
+            <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0' }}>Procedural styles are free + audio-reactive.</p>
+            {poolBgs.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginBottom: 6 }}>
+                  AI backgrounds — generated once, reused (no per-video cost). {bgImageUrls.length >= 2 ? <strong style={{ color: 'var(--accent-light, var(--accent))' }}>{bgImageUrls.length} selected → AI video (motion + crossfade)</strong> : 'Pick one for a still, or 2+ for a moving AI video.'}
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {poolBgs.slice(0, 12).map(bg => {
+                    const sel = bgImageUrls.includes(bg.url)
+                    return <button key={bg.key} type="button" onClick={() => setBgImageUrls(prev => prev.includes(bg.url) ? prev.filter(u => u !== bg.url) : [...prev, bg.url])} title={bg.genre}
+                      style={{ width: 40, height: 64, borderRadius: 8, overflow: 'hidden', padding: 0, cursor: 'pointer', background: 'var(--bg-card)', border: sel ? '2px solid var(--accent)' : '1px solid var(--border)', opacity: sel ? 1 : 0.85 }}>
+                      { /* eslint-disable-next-line @next/next/no-img-element */ }
+                      <img src={bg.url} alt={bg.genre} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </button>
+                  })}
+                </div>
+              </div>
+            )}
+          </Section>
           <Section label="Colour & font">
             <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)' }}>Accent
@@ -147,7 +241,11 @@ function MusicVideoApp() {
               </div>
             </div>
           </Section>
-          <p style={{ fontSize: 12, color: 'var(--text-muted, var(--text-secondary))', marginTop: 8 }}>Video export (burn the overlay into a downloadable file) is coming next.</p>
+          <button type="button" onClick={exportVideo} disabled={exporting}
+            style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 11, border: 'none', fontSize: 14, fontWeight: 800, cursor: exporting ? 'default' : 'pointer', background: exporting ? 'var(--border)' : 'var(--accent)', color: exporting ? 'var(--text-secondary)' : '#0e0d12' }}>
+            {exporting ? 'Recording… (plays through once)' : 'Export video'}
+          </button>
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted, var(--text-secondary))', marginTop: 8 }}>Exports on your device — no upload, no AI cost. It plays through once to record.</p>
         </>
       )}
       {error && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 14 }}>{error}</p>}

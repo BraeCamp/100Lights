@@ -381,6 +381,21 @@ export function importRecipe(stored: StoredRecipeSpec): void {
   localStorage.setItem(IMPORTED_KEY, JSON.stringify(next))
 }
 
+// ── Server-integrated recipes ─────────────────────────────────────────────────
+// Recipes an admin promoted from the Test Recipes panel (mined from public-domain sheet music) ship
+// to everyone via GET /api/recipes. A client surface fetches them once and calls setServerRecipes;
+// getAllChordRecipes then merges them like the community-imported ones. Client-only (like imported
+// recipes) so server-rendered surfaces stay hydration-stable — those use getBuiltInChordRecipes.
+let _serverRecipes: StoredRecipeSpec[] = []
+
+export function setServerRecipes(list: StoredRecipeSpec[]): void {
+  _serverRecipes = Array.isArray(list) ? list : []
+}
+
+export function getServerRecipes(): PracticeRecipe[] {
+  return _serverRecipes.map(r => ({ id: r.id, title: r.title, tagline: r.tagline, annotation: r.annotation ?? [], genre: r.genre, build: () => r.spec }))
+}
+
 // ── Signature synth sounds (from the darkwave/dark-pop starter songs) ─────────
 // These recipes carry the full instrument patch (not a preset), so dropping one
 // onto a track gives you that exact SOUND plus a short demo phrase. Clear the
@@ -473,9 +488,9 @@ const RECIPE_GENRES: Record<string, string> = {
   'andalusian':         'World',
 }
 
-/** Built-in chord recipes plus anything imported from the community. */
+/** Built-in chord recipes plus anything imported from the community or integrated by an admin. */
 export function getAllChordRecipes(): PracticeRecipe[] {
-  return [...CHORD_RECIPES, ...SOUND_RECIPES, ...getImportedRecipes()].map(r => r.genre ? r : { ...r, genre: RECIPE_GENRES[r.id] })
+  return [...CHORD_RECIPES, ...SOUND_RECIPES, ...getServerRecipes(), ...getImportedRecipes()].map(r => r.genre ? r : { ...r, genre: RECIPE_GENRES[r.id] })
 }
 
 /**

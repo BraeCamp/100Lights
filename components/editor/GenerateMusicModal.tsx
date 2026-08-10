@@ -67,6 +67,20 @@ export default function GenerateMusicModal({ open, onClose }: { open: boolean; o
     void uploadRecordingBlob(blob, clip.id).then(k => k && dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: k } }))
   }
 
+  // Fire-and-forget: send what the AI PRODUCED (stems + prompt/params) to the learning corpus. Opt-out
+  // is enforced server-side; any failure is swallowed so it never affects the user's generation.
+  function captureGeneration(promptText: string, song: ArrayBuffer, stems: { name: string; data: ArrayBuffer }[]) {
+    try {
+      const fd = new FormData()
+      fd.append('prompt', promptText)
+      fd.append('params', JSON.stringify({ lengthMs, instrumental }))
+      fd.append('model', 'music_v2')
+      fd.append('mix', new File([song], 'mix.mp3', { type: 'audio/mpeg' }))
+      for (const s of stems) fd.append('stem', new File([s.data], `${s.name}.wav`, { type: 'audio/wav' }))
+      void fetch('/api/generation-capture', { method: 'POST', body: fd }).catch(() => {})
+    } catch { /* never block generation */ }
+  }
+
   async function handleGenerate() {
     const p = prompt.trim()
     if (!p || busy) return
@@ -82,6 +96,7 @@ export default function GenerateMusicModal({ open, onClose }: { open: boolean; o
         if (!stems.length) throw new Error('No stems were returned.')
         setStatus('Importing tracks…')
         for (const stem of stems) await importTrack(stem.name, stem.data)
+        captureGeneration(p, song, stems)   // → learning corpus (opt-out-gated server-side)
       } else {
         setStatus('Importing track…')
         const name = p.length > 40 ? p.slice(0, 40).trimEnd() + '…' : p

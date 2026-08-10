@@ -1164,6 +1164,24 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   const recipeStopRef = useRef<() => void>(() => {})
   useEffect(() => () => { recipeStopRef.current() }, [])
 
+  // Load admin-integrated recipes (mined from public-domain sheet music) once and merge them into the
+  // catalog. Best-effort — a fetch failure just leaves the built-in + community recipes.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { setServerRecipes } = await import('@/lib/practice-recipes')
+        const res = await fetch('/api/recipes')
+        if (!res.ok) return
+        const data = await res.json() as { recipes?: unknown[] }
+        if (cancelled || !Array.isArray(data.recipes) || data.recipes.length === 0) return
+        setServerRecipes(data.recipes as Parameters<typeof setServerRecipes>[0])
+        setRecipesVersion(v => v + 1)
+      } catch { /* offline / route unavailable — built-ins still show */ }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
   function auditionRecipe(recipeId: string) {
     if (auditioningRecipe === recipeId) { recipeStopRef.current(); return }
     recipeStopRef.current()

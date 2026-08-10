@@ -19,7 +19,8 @@ const env = {}
 for (const line of readFileSync(new URL('../.env.local', import.meta.url), 'utf8').split('\n')) {
   const m = line.match(/^([A-Z0-9_]+)=(.*)$/); if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, '')
 }
-const key = env.STRIPE_TEST_SECRET_KEY || env.STRIPE_SECRET_KEY
+// --live forces the LIVE key; otherwise prefer the test key so local runs stay in test mode.
+const key = ALLOW_LIVE ? env.STRIPE_SECRET_KEY : (env.STRIPE_TEST_SECRET_KEY || env.STRIPE_SECRET_KEY)
 if (!key) { console.error('No STRIPE_SECRET_KEY / STRIPE_TEST_SECRET_KEY in .env.local'); process.exit(1) }
 const isLive = key.startsWith('sk_live_')
 if (CREATE && isLive && !ALLOW_LIVE) {
@@ -34,15 +35,13 @@ const mode = isLive ? 'LIVE' : 'TEST'
 // Prices + credits mirror ElevenLabs (2026); keep in sync with lib/credits.ts CREDIT_TIERS.
 const SUBS = [
   { tier: 'starter',  name: '100Lights Starter',  usd: 6,   credits: 30000 },
-  { tier: 'creator',  name: '100Lights Creator',  usd: 11,  credits: 121000 },
+  { tier: 'creator',  name: '100Lights Creator',  usd: 22,  credits: 121000 },
   { tier: 'pro',      name: '100Lights Pro',      usd: 99,  credits: 600000 },
-  { tier: 'scale',    name: '100Lights Scale',    usd: 299, credits: 1800000 },
-  { tier: 'business', name: '100Lights Business', usd: 990, credits: 6000000 },
 ]
-// One-time AI credit top-ups (~ElevenLabs' Creator rate, 11k credits/$).
+// One-time AI credit top-ups, priced ≤ the subscription rate so a plan always beats à-la-carte.
 const TOPUPS = [
-  { name: '100Lights AI Credits — 55,000',  usd: 5,  credits: 55000 },
-  { name: '100Lights AI Credits — 220,000', usd: 20, credits: 220000 },
+  { name: '100Lights AI Credits — 25,000',  usd: 5,  credits: 25000 },
+  { name: '100Lights AI Credits — 110,000', usd: 20, credits: 110000 },
 ]
 
 async function findByMeta(metaTier) {

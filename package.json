@@ -38,6 +38,7 @@
     "@clerk/themes": "^2.4.57",
     "@ffmpeg/ffmpeg": "^0.12.10",
     "@ffmpeg/util": "^0.12.1",
+    "@huggingface/transformers": "^4.2.0",
     "@liveblocks/client": "^3.22.0",
     "@liveblocks/node": "^3.22.0",
     "@liveblocks/react": "^3.22.0",

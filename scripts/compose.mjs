@@ -1571,6 +1571,17 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
 // ── CLI ───────────────────────────────────────────────────────────────────────
 async function main() {
   const argv = process.argv.slice(2)
+  // SILENCED 2026-08-10 (Brae): music is now authored directly by Claude in the program
+  // (scripts/sheet-accompany.mjs — editable, cheaper than ElevenLabs, and doesn't mode-collapse like
+  // compose). compose.mjs is KEPT for reference but no longer generates unless forced. The exported
+  // compose() fn is untouched, so any importer still works — only the CLI is muted.
+  if (!argv.includes('--force')) {
+    console.log('\n⏸  compose.mjs is SILENCED (deprecated 2026-08-10).')
+    console.log('   Music is now authored directly by Claude in the program → scripts/sheet-accompany.mjs.')
+    console.log('   compose mode-collapses (everything ends up sounding the same); kept for reference only.')
+    console.log('   Pass --force to run it anyway.\n')
+    return
+  }
   const libs = await loadAppLibs()
   if (argv.includes('--templates')) {
     console.log('Song templates (id — character · variants):')

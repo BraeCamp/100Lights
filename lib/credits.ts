@@ -10,42 +10,22 @@
 import { sql } from '@/lib/db'
 
 // ── Tiers ────────────────────────────────────────────────────────────────────────────────────
-// Prices + monthly credits MIRROR ElevenLabs (2026): our hybrid only partially uses AI, so the
-// same credits go much further here. All paid tiers grant "Pro" feature access; they differ only
-// in the monthly credit allotment.
-export const CREDIT_TIERS = {
-  free:     { price: 0,   monthlyCredits: 10_000,    label: 'Free' },
-  starter:  { price: 6,   monthlyCredits: 30_000,    label: 'Starter' },
-  creator:  { price: 11,  monthlyCredits: 121_000,   label: 'Creator' },
-  pro:      { price: 99,  monthlyCredits: 600_000,   label: 'Pro' },
-  scale:    { price: 299, monthlyCredits: 1_800_000, label: 'Scale' },
-  business: { price: 990, monthlyCredits: 6_000_000, label: 'Business' },
-} as const
-export type CreditTier = keyof typeof CREDIT_TIERS
+// The tier / cost / top-up numbers live in the isomorphic ./credit-tiers (client + server share the
+// SAME values). Re-exported here for existing importers. All paid tiers grant "Pro" feature access;
+// they differ only in the monthly credit allotment. (Scale/Business removed — consumer tiers only.)
+import { CREDIT_TIERS, CREDIT_COSTS, CREDIT_TOPUPS } from './credit-tiers'
+import type { CreditTier } from './credit-tiers'
+export { CREDIT_TIERS, CREDIT_COSTS, CREDIT_TOPUPS }
+export type { CreditTier }
 
 /** Map a Stripe price id → tier. Filled by env once the products exist (no secrets in git). */
 export const TIER_BY_PRICE: Record<string, CreditTier> = {
   ...(process.env.STRIPE_STARTER_PRICE_ID  ? { [process.env.STRIPE_STARTER_PRICE_ID]:  'starter'  as const } : {}),
   ...(process.env.STRIPE_CREATOR_PRICE_ID  ? { [process.env.STRIPE_CREATOR_PRICE_ID]:  'creator'  as const } : {}),
   ...(process.env.STRIPE_PRO_PRICE_ID      ? { [process.env.STRIPE_PRO_PRICE_ID]:      'pro'      as const } : {}),
-  ...(process.env.STRIPE_SCALE_PRICE_ID    ? { [process.env.STRIPE_SCALE_PRICE_ID]:    'scale'    as const } : {}),
-  ...(process.env.STRIPE_BUSINESS_PRICE_ID ? { [process.env.STRIPE_BUSINESS_PRICE_ID]: 'business' as const } : {}),
 }
 
-// ── AI action costs (credits). Scaled to the new allotments; the hybrid bills only the AI fraction
-//    (the low-confidence spans), so real spend is far below the nominal cost. Tune freely. ──
-export const CREDIT_COSTS = {
-  transcribeMinute: 200,   // per minute of audio sent to the AI/smarter pass (only low-confidence spans)
-  visionPage: 500,         // per sheet-music image/PDF page (Claude vision)
-  generateClip: 2000,      // per AI music generation
-  stems: 1500,             // per stem-separation
-}
-
-/** One-time credit top-ups (~ElevenLabs Creator rate). Price ids come from STRIPE_TOPUP_<n>_PRICE_ID. */
-export const CREDIT_TOPUPS = [
-  { credits: 55_000, usd: 5 },
-  { credits: 220_000, usd: 20 },
-] as const
+// CREDIT_COSTS + CREDIT_TOPUPS are defined in ./credit-tiers and re-exported above.
 
 /** Stripe price id for a subscription tier (from env, set by scripts/setup-stripe-products.mjs). */
 export function priceIdForTier(tier: CreditTier): string | undefined {
@@ -153,10 +133,18 @@ export async function useFreeTranscribe(userId: string, seconds: number): Promis
 }
 
 /**
- * The one call an AI endpoint makes before doing paid work. Deducts `credits`; on an empty balance
- * returns ok:false so the route can answer 402 + prompt an upgrade/top-up. `freeSeconds` (optional)
- * lets transcription spend the free allowance first for free users.
+ * The one call an AI endpoint makes before doing paid work. If `opts.freeSeconds` is given, the free
+ * transcription allowance is spent FIRST — when the request fits inside it, no credits are deducted
+ * (usedFree:true). Otherwise it deducts `credits`; on an empty balance returns ok:false so the route
+ * can answer 402 + prompt an upgrade/top-up.
  */
-export async function meterAI(userId: string, credits: number, reason: string): Promise<{ ok: boolean; balance: number }> {
+export async function meterAI(
+  userId: string, credits: number, reason: string, opts?: { freeSeconds?: number },
+): Promise<{ ok: boolean; balance: number; usedFree?: boolean }> {
+  if (opts?.freeSeconds && opts.freeSeconds > 0) {
+    const free = await useFreeTranscribe(userId, opts.freeSeconds)
+    if (free.ok) { const c = await getCredits(userId); return { ok: true, balance: c.balance, usedFree: true } }
+    // Free allowance exhausted → fall through and bill credits.
+  }
   return spendCredits(userId, credits, reason)
 }

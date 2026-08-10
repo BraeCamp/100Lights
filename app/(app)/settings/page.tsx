@@ -28,6 +28,7 @@ export default function SettingsPage() {
   const [billingError, setBillingError] = useState(false)
   const [loading, setLoading] = useState(false)
   const [upgradeError, setUpgradeError] = useState('')
+  const [aiOptOut, setAiOptOut] = useState(false)   // opt out of the ElevenLabs learning corpus
 
   // Profile state
   const [username, setUsername]       = useState('')
@@ -97,7 +98,20 @@ export default function SettingsPage() {
       .catch(() => setBillingError(true))
   }
 
-  useEffect(() => { if (isLoaded && isSignedIn) loadBilling() }, [isLoaded, isSignedIn])
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return
+    loadBilling()
+    fetch('/api/ai-prefs').then(r => (r.ok ? r.json() : null)).then(d => { if (d) setAiOptOut(!!d.corpusOptOut) }).catch(() => {})
+  }, [isLoaded, isSignedIn])
+
+  async function toggleAiOptOut() {
+    const next = !aiOptOut
+    setAiOptOut(next)   // optimistic
+    try {
+      const r = await fetch('/api/ai-prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ corpusOptOut: next }) })
+      if (!r.ok) throw new Error()
+    } catch { setAiOptOut(!next) }   // revert on failure
+  }
 
   async function handleUpgrade() {
     setLoading(true)
@@ -377,12 +391,57 @@ export default function SettingsPage() {
           )}
         </div>
 
+        {/* AI Credits — entry point to the tier/top-up purchase page */}
+        {isSignedIn && (
+          <div className="mb-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>AI Credits</h2>
+            <Link href="/credits" className="flex items-center justify-between p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'var(--accent-subtle)' }}>
+                  <Zap size={17} color="var(--accent-light)" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Manage AI credits</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Spendable across every app · non-AI editing is always free</p>
+                </div>
+              </div>
+              <ArrowRight size={16} color="var(--text-muted)" />
+            </Link>
+          </div>
+        )}
+
         {/* Redeem a code */}
         {isSignedIn && !billingError && (
           <div className="mb-4">
             <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Redeem a code</h2>
             <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
               <RedeemCode variant="promo" onRedeemed={loadBilling} />
+            </div>
+          </div>
+        )}
+
+        {/* AI */}
+        {isSignedIn && (
+          <div className="mb-4 mt-6">
+            <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>AI</h2>
+            <div className="p-5 rounded-xl border" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Help improve our music engine</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)', maxWidth: 470 }}>
+                    When you generate audio with AI, we analyze what the AI produced — the notes, chords, and effects — to improve 100Lights&apos; own music engine.
+                    We only keep what the AI generated for you; never your edits or your finished songs. Turn this off to opt out anytime.
+                  </p>
+                </div>
+                <button
+                  type="button" role="switch" aria-checked={!aiOptOut} onClick={toggleAiOptOut}
+                  aria-label="Help improve our music engine"
+                  className="shrink-0 relative"
+                  style={{ width: 42, height: 24, borderRadius: 999, border: 'none', cursor: 'pointer', background: aiOptOut ? 'var(--border)' : 'var(--accent)', transition: 'background .15s' }}
+                >
+                  <span style={{ position: 'absolute', top: 3, left: aiOptOut ? 3 : 21, width: 18, height: 18, borderRadius: 999, background: '#fff', transition: 'left .15s' }} />
+                </button>
+              </div>
             </div>
           </div>
         )}

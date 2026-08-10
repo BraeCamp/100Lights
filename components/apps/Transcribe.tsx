@@ -6,8 +6,7 @@
 // not just live singing; fully client-side (no sign-in). Monophonic — best on a single melody line.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, Mic } from 'lucide-react'
-import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
-import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
+import { audioToNotes } from '@/lib/audio-to-midi'
 import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
 import { writeMidiFile } from '@/lib/midi-file'
 import { DawEngine } from '@/lib/daw-engine'
@@ -36,10 +35,12 @@ function TranscribeApp() {
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
   const [conf, setConf] = useState<Record<string, number>>({})   // note id → confidence (0..1)
-  const [aiFraction, setAiFraction] = useState(0)                 // share of notes that'd route to AI
+  const [resolved, setResolved] = useState(0)                     // chords the local multi-f0 pass resolved (free)
+  const [aiFraction, setAiFraction] = useState(0)                 // share of notes STILL low-confidence after the local pass
 
   const audioRef = useRef<{ samples: Float32Array; sr: number } | null>(null)  // for re-analysis
   const mrRef = useRef<MediaRecorder | null>(null)
+  const reqSeq = useRef(0)  // guards against stale re-analyze results winning (rapid sensitivity changes)
 
   const instrument = useMemo<TrackInstrument>(
     () => (inst === 'Default' ? defaultPolyInstrument() : { type: 'poly', params: POLY_PRESETS[inst] }),
@@ -51,17 +52,25 @@ function TranscribeApp() {
   const has = notes.length > 0
 
   const analyze = useCallback(async (samples: Float32Array, sr: number, sens: number) => {
-    const a = await analyzeBufferAsync(samples, sr, { sensitivity: sens, minDuration: 0.08, segmenter: 'hmm' })
+    const myReq = ++reqSeq.current
     const t = tempoRef.current
-    // Hybrid: score every note (clarity + polyphony + stability); only the low-confidence ones
-    // would route to the paid AI pass — the rest are free.
-    const scores = scoreNotes(a.notes, (a.curve || []) as FeatureFrame[], samples, sr)
+    // Fully-local audio→MIDI hybrid (mono melody + local chord recovery). Shared with Firefly via
+    // lib/audio-to-midi — no paid AI, no network.
+    const { notes: an, chordsResolved, lowConfidence } = await audioToNotes(samples, sr, { sensitivity: sens })
+    if (myReq !== reqSeq.current) return
     const cmap: Record<string, number> = {}
-    const mapped: MidiNote[] = a.notes.map((n, i) => {
-      const id = crypto.randomUUID(); cmap[id] = scores[i].confidence
-      return { id, pitch: n.midi, startBeat: (n.startSec * t) / 60, durationBeats: Math.max(0.0625, (n.durSec * t) / 60), velocity: n.velocity <= 1 ? Math.max(1, Math.round(n.velocity * 127)) : Math.round(n.velocity) }
+    const mapped: MidiNote[] = an.map(n => {
+      const id = crypto.randomUUID(); cmap[id] = n.confidence
+      return {
+        id, pitch: n.midi,
+        startBeat: (n.startSec * t) / 60,
+        durationBeats: Math.max(0.0625, (n.durSec * t) / 60),
+        velocity: n.velocity <= 1 ? Math.max(1, Math.round(n.velocity * 127)) : Math.round(n.velocity),
+      }
     })
-    setNotes(mapped); setConf(cmap); setAiFraction(lowConfidenceFraction(scores))
+    setNotes(mapped); setConf(cmap)
+    setResolved(chordsResolved)
+    setAiFraction(an.length ? lowConfidence / an.length : 0)   // low-confidence REMAINING after the local pass
     if (!mapped.length) setError('No clear melody detected. Try a cleaner, single-line recording.')
   }, [])
 
@@ -86,7 +95,12 @@ function TranscribeApp() {
   const onSensitivity = useCallback((v: number) => {
     setSensitivity(v)
     const a = audioRef.current
-    if (a && !busy) { setBusy(true); void analyze(a.samples, a.sr, v).finally(() => setBusy(false)) }
+    if (a && !busy) {
+      setBusy(true)
+      analyze(a.samples, a.sr, v)
+        .catch(() => setError('Re-analysis failed — try again.'))
+        .finally(() => setBusy(false))
+    }
   }, [analyze, busy])
 
   // ── Mic record → transcribe ────────────────────────────────────────────────────
@@ -135,7 +149,7 @@ function TranscribeApp() {
       <main id="main" className="max-w-2xl mx-auto" style={{ padding: '20px 18px 40px' }}>
         <header style={{ marginBottom: 20 }}>
           <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent)', margin: '0 0 10px' }}>100Lights</p>
-          <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>Transcribe</h1>
+          <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>Audio to MIDI</h1>
           <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0, maxWidth: '54ch' }}>
             Upload an audio file or record a line, and turn it into editable MIDI notes — hear them on any instrument, then open in the studio or export. Works best on a single melody line.
           </p>
@@ -154,9 +168,11 @@ function TranscribeApp() {
           <section style={{ marginTop: 24 }}>
             <NoteEditor notes={notes} onChange={setNotes} confidence={conf} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 2px 0', fontSize: 12.5, color: 'var(--text-secondary)' }}>
-              {aiFraction > 0
-                ? <><span style={{ width: 9, height: 9, borderRadius: 3, background: '#f59e0b', flexShrink: 0 }} /><span><strong style={{ color: 'var(--text-primary)' }}>{Math.round(aiFraction * 100)}%</strong> of notes are low-confidence (chords / unclear) — only these would use the paid AI pass. The rest are free.</span></>
-                : <><span style={{ width: 9, height: 9, borderRadius: 3, background: 'var(--accent)', flexShrink: 0 }} /><span>All notes high-confidence — transcribed with <strong style={{ color: 'var(--text-primary)' }}>no AI</strong>.</span></>}
+              {resolved > 0
+                ? <><span style={{ width: 9, height: 9, borderRadius: 3, background: 'var(--accent)', flexShrink: 0 }} /><span><strong style={{ color: 'var(--text-primary)' }}>{resolved}</strong> chord{resolved > 1 ? 's' : ''} detected and resolved locally — <strong style={{ color: 'var(--text-primary)' }}>no AI, no cost</strong>.{aiFraction > 0 ? ` ${Math.round(aiFraction * 100)}% of notes are still unclear — edit them by hand (free) or re-record.` : ''}</span></>
+                : aiFraction > 0
+                  ? <><span style={{ width: 9, height: 9, borderRadius: 3, background: '#f59e0b', flexShrink: 0 }} /><span><strong style={{ color: 'var(--text-primary)' }}>{Math.round(aiFraction * 100)}%</strong> of notes are unclear — try a cleaner, single-line recording, or edit them by hand (free).</span></>
+                  : <><span style={{ width: 9, height: 9, borderRadius: 3, background: 'var(--accent)', flexShrink: 0 }} /><span>All notes high-confidence — transcribed with <strong style={{ color: 'var(--text-primary)' }}>no AI</strong>.</span></>}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, margin: '18px 0' }}>
               <button type="button" onClick={togglePlay} aria-label={playing ? 'Stop' : 'Play'} style={{ display: 'grid', placeItems: 'center', width: 54, height: 54, borderRadius: 999, border: 'none', background: 'var(--accent)', color: '#0e0d12', cursor: 'pointer', flexShrink: 0 }}>

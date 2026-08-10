@@ -29,6 +29,7 @@ import ContentQueuePanel from './ContentQueuePanel'
 import AppsPanel from './AppsPanel'
 import AppTargetsPanel from './AppTargetsPanel'
 import AppCorrectionsPanel from './AppCorrectionsPanel'
+import TestRecipesPanel from './TestRecipesPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -743,6 +744,19 @@ export default async function AdminPage() {
                 description="Corrections you've made to drum-hit classification, deduplicated by spectral distance. Bake them in to regenerate the built-in reference seeds."
               />
               <ClusterCorrectionsPanel />
+            </>
+          ),
+        },
+        {
+          id: 'test-recipes',
+          label: 'Test Recipes',
+          content: (
+            <>
+              <PanelIntro
+                title="Test Recipes → DAW recipe library"
+                description="Candidate chord progressions, bass lines, and motifs mined from public-domain sheet music, extracted as editable MIDI (the sheet itself isn't kept). Review each, then Integrate to ship it into the Sound Library recipe catalog every user sees, or Delete to discard it. Only you can see this."
+              />
+              <TestRecipesPanel />
             </>
           ),
         },

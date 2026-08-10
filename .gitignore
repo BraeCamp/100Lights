@@ -68,3 +68,4 @@ ios/build/
 fastlane/report.xml
 fastlane/README.md
 **/*.p8
+corr-fixture/

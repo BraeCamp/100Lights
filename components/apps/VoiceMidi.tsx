@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LivePitchDetector, type LivePitchResult, type LiveLevel, type LiveSensitivity, type PitchFrame } from '@/lib/pitch-detector'
 import { notesFromBuffer, notesFromBufferAsync, analyzeBuffer, analyzeBufferAsync, analyzeBands, buildPitchCurve, alignToGrid, conditionalGridAlign, type BufferAnalysis, type BandsAnalysis } from '@/lib/voice-backfill'
 import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
+import { snapToScale, ROOT_NOTES, SCALE_LABELS, type ScaleType } from '@/lib/scale-constants'
 import {
   getPresets, getGroupedPresets, midiNoteLabel, clampToPreset,
   type MidiPreset,
@@ -152,6 +153,21 @@ export function quantizeNotes(notes: RecNote[], bpm: number, division: number): 
   }))
 }
 
+// ── Scale-snap helper (autotune, for notes) ───────────────────────────────────
+// Pull each detected note's pitch onto the nearest note of a chosen key + scale — the discrete-note
+// analog of the Autotune app (which pitch-shifts audio to snapToScale targets). Pure + non-destructive.
+// `maxShift` is the discrete stand-in for autotune's continuous strength: only corrections within N
+// semitones are applied, so a deliberate blue/passing note isn't yanked onto a scale degree.
+// scale === 'chromatic' is a no-op (correction off).
+export function snapNotesToScale(notes: RecNote[], key: number, scale: ScaleType, maxShift = 2): RecNote[] {
+  if (scale === 'chromatic') return notes
+  const root = ROOT_NOTES[(((key % 12) + 12) % 12)]
+  return notes.map(n => {
+    const snapped = snapToScale(Math.round(n.midi), root, scale)
+    return Math.abs(snapped - n.midi) > maxShift ? n : { ...n, midi: snapped }
+  })
+}
+
 // Representative pitch of a band's per-frame track = the median MIDI over its voiced frames
 // (robust to the odd octave-flicker frame). Null when the band never locked a pitch.
 function bandDisplayMidi(track: { midi: number | null }[]): number | null {
@@ -206,6 +222,9 @@ export default function VoiceMidi({ onNotes, restore }: {
   const [rawNotes, setRawNotes] = useState<RecNote[]>([])
   const [quantized, setQuantized] = useState(false)
   const [division, setDivision] = useState(2)
+  // Autotune-for-notes: snap detected pitches to a key + scale. 'chromatic' scale = off (default).
+  const [pitchKey, setPitchKey] = useState(0)                       // 0..11 → C..B
+  const [pitchScale, setPitchScale] = useState<ScaleType>('chromatic')
   // Manual-editing grid snap (default ON). Only gates horizontal drag/add snapping in
   // the note strip; pitch stays semitone-quantized and the Quantize button is separate.
   const [editorSnap, setEditorSnap] = useState(true)
@@ -594,11 +613,12 @@ export default function VoiceMidi({ onNotes, restore }: {
     return buf
   }, [])
 
-  // The notes shown/played: raw take, optionally quantized to the current grid.
-  const displayNotes = useMemo(
-    () => (quantized ? quantizeNotes(rawNotes, bpm, division) : rawNotes),
-    [rawNotes, quantized, bpm, division],
-  )
+  // The notes shown/played: raw take → optional scale-snap (autotune for notes) → optional grid quantize.
+  const displayNotes = useMemo(() => {
+    let ns = pitchScale === 'chromatic' ? rawNotes : snapNotesToScale(rawNotes, pitchKey, pitchScale)
+    if (quantized) ns = quantizeNotes(ns, bpm, division)
+    return ns
+  }, [rawNotes, quantized, bpm, division, pitchKey, pitchScale])
 
   // Surface the final notes to an embedding host (Firefly). No-op on the standalone page.
   useEffect(() => { onNotes?.(displayNotes, bpm) }, [displayNotes, bpm, onNotes])
@@ -1420,12 +1440,14 @@ export default function VoiceMidi({ onNotes, restore }: {
       evidence: buildEvidence(),
       audio,
       settings: {
-        sensitivity, tracker: segmenter, key: null, scale: null,
+        sensitivity, tracker: segmenter,
+        key: pitchScale === 'chromatic' ? null : ROOT_NOTES[(((pitchKey % 12) + 12) % 12)],
+        scale: pitchScale === 'chromatic' ? null : pitchScale,
         bpm, division, timingOffsetMs, gridAligned: takeGridAligned,
         instrument: sel ? `${sel.name} [${sel.id}]` : null,
       },
     }
-  }, [displayNotes, detected, edited, buildEvidence, sensitivity, segmenter, bpm, division, timingOffsetMs, takeGridAligned])
+  }, [displayNotes, detected, edited, buildEvidence, sensitivity, segmenter, bpm, division, timingOffsetMs, takeGridAligned, pitchKey, pitchScale])
 
   // Save the current take locally (IndexedDB) as a correction/training example.
   const doSaveCorrection = useCallback(async (): Promise<CorrectionRecord | null> => {
@@ -2242,6 +2264,42 @@ export default function VoiceMidi({ onNotes, restore }: {
             >
               {quantized ? 'Quantized' : 'Quantize'}
             </button>
+
+            {/* Pitch correction — snap detected notes to a key + scale (autotune, for notes) */}
+            <div
+              style={{ display: 'flex', gap: 4, alignItems: 'center', padding: 3, borderRadius: 9, border: '1px solid var(--border)' }}
+              title="Snap detected notes to a musical key + scale — like autotune, for the notes. Your raw take is kept."
+            >
+              <select
+                value={pitchKey}
+                onChange={e => setPitchKey(Number(e.target.value))}
+                disabled={pitchScale === 'chromatic'}
+                aria-label="Key"
+                style={{
+                  padding: '6px 6px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                  cursor: pitchScale === 'chromatic' ? 'default' : 'pointer', border: 'none', background: 'transparent',
+                  color: 'var(--text-secondary)', opacity: pitchScale === 'chromatic' ? 0.45 : 1,
+                }}
+              >
+                {ROOT_NOTES.map((r, i) => <option key={r} value={i}>{r}</option>)}
+              </select>
+              <select
+                value={pitchScale}
+                onChange={e => setPitchScale(e.target.value as ScaleType)}
+                aria-label="Scale"
+                title="Scale to snap detected notes into"
+                style={{
+                  padding: '6px 8px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
+                  background: pitchScale !== 'chromatic' ? 'var(--accent)' : 'transparent',
+                  color: pitchScale !== 'chromatic' ? '#fff' : 'var(--text-muted)',
+                }}
+              >
+                <option value="chromatic">Pitch: Off</option>
+                {(Object.keys(SCALE_LABELS) as ScaleType[]).filter(s => s !== 'chromatic').map(s => (
+                  <option key={s} value={s}>{SCALE_LABELS[s]}</option>
+                ))}
+              </select>
+            </div>
             <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
               {displayNotes.length} note{displayNotes.length === 1 ? '' : 's'}
             </span>

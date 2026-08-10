@@ -1,12 +1,38 @@
 import { auth } from '@clerk/nextjs/server'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { presignDownload } from '@/lib/r2'
+import { cacheKey, getCached, putCached } from '@/lib/ai-cache'
 
 export const maxDuration = 120
 
 export async function POST(request: Request) {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  let body: { r2Key: string; contentType?: string; contentHash?: string }
+  try {
+    body = await request.json()
+  } catch {
+    return Response.json({ error: 'Invalid JSON.' }, { status: 400 })
+  }
+
+  const { r2Key, contentType, contentHash } = body
+  if (!r2Key) return Response.json({ error: 'Missing r2Key.' }, { status: 400 })
+
+  // Enforce users can only transcribe their own files
+  if (!r2Key.startsWith(`${userId}/`)) {
+    return Response.json({ error: 'Forbidden.' }, { status: 403 })
+  }
+
+  // Deterministic-AI cache: a transcript is a pure function of the audio bytes. The client sends a
+  // SHA-256 of the file (it already holds the bytes — no R2 egress here), so a repeat of the SAME audio
+  // returns instantly, costs $0, and consumes neither the daily quota nor a Deepgram call. Checked
+  // BEFORE the rate limit so a free cache hit never counts against the user's allowance.
+  const cacheHash = contentHash ? cacheKey('transcribe', contentHash, 'deepgram-nova3') : null
+  if (cacheHash) {
+    const hit = await getCached<{ captions: unknown[]; duration?: number }>(cacheHash)
+    if (hit) return Response.json({ ...hit, cached: true })
+  }
 
   const limit = await checkRateLimit(userId, 'transcribe', 10)
   if (!limit.allowed) {
@@ -19,21 +45,6 @@ export async function POST(request: Request) {
   const apiKey = process.env.DEEPGRAM_API_KEY
   if (!apiKey) {
     return Response.json({ error: 'Transcription service not configured.' }, { status: 503 })
-  }
-
-  let body: { r2Key: string; contentType?: string }
-  try {
-    body = await request.json()
-  } catch {
-    return Response.json({ error: 'Invalid JSON.' }, { status: 400 })
-  }
-
-  const { r2Key, contentType } = body
-  if (!r2Key) return Response.json({ error: 'Missing r2Key.' }, { status: 400 })
-
-  // Enforce users can only transcribe their own files
-  if (!r2Key.startsWith(`${userId}/`)) {
-    return Response.json({ error: 'Forbidden.' }, { status: 403 })
   }
 
   // Give Deepgram a short-lived signed URL — it fetches the file directly from R2
@@ -89,5 +100,7 @@ export async function POST(request: Request) {
     words:   u.words?.map(w => ({ w: (w.punctuated_word ?? w.word).trim(), s: w.start, e: w.end })),
   }))
 
-  return Response.json({ captions, duration: data.metadata?.duration })
+  const result = { captions, duration: data.metadata?.duration }
+  if (cacheHash) await putCached(cacheHash, 'transcribe', result)   // next identical audio is free
+  return Response.json(result)
 }

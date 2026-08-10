@@ -1232,6 +1232,21 @@ export default function VideoEditor({
       .finally(() => setIsLoadingProject(false))
   }, []) // eslint-disable-line
 
+  // Captions handed off from the standalone Captions app (/apps/captions → "Send to Video editor").
+  // Applied on mount when the URL carries ?captions=pending; the user imports/keeps their video and the
+  // words are already here. Fires once, then clears the stash.
+  useEffect(() => {
+    try {
+      if (typeof window === 'undefined') return
+      if (!new URLSearchParams(window.location.search).has('captions')) return
+      const stash = sessionStorage.getItem('cf_pending_captions')
+      if (!stash) return
+      sessionStorage.removeItem('cf_pending_captions')
+      const parsed = JSON.parse(stash) as { captions?: Caption[] }
+      if (parsed.captions?.length) setCaptionsWithHistory(parsed.captions)
+    } catch { /* malformed stash — ignore */ }
+  }, []) // eslint-disable-line
+
   async function loadCfproj(raw: string) {
     // Block dirty-tracking while we apply the loaded state so that
     // loading itself doesn't get treated as unsaved user changes.
@@ -2856,20 +2871,37 @@ export default function VideoEditor({
     setSelectedId(newItem.id)
   }
 
+  // Apply a finished transcript: build the Output, set captions, notify, persist. Shared by the
+  // local (on-device) and AI (Deepgram) paths.
+  function applyTranscript(newCaptions: Caption[], duration: number | undefined, source: 'on-device' | 'AI') {
+    const out: Output = {
+      id: `transcript-${Date.now()}`, type: 'transcript', title: 'Full Transcript',
+      wordCount: newCaptions.reduce((n, c) => n + c.text.split(' ').length, 0),
+      createdAt: new Date(), content: newCaptions.map(c => c.text).join(' '), captions: newCaptions,
+    }
+    setCaptionsWithHistory(newCaptions)
+    setLocalOutputs([out])
+    setTranscribeStatus('done')
+    posthog.capture('transcription_completed', { word_count: out.wordCount, source })
+    if (typeof window !== 'undefined' && Notification.permission === 'granted') {
+      new Notification('Transcription complete', { body: `${out.wordCount?.toLocaleString()} words ready in ${localProjectName}`, icon: '/favicon.ico' })
+    }
+    const media = selectedMediaId ? mediaItems.find(m => m.id === selectedMediaId) : null
+    saveProject({
+      id: savedProjectId, name: localProjectName,
+      contentType: media?.contentType ?? propContentType ?? 'video',
+      createdAt: new Date().toISOString(), duration,
+      captions: newCaptions, outputs: [out],
+    })
+  }
+
+  // Hybrid transcription: run the FREE on-device Whisper pass first, and only escalate to the paid
+  // Deepgram API when the local model is unavailable, can't decode the audio, or returns a
+  // low-confidence result (hallucinated/empty lines). Most clean speech never touches the paid API.
   async function handleTranscribe() {
     if (transcribeStatus === 'transcribing') return
     const media = selectedMediaId ? mediaItems.find(m => m.id === selectedMediaId) : null
     if (!media) return
-
-    // The file must have finished uploading to R2 before Deepgram can fetch it
-    if (!media.r2Key) {
-      if (media.uploadStatus === 'uploading') {
-        setTranscribeError('Still uploading — please wait a moment and try again.')
-      } else {
-        setTranscribeError('Upload failed. Please remove and re-import the file.')
-      }
-      return
-    }
 
     setTranscribeStatus('transcribing')
     setTranscribeProgress(101)
@@ -2878,44 +2910,52 @@ export default function VideoEditor({
       Notification.requestPermission().catch(() => {})
     }
 
+    // 1) LOCAL first — on-device Whisper. Works even before R2 upload finishes; $0.
     try {
-      const res = await fetch('/api/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ r2Key: media.r2Key, contentType: media.contentType }),
-      })
+      const blob: Blob | null = media.file ?? (media.url ? await fetch(media.url).then(r => (r.ok ? r.blob() : null)).catch(() => null) : null)
+      if (blob) {
+        const { transcribeLocally } = await import('@/lib/local-stt')
+        const local = await transcribeLocally(blob, {
+          onProgress: p => setTranscribeProgress(p.status === 'transcribing' ? 101 : Math.min(100, Math.round(p.progress ?? 0))),
+        })
+        if (local.captions.length && local.lowConfidenceFraction <= 0.35) {
+          applyTranscript(local.captions.map(c => ({ start: c.start, end: c.end, text: c.text, words: c.words, speaker: c.speaker })), undefined, 'on-device')
+          return
+        }
+      }
+    } catch { /* local unavailable / undecodable / low-confidence → fall through to the AI pass */ }
 
+    // 2) AI escalation — Deepgram (fetches the R2 upload). Requires the upload to have finished.
+    if (!media.r2Key) {
+      setTranscribeError(media.uploadStatus === 'uploading' ? 'Still uploading — try again in a moment.' : 'Upload failed. Please remove and re-import the file.')
+      setTranscribeStatus('error')
+      return
+    }
+    try {
+      // Content hash of the audio → lets the server skip a repeat Deepgram call (deterministic cache).
+      // We already hold the bytes, so hashing here costs nothing extra; best-effort (skip on failure).
+      let contentHash: string | undefined
+      try {
+        if (media.file && crypto?.subtle) {
+          const digest = await crypto.subtle.digest('SHA-256', await media.file.arrayBuffer())
+          contentHash = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('')
+        }
+      } catch { /* hashing unavailable — just transcribe without the cache key */ }
+      const res = await fetch('/api/transcribe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r2Key: media.r2Key, contentType: media.contentType, contentHash }),
+      })
       if (res.status === 429) {
         setTranscribeStatus('error')
-        showUpgrade('You\'ve used your free transcriptions for this month. Upgrade to Pro for 30/month.')
+        showUpgrade('You\'ve used your free AI transcriptions for this month. Upgrade to Pro for 30/month.')
         return
       }
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { error?: string }
         throw new Error(err.error ?? `Server error ${res.status}`)
       }
-
       const data = await res.json() as { captions?: Caption[]; duration?: number }
-      const newCaptions: Caption[] = data.captions ?? []
-
-      const out: Output = {
-        id: `transcript-${Date.now()}`, type: 'transcript', title: 'Full Transcript',
-        wordCount: newCaptions.reduce((n, c) => n + c.text.split(' ').length, 0),
-        createdAt: new Date(), content: newCaptions.map(c => c.text).join(' '), captions: newCaptions,
-      }
-      setCaptionsWithHistory(newCaptions)
-      setLocalOutputs([out])
-      setTranscribeStatus('done')
-      posthog.capture('transcription_completed', { word_count: out.wordCount })
-      if (typeof window !== 'undefined' && Notification.permission === 'granted') {
-        new Notification('Transcription complete', { body: `${out.wordCount?.toLocaleString()} words ready in ${localProjectName}`, icon: '/favicon.ico' })
-      }
-      saveProject({
-        id: savedProjectId, name: localProjectName,
-        contentType: media.contentType,
-        createdAt: new Date().toISOString(), duration: data.duration,
-        captions: newCaptions, outputs: [out],
-      })
+      applyTranscript(data.captions ?? [], data.duration, 'AI')
     } catch (err) {
       setTranscribeError(err instanceof Error ? err.message : 'Failed')
       setTranscribeStatus('error')

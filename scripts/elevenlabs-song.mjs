@@ -27,7 +27,7 @@
 //   <title>__full-mix.mp3  the raw generated song (preview before stems)
 
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir, homedir } from 'node:os'
 import { join, dirname, basename, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -132,15 +132,25 @@ function prettyStemName(file) {
   return base ? base.replace(/\b\w/g, c => c.toUpperCase()) : 'Stem'
 }
 
-// MP3-encode a stem WAV (~165 kbps, libmp3lame -q:a 4) and return it as a
-// self-contained `data:audio/mpeg;base64,…` URL the DAW engine decodes directly.
-function stemToDataUrl(wavPath) {
-  const mp3Path = `${wavPath.replace(/\.wav$/i, '')}.q4.mp3`
-  execFileSync('ffmpeg', ['-y', '-i', wavPath, '-codec:a', 'libmp3lame', '-q:a', '4', mp3Path],
+// MP3-encode a stem WAV and return it as a self-contained `data:audio/mpeg;base64,…` URL the DAW
+// engine decodes directly. Bitrate defaults to 112 kbps CBR — stems are inlined as base64 (≈1.33× the
+// bytes) so a whole multi-stem song stays under the ~4.5 MB /api/projects body cap; 165 kbps blew past
+// it (see scripts/shrink-cfproj.mjs, which rescues older exports).
+function stemToDataUrl(wavPath, kbps = 112) {
+  const mp3Path = `${wavPath.replace(/\.wav$/i, '')}.${kbps}k.mp3`
+  execFileSync('ffmpeg', ['-y', '-i', wavPath, '-codec:a', 'libmp3lame', '-b:a', `${kbps}k`, mp3Path],
     { stdio: ['ignore', 'ignore', 'ignore'] })
   const b64 = readFileSync(mp3Path).toString('base64')
   try { rmSync(mp3Path, { force: true }) } catch { /* ignore */ }
   return `data:audio/mpeg;base64,${b64}`
+}
+
+// True if a stem WAV is effectively silent (ElevenLabs stem-separation returns all 6 stems even for an
+// instrumental — the empty Vocals/Guitar/Piano ones just bloat the file and clutter the project).
+function isSilentWav(wavPath) {
+  const r = spawnSync('ffmpeg', ['-i', wavPath, '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' })
+  const m = (r.stderr || '').match(/max_volume:\s*(-?[\d.]+) dB/)
+  return m ? parseFloat(m[1]) < -55 : false
 }
 
 // ── Cfproj authoring (the single path selftest + real run share) ─────────────
@@ -150,6 +160,13 @@ function buildCfproj(stems, title, outCfprojPath) {
   const tracks = []
   const arrangementClips = []
   const COLORS = ['#ef4444', '#a78bfa', '#3b82f6', '#14b8a6', '#f59e0b', '#22c55e', '#ec4899']
+
+  // Drop silent stems (empty Vocals/Guitar/etc.) — they only bloat the inlined base64 and clutter the
+  // project. Selftest passes synthetic stems, so only filter when a wavPath is present.
+  const kept = stems.filter(s => !s.wavPath || !isSilentWav(s.wavPath))
+  const skipped = stems.length - kept.length
+  if (skipped > 0) console.log(`▸ dropped ${skipped} silent stem${skipped === 1 ? '' : 's'}`)
+  stems = kept
 
   stems.forEach((stem, i) => {
     const assetId = uid()
@@ -377,7 +394,7 @@ async function runReal(key) {
   let corpusDir = null
   if (!NO_LEARN) {
     try {
-      const analysis = analyzeSong({ stems: stems.map(s => ({ name: s.name, wavPath: s.wavPath })), mixPath })
+      const analysis = await analyzeSong({ stems: stems.map(s => ({ name: s.name, wavPath: s.wavPath })), mixPath })
       const rec = recordToCorpus({
         title: TITLE, prompt: PROMPT,
         params: { model_id: 'music_v2', music_length_ms: LENGTH_MS, force_instrumental: !!INSTRUMENTAL },

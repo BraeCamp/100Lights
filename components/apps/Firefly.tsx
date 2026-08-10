@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Palette, Play, Square, VolumeX, Volume2, Download, FolderPlus, Sparkles, ChevronRight, FolderOpen, Save, Trash2 } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import VoiceMidi, { type RecNote } from '@/components/apps/VoiceMidi'
+import { audioToNotes } from '@/lib/audio-to-midi'
 import BeatMaker from '@/components/apps/BeatMaker'
 import { buildSketchProject, openSketchInStudio, type SketchOpts } from '@/lib/open-in-studio'
 import { Sheet, CustomizeSheet } from '@/components/apps/AppChrome'
@@ -49,6 +50,21 @@ function FireflyApp() {
 
   const onNotes = useCallback((notes: RecNote[], tempo: number) => { setMelody(notes); setBpm(tempo) }, [])
   const onPattern = useCallback((notes: MidiNote[]) => setBeat(notes), [])
+
+  // Upload an audio file → local audio→MIDI hybrid (melody + chords) → load into the Sing surface.
+  const [importing, setImporting] = useState(false)
+  const onUploadAudio = useCallback(async (file: File) => {
+    setImporting(true)
+    try {
+      const ac = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
+      const buf = await ac.decodeAudioData(await file.arrayBuffer())
+      const { notes } = await audioToNotes(new Float32Array(buf.getChannelData(0)), buf.sampleRate)
+      ac.close()
+      restoreNonce.current += 1
+      setVoiceRestore({ notes: notes.map(n => ({ startSec: n.startSec, midi: n.midi, durSec: n.durSec, velocity: n.velocity })), bpm, nonce: restoreNonce.current })
+    } catch { /* unreadable audio — ignore */ }
+    finally { setImporting(false) }
+  }, [bpm])
 
   // Melody take (seconds) → beat-based MidiNotes at the take tempo.
   const melodyMidi = useMemo<MidiNote[]>(() => melody.map(m => ({
@@ -172,7 +188,14 @@ function FireflyApp() {
       </nav>
 
       <main id="main" style={{ flex: 1, overflowX: 'hidden', padding: '10px 14px 96px' }}>
-        <div style={{ display: tab === 'voice' ? 'block' : 'none' }}><VoiceMidi onNotes={onNotes} restore={voiceRestore} /></div>
+        <div style={{ display: tab === 'voice' ? 'block' : 'none' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: '0 0 10px', padding: '8px 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-card)', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: importing ? 'default' : 'pointer' }}>
+            <FolderOpen size={14} /> {importing ? 'Reading audio…' : 'Upload audio (detects chords)'}
+            <input type="file" accept="audio/*" style={{ display: 'none' }} disabled={importing}
+              onChange={e => { const f = e.target.files?.[0]; e.currentTarget.value = ''; if (f) void onUploadAudio(f) }} />
+          </label>
+          <VoiceMidi onNotes={onNotes} restore={voiceRestore} />
+        </div>
         <div style={{ display: tab === 'beat' ? 'block' : 'none' }}><BeatMaker onPattern={onPattern} restore={beatRestore} /></div>
         {tab === 'sketch' && (
           <SketchTab
