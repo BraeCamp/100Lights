@@ -117,7 +117,11 @@ export default function Captions() {
               {/* live subtitle burned on the video as it plays — the payoff of a caption tool */}
               {isVideo && activeCaption && (
                 <div style={{ position: 'absolute', left: 8, right: 8, bottom: 46, textAlign: 'center', pointerEvents: 'none' }}>
-                  <span style={{ background: 'rgba(0,0,0,0.74)', color: '#fff', padding: '3px 8px', borderRadius: 5, fontSize: 13, fontWeight: 600, lineHeight: 1.5, WebkitBoxDecorationBreak: 'clone', boxDecorationBreak: 'clone' }}>{activeCaption.text}</span>
+                  <span style={{ background: 'rgba(0,0,0,0.74)', color: '#fff', padding: '3px 8px', borderRadius: 5, fontSize: 13, fontWeight: 600, lineHeight: 1.5, WebkitBoxDecorationBreak: 'clone', boxDecorationBreak: 'clone' }}>
+                    {activeCaption.words?.length
+                      ? activeCaption.words.map((w, i) => <span key={i} style={{ color: now >= w.s && now < w.e ? '#ffe08a' : '#fff' }}>{w.w}{i < activeCaption.words!.length - 1 ? ' ' : ''}</span>)
+                      : activeCaption.text}
+                  </span>
                 </div>
               )}
             </div>
@@ -163,7 +167,7 @@ export default function Captions() {
           <CaptionEditor
             captions={tx.captions} onChange={tx.setCaptions}
             currentTime={now} onSeek={seek}
-            search confidence feedback deletable
+            search confidence feedback deletable timing
             emptyHint={file ? 'Hit Transcribe to generate captions.' : 'Choose an audio or video file to begin.'}
           />
         </section>
