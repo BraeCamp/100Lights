@@ -13,6 +13,7 @@ import type { ModuleKey } from '@/lib/editor-types'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import { projectPath } from '@/lib/project-url'
 import { openProjectsFromFile } from '@/lib/project-serializer'
+import { openMediaInStudio } from '@/lib/media-handoff'
 import StarterCodeBanner from '@/components/StarterCodeBanner'
 import { useIsMobile } from '@/lib/use-is-mobile'
 
@@ -180,6 +181,8 @@ export default function DashboardPage() {
     setImporting(true)
     let read
     try { read = await openProjectsFromFile() } catch { setImporting(false); return } finally { setImporting(false) }
+    // Raw media opens a fresh video project seeded with the clip.
+    if (read.media.length) { await openMediaInStudio(read.media); return }
     const files = read.projects
     if (!files.length) { if (read.errors.length) flashImport('Nothing imported.'); return }
     setImporting(true)

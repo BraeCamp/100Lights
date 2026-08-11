@@ -8,6 +8,7 @@
  */
 
 import { BundleImportError, importFireflyBundle, isZipFile } from './firefly-bundle'
+import { MEDIA_ACCEPT, VIDEO_EXTS, AUDIO_EXTS, detectMediaKind } from './media-import'
 import { loadFolder, verifyWritePermission, writeToFolder } from './local-folder'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
@@ -403,8 +404,21 @@ const PICKER_TYPES = [{
   },
 }]
 
-/** File-input `accept` covering both a bare project and a Firefly bundle. */
-const ACCEPT_ATTR = `${CF_EXT},.zip`
+// Open-file picker also accepts raw media (→ opens a new video project). Kept
+// separate from PICKER_TYPES so the SAVE picker never offers media types.
+const OPEN_PICKER_TYPES: Array<{ description: string; accept: Record<string, string[]> }> = [
+  ...PICKER_TYPES,
+  { description: 'Video or audio', accept: { 'video/*': VIDEO_EXTS.map(e => `.${e}`), 'audio/*': AUDIO_EXTS.map(e => `.${e}`) } },
+]
+
+/** File-input `accept` covering a bare project, a Firefly bundle, and raw media. */
+const ACCEPT_ATTR = `${CF_EXT},.zip,${MEDIA_ACCEPT}`
+
+// A picked file is media (→ opens a new video project) rather than a project file.
+const isMediaFile = (f: File): boolean => {
+  const k = detectMediaKind(f)
+  return k === 'video' || k === 'audio'
+}
 
 /**
  * Save to the user's computer.
@@ -550,18 +564,24 @@ export async function openProjectsFromFile(): Promise<OpenProjectsResult> {
       return e instanceof Error ? e : new Error(`Could not read “${file.name}”.`)
     }
   }
-  const collect = (results: Array<ProjectFileRead | Error>): OpenProjectsResult => ({
-    projects: results.filter((r): r is ProjectFileRead => !(r instanceof Error)).map(r => r.project),
-    uploaded: results.reduce((n, r) => n + (r instanceof Error ? 0 : r.uploaded), 0),
-    degraded: results.reduce((n, r) => n + (r instanceof Error ? 0 : r.degraded), 0),
-    errors: results.filter((r): r is Error => r instanceof Error).map(e => e.message),
-  })
-  const empty: OpenProjectsResult = { projects: [], uploaded: 0, degraded: 0, errors: [] }
+  // Media files open a new video project; the rest are read as project files.
+  const process = async (files: File[]): Promise<OpenProjectsResult> => {
+    const media = files.filter(isMediaFile)
+    const results = await Promise.all(files.filter(f => !isMediaFile(f)).map(read))
+    return {
+      projects: results.filter((r): r is ProjectFileRead => !(r instanceof Error)).map(r => r.project),
+      media,
+      uploaded: results.reduce((n, r) => n + (r instanceof Error ? 0 : r.uploaded), 0),
+      degraded: results.reduce((n, r) => n + (r instanceof Error ? 0 : r.degraded), 0),
+      errors: results.filter((r): r is Error => r instanceof Error).map(e => e.message),
+    }
+  }
+  const empty: OpenProjectsResult = { projects: [], media: [], uploaded: 0, degraded: 0, errors: [] }
 
   if (window.showOpenFilePicker) {
     try {
-      const handles = await window.showOpenFilePicker({ types: PICKER_TYPES, multiple: true })
-      return collect(await Promise.all(handles.map(h => h.getFile().then(read))))
+      const handles = await window.showOpenFilePicker({ types: OPEN_PICKER_TYPES, multiple: true })
+      return process(await Promise.all(handles.map(h => h.getFile())))
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return empty
       throw err
@@ -580,7 +600,7 @@ export async function openProjectsFromFile(): Promise<OpenProjectsResult> {
       resolve(r)
     }
     input.onchange = async () => {
-      finish(collect(await Promise.all([...(input.files ?? [])].map(read))))
+      finish(await process([...(input.files ?? [])]))
     }
     // Modern browsers fire 'cancel' on the input when the dialog is dismissed.
     input.oncancel = () => finish(empty)
@@ -596,6 +616,8 @@ export async function openProjectsFromFile(): Promise<OpenProjectsResult> {
 
 export interface OpenProjectsResult {
   projects: CfProjFile[]
+  /** Raw video/audio files picked (open in a new video project, not a .cfproj). */
+  media: File[]
   /** Firefly recordings uploaded to durable storage. */
   uploaded: number
   /** Recordings that are session-only (upload failed or asset missing). */

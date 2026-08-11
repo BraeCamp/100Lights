@@ -1246,6 +1246,21 @@ export default function VideoEditor({
   const clipTimeOffsetRef = useRef(clipTimeOffset)
   useEffect(() => { clipTimeOffsetRef.current = clipTimeOffset }, [clipTimeOffset])
 
+  // On mount: drain any media handed off from All Projects / dashboard
+  // ("Open / Import Files" with a raw video/audio file → ?importMedia=1).
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!new URLSearchParams(window.location.search).get('importMedia')) return
+    // takePendingMedia atomically reads AND clears the store, so a StrictMode
+    // double-invoke (or a reload) can't import the same files twice — no
+    // cancelled-guard needed, and skipping the import on cleanup would drop them.
+    import('@/lib/media-handoff').then(async ({ takePendingMedia }) => {
+      const files = await takePendingMedia()
+      for (const f of files) handleFileImport(f)
+    }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // On mount: check if a .cfproj was opened from the projects page
   useEffect(() => {
     if (!projectId) return

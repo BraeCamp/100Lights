@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { openProjectsFromFile, readProjectFile } from '@/lib/project-serializer'
+import { openMediaInStudio } from '@/lib/media-handoff'
 import { projectPath } from '@/lib/project-url'
 import { saveFolder, loadFolder, clearFolder, verifyPermission, verifyWritePermission } from '@/lib/local-folder'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -558,6 +559,9 @@ export default function ProjectsPage() {
     } finally {
       setImporting(false)
     }
+    // Raw media (mp4, mov, mp3…) opens a fresh video project seeded with the clip.
+    if (read.media.length) { await openMediaInStudio(read.media); return }
+
     const { projects: files, degraded, errors } = read
 
     // Recordings that never reached storage play now and die on reload — say
