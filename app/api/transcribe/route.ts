@@ -71,10 +71,11 @@ export async function POST(request: Request) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ url: signedUrl }),
+        signal: AbortSignal.timeout(110_000),
       }
     )
   } catch {
-    return Response.json({ error: 'Could not reach Deepgram. Check your internet connection.' }, { status: 502 })
+    return Response.json({ error: 'Could not reach Deepgram (or it timed out). Try again.' }, { status: 502 })
   }
 
   if (!deepgramResponse.ok) {
@@ -83,13 +84,14 @@ export async function POST(request: Request) {
     return Response.json({ error: message }, { status: deepgramResponse.status })
   }
 
-  const data = await deepgramResponse.json() as {
+  const data = await deepgramResponse.json().catch(() => null) as {
     results?: { utterances?: Array<{
       start: number; end: number; transcript: string; speaker?: number
       words?: Array<{ word: string; punctuated_word?: string; start: number; end: number }>
     }> }
     metadata?: { duration?: number }
-  }
+  } | null
+  if (!data) return Response.json({ error: 'Deepgram returned an unexpected response.' }, { status: 502 })
 
   const utterances = data.results?.utterances ?? []
   const captions = utterances.map((u) => ({

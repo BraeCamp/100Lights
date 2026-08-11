@@ -43,6 +43,7 @@ function evalAtT(sorted: AutoPoint[], t: number): number {
   let i = 0
   while (i < sorted.length - 1 && sorted[i + 1].t <= t) i++
   const p = sorted[i], q = sorted[i + 1]
+  if (q.t === p.t) return p.v   // duplicate-t points → avoid 0/0 = NaN in the curve
   if (!p.smooth && !q.smooth) {
     const s = (t - p.t) / (q.t - p.t)
     return p.v + s * (q.v - p.v)

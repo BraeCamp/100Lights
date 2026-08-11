@@ -21,7 +21,9 @@ export function interpSpeedRamp(points: Array<{ t: number; speed: number }>, t: 
   if (t >= sorted[sorted.length - 1].t) return sorted[sorted.length - 1].speed
   for (let i = 0; i < sorted.length - 1; i++) {
     if (t >= sorted[i].t && t <= sorted[i + 1].t) {
-      const frac = (t - sorted[i].t) / (sorted[i + 1].t - sorted[i].t)
+      const span = sorted[i + 1].t - sorted[i].t
+      if (span <= 0) return sorted[i].speed   // duplicate-t keyframes → avoid 0/0 = NaN
+      const frac = (t - sorted[i].t) / span
       const smooth = frac * frac * (3 - 2 * frac)
       return sorted[i].speed + (sorted[i + 1].speed - sorted[i].speed) * smooth
     }

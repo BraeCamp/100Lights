@@ -85,15 +85,18 @@ const SCHEDULER_INTERVAL = 25    // ms
 const PREFETCH_LOOKAHEAD = 2.5   // seconds
 
 function interpolateAutomation(lane: AutomationLane, beat: number): number {
+  const range = lane.max - lane.min
   if (lane.points.length === 0) {
-    return (lane.defaultValue - lane.min) / (lane.max - lane.min)
+    return range === 0 ? 0 : (lane.defaultValue - lane.min) / range   // guard max===min → NaN into an AudioParam
   }
   const sorted = [...lane.points].sort((a, b) => a.beat - b.beat)
   if (beat <= sorted[0].beat) return sorted[0].value
   if (beat >= sorted[sorted.length - 1].beat) return sorted[sorted.length - 1].value
   for (let i = 1; i < sorted.length; i++) {
     if (beat <= sorted[i].beat) {
-      const t = (beat - sorted[i - 1].beat) / (sorted[i].beat - sorted[i - 1].beat)
+      const span = sorted[i].beat - sorted[i - 1].beat
+      if (span === 0) return sorted[i].value   // duplicate-beat points → avoid 0/0
+      const t = (beat - sorted[i - 1].beat) / span
       return sorted[i - 1].value + t * (sorted[i].value - sorted[i - 1].value)
     }
   }

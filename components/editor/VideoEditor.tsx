@@ -3137,7 +3137,7 @@ export default function VideoEditor({
     savedStatusTimerRef.current = setTimeout(() => setSaveStatus('idle'), 3000)
   }
 
-  function handleRestore() {
+  async function handleRestore() {
     if (!recovery) return
     const loaded = deserialize(recovery.cfproj)
     carryoverRef.current = {
@@ -3148,11 +3148,25 @@ export default function VideoEditor({
       moduleSavedAt: recovery.cfproj.moduleSavedAt ?? carryoverRef.current.moduleSavedAt,
     }
     const loadedTracks = loaded.tracks.filter(t => t.type !== 'caption')
+    // Re-resolve media the same way loadCfproj does — deserialize strips urls, so
+    // without this every restored clip would be orphaned (shown offline) even
+    // though its media is still in R2.
+    const urlMap = await resolveR2Keys(recovery.cfproj.media)
+    const patchedItems = loaded.timelineItems.map(item => {
+      const clip = recovery.cfproj.clips.find(c => c.id === item.id)
+      const signedUrl = clip?.mediaRefId ? urlMap.get(clip.mediaRefId) : undefined
+      return signedUrl ? { ...item, url: signedUrl } : item
+    })
+    const resolvedMedia: import('@/lib/editor-types').MediaItem[] = recovery.cfproj.media.map(m => ({
+      id: m.id, name: m.name, contentType: m.contentType, duration: m.duration,
+      url: urlMap.get(m.id), r2Key: m.r2Key, uploadStatus: m.r2Key ? 'uploaded' as const : undefined,
+    }))
     setLocalProjectName(loaded.name)
     setTracks(loadedTracks)
     tracksRef.current = loadedTracks
-    setTimelineItemsRaw(loaded.timelineItems)
-    timelineItemsRef.current = loaded.timelineItems
+    setTimelineItemsRaw(patchedItems)
+    timelineItemsRef.current = patchedItems
+    setMediaItems(resolvedMedia)
     setZoomLevel(loaded.zoomLevel)
     setLocalCaptions(loaded.captions)
     captionsRef.current = loaded.captions
@@ -3163,7 +3177,7 @@ export default function VideoEditor({
     const restoredAdj = loaded.adjustments ?? DEFAULT_ADJUSTMENTS
     setAdjustments(restoredAdj)
     adjustmentsRef.current = restoredAdj
-    resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: restoredAdj, captions: loaded.captions })
+    resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: restoredAdj, captions: loaded.captions })
     // Cloud autosave: clear it now that we've loaded it (manual save will write fresh data)
     if (recovery.source === 'cloud' && projectId) {
       fetch(`/api/projects/${projectId}/autosave`, { method: 'DELETE' }).catch(() => {})
