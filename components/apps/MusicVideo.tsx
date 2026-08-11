@@ -264,55 +264,96 @@ function MusicVideoApp() {
 // delay buffers recent frames so visuals can be nudged to line up with sound that
 // reaches the room late over Bluetooth to a TV/projector.
 type LiveStyle = 'bars' | 'radial' | 'wave'
+interface LiveOpts { style: LiveStyle; color: string; gain: number; mirror: boolean; glow: boolean; trail: boolean }
 
-function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, style: LiveStyle, accent: string) {
+// Nudge a hex colour toward white (for gradient tops / highlights).
+function lighten(hex: string, amt: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return hex
+  const n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
+  const L = (c: number) => Math.round(c + (255 - c) * amt)
+  return `rgb(${L(r)}, ${L(g)}, ${L(b)})`
+}
+function fillRR(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  if (w <= 0 || h <= 0) return
+  const rad = Math.min(r, w / 2, h / 2)
+  if (typeof ctx.roundRect === 'function') { ctx.beginPath(); ctx.roundRect(x, y, w, h, rad); ctx.fill() }
+  else ctx.fillRect(x, y, w, h)
+}
+
+function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: LiveOpts) {
   const dpr = Math.min(2, (typeof devicePixelRatio === 'number' ? devicePixelRatio : 1))
   const w = cv.clientWidth, h = cv.clientHeight
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr) }
   const ctx = cv.getContext('2d'); if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  ctx.clearRect(0, 0, w, h)
-  ctx.fillStyle = '#08070d'; ctx.fillRect(0, 0, w, h)
-  const n = freq.length
-  const level = freq.reduce((s, v) => s + v, 0) / (n * 255)  // 0..1 overall energy
-  if (style === 'bars') {
-    const bars = 48
-    const bw = w / bars
-    for (let i = 0; i < bars; i++) {
-      const idx = Math.floor((i / bars) * (n * 0.7))
-      const v = freq[idx] / 255
-      const bh = Math.max(2, v * h * 0.92)
-      ctx.fillStyle = accent
-      ctx.globalAlpha = 0.35 + v * 0.65
-      ctx.fillRect(i * bw + 1, h - bh, bw - 2, bh)
+  ctx.globalAlpha = 1
+  // Trails: paint a translucent wash instead of clearing, so motion leaves a soft comet tail.
+  ctx.fillStyle = o.trail ? 'rgba(8,7,13,0.30)' : '#08070d'
+  ctx.fillRect(0, 0, w, h)
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+  ctx.shadowBlur = o.glow ? Math.max(6, Math.min(w, h) * 0.03) : 0
+  ctx.shadowColor = o.color
+
+  const n = freq.length, g = o.gain
+  // Perceptual frequency sampling — spreads bass/mid/treble evenly instead of bunching low.
+  const samp = (t: number) => {
+    const idx = Math.min(n - 1, Math.max(0, Math.floor(Math.pow(t, 1.7) * n * 0.85)))
+    return Math.min(1, (freq[idx] / 255) * g)
+  }
+  let sum = 0; for (let i = 0; i < n; i++) sum += freq[i]
+  const level = Math.min(1, (sum / (n * 255)) * g)
+
+  if (o.style === 'bars') {
+    const grad = ctx.createLinearGradient(0, 0, 0, h)
+    grad.addColorStop(0, lighten(o.color, 0.55)); grad.addColorStop(1, o.color)
+    ctx.fillStyle = grad
+    if (o.mirror) {
+      const half = 30, bw = (w / 2) / half
+      for (let i = 0; i < half; i++) {
+        const bh = Math.max(3, samp(i / half) * h * 0.92)
+        fillRR(ctx, w / 2 + i * bw + 1, h - bh, bw - 2, bh, bw / 2)
+        fillRR(ctx, w / 2 - (i + 1) * bw + 1, h - bh, bw - 2, bh, bw / 2)
+      }
+    } else {
+      const count = 60, bw = w / count
+      for (let i = 0; i < count; i++) {
+        const bh = Math.max(3, samp(i / count) * h * 0.92)
+        fillRR(ctx, i * bw + 1, h - bh, bw - 2, bh, bw / 2)
+      }
     }
-    ctx.globalAlpha = 1
-  } else if (style === 'radial') {
+  } else if (o.style === 'radial') {
     const cx = w / 2, cy = h / 2
-    const R = Math.min(w, h) * 0.18 * (1 + level * 0.9)
-    const spokes = 72
-    ctx.lineWidth = Math.max(2, Math.min(w, h) / 220)
-    ctx.strokeStyle = accent
-    for (let i = 0; i < spokes; i++) {
-      const idx = Math.floor((i / spokes) * (n * 0.6))
-      const v = freq[idx] / 255
-      const a = (i / spokes) * Math.PI * 2
-      const len = R + v * Math.min(w, h) * 0.36
-      ctx.globalAlpha = 0.25 + v * 0.75
-      ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len); ctx.stroke()
+    const base = Math.min(w, h) * 0.16 * (1 + level * 0.7)
+    const amp = Math.min(w, h) * 0.34
+    const pts = 120
+    ctx.beginPath()
+    for (let i = 0; i <= pts; i++) {
+      const t = i / pts
+      const r = base + samp(t < 0.5 ? t * 2 : (1 - t) * 2) * amp   // symmetric around the circle
+      const a = t * Math.PI * 2 - Math.PI / 2
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)
     }
-    ctx.globalAlpha = 1
+    ctx.closePath()
+    const rg = ctx.createRadialGradient(cx, cy, base * 0.5, cx, cy, base + amp)
+    rg.addColorStop(0, lighten(o.color, 0.4)); rg.addColorStop(1, o.color)
+    ctx.fillStyle = rg; ctx.globalAlpha = 0.3; ctx.fill()
+    ctx.globalAlpha = 1; ctx.lineWidth = Math.max(2, Math.min(w, h) / 260); ctx.strokeStyle = lighten(o.color, 0.35); ctx.stroke()
   } else {
-    ctx.lineWidth = Math.max(2, Math.min(w, h) / 240)
-    ctx.strokeStyle = accent
+    ctx.lineWidth = Math.max(2.5, Math.min(w, h) / 200)
+    ctx.strokeStyle = lighten(o.color, 0.3)
     ctx.beginPath()
     for (let i = 0; i < wave.length; i++) {
       const x = (i / (wave.length - 1)) * w
-      const y = h / 2 + ((wave[i] - 128) / 128) * h * 0.42
+      const y = h / 2 + ((wave[i] - 128) / 128) * g * h * 0.42
       i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)
     }
     ctx.stroke()
+    ctx.lineTo(w, h / 2); ctx.lineTo(0, h / 2); ctx.closePath()
+    ctx.globalAlpha = 0.12; ctx.fillStyle = o.color; ctx.fill(); ctx.globalAlpha = 1
   }
+  ctx.shadowBlur = 0
 }
 
 function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void }) {
@@ -324,6 +365,13 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
   const [delayMs, setDelayMs] = useState(0)
   const [err, setErr] = useState<string | null>(null)
   const [fs, setFs] = useState(false)
+  // Customization
+  const [color, setColor] = useState(accent)
+  const [gain, setGain] = useState(1.3)
+  const [smoothing, setSmoothing] = useState(0.82)
+  const [mirror, setMirror] = useState(false)
+  const [glow, setGlow] = useState(true)
+  const [trail, setTrail] = useState(true)
 
   const audioRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
@@ -331,9 +379,11 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
   const rafRef = useRef<number | null>(null)
   const wakeRef = useRef<{ release: () => Promise<void> } | null>(null)
   const bufRef = useRef<Array<{ t: number; freq: Uint8Array; wave: Uint8Array }>>([])
-  const styleRef = useRef(style); useEffect(() => { styleRef.current = style }, [style])
-  const accentRef = useRef(accent); useEffect(() => { accentRef.current = accent }, [accent])
+  const optsRef = useRef<LiveOpts>({ style, color, gain, mirror, glow, trail })
+  useEffect(() => { optsRef.current = { style, color, gain, mirror, glow, trail } }, [style, color, gain, mirror, glow, trail])
   const delayRef = useRef(delayMs); useEffect(() => { delayRef.current = delayMs }, [delayMs])
+  const smoothingRef = useRef(smoothing)
+  useEffect(() => { smoothingRef.current = smoothing; if (analyserRef.current) analyserRef.current.smoothingTimeConstant = smoothing }, [smoothing])
 
   const wake = useCallback(async () => {
     try { wakeRef.current = await (navigator as unknown as { wakeLock?: { request: (t: string) => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen') ?? null } catch { /* unsupported */ }
@@ -358,18 +408,21 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
         // sound is only possible through the screen-share prompt (a platform security rule). We
         // keep ONLY the audio and drop the video track immediately, so nothing is recorded.
         if (!md.getDisplayMedia) throw new Error('Capturing another app’s sound needs a desktop browser. On a phone, use the microphone and point it at the speaker.')
+        // Must request video too (Chrome only offers "Share tab audio" alongside a tab/screen),
+        // but we KEEP the whole stream alive — stopping the video track ends the share and kills
+        // the audio with it. We simply never render the video.
         stream = await md.getDisplayMedia({ video: true, audio: true })
-        if (!stream.getAudioTracks().length) { stream.getTracks().forEach(t => t.stop()); throw new Error('No audio was shared — in the picker choose a tab and turn on “Share tab audio”.') }
-        stream.getVideoTracks().forEach(t => t.stop())   // audio-only from here on
+        if (!stream.getAudioTracks().length) { stream.getTracks().forEach(t => t.stop()); throw new Error('No audio was shared. In the picker, pick a browser tab (not a window) and turn on “Share tab audio”.') }
       } else {
         stream = await md.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
       }
       streamRef.current = stream
+      stream.getTracks().forEach(t => t.addEventListener('ended', () => stop()))   // user hit "Stop sharing"
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       const ctx = new AC(); audioRef.current = ctx
       await ctx.resume().catch(() => {})
       const node = ctx.createMediaStreamSource(stream)
-      const an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0.78
+      const an = ctx.createAnalyser(); an.fftSize = 2048; an.smoothingTimeConstant = smoothingRef.current
       node.connect(an); analyserRef.current = an
       setSource(src); setRunning(true)
       void wake()
@@ -385,7 +438,7 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
           const target = now - delayRef.current
           let f = buf[buf.length - 1]
           for (let i = buf.length - 1; i >= 0; i--) { if (buf[i].t <= target) { f = buf[i]; break } }
-          drawLive(cv, f.freq, f.wave, styleRef.current, accentRef.current)
+          drawLive(cv, f.freq, f.wave, optsRef.current)
         }
         rafRef.current = requestAnimationFrame(draw)
       }
@@ -446,6 +499,31 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
           ))}
         </div>
       </Section>
+      <Section label="Colour">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
+          {['#a78bfa', '#22d3ee', '#34d399', '#f472b6', '#fbbf24', '#60a5fa', '#f43f5e', '#ffffff'].map(c => (
+            <button key={c} type="button" onClick={() => setColor(c)} aria-label={c}
+              style={{ width: 26, height: 26, borderRadius: 999, background: c, border: color.toLowerCase() === c ? '2px solid #fff' : '2px solid var(--border)', cursor: 'pointer', padding: 0 }} />
+          ))}
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+            Custom
+            <input type="color" value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#a78bfa'} onChange={e => setColor(e.target.value)} style={{ width: 34, height: 26, padding: 0, border: '1px solid var(--border)', borderRadius: 7, background: 'none', cursor: 'pointer' }} />
+          </label>
+        </div>
+      </Section>
+
+      <Section label="Feel">
+        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 14 }}>
+          <button type="button" onClick={() => setMirror(v => !v)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: mirror ? 'var(--accent)' : 'var(--bg-card)', color: mirror ? '#0e0d12' : 'var(--text-secondary)' }}>Mirror</button>
+          <button type="button" onClick={() => setGlow(v => !v)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: glow ? 'var(--accent)' : 'var(--bg-card)', color: glow ? '#0e0d12' : 'var(--text-secondary)' }}>Glow</button>
+          <button type="button" onClick={() => setTrail(v => !v)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: trail ? 'var(--accent)' : 'var(--bg-card)', color: trail ? '#0e0d12' : 'var(--text-secondary)' }}>Trails</button>
+        </div>
+        <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 5 }}>Sensitivity</label>
+        <input type="range" min={0.5} max={2.6} step={0.1} value={gain} onChange={e => setGain(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
+        <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '12px 0 5px' }}>Smoothness</label>
+        <input type="range" min={0} max={0.95} step={0.01} value={smoothing} onChange={e => setSmoothing(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
+      </Section>
+
       <Section label={`Sync delay — ${delayMs} ms`}>
         <input type="range" min={0} max={600} step={10} value={delayMs} onChange={e => setDelayMs(parseInt(e.target.value, 10))} style={{ width: '100%', maxWidth: 320 }} />
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0' }}>Nudge the visuals later to match sound that reaches the room a beat behind — e.g. streaming to a TV or Bluetooth speaker.</p>
