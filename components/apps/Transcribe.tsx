@@ -5,13 +5,14 @@
 // notes you can HEAR on any instrument and export (studio / WAV / MIDI). Works on real recordings,
 // not just live singing; fully client-side (no sign-in). Monophonic — best on a single melody line.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, Mic } from 'lucide-react'
+import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, Mic, ChevronLeft } from 'lucide-react'
 import { audioToNotes } from '@/lib/audio-to-midi'
 import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
 import { writeMidiFile } from '@/lib/midi-file'
 import { DawEngine } from '@/lib/daw-engine'
 import { POLY_PRESETS, type MidiNote, type TrackInstrument, defaultPolyInstrument } from '@/lib/daw-types'
 import AppChrome from '@/components/apps/AppChrome'
+import TranscribeHome from '@/components/apps/TranscribeHome'
 import NoteEditor from '@/components/apps/NoteEditor'
 
 const INSTRUMENTS = ['Default', 'Super Saw', 'Glass Pluck', 'Cold Pad', 'Brass Pad', 'Darkwave Lead']
@@ -19,8 +20,25 @@ const INSTRUMENTS = ['Default', 'Super Saw', 'Glass Pluck', 'Cold Pad', 'Brass P
 export default function Transcribe() {
   return (
     <AppChrome slug="transcribe">
-      <TranscribeApp />
+      <TranscribeShell />
     </AppChrome>
+  )
+}
+
+// Bespoke Home first, then the tool (Home button in the wrapper; the tool is untouched).
+function TranscribeShell() {
+  const [view, setView] = useState<'home' | 'tool'>('home')
+  if (view === 'home') return <TranscribeHome onStart={() => setView('tool')} />
+  return (
+    <>
+      <div className="max-w-2xl mx-auto" style={{ padding: '14px 18px 0' }}>
+        <button type="button" onClick={() => setView('home')}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+          <ChevronLeft size={16} /> Home
+        </button>
+      </div>
+      <TranscribeApp />
+    </>
   )
 }
 

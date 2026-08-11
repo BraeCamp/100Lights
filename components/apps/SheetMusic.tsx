@@ -5,7 +5,7 @@
 // and you HEAR it — play it back on any instrument, see the notes on a mini piano-roll, then open
 // it in the 100Lights studio, or export WAV / MIDI. Reuses the real audio engine + project model.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic } from 'lucide-react'
+import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, ChevronLeft } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { importSheetMusic, SHEET_MUSIC_ACCEPT } from '@/lib/sheet-music'
 import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
@@ -13,6 +13,7 @@ import { writeMidiFile } from '@/lib/midi-file'
 import { DawEngine } from '@/lib/daw-engine'
 import { POLY_PRESETS, type MidiNote, type TrackInstrument, defaultPolyInstrument } from '@/lib/daw-types'
 import AppChrome from '@/components/apps/AppChrome'
+import SheetMusicHome from '@/components/apps/SheetMusicHome'
 import NoteEditor from '@/components/apps/NoteEditor'
 
 const INSTRUMENTS = ['Default', 'Super Saw', 'Glass Pluck', 'Cold Pad', 'Brass Pad', 'Darkwave Lead']
@@ -20,8 +21,25 @@ const INSTRUMENTS = ['Default', 'Super Saw', 'Glass Pluck', 'Cold Pad', 'Brass P
 export default function SheetMusic() {
   return (
     <AppChrome slug="sheetmusic">
-      <SheetMusicApp />
+      <SheetMusicShell />
     </AppChrome>
+  )
+}
+
+// Bespoke Home first, then the tool (Home button in the wrapper; the tool is untouched).
+function SheetMusicShell() {
+  const [view, setView] = useState<'home' | 'tool'>('home')
+  if (view === 'home') return <SheetMusicHome onStart={() => setView('tool')} />
+  return (
+    <>
+      <div className="max-w-2xl mx-auto" style={{ padding: '14px 18px 0' }}>
+        <button type="button" onClick={() => setView('home')}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+          <ChevronLeft size={16} /> Home
+        </button>
+      </div>
+      <SheetMusicApp />
+    </>
   )
 }
 
