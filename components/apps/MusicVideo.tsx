@@ -19,6 +19,7 @@ import { FORMATS } from '@/lib/song-video/formats.mjs'
 import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
+import { BG_LIBRARY, BG_CATEGORIES, clipsByCategory, type BgClip, type BgCategory } from '@/lib/bg-library'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
 const FONTS = ['system-ui', 'Georgia, serif', 'ui-monospace, monospace', 'Impact, sans-serif']
@@ -497,23 +498,33 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const [glow, setGlow] = useState(true)
   const [trail, setTrail] = useState(true)
   // Background layer + filters + "no audio" ambient mode
-  const [bgKind, setBgKind] = useState<'none' | 'media' | string>('none')   // 'none' | ambient id | 'media'
+  const [bgKind, setBgKind] = useState<'none' | 'media' | 'library' | string>('none')   // 'none' | ambient id | 'media' | 'library'
   const [bgUrl, setBgUrl] = useState<string | null>(null)
   const [bgVideo, setBgVideo] = useState(false)
+  const [bgClip, setBgClip] = useState<BgClip | null>(null)
+  const [bgCat, setBgCat] = useState<BgCategory>(BG_CATEGORIES[0])
   const [reactive, setReactive] = useState(true)
+  const [matchVisuals, setMatchVisuals] = useState(true)   // tint the background with the palette
+  const [eqFilters, setEqFilters] = useState(false)        // make the filters react to the audio
   const [blur, setBlur] = useState(0)
   const [brightness, setBrightness] = useState(1)
   const [saturate, setSaturate] = useState(1)
   const [hueRot, setHueRot] = useState(0)
   const bgInputRef = useRef<HTMLInputElement | null>(null)
+  const bgFilterRef = useRef<HTMLDivElement | null>(null)  // filters applied here; EQ mode drives it per frame
   const ambient = AMBIENTS.find(a => a.id === bgKind)
-  const hasBg = bgKind === 'media' ? !!bgUrl : !!ambient
+  const hasBg = bgKind === 'media' ? !!bgUrl : bgKind === 'library' ? !!bgClip : !!ambient
   const bgFilter = `blur(${blur}px) brightness(${brightness}) saturate(${saturate}) hue-rotate(${hueRot}deg)`
   const pickBgFile = useCallback((f: File) => {
     setBgUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
     setBgVideo(f.type.startsWith('video/')); setBgKind('media')
   }, [])
   useEffect(() => () => { if (bgUrl) URL.revokeObjectURL(bgUrl) }, [bgUrl])
+  // EQ-filter driver: the draw loop reads this; when off (or no audio), the static filter applies.
+  const eqRef = useRef({ on: false, blur, brightness, saturate, hueRot })
+  useEffect(() => { eqRef.current = { on: eqFilters && reactive, blur, brightness, saturate, hueRot } }, [eqFilters, reactive, blur, brightness, saturate, hueRot])
+  // Restore the static filter whenever EQ mode is off (the loop may have left an imperative value).
+  useEffect(() => { if ((!eqFilters || !reactive) && bgFilterRef.current) bgFilterRef.current.style.filter = bgFilter }, [eqFilters, reactive, bgFilter])
 
   useEffect(() => { try { const r = localStorage.getItem('musicvideo-colorpresets'); if (r) setPresets(JSON.parse(r)) } catch { /* off */ } }, [])
   const savePreset = useCallback(() => {
@@ -593,6 +604,13 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
           let f = buf[buf.length - 1]
           for (let i = buf.length - 1; i >= 0; i--) { if (buf[i].t <= target) { f = buf[i]; break } }
           drawLive(cv, f.freq, f.wave, optsRef.current)
+          // Filters interacting with the EQ — pulse brightness/saturation, sharpen on energy.
+          const eq = eqRef.current
+          if (eq.on && bgFilterRef.current) {
+            let s = 0; for (let i = 0; i < f.freq.length; i++) s += f.freq[i]
+            const level = Math.min(1, (s / (f.freq.length * 255)) * optsRef.current.gain)
+            bgFilterRef.current.style.filter = `blur(${(eq.blur * (1 - level * 0.4)).toFixed(1)}px) brightness(${(eq.brightness * (0.7 + level * 0.75)).toFixed(2)}) saturate(${(eq.saturate * (0.85 + level * 0.7)).toFixed(2)}) hue-rotate(${Math.round(eq.hueRot + level * 55)}deg)`
+          }
         }
         rafRef.current = requestAnimationFrame(draw)
       }
@@ -625,12 +643,27 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
     <div>
       <style>{`@keyframes mv-amb{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}} .mv-ambient{animation:mv-amb 16s ease-in-out infinite}`}</style>
       <div ref={wrapRef} style={{ position: 'relative', width: '100%', aspectRatio: fs ? undefined : '16 / 9', height: fs ? '100dvh' : undefined, borderRadius: fs ? 0 : 14, overflow: 'hidden', background: '#08070d', border: fs ? 'none' : '1px solid var(--border)' }}>
-        {/* Background layer — an ambient gradient or your own photo/video, with filters */}
-        {hasBg && (bgKind === 'media'
-          ? (bgVideo
-            ? <video src={bgUrl ?? undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: bgFilter }} />
-            : <img src={bgUrl ?? undefined} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: bgFilter }} />)
-          : <div className="mv-ambient" style={{ position: 'absolute', inset: 0, backgroundImage: ambient?.css, backgroundSize: '240% 240%', filter: bgFilter }} />)}
+        {/* Background layer — ambient gradient, library clip (streamed), or your own upload; filtered here */}
+        {hasBg && (
+          <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter }}>
+            {bgKind === 'media' ? (
+              bgVideo
+                ? <video src={bgUrl ?? undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                : <img src={bgUrl ?? undefined} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : bgKind === 'library' && bgClip ? (
+              <>
+                {/* poster/tint shows offline or until the clip streams in */}
+                <div style={{ position: 'absolute', inset: 0, backgroundImage: bgClip.tint, backgroundSize: 'cover' }} />
+                <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                <video key={bgClip.id} src={bgClip.src} poster={bgClip.preview} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+              </>
+            ) : (
+              <div className="mv-ambient" style={{ position: 'absolute', inset: 0, backgroundImage: ambient?.css, backgroundSize: '240% 240%' }} />
+            )}
+            {/* Palette match — tint the background toward the visualizer colours */}
+            {matchVisuals && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(120deg, ${colors.join(', ')})`, mixBlendMode: 'overlay', opacity: 0.5, pointerEvents: 'none' }} />}
+          </div>
+        )}
 
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: reactive ? 'block' : 'none' }} />
 
@@ -724,10 +757,16 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
       </Section>
 
       <Section label="Background">
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={reactive} onChange={e => setReactive(e.target.checked)} /> Audio-reactive visuals
-        </label>
-        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '6px 0 12px' }}>Turn this off to just play a background with filters — no audio needed.</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 6 }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={reactive} onChange={e => setReactive(e.target.checked)} /> Audio-reactive visuals
+          </label>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={matchVisuals} onChange={e => setMatchVisuals(e.target.checked)} /> Match my palette
+          </label>
+        </div>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>Reactive off = play a background with filters, no audio. Match tints the background toward your visualizer colours.</p>
+
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <button type="button" onClick={() => setBgKind('none')} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgKind === 'none' ? 'var(--accent)' : 'var(--bg-card)', color: bgKind === 'none' ? '#0e0d12' : 'var(--text-secondary)' }}>None</button>
           {AMBIENTS.map(a => (
@@ -737,11 +776,36 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
           <button type="button" onClick={() => bgInputRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgKind === 'media' ? 'var(--accent)' : 'var(--bg-card)', color: bgKind === 'media' ? '#0e0d12' : 'var(--text-secondary)' }}><Upload size={13} /> Upload</button>
           <input ref={bgInputRef} type="file" accept="video/*,image/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) pickBgFile(f); e.currentTarget.value = '' }} />
         </div>
-        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0 0' }}>Upload your own photo or clip (aerial, beach, mountains…). A curated video library can be added once the clips are hosted.</p>
+
+        {/* Streamed video library */}
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '16px 0 8px' }}>Library — streams online, low-res preview offline:</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+          {BG_CATEGORIES.map(cat => (
+            <button key={cat} type="button" onClick={() => setBgCat(cat)} style={{ padding: '6px 11px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgCat === cat ? 'var(--accent)' : 'var(--bg-card)', color: bgCat === cat ? '#0e0d12' : 'var(--text-secondary)' }}>{cat}</button>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 8 }}>
+          {clipsByCategory(bgCat).map(clip => {
+            const active = bgKind === 'library' && bgClip?.id === clip.id
+            return (
+              <button key={clip.id} type="button" onClick={() => { setBgClip(clip); setBgKind('library') }} title={clip.title}
+                style={{ position: 'relative', aspectRatio: '16 / 10', borderRadius: 9, overflow: 'hidden', padding: 0, cursor: 'pointer', border: active ? '2px solid var(--accent)' : '1px solid var(--border)', backgroundImage: clip.tint, backgroundSize: 'cover' }}>
+                <img src={clip.preview} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '3px 5px', fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'linear-gradient(0deg, rgba(0,0,0,0.65), transparent)', textAlign: 'left' }}>{clip.title}</span>
+              </button>
+            )
+          })}
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0 0' }}>Library clips stream from the cloud; a low-res preview is cached for offline. Or upload your own.</p>
       </Section>
 
       {hasBg && (
         <Section label="Background filters">
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: reactive ? 'pointer' : 'not-allowed', opacity: reactive ? 1 : 0.5, marginBottom: 12 }}>
+            <input type="checkbox" checked={eqFilters} onChange={e => setEqFilters(e.target.checked)} disabled={!reactive} /> React to the audio (EQ)
+          </label>
+          {eqFilters && reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-6px 0 12px' }}>Brightness &amp; saturation pulse with the music; the sliders set the baseline.</p>}
+          {!reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-6px 0 12px' }}>Turn on audio-reactive visuals to make filters react.</p>}
           <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Blur — {blur}px</label>
           <input type="range" min={0} max={24} step={1} value={blur} onChange={e => setBlur(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
           <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Brightness</label>
