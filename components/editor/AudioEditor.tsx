@@ -1874,18 +1874,20 @@ export default function AudioEditor(props: AudioEditorProps) {
               >
                 <FolderOpen size={15} />
               </a>
-              {/* Open a project file, or import media into a new video project */}
+              {/* Open a project file, or import media into a new video project.
+                  Tinted (not muted) so it reads as an action in the icon rail. */}
               <button
                 onClick={handleOpenImport}
                 title="Open / Import Files — open a project (.cfproj / .zip) or import media"
                 style={{
-                  width: 28, height: 28, borderRadius: 6, marginBottom: 6, flexShrink: 0, cursor: 'pointer', border: 'none',
+                  width: 28, height: 28, borderRadius: 6, marginBottom: 6, flexShrink: 0, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'transparent', color: 'var(--text-muted)',
+                  background: 'rgb(var(--accent-rgb) / 0.10)', color: 'var(--accent-light)',
+                  border: '1px solid rgb(var(--accent-rgb) / 0.30)',
                   transition: 'background 0.12s, color 0.12s',
                 }}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.20)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgb(var(--accent-rgb) / 0.10)' }}
               >
                 <Upload size={15} />
               </button>
