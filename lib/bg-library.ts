@@ -36,6 +36,13 @@ const GENERATIVE: { id: string; title: string; tint: string }[] = [
   { id: 'bokeh-lights', title: 'Bokeh lights', tint: 'linear-gradient(135deg,#4c1d95,#22d3ee)' },
   { id: 'bokeh-warm', title: 'Warm bokeh', tint: 'linear-gradient(135deg,#7c2d12,#fbbf24)' },
   { id: 'synthwave-grid', title: 'Synthwave', tint: 'linear-gradient(135deg,#7c3aed,#db2777)' },
+  { id: 'particles-cyan', title: 'Particles', tint: 'linear-gradient(135deg,#0891b2,#a78bfa)' },
+  { id: 'waves-blue', title: 'Blue waves', tint: 'linear-gradient(135deg,#0369a1,#38bdf8)' },
+  { id: 'liquid-magma', title: 'Magma', tint: 'linear-gradient(135deg,#7c2d12,#fbbf24)' },
+  { id: 'starfield-deep', title: 'Starfield', tint: 'linear-gradient(135deg,#1e1b4b,#db2777)' },
+  { id: 'plasma-neon', title: 'Plasma', tint: 'linear-gradient(135deg,#22d3ee,#f472b6)' },
+  { id: 'plasma-sunset', title: 'Sunset plasma', tint: 'linear-gradient(135deg,#f59e0b,#7c3aed)' },
+  { id: 'mountains-dusk', title: 'Mountains', tint: 'linear-gradient(135deg,#7c3aed,#fbbf24)' },
 ]
 
 // Curated nature clips — stream online; poster cached offline.

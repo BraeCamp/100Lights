@@ -7,7 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload, Download, DownloadCloud, Check } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -21,6 +21,7 @@ import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
 import { BG_CATEGORIES, clipsByCategory, clipById, type BgClip, type BgCategory } from '@/lib/bg-library'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
+import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '@/lib/offline-media'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
 const FONTS = ['system-ui', 'Georgia, serif', 'ui-monospace, monospace', 'Impact, sans-serif']
@@ -513,6 +514,11 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const [hueRot, setHueRot] = useState(0)
   const bgInputRef = useRef<HTMLInputElement | null>(null)
   const bgFilterRef = useRef<HTMLDivElement | null>(null)  // filters applied here; EQ mode drives it per frame
+  // Offline save/download for the selected library clip
+  const [savedCurrent, setSavedCurrent] = useState(false)
+  const [savingBg, setSavingBg] = useState(false)
+  const [bgSrcOverride, setBgSrcOverride] = useState<string | null>(null)   // local blob URL when saved offline
+  const overrideRef = useRef<string | null>(null)
   const ambient = AMBIENTS.find(a => a.id === bgKind)
   const hasBg = bgKind === 'media' ? !!bgUrl : bgKind === 'library' ? !!bgClip : !!ambient
   const bgFilter = `blur(${blur}px) brightness(${brightness}) saturate(${saturate}) hue-rotate(${hueRot}deg)`
@@ -521,6 +527,34 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
     setBgVideo(f.type.startsWith('video/')); setBgKind('media')
   }, [])
   useEffect(() => () => { if (bgUrl) URL.revokeObjectURL(bgUrl) }, [bgUrl])
+  // When a library clip is selected, use its offline copy if it's been saved (no network needed).
+  useEffect(() => {
+    let cancelled = false
+    const revoke = () => { if (overrideRef.current) { URL.revokeObjectURL(overrideRef.current); overrideRef.current = null } }
+    if (bgKind !== 'library' || !bgClip) { revoke(); setBgSrcOverride(null); setSavedCurrent(false); return }
+    ;(async () => {
+      const url = await localUrl(bgClip.src)
+      if (cancelled) { if (url) URL.revokeObjectURL(url); return }
+      revoke(); overrideRef.current = url; setBgSrcOverride(url)
+      setSavedCurrent(url ? true : await hasAsset(bgClip.src))
+    })()
+    return () => { cancelled = true }
+  }, [bgKind, bgClip])
+  useEffect(() => () => { if (overrideRef.current) URL.revokeObjectURL(overrideRef.current) }, [])
+  const saveBgOffline = useCallback(async () => {
+    if (!bgClip) return
+    setSavingBg(true)
+    const ok = await saveAssets(bgClip.kind === 'video' ? [bgClip.src, bgClip.preview] : [bgClip.src])
+    if (ok) { const url = await localUrl(bgClip.src); if (overrideRef.current) URL.revokeObjectURL(overrideRef.current); overrideRef.current = url; setBgSrcOverride(url); setSavedCurrent(true) }
+    setSavingBg(false)
+  }, [bgClip])
+  const removeBgOffline = useCallback(async () => {
+    if (!bgClip) return
+    await removeAssets([bgClip.src, bgClip.preview])
+    if (overrideRef.current) { URL.revokeObjectURL(overrideRef.current); overrideRef.current = null }
+    setBgSrcOverride(null); setSavedCurrent(false)
+  }, [bgClip])
+  const downloadBg = useCallback(() => { if (bgClip) downloadToDevice(bgClip.src, `${bgClip.id}.${bgClip.kind === 'video' ? 'mp4' : 'jpg'}`) }, [bgClip])
   // EQ-filter driver: the draw loop reads this; when off (or no audio), the static filter applies.
   const eqRef = useRef({ on: false, blur, brightness, saturate, hueRot })
   useEffect(() => { eqRef.current = { on: eqFilters && reactive, blur, brightness, saturate, hueRot } }, [eqFilters, reactive, blur, brightness, saturate, hueRot])
@@ -676,11 +710,11 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
                 {/* tint fallback shows offline or until the asset loads */}
                 <div style={{ position: 'absolute', inset: 0, backgroundImage: bgClip.tint, backgroundSize: 'cover' }} />
                 {bgClip.kind === 'image' ? (
-                  <img key={bgClip.id} src={bgClip.src} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                  <img key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video key={bgClip.id} src={bgClip.src} poster={bgClip.preview} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
                   </>
                 )}
               </>
@@ -839,6 +873,20 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
           })}
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0 0' }}>Library clips stream from the cloud; a low-res preview is cached for offline. Or upload your own.</p>
+
+        {/* Offline: save the selected background to the device */}
+        {bgKind === 'library' && bgClip && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>{bgClip.title}:</span>
+            {savedCurrent ? (
+              <button type="button" onClick={removeBgOffline} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: '#34d399' }}><Check size={13} /> Saved offline · remove</button>
+            ) : (
+              <button type="button" onClick={saveBgOffline} disabled={savingBg} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', opacity: savingBg ? 0.6 : 1 }}><DownloadCloud size={13} /> {savingBg ? 'Saving…' : 'Save for offline'}</button>
+            )}
+            <button type="button" onClick={downloadBg} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}><Download size={13} /> Download</button>
+          </div>
+        )}
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0 0' }}>Saved backgrounds play with no connection. Bundled images already work offline once viewed.</p>
       </Section>
 
       {hasBg && (
