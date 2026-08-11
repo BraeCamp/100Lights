@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
-import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2, Link2, RotateCw, ArrowUpRight, ChevronDown } from 'lucide-react'
+import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, AlertTriangle, Library, Music2, Link2, RotateCw, ArrowUpRight, ChevronDown } from 'lucide-react'
 import type { MediaItem } from '@/lib/editor-types'
 import { MEDIA_ACCEPT, validateMediaFile } from '@/lib/media-import'
 import type { ContextMenuItem } from './ContextMenu'
@@ -378,10 +378,15 @@ export default function MediaLibrary({
                         <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                           {item.name}
                         </div>
-                        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          {item.contentType} · {formatDur(item.duration)}
+                        <div className="text-xs" style={{ color: item.warn ? '#f59e0b' : 'var(--text-muted)' }}>
+                          {item.warn ? 'can’t preview — codec unsupported' : `${item.contentType} · ${formatDur(item.duration)}`}
                         </div>
                       </div>
+                      {item.warn && (
+                        <span title={item.warn} style={{ flexShrink: 0, display: 'flex' }}>
+                          <AlertTriangle size={12} color="#f59e0b" />
+                        </span>
+                      )}
                       {statusIcon}
                     </div>
                     {showWave && (

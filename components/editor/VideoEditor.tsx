@@ -713,6 +713,21 @@ export default function VideoEditor({
     setImportError(firstErr)
     if (firstErr) setTimeout(() => setImportError(''), 6000)
   }
+
+  // Safety net: if a file is dropped anywhere OUTSIDE a handled drop zone (a gap,
+  // a portal'd menu, the window chrome), the browser would navigate away and open
+  // the file — destroying the editing session. Swallow stray file drags at the
+  // window so a mis-aimed drop is a no-op instead. Only acts on file drags; the
+  // editor/panel drop handlers run first (during bubbling) and still import.
+  useEffect(() => {
+    const guard = (e: DragEvent) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault()
+    }
+    window.addEventListener('dragover', guard)
+    window.addEventListener('drop', guard)
+    return () => { window.removeEventListener('dragover', guard); window.removeEventListener('drop', guard) }
+  }, [])
+
   const [localProjectName, setLocalProjectName] = useState(projectName)
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState(projectName)
@@ -2634,9 +2649,22 @@ export default function VideoEditor({
     setTranscribeError('')
     setViewportTab(ct === 'audio' ? 'audio' : 'video')
 
-    // Probe duration (fast for local blob URLs) and update the pool entry
+    // Probe duration (fast for local blob URLs) and update the pool entry.
+    // A video whose metadata won't load (duration 0) is one the browser can't
+    // decode — flag it so the pool explains the blank preview instead of looking
+    // silently broken. Server-side transcription can still work; editing needs
+    // an H.264/AAC MP4 (or WebM).
     readDuration(url, ct).then((dur) => {
-      setMediaItems(prev => prev.map(m => m.id === id ? { ...m, duration: dur } : m))
+      const undecodable = !(dur > 0)   // metadata never loaded → browser can't decode it
+      setMediaItems(prev => prev.map(m => m.id === id ? {
+        ...m,
+        duration: dur,
+        warn: undecodable
+          ? (ct === 'video'
+              ? 'This video’s codec isn’t supported for preview in the browser. It still imports and can be transcribed, but to edit/see it here, convert it to an H.264 MP4.'
+              : 'This audio’s codec isn’t supported in the browser. It still imports and can be transcribed; convert it to MP3 or WAV to preview/edit it here.')
+          : m.warn,
+      } : m))
     })
 
     // Capture first frame as thumbnail for video files

@@ -205,6 +205,7 @@ export interface MediaItem {
   r2Key?: string       // R2 object key; set after successful upload
   uploadStatus?: 'uploading' | 'uploaded' | 'error'
   uploadError?: string // the reason, when uploadStatus === 'error' (shown on hover)
+  warn?: string        // non-fatal note (e.g. a video the browser can't preview/decode)
   peaks?: number[]     // audio waveform peak data (0–1 per band, 80 samples)
 }
 

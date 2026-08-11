@@ -890,6 +890,10 @@ export default function Timeline({
                     }}
                     onDragOver={(e) => {
                       if (track.locked || track.type === 'drawfocus') return
+                      // OS file drags aren't placed on a track (they import to the
+                      // pool via the editor-wide handler) — don't show a track drop
+                      // indicator that implies otherwise.
+                      if (e.dataTransfer.types.includes('Files')) return
                       e.preventDefault(); e.dataTransfer.dropEffect = 'copy'
                       const rect = e.currentTarget.getBoundingClientRect()
                       setDropIndicator({ trackId: track.id, x: e.clientX - rect.left })
