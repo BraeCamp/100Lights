@@ -24,13 +24,18 @@ const flag = (n, d) => { const a = argv.find(x => x.startsWith(`--${n}=`)); retu
 const SEG = Math.max(4, Number(flag('seg', '7')))
 const FONT = ['/System/Library/Fonts/Supplemental/Arial Bold.ttf', '/System/Library/Fonts/Supplemental/Arial.ttf', '/Library/Fonts/Arial.ttf'].find(existsSync) || ''
 
-// ── the hook: a catchy 4-bar loop in A minor (vi-IV-I-V), melody stays constant across genres ────────
+// ── the hooks: each is a catchy 4-bar (16-beat) loop that stays CONSTANT across the genres ───────────
 const N = (pitch, startBeat, durationBeats, velocity = 100) => ({ id: uid(), pitch, startBeat, durationBeats, velocity })
-const MELODY = [ // A minor pentatonic hook, 16 beats
-  [76, 0, 1], [74, 1, 1], [72, 2, 1], [69, 3, 1], [72, 4, 2], [69, 6, 2],
-  [77, 8, 1], [76, 9, 1], [74, 10, 1], [72, 11, 1], [74, 12, 2], [69, 14, 2],
-]
-const CHORDS = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]]  // Am F C G, 4 beats each
+const MELODIES = {
+  penta: { name: 'penta', melody: [[76, 0, 1], [74, 1, 1], [72, 2, 1], [69, 3, 1], [72, 4, 2], [69, 6, 2], [77, 8, 1], [76, 9, 1], [74, 10, 1], [72, 11, 1], [74, 12, 2], [69, 14, 2]],
+    chords: [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]] },  // Am F C G — pentatonic hook
+  epic:  { name: 'epic', melody: [[69, 0, 2], [71, 2, 1], [72, 3, 1], [76, 4, 2], [74, 6, 1], [72, 7, 1], [71, 8, 2], [69, 10, 1], [68, 11, 1], [69, 12, 4]],
+    chords: [[57, 60, 64], [55, 59, 62], [53, 57, 60], [52, 56, 59]] },  // Am G F E — dramatic Andalusian, E major leading tone
+  pop:   { name: 'pop', melody: [[72, 0, 1], [74, 1, 1], [76, 2, 2], [74, 4, 1], [72, 5, 1], [71, 6, 2], [69, 8, 1], [71, 9, 1], [72, 10, 2], [76, 12, 1], [74, 13, 1], [72, 14, 2]],
+    chords: [[60, 64, 67], [55, 59, 62], [57, 60, 64], [53, 57, 60]] },  // C G Am F — bright pop
+  dark:  { name: 'dark', melody: [[74, 0, 1], [77, 1, 1], [76, 2, 2], [74, 4, 1], [72, 5, 1], [69, 6, 2], [70, 8, 1], [72, 9, 1], [74, 10, 2], [69, 12, 4]],
+    chords: [[50, 53, 57], [46, 50, 53], [53, 57, 60], [48, 52, 55]] },  // Dm Bb F C — tense
+}
 const KICK = 36, SNARE = 38, HAT = 42, OPEN = 46, CLAP = 39
 
 // drum patterns (beats within a 4-beat bar) → repeated each bar
@@ -55,13 +60,13 @@ const ff = (args) => { try { execFileSync('ffmpeg', args, { stdio: ['ignore', 'i
 const track = (id, name, instrument) => ({ id, name, type: 'audio', color: '#a78bfa', volume: 0.8, pan: 0, mute: false, solo: false, armed: false, height: 64, effects: [], instrument })
 const clip = (trackId, notes, presetId, isDrum, dur) => ({ kind: 'midi', id: uid(), trackId, name: 'c', startBeat: 0, durationBeats: dur, notes, isDrumClip: isDrum, presetId, rollFx: {} })
 
-function buildGenreCfproj(kit, bars) {
+function buildGenreCfproj(kit, bars, hook) {
   const tMel = uid(), tPad = uid(), tBass = uid(), tDrum = uid()
   const mel = [], pad = [], bass = [], drum = []
   for (let b = 0; b < bars; b++) {
     const off = b * 16
-    for (const [p, s, d] of MELODY) mel.push(N(p, off + s, d, 105))
-    CHORDS.forEach((ch, bar) => {
+    for (const [p, s, d] of hook.melody) mel.push(N(p, off + s, d, 105))
+    hook.chords.forEach((ch, bar) => {
       const bs = off + bar * 4
       for (const n of ch) pad.push(N(n, bs, 4, 60))
       bass.push(N(ch[0] - 12, bs, 2, 92), N(ch[0] - 12, bs + 2, 2, 84))
@@ -91,39 +96,50 @@ const frameHtml = (kit) => `<!doctype html><html><body style="margin:0;width:108
   <div style="margin-bottom:80px;font-size:30px;font-weight:800;letter-spacing:6px;opacity:.55">100LIGHTS</div>
 </body></html>`
 
-async function main() {
-  const genres = (flag('genres', 'lofi,orchestral,edm')).split(',').map(s => s.trim()).filter(g => KITS[g])
-  if (!genres.length) { console.error('no valid genres. options:', Object.keys(KITS).join(', ')); process.exit(1) }
-  const tmp = mkdtempSync(join(tmpdir(), 'melody-shorts-'))
-  const browser = await chromium.launch()
-  const page = await browser.newPage({ viewport: { width: 1080, height: 1920 } })
+async function buildShort(hook, genres, tmp, page) {
   const segs = []
   for (const g of genres) {
     const kit = KITS[g]
     const secsPerLoop = 16 * 60 / kit.bpm
     const bars = Math.max(4, Math.round((SEG / secsPerLoop) * 4))
-    console.log(`▸ ${kit.name}: rendering audio (${kit.bpm} BPM)…`)
-    const cfPath = join(tmp, `${g}.cfproj`); writeFileSync(cfPath, JSON.stringify(buildGenreCfproj(kit, bars)))
-    execFileSync('node', ['scripts/hear-ai.mjs', `--project=${cfPath}`, `--seconds=${SEG + 1}`, '--keep', `--out=${join(tmp, g + '.mp3')}`], { cwd: ROOT, stdio: 'ignore' })
-    const wav = join(tmp, `${g}.wav`)
-    console.log(`  ▸ ${kit.name}: styling the frame + building segment…`)
-    const png = join(tmp, `${g}.png`)
+    console.log(`  ▸ [${hook.name}] ${kit.name}: audio (${kit.bpm} BPM)…`)
+    const cfPath = join(tmp, `${hook.name}-${g}.cfproj`); writeFileSync(cfPath, JSON.stringify(buildGenreCfproj(kit, bars, hook)))
+    const wav = join(tmp, `${hook.name}-${g}.wav`)
+    let ok = false
+    for (let attempt = 1; attempt <= 2 && !ok; attempt++) {   // one retry — headless renders occasionally flake
+      try { execFileSync('node', ['scripts/hear-ai.mjs', `--project=${cfPath}`, `--seconds=${SEG + 1}`, '--keep', `--out=${join(tmp, hook.name + '-' + g + '.mp3')}`], { cwd: ROOT, stdio: ['ignore', 'ignore', 'ignore'] }); ok = existsSync(wav) }
+      catch { if (attempt === 2) console.log(`    ⚠ ${kit.name} render failed twice — skipping`) }
+    }
+    if (!ok) continue
+    const png = join(tmp, `${hook.name}-${g}.png`)
     await page.setContent(frameHtml(kit), { waitUntil: 'load' })
     await page.screenshot({ path: png, type: 'png' })
-    const seg = join(tmp, `seg_${g}.mp4`)
-    // styled frame (loop) as base + audio-reactive waveform overlaid in the lower-middle band + the audio
+    const seg = join(tmp, `seg_${hook.name}_${g}.mp4`)
     ff(['-y', '-loop', '1', '-i', png, '-i', wav,
       '-filter_complex', `[1:a]showwaves=s=1080x420:mode=cline:colors=white@0.7:draw=full[w];[0:v][w]overlay=0:1160[v]`,
       '-map', '[v]', '-map', '1:a', '-t', String(SEG), '-r', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-c:a', 'aac', '-b:a', '160k', seg])
     segs.push(seg)
   }
-  await browser.close()
-  // concat
-  const listFile = join(tmp, 'list.txt'); writeFileSync(listFile, segs.map(s => `file '${s}'`).join('\n'))
-  const out = flag('out', join(OUT_DIR, `Short - Same Melody ${genres.length} Genres.mp4`))
+  if (segs.length < 2) { console.log(`  ⚠ [${hook.name}] only ${segs.length} genre(s) rendered — skipping this Short`); return null }
+  const listFile = join(tmp, `list-${hook.name}.txt`); writeFileSync(listFile, segs.map(s => `file '${s}'`).join('\n'))
+  const out = join(OUT_DIR, `Short - Same Melody (${hook.name}) ${genres.length} Genres.mp4`)
   ff(['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-c:a', 'aac', '-movflags', '+faststart', out])
-  rmSync(tmp, { recursive: true, force: true })
   const secs = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', out]).toString().trim()
-  console.log(`\n✓ ${out}\n  ${genres.join(' → ')} · ${(+secs).toFixed(0)}s · 1080x1920 · ready to post`)
+  console.log(`✓ ${out}  (${genres.join('→')} · ${(+secs).toFixed(0)}s)`)
+  return out
+}
+
+async function main() {
+  const genres = (flag('genres', 'lofi,orchestral,edm')).split(',').map(s => s.trim()).filter(g => KITS[g])
+  const melodies = (flag('melodies', flag('melody', 'penta'))).split(',').map(s => s.trim()).filter(m => MELODIES[m])
+  if (!genres.length || !melodies.length) { console.error(`genres: ${Object.keys(KITS).join(',')}\nmelodies: ${Object.keys(MELODIES).join(',')}`); process.exit(1) }
+  const tmp = mkdtempSync(join(tmpdir(), 'melody-shorts-'))
+  const browser = await chromium.launch()
+  const page = await browser.newPage({ viewport: { width: 1080, height: 1920 } })
+  const outs = []
+  for (const m of melodies) { console.log(`▸ HOOK "${m}"`); const r = await buildShort(MELODIES[m], genres, tmp, page); if (r) outs.push(r) }
+  await browser.close()
+  rmSync(tmp, { recursive: true, force: true })
+  console.log(`\n✓ batch done — ${outs.length} Short${outs.length === 1 ? '' : 's'}`)
 }
 main().catch(e => { console.error(e); process.exit(1) })

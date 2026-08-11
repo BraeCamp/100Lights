@@ -1248,6 +1248,31 @@ export default function VideoEditor({
     } catch { /* malformed stash — ignore */ }
   }, []) // eslint-disable-line
 
+  // Programmatic control of the video module (window.__video) — mirrors the DAW's __daw hooks so an
+  // agent/headless script can operate the editor exactly like a user: import media (file or URL),
+  // transcribe, edit captions + burn-in style, name, and open export. Dev-only, like __dawDispatch.
+  useEffect(() => {
+    if (typeof window === 'undefined' || process.env.NODE_ENV !== 'development') return
+    const w = window as unknown as { __video?: Record<string, unknown> }
+    const fetchToFile = async (url: string, name?: string, type?: string) => {
+      const r = await fetch(url); const b = await r.blob()
+      return new File([b], name || url.split('/').pop() || 'media', { type: type || b.type })
+    }
+    w.__video = {
+      getState: () => ({ name: localProjectName, captions: captionsRef.current, captionStyle,
+        media: mediaItems.map(m => ({ id: m.id, name: m.name, contentType: m.contentType, duration: m.duration })), timelineItems: timelineItems.length }),
+      setName: (n: string) => setLocalProjectName(n),
+      importFile: (f: File) => handleFileImport(f),
+      importFromUrl: async (url: string, name?: string, type?: string) => handleFileImport(await fetchToFile(url, name, type)),
+      transcribe: () => handleTranscribe(),
+      setCaptions: (c: Caption[]) => setCaptionsWithHistory(c),
+      setCaptionStyle: (s: CaptionStyle) => setCaptionStyle(s),
+      selectMedia: (id: string) => setSelectedMediaId(id),
+      openExport: () => setShowExport(true),
+    }
+    return () => { try { delete (window as unknown as { __video?: unknown }).__video } catch { /* ignore */ } }
+  }, [localProjectName, captionStyle, mediaItems, timelineItems]) // eslint-disable-line
+
   async function loadCfproj(raw: string) {
     // Block dirty-tracking while we apply the loaded state so that
     // loading itself doesn't get treated as unsaved user changes.
