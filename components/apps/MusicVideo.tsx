@@ -7,7 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Upload, Film, Loader2, Play, Square, Mic, Radio, Maximize2, X } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -18,6 +18,7 @@ import { songVideoData } from '@/lib/song-video/from-project.mjs'
 import { FORMATS } from '@/lib/song-video/formats.mjs'
 import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
+import MusicVideoHome from '@/components/apps/MusicVideoHome'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
 const FONTS = ['system-ui', 'Georgia, serif', 'ui-monospace, monospace', 'Impact, sans-serif']
@@ -161,34 +162,25 @@ function MusicVideoApp() {
     finally { setExporting(false) }
   }, [exporting])
 
+  // Bespoke home when nothing is chosen yet.
+  if (!live && !videoUrl) return <MusicVideoHome busy={busy} onFile={handleFile} onLive={() => setLive(true)} />
+
   return (
     <main id="main" className="max-w-2xl mx-auto" style={{ padding: '20px 18px 40px' }}>
       <header style={{ marginBottom: 18 }}>
-        <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent)', margin: '0 0 10px' }}>100Lights</p>
-        <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>Music Video</h1>
-        <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0, maxWidth: '54ch' }}>
-          Put visuals on a video, or turn on Live mode to visualize whatever is playing in the room — great for parties. All on your device, no AI.
-        </p>
+        <button type="button" onClick={() => { setLive(false); setVideoUrl(null); setNotes([]) }}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 12, padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+          <ChevronLeft size={16} /> Home
+        </button>
+        <h1 style={{ fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.02em' }}>{live ? 'Live visuals' : 'Music Video'}</h1>
       </header>
 
       {live ? (
         <LiveVisualizer accent={accent} onExit={() => setLive(false)} />
-      ) : !videoUrl ? (
-        <div style={{ display: 'grid', gap: 12 }}>
-          <UploadZone busy={busy} onFile={handleFile} />
-          <button type="button" onClick={() => setLive(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 18px', borderRadius: 16, cursor: 'pointer', textAlign: 'left', border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
-            <span style={{ display: 'grid', placeItems: 'center', width: 44, height: 44, borderRadius: 12, background: 'var(--accent-subtle, var(--bg-base))', color: 'var(--accent)', flexShrink: 0 }}><Radio size={22} /></span>
-            <span style={{ minWidth: 0 }}>
-              <span style={{ display: 'block', fontSize: 15, fontWeight: 750, color: 'var(--text-primary)' }}>Live visuals (party mode)</span>
-              <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-secondary)' }}>React to music playing in the room — full-screen it on a TV or projector.</span>
-            </span>
-          </button>
-        </div>
       ) : (
         <>
           <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: '#000', border: '1px solid var(--border)' }}>
-            <video ref={videoRef} src={videoUrl} playsInline onEnded={() => setPlaying(false)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+            <video ref={videoRef} src={videoUrl ?? undefined} playsInline onEnded={() => setPlaying(false)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
             <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
             {busy && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.5)', color: '#fff', gap: 8 }}><Loader2 size={26} style={{ animation: 'spin 1s linear infinite' }} /><span style={{ fontSize: 14, fontWeight: 700 }}>Detecting the melody…</span></div>}
           </div>
@@ -462,24 +454,6 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
       <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.55 }}>
         <strong style={{ color: 'var(--text-secondary)' }}>Party setup:</strong> tap fullscreen and drag this window onto your TV or projector — it keeps running while its window stays visible, so you can use other apps beside it. Browsers can’t grab a device’s internal audio silently (a security rule), so the mic is the no-setup path; capturing another tab’s sound needs the browser’s share prompt. The 100Lights app will add true internal-audio capture and background playback.
       </p>
-    </div>
-  )
-}
-
-function UploadZone({ busy, onFile }: { busy: boolean; onFile: (f: File) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [drag, setDrag] = useState(false)
-  return (
-    <div
-      onDragOver={e => { e.preventDefault(); setDrag(true) }} onDragLeave={() => setDrag(false)}
-      onDrop={e => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) onFile(f) }}
-      onClick={() => inputRef.current?.click()}
-      style={{ display: 'grid', placeItems: 'center', gap: 8, minHeight: 168, padding: 20, borderRadius: 16, cursor: busy ? 'wait' : 'pointer', textAlign: 'center', border: `1.5px dashed ${drag ? 'var(--accent)' : 'var(--border)'}`, background: drag ? 'var(--accent-subtle, var(--bg-card))' : 'var(--bg-card)' }}
-    >
-      <input ref={inputRef} type="file" accept="video/*,.mp4,.mov,.webm,.m4v" hidden onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); e.currentTarget.value = '' }} />
-      <span style={{ display: 'grid', placeItems: 'center', width: 44, height: 44, borderRadius: 12, background: 'var(--accent-subtle, var(--bg-base))', color: 'var(--accent)' }}><Film size={22} /></span>
-      <span style={{ fontSize: 15, fontWeight: 750, color: 'var(--text-primary)' }}>Drop a video, or tap to choose</span>
-      <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', display: 'inline-flex', alignItems: 'center', gap: 5 }}><Upload size={13} /> MP4 · MOV · WebM</span>
     </div>
   )
 }
