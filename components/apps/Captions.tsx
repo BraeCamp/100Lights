@@ -11,9 +11,11 @@ import WaveformStrip from '@/components/captions/WaveformStrip'
 import { useTranscription } from '@/lib/use-transcription'
 import { downloadCaptions } from '@/lib/caption-format'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
+import { useAppShellOptional } from '@/components/apps/AppChrome'
 
 export default function Captions() {
   const tx = useTranscription()
+  const shell = useAppShellOptional()
   const [file, setFile] = useState<File | null>(null)
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [isVideo, setIsVideo] = useState(false)
@@ -24,6 +26,7 @@ export default function Captions() {
   const [dragging, setDragging] = useState(false)
   const [style, setStyle] = useState<CaptionStyle>(DEFAULT_CAPTION_STYLE)
   const [showStyle, setShowStyle] = useState(false)
+  const [savingVideo, setSavingVideo] = useState(false)
   const [peaks, setPeaks] = useState<number[]>([])
   const [dur, setDur] = useState(0)
   const [restorable, setRestorable] = useState<{ captions: typeof tx.captions; style?: CaptionStyle; fileName?: string; at: number } | null>(null)
@@ -79,6 +82,63 @@ export default function Captions() {
   const transcribe = () => file && tx.transcribe(file)          // local-only ($0) in the standalone app
   const seek = (t: number) => { if (mediaRef.current) { mediaRef.current.currentTime = t; setNow(t) } }
   const name = file?.name || 'captions'
+  const baseName = name.replace(/\.[^.]+$/, '')
+
+  // Reopen a saved session from the shared History (captions + style; media is re-added).
+  useEffect(() => {
+    if (!shell) return
+    shell.registerRestore((data) => {
+      const d = data as { captions?: typeof tx.captions; style?: CaptionStyle }
+      if (d.captions?.length) tx.setCaptions(d.captions)
+      if (d.style) setStyle(d.style)
+    })
+  }, [shell]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save the CAPTIONED VIDEO to the device — burn the styled, animated captions onto the frames
+  // (canvas + MediaRecorder, on-device, no upload) and download. Also drops a session into History.
+  const saveVideo = useCallback(async () => {
+    const vid = mediaRef.current as HTMLVideoElement | null
+    if (!vid || !isVideo || savingVideo || !tx.captions.length) return
+    setSavingVideo(true)
+    try {
+      const W = 1280, H = 720
+      const ex = document.createElement('canvas'); ex.width = W; ex.height = H
+      const c = ex.getContext('2d'); if (!c) throw new Error('canvas unavailable')
+      const stream = ex.captureStream(30)
+      const vs = (vid as unknown as { captureStream?: () => MediaStream }).captureStream?.()
+      for (const tr of vs?.getAudioTracks() ?? []) stream.addTrack(tr)
+      const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
+      const rec = new MediaRecorder(stream, { mimeType: mime })
+      const chunks: BlobPart[] = []
+      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
+      const stopped = new Promise<void>(res => { rec.onstop = () => res() })
+      const caps = tx.captions
+      let raf = 0
+      const draw = () => {
+        const t = vid.currentTime
+        const iw = vid.videoWidth || W, ih = vid.videoHeight || H, ir = iw / ih, cr = W / H
+        let dw: number, dh: number
+        if (ir > cr) { dh = H; dw = H * ir } else { dw = W; dh = W / ir }
+        c.fillStyle = '#000'; c.fillRect(0, 0, W, H)
+        c.drawImage(vid, (W - dw) / 2, (H - dh) / 2, dw, dh)
+        const cap = caps.find(x => t >= x.start && t < x.end)
+        if (cap) drawCaptionFrame(c, W, H, cap.text, t - cap.start, style)
+        raf = requestAnimationFrame(draw)
+      }
+      vid.pause(); vid.currentTime = 0
+      await new Promise(res => setTimeout(res, 120))
+      rec.start(100); draw()
+      await vid.play().catch(() => {})
+      await new Promise<void>(res => { const on = () => { vid.removeEventListener('ended', on); res() }; vid.addEventListener('ended', on) })
+      cancelAnimationFrame(raf); rec.stop(); await stopped
+      const blob = new Blob(chunks, { type: 'video/webm' })
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${baseName}-captioned.webm`
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+      shell?.history.save({ title: baseName, subtitle: `${caps.length} captions`, data: { captions: caps, style, fileName: name } })
+    } catch { /* export failed — the media may block captureStream */ }
+    finally { setSavingVideo(false) }
+  }, [isVideo, savingVideo, tx.captions, style, name, baseName, shell])
 
   const copyTranscript = async () => { try { await navigator.clipboard.writeText(tx.captions.map(c => c.text).join(' ')); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* clipboard blocked */ } }
   const togglePlay = () => { const m = mediaRef.current; if (!m) return; if (m.paused) m.play(); else m.pause() }
@@ -129,6 +189,17 @@ export default function Captions() {
       onDragLeave={e => { if (e.currentTarget === e.target) setDragging(false) }}
       onDrop={onDrop}
       style={{ position: 'relative', display: 'flex', flexDirection: 'column', height: '100dvh', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+      <style>{`
+        @keyframes cap-pop { from { transform: scale(.72); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+        @keyframes cap-fade { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes cap-rise { from { transform: translateY(0.7em); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+        @keyframes cap-bounce { 0% { transform: translateY(1.1em); opacity: 0 } 60% { transform: translateY(-0.18em); opacity: 1 } 100% { transform: translateY(0) } }
+        .cap-anim-pop { animation: cap-pop .26s cubic-bezier(.34,1.56,.64,1) both }
+        .cap-anim-fade { animation: cap-fade .26s ease both }
+        .cap-anim-rise { animation: cap-rise .26s cubic-bezier(.22,1,.36,1) both }
+        .cap-anim-bounce { animation: cap-bounce .4s cubic-bezier(.22,1,.36,1) both }
+        @media (prefers-reduced-motion: reduce) { .cap-anim-pop,.cap-anim-fade,.cap-anim-rise,.cap-anim-bounce { animation: none !important } }
+      `}</style>
       {dragging && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, background: 'rgba(124,92,255,0.14)', border: '2px dashed var(--accent)', backdropFilter: 'blur(2px)', pointerEvents: 'none', fontWeight: 700, fontSize: 16 }}>
           <Upload size={22} /> Drop audio or video to caption
@@ -161,6 +232,13 @@ export default function Captions() {
               style={{ ...tbtn, color: saved != null && saved > 0 ? '#34d399' : 'var(--text-secondary)' }}>
               <ThumbsUp size={14} /> {saved == null ? 'Save feedback' : saved > 0 ? `Saved ${saved} ✓` : 'Nothing to send'}
             </button>
+            {isVideo && done && (
+              <button onClick={saveVideo} disabled={savingVideo} title="Burn the captions onto the video and save it to your device"
+                style={{ ...tbtn, opacity: savingVideo ? 0.7 : 1 }}>
+                {savingVideo ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                {savingVideo ? 'Saving video…' : 'Save video'}
+              </button>
+            )}
             <button onClick={sendToVideo} style={{ ...tbtn, background: 'var(--accent)', color: '#fff', border: 'none' }}><Film size={14} /> Send to Video editor</button>
           </>}
         </div>
@@ -184,7 +262,7 @@ export default function Captions() {
               {isVideo && activeCaption && (
                 <div style={{ position: 'absolute', left: 8, right: 8, textAlign: 'center', pointerEvents: 'none',
                   ...(style.position === 'top' ? { top: 8 } : style.position === 'center' ? { top: '50%', transform: 'translateY(-50%)' } : { bottom: 46 }) }}>
-                  <span style={{ background: style.bg === 'none' ? 'transparent' : style.bg, color: style.color, padding: style.bg === 'none' ? 0 : '3px 8px', borderRadius: 5, fontSize: Math.round(13 * style.size), fontWeight: 700, lineHeight: 1.5, textShadow: style.bg === 'none' ? '0 1px 3px #000, 0 0 4px #000' : 'none', WebkitBoxDecorationBreak: 'clone', boxDecorationBreak: 'clone' }}>
+                  <span key={activeCaption.id} className={`cap-anim-${style.anim ?? 'none'}`} style={{ display: 'inline-block', background: style.bg === 'none' ? 'transparent' : style.bg, color: style.color, padding: style.bg === 'none' ? 0 : '3px 8px', borderRadius: 5, fontSize: Math.round(13 * style.size), fontWeight: 700, lineHeight: 1.5, textShadow: style.bg === 'none' ? '0 1px 3px #000, 0 0 4px #000' : 'none', WebkitBoxDecorationBreak: 'clone', boxDecorationBreak: 'clone' }}>
                     {style.karaoke && activeCaption.words?.length
                       ? activeCaption.words.map((w, i) => <span key={i} style={{ color: now >= w.s && now < w.e ? style.highlightColor : style.color }}>{w.w}{i < activeCaption.words!.length - 1 ? ' ' : ''}</span>)
                       : activeCaption.text}
@@ -281,3 +359,46 @@ export default function Captions() {
 }
 
 const tbtn: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }
+
+// Draw one styled caption onto an export canvas at time `age` seconds after it appeared.
+// Mirrors the live overlay: position, size, colour, box/outline, plus the entrance animation.
+function drawCaptionFrame(ctx: CanvasRenderingContext2D, W: number, H: number, text: string, age: number, style: CaptionStyle) {
+  const fs = Math.round(H * 0.05 * (style.size || 1))
+  ctx.font = `700 ${fs}px system-ui, -apple-system, "Segoe UI", sans-serif`
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  const maxW = W * 0.86
+  // word-wrap into up to 3 lines
+  const words = text.split(/\s+/); const lines: string[] = []; let cur = ''
+  for (const w of words) { const test = cur ? `${cur} ${w}` : w; if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w } else cur = test }
+  if (cur) lines.push(cur)
+  const shown = lines.slice(0, 3)
+  const lh = fs * 1.34
+  const blockH = shown.length * lh
+  const cy = style.position === 'top' ? H * 0.12 + blockH / 2 : style.position === 'center' ? H / 2 : H - H * 0.10 - blockH / 2
+  const p = Math.max(0, Math.min(1, age / 0.28)), e = 1 - Math.pow(1 - p, 3)
+  let alpha = 1, scale = 1, dy = 0
+  if (style.anim === 'fade') alpha = e
+  else if (style.anim === 'pop') { alpha = e; scale = 0.72 + 0.28 * e }
+  else if (style.anim === 'rise') { alpha = e; dy = (1 - e) * fs * 0.9 }
+  else if (style.anim === 'bounce') { alpha = e; dy = (1 - e) * fs * 1.15 - Math.sin(p * Math.PI) * fs * 0.35 }
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.translate(W / 2, cy + dy); ctx.scale(scale, scale); ctx.translate(-W / 2, -cy)
+  const noBox = !style.bg || style.bg === 'none'
+  shown.forEach((ln, i) => {
+    const y = cy - blockH / 2 + lh * (i + 0.5)
+    const tw = ctx.measureText(ln).width
+    if (!noBox) {
+      const bw = tw + fs, bh = lh
+      ctx.fillStyle = style.bg
+      ctx.beginPath()
+      if (typeof ctx.roundRect === 'function') ctx.roundRect(W / 2 - bw / 2, y - bh / 2, bw, bh, 8)
+      else ctx.rect(W / 2 - bw / 2, y - bh / 2, bw, bh)
+      ctx.fill()
+    } else {
+      ctx.lineWidth = fs * 0.16; ctx.strokeStyle = 'rgba(0,0,0,0.88)'; ctx.lineJoin = 'round'; ctx.strokeText(ln, W / 2, y)
+    }
+    ctx.fillStyle = style.color; ctx.fillText(ln, W / 2, y)
+  })
+  ctx.restore()
+}

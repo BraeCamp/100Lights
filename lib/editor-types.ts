@@ -62,6 +62,9 @@ export interface TempoSeg {
 // every aspect/resolution. Karaoke highlights the active word (needs word
 // timings on the caption — older transcripts without them render statically).
 
+/** How each caption line enters — a light per-snippet animation for a "produced" look. */
+export type CaptionAnim = 'none' | 'pop' | 'fade' | 'rise' | 'bounce'
+
 export interface CaptionStyle {
   size: number                          // 0.5–2, multiplier on the base size
   color: string                         // text color
@@ -69,6 +72,7 @@ export interface CaptionStyle {
   position: 'bottom' | 'center' | 'top'
   karaoke: boolean
   highlightColor: string                // active-word color when karaoke is on
+  anim?: CaptionAnim                    // entrance animation per caption (optional; defaults to 'none')
 }
 
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
@@ -78,6 +82,7 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   position: 'bottom',
   karaoke: false,
   highlightColor: '#a78bfa',
+  anim: 'none',
 }
 
 export interface ClipFlag {

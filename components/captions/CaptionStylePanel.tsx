@@ -3,12 +3,20 @@
 // Burn-in caption style controls. Edits the SAME CaptionStyle the video module + export use, so the
 // look you set here is exactly what gets rendered onto the video. Reusable in either surface.
 import { AlignEndVertical, AlignCenterVertical, AlignStartVertical } from 'lucide-react'
-import type { CaptionStyle } from '@/lib/editor-types'
+import type { CaptionStyle, CaptionAnim } from '@/lib/editor-types'
 
 const POSITIONS: { key: CaptionStyle['position']; icon: typeof AlignEndVertical; label: string }[] = [
   { key: 'top', icon: AlignStartVertical, label: 'Top' },
   { key: 'center', icon: AlignCenterVertical, label: 'Middle' },
   { key: 'bottom', icon: AlignEndVertical, label: 'Bottom' },
+]
+
+const ANIMS: { key: CaptionAnim; label: string }[] = [
+  { key: 'none', label: 'None' },
+  { key: 'pop', label: 'Pop' },
+  { key: 'fade', label: 'Fade' },
+  { key: 'rise', label: 'Rise' },
+  { key: 'bounce', label: 'Bounce' },
 ]
 
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 }
@@ -49,6 +57,20 @@ export default function CaptionStylePanel({ style, onChange }: { style: CaptionS
           <input type="checkbox" checked={style.karaoke} onChange={e => set({ karaoke: e.target.checked })} /> Highlight current word
         </label>
         {style.karaoke && <input type="color" value={style.highlightColor} onChange={e => set({ highlightColor: e.target.value })} style={{ ...swatch, marginLeft: 'auto' }} />}
+      </div>
+      <div style={{ ...row, alignItems: 'flex-start' }}>
+        <span style={{ ...label, marginTop: 4 }}>Animate</span>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {ANIMS.map(({ key, label: l }) => {
+            const active = (style.anim ?? 'none') === key
+            return (
+              <button key={key} onClick={() => set({ anim: key })} title={`Each caption ${l === 'None' ? 'appears instantly' : `animates in (${l})`}`}
+                style={{ fontSize: 11, fontWeight: 600, padding: '5px 9px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border)', background: active ? 'var(--accent)' : 'var(--bg-card)', color: active ? '#fff' : 'var(--text-secondary)' }}>
+                {l}
+              </button>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
