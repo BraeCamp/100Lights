@@ -188,7 +188,11 @@ function HistorySheet({ history, onOpen, onClose }: { history: ReturnType<typeof
           <button type="button" onClick={clear} className="app-btn" style={{ marginTop: 14, padding: '8px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-muted)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Clear all</button>
         </>
       )}
-      <p style={{ marginTop: 16, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>Saved on this device. <Link href="/pricing" style={{ color: 'var(--accent)', fontWeight: 700 }}>Members</Link> get their history synced across devices.</p>
+      <p style={{ marginTop: 16, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        {history.synced
+          ? 'Saved on this device and synced to your account — your history follows you across devices.'
+          : <>Saved on this device. <Link href="/sign-in" style={{ color: 'var(--accent)', fontWeight: 700 }}>Sign in</Link> to sync it to your account across devices.</>}
+      </p>
     </Sheet>
   )
 }
