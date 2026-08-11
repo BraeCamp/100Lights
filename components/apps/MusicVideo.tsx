@@ -294,6 +294,79 @@ const AMBIENTS: { id: string; name: string; css: string }[] = [
   { id: 'forest', name: 'Forest', css: 'linear-gradient(120deg,#064e3b,#10b981,#a3e635)' },
 ]
 
+// Snapchat-style "looks" for the background video/image — a stackable recipe of a CSS
+// filter, an SVG filter (posterize/aberration/bloom/ripple, defined once in LookSvgDefs),
+// and overlay layers (vignette/grain/scanlines/duotone). Pure CSS+SVG — cheap, no WebGL,
+// works over video and stills alike, and composes on top of the user's blur/hue sliders.
+type Overlay = 'vignette' | 'grain' | 'scanlines' | 'duotone'
+interface VideoLook { id: string; name: string; css?: string; svg?: string; overlays?: Overlay[] }
+const VIDEO_LOOKS: VideoLook[] = [
+  { id: 'none', name: 'None' },
+  { id: 'vignette', name: 'Vignette', overlays: ['vignette'] },
+  { id: 'film', name: 'Film', css: 'contrast(1.05) saturate(1.05) sepia(0.12)', overlays: ['grain', 'vignette'] },
+  { id: 'vhs', name: 'VHS', svg: 'mv-vhs', css: 'saturate(1.2) contrast(1.05)', overlays: ['scanlines', 'grain', 'vignette'] },
+  { id: 'cartoon', name: 'Cartoon', svg: 'mv-cartoon', css: 'saturate(1.55) contrast(1.12)' },
+  { id: 'dream', name: 'Dream', svg: 'mv-dream', css: 'brightness(1.05) saturate(1.1)', overlays: ['vignette'] },
+  { id: 'noir', name: 'Noir', css: 'grayscale(1) contrast(1.32) brightness(1.02)', overlays: ['vignette', 'grain'] },
+  { id: 'neon', name: 'Neon', css: 'saturate(1.8) contrast(1.25) hue-rotate(8deg)', overlays: ['duotone'] },
+  { id: 'living', name: 'Living', svg: 'mv-living' },
+]
+// Tileable film-grain noise (feTurbulence baked into a data-URI so it needs no network).
+const GRAIN_URI = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='140' height='140' filter='url(#n)'/></svg>")
+
+// Overlay layers for a look — absolutely-positioned, non-interactive, blended over the media.
+function LookOverlays({ keys }: { keys: Overlay[] }) {
+  const base: React.CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none' }
+  return (
+    <>
+      {keys.map(k => {
+        if (k === 'vignette') return <div key={k} style={{ ...base, background: 'radial-gradient(ellipse at center, transparent 52%, rgba(0,0,0,0.72) 100%)' }} />
+        if (k === 'scanlines') return <div key={k} style={{ ...base, backgroundImage: 'repeating-linear-gradient(to bottom, rgba(0,0,0,0.28) 0 1px, transparent 1px 3px)', mixBlendMode: 'multiply' }} />
+        if (k === 'grain') return <div key={k} className="mv-grain" style={{ ...base, backgroundImage: `url("${GRAIN_URI}")`, backgroundSize: '160px 160px', opacity: 0.16, mixBlendMode: 'overlay' }} />
+        if (k === 'duotone') return <div key={k} style={{ ...base, backgroundImage: 'linear-gradient(125deg,#12b3ff,#ff2fd0)', mixBlendMode: 'color', opacity: 0.4 }} />
+        return null
+      })}
+    </>
+  )
+}
+
+// SVG filter definitions referenced by the looks above (posterize, chromatic aberration,
+// bloom, animated ripple). Rendered once, hidden; url(#id) points the CSS filter at them.
+function LookSvgDefs() {
+  return (
+    <svg aria-hidden width="0" height="0" style={{ position: 'absolute', width: 0, height: 0 }}>
+      <defs>
+        <filter id="mv-cartoon">
+          <feComponentTransfer>
+            <feFuncR type="discrete" tableValues="0 0.22 0.45 0.7 1" />
+            <feFuncG type="discrete" tableValues="0 0.22 0.45 0.7 1" />
+            <feFuncB type="discrete" tableValues="0 0.22 0.45 0.7 1" />
+          </feComponentTransfer>
+        </filter>
+        <filter id="mv-vhs" x="-6%" y="-2%" width="112%" height="104%">
+          <feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r" />
+          <feOffset in="r" dx="3" dy="0" result="ro" />
+          <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0" result="gb" />
+          <feOffset in="gb" dx="-3" dy="0" result="gbo" />
+          <feBlend in="ro" in2="gbo" mode="screen" />
+        </filter>
+        <filter id="mv-dream">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b" />
+          <feComponentTransfer in="b" result="bb"><feFuncA type="linear" slope="0.85" /></feComponentTransfer>
+          <feBlend in="SourceGraphic" in2="bb" mode="screen" />
+        </filter>
+        <filter id="mv-living">
+          <feTurbulence type="fractalNoise" baseFrequency="0.006 0.01" numOctaves="2" seed="7" result="n">
+            <animate attributeName="baseFrequency" dur="18s" values="0.006 0.01;0.011 0.007;0.006 0.01" repeatCount="indefinite" />
+          </feTurbulence>
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="20" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+      </defs>
+    </svg>
+  )
+}
+
 function hsl(h: number, s: number, l: number): string {
   s /= 100; l /= 100
   const k = (n: number) => (n + h / 30) % 12
@@ -519,6 +592,8 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const [brightness, setBrightness] = useState(1)
   const [saturate, setSaturate] = useState(1)
   const [hueRot, setHueRot] = useState(0)
+  const [videoLook, setVideoLook] = useState('none')       // Snapchat-style look on the background
+  const lookFilterRef = useRef('')                          // look's svg+css prefix, kept for the per-frame EQ update
   const bgInputRef = useRef<HTMLInputElement | null>(null)
   const bgFilterRef = useRef<HTMLDivElement | null>(null)  // filters applied here; EQ mode drives it per frame
   // Offline save/download for the selected library clip
@@ -529,7 +604,10 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const overrideRef = useRef<string | null>(null)
   const ambient = AMBIENTS.find(a => a.id === bgKind)
   const hasBg = bgKind === 'media' ? !!bgUrl : bgKind === 'library' ? !!bgClip : !!ambient
-  const bgFilter = `blur(${blur}px) brightness(${brightness}) saturate(${saturate}) hue-rotate(${hueRot}deg)`
+  const activeVideoLook = VIDEO_LOOKS.find(l => l.id === videoLook) ?? VIDEO_LOOKS[0]
+  const lookFilterStr = [activeVideoLook.svg ? `url(#${activeVideoLook.svg})` : '', activeVideoLook.css || ''].filter(Boolean).join(' ')
+  lookFilterRef.current = lookFilterStr
+  const bgFilter = [lookFilterStr, `blur(${blur}px) brightness(${brightness}) saturate(${saturate}) hue-rotate(${hueRot}deg)`].filter(Boolean).join(' ')
   const pickBgFile = useCallback((f: File) => {
     setBgUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
     setBgVideo(f.type.startsWith('video/')); setBgKind('media')
@@ -697,7 +775,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
           if (eq.on && bgFilterRef.current) {
             let s = 0; for (let i = 0; i < f.freq.length; i++) s += f.freq[i]
             const level = Math.min(1, (s / (f.freq.length * 255)) * optsRef.current.gain)
-            bgFilterRef.current.style.filter = `blur(${(eq.blur * (1 - level * 0.4)).toFixed(1)}px) brightness(${(eq.brightness * (0.7 + level * 0.75)).toFixed(2)}) saturate(${(eq.saturate * (0.85 + level * 0.7)).toFixed(2)}) hue-rotate(${Math.round(eq.hueRot + level * 55)}deg)`
+            bgFilterRef.current.style.filter = `${lookFilterRef.current} blur(${(eq.blur * (1 - level * 0.4)).toFixed(1)}px) brightness(${(eq.brightness * (0.7 + level * 0.75)).toFixed(2)}) saturate(${(eq.saturate * (0.85 + level * 0.7)).toFixed(2)}) hue-rotate(${Math.round(eq.hueRot + level * 55)}deg)`.trim()
           }
         }
         rafRef.current = requestAnimationFrame(draw)
@@ -730,17 +808,19 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   return (
     <div className="mv-live">
       <style>{`@keyframes mv-amb{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}} .mv-ambient{animation:mv-amb 16s ease-in-out infinite}
+@keyframes mv-grain{0%{background-position:0 0}25%{background-position:-6% 5%}50%{background-position:5% -4%}75%{background-position:-4% -6%}100%{background-position:0 0}} .mv-grain{animation:mv-grain .6s steps(3) infinite}
 .mv-live{container-type:inline-size}
 .mv-split{display:flex;flex-direction:column}
 .mv-stage{position:sticky;top:0;z-index:3;background:var(--bg-base);padding-bottom:12px}
 .mv-panels{display:flex;flex-direction:column}
 @container (min-width:760px){.mv-split{flex-direction:row;align-items:flex-start;gap:20px}.mv-stage{flex:1 1 60%;min-width:0;padding-bottom:4px}.mv-panels{flex:1 1 40%;min-width:280px;max-height:calc(100dvh - 16px);overflow:auto;padding-right:4px}}`}</style>
+      <LookSvgDefs />
       <div className="mv-split">
         <div className="mv-stage">
       <div ref={wrapRef} style={{ position: 'relative', width: '100%', aspectRatio: fs ? undefined : '16 / 9', height: fs ? '100dvh' : undefined, borderRadius: fs ? 0 : 14, overflow: 'hidden', background: '#08070d', border: fs ? 'none' : '1px solid var(--border)' }}>
         {/* Background layer — ambient gradient, library clip (streamed), or your own upload; filtered here */}
         {hasBg && (
-          <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter }}>
+          <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter, isolation: 'isolate' }}>
             {bgKind === 'media' ? (
               bgVideo
                 ? <video src={bgUrl ?? undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -763,6 +843,8 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
             )}
             {/* Palette match — tint the background toward the visualizer colours */}
             {matchVisuals && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(120deg, ${colors.join(', ')})`, mixBlendMode: 'overlay', opacity: 0.5, pointerEvents: 'none' }} />}
+            {/* Snapchat-style look overlays (vignette / grain / scanlines / duotone) */}
+            <LookOverlays keys={activeVideoLook.overlays ?? []} />
           </div>
         )}
 
@@ -937,7 +1019,15 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
       </Panel>
 
       {hasBg && (
-        <Panel id="filters" label="Background filters" open={openPanel === 'filters'} onToggle={() => setOpenPanel(p => (p === 'filters' ? null : 'filters'))}>
+        <Panel id="filters" label="Video look & filters" open={openPanel === 'filters'} onToggle={() => setOpenPanel(p => (p === 'filters' ? null : 'filters'))}>
+          {/* Snapchat-style looks — one-tap recipes on the background video/image */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 8 }}>
+            {VIDEO_LOOKS.map(l => (
+              <button key={l.id} type="button" onClick={() => setVideoLook(l.id)}
+                style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: videoLook === l.id ? 'var(--accent)' : 'var(--bg-card)', color: videoLook === l.id ? '#0e0d12' : 'var(--text-secondary)' }}>{l.name}</button>
+            ))}
+          </div>
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 14px' }}>A look stacks on top of the sliders below — Cartoon posterizes, VHS adds scanlines &amp; colour-split, Living ripples, Film/Noir add grain &amp; vignette.</p>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: reactive ? 'pointer' : 'not-allowed', opacity: reactive ? 1 : 0.5, marginBottom: 12 }}>
             <input type="checkbox" checked={eqFilters} onChange={e => setEqFilters(e.target.checked)} disabled={!reactive} /> React to the audio (EQ)
           </label>

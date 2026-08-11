@@ -5,9 +5,10 @@
 //    Real, detailed, work offline NOW. Ones in MOTION also have an animated <id>.webm loop
 //    (scripts/gen-bg-videos.mjs) → kind:'video' with the <id>.jpg as its poster; the rest
 //    are static kind:'image'.
-//  • kind:'video' nature clips (Aerial/Beach/Mountains/Animals/City) that STREAM online from
-//    a CDN/R2 base (NEXT_PUBLIC_BG_CDN) as <id>.mp4, with a small poster cached offline at
-//    public/bg/previews/<id>.jpg. Until you host a clip it shows its poster / a gradient tint.
+//  • kind:'video' nature clips (Aerial/Beach/Mountains/Animals/City). These ship a bundled,
+//    offline, procedurally-animated loop at public/bg/nature/<id>.webm with a poster
+//    <id>.jpg (both from scripts/gen-bg-videos.mjs) — so they always play, never blank. If
+//    NEXT_PUBLIC_BG_CDN is set they upgrade to real hosted footage at CDN/<id>.mp4 instead.
 //
 // Adding a clip = add a row here (no code change). Hosting the nature clips + a CSP
 // media-src for the CDN are the ops step; the bundled images need neither.
@@ -77,7 +78,8 @@ export const BG_LIBRARY: BgClip[] = [
   }),
   ...NATURE.map(c => ({
     ...c, kind: 'video' as const,
-    preview: `/bg/previews/${c.id}.jpg`, src: CDN ? `${CDN}/${c.id}.mp4` : `/bg/clips/${c.id}.mp4`,
+    preview: `/bg/nature/${c.id}.jpg`,                                   // bundled poster (offline, never blank)
+    src: CDN ? `${CDN}/${c.id}.mp4` : `/bg/nature/${c.id}.webm`,        // real footage when hosted, else the bundled loop
   })),
 ]
 

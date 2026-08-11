@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// Animated versions of the generative backgrounds — seamless-looping WebM clips so
-// the Music Video library has real MOTION backgrounds bundled and offline (the static
-// JPGs from gen-bg-images become their posters). Renders each with canvas + MediaRecorder
-// in a headless browser → public/bg/generative/<id>.webm.
+// Animated backgrounds for the Music Video library — seamless-looping WebM clips rendered
+// with canvas + MediaRecorder in a headless browser. Two families:
+//   • generative (public/bg/generative/) — abstract motion; posters come from gen-bg-images.
+//   • nature (public/bg/nature/) — themed motion for the Aerial/Beach/Mountains/Animals/City
+//     categories, PLUS a poster JPG (frame 0) so nothing falls back to a flat colour. These
+//     are stylised, not drone footage — real footage can override them via NEXT_PUBLIC_BG_CDN.
 //
 //   node scripts/gen-bg-videos.mjs   (npm run bg:videos)
 
@@ -12,10 +14,11 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const OUT = join(ROOT, 'public', 'bg', 'generative')
-mkdirSync(OUT, { recursive: true })
+const PUB = join(ROOT, 'public', 'bg')
+mkdirSync(join(PUB, 'generative'), { recursive: true })
+mkdirSync(join(PUB, 'nature'), { recursive: true })
 
-const DEFS = [
+const GEN = [
   { id: 'nebula-violet', kind: 'mesh', colors: ['#4c1d95', '#db2777', '#22d3ee'] },
   { id: 'aurora-teal', kind: 'mesh', colors: ['#0ea5e9', '#34d399', '#a78bfa'] },
   { id: 'ocean-deep', kind: 'mesh', colors: ['#082f49', '#0e7490', '#22d3ee'] },
@@ -25,17 +28,33 @@ const DEFS = [
   { id: 'waves-blue', kind: 'waves', colors: ['#0369a1', '#0ea5e9', '#38bdf8'] },
   { id: 'liquid-magma', kind: 'liquid', colors: ['#7c2d12', '#f97316', '#fde047'] },
   { id: 'starfield-deep', kind: 'starfield', colors: ['#4c1d95', '#db2777', '#22d3ee'] },
-]
+].map(d => ({ ...d, dir: 'generative', poster: false }))
 
+// Themed motion for each nature clip in bg-library. Poster JPG written for every one.
+const NATURE = [
+  { id: 'aerial-coastline', kind: 'waves', colors: ['#0e7490', '#22d3ee', '#67e8f9'] },
+  { id: 'aerial-forest', kind: 'mesh', colors: ['#065f46', '#10b981', '#34d399'] },
+  { id: 'aerial-desert', kind: 'waves', colors: ['#b45309', '#f59e0b', '#fcd34d'] },
+  { id: 'beach-waves', kind: 'waves', colors: ['#0369a1', '#0ea5e9', '#7dd3fc'] },
+  { id: 'beach-sunset', kind: 'waves', colors: ['#c2410c', '#f59e0b', '#fb7185'] },
+  { id: 'mountains-peaks', kind: 'peaks', colors: ['#1e293b', '#475569', '#cbd5e1'] },
+  { id: 'mountains-valley', kind: 'peaks', colors: ['#0f2440', '#3b5573', '#a8c3e0'] },
+  { id: 'animals-birds', kind: 'particles', colors: ['#0c4a6e', '#38bdf8', '#e0f2fe'] },
+  { id: 'animals-jellyfish', kind: 'liquid', colors: ['#4c1d95', '#a855f7', '#f0abfc'] },
+  { id: 'city-night', kind: 'bokeh', colors: ['#111827', '#a78bfa', '#f472b6', '#22d3ee'] },
+  { id: 'city-timelapse', kind: 'bokeh', colors: ['#7c2d12', '#f97316', '#fbbf24', '#f472b6'] },
+].map(d => ({ ...d, dir: 'nature', poster: true }))
+
+const ALL = [...GEN, ...NATURE]
 const W = 960, H = 540, SECONDS = 6
 
 const browser = await chromium.launch()
 const ctx = await browser.newContext({ viewport: { width: W, height: H } })
 const page = await ctx.newPage()
 
-for (const def of DEFS) {
+for (const def of ALL) {
   await page.setContent(`<canvas id="c" width="${W}" height="${H}"></canvas>`)
-  const b64 = await page.evaluate(async ({ id, kind, colors, W, H, seconds }) => {
+  const out = await page.evaluate(async ({ id, kind, colors, poster, W, H, seconds }) => {
     const cv = document.getElementById('c'); const g = cv.getContext('2d')
     let s = 0; for (let i = 0; i < id.length; i++) s = (s * 31 + id.charCodeAt(i)) >>> 0
     const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 }
@@ -43,12 +62,13 @@ for (const def of DEFS) {
     const pick = () => colors[Math.floor(rnd() * colors.length)]
     const TAU = Math.PI * 2
 
-    // Pre-generate stable params so only positions/alphas animate.
+    // Pre-generate stable params so only positions/alphas animate frame to frame.
     const blobs = Array.from({ length: kind === 'liquid' ? 5 : 7 }, () => ({ bx: rnd() * W, by: rnd() * H, dr: 20 + rnd() * 70, r: (0.3 + rnd() * 0.45) * W, col: pick(), off: rnd() * TAU }))
     const circles = Array.from({ length: 70 }, () => ({ x: rnd() * W, y: rnd() * H, r: 10 + rnd() * 90, col: pick(), off: rnd() * TAU }))
     const parts = Array.from({ length: 200 }, () => ({ x: rnd() * W, y: rnd() * H, r: (1 + rnd() * rnd() * 6) * 3, col: pick(), off: rnd() * TAU, bob: 8 + rnd() * 26 }))
     const stars = Array.from({ length: 620 }, () => ({ x: rnd() * W, y: rnd() * H, ba: 0.2 + rnd() * 0.8, off: rnd() * TAU, big: rnd() > 0.96 }))
     const nebs = Array.from({ length: 4 }, () => ({ bx: rnd() * W, by: rnd() * H, dr: 30 + rnd() * 40, r: (0.4 + rnd() * 0.4) * W, col: pick(), off: rnd() * TAU }))
+    const ridges = Array.from({ length: 4 }, () => ({ pts: Array.from({ length: 10 }, () => rnd()) }))
 
     const vignette = () => { const vg = g.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, W * 0.75); vg.addColorStop(0, '#00000000'); vg.addColorStop(1, '#000000aa'); g.fillStyle = vg; g.fillRect(0, 0, W, H) }
 
@@ -88,9 +108,22 @@ for (const def of DEFS) {
           const grd = g.createLinearGradient(0, yBase - 60, 0, H); grd.addColorStop(0, col + 'aa'); grd.addColorStop(1, col + '11')
           g.fillStyle = grd; g.fill()
         }
+      } else if (kind === 'peaks') {
+        // Layered mountain silhouettes (far→light, near→dark) with drifting mist bands.
+        const sky = g.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, colors[0]); sky.addColorStop(1, colors[1])
+        g.fillStyle = sky; g.fillRect(0, 0, W, H)
+        for (let L = 0; L < ridges.length; L++) {
+          const rg = ridges[L], yBase = H * 0.4 + L * H * 0.15, amp = H * (0.18 - L * 0.02), segs = rg.pts.length - 1
+          g.beginPath(); g.moveTo(0, H)
+          for (let x = 0; x <= W; x += 12) { const u = (x / W) * segs, lo = Math.floor(u), hi = Math.min(segs, lo + 1), v = rg.pts[lo] + (rg.pts[hi] - rg.pts[lo]) * (u - lo); g.lineTo(x, yBase - v * amp) }
+          g.lineTo(W, H); g.closePath()
+          g.fillStyle = [colors[2], colors[1], colors[1], colors[0]][L] + 'ee'; g.fill()
+        }
+        g.globalCompositeOperation = 'lighter'
+        for (let m = 0; m < 3; m++) { const my = H * 0.5 + m * H * 0.13 + Math.sin(ph + m * 1.6) * 10; const grd = g.createLinearGradient(0, my - 34, 0, my + 34); grd.addColorStop(0, colors[2] + '00'); grd.addColorStop(0.5, colors[2] + '44'); grd.addColorStop(1, colors[2] + '00'); g.fillStyle = grd; g.fillRect(0, my - 34, W, 68) }
       } else if (kind === 'starfield') {
         g.globalCompositeOperation = 'lighter'
-        for (const n of nebs) { const cx = n.bx + Math.cos(ph * 0.5 + n.off) * n.dr, cy = n.by + Math.sin(ph * 0.5 + n.off) * n.dr; const rg = g.createRadialGradient(cx, cy, 0, cx, cy, n.r); rg.addColorStop(0, n.col + '55'); rg.addColorStop(1, n.col + '00'); g.fillStyle = rg; g.fillRect(0, 0, W, H) }
+        for (const nb of nebs) { const cx = nb.bx + Math.cos(ph * 0.5 + nb.off) * nb.dr, cy = nb.by + Math.sin(ph * 0.5 + nb.off) * nb.dr; const rg = g.createRadialGradient(cx, cy, 0, cx, cy, nb.r); rg.addColorStop(0, nb.col + '55'); rg.addColorStop(1, nb.col + '00'); g.fillStyle = rg; g.fillRect(0, 0, W, H) }
         g.globalCompositeOperation = 'source-over'
         for (const st of stars) { const al = st.ba * (0.4 + 0.6 * (0.5 + 0.5 * Math.sin(ph * 2 + st.off))); g.fillStyle = `rgba(255,255,255,${al.toFixed(2)})`; g.fillRect(st.x, st.y, st.big ? 2 : 1, st.big ? 2 : 1) }
       }
@@ -113,12 +146,14 @@ for (const def of DEFS) {
     const buf = await new Blob(chunks, { type: 'video/webm' }).arrayBuffer()
     const bytes = new Uint8Array(buf); let bin = ''
     for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
-    return btoa(bin)
+    frame(0)   // repaint a clean first frame for the poster
+    return { webm: btoa(bin), poster: poster ? cv.toDataURL('image/jpeg', 0.82).split(',')[1] : null }
   }, { ...def, W, H, seconds: SECONDS })
 
-  writeFileSync(join(OUT, `${def.id}.webm`), Buffer.from(b64, 'base64'))
-  console.log(`  ✓ ${def.id}.webm`)
+  writeFileSync(join(PUB, def.dir, `${def.id}.webm`), Buffer.from(out.webm, 'base64'))
+  if (out.poster) writeFileSync(join(PUB, def.dir, `${def.id}.jpg`), Buffer.from(out.poster, 'base64'))
+  console.log(`  ✓ ${def.dir}/${def.id}.webm${out.poster ? ' (+poster)' : ''}`)
 }
 
 await browser.close()
-console.log(`\n✓ ${DEFS.length} animated backgrounds → public/bg/generative/<id>.webm`)
+console.log(`\n✓ ${ALL.length} animated backgrounds rendered`)
