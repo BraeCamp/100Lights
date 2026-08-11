@@ -33,6 +33,7 @@ import { join, dirname, basename, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { analyzeSong, recordToCorpus } from '../lib/music-learn.mjs'
+import { recordUsage } from './_usage.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const uid = () => randomUUID()
@@ -365,9 +366,11 @@ async function runReal(key) {
   const mixPath = join(OUT_DIR, `${safeName(TITLE)}__full-mix.mp3`)
   writeFileSync(mixPath, mp3)
   console.log(`▸ full mix saved: ${mixPath} (${(mp3.length / 1024).toFixed(0)} KB)`)
+  await recordUsage({ provider: 'elevenlabs', operation: 'music-gen', units: LENGTH_MS / 1000, unitType: 'seconds', metadata: { model: 'music_v2', lengthMs: LENGTH_MS, title: TITLE, source: 'elevenlabs-song.mjs' } })
 
   console.log('▸ stem-separating…')
   const stemZipBuf = await stemSeparate(key, mp3)
+  await recordUsage({ provider: 'elevenlabs', operation: 'stem-sep', units: LENGTH_MS / 1000, unitType: 'seconds', metadata: { title: TITLE, source: 'elevenlabs-song.mjs' } })
   const JSZip = (await import('jszip')).default
   const stemZip = await JSZip.loadAsync(stemZipBuf)
   const audioExt = /\.(wav|mp3|flac|ogg|m4a|aac)$/i

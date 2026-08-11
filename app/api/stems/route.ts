@@ -4,6 +4,7 @@ import { createPrediction, getPrediction } from '@/lib/replicate'
 import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
 import { S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { recordUsage } from '@/lib/api-usage'
 
 // Demucs htdemucs model on Replicate — 4 stems: drums, bass, vocals, other
 const DEMUCS_VERSION = 'cjwbw/demucs:d30b9aed23df6ae13e25c8f6a03dc33c0aa50e46e96d3c60fc94f1e4cec87fac'
@@ -56,6 +57,7 @@ export async function POST(req: NextRequest) {
     jobs: 0,
   })
 
+  recordUsage({ userId, provider: 'replicate', operation: 'stem-sep-demucs', units: 1, unitType: 'predictions', metadata: { model: 'htdemucs', predictionId: prediction.id } })
   return NextResponse.json({ predictionId: prediction.id, status: prediction.status })
 }
 

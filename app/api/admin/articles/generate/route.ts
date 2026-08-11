@@ -1,4 +1,5 @@
 import { isAdmin } from '@/lib/admin-auth'
+import { recordUsage } from '@/lib/api-usage'
 import { getArticles } from '@/lib/learn-articles'
 import { buildVoicePrompt, pickVoice, VOICES, type VoiceId } from '@/lib/article-voice'
 
@@ -52,7 +53,8 @@ export async function POST(req: Request) {
     const detail = await res.text().catch(() => '')
     return Response.json({ error: `Anthropic API error ${res.status}: ${detail.slice(0, 200)}` }, { status: 502 })
   }
-  const data = await res.json() as { content?: Array<{ type: string; text?: string }> }
+  const data = await res.json() as { content?: Array<{ type: string; text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } }
+  recordUsage({ provider: 'anthropic', operation: 'article-generate', unitType: 'tokens', inputTokens: data.usage?.input_tokens, outputTokens: data.usage?.output_tokens, units: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0), metadata: { model: 'claude-sonnet-5' } })
   const markdown = (data.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('\n').trim()
   if (!markdown) return Response.json({ error: 'Empty response from the model' }, { status: 502 })
 

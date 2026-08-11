@@ -1268,10 +1268,26 @@ export default function VideoEditor({
       setCaptions: (c: Caption[]) => setCaptionsWithHistory(c),
       setCaptionStyle: (s: CaptionStyle) => setCaptionStyle(s),
       selectMedia: (id: string) => setSelectedMediaId(id),
+      addToTimeline: (mediaId: string, o: { trackId?: string; startTime?: number } = {}) =>
+        handleDropMedia(mediaId, o.trackId ?? (tracksRef.current.find(t => t.type === 'media' || t.type === 'video')?.id ?? 'v1'), o.startTime ?? 0),
       openExport: () => setShowExport(true),
+      // Direct headless render — same path the Export modal uses (exportTimelineFidelity), building the
+      // input from live editor state. Returns the finished video as a base64 data URL so a driver can
+      // save it. This closes the "render a finished video through the product" loop.
+      export: async (opts: { quality?: 'high' | 'medium' | 'web'; resolution?: 'original' | '1080p' | '720p' | '480p'; aspect?: ProjectAspect; fast?: boolean } = {}) => {
+        const { exportTimelineFidelity } = await import('@/lib/video-export')
+        const blob = await exportTimelineFidelity({
+          timelineItems, tracks, adjustments: adjustmentsRef.current, captions: captionsRef.current, captionStyle,
+          luts: lutMap, quality: opts.quality ?? 'high', resolution: opts.resolution ?? '1080p',
+          aspect: opts.aspect ?? projectAspect, fast: opts.fast ?? true, range: null,
+          onProgress: (frac: number, msg?: string) => { try { console.log(`[export] ${Math.round(frac * 100)}% ${msg ?? ''}`) } catch { /* noop */ } },
+        })
+        const dataUrl = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsDataURL(blob) })
+        return { type: blob.type, size: blob.size, dataUrl }
+      },
     }
     return () => { try { delete (window as unknown as { __video?: unknown }).__video } catch { /* ignore */ } }
-  }, [localProjectName, captionStyle, mediaItems, timelineItems]) // eslint-disable-line
+  }, [localProjectName, captionStyle, mediaItems, timelineItems, tracks, lutMap, projectAspect]) // eslint-disable-line
 
   async function loadCfproj(raw: string) {
     // Block dirty-tracking while we apply the loaded state so that

@@ -6,6 +6,7 @@
 //   node scripts/generate-bg-pool.mjs --n=2 --genres=lofi,synthwave
 // Needs REPLICATE_API_TOKEN + R2_* in .env.local.
 import { readFileSync } from 'node:fs'
+import { recordUsage } from './_usage.mjs'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 
 const env = {}
@@ -67,6 +68,7 @@ for (const g of genres) {
     if (DRY) { console.log(`[dry] bg-pool/${g}/${i}.webp  ←  ${prompt}`); continue }
     try {
       const url = await flux(prompt)
+      await recordUsage({ provider: 'replicate', operation: 'image', units: 1, unitType: 'predictions', metadata: { model: 'flux-schnell', genre: g, source: 'generate-bg-pool.mjs' } })
       const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer())
       const key = `bg-pool/${g}/${i}.webp`
       await s3.send(new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: key, Body: bytes, ContentType: 'image/webp' }))

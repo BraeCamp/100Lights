@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { CREDITS_ENABLED, meterAI, CREDIT_COSTS } from '@/lib/credits'
+import { recordUsage } from '@/lib/api-usage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -56,5 +57,7 @@ export async function POST(req: Request) {
   }
 
   const contentType = res.headers.get('content-type') || 'audio/mpeg'
+  recordUsage({ userId, provider: 'elevenlabs', operation: 'music-gen', units: lengthMs / 1000, unitType: 'seconds',
+    metadata: { model: 'music_v2', lengthMs, instrumental: body.instrumental, credits: res.headers.get('x-credits-used') || res.headers.get('character-cost') || undefined } })
   return new Response(res.body, { headers: { 'content-type': contentType } })
 }

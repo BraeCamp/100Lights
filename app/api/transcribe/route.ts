@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { presignDownload } from '@/lib/r2'
 import { cacheKey, getCached, putCached } from '@/lib/ai-cache'
+import { recordUsage } from '@/lib/api-usage'
 
 export const maxDuration = 120
 
@@ -101,6 +102,7 @@ export async function POST(request: Request) {
   }))
 
   const result = { captions, duration: data.metadata?.duration }
+  recordUsage({ userId, provider: 'deepgram', operation: 'transcribe', units: data.metadata?.duration ?? 0, unitType: 'seconds', metadata: { model: 'nova-3' } })
   if (cacheHash) await putCached(cacheHash, 'transcribe', result)   // next identical audio is free
   return Response.json(result)
 }

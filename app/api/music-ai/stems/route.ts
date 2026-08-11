@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { CREDITS_ENABLED, meterAI, CREDIT_COSTS } from '@/lib/credits'
+import { recordUsage } from '@/lib/api-usage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -43,5 +44,6 @@ export async function POST(req: Request) {
     return Response.json({ error: `Stem separation error ${res.status}: ${msg}` }, { status: 502 })
   }
 
+  recordUsage({ userId, provider: 'elevenlabs', operation: 'stem-sep', units: 1, unitType: 'predictions', metadata: { bytes: ab.byteLength } })
   return new Response(res.body, { headers: { 'content-type': 'application/zip' } })
 }

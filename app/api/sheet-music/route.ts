@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { CREDITS_ENABLED, meterAI, CREDIT_COSTS } from '@/lib/credits'
 import { cacheKey, getCached, putCached } from '@/lib/ai-cache'
+import { recordUsage } from '@/lib/api-usage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -65,7 +66,10 @@ export async function POST(req: Request) {
   if (!res) return Response.json({ error: 'Could not reach the transcription service.' }, { status: 502 })
   if (!res.ok) return Response.json({ error: `Transcription error ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}` }, { status: 502 })
 
-  const out = await res.json() as { content?: Array<{ type: string; text?: string }> }
+  const out = await res.json() as { content?: Array<{ type: string; text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } }
+  recordUsage({ userId, provider: 'anthropic', operation: 'vision', unitType: 'tokens',
+    inputTokens: out.usage?.input_tokens, outputTokens: out.usage?.output_tokens,
+    units: (out.usage?.input_tokens ?? 0) + (out.usage?.output_tokens ?? 0), metadata: { model: MODEL, feature: 'sheet-music' } })
   const text = (out.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('\n')
   const json = (text.match(/\{[\s\S]*\}/) || [])[0]
   if (!json) return Response.json({ error: 'No notes recognized. Try a clearer, higher-contrast image.' }, { status: 422 })
