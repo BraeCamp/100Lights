@@ -5,6 +5,7 @@ import { Scissors, FileText, Newspaper, AlignLeft, Plus, FolderOpen } from 'luci
 import { formatDisplayTime } from '@/lib/captions'
 import type { Output } from '@/lib/types'
 import type { TimelineItem } from '@/lib/editor-types'
+import { MEDIA_ACCEPT } from '@/lib/media-import'
 
 interface Props {
   timelineItems: TimelineItem[]
@@ -26,9 +27,9 @@ export default function MediaPool({ timelineItems, outputs, selectedId, onSelect
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (file && onImportFile) onImportFile(file)
+    const files = Array.from(e.target.files ?? [])
     e.target.value = ''
+    if (onImportFile) files.forEach(onImportFile)
   }
 
   const textOutputs = outputs.filter((o) => o.type !== 'clips' && o.type !== 'transcript')
@@ -43,7 +44,8 @@ export default function MediaPool({ timelineItems, outputs, selectedId, onSelect
           <input
             ref={fileInputRef}
             type="file"
-            accept="video/*,audio/*"
+            accept={MEDIA_ACCEPT}
+            multiple
             className="hidden"
             onChange={handleFileInput}
           />

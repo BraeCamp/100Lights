@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect } from 'react'
 import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, Library, Music2, Link2, RotateCw, ArrowUpRight, ChevronDown } from 'lucide-react'
 import type { MediaItem } from '@/lib/editor-types'
+import { MEDIA_ACCEPT, validateMediaFile } from '@/lib/media-import'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
 
@@ -121,26 +122,14 @@ export default function MediaLibrary({
     return () => { alive = false }
   }, [uploadedCount])
 
-  const ACCEPTED_TYPES = ['video/', 'audio/']
-  const MAX_BYTES = 500 * 1024 * 1024
-
-  function validateFile(file: File): string {
-    const isCube = file.name.toLowerCase().endsWith('.cube')
-    if (!isCube && !ACCEPTED_TYPES.some(t => file.type.startsWith(t)))
-      return `Unsupported file type "${file.type || file.name.split('.').pop()}". Upload a video, audio, or .cube LUT file.`
-    if (file.size > MAX_BYTES)
-      return `File is too large (${(file.size / 1024 / 1024).toFixed(0)} MB). Maximum size is 500 MB.`
-    return ''
-  }
+  // Accepts video/audio (by MIME or extension — .mkv/.mov/.avi often have an
+  // empty type) plus .cube LUTs. See lib/media-import.ts.
+  const validateFile = validateMediaFile
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
+    const files = e.target.files
     e.target.value = ''
-    if (!file) return
-    const err = validateFile(file)
-    if (err) { setImportError(err); return }
-    setImportError('')
-    onImport(file)
+    if (files?.length) importFiles(files)
   }
 
   function getMenuItems(item: MediaItem): ContextMenuItem[] {
@@ -253,7 +242,7 @@ export default function MediaLibrary({
             <FolderOpen size={11} /> Import
           </button>
         </div>
-        <input ref={fileInputRef} type="file" accept="video/*,audio/*,.cube" className="hidden" onChange={handleFileInput} />
+        <input ref={fileInputRef} type="file" accept={MEDIA_ACCEPT} multiple className="hidden" onChange={handleFileInput} />
       </div>
 
       {/* Import error */}

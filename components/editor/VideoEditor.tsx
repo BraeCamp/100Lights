@@ -77,6 +77,7 @@ import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType, 
 import { projectBeatLines, clipBeatLines, nearestSorted } from '@/lib/video-beats'
 import BeatMapEditor from './BeatMapEditor'
 import { r2CorsEligible } from '@/lib/media-cors'
+import { MEDIA_ACCEPT, detectMediaKind, validateMediaFile } from '@/lib/media-import'
 import { interpSpeedRamp } from '@/lib/video-export/speed'
 import { pickVisibleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss } from '@/lib/video-export/compositor'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
@@ -696,6 +697,22 @@ export default function VideoEditor({
   // Transcription
   const [importedFile, setImportedFile] = useState<File | null>(null)
   const projectFileRef = useRef<HTMLInputElement | null>(null)   // hidden input for "Open project (.cfproj)"
+  const mediaFileRef = useRef<HTMLInputElement | null>(null)     // hidden input for the toolbar Import button
+  const [importError, setImportError] = useState('')
+
+  // Toolbar Import → validate + import each chosen media file.
+  function handleImportInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    let firstErr = ''
+    for (const f of files) {
+      const err = validateMediaFile(f)
+      if (err) { if (!firstErr) firstErr = err }
+      else handleFileImport(f)
+    }
+    setImportError(firstErr)
+    if (firstErr) setTimeout(() => setImportError(''), 6000)
+  }
   const [localProjectName, setLocalProjectName] = useState(projectName)
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState(projectName)
@@ -2601,7 +2618,9 @@ export default function VideoEditor({
       return
     }
 
-    const ct: ContentType = file.type.startsWith('video/') ? 'video' : 'audio'
+    // Detect via the shared helper (MIME first, then extension) so containers
+    // that arrive with an empty type (.mkv/.mov/.avi…) still file as video.
+    const ct: ContentType = detectMediaKind(file) === 'audio' ? 'audio' : 'video'
     const url = URL.createObjectURL(file)
     const id = crypto.randomUUID()
 
@@ -3358,7 +3377,7 @@ export default function VideoEditor({
         if (!e.dataTransfer.types.includes('Files')) return
         e.preventDefault()
         for (const f of Array.from(e.dataTransfer.files)) {
-          if (f.type.startsWith('video/') || f.type.startsWith('audio/') || f.name.toLowerCase().endsWith('.cube')) handleFileImport(f)
+          if (detectMediaKind(f)) handleFileImport(f)
         }
       }}
     >
@@ -3367,6 +3386,8 @@ export default function VideoEditor({
       <div className="electron-drag-container flex items-center gap-3 px-4 shrink-0" style={{ height: 40, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', paddingLeft: isElectronMac ? 80 : 16 }}>
         {/* Import a project (.cfproj) straight into the video editor */}
         <input ref={projectFileRef} type="file" accept=".cfproj,application/json" onChange={handleOpenProjectFile} className="hidden" />
+        {/* Import media files (video / audio / LUT) */}
+        <input ref={mediaFileRef} type="file" accept={MEDIA_ACCEPT} multiple onChange={handleImportInput} className="hidden" />
         <button
           onClick={() => projectFileRef.current?.click()}
           title="Open a project (.cfproj) in the video editor"
@@ -3427,6 +3448,19 @@ export default function VideoEditor({
           </button>
         </div>
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border)' }} />
+
+        {/* Import media (video / audio / LUT) */}
+        {activePage === 'edit' && (
+          <button
+            onClick={() => mediaFileRef.current?.click()}
+            data-help-id="import-media"
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
+            title="Import video, audio, or LUT files (or drag them in)"
+            style={{ color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+          >
+            <FolderOpen size={12} /> Import
+          </button>
+        )}
 
         {/* Insert a title/text clip */}
         {activePage === 'edit' && (
@@ -4230,6 +4264,12 @@ export default function VideoEditor({
 
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
 
+      {importError && (
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 2500, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', color: '#f87171', padding: '9px 15px', borderRadius: 9, fontSize: 12.5, maxWidth: '90vw', boxShadow: '0 8px 30px rgba(0,0,0,0.4)' }}>
+          {importError}
+        </div>
+      )}
+
       {/* Per-audio-clip beat-grid editor (opened from a clip's right-click menu) */}
       {beatMapEditor && (() => {
         const clip = timelineItems.find(i => i.id === beatMapEditor.clipId)
@@ -4413,7 +4453,7 @@ export default function VideoEditor({
                 { title: 'Reposition, resize & crop', desc: "Select a clip, then drag inside the preview to move, corners to resize, edges to crop. Items snap to the frame's edges, center and quarters — hold Option to bypass.", page: 'edit', ids: [] },
                 { title: 'Add a title / text', desc: 'Drop a text or title clip at the playhead, then style it in the inspector.', page: 'edit', ids: ['add-title'] },
                 { title: 'Blade (split) tool', desc: 'Click clips to cut them where you click. Press A or Esc to go back to the select tool.', page: 'edit', ids: ['blade-tool'] },
-                { title: 'Import media', desc: 'Bring in video, audio, images and LUTs — or import from a URL.', page: 'edit', ids: ['media-library'] },
+                { title: 'Import media', desc: 'Bring in video (mp4, mov, webm, mkv…), audio, and LUTs — the Import button in the toolbar, the Media Pool, or just drag files in.', page: 'edit', ids: ['import-media', 'media-library'] },
                 { title: 'Color grading', desc: 'Grade the look — exposure, contrast, color balance and LUTs — on the Color page.', page: 'color', ids: ['page-color'] },
                 { title: 'Audio mixer', desc: 'Levels, fades and per-track mixing on the Audio page.', page: 'audio', ids: ['page-audio'] },
                 { title: 'Export the video', desc: 'Render the finished timeline to a downloadable video file.', ids: ['export-btn'] },
