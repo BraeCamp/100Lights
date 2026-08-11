@@ -1396,7 +1396,12 @@ export default function VideoEditor({
         .map(i => i.dawMixSourceProjectId as string)))
       if (srcIds.length) void rehydrateLinkedSources(srcIds)
       setActiveModules(cfproj.modules ?? ALL_MODULE_KEYS)
-      resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
+      // Apply the saved color grade — without this it stays DEFAULT and the next
+      // save overwrites the stored grade (silent loss on every reopen).
+      const loadedAdj = loaded.adjustments ?? DEFAULT_ADJUSTMENTS
+      setAdjustments(loadedAdj)
+      adjustmentsRef.current = loadedAdj
+      resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: loadedAdj, captions: loaded.captions })
 
       // ── Recovery check ────────────────────────────────────────
       // Show recovery only when the autosave is NEWER than the loaded
@@ -3119,7 +3124,10 @@ export default function VideoEditor({
     setChapters(loaded.chapters ?? [])
     setProjectAspect(loaded.aspect)
     setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
-    resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
+    const restoredAdj = loaded.adjustments ?? DEFAULT_ADJUSTMENTS
+    setAdjustments(restoredAdj)
+    adjustmentsRef.current = restoredAdj
+    resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: restoredAdj, captions: loaded.captions })
     // Cloud autosave: clear it now that we've loaded it (manual save will write fresh data)
     if (recovery.source === 'cloud' && projectId) {
       fetch(`/api/projects/${projectId}/autosave`, { method: 'DELETE' }).catch(() => {})
