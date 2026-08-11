@@ -19,7 +19,7 @@ const INSTRUMENTS = ['Default', 'Super Saw', 'Glass Pluck', 'Cold Pad', 'Brass P
 
 export default function SheetMusic() {
   return (
-    <AppChrome>
+    <AppChrome slug="sheetmusic">
       <SheetMusicApp />
     </AppChrome>
   )

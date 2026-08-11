@@ -24,7 +24,7 @@ const FONTS = ['system-ui', 'Georgia, serif', 'ui-monospace, monospace', 'Impact
 
 export default function MusicVideo() {
   return (
-    <AppChrome>
+    <AppChrome slug="musicvideo">
       <MusicVideoApp />
     </AppChrome>
   )

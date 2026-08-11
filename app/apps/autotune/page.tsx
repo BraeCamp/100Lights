@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 
 export default function AutotunePage() {
   return (
-    <AppChrome>
+    <AppChrome slug="autotune">
       <main id="main" className="max-w-2xl mx-auto px-6 py-14">
         <header style={{ marginBottom: 28 }}>
           <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>

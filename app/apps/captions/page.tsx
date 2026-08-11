@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
+import AppChrome from '@/components/apps/AppChrome'
 
 const Captions = dynamic(() => import('@/components/apps/Captions'))
 
@@ -17,5 +18,9 @@ export const metadata: Metadata = {
 }
 
 export default function CaptionsPage() {
-  return <Captions />
+  return (
+    <AppChrome slug="captions">
+      <Captions />
+    </AppChrome>
+  )
 }

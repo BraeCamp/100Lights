@@ -18,7 +18,7 @@ const INSTRUMENTS = ['Default', 'Super Saw', 'Glass Pluck', 'Cold Pad', 'Brass P
 
 export default function Transcribe() {
   return (
-    <AppChrome>
+    <AppChrome slug="transcribe">
       <TranscribeApp />
     </AppChrome>
   )
