@@ -23,7 +23,8 @@
     "store:metadata": "node scripts/gen-store-metadata.mjs",
     "store:metadata:check": "node scripts/gen-store-metadata.mjs --check",
     "store:icons": "node scripts/gen-app-icons.mjs",
-    "store:screenshots": "node scripts/gen-app-screenshots.mjs"
+    "store:screenshots": "node scripts/gen-app-screenshots.mjs",
+    "store:upload": "bundle exec fastlane ios metadata"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1067.0",

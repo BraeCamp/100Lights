@@ -4,7 +4,8 @@
 // Because every app now has a distinct, from-scratch home, screenshots taken
 // straight from them are genuinely different app-to-app — the clearest evidence
 // against App Review 4.3 (duplicate apps). Writes 6.7" iPhone portrait PNGs to
-// fastlane/metadata/<slug>/en-US/screenshots/APP_IPHONE_67/.
+// fastlane/screenshots/<slug>/en-US/ — the layout `deliver` reads (it detects the
+// 6.7" device from the 1290×2796 resolution).
 //
 //   node scripts/gen-app-screenshots.mjs [--url=http://localhost:3001]
 //
@@ -36,9 +37,9 @@ for (const slug of APPS) {
     await page.goto(`${URL}/apps/${slug}`, { waitUntil: 'networkidle', timeout: 30000 })
     await page.addStyleTag({ content: 'nextjs-portal,[data-next-badge-root],#__next-build-watcher,[data-nextjs-toast]{display:none!important}' })
     await page.waitForTimeout(900)                 // let motifs settle
-    const dir = join(ROOT, 'fastlane', 'metadata', slug, 'en-US', 'screenshots', 'APP_IPHONE_67')
+    const dir = join(ROOT, 'fastlane', 'screenshots', slug, 'en-US')
     mkdirSync(dir, { recursive: true })
-    await page.screenshot({ path: join(dir, '01_home.png') })
+    await page.screenshot({ path: join(dir, '01_home_6.7.png') })
     n++
     console.log(`  ✓ ${slug}`)
   } catch (e) {
@@ -48,4 +49,4 @@ for (const slug of APPS) {
   }
 }
 await browser.close()
-console.log(`\n✓ ${n}/${APPS.length} app screenshots → fastlane/metadata/<slug>/en-US/screenshots/APP_IPHONE_67/01_home.png`)
+console.log(`\n✓ ${n}/${APPS.length} app screenshots → fastlane/screenshots/<slug>/en-US/01_home_6.7.png`)
