@@ -405,7 +405,9 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
     ctx.beginPath()
     for (let i = 0; i <= pts; i++) {
       const t = i / pts
-      const r = base + samp(t < 0.5 ? t * 2 : (1 - t) * 2) * amp   // symmetric around the circle
+      // Mirror on → symmetric ring; off → full spectrum sweeps once around (asymmetric).
+      const fr = o.mirror ? (t < 0.5 ? t * 2 : (1 - t) * 2) : t
+      const r = base + samp(fr) * amp
       const a = t * Math.PI * 2 - Math.PI / 2
       const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r
       i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)
@@ -560,7 +562,8 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const downloadBg = useCallback(async () => {
     if (!bgClip) return
     setBgMsg('')
-    const ok = await downloadToDevice(bgClip.src, `${bgClip.id}.${bgClip.kind === 'video' ? 'mp4' : 'jpg'}`)
+    const ext = bgClip.src.split('.').pop() || (bgClip.kind === 'video' ? 'mp4' : 'jpg')
+    const ok = await downloadToDevice(bgClip.src, `${bgClip.id}.${ext}`)
     if (!ok) setBgMsg('Couldn’t download — the clip isn’t reachable yet.')
   }, [bgClip])
   // EQ-filter driver: the draw loop reads this; when off (or no audio), the static filter applies.
@@ -655,9 +658,12 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
         if (src === 'device') {
           // No API grabs internal audio silently — another tab/app's sound needs the screen-share
           // prompt. We keep the whole stream alive (stopping the video track kills the audio).
-          if (!md.getDisplayMedia) throw new Error('Capturing another app’s sound needs a desktop browser. On a phone, use the microphone or play a track through the app.')
-          stream = await md.getDisplayMedia({ video: true, audio: true })
-          if (!stream.getAudioTracks().length) { stream.getTracks().forEach(t => t.stop()); throw new Error('No audio was shared. In the picker, pick a browser tab (not a window) and turn on “Share tab audio”.') }
+          if (!md.getDisplayMedia) throw new Error('Capturing device audio needs a desktop browser. On a phone, use the microphone or play a track through the app.')
+          // The screen-share prompt is the browser's only route to system audio. Ask for system
+          // audio explicitly and keep it playing on the speakers. Pick "Entire Screen" +
+          // "Share system audio" for everything, or a tab + "Share tab audio".
+          stream = await md.getDisplayMedia({ video: true, audio: { systemAudio: 'include', suppressLocalAudioPlayback: false, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+          if (!stream.getAudioTracks().length) { stream.getTracks().forEach(t => t.stop()); throw new Error('No audio was shared. In the picker, choose "Entire Screen" and turn on "Share system audio" (or a tab + "Share tab audio").') }
         } else {
           stream = await md.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
         }
@@ -758,7 +764,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
               <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '13px 20px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 15, fontWeight: 750, cursor: 'pointer' }}><Mic size={17} /> Use microphone</button>
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: 0, maxWidth: 360, lineHeight: 1.5 }}>Play a track through the app for perfect sync — no prompts, no mic. Or point the mic at the speaker to visualize whatever’s in the room.</p>
-            <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}><Radio size={14} /> Or capture a tab’s sound (desktop)</button>
+            <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}><Radio size={14} /> Capture system audio (desktop)</button>
             <input ref={trackInputRef} type="file" accept="audio/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) start('file', f); e.currentTarget.value = '' }} />
           </div>
         )}
