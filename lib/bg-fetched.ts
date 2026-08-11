@@ -2,4 +2,4 @@
 // quality footage bundled at public/bg/nature/<id>.mp4 (with a real <id>.jpg poster). Any id
 // NOT listed here falls back to its procedural .webm loop. Do not edit by hand; re-run
 // `npm run bg:fetch` to refresh.
-export const FETCHED_NATURE: string[] = []
+export const FETCHED_NATURE: string[] = ['aerial-coastline', 'aerial-desert', 'aerial-forest', 'animals-birds', 'animals-jellyfish', 'beach-sunset', 'beach-waves', 'city-night', 'city-timelapse', 'mountains-peaks', 'mountains-valley']

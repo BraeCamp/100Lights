@@ -1,0 +1,57 @@
+{
+  "aerial-coastline": {
+    "photographer": "Mikhail Nilov",
+    "url": "https://www.pexels.com/video/top-view-of-breaking-waves-on-a-coastal-cliff-8357481/",
+    "source": "Pexels"
+  },
+  "aerial-forest": {
+    "photographer": "Case Joel",
+    "url": "https://www.pexels.com/video/trees-in-deep-forest-13749770/",
+    "source": "Pexels"
+  },
+  "aerial-desert": {
+    "photographer": "Adrien JACTA",
+    "url": "https://www.pexels.com/video/flying-with-a-drone-above-a-dune-lighted-by-the-sunset-gran-canaria-17833698/",
+    "source": "Pexels"
+  },
+  "beach-waves": {
+    "photographer": "Atakan Ozkan",
+    "url": "https://www.pexels.com/video/sea-waves-crashing-the-beach-shore-3116760/",
+    "source": "Pexels"
+  },
+  "beach-sunset": {
+    "photographer": "Hervé Piglowski",
+    "url": "https://www.pexels.com/video/a-beach-at-or-near-the-apartment-19771183/",
+    "source": "Pexels"
+  },
+  "mountains-peaks": {
+    "photographer": "Yaroslav Shuraev",
+    "url": "https://www.pexels.com/video/a-mountain-peak-trail-covered-with-snow-4763085/",
+    "source": "Pexels"
+  },
+  "mountains-valley": {
+    "photographer": "Julien Goettelmann",
+    "url": "https://www.pexels.com/video/aerial-view-of-a-forested-valley-in-the-mountains-26081680/",
+    "source": "Pexels"
+  },
+  "animals-birds": {
+    "photographer": "CESAR A RAMIREZ VALLEJO TRAPHITHO",
+    "url": "https://www.pexels.com/video/black-birds-flying-in-sky-13456511/",
+    "source": "Pexels"
+  },
+  "animals-jellyfish": {
+    "photographer": "Soly Moses",
+    "url": "https://www.pexels.com/video/jellyfish-tank-28156785/",
+    "source": "Pexels"
+  },
+  "city-night": {
+    "photographer": "Altaf Shah",
+    "url": "https://www.pexels.com/video/breathtaking-cityscape-at-night-in-black-and-white-34398886/",
+    "source": "Pexels"
+  },
+  "city-timelapse": {
+    "photographer": "Ivan Chumak",
+    "url": "https://www.pexels.com/video/berlin-timelapse-night-city-traffic-lights-34665162/",
+    "source": "Pexels"
+  }
+}
