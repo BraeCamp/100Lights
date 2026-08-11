@@ -1331,6 +1331,21 @@ export default function VideoEditor({
       },
       addToTimeline: (mediaId: string, o: { trackId?: string; startTime?: number } = {}) =>
         handleDropMedia(mediaId, o.trackId ?? (tracksRef.current.find(t => t.type === 'media' || t.type === 'video')?.id ?? 'v1'), o.startTime ?? 0),
+      // Add an audio-reactive music-visual clip (full-frame background by default) —
+      // format = 'waveform' | 'eq-bars' | 'radial'. Drives the same MusicVizOverlay
+      // the user gets from the inspector; returns the clip id.
+      addMusicViz: (o: { format?: string; startTime?: number; duration?: number; trackId?: string; accent?: string; bg?: [string, string] | null } = {}) => {
+        const trackId = o.trackId ?? (tracksRef.current.find(t => t.type === 'media' || t.type === 'video')?.id ?? 'v1')
+        const start = o.startTime ?? 0
+        const id = crypto.randomUUID()
+        setTimelineItems(prev => [...prev, {
+          id, label: 'Music Visual', startTime: start, inPoint: 0, outPoint: o.duration ?? 30,
+          captions: [], color: CLIP_COLORS[0], trackId, contentType: 'musicviz',
+          mvFormat: o.format ?? DEFAULT_MUSIC_VIZ_FORMAT, mvAccent: o.accent ?? themeAccent,
+          mvBg: o.bg ?? null, mvMatchTheme: !o.accent,
+        }])
+        return id
+      },
       openExport: () => setShowExport(true),
       // Direct headless render — same path the Export modal uses (exportTimelineFidelity), building the
       // input from live editor state. Returns the finished video as a base64 data URL so a driver can
