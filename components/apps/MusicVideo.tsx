@@ -20,6 +20,8 @@ import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
 import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, type BgClip, type BgCategory } from '@/lib/bg-library'
+import { detectMediaKind } from '@/lib/media-import'
+import { useMediaDrop } from '@/lib/use-media-drop'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
 import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '@/lib/offline-media'
 
@@ -935,6 +937,16 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   }, [wake])
   useEffect(() => () => stop(), [stop])
 
+  // Drag-and-drop media onto the stage: audio plays into the visualizer, a video/image
+  // becomes the background.
+  const onDropMedia = useCallback((files: File[]) => {
+    const f = files[0]; if (!f) return
+    const k = detectMediaKind(f)
+    if (k === 'audio') start('file', f)
+    else if (k === 'video' || k === 'image') pickBgFile(f)
+  }, [start, pickBgFile])
+  const { isOver, dropProps } = useMediaDrop(onDropMedia, { accept: ['audio', 'video', 'image'] })
+
   return (
     <div className="mv-live">
       <style>{`@keyframes mv-amb{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}} .mv-ambient{animation:mv-amb 16s ease-in-out infinite}
@@ -947,7 +959,10 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
       <LookSvgDefs />
       <div className="mv-split">
         <div className="mv-stage">
-      <div ref={wrapRef} style={{ position: 'relative', width: '100%', aspectRatio: fs ? undefined : '16 / 9', height: fs ? '100dvh' : undefined, borderRadius: fs ? 0 : 14, overflow: 'hidden', background: '#08070d', border: fs ? 'none' : '1px solid var(--border)' }}>
+      <div ref={wrapRef} {...dropProps} style={{ position: 'relative', width: '100%', aspectRatio: fs ? undefined : '16 / 9', height: fs ? '100dvh' : undefined, borderRadius: fs ? 0 : 14, overflow: 'hidden', background: '#08070d', border: fs ? 'none' : '1px solid var(--border)', outline: isOver ? '3px dashed var(--accent)' : 'none', outlineOffset: -3 }}>
+        {isOver && (
+          <div style={{ position: 'absolute', inset: 0, zIndex: 5, display: 'grid', placeItems: 'center', background: 'rgba(6,5,10,0.6)', color: '#fff', fontSize: 15, fontWeight: 800, pointerEvents: 'none' }}>Drop audio to visualize · video or image for the background</div>
+        )}
         {/* Background layer — ambient gradient, library clip (streamed), or your own upload; filtered here */}
         {hasBg && (
           <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter, isolation: 'isolate' }}>

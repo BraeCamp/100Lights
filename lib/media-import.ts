@@ -6,7 +6,7 @@
 // .m4v, …) come through the OS with an EMPTY or generic `file.type`, so a
 // `startsWith('video/')` check alone would reject them or misfile them as audio.
 
-export type MediaKind = 'video' | 'audio' | 'lut'
+export type MediaKind = 'video' | 'audio' | 'image' | 'lut'
 
 // Extensions we accept (lowercase, no dot). Broad on purpose — the browser only
 // *decodes* a subset (mp4/h264, webm, mov/h264…), but importing should never be
@@ -19,14 +19,18 @@ export const AUDIO_EXTS = [
   'mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'weba',
   'flac', 'aif', 'aiff', 'wma', 'caf',
 ]
+export const IMAGE_EXTS = [
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'heic', 'heif', 'svg',
+]
 export const LUT_EXTS = ['cube']
 
 // `accept` attribute for a file <input> — MIME wildcards for the common case
 // plus every explicit extension so the OS picker never greys these out.
 export const MEDIA_ACCEPT = [
-  'video/*', 'audio/*',
+  'video/*', 'audio/*', 'image/*',
   ...VIDEO_EXTS.map(e => `.${e}`),
   ...AUDIO_EXTS.map(e => `.${e}`),
+  ...IMAGE_EXTS.map(e => `.${e}`),
   ...LUT_EXTS.map(e => `.${e}`),
 ].join(',')
 
@@ -43,9 +47,24 @@ export function detectMediaKind(file: File): MediaKind | null {
   const type = (file.type || '').toLowerCase()
   if (type.startsWith('video/')) return 'video'
   if (type.startsWith('audio/')) return 'audio'
+  if (type.startsWith('image/')) return 'image'
   if (VIDEO_EXTS.includes(ext)) return 'video'
   if (AUDIO_EXTS.includes(ext)) return 'audio'
+  if (IMAGE_EXTS.includes(ext)) return 'image'
   return null
+}
+
+/** Decode a file's audio into an AudioBuffer. Works for audio files AND video
+ *  containers — `decodeAudioData` pulls only the audio track, so the picture is
+ *  discarded. Throws if the codec can't be decoded. Shared by every "video in,
+ *  audio only" surface (sound library import, drag-and-drop). */
+export async function decodeFileAudio(file: Blob, ctx?: AudioContext): Promise<AudioBuffer> {
+  const ac = ctx ?? new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
+  try {
+    return await ac.decodeAudioData(await file.arrayBuffer())
+  } finally {
+    if (!ctx) ac.close()
+  }
 }
 
 export const MAX_MEDIA_BYTES = 500 * 1024 * 1024

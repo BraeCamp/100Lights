@@ -11,6 +11,8 @@ import {
   TYPE_TAGS, CHARACTER_TAGS, CATEGORY_TO_TYPE_TAG, CATEGORY_CHAR_TAGS,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
+import { detectMediaKind } from '@/lib/media-import'
+import { useMediaDrop } from '@/lib/use-media-drop'
 import { useUser } from '@clerk/nextjs'
 
 let _recipeCtx: AudioContext | null = null
@@ -665,10 +667,12 @@ export function AddToLibraryModal({
       } catch { setError('Could not decode AIFF file') }
       return
     }
-    if (!file.type.startsWith('audio/') && ext !== 'wav' && ext !== 'mp3' && ext !== 'ogg' && ext !== 'flac' && ext !== 'm4a') {
-      setError('Audio files only'); return
-    }
-    loadBlob(new Blob([await file.arrayBuffer()], { type: file.type || 'audio/mpeg' }))
+    const kind = detectMediaKind(file)
+    if (kind !== 'audio' && kind !== 'video') { setError('Import an audio or video file'); return }
+    // Video files import as audio-only: decodeAudioData (in loadBlob) keeps just the
+    // audio track and the picture is discarded.
+    const base = file.name.replace(/\.[^.]+$/, '')
+    loadBlob(new Blob([await file.arrayBuffer()], { type: file.type || 'audio/mpeg' }), base, kind === 'video')
   }
 
   function applySynth(buf: AudioBuffer, suggestedName: string) {
@@ -705,13 +709,13 @@ export function AddToLibraryModal({
     setMode('edit')
   }
 
-  async function loadBlob(blob: Blob) {
+  async function loadBlob(blob: Blob, name?: string, fromVideo = false) {
     try {
       const ctx = new AudioContext()
       const buf = await ctx.decodeAudioData(await blob.arrayBuffer())
       ctx.close()
-      enterEdit(buf)
-    } catch { setError('Could not decode audio') }
+      enterEdit(buf, name)
+    } catch { setError(fromVideo ? 'Could not read the audio from that video (unsupported codec)' : 'Could not decode audio') }
   }
 
   function stopPreview() {
@@ -890,11 +894,14 @@ export function AddToLibraryModal({
     </>
   ) : null
 
+  const { isOver: createOver, dropProps: createDropProps } = useMediaDrop(files => { if (files[0]) loadFile(files[0]) }, { accept: ['audio', 'video'] })
+
   return (
     <div
 className="electron-nodrag"
 style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 22, width: mode === 'synth' ? 'min(1020px,96vw)' : 'min(600px,94vw)', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div {...createDropProps} style={{ position: 'relative', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 22, width: mode === 'synth' ? 'min(1020px,96vw)' : 'min(600px,94vw)', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '90vh', overflowY: 'auto', outline: createOver ? '3px dashed var(--accent)' : 'none', outlineOffset: -3 }}>
+        {createOver && <div style={{ position: 'absolute', inset: 0, zIndex: 3, display: 'grid', placeItems: 'center', borderRadius: 14, background: 'rgba(6,5,10,0.72)', color: '#fff', fontSize: 14, fontWeight: 800, pointerEvents: 'none' }}>Drop an audio or video file — only the audio is kept</div>}
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{mode === 'edit' || mode === 'synth' ? 'Build a Sound' : 'Add to Library'}</span>
@@ -908,7 +915,7 @@ style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 10
                 <Mic size={22} />
                 Record
               </button>
-              <button onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*'; inp.onchange = () => inp.files?.[0] && loadFile(inp.files[0]); inp.click() }}
+              <button title="Import an audio file — or a video (only its audio is kept)" onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'audio/*,video/*'; inp.onchange = () => inp.files?.[0] && loadFile(inp.files[0]); inp.click() }}
                 style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '16px 0', borderRadius: 10, background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                 <Upload size={22} />
                 Import
