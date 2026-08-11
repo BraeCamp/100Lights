@@ -29,8 +29,15 @@ import {
 import { writeMidiFile } from '@/lib/midi-file'
 import { audioBufferToWav } from '@/lib/wav-encoder'
 import { openSketchInStudio } from '@/lib/open-in-studio'
+import { useAppShellOptional } from '@/components/apps/AppChrome'
 import type { MidiNote } from '@/lib/daw-types'
 import type { DrumPadSettings } from '@/lib/daw-types'
+
+// Play/record-feel animation styles. 'random' resolves to a concrete one when the
+// app opens (so each session feels a little different); 'off' disables them.
+type AnimStyle = 'off' | 'pulse' | 'ripple' | 'bounce' | 'random'
+const ANIM_CONCRETE: Exclude<AnimStyle, 'random' | 'off'>[] = ['pulse', 'ripple', 'bounce']
+const ANIM_KEY = 'beatmaker-anim'
 
 const MIN_BPM = 40
 const MAX_BPM = 300
@@ -120,8 +127,29 @@ export default function BeatMaker({ onPattern, restore }: {
   const [playing, setPlaying] = useState(false)
   const [displayStep, setDisplayStep] = useState(-1)
   const [loaded, setLoaded] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [animStyle, setAnimStyle] = useState<AnimStyle>('pulse')
+  const [resolvedAnim, setResolvedAnim] = useState<Exclude<AnimStyle, 'random'>>('pulse')
+  const [savedNote, setSavedNote] = useState('')
+
+  // Optional — present on the standalone /apps/beatmaker page (inside AppChrome), absent when
+  // BeatMaker is embedded (Firefly). Gates Save-to-history and the History restore hook.
+  const shell = useAppShellOptional()
 
   const kit = useMemo(() => DRUM_KITS.find(k => k.id === kitId) ?? DEFAULT_KIT, [kitId])
+
+  // Resolve the play-animation style once on open. 'random' picks a concrete style for the session.
+  useEffect(() => {
+    let stored: AnimStyle = 'pulse'
+    try { const s = localStorage.getItem(ANIM_KEY) as AnimStyle | null; if (s) stored = s } catch { /* off */ }
+    setAnimStyle(stored)
+    setResolvedAnim(stored === 'random' ? ANIM_CONCRETE[Math.floor(Math.random() * ANIM_CONCRETE.length)] : (stored === 'off' ? 'off' : stored))
+  }, [])
+  const changeAnim = useCallback((s: AnimStyle) => {
+    setAnimStyle(s)
+    setResolvedAnim(s === 'random' ? ANIM_CONCRETE[Math.floor(Math.random() * ANIM_CONCRETE.length)] : (s === 'off' ? 'off' : s))
+    try { localStorage.setItem(ANIM_KEY, s) } catch { /* off */ }
+  }, [])
 
   // Surface the grid to an embedding host (Firefly) as beat-based drum MidiNotes (GM pitches,
   // 16th-note grid). No-op on the standalone page.
@@ -179,6 +207,8 @@ export default function BeatMaker({ onPattern, restore }: {
   const nextStepTimeRef = useRef(0)   // audio-clock time of the next step to schedule
   const stepRef = useRef(0)           // index of the next step to schedule
   const queueRef = useRef<Array<{ step: number; time: number }>>([])  // for the visual playhead
+  const loopStartRef = useRef(0)      // audio-clock time step 0 fires (for record quantize)
+  const recordingRef = useRef(false); useEffect(() => { recordingRef.current = recording }, [recording])
 
   // ── Persistence ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -272,6 +302,7 @@ export default function BeatMaker({ onPattern, restore }: {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
     queueRef.current = []
     setPlaying(false)
+    setRecording(false)
     setDisplayStep(-1)
   }, [])
 
@@ -281,6 +312,7 @@ export default function BeatMaker({ onPattern, restore }: {
     stepRef.current = 0
     queueRef.current = []
     nextStepTimeRef.current = c.currentTime + 0.1
+    loopStartRef.current = nextStepTimeRef.current
     timerRef.current = window.setInterval(scheduler, TICK_MS)
     rafRef.current = requestAnimationFrame(drawStep)
     setPlaying(true)
@@ -294,6 +326,34 @@ export default function BeatMaker({ onPattern, restore }: {
     void c.resume()
     if (buffersRef.current) triggerHit(c, buffersRef.current, voicingRef.current, laneKey, c.currentTime, c.destination)
   }, [ensureCtx, triggerHit])
+
+  // Tapping a drum pad: always plays the sound (fun to bash on), and when armed +
+  // playing, lands a hit on the grid quantized to the nearest 16th step.
+  const padHit = useCallback((laneKey: string) => {
+    auditionLane(laneKey)
+    if (!recordingRef.current || !playing) return
+    const c = ctxRef.current
+    if (!c) return
+    const secPerStep = 60 / bpmRef.current / 4
+    let step = Math.round((c.currentTime - loopStartRef.current) / secPerStep) % STEPS_PER_BAR
+    if (step < 0) step += STEPS_PER_BAR
+    setGrid(prev => {
+      if (prev[laneKey]?.[step]) return prev
+      const next: Grid = { ...prev, [laneKey]: prev[laneKey].slice() }
+      next[laneKey][step] = true
+      return next
+    })
+    setPatternId('')
+  }, [auditionLane, playing])
+
+  // Arming record also starts the transport so hits have a clock to land on.
+  const toggleRecord = useCallback(() => {
+    setRecording(r => {
+      const next = !r
+      if (next && !playing) start()
+      return next
+    })
+  }, [playing, start])
 
   const toggleCell = useCallback((laneKey: string, step: number) => {
     setGrid(prev => {
@@ -395,6 +455,34 @@ export default function BeatMaker({ onPattern, restore }: {
     openSketchInStudio([], beat, { tempo: bpm, name: `Beat — ${kit.name}` })
   }, [grid, bpm, kit.name, gridToNotes, hasHits])
 
+  // ── Save to (and restore from) the shared app History ─────────────────────────
+  const saveBeat = useCallback(() => {
+    if (!shell || !hasHits) return
+    shell.history.save({
+      title: `Beat — ${kit.name}`,
+      subtitle: `${bpm} BPM · ${kit.name}`,
+      data: { grid: gridRef.current, bpm, swing, kitId },
+    })
+    setSavedNote('Saved ✓')
+    window.setTimeout(() => setSavedNote(''), 1800)
+  }, [shell, hasHits, kit.name, bpm, swing, kitId])
+
+  useEffect(() => {
+    if (!shell) return
+    shell.registerRestore((data) => {
+      const d = data as Partial<{ grid: Grid; bpm: number; swing: number; kitId: string }>
+      if (d.grid) {
+        const ng = emptyGrid()
+        for (const l of DRUM_LANES) if (Array.isArray(d.grid[l.key])) for (let i = 0; i < STEPS_PER_BAR; i++) ng[l.key][i] = !!d.grid![l.key][i]
+        setGrid(ng)
+      }
+      if (typeof d.bpm === 'number') { const b = clampBpm(d.bpm); setBpm(b); setBpmText(String(b)) }
+      if (typeof d.swing === 'number') setSwing(clamp(d.swing, 0, SWING_MAX))
+      if (typeof d.kitId === 'string' && DRUM_KITS.some(k => k.id === d.kitId)) setKitId(d.kitId)
+      setPatternId('')
+    })
+  }, [shell])
+
   // ── Headless test hook (mirrors the __voice* / __daw* convention) ─────────────
   useEffect(() => {
     const w = window as unknown as {
@@ -440,6 +528,19 @@ export default function BeatMaker({ onPattern, restore }: {
   const cellSize = 26
   return (
     <div style={{ border: '1px solid var(--border-subtle, #2a2a2a)', borderRadius: 14, padding: 18, background: 'var(--bg-surface, #14141a)' }}>
+      <style>{`
+        @keyframes bm-pulse { 0%{transform:scale(1)} 38%{transform:scale(1.32); filter:brightness(1.7)} 100%{transform:scale(1)} }
+        @keyframes bm-ripple { 0%{box-shadow:0 0 0 0 rgba(96,165,250,.65)} 100%{box-shadow:0 0 0 9px rgba(96,165,250,0)} }
+        @keyframes bm-bounce { 0%{transform:translateY(0)} 34%{transform:translateY(-5px)} 68%{transform:translateY(1px)} 100%{transform:translateY(0)} }
+        @keyframes bm-rec-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.55)} 50%{box-shadow:0 0 0 6px rgba(239,68,68,0)} }
+        .bm-anim-pulse { animation: bm-pulse .22s ease-out }
+        .bm-anim-ripple { animation: bm-ripple .32s ease-out }
+        .bm-anim-bounce { animation: bm-bounce .26s ease-out }
+        .bm-rec-armed { animation: bm-rec-pulse 1.1s ease-in-out infinite }
+        .bm-pad { -webkit-tap-highlight-color: transparent }
+        .bm-pad:active { transform: scale(.93) }
+        @media (prefers-reduced-motion: reduce) { .bm-anim-pulse,.bm-anim-ripple,.bm-anim-bounce,.bm-rec-armed { animation: none !important } }
+      `}</style>
       {/* Transport + controls */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', marginBottom: 16 }}>
         <button
@@ -451,6 +552,22 @@ export default function BeatMaker({ onPattern, restore }: {
           }}
         >
           {playing ? 'Stop' : 'Play'}
+        </button>
+
+        <button
+          onClick={toggleRecord}
+          aria-pressed={recording}
+          title="Record: tap the pads in time and they land on the grid"
+          className={recording ? 'bm-rec-armed' : ''}
+          style={{
+            fontSize: 14, fontWeight: 700, padding: '10px 16px', borderRadius: 10, cursor: 'pointer',
+            border: recording ? '1px solid #ef4444' : '1px solid var(--border-subtle,#333)',
+            color: recording ? '#fff' : 'var(--text-secondary,#bbb)',
+            background: recording ? '#dc2626' : 'transparent', display: 'inline-flex', alignItems: 'center', gap: 7,
+          }}
+        >
+          <span style={{ width: 9, height: 9, borderRadius: 999, background: recording ? '#fff' : '#ef4444', display: 'inline-block' }} />
+          {recording ? 'Recording' : 'Record'}
         </button>
 
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 11, color: 'var(--text-muted)', gap: 3 }}>
@@ -496,6 +613,21 @@ export default function BeatMaker({ onPattern, restore }: {
           />
         </label>
 
+        <label style={{ display: 'flex', flexDirection: 'column', fontSize: 11, color: 'var(--text-muted)', gap: 3 }}>
+          Animation
+          <select
+            value={animStyle} onChange={e => changeAnim(e.target.value as AnimStyle)}
+            title="How the pads react as the beat plays"
+            style={{ padding: '7px 8px', borderRadius: 8, border: '1px solid var(--border-subtle,#333)', background: 'var(--bg-base,#0c0c10)', color: 'var(--text-primary,#eee)', fontSize: 13.5 }}
+          >
+            <option value="off">Off</option>
+            <option value="pulse">Pulse</option>
+            <option value="ripple">Ripple</option>
+            <option value="bounce">Bounce</option>
+            <option value="random">Random</option>
+          </select>
+        </label>
+
         <button
           onClick={clearGrid}
           style={{ fontSize: 13, fontWeight: 600, padding: '8px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid var(--border-subtle,#333)', background: 'transparent', color: 'var(--text-secondary,#bbb)' }}
@@ -518,11 +650,26 @@ export default function BeatMaker({ onPattern, restore }: {
             ))}
           </div>
 
-          {DRUM_LANES.map(lane => (
+          {DRUM_LANES.map(lane => {
+            const laneFiring = displayStep >= 0 && !!grid[lane.key]?.[displayStep]
+            const laneAnim = resolvedAnim !== 'off' && laneFiring ? `bm-anim-${resolvedAnim}` : ''
+            return (
             <div key={lane.key} style={{ display: 'flex', alignItems: 'center', marginBottom: 3 }}>
-              <div style={{ width: 84, marginRight: 4, fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary,#bbb)', textAlign: 'right', paddingRight: 4 }}>
+              <button
+                type="button"
+                onClick={() => padHit(lane.key)}
+                aria-label={`Play ${lane.label}`}
+                className={`bm-pad ${laneAnim}`}
+                style={{
+                  width: 84, marginRight: 4, fontSize: 11.5, fontWeight: 700, textAlign: 'right', padding: '4px 6px', borderRadius: 6, cursor: 'pointer',
+                  border: '1px solid ' + (laneFiring ? 'var(--accent,#60a5fa)' : 'transparent'),
+                  background: laneFiring ? 'var(--accent,#60a5fa)' : 'transparent',
+                  color: laneFiring ? '#0e0d12' : 'var(--text-secondary,#bbb)',
+                  transition: 'background 60ms, color 60ms, border-color 60ms',
+                }}
+              >
                 {lane.label}
-              </div>
+              </button>
               {Array.from({ length: STEPS_PER_BAR }).map((_, s) => {
                 const on = grid[lane.key]?.[s]
                 const isBeat = s % 4 === 0
@@ -533,6 +680,7 @@ export default function BeatMaker({ onPattern, restore }: {
                     onClick={() => toggleCell(lane.key, s)}
                     aria-label={`${lane.label} step ${s + 1}`}
                     aria-pressed={on}
+                    className={resolvedAnim !== 'off' && on && isCur ? `bm-anim-${resolvedAnim}` : ''}
                     style={{
                       width: cellSize, height: cellSize, marginRight: 3, borderRadius: 5, cursor: 'pointer',
                       border: isCur ? '1px solid #facc15' : '1px solid var(--border-subtle,#2a2a2a)',
@@ -546,7 +694,8 @@ export default function BeatMaker({ onPattern, restore }: {
                 )
               })}
             </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -564,6 +713,14 @@ export default function BeatMaker({ onPattern, restore }: {
         >
           {rendering ? 'Rendering…' : `Download WAV (${EXPORT_BARS} bars)`}
         </button>
+        {shell && (
+          <button
+            onClick={saveBeat} disabled={!hasHits}
+            style={{ fontSize: 13.5, fontWeight: 700, padding: '9px 16px', borderRadius: 9, cursor: hasHits ? 'pointer' : 'not-allowed', opacity: hasHits ? 1 : 0.5, border: 'none', background: 'var(--accent,#60a5fa)', color: '#0e0d12' }}
+          >
+            {savedNote || 'Save beat'}
+          </button>
+        )}
         <button
           onClick={openStudio} disabled={!hasHits}
           style={{ fontSize: 13, fontWeight: 600, padding: '9px 14px', borderRadius: 9, cursor: hasHits ? 'pointer' : 'not-allowed', opacity: hasHits ? 1 : 0.5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}
