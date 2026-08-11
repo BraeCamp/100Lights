@@ -298,17 +298,36 @@ const AMBIENTS: { id: string; name: string; css: string }[] = [
 // filter, an SVG filter (posterize/aberration/bloom/ripple, defined once in LookSvgDefs),
 // and overlay layers (vignette/grain/scanlines/duotone). Pure CSS+SVG — cheap, no WebGL,
 // works over video and stills alike, and composes on top of the user's blur/hue sliders.
-type Overlay = 'vignette' | 'grain' | 'scanlines' | 'duotone'
+type Overlay = 'vignette' | 'grain' | 'scanlines' | 'duotone' | 'halftone'
 interface VideoLook { id: string; name: string; css?: string; svg?: string; overlays?: Overlay[] }
+
+// LOOK = a subtle grade/atmosphere you leave on. Composes UNDER a Mode.
 const VIDEO_LOOKS: VideoLook[] = [
   { id: 'none', name: 'None' },
   { id: 'vignette', name: 'Vignette', overlays: ['vignette'] },
   { id: 'film', name: 'Film', css: 'contrast(1.05) saturate(1.05) sepia(0.12)', overlays: ['grain', 'vignette'] },
-  { id: 'vhs', name: 'VHS', svg: 'mv-vhs', css: 'saturate(1.2) contrast(1.05)', overlays: ['scanlines', 'grain', 'vignette'] },
-  { id: 'cartoon', name: 'Cartoon', svg: 'mv-cartoon', css: 'saturate(1.55) contrast(1.12)' },
   { id: 'dream', name: 'Dream', svg: 'mv-dream', css: 'brightness(1.05) saturate(1.1)', overlays: ['vignette'] },
   { id: 'noir', name: 'Noir', css: 'grayscale(1) contrast(1.32) brightness(1.02)', overlays: ['vignette', 'grain'] },
-  { id: 'neon', name: 'Neon', css: 'saturate(1.8) contrast(1.25) hue-rotate(8deg)', overlays: ['duotone'] },
+  { id: 'warm', name: 'Warm', css: 'sepia(0.25) saturate(1.3) contrast(1.05) brightness(1.03)' },
+  { id: 'cool', name: 'Cool', css: 'saturate(1.15) hue-rotate(-12deg) brightness(1.02)' },
+]
+
+// MODE = a dramatic, live full-frame transform — the "change the whole look" layer, more
+// overlay than tweak. Built from SVG filters (edge-detect + posterize for the cel/ink looks,
+// colour-ramp palettes for thermal/infrared, displacement for glitch). Real neural anime
+// style-transfer would need an ML model; these are stylised approximations to iterate on.
+const VIDEO_MODES: VideoLook[] = [
+  { id: 'none', name: 'None' },
+  { id: 'anime', name: 'Anime', svg: 'mv-anime', css: 'saturate(1.5) contrast(1.08)' },
+  { id: 'comic', name: 'Comic', svg: 'mv-comic', css: 'saturate(1.4) contrast(1.15)', overlays: ['halftone'] },
+  { id: 'ink', name: 'Ink', svg: 'mv-ink' },
+  { id: 'oil', name: 'Oil paint', svg: 'mv-oil', css: 'saturate(1.35) contrast(1.08)' },
+  { id: 'cartoon', name: 'Cartoon', svg: 'mv-cartoon', css: 'saturate(1.55) contrast(1.12)' },
+  { id: 'neonedge', name: 'Neon edge', svg: 'mv-neonedge' },
+  { id: 'thermal', name: 'Thermal', svg: 'mv-thermal' },
+  { id: 'infrared', name: 'Infrared', svg: 'mv-infrared' },
+  { id: 'vhs', name: 'VHS', svg: 'mv-vhs', css: 'saturate(1.2) contrast(1.05)', overlays: ['scanlines', 'grain'] },
+  { id: 'glitch', name: 'Glitch', svg: 'mv-glitch', overlays: ['scanlines'] },
   { id: 'living', name: 'Living', svg: 'mv-living' },
 ]
 // Tileable film-grain noise (feTurbulence baked into a data-URI so it needs no network).
@@ -325,6 +344,7 @@ function LookOverlays({ keys }: { keys: Overlay[] }) {
         if (k === 'scanlines') return <div key={k} style={{ ...base, backgroundImage: 'repeating-linear-gradient(to bottom, rgba(0,0,0,0.28) 0 1px, transparent 1px 3px)', mixBlendMode: 'multiply' }} />
         if (k === 'grain') return <div key={k} className="mv-grain" style={{ ...base, backgroundImage: `url("${GRAIN_URI}")`, backgroundSize: '160px 160px', opacity: 0.16, mixBlendMode: 'overlay' }} />
         if (k === 'duotone') return <div key={k} style={{ ...base, backgroundImage: 'linear-gradient(125deg,#12b3ff,#ff2fd0)', mixBlendMode: 'color', opacity: 0.4 }} />
+        if (k === 'halftone') return <div key={k} style={{ ...base, backgroundImage: 'radial-gradient(circle at center, rgba(0,0,0,0.55) 30%, transparent 32%)', backgroundSize: '6px 6px', mixBlendMode: 'multiply', opacity: 0.55 }} />
         return null
       })}
     </>
@@ -361,6 +381,89 @@ function LookSvgDefs() {
             <animate attributeName="baseFrequency" dur="18s" values="0.006 0.01;0.011 0.007;0.006 0.01" repeatCount="indefinite" />
           </feTurbulence>
           <feDisplacementMap in="SourceGraphic" in2="n" scale="20" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+        {/* Anime cel — posterized fills + dark ink outlines from a Laplacian edge pass. */}
+        <filter id="mv-anime">
+          <feComponentTransfer result="post">
+            <feFuncR type="discrete" tableValues="0.1 0.4 0.65 0.85 1" />
+            <feFuncG type="discrete" tableValues="0.1 0.4 0.65 0.85 1" />
+            <feFuncB type="discrete" tableValues="0.12 0.42 0.67 0.87 1" />
+          </feComponentTransfer>
+          <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.33 0.34 0.33 0 0" result="lum" />
+          <feConvolveMatrix in="lum" order="3" preserveAlpha="false" kernelMatrix="1 1 1 1 -8 1 1 1 1" result="edge" />
+          <feComponentTransfer in="edge" result="ea"><feFuncA type="table" tableValues="0 0 0.9 1" /></feComponentTransfer>
+          <feFlood floodColor="#1a1420" result="ink" />
+          <feComposite in="ink" in2="ea" operator="in" result="lines" />
+          <feMerge><feMergeNode in="post" /><feMergeNode in="lines" /></feMerge>
+        </filter>
+        {/* Comic — 3-level posterize + hard black outlines (halftone dots via overlay). */}
+        <filter id="mv-comic">
+          <feComponentTransfer result="post">
+            <feFuncR type="discrete" tableValues="0 0.5 1" />
+            <feFuncG type="discrete" tableValues="0 0.5 1" />
+            <feFuncB type="discrete" tableValues="0 0.5 1" />
+          </feComponentTransfer>
+          <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.33 0.34 0.33 0 0" result="lum" />
+          <feConvolveMatrix in="lum" order="3" preserveAlpha="false" kernelMatrix="1 1 1 1 -8 1 1 1 1" result="edge" />
+          <feComponentTransfer in="edge" result="ea"><feFuncA type="table" tableValues="0 0 1 1" /></feComponentTransfer>
+          <feFlood floodColor="#000" result="ink" />
+          <feComposite in="ink" in2="ea" operator="in" result="lines" />
+          <feMerge><feMergeNode in="post" /><feMergeNode in="lines" /></feMerge>
+        </filter>
+        {/* Ink / woodcut — threshold to two tones on cream paper. */}
+        <filter id="mv-ink">
+          <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.33 0.34 0.33 0 0" result="lum" />
+          <feComponentTransfer in="lum" result="th"><feFuncA type="discrete" tableValues="1 1 0" /></feComponentTransfer>
+          <feFlood floodColor="#15110c" result="ink" />
+          <feComposite in="ink" in2="th" operator="in" result="dark" />
+          <feFlood floodColor="#efe9da" result="paper" />
+          <feMerge><feMergeNode in="paper" /><feMergeNode in="dark" /></feMerge>
+        </filter>
+        {/* Oil paint — dilate + soften into blobs. */}
+        <filter id="mv-oil">
+          <feMorphology operator="dilate" radius="2" result="d" />
+          <feGaussianBlur in="d" stdDeviation="1.1" />
+        </filter>
+        {/* Neon edge — bright glowing outlines on near-black. */}
+        <filter id="mv-neonedge">
+          <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.33 0.34 0.33 0 0" result="lum" />
+          <feConvolveMatrix in="lum" order="3" preserveAlpha="false" kernelMatrix="1 1 1 1 -8 1 1 1 1" result="edge" />
+          <feComponentTransfer in="edge" result="ea"><feFuncA type="linear" slope="3" /></feComponentTransfer>
+          <feFlood floodColor="#26e6ff" result="glow" />
+          <feComposite in="glow" in2="ea" operator="in" result="lines" />
+          <feGaussianBlur in="lines" stdDeviation="1.4" result="lg" />
+          <feFlood floodColor="#05060a" result="bg" />
+          <feMerge><feMergeNode in="bg" /><feMergeNode in="lg" /><feMergeNode in="lines" /></feMerge>
+        </filter>
+        {/* Thermal — map luminance to a heat palette. */}
+        <filter id="mv-thermal">
+          <feColorMatrix type="matrix" values="0.33 0.34 0.33 0 0  0.33 0.34 0.33 0 0  0.33 0.34 0.33 0 0  0 0 0 1 0" result="g" />
+          <feComponentTransfer in="g">
+            <feFuncR type="table" tableValues="0 0.1 0.4 0.85 1 1" />
+            <feFuncG type="table" tableValues="0 0 0.15 0.6 0.95 1" />
+            <feFuncB type="table" tableValues="0.25 0.55 0.35 0.1 0.2 1" />
+          </feComponentTransfer>
+        </filter>
+        {/* Infrared — false-colour foliage (pink/magenta highlights). */}
+        <filter id="mv-infrared">
+          <feColorMatrix type="matrix" values="0.33 0.34 0.33 0 0  0.33 0.34 0.33 0 0  0.33 0.34 0.33 0 0  0 0 0 1 0" result="g" />
+          <feComponentTransfer in="g">
+            <feFuncR type="table" tableValues="0.2 0.5 0.8 1 1" />
+            <feFuncG type="table" tableValues="0 0.1 0.3 0.6 1" />
+            <feFuncB type="table" tableValues="0.3 0.4 0.6 0.8 1" />
+          </feComponentTransfer>
+        </filter>
+        {/* Glitch — horizontal jitter slices + chromatic split, animated. */}
+        <filter id="mv-glitch" x="-6%" width="112%">
+          <feTurbulence type="turbulence" baseFrequency="0 0.6" numOctaves="1" seed="3" result="n">
+            <animate attributeName="baseFrequency" dur="0.7s" values="0 0.6;0 0.9;0 0.5;0 0.6" repeatCount="indefinite" />
+          </feTurbulence>
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="14" xChannelSelector="R" yChannelSelector="A" result="disp" />
+          <feColorMatrix in="disp" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r" />
+          <feOffset in="r" dx="4" result="ro" />
+          <feColorMatrix in="disp" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0" result="gb" />
+          <feOffset in="gb" dx="-4" result="gbo" />
+          <feBlend in="ro" in2="gbo" mode="screen" />
         </filter>
       </defs>
     </svg>
@@ -592,8 +695,9 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const [brightness, setBrightness] = useState(1)
   const [saturate, setSaturate] = useState(1)
   const [hueRot, setHueRot] = useState(0)
-  const [videoLook, setVideoLook] = useState('none')       // Snapchat-style look on the background
-  const lookFilterRef = useRef('')                          // look's svg+css prefix, kept for the per-frame EQ update
+  const [videoMode, setVideoMode] = useState('none')       // dramatic full-frame transform (anime, ink, glitch…)
+  const [videoLook, setVideoLook] = useState('none')       // subtle grade layered under the mode
+  const lookFilterRef = useRef('')                          // mode+look svg/css prefix, kept for the per-frame EQ update
   const [autoShuffle, setAutoShuffle] = useState(false)     // play a clip, then move to the next one
   const [shuffleScope, setShuffleScope] = useState<'category' | 'all'>('all')
   const shuffleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -608,9 +712,12 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const overrideRef = useRef<string | null>(null)
   const ambient = AMBIENTS.find(a => a.id === bgKind)
   const hasBg = bgKind === 'media' ? !!bgUrl : bgKind === 'library' ? !!bgClip : !!ambient
+  const activeVideoMode = VIDEO_MODES.find(m => m.id === videoMode) ?? VIDEO_MODES[0]
   const activeVideoLook = VIDEO_LOOKS.find(l => l.id === videoLook) ?? VIDEO_LOOKS[0]
-  const lookFilterStr = [activeVideoLook.svg ? `url(#${activeVideoLook.svg})` : '', activeVideoLook.css || ''].filter(Boolean).join(' ')
+  const filterParts = (x: VideoLook) => [x.svg ? `url(#${x.svg})` : '', x.css || ''].filter(Boolean).join(' ')
+  const lookFilterStr = [filterParts(activeVideoMode), filterParts(activeVideoLook)].filter(Boolean).join(' ')   // mode first, then grade
   lookFilterRef.current = lookFilterStr
+  const activeOverlays = [...(activeVideoMode.overlays ?? []), ...(activeVideoLook.overlays ?? [])]
   const bgFilter = [lookFilterStr, `blur(${blur}px) brightness(${brightness}) saturate(${saturate}) hue-rotate(${hueRot}deg)`].filter(Boolean).join(' ')
 
   // Auto-shuffle: advance to a different clip in the pool (this category, or the whole
@@ -866,8 +973,8 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
             )}
             {/* Palette match — tint the background toward the visualizer colours */}
             {matchVisuals && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(120deg, ${colors.join(', ')})`, mixBlendMode: 'overlay', opacity: 0.5, pointerEvents: 'none' }} />}
-            {/* Snapchat-style look overlays (vignette / grain / scanlines / duotone) */}
-            <LookOverlays keys={activeVideoLook.overlays ?? []} />
+            {/* Mode + look overlays (vignette / grain / scanlines / duotone / halftone) */}
+            <LookOverlays keys={activeOverlays} />
           </div>
         )}
 
@@ -1056,15 +1163,26 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
       </Panel>
 
       {hasBg && (
-        <Panel id="filters" label="Video look & filters" open={openPanel === 'filters'} onToggle={() => setOpenPanel(p => (p === 'filters' ? null : 'filters'))}>
-          {/* Snapchat-style looks — one-tap recipes on the background video/image */}
+        <Panel id="filters" label="Look & filters" open={openPanel === 'filters'} onToggle={() => setOpenPanel(p => (p === 'filters' ? null : 'filters'))}>
+          {/* MODE — dramatic live transform of the whole frame */}
+          <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 7px' }}>Mode — transform the whole look</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 6 }}>
+            {VIDEO_MODES.map(m => (
+              <button key={m.id} type="button" onClick={() => setVideoMode(m.id)}
+                style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: videoMode === m.id ? 'var(--accent)' : 'var(--bg-card)', color: videoMode === m.id ? '#0e0d12' : 'var(--text-secondary)' }}>{m.name}</button>
+            ))}
+          </div>
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 16px' }}>Anime cel-shades with ink outlines, Comic adds halftone, Ink/Oil restyle the paint, Thermal/Infrared recolour, Glitch &amp; Neon edge go electric. Applies live over any background.</p>
+
+          {/* LOOK — subtle grade layered underneath the mode */}
+          <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 7px' }}>Look — grade</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 8 }}>
             {VIDEO_LOOKS.map(l => (
               <button key={l.id} type="button" onClick={() => setVideoLook(l.id)}
                 style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: videoLook === l.id ? 'var(--accent)' : 'var(--bg-card)', color: videoLook === l.id ? '#0e0d12' : 'var(--text-secondary)' }}>{l.name}</button>
             ))}
           </div>
-          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 14px' }}>A look stacks on top of the sliders below — Cartoon posterizes, VHS adds scanlines &amp; colour-split, Living ripples, Film/Noir add grain &amp; vignette.</p>
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 14px' }}>A grade stacks under the mode and the sliders below — Film/Noir add grain &amp; vignette, Warm/Cool shift the temperature.</p>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: reactive ? 'pointer' : 'not-allowed', opacity: reactive ? 1 : 0.5, marginBottom: 12 }}>
             <input type="checkbox" checked={eqFilters} onChange={e => setEqFilters(e.target.checked)} disabled={!reactive} /> React to the audio (EQ)
           </label>
