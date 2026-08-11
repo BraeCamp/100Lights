@@ -4,7 +4,7 @@
 // editor · status bar). The transcription runs through the SHARED useTranscription hook and the SHARED
 // CaptionEditor component — the exact same caption system the video module uses — so they never drift.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Download, Film, Loader2, Wand2, ThumbsUp, Captions as CaptionsIcon, ChevronDown, AlertTriangle, Type, Copy, CheckCheck, History } from 'lucide-react'
+import { Upload, Download, Film, Loader2, Wand2, ThumbsUp, Captions as CaptionsIcon, ChevronDown, ChevronLeft, AlertTriangle, Type, Copy, CheckCheck, History } from 'lucide-react'
 import CaptionEditor from '@/components/captions/CaptionEditor'
 import CaptionStylePanel from '@/components/captions/CaptionStylePanel'
 import WaveformStrip from '@/components/captions/WaveformStrip'
@@ -13,7 +13,7 @@ import { downloadCaptions } from '@/lib/caption-format'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
 import { useAppShellOptional } from '@/components/apps/AppChrome'
 
-export default function Captions() {
+export default function Captions({ open, onHome }: { open?: { data?: unknown; nonce: number }; onHome?: () => void } = {}) {
   const tx = useTranscription()
   const shell = useAppShellOptional()
   const [file, setFile] = useState<File | null>(null)
@@ -93,6 +93,15 @@ export default function Captions() {
       if (d.style) setStyle(d.style)
     })
   }, [shell]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Open a session chosen on the Home screen.
+  const openNonce = open?.nonce
+  useEffect(() => {
+    if (!open?.nonce) return
+    const d = open.data as { captions?: typeof tx.captions; style?: CaptionStyle } | undefined
+    if (d?.captions?.length) tx.setCaptions(d.captions)
+    if (d?.style) setStyle(d.style)
+  }, [openNonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save the CAPTIONED VIDEO to the device — burn the styled, animated captions onto the frames
   // (canvas + MediaRecorder, on-device, no upload) and download. Also drops a session into History.
@@ -207,6 +216,11 @@ export default function Captions() {
       )}
       {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', height: 52, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0 }}>
+        {onHome && (
+          <button onClick={onHome} aria-label="Home" title="Home" style={{ display: 'grid', placeItems: 'center', width: 32, height: 32, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0 }}>
+            <ChevronLeft size={17} />
+          </button>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <CaptionsIcon size={18} style={{ color: 'var(--accent)' }} />
           <span style={{ fontWeight: 800, fontSize: 15 }}>Captions</span>

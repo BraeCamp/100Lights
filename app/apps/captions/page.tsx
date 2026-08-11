@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
 import AppChrome from '@/components/apps/AppChrome'
 
-const Captions = dynamic(() => import('@/components/apps/Captions'))
+const CaptionsApp = dynamic(() => import('@/components/apps/CaptionsApp'))
 
 export const metadata: Metadata = {
   title: 'Captions — Turn Speech Into Timed Captions',
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 export default function CaptionsPage() {
   return (
     <AppChrome slug="captions">
-      <Captions />
+      <CaptionsApp />
     </AppChrome>
   )
 }
