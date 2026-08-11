@@ -1,0 +1,8 @@
+A drum machine that gets you from an empty grid to a beat in seconds. Place kick, snare, and hats on the step sequencer, or switch to the pads and tap a groove in live — with Record on, your taps land on the grid, quantized.
+
+Pick a kit to re-voice the whole pattern, expand the sequencer to more bars, duplicate a section to build it out, then export MIDI or a WAV loop for any DAW.
+
+• Step sequencer + playable drum pads
+• Live record with quantize
+• Expand to multiple bars; duplicate sections
+• Export MIDI / WAV; works offline

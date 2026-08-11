@@ -1,0 +1,8 @@
+Add clean, animated captions to a video straight from your camera roll — transcribed on your device, so nothing is uploaded and it works offline.
+
+Edit the words, control how they group into lines, and animate specific snippets. Export SRT, VTT, or TXT, or save the finished video with the captions burned right onto it.
+
+• On-device transcription — private, no upload
+• Editable words and line grouping
+• Per-snippet animations and styles
+• Export SRT / VTT / TXT or a captioned video

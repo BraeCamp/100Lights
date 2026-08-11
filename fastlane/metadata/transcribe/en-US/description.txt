@@ -1,0 +1,8 @@
+Turn a recording or a hummed line into editable MIDI notes. The pitch detector reads a single melody line — and picks out chords too — then lets you hear the result on any instrument, tidy it up, and export.
+
+It runs entirely on your device: no upload, no sign-in. Export MIDI or WAV, or open the notes in the 100Lights studio to keep building.
+
+• Audio file or live recording → MIDI
+• Hear it on any instrument; edit the notes
+• Export MIDI / WAV or open in the studio
+• On-device pitch detection

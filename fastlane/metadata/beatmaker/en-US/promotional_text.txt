@@ -1,0 +1,1 @@
+Tap out a groove on the step grid, play the pads live, expand to more bars, and export MIDI or WAV.

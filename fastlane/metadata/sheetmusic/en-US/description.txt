@@ -1,0 +1,8 @@
+Upload a photo, PDF, or MusicXML of sheet music and hear it played. It reads the notes off the page and plays them on any instrument you pick, so you can check how a piece sounds without playing it yourself.
+
+From there, export a WAV or MIDI, or open the piece in the 100Lights studio to arrange it.
+
+• Photo / PDF / MusicXML → playback
+• Choose any instrument
+• Export WAV / MIDI or open in the studio
+• Reads the notes on your device

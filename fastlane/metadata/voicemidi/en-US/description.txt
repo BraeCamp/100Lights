@@ -1,0 +1,7 @@
+Hum or sing a melody and hear it come back on the instrument you choose — piano, strings, synth, and more. The pitch of every note is detected as you go, so a tune in your head becomes real, playable notes without touching a keyboard.
+
+Turn on the metronome to keep time, then quantize your take to snap it to the beat. Your raw take is always kept, so you can toggle quantize off anytime.
+
+• Sing/hum → notes on any instrument
+• Live pitch detection, metronome, quantize
+• On-device — nothing is recorded to a server

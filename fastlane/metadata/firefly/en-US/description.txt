@@ -1,0 +1,8 @@
+Firefly is a voice-first sketchpad for songs. Hum or sing a melody and it becomes playable notes; add a simple beat underneath; then open the whole sketch in the 100Lights studio when you're ready to produce it.
+
+It's the fastest way to catch an idea the moment it arrives — no keyboard, no theory, no account needed.
+
+• Sing or hum → playable notes
+• Add a beat and pick an instrument
+• Open the sketch in the full studio
+• On-device; nothing uploaded

@@ -1,0 +1,8 @@
+100Lights is a full music studio that fits your thumbs. Build a beat on the pad grid, play melodies with real and AI-sampled instruments, arrange your parts, and mix with EQ, reverb, and compression — then export a WAV or MIDI to take anywhere.
+
+Everything runs on-device and you can start making sound without an account. When you sign in, your projects and sounds follow you across devices.
+
+• A real step sequencer and piano roll
+• Instruments, drum kits, and effects
+• Arrange, mix, and export WAV / MIDI
+• Works offline; no sign-in to begin

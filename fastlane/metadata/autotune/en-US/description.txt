@@ -1,0 +1,8 @@
+Record or upload a vocal and hear it pitch-corrected to the nearest note in a key you choose. Compare the original with the corrected take, then dial the strength from a gentle touch-up all the way to the hard-tuned effect.
+
+Everything happens in your browser — nothing is recorded to a server. Download the result as a WAV when you like it.
+
+• Record or upload a vocal
+• Choose key + scale; adjust strength
+• A/B original vs corrected; download WAV
+• Runs on-device, no upload

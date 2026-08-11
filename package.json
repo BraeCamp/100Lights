@@ -19,7 +19,9 @@
     "app:select": "node scripts/cap-select.mjs",
     "app:add-ios": "node scripts/cap-select.mjs $APP && cap add ios && cap sync ios && node scripts/ios-postsync.mjs",
     "beta": "bundle exec fastlane ios beta",
-    "beta:check": "bundle exec fastlane ios preflight"
+    "beta:check": "bundle exec fastlane ios preflight",
+    "store:metadata": "node scripts/gen-store-metadata.mjs",
+    "store:metadata:check": "node scripts/gen-store-metadata.mjs --check"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1067.0",
