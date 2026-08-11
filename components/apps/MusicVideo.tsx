@@ -484,7 +484,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [running, setRunning] = useState(false)
-  const [source, setSource] = useState<'mic' | 'device' | null>(null)
+  const [source, setSource] = useState<'mic' | 'device' | 'file' | null>(null)
   const [style, setStyle] = useState<LiveStyle>('bars')
   const [delayMs, setDelayMs] = useState(0)
   const [err, setErr] = useState<string | null>(null)
@@ -604,6 +604,9 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const audioRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const audioElRef = useRef<HTMLAudioElement | null>(null)   // "play a track" source
+  const fileUrlRef = useRef<string | null>(null)
+  const trackInputRef = useRef<HTMLInputElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const wakeRef = useRef<{ release: () => Promise<void> } | null>(null)
   const bufRef = useRef<Array<{ t: number; freq: Uint8Array; wave: Uint8Array }>>([])
@@ -620,38 +623,49 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const stop = useCallback(() => {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
     streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null
+    if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.src = ''; audioElRef.current = null }
+    if (fileUrlRef.current) { URL.revokeObjectURL(fileUrlRef.current); fileUrlRef.current = null }
     void audioRef.current?.close().catch(() => {}); audioRef.current = null
     void wakeRef.current?.release().catch(() => {}); wakeRef.current = null
     analyserRef.current = null; bufRef.current = []
     setRunning(false); setSource(null)
   }, [])
 
-  const start = useCallback(async (src: 'mic' | 'device') => {
+  const start = useCallback(async (src: 'mic' | 'device' | 'file', file?: File) => {
     setErr(null)
     try {
-      const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c: unknown) => Promise<MediaStream> }
-      let stream: MediaStream
-      if (src === 'device') {
-        // The browser has no API to grab internal audio silently — capturing another tab/app's
-        // sound is only possible through the screen-share prompt (a platform security rule). We
-        // keep ONLY the audio and drop the video track immediately, so nothing is recorded.
-        if (!md.getDisplayMedia) throw new Error('Capturing another app’s sound needs a desktop browser. On a phone, use the microphone and point it at the speaker.')
-        // Must request video too (Chrome only offers "Share tab audio" alongside a tab/screen),
-        // but we KEEP the whole stream alive — stopping the video track ends the share and kills
-        // the audio with it. We simply never render the video.
-        stream = await md.getDisplayMedia({ video: true, audio: true })
-        if (!stream.getAudioTracks().length) { stream.getTracks().forEach(t => t.stop()); throw new Error('No audio was shared. In the picker, pick a browser tab (not a window) and turn on “Share tab audio”.') }
-      } else {
-        stream = await md.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
-      }
-      streamRef.current = stream
-      stream.getTracks().forEach(t => t.addEventListener('ended', () => stop()))   // user hit "Stop sharing"
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       const ctx = new AC(); audioRef.current = ctx
       await ctx.resume().catch(() => {})
-      const node = ctx.createMediaStreamSource(stream)
       const an = ctx.createAnalyser(); an.fftSize = 2048; an.smoothingTimeConstant = smoothingRef.current
-      node.connect(an); analyserRef.current = an
+
+      if (src === 'file') {
+        // Play the track THROUGH the app and tap it directly — no mic, no screen prompt.
+        // The <audio> element still plays out to the speaker / Bluetooth / AirPlay.
+        if (!file) throw new Error('No audio file')
+        const url = URL.createObjectURL(file); fileUrlRef.current = url
+        const el = new Audio(); el.src = url; el.loop = true; el.crossOrigin = 'anonymous'
+        audioElRef.current = el
+        const node = ctx.createMediaElementSource(el)
+        node.connect(an); node.connect(ctx.destination)   // audible, and tapped for the visualizer
+        await el.play().catch(() => { throw new Error('Couldn’t play that file — try an MP3, M4A, or WAV.') })
+      } else {
+        const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c: unknown) => Promise<MediaStream> }
+        let stream: MediaStream
+        if (src === 'device') {
+          // No API grabs internal audio silently — another tab/app's sound needs the screen-share
+          // prompt. We keep the whole stream alive (stopping the video track kills the audio).
+          if (!md.getDisplayMedia) throw new Error('Capturing another app’s sound needs a desktop browser. On a phone, use the microphone or play a track through the app.')
+          stream = await md.getDisplayMedia({ video: true, audio: true })
+          if (!stream.getAudioTracks().length) { stream.getTracks().forEach(t => t.stop()); throw new Error('No audio was shared. In the picker, pick a browser tab (not a window) and turn on “Share tab audio”.') }
+        } else {
+          stream = await md.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+        }
+        streamRef.current = stream
+        stream.getTracks().forEach(t => t.addEventListener('ended', () => stop()))   // user hit "Stop sharing"
+        ctx.createMediaStreamSource(stream).connect(an)
+      }
+      analyserRef.current = an
       setSource(src); setRunning(true)
       void wake()
       const draw = () => {
@@ -737,11 +751,15 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: reactive ? 'block' : 'none' }} />
 
         {reactive && !running && (
-          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 14, padding: 24, textAlign: 'center', background: hasBg ? 'rgba(6,5,10,0.45)' : 'transparent' }}>
-            <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Visualize the music in the room</p>
-            <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '13px 22px', borderRadius: 12, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 15, fontWeight: 850, cursor: 'pointer' }}><Mic size={18} /> Use microphone</button>
-            <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: 0, maxWidth: 320, lineHeight: 1.5 }}>Point your device at the speaker — no prompts, nothing recorded.</p>
-            <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}><Radio size={14} /> Or capture a tab’s sound (desktop)</button>
+          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 12, padding: 24, textAlign: 'center', background: hasBg ? 'rgba(6,5,10,0.45)' : 'transparent' }}>
+            <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Visualize your music</p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button type="button" onClick={() => trackInputRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '13px 22px', borderRadius: 12, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 15, fontWeight: 850, cursor: 'pointer' }}><Play size={17} fill="#0e0d12" /> Play a track</button>
+              <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '13px 20px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 15, fontWeight: 750, cursor: 'pointer' }}><Mic size={17} /> Use microphone</button>
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: 0, maxWidth: 360, lineHeight: 1.5 }}>Play a track through the app for perfect sync — no prompts, no mic. Or point the mic at the speaker to visualize whatever’s in the room.</p>
+            <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}><Radio size={14} /> Or capture a tab’s sound (desktop)</button>
+            <input ref={trackInputRef} type="file" accept="audio/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) start('file', f); e.currentTarget.value = '' }} />
           </div>
         )}
         {!reactive && (
@@ -756,7 +774,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
         {running
           ? <button type="button" onClick={stop} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}><Square size={15} /> Stop</button>
           : <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Not listening</span>}
-        <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{source === 'device' ? 'Capturing device audio' : source === 'mic' ? 'Listening to the room' : ''}</span>
+        <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{source === 'file' ? 'Playing your track' : source === 'device' ? 'Capturing device audio' : source === 'mic' ? 'Listening to the room' : ''}</span>
         <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
       </div>
 
