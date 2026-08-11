@@ -24,8 +24,8 @@ export default function MusicVideoHome({ busy, onFile, onLive }: { busy: boolean
       `}</style>
 
       <section style={{ position: 'relative', overflow: 'hidden', borderRadius: 20, border: '1px solid var(--border)', background: 'linear-gradient(180deg, var(--bg-card), var(--bg-base))', padding: '26px 22px 22px', marginBottom: 22 }}>
-        <p style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--accent)', margin: '0 0 10px' }}>Music → Visuals</p>
-        <h1 style={{ fontSize: 33, fontWeight: 850, letterSpacing: '-0.03em', color: 'var(--text-primary)', margin: '0 0 8px', lineHeight: 1.06 }}>Music Video</h1>
+        <p style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--accent)', margin: '0 0 10px' }}>Music → Light</p>
+        <h1 style={{ fontSize: 33, fontWeight: 850, letterSpacing: '-0.03em', color: 'var(--text-primary)', margin: '0 0 8px', lineHeight: 1.06 }}>Lightning Bug</h1>
         <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.55, margin: '0 0 22px', maxWidth: '42ch' }}>
           Put reactive visuals on a video, or turn the room’s music into a live show for a party — all on your device, no AI.
         </p>

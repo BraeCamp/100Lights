@@ -41,9 +41,9 @@ export const MINI_APPS: MiniApp[] = [
   },
   {
     slug: 'musicvideo',
-    title: 'Music Video',
-    tagline: 'Turn a video into a music visual.',
-    description: 'Upload a video and its melody becomes a visual overlay synced to playback — falling notes, flowing shapes, colors, and fonts. Melody detection is AI-light; tweaking the visuals is free.',
+    title: 'Lightning Bug',
+    tagline: 'Light up your music with live visuals.',
+    description: 'Turn any track into a glowing live visual — reactive bars and radial glow, artsy video backgrounds, cinematic look modes, and auto-shuffling scenes. Full-screen it for a party, or lay visuals over your own video. Runs on your device.',
     href: '/apps/musicvideo',
     status: 'beta',
   },
