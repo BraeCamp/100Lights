@@ -29,6 +29,14 @@ export async function POST(req: Request) {
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const sub = await getSubscription(userId)
+  // Block if a live Stripe subscription already exists — otherwise a user in a
+  // non-'active' billable state (past_due/unpaid/trialing, whom the webhook may
+  // have flipped to plan:'free') could open a SECOND subscription and be billed
+  // twice. Gift/code Pro (no stripeSubId) is not a paid sub, so it doesn't block.
+  const LIVE_SUB = new Set(['active', 'trialing', 'past_due', 'unpaid'])
+  if (sub.stripeSubId && LIVE_SUB.has(sub.status)) {
+    return Response.json({ error: 'You already have a subscription — manage it in Settings.' }, { status: 400 })
+  }
   if (sub.plan === 'pro' && sub.status === 'active') {
     return Response.json({ error: 'Already on Pro plan' }, { status: 400 })
   }

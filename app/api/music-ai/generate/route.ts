@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server'
-import { CREDITS_ENABLED, meterAI, CREDIT_COSTS } from '@/lib/credits'
+import { CREDITS_ENABLED, meterAI, CREDIT_COSTS, grantCredits } from '@/lib/credits'
 import { recordUsage } from '@/lib/api-usage'
 import { getElevenLabsCredits, creditsDelta, headerMap } from '@/lib/elevenlabs-usage'
 
@@ -21,11 +21,6 @@ export async function POST(req: Request) {
   const key = process.env.ELEVENLABS_API_KEY
   if (!key) return Response.json({ error: 'ELEVENLABS_API_KEY is not set.' }, { status: 501 })
 
-  if (CREDITS_ENABLED) {
-    const m = await meterAI(userId, CREDIT_COSTS.generateClip, 'AI music generation')
-    if (!m.ok) return Response.json({ error: 'Not enough credits.', needCredits: true, balance: m.balance }, { status: 402 })
-  }
-
   let body: { prompt?: string; lengthMs?: number; instrumental?: boolean }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
@@ -44,6 +39,16 @@ export async function POST(req: Request) {
   }
   if (body.instrumental === true) payload.force_instrumental = true
 
+  // Charge only once input is valid and we're committed to the paid call, and
+  // refund if the upstream generation fails (so a 502 doesn't cost the user).
+  let charged = 0
+  if (CREDITS_ENABLED) {
+    const m = await meterAI(userId, CREDIT_COSTS.generateClip, 'AI music generation')
+    if (!m.ok) return Response.json({ error: 'Not enough credits.', needCredits: true, balance: m.balance }, { status: 402 })
+    if (!m.usedFree) charged = CREDIT_COSTS.generateClip
+  }
+  const refundOnFail = async () => { if (charged) await grantCredits(userId, charged, 'refund: music generation failed') }
+
   // Snapshot the credit balance right before generation so we can compute the
   // exact per-request cost from the after-snapshot delta.
   const before = await getElevenLabsCredits(key)
@@ -55,27 +60,31 @@ export async function POST(req: Request) {
     signal: AbortSignal.timeout(290_000),
   }).catch(() => null)
 
-  if (!res) return Response.json({ error: 'Could not reach the music service.' }, { status: 502 })
+  if (!res) { await refundOnFail(); return Response.json({ error: 'Could not reach the music service.' }, { status: 502 }) }
   if (!res.ok) {
+    await refundOnFail()
     const msg = (await res.text().catch(() => '')).slice(0, 300)
     return Response.json({ error: `Music generation error ${res.status}: ${msg}` }, { status: 502 })
   }
 
   const contentType = res.headers.get('content-type') || 'audio/mpeg'
-  // The generation is complete server-side once the response headers arrive, so
-  // the after-snapshot reflects this request's cost. Delta = exact credits.
-  const after = await getElevenLabsCredits(key)
-  const credits = creditsDelta(before, after)
-  recordUsage({
-    userId, provider: 'elevenlabs', operation: 'music-gen',
-    units: credits ?? lengthMs / 1000,
-    unitType: credits != null ? 'credits' : 'seconds',
-    metadata: {
-      model: 'music_v2', lengthMs, instrumental: body.instrumental,
-      credits, creditsBefore: before?.used, creditsAfter: after?.used,
-      tier: after?.tier ?? before?.tier, secondsProxy: lengthMs / 1000,
-      responseHeaders: headerMap(res),
-    },
-  })
+  // The generation is complete server-side once the response headers arrive.
+  // Compute the exact-credit accounting in the background so the after-snapshot
+  // (up to 10s) never delays streaming the audio back to the client.
+  void (async () => {
+    const after = await getElevenLabsCredits(key)
+    const credits = creditsDelta(before, after)
+    recordUsage({
+      userId, provider: 'elevenlabs', operation: 'music-gen',
+      units: credits ?? lengthMs / 1000,
+      unitType: credits != null ? 'credits' : 'seconds',
+      metadata: {
+        model: 'music_v2', lengthMs, instrumental: body.instrumental,
+        credits, creditsBefore: before?.used, creditsAfter: after?.used,
+        tier: after?.tier ?? before?.tier, secondsProxy: lengthMs / 1000,
+        responseHeaders: headerMap(res),
+      },
+    })
+  })()
   return new Response(res.body, { headers: { 'content-type': contentType } })
 }

@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server'
-import { CREDITS_ENABLED, meterAI, CREDIT_COSTS } from '@/lib/credits'
+import { CREDITS_ENABLED, meterAI, CREDIT_COSTS, grantCredits } from '@/lib/credits'
 import { cacheKey, getCached, putCached } from '@/lib/ai-cache'
 import { recordUsage } from '@/lib/api-usage'
 
@@ -41,10 +41,14 @@ export async function POST(req: Request) {
   if (cached) return Response.json({ ...cached, cached: true })
 
   // Meter credits (no-op until CREDITS_ENABLED — see lib/credits.ts). Skipped on a cache hit above.
+  // Refund if the transcription fails or recognizes nothing usable — the user shouldn't pay for a blank result.
+  let charged = 0
   if (CREDITS_ENABLED) {
     const m = await meterAI(userId, CREDIT_COSTS.visionPage, 'sheet-music vision')
     if (!m.ok) return Response.json({ error: 'Not enough credits for AI transcription.', needCredits: true, balance: m.balance }, { status: 402 })
+    if (!m.usedFree) charged = CREDIT_COSTS.visionPage
   }
+  const refundOnFail = async () => { if (charged) await grantCredits(userId, charged, 'refund: sheet-music transcription failed') }
 
   // PDFs go in a `document` block; images in an `image` block.
   const isPdf = mediaType === 'application/pdf'
@@ -63,8 +67,8 @@ export async function POST(req: Request) {
     signal: AbortSignal.timeout(110_000),
   }).catch(() => null)
 
-  if (!res) return Response.json({ error: 'Could not reach the transcription service.' }, { status: 502 })
-  if (!res.ok) return Response.json({ error: `Transcription error ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}` }, { status: 502 })
+  if (!res) { await refundOnFail(); return Response.json({ error: 'Could not reach the transcription service.' }, { status: 502 }) }
+  if (!res.ok) { await refundOnFail(); return Response.json({ error: `Transcription error ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}` }, { status: 502 }) }
 
   const out = await res.json() as { content?: Array<{ type: string; text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } }
   recordUsage({ userId, provider: 'anthropic', operation: 'vision', unitType: 'tokens',
@@ -72,9 +76,9 @@ export async function POST(req: Request) {
     units: (out.usage?.input_tokens ?? 0) + (out.usage?.output_tokens ?? 0), metadata: { model: MODEL, feature: 'sheet-music' } })
   const text = (out.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('\n')
   const json = (text.match(/\{[\s\S]*\}/) || [])[0]
-  if (!json) return Response.json({ error: 'No notes recognized. Try a clearer, higher-contrast image.' }, { status: 422 })
+  if (!json) { await refundOnFail(); return Response.json({ error: 'No notes recognized. Try a clearer, higher-contrast image.' }, { status: 422 }) }
   let parsed: { tempo?: number | null; notes?: unknown[] }
-  try { parsed = JSON.parse(json) } catch { return Response.json({ error: 'Transcription returned malformed data.' }, { status: 422 }) }
+  try { parsed = JSON.parse(json) } catch { await refundOnFail(); return Response.json({ error: 'Transcription returned malformed data.' }, { status: 422 }) }
 
   // Accept the compact [pitch, start, dur] triples (and legacy {pitch,start,dur} objects, just in case).
   const triple = (n: unknown): [number, number, number] | null => {
@@ -92,7 +96,7 @@ export async function POST(req: Request) {
       velocity: 90,
     }))
     .sort((a, b) => a.startBeat - b.startBeat || a.pitch - b.pitch)
-  if (!notes.length) return Response.json({ error: 'No notes recognized in the image.' }, { status: 422 })
+  if (!notes.length) { await refundOnFail(); return Response.json({ error: 'No notes recognized in the image.' }, { status: 422 }) }
 
   const result = { notes, tempo: parsed.tempo ?? undefined, name: 'Sheet music' }
   await putCached(cacheHash, 'sheet-music', result)   // next identical upload is free

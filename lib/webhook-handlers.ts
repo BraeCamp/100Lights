@@ -1,6 +1,6 @@
 import { stripe } from './stripe'
 import { upsertSubscription } from './subscription'
-import { CREDITS_ENABLED, applyTierGrant, grantCredits, TIER_BY_PRICE } from './credits'
+import { CREDITS_ENABLED, applyTierGrant, grantCredits, claimGrant, TIER_BY_PRICE } from './credits'
 import { recordInvoiceCommission } from './affiliates'
 import { sql } from './db'
 import type Stripe from 'stripe'
@@ -43,7 +43,10 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
       if (session.mode === 'payment') {
         const uid = session.metadata?.userId
         const credits = Number(session.metadata?.topupCredits || 0)
-        if (CREDITS_ENABLED && uid && credits > 0) await grantCredits(uid, credits, 'credit top-up')
+        // Idempotent per checkout session so a retry/replay can't double-grant.
+        if (CREDITS_ENABLED && uid && credits > 0 && await claimGrant(`topup:${session.id}`)) {
+          await grantCredits(uid, credits, 'credit top-up')
+        }
         break
       }
       if (session.mode !== 'subscription') break
@@ -117,7 +120,9 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
       if (CREDITS_ENABLED) {
         const priceId = sub.items?.data?.[0]?.price?.id
         const tier = priceId ? TIER_BY_PRICE[priceId] : undefined
-        if (tier) await applyTierGrant(userId, tier)
+        // Idempotent per invoice so a retry/replay of this invoice.paid can't
+        // grant the cycle's credits twice (each monthly invoice has a new id).
+        if (tier && await claimGrant(`tier:${invoice.id}`)) await applyTierGrant(userId, tier)
       }
       break
     }

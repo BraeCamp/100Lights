@@ -25,6 +25,11 @@ export async function POST(req: Request) {
   // ── Subscription tier ──
   if (body.tier) {
     if (!(body.tier in CREDIT_TIERS) || body.tier === 'free') return Response.json({ error: 'Invalid tier' }, { status: 400 })
+    // Don't let a user with a live Stripe subscription open a second one (double billing).
+    const LIVE_SUB = new Set(['active', 'trialing', 'past_due', 'unpaid'])
+    if (sub.stripeSubId && LIVE_SUB.has(sub.status)) {
+      return Response.json({ error: 'You already have a subscription — manage it in Settings.' }, { status: 400 })
+    }
     const price = priceIdForTier(body.tier as CreditTier)
     if (!price) return Response.json({ error: `Tier "${body.tier}" isn't configured yet.` }, { status: 501 })
     const session = await stripe.checkout.sessions.create({

@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server'
-import { CREDITS_ENABLED, meterAI, CREDIT_COSTS } from '@/lib/credits'
+import { CREDITS_ENABLED, meterAI, CREDIT_COSTS, grantCredits } from '@/lib/credits'
 import { recordUsage } from '@/lib/api-usage'
 import { getElevenLabsCredits, creditsDelta, headerMap } from '@/lib/elevenlabs-usage'
 
@@ -18,11 +18,6 @@ export async function POST(req: Request) {
   const key = process.env.ELEVENLABS_API_KEY
   if (!key) return Response.json({ error: 'ELEVENLABS_API_KEY is not set.' }, { status: 501 })
 
-  if (CREDITS_ENABLED) {
-    const m = await meterAI(userId, CREDIT_COSTS.stems, 'stem separation')
-    if (!m.ok) return Response.json({ error: 'Not enough credits.', needCredits: true, balance: m.balance }, { status: 402 })
-  }
-
   const ab = await req.arrayBuffer().catch(() => null)
   if (!ab || ab.byteLength === 0) return Response.json({ error: 'No audio supplied.' }, { status: 400 })
 
@@ -31,6 +26,15 @@ export async function POST(req: Request) {
   // Do NOT set content-type on the fetch manually — let fetch set the multipart
   // boundary. The file's own type is carried by the Blob.
   form.append('file', new Blob([ab], { type: contentType }), 'song.mp3')
+
+  // Charge once we're committed to the paid call; refund if it fails.
+  let charged = 0
+  if (CREDITS_ENABLED) {
+    const m = await meterAI(userId, CREDIT_COSTS.stems, 'stem separation')
+    if (!m.ok) return Response.json({ error: 'Not enough credits.', needCredits: true, balance: m.balance }, { status: 402 })
+    if (!m.usedFree) charged = CREDIT_COSTS.stems
+  }
+  const refundOnFail = async () => { if (charged) await grantCredits(userId, charged, 'refund: stem separation failed') }
 
   const before = await getElevenLabsCredits(key)
 
@@ -41,22 +45,26 @@ export async function POST(req: Request) {
     signal: AbortSignal.timeout(290_000),
   }).catch(() => null)
 
-  if (!res) return Response.json({ error: 'Could not reach the stem-separation service.' }, { status: 502 })
+  if (!res) { await refundOnFail(); return Response.json({ error: 'Could not reach the stem-separation service.' }, { status: 502 }) }
   if (!res.ok) {
+    await refundOnFail()
     const msg = (await res.text().catch(() => '')).slice(0, 300)
     return Response.json({ error: `Stem separation error ${res.status}: ${msg}` }, { status: 502 })
   }
 
-  const after = await getElevenLabsCredits(key)
-  const credits = creditsDelta(before, after)
-  recordUsage({
-    userId, provider: 'elevenlabs', operation: 'stem-sep',
-    units: credits ?? 1,
-    unitType: credits != null ? 'credits' : 'predictions',
-    metadata: {
-      bytes: ab.byteLength, credits, creditsBefore: before?.used, creditsAfter: after?.used,
-      tier: after?.tier ?? before?.tier, responseHeaders: headerMap(res),
-    },
-  })
+  // Background the exact-credit accounting so it doesn't delay the ZIP response.
+  void (async () => {
+    const after = await getElevenLabsCredits(key)
+    const credits = creditsDelta(before, after)
+    recordUsage({
+      userId, provider: 'elevenlabs', operation: 'stem-sep',
+      units: credits ?? 1,
+      unitType: credits != null ? 'credits' : 'predictions',
+      metadata: {
+        bytes: ab.byteLength, credits, creditsBefore: before?.used, creditsAfter: after?.used,
+        tier: after?.tier ?? before?.tier, responseHeaders: headerMap(res),
+      },
+    })
+  })()
   return new Response(res.body, { headers: { 'content-type': 'application/zip' } })
 }

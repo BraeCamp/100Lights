@@ -64,7 +64,31 @@ async function ensure(): Promise<void> {
       reason     TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`
+  // Idempotency keys for one-time grants (keyed by the Stripe object id) so a
+  // webhook retry or an admin replay can't grant the same credits twice.
+  await sql`
+    CREATE TABLE IF NOT EXISTS credit_grants (
+      grant_key  TEXT PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`
   ready = true
+}
+
+/**
+ * Claim a one-time grant key. Returns true exactly once per key (the caller may
+ * then grant); every later call for the same key returns false. Backed by an
+ * INSERT … ON CONFLICT DO NOTHING so it's atomic under concurrent webhooks.
+ * Fails OPEN (returns true) if the dedup table is unavailable — a rare double is
+ * preferable to never granting a paid customer their credits.
+ */
+export async function claimGrant(key: string): Promise<boolean> {
+  try {
+    await ensure()
+    const r = await sql`INSERT INTO credit_grants (grant_key) VALUES (${key}) ON CONFLICT (grant_key) DO NOTHING RETURNING grant_key`
+    return r.length > 0
+  } catch {
+    return true
+  }
 }
 
 async function record(userId: string, delta: number, reason: string): Promise<void> {
