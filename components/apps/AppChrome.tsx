@@ -7,7 +7,7 @@
 // <AppChrome slug="beatmaker">…</AppChrome>; apps can reach the shell via useAppShell().
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Palette, X, RotateCcw, GraduationCap, History as HistoryIcon, User, Sparkles, Trash2, ArrowRight, Zap } from 'lucide-react'
+import { Palette, X, RotateCcw, GraduationCap, History as HistoryIcon, User, Sparkles, Trash2, ArrowRight, Zap, ShieldCheck } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { WorkshopThemeProvider, useWorkshopTheme } from '@/components/editor/WorkshopThemeProvider'
 import { BUILTIN_PRESETS, PATTERN_TYPES, resolveColor } from '@/lib/workshop-theme'
@@ -290,6 +290,17 @@ function AccountSheet({ motion, setMotion, settings, onCustomize, onClose }: { m
         <button type="button" onClick={onCustomize} className="app-btn" style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 14px', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
           <Palette size={17} style={{ color: 'var(--accent)' }} /> Theme, colors & pattern <ArrowRight size={15} style={{ marginLeft: 'auto', color: 'var(--text-muted)' }} />
         </button>
+      </Section>
+
+      <Section label="Privacy & data">
+        <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.55, margin: '0 0 10px' }}>
+          <ShieldCheck size={13} style={{ display: 'inline', verticalAlign: '-2px', color: 'var(--accent)', marginRight: 4 }} />
+          Your work stays on your device — captions, transcription, and audio are processed locally and only leave your device if you export or choose to sync.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Link href="/legal/privacy" className="app-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 13px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 700 }}>Privacy policy <ArrowRight size={13} /></Link>
+          <Link href="/settings" className="app-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 13px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 700 }}>Your data &amp; deletion <ArrowRight size={13} /></Link>
+        </div>
       </Section>
     </Sheet>
   )

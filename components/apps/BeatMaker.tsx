@@ -30,6 +30,7 @@ import {
 import { writeMidiFile } from '@/lib/midi-file'
 import { audioBufferToWav } from '@/lib/wav-encoder'
 import { openSketchInStudio } from '@/lib/open-in-studio'
+import { tapHaptic } from '@/lib/haptics'
 import { useAppShellOptional } from '@/components/apps/AppChrome'
 import type { MidiNote } from '@/lib/daw-types'
 import type { DrumPadSettings } from '@/lib/daw-types'
@@ -378,6 +379,7 @@ export default function BeatMaker({ onPattern, restore, open, onHome }: {
   // playing, lands a hit on the grid quantized to the nearest 16th step.
   const padHit = useCallback((laneKey: string) => {
     auditionLane(laneKey)
+    tapHaptic('medium')
     setTapNonce(m => ({ ...m, [laneKey]: (m[laneKey] ?? 0) + 1 }))   // light up + slight jump on click only
     // With Quantize on, a live tap while recording lands on the grid as a sequence step.
     if (!recordingRef.current || !playing || !quantize) return
@@ -406,6 +408,7 @@ export default function BeatMaker({ onPattern, restore, open, onHome }: {
   }, [playing, start])
 
   const toggleCell = useCallback((laneKey: string, step: number) => {
+    tapHaptic('light')
     setGrid(prev => {
       const wasOn = prev[laneKey]?.[step]
       const next: Grid = { ...prev, [laneKey]: prev[laneKey].slice() }
