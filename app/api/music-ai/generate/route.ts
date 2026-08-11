@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { CREDITS_ENABLED, meterAI, CREDIT_COSTS } from '@/lib/credits'
 import { recordUsage } from '@/lib/api-usage'
+import { getElevenLabsCredits, creditsDelta, headerMap } from '@/lib/elevenlabs-usage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -43,6 +44,10 @@ export async function POST(req: Request) {
   }
   if (body.instrumental === true) payload.force_instrumental = true
 
+  // Snapshot the credit balance right before generation so we can compute the
+  // exact per-request cost from the after-snapshot delta.
+  const before = await getElevenLabsCredits(key)
+
   const res = await fetch('https://api.elevenlabs.io/v1/music', {
     method: 'POST',
     headers: { 'xi-api-key': key, 'content-type': 'application/json' },
@@ -57,7 +62,20 @@ export async function POST(req: Request) {
   }
 
   const contentType = res.headers.get('content-type') || 'audio/mpeg'
-  recordUsage({ userId, provider: 'elevenlabs', operation: 'music-gen', units: lengthMs / 1000, unitType: 'seconds',
-    metadata: { model: 'music_v2', lengthMs, instrumental: body.instrumental, credits: res.headers.get('x-credits-used') || res.headers.get('character-cost') || undefined } })
+  // The generation is complete server-side once the response headers arrive, so
+  // the after-snapshot reflects this request's cost. Delta = exact credits.
+  const after = await getElevenLabsCredits(key)
+  const credits = creditsDelta(before, after)
+  recordUsage({
+    userId, provider: 'elevenlabs', operation: 'music-gen',
+    units: credits ?? lengthMs / 1000,
+    unitType: credits != null ? 'credits' : 'seconds',
+    metadata: {
+      model: 'music_v2', lengthMs, instrumental: body.instrumental,
+      credits, creditsBefore: before?.used, creditsAfter: after?.used,
+      tier: after?.tier ?? before?.tier, secondsProxy: lengthMs / 1000,
+      responseHeaders: headerMap(res),
+    },
+  })
   return new Response(res.body, { headers: { 'content-type': contentType } })
 }

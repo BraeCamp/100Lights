@@ -92,3 +92,27 @@ export async function usageTotals(): Promise<Record<string, unknown>[]> {
       FROM api_usage GROUP BY provider ORDER BY cost_usd DESC NULLS LAST`
   } catch { return [] }
 }
+
+/** Consumption summed per provider × operation × unit_type — so exact ElevenLabs
+ *  credits (unit_type='credits') read distinctly from the seconds proxy. */
+export async function usageByProviderUnit(): Promise<Record<string, unknown>[]> {
+  try {
+    await ensure()
+    return await sql`
+      SELECT provider, operation, unit_type, COUNT(*)::int calls,
+             ROUND(SUM(units)::numeric, 2) units, ROUND(SUM(cost_usd)::numeric, 4) cost_usd
+      FROM api_usage GROUP BY provider, operation, unit_type
+      ORDER BY provider, calls DESC`
+  } catch { return [] }
+}
+
+/** Most-recent raw rows for a live feed (shows the exact per-call credit/token figure). */
+export async function usageRecent(limit = 40): Promise<Record<string, unknown>[]> {
+  try {
+    await ensure()
+    return await sql`
+      SELECT id, user_id, provider, operation, units, unit_type, input_tokens, output_tokens,
+             cost_usd, metadata, created_at
+      FROM api_usage ORDER BY created_at DESC LIMIT ${limit}`
+  } catch { return [] }
+}

@@ -105,6 +105,22 @@ async function stemSeparate(key, audioBuf) {
   return Buffer.from(await res.arrayBuffer())
 }
 
+// Exact credit accounting: /v1/user/subscription reports character_count (credits
+// used this period). Snapshot before/after a call → the delta is the exact cost.
+// Fail-soft (returns null) so it never breaks a generation run.
+async function elCredits(key) {
+  try {
+    const res = await fetch('https://api.elevenlabs.io/v1/user/subscription', {
+      headers: { 'xi-api-key': key }, signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return null
+    const d = await res.json()
+    return Number(d.character_count ?? 0)
+  } catch { return null }
+}
+const creditDelta = (before, after) =>
+  (before != null && after != null && after - before >= 0) ? after - before : undefined
+
 // ── Audio helpers (ffmpeg / ffprobe) ─────────────────────────────────────────
 function probeDurationSec(path) {
   try {
@@ -362,15 +378,22 @@ async function runReal(key) {
 
   console.log(`▸ generating "${TITLE}" (${LENGTH_MS} ms${INSTRUMENTAL ? ', instrumental' : ''})`)
   console.log(`  prompt: ${PROMPT}`)
+  const credBefore = await elCredits(key)
   const mp3 = await generateMusic(key, PROMPT, LENGTH_MS, INSTRUMENTAL)
   const mixPath = join(OUT_DIR, `${safeName(TITLE)}__full-mix.mp3`)
   writeFileSync(mixPath, mp3)
   console.log(`▸ full mix saved: ${mixPath} (${(mp3.length / 1024).toFixed(0)} KB)`)
-  await recordUsage({ provider: 'elevenlabs', operation: 'music-gen', units: LENGTH_MS / 1000, unitType: 'seconds', metadata: { model: 'music_v2', lengthMs: LENGTH_MS, title: TITLE, source: 'elevenlabs-song.mjs' } })
+  const credAfterGen = await elCredits(key)
+  const genCredits = creditDelta(credBefore, credAfterGen)
+  if (genCredits != null) console.log(`  ↳ ${genCredits} EL credits`)
+  await recordUsage({ provider: 'elevenlabs', operation: 'music-gen', units: genCredits ?? LENGTH_MS / 1000, unitType: genCredits != null ? 'credits' : 'seconds', metadata: { model: 'music_v2', lengthMs: LENGTH_MS, title: TITLE, source: 'elevenlabs-song.mjs', credits: genCredits, creditsBefore: credBefore, creditsAfter: credAfterGen } })
 
   console.log('▸ stem-separating…')
   const stemZipBuf = await stemSeparate(key, mp3)
-  await recordUsage({ provider: 'elevenlabs', operation: 'stem-sep', units: LENGTH_MS / 1000, unitType: 'seconds', metadata: { title: TITLE, source: 'elevenlabs-song.mjs' } })
+  const credAfterStem = await elCredits(key)
+  const stemCredits = creditDelta(credAfterGen, credAfterStem)
+  if (stemCredits != null) console.log(`  ↳ ${stemCredits} EL credits`)
+  await recordUsage({ provider: 'elevenlabs', operation: 'stem-sep', units: stemCredits ?? LENGTH_MS / 1000, unitType: stemCredits != null ? 'credits' : 'seconds', metadata: { title: TITLE, source: 'elevenlabs-song.mjs', credits: stemCredits, creditsBefore: credAfterGen, creditsAfter: credAfterStem } })
   const JSZip = (await import('jszip')).default
   const stemZip = await JSZip.loadAsync(stemZipBuf)
   const audioExt = /\.(wav|mp3|flac|ogg|m4a|aac)$/i

@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { CREDITS_ENABLED, meterAI, CREDIT_COSTS } from '@/lib/credits'
 import { recordUsage } from '@/lib/api-usage'
+import { getElevenLabsCredits, creditsDelta, headerMap } from '@/lib/elevenlabs-usage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -31,6 +32,8 @@ export async function POST(req: Request) {
   // boundary. The file's own type is carried by the Blob.
   form.append('file', new Blob([ab], { type: contentType }), 'song.mp3')
 
+  const before = await getElevenLabsCredits(key)
+
   const res = await fetch('https://api.elevenlabs.io/v1/music/stem-separation', {
     method: 'POST',
     headers: { 'xi-api-key': key },
@@ -44,6 +47,16 @@ export async function POST(req: Request) {
     return Response.json({ error: `Stem separation error ${res.status}: ${msg}` }, { status: 502 })
   }
 
-  recordUsage({ userId, provider: 'elevenlabs', operation: 'stem-sep', units: 1, unitType: 'predictions', metadata: { bytes: ab.byteLength } })
+  const after = await getElevenLabsCredits(key)
+  const credits = creditsDelta(before, after)
+  recordUsage({
+    userId, provider: 'elevenlabs', operation: 'stem-sep',
+    units: credits ?? 1,
+    unitType: credits != null ? 'credits' : 'predictions',
+    metadata: {
+      bytes: ab.byteLength, credits, creditsBefore: before?.used, creditsAfter: after?.used,
+      tier: after?.tier ?? before?.tier, responseHeaders: headerMap(res),
+    },
+  })
   return new Response(res.body, { headers: { 'content-type': 'application/zip' } })
 }

@@ -27,6 +27,8 @@ import TasksInboxPanel from './TasksInboxPanel'
 import ContentVideoPanel from './ContentVideoPanel'
 import ContentQueuePanel from './ContentQueuePanel'
 import AppsPanel from './AppsPanel'
+import UsagePanel from './UsagePanel'
+import FormatsPanel from './FormatsPanel'
 import AppTargetsPanel from './AppTargetsPanel'
 import AppCorrectionsPanel from './AppCorrectionsPanel'
 import TestRecipesPanel from './TestRecipesPanel'
@@ -519,6 +521,20 @@ export default async function AdminPage() {
           ),
         },
         {
+          id: 'usage',
+          group: 'Business',
+          label: 'API Usage',
+          content: (
+            <>
+              <PanelIntro
+                title="API Usage & Spend"
+                description="Raw provider spend across every paid API that burns tokens/credits — ElevenLabs, Anthropic, Deepgram, Replicate — attributed per user. ElevenLabs rows show the exact credits consumed (from the subscription-balance delta), not an estimate. This is the cost ledger, separate from the in-app credit billing users are charged."
+              />
+              <UsagePanel />
+            </>
+          ),
+        },
+        {
           id: 'feedback',
           group: 'Content & comms',
           label: 'Feedback',
@@ -790,6 +806,19 @@ export default async function AdminPage() {
                 description="The publishing pipeline, in-app and admin-only. Every video you send from the maker lands here as a draft with an auto-written caption. Review it, edit the copy, pick platforms, approve, then publish to YouTube (and Instagram / TikTok via Buffer). Dry-run first; nothing posts without your approval."
               />
               <ContentQueuePanel />
+            </>
+          ),
+        },
+        {
+          id: 'formats',
+          label: 'Formats',
+          content: (
+            <>
+              <PanelIntro
+                title="Content Formats"
+                description="The social formats we're testing — each format's focus (its hook + what it's made with), the hook archetypes, how each is actually performing (completion, subs/1k), and the per-post corrections (what worked, what to fix). Source of truth: lib/content-formats.ts + the content_perf corpus."
+              />
+              <FormatsPanel />
             </>
           ),
         },
