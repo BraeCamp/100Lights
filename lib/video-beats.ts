@@ -16,11 +16,14 @@ export function clipBeatLines(clip: TimelineItem): { beats: number[]; bars: numb
   const map = clip.beatMap
   if (!map || map.length === 0) return { beats: [], bars: [] }
 
-  // Source → timeline: a source time `s` shows at clip.startTime + (s - inPoint),
-  // for s within the clip's visible source window [inPoint, outPoint].
+  // Source → timeline: a source time `s` shows at clip.startTime + (s - inPoint)/speed,
+  // for s within the clip's visible source window [inPoint, outPoint]. A clip
+  // played at 2× compresses its source into half the timeline footprint, so the
+  // beat spacing must divide by speed (otherwise ticks run past the clip's end).
   const inPoint = clip.inPoint
   const outPoint = clip.outPoint
-  const toTimeline = (s: number) => clip.startTime + (s - inPoint)
+  const speed = clip.speed && clip.speed > 0 ? clip.speed : 1
+  const toTimeline = (s: number) => clip.startTime + (s - inPoint) / speed
 
   const segs = [...map].filter(s => s.bpm > 0).sort((a, b) => a.src - b.src)
   const beats: number[] = []

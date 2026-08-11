@@ -2005,24 +2005,43 @@ export default function VideoEditor({
       const clipEnd = clip.startTime + (clip.outPoint - clip.inPoint)
       const cuts = lines.filter(t => t > clipStart + 0.05 && t < clipEnd - 0.05)
       if (!cuts.length) return prev
+      const boundaries = [...cuts, clipEnd]
+      const srcDur = clip.outPoint - clip.inPoint
+      const kb = clip.kenBurns
+      const lerp = (a: number, b: number, t: number) => a + (b - a) * t
       const segments: TimelineItem[] = []
       let segStart = clipStart
       let segIn = clip.inPoint
-      for (const cut of [...cuts, clipEnd]) {
+      boundaries.forEach((cut, idx) => {
         const segOut = segIn + (cut - segStart)
+        const isFirst = idx === 0
+        const isLast = idx === boundaries.length - 1
+        // Interpolate the Ken Burns move so it stays continuous across segments
+        // instead of restarting in each one.
+        let segKb = kb
+        if (kb && srcDur > 0) {
+          const f0 = (segIn - clip.inPoint) / srcDur, f1 = (segOut - clip.inPoint) / srcDur
+          segKb = {
+            fromZoom: lerp(kb.fromZoom, kb.toZoom, f0), fromX: lerp(kb.fromX, kb.toX, f0), fromY: lerp(kb.fromY, kb.toY, f0),
+            toZoom: lerp(kb.fromZoom, kb.toZoom, f1), toX: lerp(kb.fromX, kb.toX, f1), toY: lerp(kb.fromY, kb.toY, f1),
+          }
+        }
         segments.push({
           ...clip,
-          id: segments.length === 0 ? clip.id : crypto.randomUUID(),
+          id: isFirst ? clip.id : crypto.randomUUID(),
           startTime: segStart,
           inPoint: segIn,
           outPoint: segOut,
-          // A transition-in belongs to the original head only.
-          transitionIn: segments.length === 0 ? clip.transitionIn : undefined,
-          transitionDuration: segments.length === 0 ? clip.transitionDuration : undefined,
+          kenBurns: segKb,
+          // A transition-in / fade-in belongs to the head; a fade-out to the tail.
+          transitionIn: isFirst ? clip.transitionIn : undefined,
+          transitionDuration: isFirst ? clip.transitionDuration : undefined,
+          fadeIn: isFirst ? clip.fadeIn : undefined,
+          fadeOut: isLast ? clip.fadeOut : undefined,
         })
         segStart = cut
         segIn = segOut
-      }
+      })
       return prev.flatMap(i => i.id === id ? segments : [i])
     })
   }
@@ -2511,17 +2530,34 @@ export default function VideoEditor({
     linkedUploadTimersRef.current.clear()
   }, [])
 
-  // Blade split: split a clip at a given timeline time
+  // Blade split: split a clip at a given timeline time.
   function handleSplitItem(id: string, atTime: number) {
     setTimelineItems(prev => {
       const clip = prev.find(i => i.id === id)
       if (!clip) return prev
       const splitSource = atTime - clip.startTime + clip.inPoint
       if (splitSource <= clip.inPoint + 0.05 || splitSource >= clip.outPoint - 0.05) return prev
-      const clipA: TimelineItem = { ...clip, outPoint: splitSource }
+      const f = (splitSource - clip.inPoint) / (clip.outPoint - clip.inPoint)   // 0..1 cut point in the clip
+      // Ken Burns: keep the move continuous across the cut by splitting it at the
+      // interpolated midpoint instead of restarting the full move in each half.
+      let kbA = clip.kenBurns, kbB = clip.kenBurns
+      if (clip.kenBurns) {
+        const kb = clip.kenBurns
+        const lerp = (a: number, b: number) => a + (b - a) * f
+        const mZoom = lerp(kb.fromZoom, kb.toZoom), mX = lerp(kb.fromX, kb.toX), mY = lerp(kb.fromY, kb.toY)
+        kbA = { fromZoom: kb.fromZoom, fromX: kb.fromX, fromY: kb.fromY, toZoom: mZoom, toX: mX, toY: mY }
+        kbB = { fromZoom: mZoom, fromX: mX, fromY: mY, toZoom: kb.toZoom, toX: kb.toX, toY: kb.toY }
+      }
+      const clipA: TimelineItem = {
+        ...clip, outPoint: splitSource, kenBurns: kbA,
+        // The fade-out belongs to the tail now — a mid-clip fade-out would dip to black at the cut.
+        fadeOut: undefined,
+      }
       const clipB: TimelineItem = {
-        ...clip, id: crypto.randomUUID(),
-        startTime: atTime, inPoint: splitSource,
+        ...clip, id: crypto.randomUUID(), startTime: atTime, inPoint: splitSource, kenBurns: kbB,
+        // The tail keeps its fade-out but not the head-only fade-in or transition-in
+        // (both would otherwise re-play from black at the cut).
+        fadeIn: undefined, transitionIn: undefined, transitionDuration: undefined,
       }
       return prev.map(i => i.id === id ? clipA : i).concat([clipB])
     })

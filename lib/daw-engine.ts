@@ -1281,13 +1281,19 @@ export class DawEngine extends EventTarget {
     }
 
     scheduleLoop(launchCtxTime)
+    // The initial call covers iteration 0; the interval schedules each later
+    // loop exactly once. Without the `iteration > lastScheduled` guard, the
+    // 25 ms interval re-scheduled the SAME iteration ~12× during each lookahead
+    // window, stacking a fresh copy of every note per fire → runaway loudness.
+    let lastScheduled = 0
     const intervalId = setInterval(() => {
       if (!this._sessionMidiSlots.has(trackId)) return
       const elapsed   = this.ctx.currentTime - launchCtxTime
       const iteration = Math.floor(elapsed / clipDurSec) + 1
       const nextStart = launchCtxTime + iteration * clipDurSec
-      if (nextStart - this.ctx.currentTime < SCHEDULE_LOOKAHEAD * 2) {
+      if (iteration > lastScheduled && nextStart - this.ctx.currentTime < SCHEDULE_LOOKAHEAD * 2) {
         scheduleLoop(nextStart)
+        lastScheduled = iteration
       }
     }, SCHEDULER_INTERVAL)
 
