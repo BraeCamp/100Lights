@@ -530,7 +530,7 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
       </Section>
       {err && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 8 }}>{err}</p>}
       <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.55 }}>
-        <strong style={{ color: 'var(--text-secondary)' }}>Party setup:</strong> tap fullscreen and drag this window onto your TV or projector — it keeps running while its window stays visible, so you can use other apps beside it. Browsers can’t grab a device’s internal audio silently (a security rule), so the mic is the no-setup path; capturing another tab’s sound needs the browser’s share prompt. The 100Lights app will add true internal-audio capture and background playback.
+        <strong style={{ color: 'var(--text-secondary)' }}>Party setup:</strong> tap fullscreen and drag this window onto your TV or projector — it keeps running while its window stays visible, so you can use other apps beside it. The mic is the reliable way to visualize the room: point your device at the speaker. Grabbing another app’s audio directly (Spotify, Apple Music) isn’t possible on iPhone and is limited on Android — a phone can’t silently tap another app’s sound — so the mic stays the go-to; on a computer you can also capture a browser tab’s sound.
       </p>
     </div>
   )
