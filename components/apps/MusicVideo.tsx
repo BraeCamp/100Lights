@@ -337,15 +337,21 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
   const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
+  const wakeRef = useRef<{ release: () => Promise<void> } | null>(null)
   const bufRef = useRef<Array<{ t: number; freq: Uint8Array; wave: Uint8Array }>>([])
   const styleRef = useRef(style); useEffect(() => { styleRef.current = style }, [style])
   const accentRef = useRef(accent); useEffect(() => { accentRef.current = accent }, [accent])
   const delayRef = useRef(delayMs); useEffect(() => { delayRef.current = delayMs }, [delayMs])
 
+  const wake = useCallback(async () => {
+    try { wakeRef.current = await (navigator as unknown as { wakeLock?: { request: (t: string) => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen') ?? null } catch { /* unsupported */ }
+  }, [])
+
   const stop = useCallback(() => {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
     streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null
     void audioRef.current?.close().catch(() => {}); audioRef.current = null
+    void wakeRef.current?.release().catch(() => {}); wakeRef.current = null
     analyserRef.current = null; bufRef.current = []
     setRunning(false); setSource(null)
   }, [])
@@ -356,9 +362,13 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
       const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c: unknown) => Promise<MediaStream> }
       let stream: MediaStream
       if (src === 'device') {
-        if (!md.getDisplayMedia) throw new Error('Capturing device audio is desktop-only. On a phone, use the microphone and point it at the speaker.')
+        // The browser has no API to grab internal audio silently — capturing another tab/app's
+        // sound is only possible through the screen-share prompt (a platform security rule). We
+        // keep ONLY the audio and drop the video track immediately, so nothing is recorded.
+        if (!md.getDisplayMedia) throw new Error('Capturing another app’s sound needs a desktop browser. On a phone, use the microphone and point it at the speaker.')
         stream = await md.getDisplayMedia({ video: true, audio: true })
-        if (!stream.getAudioTracks().length) { stream.getTracks().forEach(t => t.stop()); throw new Error('No audio was shared — in the picker, pick a tab/screen and turn on “Share audio”.') }
+        if (!stream.getAudioTracks().length) { stream.getTracks().forEach(t => t.stop()); throw new Error('No audio was shared — in the picker choose a tab and turn on “Share tab audio”.') }
+        stream.getVideoTracks().forEach(t => t.stop())   // audio-only from here on
       } else {
         stream = await md.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
       }
@@ -370,6 +380,7 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
       const an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0.78
       node.connect(an); analyserRef.current = an
       setSource(src); setRunning(true)
+      void wake()
       const draw = () => {
         const a = analyserRef.current, cv = canvasRef.current
         if (a && cv) {
@@ -403,6 +414,12 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
     document.addEventListener('fullscreenchange', on)
     return () => document.removeEventListener('fullscreenchange', on)
   }, [])
+  // Wake locks drop when the tab hides — re-acquire when it comes back so the screen stays on.
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === 'visible' && streamRef.current && !wakeRef.current) void wake() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [wake])
   useEffect(() => () => stop(), [stop])
 
   return (
@@ -410,12 +427,11 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
       <div ref={wrapRef} style={{ position: 'relative', width: '100%', aspectRatio: fs ? undefined : '16 / 9', height: fs ? '100dvh' : undefined, borderRadius: fs ? 0 : 14, overflow: 'hidden', background: '#08070d', border: fs ? 'none' : '1px solid var(--border)' }}>
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }} />
         {!running && (
-          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 12, padding: 20, textAlign: 'center' }}>
-            <p style={{ fontSize: 14, color: 'var(--text-secondary)', maxWidth: 340, margin: 0 }}>Pick an audio source. Point your mic at the speaker, or (on a computer) capture a tab’s sound.</p>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
-              <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 11, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 14, fontWeight: 800, cursor: 'pointer' }}><Mic size={17} /> Use microphone</button>
-              <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}><Radio size={17} /> Capture device audio</button>
-            </div>
+          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 14, padding: 24, textAlign: 'center' }}>
+            <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Visualize the music in the room</p>
+            <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '13px 22px', borderRadius: 12, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 15, fontWeight: 850, cursor: 'pointer' }}><Mic size={18} /> Use microphone</button>
+            <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: 0, maxWidth: 320, lineHeight: 1.5 }}>Point your device at the speaker — no prompts, nothing recorded.</p>
+            <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}><Radio size={14} /> Or capture a tab’s sound (desktop)</button>
           </div>
         )}
         {running && (
@@ -443,7 +459,9 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0' }}>Nudge the visuals later to match sound that reaches the room a beat behind — e.g. streaming to a TV or Bluetooth speaker.</p>
       </Section>
       {err && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 8 }}>{err}</p>}
-      <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10 }}>Phones can visualize the microphone (point it at the speaker); capturing another app’s audio directly isn’t possible on mobile. On a computer you can capture a browser tab’s sound.</p>
+      <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.55 }}>
+        <strong style={{ color: 'var(--text-secondary)' }}>Party setup:</strong> tap fullscreen and drag this window onto your TV or projector — it keeps running while its window stays visible, so you can use other apps beside it. Browsers can’t grab a device’s internal audio silently (a security rule), so the mic is the no-setup path; capturing another tab’s sound needs the browser’s share prompt. The 100Lights app will add true internal-audio capture and background playback.
+      </p>
     </div>
   )
 }
