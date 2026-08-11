@@ -26,7 +26,7 @@ import { DRUM_PATTERNS, DRUM_LANES, STEP_BEATS } from '@/lib/drum-presets'
 import { playDrumHit } from '@/lib/drum-samples'
 import type { BeatType } from '@/lib/beat-analyzer'
 import { clampToViewport } from './daw/menu-clamp'
-import { playMelodicNote } from '@/lib/instrument-synth'
+import { playMelodicNote, MELODIC_TYPES } from '@/lib/instrument-synth'
 import { libraryFulfill } from '@/lib/default-samples'
 import {
   SynthDesigner, LibrarySourcePicker, requestCreateRecipe, RECIPES_CHANGED_EVENT,
@@ -1156,6 +1156,12 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   }, [isLoaded, user?.id])
 
   const [libTab,           setLibTab]           = useState<'samples' | 'presets'>('samples')
+  // Samples browse: compact instrument → versions → notes drill-down (default),
+  // or the classic folder view. drillCat = the opened instrument; noteMapId =
+  // the version whose notes-map keyboard is open.
+  const [browseView,       setBrowseView]       = useState<'instruments' | 'folders'>('instruments')
+  const [drillCat,         setDrillCat]         = useState<LibraryCategory | null>(null)
+  const [noteMapId,        setNoteMapId]        = useState<string | null>(null)
   const [presetSub,        setPresetSub]        = useState<'recipes' | 'patterns'>('recipes')
   const [recipesVersion,   setRecipesVersion]   = useState(0)
   const [recipeDetail,     setRecipeDetail]     = useState<{ id: string; x: number; y: number } | null>(null)
@@ -1470,7 +1476,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   }, [entries])
 
   // Group entries (filtered by search query + tag filters)
-  const { byFolder, unfiled, byParent } = useMemo(() => {
+  const { byFolder, unfiled, byParent, byInstrument } = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     const filtered = entries.filter(en => {
       if (q && !en.name.toLowerCase().includes(q)) return false
@@ -1485,7 +1491,11 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     const byParent = new Map<string, Map<string, LibraryEntry[]>>()
     const byFolder = new Map<string, LibraryEntry[]>()
     const unfiled: LibraryEntry[] = []
+    // byInstrument: category (instrument type) → its versions[] — powers the
+    // compact instrument → versions → notes drill-down.
+    const byInstrument = new Map<LibraryCategory, LibraryEntry[]>()
     for (const e of filtered) {
+      byInstrument.set(e.category, [...(byInstrument.get(e.category) ?? []), e])
       if (e.parentFolder) {
         const subMap = byParent.get(e.parentFolder) ?? new Map<string, LibraryEntry[]>()
         const sub    = e.folder ?? ''
@@ -1497,7 +1507,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
         unfiled.push(e)
       }
     }
-    return { byFolder, unfiled, byParent }
+    return { byFolder, unfiled, byParent, byInstrument }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, folders, searchQuery, activeTypeTag, activeCharTags])
 
@@ -1579,6 +1589,106 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       onPick={onPick}
     />
   )
+
+  // Audition an instrument at a pitch for the notes-map keyboard.
+  function auditionNote(cat: LibraryCategory, midi: number) {
+    _recipeCtx ??= new AudioContext()
+    const ctx = _recipeCtx
+    if (ctx.state === 'suspended') void ctx.resume()
+    const g = ctx.createGain(); g.gain.value = 0.85; g.connect(ctx.destination)
+    playMelodicNote(ctx, cat as Parameters<typeof playMelodicNote>[1], midi, ctx.currentTime + 0.02, 0.9, g)
+    window.setTimeout(() => { try { g.disconnect() } catch { /* already gone */ } }, 2500)  // don't leak gain nodes
+  }
+
+  const NOTE_PCS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+  // A compact 2-octave notes-map keyboard (C3–C5). Click a key to hear the
+  // selected instrument at that pitch; drag the version above onto a track to use it.
+  const notesMap = (cat: LibraryCategory) => (
+    <div style={{ display: 'flex', gap: 1, padding: '6px 8px 8px 22px', overflowX: 'auto' }}>
+      {Array.from({ length: 25 }, (_, i) => 48 + i).map(midi => {
+        const pc = midi % 12
+        const black = [1, 3, 6, 8, 10].includes(pc)
+        return (
+          <button
+            key={midi}
+            onMouseDown={() => auditionNote(cat, midi)}
+            title={`${NOTE_PCS[pc]}${Math.floor(midi / 12) - 1}`}
+            style={{
+              flexShrink: 0, width: black ? 15 : 18, height: black ? 30 : 42, borderRadius: '0 0 3px 3px',
+              border: '1px solid var(--border)', cursor: 'pointer', fontSize: 7,
+              display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 2,
+              background: black ? '#1a1a1f' : 'var(--bg-card)', color: black ? '#8a8a95' : 'var(--text-muted)',
+            }}
+          >{pc === 0 ? `C${Math.floor(midi / 12) - 1}` : ''}</button>
+        )
+      })}
+    </div>
+  )
+
+  // ── Compact instrument → versions → notes drill-down ──────────────────────────
+  const instrumentBrowser = (() => {
+    if (drillCat === null) {
+      // Level 1: one compact row per instrument, grouped by family.
+      const extra = [...byInstrument.keys()].filter(c => !LIBRARY_CATEGORIES.includes(c))
+      return (
+        <div style={{ padding: '4px 0' }}>
+          {[...CATEGORY_GROUPS, { label: 'More', categories: extra }].map(group => {
+            const cats = group.categories.filter(c => byInstrument.has(c))
+            if (!cats.length) return null
+            return (
+              <div key={group.label}>
+                <div style={{ padding: '7px 10px 3px', fontSize: 8.5, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{group.label}</div>
+                {cats.map(cat => {
+                  const versions = byInstrument.get(cat)!
+                  return (
+                    <button key={cat} onClick={() => { setDrillCat(cat); setNoteMapId(null) }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 10px', border: 'none', borderLeft: `2px solid ${colorFor(cat)}`, background: 'transparent', cursor: 'pointer' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+                      <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>{CATEGORY_LABELS[cat] ?? cat}</span>
+                      {(MELODIC_TYPES as Set<string>).has(cat) && <span style={{ fontSize: 10 }} title="Pitched — has a notes map">🎹</span>}
+                      <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{versions.length}</span>
+                      <ChevronRight size={12} style={{ color: 'var(--text-muted)' }} />
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
+    // Level 2/3: versions of the chosen instrument, each with an optional notes map.
+    const versions = byInstrument.get(drillCat) ?? []
+    const melodic = (MELODIC_TYPES as Set<string>).has(drillCat)
+    return (
+      <div>
+        <button onClick={() => { setDrillCat(null); setNoteMapId(null) }}
+          style={{ display: 'flex', alignItems: 'center', gap: 5, width: '100%', padding: '6px 10px', border: 'none', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 10, fontWeight: 600 }}>
+          <ArrowLeft size={12} /> All instruments
+        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px 3px' }}>
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text-primary)', borderLeft: `2px solid ${colorFor(drillCat)}`, paddingLeft: 6 }}>{CATEGORY_LABELS[drillCat] ?? drillCat}</span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{versions.length} version{versions.length !== 1 ? 's' : ''}</span>
+          {melodic && <span style={{ fontSize: 8.5, color: 'var(--text-muted)', marginLeft: 'auto' }}>click 🎹 for a notes map</span>}
+        </div>
+        {versions.map(entry => (
+          <div key={entry.id}>
+            <div style={{ display: 'flex', alignItems: 'stretch' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>{entryRow(entry)}</div>
+              {melodic && (
+                <button onClick={() => setNoteMapId(id => id === entry.id ? null : entry.id)}
+                  title="Show the notes map" aria-label="Notes map"
+                  style={{ flexShrink: 0, width: 30, border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', fontSize: 13, background: noteMapId === entry.id ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: 'var(--text-muted)' }}>🎹</button>
+              )}
+            </div>
+            {melodic && noteMapId === entry.id && notesMap(drillCat)}
+          </div>
+        ))}
+        {versions.length === 0 && <div style={{ padding: 14, fontSize: 10, color: 'var(--text-muted)', textAlign: 'center' }}>No versions.</div>}
+      </div>
+    )
+  })()
 
   const recipeCard = (r: ReturnType<typeof getAllChordRecipes>[number], showGenre = false) => {
     const spec = recipeSpecs.get(r.id)
@@ -1818,7 +1928,22 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       {!onPick && libTab === 'presets' ? presetsBody : (<>
       {/* Header toolbar */}
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1 }}>{entries.length} item{entries.length !== 1 ? 's' : ''}</span>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{entries.length} item{entries.length !== 1 ? 's' : ''}</span>
+        {/* Browse view: compact instruments drill-down vs classic folders */}
+        {!onPick && (
+          <div style={{ display: 'flex', gap: 0, marginLeft: 4, borderRadius: 5, overflow: 'hidden', border: '1px solid var(--border)' }}>
+            {(['instruments', 'folders'] as const).map(v => (
+              <button key={v} onClick={() => { setBrowseView(v); setDrillCat(null); setNoteMapId(null) }}
+                title={v === 'instruments' ? 'Group by instrument → versions → notes' : 'Classic folder view'}
+                style={{
+                  fontSize: 8.5, fontWeight: 700, padding: '2px 7px', border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+                  background: browseView === v ? 'var(--accent)' : 'transparent',
+                  color: browseView === v ? '#fff' : 'var(--text-muted)',
+                }}>{v}</button>
+            ))}
+          </div>
+        )}
+        <span style={{ flex: 1 }} />
         {onPick && (
           <a href="/community?kind=sample" target="_blank" rel="noreferrer" title="Browse what other producers have shared"
             style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-muted)', textDecoration: 'none' }}>
@@ -1956,6 +2081,9 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
               or <a href="/community?kind=sample" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-light, #a78bfa)' }}>browse Community sounds ↗</a>
             </p>
           </div>
+        ) : (!filtering && !onPick && browseView === 'instruments') ? (
+          /* Compact instrument → versions → notes drill-down */
+          instrumentBrowser
         ) : (
           <>
             {/* Sections: community links first, then the built-in 100Lights
