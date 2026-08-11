@@ -62,9 +62,10 @@ function dawAudioFingerprint(daw: import('@/lib/daw-types').DawProject): string 
 // this true (behind a Pro check) to re-enable live cross-project re-bouncing.
 const LIVE_CROSS_PROJECT_SYNC = false
 import {
-  serialize, saveProjectToFile, openProjectFromFile, deserialize,
+  serialize, saveProjectToFile, openProjectFromFile, openProjectsFromFile, deserialize,
   type CfProjFile, type EditorSnapshot,
 } from '@/lib/project-serializer'
+import { openMediaInStudio } from '@/lib/media-handoff'
 import { writeAutosave, readAutosave, clearAutosave } from '@/lib/autosave'
 import {
   DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS, DEFAULT_ASPECT, PROJECT_ASPECTS,
@@ -696,7 +697,6 @@ export default function VideoEditor({
 
   // Transcription
   const [importedFile, setImportedFile] = useState<File | null>(null)
-  const projectFileRef = useRef<HTMLInputElement | null>(null)   // hidden input for "Open project (.cfproj)"
   const mediaFileRef = useRef<HTMLInputElement | null>(null)     // hidden input for the toolbar Import button
   const [importError, setImportError] = useState('')
 
@@ -2751,23 +2751,18 @@ export default function VideoEditor({
     uploadMediaToR2(file, id)
   }
 
-  // Open a 100Lights project (.cfproj) straight into the video editor — the same
-  // load path the projects page uses, so a studio project can be brought into
-  // video (and vice-versa) without leaving the module.
-  async function handleOpenProjectFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
+  // Open / Import Files — pick a project (.cfproj / Firefly .zip) to open in place,
+  // or raw media (mp4/mov/mp3…) which opens a fresh video project seeded with it.
+  // Same picker the All Projects page uses.
+  async function handleOpenImport() {
+    const read = await openProjectsFromFile().catch(() => null)
+    if (!read) return
+    if (read.media.length) { await openMediaInStudio(read.media); return }
+    const proj = read.projects[0]
+    if (!proj) { if (read.errors.length) window.alert(read.errors[0]); return }
     if (isDirty && !window.confirm('Open a different project? Unsaved changes to the current one will be lost.')) return
-    try {
-      const text = await file.text()
-      const cf = JSON.parse(text) as { _type?: string; name?: string; clips?: unknown; dawProject?: unknown }
-      if (cf._type !== '100lights-project' && !Array.isArray(cf.clips) && !cf.dawProject) throw new Error('not a project')
-      await loadCfproj(text)
-      setLocalProjectName(cf.name || file.name.replace(/\.cfproj$/i, ''))
-    } catch {
-      window.alert('That doesn’t look like a 100Lights project (.cfproj).')
-    }
+    await loadCfproj(JSON.stringify(proj))
+    setLocalProjectName(proj.name || 'Untitled')
   }
 
   // Re-attempt a failed upload for a media item that still holds its File (e.g.
@@ -3485,17 +3480,15 @@ export default function VideoEditor({
 
       {/* ── Header ───────────────────────────────────────────── */}
       <div className="electron-drag-container flex items-center gap-3 px-4 shrink-0" style={{ height: 40, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', paddingLeft: isElectronMac ? 80 : 16 }}>
-        {/* Import a project (.cfproj) straight into the video editor */}
-        <input ref={projectFileRef} type="file" accept=".cfproj,application/json" onChange={handleOpenProjectFile} className="hidden" />
-        {/* Import media files (video / audio / LUT) */}
+        {/* Import media files (video / audio / LUT) into this project */}
         <input ref={mediaFileRef} type="file" accept={MEDIA_ACCEPT} multiple onChange={handleImportInput} className="hidden" />
         <button
-          onClick={() => projectFileRef.current?.click()}
-          title="Open a project (.cfproj) in the video editor"
+          onClick={handleOpenImport}
+          title="Open a project (.cfproj / Firefly .zip), or import media to a new video project"
           className="flex items-center gap-1.5 text-xs shrink-0 hover:opacity-70 transition-opacity"
           style={{ color: 'var(--text-muted)' }}
         >
-          <Upload size={12} /> Open
+          <FolderOpen size={12} /> Open / Import Files
         </button>
         <div className="w-px h-4 shrink-0" style={{ background: 'var(--border)' }} />
         <div className="flex items-center gap-1.5 flex-1 min-w-0">

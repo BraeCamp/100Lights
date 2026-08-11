@@ -15,7 +15,7 @@ import { readWorkspace, writeWorkspace } from '@/lib/editor-workspace'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
-import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X, Link2 } from 'lucide-react'
+import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X, Link2, Upload } from 'lucide-react'
 import { LogoMark } from '@/components/Logo'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { UITierProvider } from './UITierProvider'
@@ -24,6 +24,8 @@ import type { CollabPeer } from '@/lib/daw-types'
 import { uploadRecordingBlob } from '@/lib/record-upload'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
+import { openProjectsFromFile } from '@/lib/project-serializer'
+import { openMediaInStudio } from '@/lib/media-handoff'
 import type { Caption } from '@/lib/types'
 import { captureAudioInput } from '@/lib/audio-capture'
 import { monitorFxParams } from '@/lib/daw-engine'
@@ -512,6 +514,21 @@ export default function AudioEditor(props: AudioEditorProps) {
   }
   const requireAccountRef = useRef(requireAccount)
   useEffect(() => { requireAccountRef.current = requireAccount })
+
+  // Open / Import Files — pick a project (.cfproj / Firefly .zip) to open, or raw
+  // media which opens a fresh video project seeded with it. Opening navigates
+  // (loads via the /projects/<id> route), so flush + confirm if there are edits.
+  async function handleOpenImport() {
+    const read = await openProjectsFromFile().catch(() => null)
+    if (!read) return
+    if (read.media.length) { await openMediaInStudio(read.media); return }
+    const proj = read.projects[0]
+    if (!proj) { if (read.errors.length) window.alert(read.errors[0]); return }
+    if (dawDirty && !window.confirm('Open a different project? Unsaved changes to the current one will be lost.')) return
+    try { void saveSnapshot(snapshotKey, projectRef.current) } catch { /* best effort */ }
+    localStorage.setItem(`cf_pending_cfproj_${proj.id}`, JSON.stringify(proj))
+    window.location.assign(`/projects/${proj.id}`)
+  }
 
   // Offer to restore a local snapshot that never made it to the server.
   // Special case: if we just came back from the guest sign-up gate for THIS
@@ -1857,6 +1874,21 @@ export default function AudioEditor(props: AudioEditorProps) {
               >
                 <FolderOpen size={15} />
               </a>
+              {/* Open a project file, or import media into a new video project */}
+              <button
+                onClick={handleOpenImport}
+                title="Open / Import Files — open a project (.cfproj / .zip) or import media"
+                style={{
+                  width: 28, height: 28, borderRadius: 6, marginBottom: 6, flexShrink: 0, cursor: 'pointer', border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'transparent', color: 'var(--text-muted)',
+                  transition: 'background 0.12s, color 0.12s',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(var(--accent-rgb) / 0.12)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+              >
+                <Upload size={15} />
+              </button>
               {!isPodcast ? (
                 ([
                   { tab: 'library', Icon: Library, label: 'Sound Library',                     help: 'sound-library' },
