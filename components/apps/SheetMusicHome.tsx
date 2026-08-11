@@ -10,7 +10,7 @@ import { relTime } from '@/lib/app-history'
 const NOTES: [number, number][] = [[8, 6], [20, 5], [30, 3], [42, 4], [52, 2], [64, 5], [74, 3], [86, 1]]
 const STAFF_LINES = 5
 
-export default function SheetMusicHome({ onStart }: { onStart: () => void }) {
+export default function SheetMusicHome({ onStart, onOpen }: { onStart: () => void; onOpen?: (data: unknown) => void }) {
   const { history } = useAppShell()
   const recent = history.entries
 
@@ -55,11 +55,11 @@ export default function SheetMusicHome({ onStart }: { onStart: () => void }) {
             {recent.map(e => (
               <div key={e.id} className="sm-card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 13, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
                 <span style={{ display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 10, background: 'var(--bg-base)', color: 'var(--accent)', flexShrink: 0 }}><FileMusic size={17} /></span>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <button type="button" onClick={() => (onOpen ? onOpen(e.data) : onStart())} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.title}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{[e.subtitle, relTime(e.ts)].filter(Boolean).join(' · ')}</div>
-                </div>
-                <button type="button" onClick={onStart} aria-label="Open" style={{ display: 'grid', placeItems: 'center', width: 34, height: 34, borderRadius: 9, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0 }}><Play size={15} /></button>
+                </button>
+                <button type="button" onClick={() => (onOpen ? onOpen(e.data) : onStart())} aria-label="Open" style={{ display: 'grid', placeItems: 'center', width: 34, height: 34, borderRadius: 9, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0 }}><Play size={15} /></button>
               </div>
             ))}
           </div>

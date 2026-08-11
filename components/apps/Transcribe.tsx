@@ -5,7 +5,7 @@
 // notes you can HEAR on any instrument and export (studio / WAV / MIDI). Works on real recordings,
 // not just live singing; fully client-side (no sign-in). Monophonic — best on a single melody line.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, Mic, ChevronLeft } from 'lucide-react'
+import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, Mic, ChevronLeft, Save } from 'lucide-react'
 import { audioToNotes } from '@/lib/audio-to-midi'
 import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
 import { writeMidiFile } from '@/lib/midi-file'
@@ -29,9 +29,10 @@ export default function Transcribe() {
 function TranscribeShell() {
   const shell = useAppShell()
   const [view, setView] = useState<'home' | 'tool'>('home')
+  const [open, setOpen] = useState<{ data?: unknown; nonce: number }>({ nonce: 0 })
   const toured = useRef(false)
   useEffect(() => { if (view === 'tool' && !toured.current) { toured.current = true; setTimeout(() => shell.startTour(false), 400) } }, [view, shell])
-  if (view === 'home') return <TranscribeHome onStart={() => setView('tool')} />
+  if (view === 'home') return <TranscribeHome onStart={() => setView('tool')} onOpen={data => { setOpen(p => ({ data, nonce: p.nonce + 1 })); setView('tool') }} />
   return (
     <>
       <div className="max-w-2xl mx-auto" style={{ padding: '14px 18px 0' }}>
@@ -40,12 +41,14 @@ function TranscribeShell() {
           <ChevronLeft size={16} /> Home
         </button>
       </div>
-      <TranscribeApp />
+      <TranscribeApp open={open} />
     </>
   )
 }
 
-function TranscribeApp() {
+function TranscribeApp({ open }: { open?: { data?: unknown; nonce: number } }) {
+  const shell = useAppShell()
+  const [savedNote, setSavedNote] = useState('')
   const [notes, setNotes] = useState<MidiNote[]>([])  // editable detection result
   const [tempo, setTempo] = useState(100)
   const [name, setName] = useState('Transcription')
@@ -166,6 +169,23 @@ function TranscribeApp() {
   }, [notes, tempo, name])
   const openStudio = useCallback(() => openSketchInStudio(notes, [], { tempo, name, voice: { instrument } }), [notes, tempo, name, instrument])
 
+  // Save the transcription to History, and restore one (from the Home screen or the History sheet).
+  type Take = { notes?: MidiNote[]; tempo?: number; name?: string; inst?: string }
+  const applyTake = useCallback((d: Take) => {
+    if (Array.isArray(d.notes)) setNotes(d.notes)
+    if (typeof d.tempo === 'number') setTempo(d.tempo)
+    if (typeof d.name === 'string') setName(d.name)
+    if (typeof d.inst === 'string') setInst(d.inst)
+  }, [])
+  const openNonce = open?.nonce
+  useEffect(() => { if (open?.nonce) applyTake(open.data as Take) }, [openNonce]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { shell.registerRestore((data) => applyTake(data as Take)) }, [shell, applyTake])
+  const saveTake = useCallback(() => {
+    if (!notes.length) return
+    shell.history.save({ title: name || 'Transcription', subtitle: `${notes.length} notes · ${tempo} BPM`, data: { notes, tempo, name, inst } })
+    setSavedNote('Saved ✓'); window.setTimeout(() => setSavedNote(''), 1600)
+  }, [notes, tempo, name, inst, shell])
+
   return (
       <main id="main" className="max-w-2xl mx-auto" style={{ padding: '20px 18px 40px' }}>
         <header style={{ marginBottom: 20 }}>
@@ -221,6 +241,7 @@ function TranscribeApp() {
 
             <Label>Export</Label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <ExportBtn icon={<Save size={15} />} label={savedNote || 'Save'} onClick={saveTake} primary />
               <ExportBtn icon={<Sparkles size={15} />} label="Open in 100Lights" onClick={openStudio} subtle />
               <ExportBtn icon={<Download size={15} />} label="WAV" onClick={exportWav} />
               <ExportBtn icon={<FileMusic size={15} />} label="MIDI" onClick={exportMidi} />

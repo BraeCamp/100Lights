@@ -5,7 +5,7 @@
 // and you HEAR it — play it back on any instrument, see the notes on a mini piano-roll, then open
 // it in the 100Lights studio, or export WAV / MIDI. Reuses the real audio engine + project model.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, ChevronLeft } from 'lucide-react'
+import { Play, Square, Upload, Music, Loader2, Sparkles, Download, FileMusic, ChevronLeft, Save } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { importSheetMusic, SHEET_MUSIC_ACCEPT } from '@/lib/sheet-music'
 import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
@@ -30,9 +30,10 @@ export default function SheetMusic() {
 function SheetMusicShell() {
   const shell = useAppShell()
   const [view, setView] = useState<'home' | 'tool'>('home')
+  const [open, setOpen] = useState<{ data?: unknown; nonce: number }>({ nonce: 0 })
   const toured = useRef(false)
   useEffect(() => { if (view === 'tool' && !toured.current) { toured.current = true; setTimeout(() => shell.startTour(false), 400) } }, [view, shell])
-  if (view === 'home') return <SheetMusicHome onStart={() => setView('tool')} />
+  if (view === 'home') return <SheetMusicHome onStart={() => setView('tool')} onOpen={data => { setOpen(p => ({ data, nonce: p.nonce + 1 })); setView('tool') }} />
   return (
     <>
       <div className="max-w-2xl mx-auto" style={{ padding: '14px 18px 0' }}>
@@ -41,12 +42,14 @@ function SheetMusicShell() {
           <ChevronLeft size={16} /> Home
         </button>
       </div>
-      <SheetMusicApp />
+      <SheetMusicApp open={open} />
     </>
   )
 }
 
-function SheetMusicApp() {
+function SheetMusicApp({ open }: { open?: { data?: unknown; nonce: number } }) {
+  const shell = useAppShell()
+  const [savedNote, setSavedNote] = useState('')
   const { isSignedIn } = useUser()
   const [notes, setNotes] = useState<MidiNote[]>([])
   const [tempo, setTempo] = useState(100)
@@ -119,6 +122,23 @@ function SheetMusicApp() {
 
   const openStudio = useCallback(() => openSketchInStudio(notes, [], { tempo, name, voice: { instrument } }), [notes, tempo, name, instrument])
 
+  // Save the read-back piece to History, and restore one (from Home or the History sheet).
+  type Piece = { notes?: MidiNote[]; tempo?: number; name?: string; inst?: string }
+  const applyPiece = useCallback((d: Piece) => {
+    if (Array.isArray(d.notes)) setNotes(d.notes)
+    if (typeof d.tempo === 'number') setTempo(d.tempo)
+    if (typeof d.name === 'string') setName(d.name)
+    if (typeof d.inst === 'string') setInst(d.inst)
+  }, [])
+  const openNonce = open?.nonce
+  useEffect(() => { if (open?.nonce) applyPiece(open.data as Piece) }, [openNonce]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { shell.registerRestore((data) => applyPiece(data as Piece)) }, [shell, applyPiece])
+  const savePiece = useCallback(() => {
+    if (!notes.length) return
+    shell.history.save({ title: name || 'Sheet music', subtitle: `${notes.length} notes · ${tempo} BPM`, data: { notes, tempo, name, inst } })
+    setSavedNote('Saved ✓'); window.setTimeout(() => setSavedNote(''), 1600)
+  }, [notes, tempo, name, inst, shell])
+
   return (
       <main id="main" className="max-w-2xl mx-auto" style={{ padding: '20px 18px 40px' }}>
         <header style={{ marginBottom: 22 }}>
@@ -167,6 +187,7 @@ function SheetMusicApp() {
 
             <Label>Export</Label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <ExportBtn icon={<Save size={15} />} label={savedNote || 'Save'} onClick={savePiece} primary />
               <ExportBtn icon={<Sparkles size={15} />} label="Open in 100Lights" onClick={openStudio} subtle />
               <ExportBtn icon={<Download size={15} />} label="WAV" onClick={exportWav} />
               <ExportBtn icon={<FileMusic size={15} />} label="MIDI" onClick={exportMidi} />
