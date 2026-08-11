@@ -11,7 +11,7 @@ import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
 import { writeMidiFile } from '@/lib/midi-file'
 import { DawEngine } from '@/lib/daw-engine'
 import { POLY_PRESETS, type MidiNote, type TrackInstrument, defaultPolyInstrument } from '@/lib/daw-types'
-import AppChrome from '@/components/apps/AppChrome'
+import AppChrome, { useAppShell } from '@/components/apps/AppChrome'
 import TranscribeHome from '@/components/apps/TranscribeHome'
 import NoteEditor from '@/components/apps/NoteEditor'
 
@@ -27,7 +27,10 @@ export default function Transcribe() {
 
 // Bespoke Home first, then the tool (Home button in the wrapper; the tool is untouched).
 function TranscribeShell() {
+  const shell = useAppShell()
   const [view, setView] = useState<'home' | 'tool'>('home')
+  const toured = useRef(false)
+  useEffect(() => { if (view === 'tool' && !toured.current) { toured.current = true; setTimeout(() => shell.startTour(false), 400) } }, [view, shell])
   if (view === 'home') return <TranscribeHome onStart={() => setView('tool')} />
   return (
     <>
@@ -175,7 +178,7 @@ function TranscribeApp() {
 
         <div style={{ display: 'flex', gap: 10, marginBottom: 2 }}>
           <div style={{ flex: 1 }}><UploadZone busy={busy} onFile={onFile} hasResult={has} /></div>
-          <button type="button" onClick={recording ? stopRec : startRec} disabled={busy} aria-label={recording ? 'Stop recording' : 'Record'} style={{ display: 'grid', placeItems: 'center', gap: 6, width: 100, borderRadius: 16, border: '1.5px solid var(--border)', background: recording ? 'var(--accent)' : 'var(--bg-card)', color: recording ? '#0e0d12' : 'var(--text-secondary)', cursor: busy ? 'not-allowed' : 'pointer' }}>
+          <button type="button" data-tour="record" onClick={recording ? stopRec : startRec} disabled={busy} aria-label={recording ? 'Stop recording' : 'Record'} style={{ display: 'grid', placeItems: 'center', gap: 6, width: 100, borderRadius: 16, border: '1.5px solid var(--border)', background: recording ? 'var(--accent)' : 'var(--bg-card)', color: recording ? '#0e0d12' : 'var(--text-secondary)', cursor: busy ? 'not-allowed' : 'pointer' }}>
             {recording ? <Square size={22} /> : <Mic size={22} />}
             <span style={{ fontSize: 12.5, fontWeight: 750 }}>{recording ? 'Stop' : 'Record'}</span>
           </button>

@@ -29,5 +29,38 @@ export const APP_TOURS: Record<string, TourStep[]> = {
   ],
 }
 
+APP_TOURS.voicemidi = [
+  { body: 'Sing or hum a melody and hear it played back on any instrument — here’s the gist.' },
+  { target: 'record', body: 'Tap Record and hum a tune. Your singing stays silent so you can focus; the detected note shows as you go.' },
+  { target: 'instrument', body: 'Pick the instrument your melody plays back on.' },
+  { body: 'Then Play to hear your take, turn on the metronome to keep time, and Quantize to snap it to the beat.' },
+]
+
+APP_TOURS.autotune = [
+  { body: 'Snap a vocal to the nearest note in a key — a quick tour.' },
+  { target: 'record', body: 'Record a take or upload a vocal here.' },
+  { target: 'key', body: 'Set the key and scale your part is in — notes outside it get pulled to the nearest one.' },
+  { body: 'Then dial Strength from a subtle touch-up to the hard-tuned effect, A/B original vs corrected, and download a WAV.' },
+]
+
+APP_TOURS.transcribe = [
+  { body: 'Turn audio into editable MIDI notes — here’s how.' },
+  { target: 'record', body: 'Upload an audio file or record a melody line here.' },
+  { body: 'The pitch detector turns it into MIDI notes you can hear on any instrument, then export MIDI/WAV or open in the studio.' },
+]
+
+APP_TOURS.sheetmusic = [
+  { body: 'Hear a printed score played back — a quick tour.' },
+  { target: 'upload', body: 'Upload a photo, PDF, or MusicXML of the sheet music here.' },
+  { body: 'It reads the notes; pick any instrument and press play, then export WAV/MIDI or open the piece in the studio.' },
+]
+
+APP_TOURS.captions = [
+  { body: 'Caption a video with clean, editable, animated text — here’s the flow.' },
+  { target: 'upload', body: 'Add a video (or audio) straight from your device here — everything stays on-device.' },
+  { target: 'transcribe', body: 'Hit Transcribe and the words appear with timings.' },
+  { body: 'Edit the words, regroup lines, animate snippets in Subtitle style, then Save video to burn them onto the clip.' },
+]
+
 export const tourFor = (slug?: string): TourStep[] | null =>
   (slug && APP_TOURS[slug]) || null

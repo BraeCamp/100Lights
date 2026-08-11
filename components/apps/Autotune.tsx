@@ -231,6 +231,7 @@ export default function Autotune() {
         <select
           value={key}
           aria-label="Key"
+          data-tour="key"
           data-testid="at-key"
           onChange={e => setKey(parseInt(e.target.value, 10))}
           style={select}
@@ -273,6 +274,7 @@ export default function Autotune() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 18 }}>
         <button
           onClick={toggleRecord}
+          data-tour="record"
           data-testid="at-record"
           disabled={processing && !recording}
           style={{

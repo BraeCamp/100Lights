@@ -261,7 +261,7 @@ export default function Captions({ open, onHome }: { open?: { data?: unknown; no
       {/* ── Body: source sidebar + caption editor ───────────────────────────── */}
       <main style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <aside style={{ width: 320, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', padding: 16, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
-          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, border: '1.5px dashed var(--border)', borderRadius: 12, cursor: 'pointer', background: 'var(--bg-card)' }}>
+          <label data-tour="upload" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, border: '1.5px dashed var(--border)', borderRadius: 12, cursor: 'pointer', background: 'var(--bg-card)' }}>
             <Upload size={16} />
             <span style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file ? file.name : 'Choose audio or video'}</span>
             <input type="file" accept="audio/*,video/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) pick(f) }} />
@@ -296,7 +296,7 @@ export default function Captions({ open, onHome }: { open?: { data?: unknown; no
             <WaveformStrip peaks={peaks} duration={dur} captions={tx.captions} currentTime={now} onSeek={seek} />
           )}
 
-          <button onClick={transcribe} disabled={!file || busy}
+          <button onClick={transcribe} disabled={!file || busy} data-tour="transcribe"
             style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px 14px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: file && !busy ? 'pointer' : 'not-allowed', opacity: file && !busy ? 1 : 0.5 }}>
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
             {tx.status === 'loading' ? `Loading model ${tx.progress}%` : tx.status === 'transcribing' ? 'Transcribing…' : tx.captions.length ? 'Re-transcribe' : 'Transcribe'}

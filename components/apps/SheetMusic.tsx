@@ -12,7 +12,7 @@ import { buildSketchProject, openSketchInStudio } from '@/lib/open-in-studio'
 import { writeMidiFile } from '@/lib/midi-file'
 import { DawEngine } from '@/lib/daw-engine'
 import { POLY_PRESETS, type MidiNote, type TrackInstrument, defaultPolyInstrument } from '@/lib/daw-types'
-import AppChrome from '@/components/apps/AppChrome'
+import AppChrome, { useAppShell } from '@/components/apps/AppChrome'
 import SheetMusicHome from '@/components/apps/SheetMusicHome'
 import NoteEditor from '@/components/apps/NoteEditor'
 
@@ -28,7 +28,10 @@ export default function SheetMusic() {
 
 // Bespoke Home first, then the tool (Home button in the wrapper; the tool is untouched).
 function SheetMusicShell() {
+  const shell = useAppShell()
   const [view, setView] = useState<'home' | 'tool'>('home')
+  const toured = useRef(false)
+  useEffect(() => { if (view === 'tool' && !toured.current) { toured.current = true; setTimeout(() => shell.startTour(false), 400) } }, [view, shell])
   if (view === 'home') return <SheetMusicHome onStart={() => setView('tool')} />
   return (
     <>
@@ -126,7 +129,7 @@ function SheetMusicApp() {
           </p>
         </header>
 
-        <UploadZone busy={busy} onFile={handleFile} accept={SHEET_MUSIC_ACCEPT} hasResult={has} />
+        <div data-tour="upload"><UploadZone busy={busy} onFile={handleFile} accept={SHEET_MUSIC_ACCEPT} hasResult={has} /></div>
         {!isSignedIn && (
           <p style={{ fontSize: 12.5, color: 'var(--text-muted, var(--text-secondary))', margin: '10px 2px 0' }}>
             Photos &amp; PDFs use AI transcription (sign in required). MusicXML files work without signing in.

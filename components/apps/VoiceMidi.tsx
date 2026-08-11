@@ -1758,6 +1758,7 @@ export default function VoiceMidi({ onNotes, restore }: {
           onChange={e => setSelectedId(e.target.value)}
           style={select}
           aria-label="Instrument"
+          data-tour="instrument"
         >
           {grouped.map(g => (
             <optgroup key={g.group} label={g.group}>
@@ -1939,6 +1940,7 @@ export default function VoiceMidi({ onNotes, restore }: {
         <button
           onClick={toggleRecord}
           data-testid="vm-record"
+          data-tour="record"
           style={{
             padding: '15px 40px', borderRadius: 14, border: 'none', fontSize: 17, fontWeight: 800, cursor: 'pointer',
             background: recording ? '#dc2626' : 'var(--accent)', color: '#fff',
