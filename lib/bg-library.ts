@@ -26,6 +26,8 @@ export interface BgClip {
 export const BG_CATEGORIES = ['Patterns', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
 export type BgCategory = typeof BG_CATEGORIES[number]
 
+import { FETCHED_NATURE } from './bg-fetched'
+
 const CDN = (process.env.NEXT_PUBLIC_BG_CDN || '').replace(/\/$/, '')
 
 // Bundled generative images — render immediately, offline, no hosting.
@@ -79,7 +81,10 @@ export const BG_LIBRARY: BgClip[] = [
   ...NATURE.map(c => ({
     ...c, kind: 'video' as const,
     preview: `/bg/nature/${c.id}.jpg`,                                   // bundled poster (offline, never blank)
-    src: CDN ? `${CDN}/${c.id}.mp4` : `/bg/nature/${c.id}.webm`,        // real footage when hosted, else the bundled loop
+    // Priority: hosted CDN footage → real footage fetched by bg:fetch → procedural loop.
+    src: CDN ? `${CDN}/${c.id}.mp4`
+      : FETCHED_NATURE.includes(c.id) ? `/bg/nature/${c.id}.mp4`
+        : `/bg/nature/${c.id}.webm`,
   })),
 ]
 
