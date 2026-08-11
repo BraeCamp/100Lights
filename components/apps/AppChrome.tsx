@@ -11,12 +11,12 @@ import { Palette, X, RotateCcw, GraduationCap, History as HistoryIcon, User, Spa
 import { useUser } from '@clerk/nextjs'
 import { WorkshopThemeProvider, useWorkshopTheme } from '@/components/editor/WorkshopThemeProvider'
 import { BUILTIN_PRESETS, PATTERN_TYPES, resolveColor } from '@/lib/workshop-theme'
-import { tutorialFor } from '@/lib/app-tutorials'
+import { tourFor, type TourStep } from '@/lib/app-tour'
 import { useAppHistory, relTime, type AppHistoryEntry } from '@/lib/app-history'
 import { bySlug } from '@/lib/apps-registry'
 
 type Motion = 'full' | 'subtle' | 'off'
-type SheetId = 'learn' | 'history' | 'account' | 'customize' | null
+type SheetId = 'history' | 'account' | 'customize' | null
 
 interface AppShell {
   slug: string
@@ -51,10 +51,12 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
   const [sheet, setSheet] = useState<SheetId>(null)
   const [motion, setMotionState] = useState<Motion>('full')
   const [intro, setIntro] = useState(true)
+  const [tour, setTour] = useState(false)
   const [appSettings, setAppSettings] = useState<React.ReactNode | null>(null)
   const history = useAppHistory(slug)
   const restoreRef = useRef<((data: unknown) => void) | null>(null)
   const app = bySlug(slug)
+  const tourSteps = tourFor(slug)
 
   // Resolve the Motion preference (default follows prefers-reduced-motion).
   useEffect(() => {
@@ -73,6 +75,20 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
     return () => clearTimeout(t)
   }, [slug, motion])
 
+  // Auto-play the interactive tour the first time this app opens (after the intro fades).
+  useEffect(() => {
+    if (!tourSteps || intro) return
+    const seen = (() => { try { return localStorage.getItem(`100lights-tour-${slug}`) } catch { return null } })()
+    if (seen) return
+    const t = setTimeout(() => setTour(true), 500)
+    return () => clearTimeout(t)
+  }, [slug, intro, tourSteps])
+
+  const endTour = useCallback(() => {
+    setTour(false)
+    try { localStorage.setItem(`100lights-tour-${slug}`, '1') } catch { /* off */ }
+  }, [slug])
+
   const registerRestore = useCallback((fn: (data: unknown) => void) => { restoreRef.current = fn }, [])
   const openSheet = useCallback((s: Exclude<SheetId, null>) => setSheet(s), [])
   const setSettings = useCallback((node: React.ReactNode | null) => setAppSettings(node), [])
@@ -87,7 +103,7 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
 
         {/* Floating toolbar — one cluster, top-right, safe-area aware. */}
         <div className="app-toolbar" style={{ position: 'fixed', top: 'calc(12px + env(safe-area-inset-top))', right: 12, zIndex: 25, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {app && tutorialFor(slug) && <ToolBtn label="Learn" onClick={() => setSheet('learn')}><GraduationCap size={18} /></ToolBtn>}
+          {tourSteps && <ToolBtn label="Show me around" onClick={() => setTour(true)}><GraduationCap size={18} /></ToolBtn>}
           {slug && <ToolBtn label="History" onClick={() => setSheet('history')}><HistoryIcon size={18} /></ToolBtn>}
           <ToolBtn label="Account & settings" onClick={() => setSheet('account')}><User size={18} /></ToolBtn>
           <ToolBtn label="Customize appearance" onClick={() => setSheet('customize')}><Palette size={18} /></ToolBtn>
@@ -95,7 +111,7 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
 
         {intro && <IntroSplash title={app?.title ?? '100Lights'} tagline={app?.tagline} motion={motion} />}
 
-        {sheet === 'learn' && <LearnSheet slug={slug} onClose={() => setSheet(null)} />}
+        {tour && tourSteps && <Tour steps={tourSteps} onDone={endTour} />}
         {sheet === 'history' && <HistorySheet history={history} onOpen={(e) => { restoreRef.current?.(e.data); setSheet(null) }} onClose={() => setSheet(null)} />}
         {sheet === 'account' && <AccountSheet motion={motion} setMotion={setMotion} settings={appSettings} onCustomize={() => setSheet('customize')} onClose={() => setSheet(null)} />}
         {sheet === 'customize' && <CustomizeSheet onClose={() => setSheet(null)} />}
@@ -134,32 +150,66 @@ function IntroSplash({ title, tagline, motion }: { title: string; tagline?: stri
   )
 }
 
-// ── Learn (tutorial) sheet ───────────────────────────────────────────────────────
-function LearnSheet({ slug, onClose }: { slug: string; onClose: () => void }) {
-  const t = tutorialFor(slug)
-  const app = bySlug(slug)
-  if (!t) { return <Sheet onClose={onClose} title="How it works"><p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>A guide for this app is coming soon.</p></Sheet> }
+// ── Interactive guided tour (coach marks) ────────────────────────────────────────
+// Spotlights a real element on screen and coaches from a bar at the bottom. The hole
+// over the highlighted element stays clickable so the user can actually try it; a
+// floating Skip is always reachable. Auto-plays first open; the Learn button replays.
+function Tour({ steps, onDone }: { steps: TourStep[]; onDone: () => void }) {
+  const [i, setI] = useState(0)
+  const [rect, setRect] = useState<DOMRect | null>(null)
+  const lastRef = useRef<DOMRect | null>(null)
+  const step = steps[Math.min(i, steps.length - 1)]
+
+  useEffect(() => {
+    let raf = 0
+    const measure = () => {
+      const el = step?.target ? document.querySelector<HTMLElement>(`[data-tour="${step.target}"]`) : null
+      if (!el) { if (lastRef.current) { lastRef.current = null; setRect(null) }; return }
+      const r = el.getBoundingClientRect()
+      const l = lastRef.current
+      if (!l || l.top !== r.top || l.left !== r.left || l.width !== r.width || l.height !== r.height) { lastRef.current = r; setRect(r) }
+    }
+    if (step?.target) document.querySelector<HTMLElement>(`[data-tour="${step.target}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    measure()
+    const loop = () => { measure(); raf = requestAnimationFrame(loop) }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [step])
+
+  const next = () => { if (i + 1 < steps.length) setI(i + 1); else onDone() }
+  const p = 8
+  const dim = (s: React.CSSProperties): React.CSSProperties => ({ position: 'fixed', background: 'rgba(6,5,10,0.64)', pointerEvents: 'auto', ...s })
+
   return (
-    <Sheet onClose={onClose} title={`Learn ${app?.title ?? ''}`.trim()}>
-      <p style={{ fontSize: 14.5, color: 'var(--text-secondary)', lineHeight: 1.6, margin: '0 0 18px' }}>{t.intro}</p>
-      <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {t.steps.map((s, i) => (
-          <li key={i} className="app-step" style={{ ['--i' as string]: i, display: 'flex', gap: 13, alignItems: 'flex-start' }}>
-            <span style={{ flexShrink: 0, display: 'grid', placeItems: 'center', width: 26, height: 26, borderRadius: 999, background: 'var(--accent)', color: '#0e0d12', fontSize: 13, fontWeight: 800 }}>{i + 1}</span>
-            <div>
-              <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text-primary)' }}>{s.title}</div>
-              <div style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.55, marginTop: 2 }}>{s.body}</div>
-            </div>
-          </li>
-        ))}
-      </ol>
-      {t.tip && (
-        <div style={{ marginTop: 18, display: 'flex', gap: 9, alignItems: 'flex-start', padding: '12px 14px', borderRadius: 12, background: 'var(--bg-base)', border: '1px solid var(--border)' }}>
-          <Sparkles size={16} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>{t.tip}</span>
-        </div>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 70, pointerEvents: 'none' }}>
+      {rect ? (
+        <>
+          <div style={dim({ left: 0, top: 0, width: '100%', height: Math.max(0, rect.top - p) })} />
+          <div style={dim({ left: 0, top: rect.bottom + p, width: '100%', bottom: 0 })} />
+          <div style={dim({ left: 0, top: Math.max(0, rect.top - p), width: Math.max(0, rect.left - p), height: rect.height + p * 2 })} />
+          <div style={dim({ left: rect.right + p, top: Math.max(0, rect.top - p), right: 0, height: rect.height + p * 2 })} />
+          <div style={{ position: 'fixed', left: rect.left - p, top: rect.top - p, width: rect.width + p * 2, height: rect.height + p * 2, borderRadius: 10, border: '2px solid var(--accent)', pointerEvents: 'none', animation: 'app-tour-glow 1.5s ease-in-out infinite' }} />
+        </>
+      ) : (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(6,5,10,0.64)', pointerEvents: 'auto' }} />
       )}
-    </Sheet>
+
+      <button type="button" onClick={onDone}
+        style={{ position: 'fixed', top: 'calc(12px + env(safe-area-inset-top))', left: 12, zIndex: 72, pointerEvents: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 10px rgba(0,0,0,0.3)' }}>
+        <X size={14} /> Skip tour
+      </button>
+
+      <div className="app-tour-coach" style={{ position: 'fixed', left: 12, right: 12, bottom: 'calc(16px + env(safe-area-inset-bottom))', zIndex: 72, pointerEvents: 'auto', maxWidth: 460, margin: '0 auto', padding: '14px 16px', borderRadius: 16, background: 'var(--bg-card)', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.4)' }}>
+        {step.title && <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 3 }}>{step.title}</div>}
+        <div style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{step.body}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{i + 1} / {steps.length}</span>
+          <button type="button" onClick={next} className="app-btn" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 18px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 14, fontWeight: 800, cursor: 'pointer' }}>
+            {i + 1 < steps.length ? <>Next <ArrowRight size={15} /></> : 'Got it'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -270,6 +320,9 @@ function ShellStyles() {
       @keyframes app-tool-in { from { transform: scale(.6); opacity: 0 } to { transform: scale(1); opacity: 1 } }
       @keyframes app-light { 0%,100% { opacity: .25; transform: scale(.8) } 50% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 14px 2px var(--accent) } }
       @keyframes app-intro-out { to { opacity: 0; visibility: hidden } }
+      @keyframes app-tour-glow { 0%,100% { box-shadow: 0 0 0 3px rgba(255,255,255,.12), 0 0 14px 2px var(--accent) } 50% { box-shadow: 0 0 0 4px rgba(255,255,255,.22), 0 0 26px 6px var(--accent) } }
+      @keyframes app-coach-in { from { transform: translateY(16px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+      [data-anim="full"] .app-tour-coach { animation: app-coach-in .3s cubic-bezier(.22,1,.36,1) both }
 
       [data-anim="full"] .app-btn, [data-anim="subtle"] .app-btn { transition: transform .12s ease, background .18s ease, box-shadow .18s ease, color .18s ease, border-color .18s ease }
       [data-anim="full"] .app-btn:hover, [data-anim="subtle"] .app-btn:hover { transform: translateY(-1px) }

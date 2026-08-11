@@ -633,6 +633,7 @@ export default function BeatMaker({ onPattern, restore }: {
         <button
           onClick={togglePlay}
           data-help-id="beatmaker-play"
+          data-tour="play"
           style={{
             fontSize: 15, fontWeight: 700, padding: '10px 22px', borderRadius: 10, cursor: 'pointer',
             border: 'none', color: playing ? '#fff' : '#0e0d12', background: playing ? '#dc2626' : 'var(--accent, #16a34a)', minWidth: 96,
@@ -660,7 +661,7 @@ export default function BeatMaker({ onPattern, restore }: {
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 11, color: 'var(--text-muted)', gap: 3 }}>
           Tempo (BPM)
           <input
-            type="number" inputMode="numeric" value={bpmText}
+            type="number" inputMode="numeric" value={bpmText} data-tour="bpm"
             onChange={e => setBpmText(e.target.value)}
             onFocus={e => e.currentTarget.select()}
             onBlur={commitBpm}
@@ -673,7 +674,7 @@ export default function BeatMaker({ onPattern, restore }: {
         <label style={{ display: 'flex', flexDirection: 'column', fontSize: 11, color: 'var(--text-muted)', gap: 3 }}>
           Kit
           <select
-            value={kitId} onChange={e => setKitId(e.target.value)}
+            value={kitId} onChange={e => setKitId(e.target.value)} data-tour="kit"
             style={{ padding: '7px 8px', borderRadius: 8, border: '1px solid var(--border-subtle,#333)', background: 'var(--bg-base,#0c0c10)', color: 'var(--text-primary,#eee)', fontSize: 13.5 }}
           >
             {DRUM_KITS.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
@@ -711,7 +712,7 @@ export default function BeatMaker({ onPattern, restore }: {
       {/* Tabs: Sequencer / Pads */}
       <div style={{ display: 'inline-flex', gap: 4, padding: 4, borderRadius: 11, background: 'var(--bg-base,#0c0c10)', border: '1px solid var(--border-subtle,#333)', marginBottom: 14 }}>
         {([['grid', 'Sequencer', <Grid3x3 key="g" size={14} />], ['pads', 'Pads', <Grip key="p" size={14} />]] as const).map(([t, label, icon]) => (
-          <button key={t} type="button" onClick={() => setTab(t)}
+          <button key={t} type="button" onClick={() => setTab(t)} data-tour={t === 'pads' ? 'pads-tab' : undefined}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700, background: tab === t ? 'var(--accent)' : 'transparent', color: tab === t ? '#0e0d12' : 'var(--text-secondary)' }}>
             {icon}{label}
           </button>
@@ -721,7 +722,7 @@ export default function BeatMaker({ onPattern, restore }: {
       {tab === 'grid' ? (
         <>
           {/* Bars & sections */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+          <div data-tour="bars" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Bars</span>
             <div style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid var(--border-subtle,#333)', borderRadius: 9, overflow: 'hidden' }}>
               <button type="button" onClick={() => changeBars(bars - 1)} disabled={bars <= 1} style={{ padding: '6px 12px', border: 'none', background: 'transparent', color: 'var(--text-secondary)', cursor: bars <= 1 ? 'default' : 'pointer', fontSize: 16, opacity: bars <= 1 ? 0.4 : 1 }}>−</button>
@@ -740,7 +741,7 @@ export default function BeatMaker({ onPattern, restore }: {
           </div>
 
           {/* Step grid */}
-          <div style={{ overflowX: 'auto' }}>
+          <div data-tour="grid" style={{ overflowX: 'auto' }}>
             <div style={{ display: 'inline-block', minWidth: 'max-content' }}>
               {/* Step ruler */}
               <div style={{ display: 'flex', marginLeft: 88, marginBottom: 4 }}>
@@ -845,7 +846,7 @@ export default function BeatMaker({ onPattern, restore }: {
         </button>
         {shell && (
           <button
-            onClick={saveBeat} disabled={!hasHits}
+            onClick={saveBeat} disabled={!hasHits} data-tour="save"
             style={{ fontSize: 13.5, fontWeight: 700, padding: '9px 16px', borderRadius: 9, cursor: hasHits ? 'pointer' : 'not-allowed', opacity: hasHits ? 1 : 0.5, border: 'none', background: 'var(--accent,#60a5fa)', color: '#0e0d12' }}
           >
             {savedNote || 'Save beat'}
