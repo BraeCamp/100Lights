@@ -140,7 +140,8 @@ for (const def of DEFS) {
       for (let L = 0; L < 4; L++) {
         const baseY = H * 0.5 + L * H * 0.11
         g.beginPath(); g.moveTo(0, H); g.lineTo(0, baseY)
-        for (let x = 0; x <= W; x += 36) { const y = baseY - Math.sin(x * 0.007 + L * 2.1) * (28 + L * 22) - rnd() * 12; g.lineTo(x, y) }
+        // Step past W and clamp so the ridge reaches the exact right edge (no seam).
+        for (let x = 0; x <= W + 36; x += 36) { const xx = Math.min(x, W); const y = baseY - Math.sin(xx * 0.007 + L * 2.1) * (28 + L * 22) - rnd() * 12; g.lineTo(xx, y) }
         g.lineTo(W, H); g.closePath()
         g.fillStyle = `rgba(10,7,20,${(0.42 + L * 0.17).toFixed(2)})`; g.fill()
       }

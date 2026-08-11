@@ -517,6 +517,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   // Offline save/download for the selected library clip
   const [savedCurrent, setSavedCurrent] = useState(false)
   const [savingBg, setSavingBg] = useState(false)
+  const [bgMsg, setBgMsg] = useState('')
   const [bgSrcOverride, setBgSrcOverride] = useState<string | null>(null)   // local blob URL when saved offline
   const overrideRef = useRef<string | null>(null)
   const ambient = AMBIENTS.find(a => a.id === bgKind)
@@ -531,6 +532,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   useEffect(() => {
     let cancelled = false
     const revoke = () => { if (overrideRef.current) { URL.revokeObjectURL(overrideRef.current); overrideRef.current = null } }
+    setBgMsg('')
     if (bgKind !== 'library' || !bgClip) { revoke(); setBgSrcOverride(null); setSavedCurrent(false); return }
     ;(async () => {
       const url = await localUrl(bgClip.src)
@@ -543,9 +545,10 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   useEffect(() => () => { if (overrideRef.current) URL.revokeObjectURL(overrideRef.current) }, [])
   const saveBgOffline = useCallback(async () => {
     if (!bgClip) return
-    setSavingBg(true)
+    setSavingBg(true); setBgMsg('')
     const ok = await saveAssets(bgClip.kind === 'video' ? [bgClip.src, bgClip.preview] : [bgClip.src])
     if (ok) { const url = await localUrl(bgClip.src); if (overrideRef.current) URL.revokeObjectURL(overrideRef.current); overrideRef.current = url; setBgSrcOverride(url); setSavedCurrent(true) }
+    else setBgMsg('Couldn’t save — the clip isn’t reachable yet (needs a connection, and CORS for streamed clips).')
     setSavingBg(false)
   }, [bgClip])
   const removeBgOffline = useCallback(async () => {
@@ -554,7 +557,12 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
     if (overrideRef.current) { URL.revokeObjectURL(overrideRef.current); overrideRef.current = null }
     setBgSrcOverride(null); setSavedCurrent(false)
   }, [bgClip])
-  const downloadBg = useCallback(() => { if (bgClip) downloadToDevice(bgClip.src, `${bgClip.id}.${bgClip.kind === 'video' ? 'mp4' : 'jpg'}`) }, [bgClip])
+  const downloadBg = useCallback(async () => {
+    if (!bgClip) return
+    setBgMsg('')
+    const ok = await downloadToDevice(bgClip.src, `${bgClip.id}.${bgClip.kind === 'video' ? 'mp4' : 'jpg'}`)
+    if (!ok) setBgMsg('Couldn’t download — the clip isn’t reachable yet.')
+  }, [bgClip])
   // EQ-filter driver: the draw loop reads this; when off (or no audio), the static filter applies.
   const eqRef = useRef({ on: false, blur, brightness, saturate, hueRot })
   useEffect(() => { eqRef.current = { on: eqFilters && reactive, blur, brightness, saturate, hueRot } }, [eqFilters, reactive, blur, brightness, saturate, hueRot])
@@ -884,6 +892,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
               <button type="button" onClick={saveBgOffline} disabled={savingBg} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', opacity: savingBg ? 0.6 : 1 }}><DownloadCloud size={13} /> {savingBg ? 'Saving…' : 'Save for offline'}</button>
             )}
             <button type="button" onClick={downloadBg} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}><Download size={13} /> Download</button>
+            {bgMsg && <span style={{ flexBasis: '100%', fontSize: 11, color: '#f87171', lineHeight: 1.5 }}>{bgMsg}</span>}
           </div>
         )}
         <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0 0' }}>Saved backgrounds play with no connection. Bundled images already work offline once viewed.</p>
