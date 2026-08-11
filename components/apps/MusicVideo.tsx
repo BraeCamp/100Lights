@@ -7,7 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -176,7 +176,7 @@ function MusicVideoApp() {
       </header>
 
       {live ? (
-        <LiveVisualizer accent={accent} onExit={() => setLive(false)} />
+        <LiveVisualizer onExit={() => setLive(false)} />
       ) : (
         <>
           <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: '#000', border: '1px solid var(--border)' }}>
@@ -264,16 +264,65 @@ function MusicVideoApp() {
 // delay buffers recent frames so visuals can be nudged to line up with sound that
 // reaches the room late over Bluetooth to a TV/projector.
 type LiveStyle = 'bars' | 'radial' | 'wave'
-interface LiveOpts { style: LiveStyle; color: string; gain: number; mirror: boolean; glow: boolean; trail: boolean }
+type ColorMode = 'solid' | 'spectrum' | 'random'
+interface Plane { h0: number; h1: number; sat: number; light: number }   // a hue band selected off the colour map
+interface LiveColor { paletteId: string | null; plane: Plane | null; mode: ColorMode }
+interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: number; gain: number; mirror: boolean; glow: boolean; trail: boolean }
 
-// Nudge a hex colour toward white (for gradient tops / highlights).
+// Curated multi-colour palettes the user can pick, or derive their own from the colour map.
+const PALETTES: { id: string; name: string; colors: string[] }[] = [
+  { id: 'aurora', name: 'Aurora', colors: ['#22d3ee', '#34d399', '#a78bfa'] },
+  { id: 'sunset', name: 'Sunset', colors: ['#fde047', '#fb7185', '#a855f7'] },
+  { id: 'ocean', name: 'Ocean', colors: ['#38bdf8', '#22d3ee', '#2563eb'] },
+  { id: 'neon', name: 'Neon', colors: ['#f0abfc', '#22d3ee', '#a3e635'] },
+  { id: 'fire', name: 'Fire', colors: ['#fde047', '#fb923c', '#ef4444'] },
+  { id: 'ice', name: 'Ice', colors: ['#e0f2fe', '#7dd3fc', '#818cf8'] },
+  { id: 'candy', name: 'Candy', colors: ['#f472b6', '#c084fc', '#60a5fa'] },
+  { id: 'mono', name: 'Mono', colors: ['#f8fafc', '#c7c7d1'] },
+]
+
+function hsl(h: number, s: number, l: number): string {
+  s /= 100; l /= 100
+  const k = (n: number) => (n + h / 30) % 12
+  const a = s * Math.min(l, 1 - l)
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))
+  const to = (x: number) => Math.round(255 * x).toString(16).padStart(2, '0')
+  return `#${to(f(0))}${to(f(8))}${to(f(4))}`
+}
+function toRgb(c: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(c.trim())
+  if (!m) return [255, 255, 255]
+  const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+function lerpHex(a: string, b: string, t: number): string {
+  const [ar, ag, ab] = toRgb(a), [br, bg, bb] = toRgb(b)
+  const m = (x: number, y: number) => Math.round(x + (y - x) * t).toString(16).padStart(2, '0')
+  return `#${m(ar, br)}${m(ag, bg)}${m(ab, bb)}`
+}
 function lighten(hex: string, amt: number): string {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
-  if (!m) return hex
-  const n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
-  const L = (c: number) => Math.round(c + (255 - c) * amt)
+  const [r, g, b] = toRgb(hex); const L = (c: number) => Math.round(c + (255 - c) * amt)
   return `rgb(${L(r)}, ${L(g)}, ${L(b)})`
 }
+// Interpolate palette stops into an n-colour ramp.
+function rampFrom(stops: string[], n: number): string[] {
+  if (stops.length <= 1) return Array(n).fill(stops[0] || '#ffffff')
+  const out: string[] = []
+  for (let i = 0; i < n; i++) {
+    const p = (i / (n - 1)) * (stops.length - 1), lo = Math.floor(p), hi = Math.min(stops.length - 1, lo + 1)
+    out.push(lerpHex(stops[lo], stops[hi], p - lo))
+  }
+  return out
+}
+function resolveColors(c: LiveColor, n = 16): string[] {
+  if (c.plane) {
+    const { h0, h1, sat, light } = c.plane, out: string[] = []
+    for (let i = 0; i < n; i++) { const h = h0 + (h1 - h0) * (i / (n - 1)); out.push(hsl(((h % 360) + 360) % 360, sat, light)) }
+    return out
+  }
+  const p = PALETTES.find(x => x.id === c.paletteId) ?? PALETTES[0]
+  return rampFrom(p.colors, n)
+}
+
 function fillRR(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   if (w <= 0 || h <= 0) return
   const rad = Math.min(r, w / 2, h / 2)
@@ -293,9 +342,14 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
   ctx.fillRect(0, 0, w, h)
   ctx.lineCap = 'round'; ctx.lineJoin = 'round'
   ctx.shadowBlur = o.glow ? Math.max(6, Math.min(w, h) * 0.03) : 0
-  ctx.shadowColor = o.color
 
   const n = freq.length, g = o.gain
+  const N = o.colors.length
+  const mid = o.colors[Math.floor(N / 2)]
+  ctx.shadowColor = mid
+  const randColor = (i: number) => { const x = Math.sin((i + 1) * 97.13 + o.seed) * 43758.5453; return o.colors[Math.floor((x - Math.floor(x)) * N)] }
+  const colorAt = (t: number, i: number) => o.mode === 'solid' ? mid : o.mode === 'spectrum' ? o.colors[Math.min(N - 1, Math.max(0, Math.floor(t * N)))] : randColor(i)
+
   // Perceptual frequency sampling — spreads bass/mid/treble evenly instead of bunching low.
   const samp = (t: number) => {
     const idx = Math.min(n - 1, Math.max(0, Math.floor(Math.pow(t, 1.7) * n * 0.85)))
@@ -305,20 +359,22 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
   const level = Math.min(1, (sum / (n * 255)) * g)
 
   if (o.style === 'bars') {
-    const grad = ctx.createLinearGradient(0, 0, 0, h)
-    grad.addColorStop(0, lighten(o.color, 0.55)); grad.addColorStop(1, o.color)
-    ctx.fillStyle = grad
+    const solidGrad = ctx.createLinearGradient(0, 0, 0, h)
+    solidGrad.addColorStop(0, lighten(mid, 0.55)); solidGrad.addColorStop(1, mid)
+    const paint = (i: number, t: number) => { ctx.fillStyle = o.mode === 'solid' ? solidGrad : colorAt(t, i) }
     if (o.mirror) {
       const half = 30, bw = (w / 2) / half
       for (let i = 0; i < half; i++) {
-        const bh = Math.max(3, samp(i / half) * h * 0.92)
+        const t = i / half, bh = Math.max(3, samp(t) * h * 0.92)
+        paint(i, t)
         fillRR(ctx, w / 2 + i * bw + 1, h - bh, bw - 2, bh, bw / 2)
         fillRR(ctx, w / 2 - (i + 1) * bw + 1, h - bh, bw - 2, bh, bw / 2)
       }
     } else {
       const count = 60, bw = w / count
       for (let i = 0; i < count; i++) {
-        const bh = Math.max(3, samp(i / count) * h * 0.92)
+        const t = i / count, bh = Math.max(3, samp(t) * h * 0.92)
+        paint(i, t)
         fillRR(ctx, i * bw + 1, h - bh, bw - 2, bh, bw / 2)
       }
     }
@@ -337,12 +393,17 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
     }
     ctx.closePath()
     const rg = ctx.createRadialGradient(cx, cy, base * 0.5, cx, cy, base + amp)
-    rg.addColorStop(0, lighten(o.color, 0.4)); rg.addColorStop(1, o.color)
-    ctx.fillStyle = rg; ctx.globalAlpha = 0.3; ctx.fill()
-    ctx.globalAlpha = 1; ctx.lineWidth = Math.max(2, Math.min(w, h) / 260); ctx.strokeStyle = lighten(o.color, 0.35); ctx.stroke()
+    if (o.mode === 'solid') { rg.addColorStop(0, lighten(mid, 0.4)); rg.addColorStop(1, mid) }
+    else { rg.addColorStop(0, o.colors[0]); rg.addColorStop(0.5, mid); rg.addColorStop(1, o.colors[N - 1]) }
+    ctx.fillStyle = rg; ctx.globalAlpha = 0.32; ctx.fill()
+    ctx.globalAlpha = 1; ctx.lineWidth = Math.max(2, Math.min(w, h) / 260); ctx.strokeStyle = lighten(mid, 0.35); ctx.stroke()
   } else {
+    if (o.mode === 'spectrum') {
+      const lg = ctx.createLinearGradient(0, 0, w, 0)
+      for (let i = 0; i < N; i++) lg.addColorStop(i / (N - 1), o.colors[i])
+      ctx.strokeStyle = lg
+    } else ctx.strokeStyle = lighten(mid, 0.3)
     ctx.lineWidth = Math.max(2.5, Math.min(w, h) / 200)
-    ctx.strokeStyle = lighten(o.color, 0.3)
     ctx.beginPath()
     for (let i = 0; i < wave.length; i++) {
       const x = (i / (wave.length - 1)) * w
@@ -351,12 +412,56 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
     }
     ctx.stroke()
     ctx.lineTo(w, h / 2); ctx.lineTo(0, h / 2); ctx.closePath()
-    ctx.globalAlpha = 0.12; ctx.fillStyle = o.color; ctx.fill(); ctx.globalAlpha = 1
+    ctx.globalAlpha = 0.12; ctx.fillStyle = mid; ctx.fill(); ctx.globalAlpha = 1
   }
   ctx.shadowBlur = 0
 }
 
-function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void }) {
+// A colour map: drag a rectangle to select a hue band + lightness → a custom spectrum.
+function ColorPlane({ onChange }: { onChange: (p: Plane) => void }) {
+  const ref = useRef<HTMLCanvasElement | null>(null)
+  const [sel, setSel] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  const drag = useRef(false)
+  const H = 116
+
+  useEffect(() => {
+    const c = ref.current; if (!c) return
+    const ctx = c.getContext('2d'); if (!ctx) return
+    const w = c.clientWidth || 300, dpr = Math.min(2, (typeof devicePixelRatio === 'number' ? devicePixelRatio : 1))
+    c.width = Math.round(w * dpr); c.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    const hue = ctx.createLinearGradient(0, 0, w, 0)
+    for (let i = 0; i <= 6; i++) hue.addColorStop(i / 6, `hsl(${i * 60}, 85%, 55%)`)
+    ctx.fillStyle = hue; ctx.fillRect(0, 0, w, H)
+    const lg = ctx.createLinearGradient(0, 0, 0, H)
+    lg.addColorStop(0, 'rgba(255,255,255,0.8)'); lg.addColorStop(0.5, 'rgba(255,255,255,0)'); lg.addColorStop(0.5, 'rgba(0,0,0,0)'); lg.addColorStop(1, 'rgba(0,0,0,0.8)')
+    ctx.fillStyle = lg; ctx.fillRect(0, 0, w, H)
+  }, [])
+
+  const frac = (e: React.PointerEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) }
+  }
+  const commit = (s: { x0: number; y0: number; x1: number; y1: number }) => {
+    const h0 = Math.min(s.x0, s.x1) * 360, h1 = Math.max(s.x0, s.x1) * 360
+    const yc = (s.y0 + s.y1) / 2
+    onChange({ h0, h1: Math.max(h1, h0 + 12), sat: 82, light: Math.max(22, Math.min(90, Math.round(90 - yc * 68))) })
+  }
+  const down = (e: React.PointerEvent) => { drag.current = true; const p = frac(e); setSel({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }); (e.currentTarget as Element).setPointerCapture?.(e.pointerId) }
+  const move = (e: React.PointerEvent) => { if (!drag.current) return; const p = frac(e); setSel(s => (s ? { ...s, x1: p.x, y1: p.y } : s)) }
+  const up = () => { drag.current = false; if (sel) commit(sel) }
+
+  return (
+    <div style={{ position: 'relative', width: '100%', maxWidth: 320 }}>
+      <canvas ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up}
+        style={{ width: '100%', height: H, borderRadius: 10, border: '1px solid var(--border)', cursor: 'crosshair', touchAction: 'none', display: 'block' }} />
+      {sel && (
+        <div style={{ position: 'absolute', left: `${Math.min(sel.x0, sel.x1) * 100}%`, top: `${Math.min(sel.y0, sel.y1) * 100}%`, width: `${Math.abs(sel.x1 - sel.x0) * 100}%`, height: `${Math.abs(sel.y1 - sel.y0) * 100}%`, border: '2px solid #fff', borderRadius: 4, boxShadow: '0 0 0 1px rgba(0,0,0,0.45)', pointerEvents: 'none' }} />
+      )}
+    </div>
+  )
+}
+
+function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [running, setRunning] = useState(false)
@@ -365,13 +470,28 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
   const [delayMs, setDelayMs] = useState(0)
   const [err, setErr] = useState<string | null>(null)
   const [fs, setFs] = useState(false)
-  // Customization
-  const [color, setColor] = useState(accent)
+  // Customization — colour config (palette OR a plane off the colour map) + how it maps.
+  const [colorCfg, setColorCfg] = useState<LiveColor>({ paletteId: 'aurora', plane: null, mode: 'spectrum' })
+  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e6))
+  const colors = useMemo(() => resolveColors(colorCfg), [colorCfg])
+  const [presets, setPresets] = useState<{ id: string; name: string; cfg: LiveColor }[]>([])
   const [gain, setGain] = useState(1.3)
   const [smoothing, setSmoothing] = useState(0.82)
   const [mirror, setMirror] = useState(false)
   const [glow, setGlow] = useState(true)
   const [trail, setTrail] = useState(true)
+
+  useEffect(() => { try { const r = localStorage.getItem('musicvideo-colorpresets'); if (r) setPresets(JSON.parse(r)) } catch { /* off */ } }, [])
+  const savePreset = useCallback(() => {
+    const name = (typeof prompt === 'function' ? prompt('Name this colour preset') : '')?.trim()
+    if (!name) return
+    setPresets(prev => {
+      const next = [...prev.filter(p => p.name !== name), { id: `${Date.now()}`, name, cfg: colorCfg }].slice(-24)
+      try { localStorage.setItem('musicvideo-colorpresets', JSON.stringify(next)) } catch { /* off */ }
+      return next
+    })
+  }, [colorCfg])
+  const removePreset = useCallback((id: string) => setPresets(prev => { const next = prev.filter(p => p.id !== id); try { localStorage.setItem('musicvideo-colorpresets', JSON.stringify(next)) } catch { /* off */ } return next }), [])
 
   const audioRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
@@ -379,8 +499,8 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
   const rafRef = useRef<number | null>(null)
   const wakeRef = useRef<{ release: () => Promise<void> } | null>(null)
   const bufRef = useRef<Array<{ t: number; freq: Uint8Array; wave: Uint8Array }>>([])
-  const optsRef = useRef<LiveOpts>({ style, color, gain, mirror, glow, trail })
-  useEffect(() => { optsRef.current = { style, color, gain, mirror, glow, trail } }, [style, color, gain, mirror, glow, trail])
+  const optsRef = useRef<LiveOpts>({ style, colors, mode: colorCfg.mode, seed, gain, mirror, glow, trail })
+  useEffect(() => { optsRef.current = { style, colors, mode: colorCfg.mode, seed, gain, mirror, glow, trail } }, [style, colors, colorCfg.mode, seed, gain, mirror, glow, trail])
   const delayRef = useRef(delayMs); useEffect(() => { delayRef.current = delayMs }, [delayMs])
   const smoothingRef = useRef(smoothing)
   useEffect(() => { smoothingRef.current = smoothing; if (analyserRef.current) analyserRef.current.smoothingTimeConstant = smoothing }, [smoothing])
@@ -500,15 +620,48 @@ function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void
         </div>
       </Section>
       <Section label="Colour">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
-          {['#a78bfa', '#22d3ee', '#34d399', '#f472b6', '#fbbf24', '#60a5fa', '#f43f5e', '#ffffff'].map(c => (
-            <button key={c} type="button" onClick={() => setColor(c)} aria-label={c}
-              style={{ width: 26, height: 26, borderRadius: 999, background: c, border: color.toLowerCase() === c ? '2px solid #fff' : '2px solid var(--border)', cursor: 'pointer', padding: 0 }} />
+        {/* Palettes */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+          {PALETTES.map(p => {
+            const active = colorCfg.paletteId === p.id
+            return (
+              <button key={p.id} type="button" title={p.name} aria-label={p.name}
+                onClick={() => setColorCfg(c => ({ ...c, paletteId: p.id, plane: null }))}
+                style={{ width: 54, height: 26, borderRadius: 8, background: `linear-gradient(90deg, ${p.colors.join(', ')})`, border: active ? '2px solid #fff' : '2px solid var(--border)', cursor: 'pointer', padding: 0 }} />
+            )
+          })}
+        </div>
+
+        {/* Colour map — drag a rectangle to pick a hue band + lightness */}
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 7px' }}>Or drag a spectrum off the colour map:</p>
+        <ColorPlane onChange={p => setColorCfg(c => ({ ...c, plane: p, paletteId: null }))} />
+        {colorCfg.plane && <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '6px 0 0' }}>Custom spectrum · hue {Math.round(colorCfg.plane.h0)}–{Math.round(colorCfg.plane.h1)}°</p>}
+
+        {/* Live spectrum preview */}
+        <div style={{ display: 'flex', height: 12, borderRadius: 6, overflow: 'hidden', margin: '12px 0 0', border: '1px solid var(--border)' }}>
+          {colors.map((c, i) => <span key={i} style={{ flex: 1, background: c }} />)}
+        </div>
+
+        {/* Pattern */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', margin: '14px 0 0' }}>
+          {(['solid', 'spectrum', 'random'] as ColorMode[]).map(m => (
+            <button key={m} type="button" onClick={() => setColorCfg(c => ({ ...c, mode: m }))}
+              style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: colorCfg.mode === m ? 'var(--accent)' : 'var(--bg-card)', color: colorCfg.mode === m ? '#0e0d12' : 'var(--text-secondary)' }}>{m[0].toUpperCase() + m.slice(1)}</button>
           ))}
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
-            Custom
-            <input type="color" value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#a78bfa'} onChange={e => setColor(e.target.value)} style={{ width: 34, height: 26, padding: 0, border: '1px solid var(--border)', borderRadius: 7, background: 'none', cursor: 'pointer' }} />
-          </label>
+          {colorCfg.mode === 'random' && (
+            <button type="button" onClick={() => setSeed(Math.floor(Math.random() * 1e6))} style={{ padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>Shuffle</button>
+          )}
+        </div>
+
+        {/* Saved colour presets */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '14px 0 0' }}>
+          <button type="button" onClick={savePreset} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}><Save size={13} /> Save colours</button>
+          {presets.map(p => (
+            <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 4px 4px 11px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg-base)', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
+              <button type="button" onClick={() => setColorCfg(p.cfg)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontWeight: 700 }}>{p.name}</button>
+              <button type="button" onClick={() => removePreset(p.id)} aria-label="Delete preset" style={{ display: 'grid', placeItems: 'center', width: 20, height: 20, borderRadius: 999, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={12} /></button>
+            </span>
+          ))}
         </div>
       </Section>
 
