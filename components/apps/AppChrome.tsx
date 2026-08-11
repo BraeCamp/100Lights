@@ -24,6 +24,8 @@ interface AppShell {
   history: ReturnType<typeof useAppHistory>
   /** Register a handler the History sheet calls when the user reopens a saved entry. */
   registerRestore: (fn: (data: unknown) => void) => void
+  /** Contribute app-specific controls into the Account & settings sheet (pass null to clear). */
+  setSettings: (node: React.ReactNode | null) => void
   openSheet: (s: Exclude<SheetId, null>) => void
 }
 
@@ -49,6 +51,7 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
   const [sheet, setSheet] = useState<SheetId>(null)
   const [motion, setMotionState] = useState<Motion>('full')
   const [intro, setIntro] = useState(true)
+  const [appSettings, setAppSettings] = useState<React.ReactNode | null>(null)
   const history = useAppHistory(slug)
   const restoreRef = useRef<((data: unknown) => void) | null>(null)
   const app = bySlug(slug)
@@ -72,7 +75,8 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
 
   const registerRestore = useCallback((fn: (data: unknown) => void) => { restoreRef.current = fn }, [])
   const openSheet = useCallback((s: Exclude<SheetId, null>) => setSheet(s), [])
-  const ctx = useMemo<AppShell>(() => ({ slug, motion, history, registerRestore, openSheet }), [slug, motion, history, registerRestore, openSheet])
+  const setSettings = useCallback((node: React.ReactNode | null) => setAppSettings(node), [])
+  const ctx = useMemo<AppShell>(() => ({ slug, motion, history, registerRestore, setSettings, openSheet }), [slug, motion, history, registerRestore, setSettings, openSheet])
 
   return (
     <Ctx.Provider value={ctx}>
@@ -93,7 +97,7 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
 
         {sheet === 'learn' && <LearnSheet slug={slug} onClose={() => setSheet(null)} />}
         {sheet === 'history' && <HistorySheet history={history} onOpen={(e) => { restoreRef.current?.(e.data); setSheet(null) }} onClose={() => setSheet(null)} />}
-        {sheet === 'account' && <AccountSheet motion={motion} setMotion={setMotion} onCustomize={() => setSheet('customize')} onClose={() => setSheet(null)} />}
+        {sheet === 'account' && <AccountSheet motion={motion} setMotion={setMotion} settings={appSettings} onCustomize={() => setSheet('customize')} onClose={() => setSheet(null)} />}
         {sheet === 'customize' && <CustomizeSheet onClose={() => setSheet(null)} />}
       </div>
     </Ctx.Provider>
@@ -198,10 +202,11 @@ function HistorySheet({ history, onOpen, onClose }: { history: ReturnType<typeof
 }
 
 // ── Account & settings sheet ─────────────────────────────────────────────────────
-function AccountSheet({ motion, setMotion, onCustomize, onClose }: { motion: Motion; setMotion: (m: Motion) => void; onCustomize: () => void; onClose: () => void }) {
+function AccountSheet({ motion, setMotion, settings, onCustomize, onClose }: { motion: Motion; setMotion: (m: Motion) => void; settings?: React.ReactNode; onCustomize: () => void; onClose: () => void }) {
   const { isSignedIn, user } = useUser()
   return (
     <Sheet onClose={onClose} title="Account & settings">
+      {settings ? <Section label="This app">{settings}</Section> : null}
       <Section label="Account">
         {isSignedIn ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

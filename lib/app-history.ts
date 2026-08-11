@@ -8,7 +8,7 @@
 // account across devices. Offline changes are queued and flushed on reconnect.
 // Payload is app-defined (whatever restores a session).
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
 
 export interface AppHistoryEntry {
@@ -150,7 +150,9 @@ export function useAppHistory(slug: string) {
     ids.forEach(id => syncDel(id))
   }, [slug, syncDel])
 
-  return { entries, save, remove, clear, synced: !!isSignedIn }
+  // Stable reference so consumers (and the shell context that spreads this) don't
+  // re-render on every parent render — only when the data or auth state actually changes.
+  return useMemo(() => ({ entries, save, remove, clear, synced: !!isSignedIn }), [entries, save, remove, clear, isSignedIn])
 }
 
 /** Format a timestamp as a short relative label ("just now", "3h ago", "Aug 11"). */

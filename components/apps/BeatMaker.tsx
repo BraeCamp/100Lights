@@ -19,6 +19,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Copy, Eraser, Grid3x3, Grip } from 'lucide-react'
 import {
   DRUM_LANES, STEPS_PER_BAR, STEP_BEATS, DRUM_KITS, DRUM_PATTERNS, DEFAULT_KIT,
   type DrumKit, type DrumPattern,
@@ -43,15 +44,27 @@ const MIN_BPM = 40
 const MAX_BPM = 300
 const LOOKAHEAD_S = 0.12    // schedule this far ahead of the audio clock
 const TICK_MS = 25          // scheduler wakeup interval
-const EXPORT_BARS = 2       // WAV loop length
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 const clampBpm = (v: number) => clamp(Math.round(v), MIN_BPM, MAX_BPM)
 
 type Grid = Record<string, boolean[]>
 
-const emptyGrid = (): Grid =>
-  Object.fromEntries(DRUM_LANES.map(l => [l.key, new Array(STEPS_PER_BAR).fill(false)]))
+const MAX_BARS = 8   // the sequencer can expand up to 8 bars to fit a longer beat
+
+const emptyGrid = (steps: number = STEPS_PER_BAR): Grid =>
+  Object.fromEntries(DRUM_LANES.map(l => [l.key, new Array(steps).fill(false)]))
+
+// Resize every lane row to `steps` (pad with false when growing, truncate when shrinking).
+const resizeGrid = (g: Grid, steps: number): Grid =>
+  Object.fromEntries(DRUM_LANES.map(l => {
+    const row = g[l.key] ?? []
+    const nr = new Array<boolean>(steps).fill(false)
+    for (let i = 0; i < Math.min(steps, row.length); i++) nr[i] = !!row[i]
+    return [l.key, nr]
+  }))
+
+const barsOf = (g: Grid): number => Math.max(1, Math.round((g[DRUM_LANES[0].key]?.length ?? STEPS_PER_BAR) / STEPS_PER_BAR))
 
 const gridFromPattern = (p: DrumPattern): Grid => {
   const g = emptyGrid()
@@ -132,6 +145,10 @@ export default function BeatMaker({ onPattern, restore }: {
   const [resolvedAnim, setResolvedAnim] = useState<Exclude<AnimStyle, 'random'>>('pulse')
   const [savedNote, setSavedNote] = useState('')
   const [tapNonce, setTapNonce] = useState<Record<string, number>>({})   // per-pad click flash (light up only on tap)
+  const [bars, setBars] = useState(1)                                    // sequencer length in bars (expandable)
+  const [tab, setTab] = useState<'grid' | 'pads'>('grid')
+  const [quantize, setQuantize] = useState(true)                         // pad taps snap to the grid → a clean sequence
+  const totalSteps = bars * STEPS_PER_BAR
 
   // Optional — present on the standalone /apps/beatmaker page (inside AppChrome), absent when
   // BeatMaker is embedded (Firefly). Gates Save-to-history and the History restore hook.
@@ -152,6 +169,23 @@ export default function BeatMaker({ onPattern, restore }: {
     try { localStorage.setItem(ANIM_KEY, s) } catch { /* off */ }
   }, [])
 
+  // The play-animation control lives in the app's Settings (not the transport). When embedded
+  // without a shell (Firefly), it renders inline near the pads instead.
+  const animControl = (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
+      Play animation
+      <select value={animStyle} onChange={e => changeAnim(e.target.value as AnimStyle)}
+        style={{ padding: '9px 10px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', fontSize: 14 }}>
+        <option value="off">Off</option>
+        <option value="pulse">Pulse</option>
+        <option value="ripple">Ripple</option>
+        <option value="bounce">Bounce</option>
+        <option value="random">Random</option>
+      </select>
+      <span style={{ fontSize: 11.5, fontWeight: 400, color: 'var(--text-muted)' }}>How the pads react as the beat plays — Random re-rolls each time you open the app.</span>
+    </label>
+  )
+
   // Surface the grid to an embedding host (Firefly) as beat-based drum MidiNotes (GM pitches,
   // 16th-note grid). No-op on the standalone page.
   useEffect(() => {
@@ -170,14 +204,19 @@ export default function BeatMaker({ onPattern, restore }: {
   const restoreNonce = restore?.nonce
   useEffect(() => {
     if (!restore) return
-    const g = emptyGrid()
-    for (const n of restore.notes ?? []) {
+    const notes = restore.notes ?? []
+    let maxStep = 0
+    for (const n of notes) { const s = Math.round(n.startBeat / STEP_BEATS); if (s > maxStep) maxStep = s }
+    const nb = Math.min(MAX_BARS, Math.max(1, Math.floor(maxStep / STEPS_PER_BAR) + 1))
+    const steps = nb * STEPS_PER_BAR
+    const g = emptyGrid(steps)
+    for (const n of notes) {
       const lane = DRUM_LANES.find(l => l.pitch === n.pitch)
       if (!lane) continue
       const step = Math.round(n.startBeat / STEP_BEATS)
-      if (step >= 0 && step < STEPS_PER_BAR) g[lane.key][step] = true
+      if (step >= 0 && step < steps) g[lane.key][step] = true
     }
-    setGrid(g)
+    setBars(nb); setGrid(g)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restoreNonce])
 
@@ -210,6 +249,7 @@ export default function BeatMaker({ onPattern, restore }: {
   const queueRef = useRef<Array<{ step: number; time: number }>>([])  // for the visual playhead
   const loopStartRef = useRef(0)      // audio-clock time step 0 fires (for record quantize)
   const recordingRef = useRef(false); useEffect(() => { recordingRef.current = recording }, [recording])
+  const totalStepsRef = useRef(totalSteps); useEffect(() => { totalStepsRef.current = totalSteps }, [totalSteps])
 
   // ── Persistence ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -218,11 +258,12 @@ export default function BeatMaker({ onPattern, restore }: {
       if (raw) {
         const s = JSON.parse(raw) as Partial<{ grid: Grid; bpm: number; swing: number; kitId: string }>
         if (s.grid) {
-          const g = emptyGrid()
-          for (const l of DRUM_LANES) if (Array.isArray(s.grid[l.key])) {
-            for (let i = 0; i < STEPS_PER_BAR; i++) g[l.key][i] = !!s.grid[l.key][i]
-          }
-          setGrid(g)
+          const savedLen = Array.isArray(s.grid[DRUM_LANES[0].key]) ? s.grid[DRUM_LANES[0].key].length : STEPS_PER_BAR
+          const nb = Math.min(MAX_BARS, Math.max(1, Math.round(savedLen / STEPS_PER_BAR)))
+          const steps = nb * STEPS_PER_BAR
+          const g = emptyGrid(steps)
+          for (const l of DRUM_LANES) if (Array.isArray(s.grid[l.key])) for (let i = 0; i < steps; i++) g[l.key][i] = !!s.grid[l.key][i]
+          setBars(nb); setGrid(g)
         }
         if (typeof s.bpm === 'number') { const b = clampBpm(s.bpm); setBpm(b); setBpmText(String(b)) }
         if (typeof s.swing === 'number') setSwing(clamp(s.swing, 0, SWING_MAX))
@@ -282,7 +323,7 @@ export default function BeatMaker({ onPattern, restore }: {
       }
       queueRef.current.push({ step, time: t })
       nextStepTimeRef.current += secPerStep
-      stepRef.current = (step + 1) % STEPS_PER_BAR
+      stepRef.current = (step + 1) % totalStepsRef.current
     }
   }, [triggerHit])
 
@@ -333,12 +374,14 @@ export default function BeatMaker({ onPattern, restore }: {
   const padHit = useCallback((laneKey: string) => {
     auditionLane(laneKey)
     setTapNonce(m => ({ ...m, [laneKey]: (m[laneKey] ?? 0) + 1 }))   // light up + slight jump on click only
-    if (!recordingRef.current || !playing) return
+    // With Quantize on, a live tap while recording lands on the grid as a sequence step.
+    if (!recordingRef.current || !playing || !quantize) return
     const c = ctxRef.current
     if (!c) return
     const secPerStep = 60 / bpmRef.current / 4
-    let step = Math.round((c.currentTime - loopStartRef.current) / secPerStep) % STEPS_PER_BAR
-    if (step < 0) step += STEPS_PER_BAR
+    const span = totalStepsRef.current
+    let step = Math.round((c.currentTime - loopStartRef.current) / secPerStep) % span
+    if (step < 0) step += span
     setGrid(prev => {
       if (prev[laneKey]?.[step]) return prev
       const next: Grid = { ...prev, [laneKey]: prev[laneKey].slice() }
@@ -346,7 +389,7 @@ export default function BeatMaker({ onPattern, restore }: {
       return next
     })
     setPatternId('')
-  }, [auditionLane, playing])
+  }, [auditionLane, playing, quantize])
 
   // Arming record also starts the transport so hits have a clock to land on.
   const toggleRecord = useCallback(() => {
@@ -371,10 +414,40 @@ export default function BeatMaker({ onPattern, restore }: {
   const loadPattern = useCallback((id: string) => {
     setPatternId(id)
     const p = DRUM_PATTERNS.find(x => x.id === id)
-    if (p) setGrid(gridFromPattern(p))
+    if (p) { setBars(1); setGrid(gridFromPattern(p)) }
   }, [])
 
-  const clearGrid = useCallback(() => { setGrid(emptyGrid()); setPatternId('') }, [])
+  const clearGrid = useCallback(() => { setGrid(g => emptyGrid(g[DRUM_LANES[0].key]?.length || STEPS_PER_BAR)); setPatternId('') }, [])
+
+  // ── Expand / section the sequencer ────────────────────────────────────────────
+  const changeBars = useCallback((n: number) => {
+    const nb = clamp(Math.round(n), 1, MAX_BARS)
+    setGrid(g => resizeGrid(g, nb * STEPS_PER_BAR))
+    setBars(nb)
+  }, [])
+  // Duplicate a bar (section) onto the end — the fast way to build a longer arrangement.
+  const duplicateBar = useCallback((bi: number) => {
+    setGrid(g => {
+      const prevBars = barsOf(g)
+      if (prevBars >= MAX_BARS) return g
+      const nb = prevBars + 1
+      const out = resizeGrid(g, nb * STEPS_PER_BAR)
+      const src = bi * STEPS_PER_BAR, dst = (nb - 1) * STEPS_PER_BAR
+      for (const l of DRUM_LANES) for (let i = 0; i < STEPS_PER_BAR; i++) out[l.key][dst + i] = !!g[l.key]?.[src + i]
+      return out
+    })
+    setBars(b => Math.min(MAX_BARS, b + 1))
+    setPatternId('')
+  }, [])
+  const clearBar = useCallback((bi: number) => {
+    setGrid(g => {
+      const out = resizeGrid(g, g[DRUM_LANES[0].key]?.length || STEPS_PER_BAR)
+      const start = bi * STEPS_PER_BAR
+      for (const l of DRUM_LANES) for (let i = 0; i < STEPS_PER_BAR; i++) if (out[l.key][start + i] !== undefined) out[l.key][start + i] = false
+      return out
+    })
+    setPatternId('')
+  }, [])
 
   // ── Tempo input (select-all on focus, commit on blur/Enter, clamp) ────────────
   const commitBpm = useCallback(() => {
@@ -391,7 +464,7 @@ export default function BeatMaker({ onPattern, restore }: {
     const notes: Array<{ pitch: number; startBeat: number; durationBeats: number; velocity: number }> = []
     for (const l of DRUM_LANES) {
       const row = g[l.key]; if (!row) continue
-      for (let s = 0; s < STEPS_PER_BAR; s++) {
+      for (let s = 0; s < row.length; s++) {
         if (row[s]) notes.push({ pitch: l.pitch, startBeat: s * STEP_BEATS, durationBeats: STEP_BEATS, velocity: 100 })
       }
     }
@@ -414,12 +487,13 @@ export default function BeatMaker({ onPattern, restore }: {
     download(writeMidiFile(notes, bpm, `Beat — ${kit.name}`), 'beat.mid')
   }, [grid, bpm, kit.name, gridToNotes, download])
 
-  // ── WAV export — offline render of EXPORT_BARS bars of the loop ────────────────
+  // ── WAV export — offline render of the full sequence (all bars) ───────────────
   const renderWavBlob = useCallback(async (g: Grid, theBpm: number, theSwing: number, theKit: DrumKit): Promise<Blob> => {
     const sr = 44100
     const secPerStep = 60 / theBpm / 4
-    const bars = EXPORT_BARS
-    const total = bars * STEPS_PER_BAR * secPerStep + 1.4   // + tail for cymbals/808
+    const nBars = barsOf(g)                                 // export the actual length of the sequence
+    const span = nBars * STEPS_PER_BAR
+    const total = span * secPerStep + 1.4                   // + tail for cymbals/808
     const offline = new OfflineAudioContext(2, Math.ceil(total * sr), sr)
     const thePack = (theKit.instrument.params as { pack?: string }).pack === '808' ? '808' : 'synth'
     const buffers = buildLaneBuffers(offline, thePack, theKit.voices)
@@ -427,13 +501,11 @@ export default function BeatMaker({ onPattern, restore }: {
     const master = offline.createGain()
     master.gain.value = 0.9
     master.connect(offline.destination)
-    for (let bar = 0; bar < bars; bar++) {
-      for (let step = 0; step < STEPS_PER_BAR; step++) {
-        const offset = (step % 2 === 1) ? theSwing * secPerStep : 0
-        const t = (bar * STEPS_PER_BAR + step) * secPerStep + offset + 0.02
-        for (const l of DRUM_LANES) {
-          if (g[l.key]?.[step]) triggerHit(offline, buffers, voicing, l.key, t, master)
-        }
+    for (let step = 0; step < span; step++) {
+      const offset = (step % 2 === 1) ? theSwing * secPerStep : 0
+      const t = step * secPerStep + offset + 0.02
+      for (const l of DRUM_LANES) {
+        if (g[l.key]?.[step]) triggerHit(offline, buffers, voicing, l.key, t, master)
       }
     }
     const rendered = await offline.startRendering()
@@ -474,9 +546,12 @@ export default function BeatMaker({ onPattern, restore }: {
     shell.registerRestore((data) => {
       const d = data as Partial<{ grid: Grid; bpm: number; swing: number; kitId: string }>
       if (d.grid) {
-        const ng = emptyGrid()
-        for (const l of DRUM_LANES) if (Array.isArray(d.grid[l.key])) for (let i = 0; i < STEPS_PER_BAR; i++) ng[l.key][i] = !!d.grid![l.key][i]
-        setGrid(ng)
+        const savedLen = Array.isArray(d.grid[DRUM_LANES[0].key]) ? d.grid[DRUM_LANES[0].key]!.length : STEPS_PER_BAR
+        const nb = Math.min(MAX_BARS, Math.max(1, Math.round(savedLen / STEPS_PER_BAR)))
+        const steps = nb * STEPS_PER_BAR
+        const ng = emptyGrid(steps)
+        for (const l of DRUM_LANES) if (Array.isArray(d.grid[l.key])) for (let i = 0; i < steps; i++) ng[l.key][i] = !!d.grid![l.key][i]
+        setBars(nb); setGrid(ng)
       }
       if (typeof d.bpm === 'number') { const b = clampBpm(d.bpm); setBpm(b); setBpmText(String(b)) }
       if (typeof d.swing === 'number') setSwing(clamp(d.swing, 0, SWING_MAX))
@@ -484,6 +559,14 @@ export default function BeatMaker({ onPattern, restore }: {
       setPatternId('')
     })
   }, [shell])
+
+  // Put the play-animation control in the app's Settings sheet (re-register when it changes).
+  useEffect(() => {
+    if (!shell) return
+    shell.setSettings(animControl)
+    return () => shell.setSettings(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shell, animStyle])
 
   // ── Headless test hook (mirrors the __voice* / __daw* convention) ─────────────
   useEffect(() => {
@@ -617,21 +700,6 @@ export default function BeatMaker({ onPattern, restore }: {
           />
         </label>
 
-        <label style={{ display: 'flex', flexDirection: 'column', fontSize: 11, color: 'var(--text-muted)', gap: 3 }}>
-          Animation
-          <select
-            value={animStyle} onChange={e => changeAnim(e.target.value as AnimStyle)}
-            title="How the pads react as the beat plays"
-            style={{ padding: '7px 8px', borderRadius: 8, border: '1px solid var(--border-subtle,#333)', background: 'var(--bg-base,#0c0c10)', color: 'var(--text-primary,#eee)', fontSize: 13.5 }}
-          >
-            <option value="off">Off</option>
-            <option value="pulse">Pulse</option>
-            <option value="ripple">Ripple</option>
-            <option value="bounce">Bounce</option>
-            <option value="random">Random</option>
-          </select>
-        </label>
-
         <button
           onClick={clearGrid}
           style={{ fontSize: 13, fontWeight: 600, padding: '8px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid var(--border-subtle,#333)', background: 'transparent', color: 'var(--text-secondary,#bbb)' }}
@@ -640,65 +708,126 @@ export default function BeatMaker({ onPattern, restore }: {
         </button>
       </div>
 
-      {/* Step grid */}
-      <div style={{ overflowX: 'auto' }}>
-        <div style={{ display: 'inline-block', minWidth: 'max-content' }}>
-          {/* Step ruler */}
-          <div style={{ display: 'flex', marginLeft: 88, marginBottom: 4 }}>
-            {Array.from({ length: STEPS_PER_BAR }).map((_, s) => (
-              <div key={s} style={{
-                width: cellSize, marginRight: 3, textAlign: 'center', fontSize: 9,
-                color: displayStep === s ? '#facc15' : (s % 4 === 0 ? 'var(--text-secondary,#999)' : 'var(--text-muted,#555)'),
-                fontWeight: s % 4 === 0 ? 700 : 400,
-              }}>{s % 4 === 0 ? (s / 4) + 1 : ''}</div>
+      {/* Tabs: Sequencer / Pads */}
+      <div style={{ display: 'inline-flex', gap: 4, padding: 4, borderRadius: 11, background: 'var(--bg-base,#0c0c10)', border: '1px solid var(--border-subtle,#333)', marginBottom: 14 }}>
+        {([['grid', 'Sequencer', <Grid3x3 key="g" size={14} />], ['pads', 'Pads', <Grip key="p" size={14} />]] as const).map(([t, label, icon]) => (
+          <button key={t} type="button" onClick={() => setTab(t)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700, background: tab === t ? 'var(--accent)' : 'transparent', color: tab === t ? '#0e0d12' : 'var(--text-secondary)' }}>
+            {icon}{label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'grid' ? (
+        <>
+          {/* Bars & sections */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Bars</span>
+            <div style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid var(--border-subtle,#333)', borderRadius: 9, overflow: 'hidden' }}>
+              <button type="button" onClick={() => changeBars(bars - 1)} disabled={bars <= 1} style={{ padding: '6px 12px', border: 'none', background: 'transparent', color: 'var(--text-secondary)', cursor: bars <= 1 ? 'default' : 'pointer', fontSize: 16, opacity: bars <= 1 ? 0.4 : 1 }}>−</button>
+              <span style={{ padding: '0 6px', minWidth: 20, textAlign: 'center', fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>{bars}</span>
+              <button type="button" onClick={() => changeBars(bars + 1)} disabled={bars >= MAX_BARS} style={{ padding: '6px 12px', border: 'none', background: 'transparent', color: 'var(--text-secondary)', cursor: bars >= MAX_BARS ? 'default' : 'pointer', fontSize: 16, opacity: bars >= MAX_BARS ? 0.4 : 1 }}>+</button>
+            </div>
+            {Array.from({ length: bars }).map((_, bi) => (
+              <span key={bi} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 5px 3px 10px', borderRadius: 8, border: '1px solid var(--border-subtle,#333)', background: 'var(--bg-base,#0c0c10)', fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                Bar {bi + 1}
+                <button type="button" title="Duplicate this section" onClick={() => duplicateBar(bi)} disabled={bars >= MAX_BARS}
+                  style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: bars >= MAX_BARS ? 'default' : 'pointer', opacity: bars >= MAX_BARS ? 0.4 : 1 }}><Copy size={12} /></button>
+                <button type="button" title="Clear this section" onClick={() => clearBar(bi)}
+                  style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}><Eraser size={12} /></button>
+              </span>
             ))}
           </div>
 
-          {DRUM_LANES.map(lane => {
-            const n = tapNonce[lane.key] ?? 0
-            return (
-            <div key={lane.key} style={{ display: 'flex', alignItems: 'center', marginBottom: 3 }}>
-              <button
-                type="button"
-                key={`${lane.key}-${n}`}
-                onClick={() => padHit(lane.key)}
-                aria-label={`Play ${lane.label}`}
-                className={`bm-pad ${n > 0 ? 'bm-tap' : ''}`}
-                style={{
-                  width: 84, marginRight: 4, fontSize: 11.5, fontWeight: 700, textAlign: 'right', padding: '4px 6px', borderRadius: 6, cursor: 'pointer',
-                  border: '1px solid transparent', background: 'transparent', color: 'var(--text-secondary,#bbb)',
-                }}
-              >
-                {lane.label}
-              </button>
-              {Array.from({ length: STEPS_PER_BAR }).map((_, s) => {
-                const on = grid[lane.key]?.[s]
-                const isBeat = s % 4 === 0
-                const isCur = displayStep === s
+          {/* Step grid */}
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ display: 'inline-block', minWidth: 'max-content' }}>
+              {/* Step ruler */}
+              <div style={{ display: 'flex', marginLeft: 88, marginBottom: 4 }}>
+                {Array.from({ length: totalSteps }).map((_, s) => (
+                  <div key={s} style={{
+                    width: cellSize, marginRight: 3, marginLeft: s % STEPS_PER_BAR === 0 && s > 0 ? 10 : 0, textAlign: 'center', fontSize: 9,
+                    color: displayStep === s ? '#facc15' : (s % 4 === 0 ? 'var(--text-secondary,#999)' : 'var(--text-muted,#555)'),
+                    fontWeight: s % STEPS_PER_BAR === 0 ? 800 : 400,
+                  }}>{s % STEPS_PER_BAR === 0 ? (s / STEPS_PER_BAR) + 1 : (s % 4 === 0 ? '·' : '')}</div>
+                ))}
+              </div>
+
+              {DRUM_LANES.map(lane => {
+                const n = tapNonce[lane.key] ?? 0
                 return (
+                <div key={lane.key} style={{ display: 'flex', alignItems: 'center', marginBottom: 3 }}>
                   <button
-                    key={s}
-                    onClick={() => toggleCell(lane.key, s)}
-                    aria-label={`${lane.label} step ${s + 1}`}
-                    aria-pressed={on}
-                    className={resolvedAnim !== 'off' && on && isCur ? `bm-anim-${resolvedAnim}` : ''}
+                    type="button"
+                    key={`${lane.key}-${n}`}
+                    onClick={() => padHit(lane.key)}
+                    aria-label={`Play ${lane.label}`}
+                    className={`bm-pad ${n > 0 ? 'bm-tap' : ''}`}
                     style={{
-                      width: cellSize, height: cellSize, marginRight: 3, borderRadius: 5, cursor: 'pointer',
-                      border: isCur ? '1px solid #facc15' : '1px solid var(--border-subtle,#2a2a2a)',
-                      background: on
-                        ? (isCur ? '#fde047' : '#3b82f6')
-                        : (isCur ? 'rgba(250,204,21,0.18)' : (isBeat ? 'var(--bg-elevated,#20202a)' : 'var(--bg-base,#101014)')),
-                      transition: 'background 40ms linear',
-                      padding: 0,
+                      width: 84, marginRight: 4, fontSize: 11.5, fontWeight: 700, textAlign: 'right', padding: '4px 6px', borderRadius: 6, cursor: 'pointer',
+                      border: '1px solid transparent', background: 'transparent', color: 'var(--text-secondary,#bbb)',
                     }}
-                  />
+                  >
+                    {lane.label}
+                  </button>
+                  {Array.from({ length: totalSteps }).map((_, s) => {
+                    const on = grid[lane.key]?.[s]
+                    const isBeat = s % 4 === 0
+                    const isCur = displayStep === s
+                    const barStart = s % STEPS_PER_BAR === 0 && s > 0
+                    return (
+                      <button
+                        key={s}
+                        onClick={() => toggleCell(lane.key, s)}
+                        aria-label={`${lane.label} step ${s + 1}`}
+                        aria-pressed={on}
+                        className={resolvedAnim !== 'off' && on && isCur ? `bm-anim-${resolvedAnim}` : ''}
+                        style={{
+                          width: cellSize, height: cellSize, marginRight: 3, marginLeft: barStart ? 10 : 0, borderRadius: 5, cursor: 'pointer',
+                          border: isCur ? '1px solid #facc15' : '1px solid var(--border-subtle,#2a2a2a)',
+                          background: on
+                            ? (isCur ? '#fde047' : 'var(--accent, #3b82f6)')
+                            : (isCur ? 'rgba(250,204,21,0.18)' : (isBeat ? 'var(--bg-elevated,#20202a)' : 'var(--bg-base,#101014)')),
+                          transition: 'background 40ms linear',
+                          padding: 0,
+                        }}
+                      />
+                    )
+                  })}
+                </div>
                 )
               })}
             </div>
-            )
-          })}
+          </div>
+        </>
+      ) : (
+        /* Pads tab — big tappable pads; with Record + Quantize on, taps become a sequence */
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={quantize} onChange={e => setQuantize(e.target.checked)} /> Quantize
+            </label>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: '46ch', lineHeight: 1.5 }}>
+              Arm <strong style={{ color: 'var(--text-secondary)' }}>Record</strong>, press <strong style={{ color: 'var(--text-secondary)' }}>Play</strong>, and tap the pads. With Quantize on, your taps snap into a sequence you can edit on the Sequencer tab.
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(92px, 1fr))', gap: 10 }}>
+            {DRUM_LANES.map(lane => {
+              const n = tapNonce[lane.key] ?? 0
+              return (
+                <button key={`${lane.key}-${n}`} type="button" onClick={() => padHit(lane.key)} aria-label={`Play ${lane.label}`}
+                  className={`bm-pad ${n > 0 ? 'bm-tap' : ''}`}
+                  style={{ padding: '26px 8px', borderRadius: 14, border: '1px solid var(--border-subtle,#333)', background: 'var(--bg-base,#101014)', color: 'var(--text-secondary)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                  {lane.label}
+                </button>
+              )
+            })}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* No shell (embedded in Firefly): the play-animation control has no Settings sheet, so show it here. */}
+      {!shell && <div style={{ marginTop: 16, maxWidth: 300 }}>{animControl}</div>}
 
       {/* Export */}
       <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
@@ -712,7 +841,7 @@ export default function BeatMaker({ onPattern, restore }: {
           onClick={exportWav} disabled={!hasHits || rendering}
           style={{ fontSize: 13.5, fontWeight: 600, padding: '9px 16px', borderRadius: 9, cursor: (hasHits && !rendering) ? 'pointer' : 'not-allowed', opacity: (hasHits && !rendering) ? 1 : 0.5, border: '1px solid var(--border-subtle,#333)', background: 'var(--bg-elevated,#20202a)', color: 'var(--text-primary,#eee)' }}
         >
-          {rendering ? 'Rendering…' : `Download WAV (${EXPORT_BARS} bars)`}
+          {rendering ? 'Rendering…' : `Download WAV (${bars} bar${bars > 1 ? 's' : ''})`}
         </button>
         {shell && (
           <button
