@@ -20,6 +20,7 @@ import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
 import { BG_LIBRARY, BG_CATEGORIES, clipsByCategory, type BgClip, type BgCategory } from '@/lib/bg-library'
+import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
 const FONTS = ['system-ui', 'Georgia, serif', 'ui-monospace, monospace', 'Impact, sans-serif']
@@ -526,6 +527,25 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   // Restore the static filter whenever EQ mode is off (the loop may have left an imperative value).
   useEffect(() => { if ((!eqFilters || !reactive) && bgFilterRef.current) bgFilterRef.current.style.filter = bgFilter }, [eqFilters, reactive, bgFilter])
 
+  // Genre "Looks" — apply a whole scene, with a random genre-appropriate background.
+  const [activeLook, setActiveLook] = useState<GenreLook | null>(null)
+  const shuffleTo = useCallback((look: GenreLook) => {
+    const clips = look.bg.categories.flatMap(c => clipsByCategory(c))
+    const pool: Array<{ a: string } | { c: BgClip }> = [...look.bg.ambients.map(id => ({ a: id })), ...clips.map(c => ({ c }))]
+    if (!pool.length) return
+    const pick = pool[Math.floor(Math.random() * pool.length)]
+    if ('a' in pick) { setBgKind(pick.a); setBgClip(null) } else { setBgClip(pick.c); setBgKind('library') }
+  }, [])
+  const applyLook = useCallback((look: GenreLook) => {
+    setStyle(look.style)
+    setColorCfg({ paletteId: look.palette, plane: null, mode: look.mode })
+    setGain(look.gain); setSmoothing(look.smoothing)
+    setMirror(look.mirror); setGlow(look.glow); setTrail(look.trail)
+    setMatchVisuals(look.match); setEqFilters(look.eq)
+    setBlur(look.filters.blur); setBrightness(look.filters.brightness); setSaturate(look.filters.saturate); setHueRot(look.filters.hue)
+    setBgCat(look.bg.categories[0]); setActiveLook(look); shuffleTo(look)
+  }, [shuffleTo])
+
   useEffect(() => { try { const r = localStorage.getItem('musicvideo-colorpresets'); if (r) setPresets(JSON.parse(r)) } catch { /* off */ } }, [])
   const savePreset = useCallback(() => {
     const name = (typeof prompt === 'function' ? prompt('Name this colour preset') : '')?.trim()
@@ -690,6 +710,21 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
         <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{source === 'device' ? 'Capturing device audio' : source === 'mic' ? 'Listening to the room' : ''}</span>
         <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
       </div>
+
+      <Section label="Genre look">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+          {GENRE_LOOKS.map(l => (
+            <button key={l.id} type="button" onClick={() => applyLook(l)} title={l.desc}
+              style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: activeLook?.id === l.id ? 'var(--accent)' : 'var(--bg-card)', color: activeLook?.id === l.id ? '#0e0d12' : 'var(--text-secondary)' }}>{l.name}</button>
+          ))}
+        </div>
+        {activeLook && (
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '9px 0 0' }}>
+            {activeLook.desc} · a random {activeLook.bg.categories.join(' / ')} background.{' '}
+            <button type="button" onClick={() => shuffleTo(activeLook)} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontWeight: 700, cursor: 'pointer', padding: 0 }}>Shuffle background</button>
+          </p>
+        )}
+      </Section>
 
       <Section label="Visual style">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
