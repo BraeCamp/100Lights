@@ -19,7 +19,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, Eraser, Grid3x3, Grip } from 'lucide-react'
+import { Copy, Eraser, Grid3x3, Grip, ChevronLeft } from 'lucide-react'
 import {
   DRUM_LANES, STEPS_PER_BAR, STEP_BEATS, DRUM_KITS, DRUM_PATTERNS, DEFAULT_KIT,
   type DrumKit, type DrumPattern,
@@ -127,9 +127,14 @@ const SWING_MAX = 0.5
 // `onPattern` (optional) surfaces the current grid as beat-based MidiNotes so a host app — the
 // Firefly sketchpad — can fold the beat into a project. The standalone /apps/beatmaker page
 // passes nothing, so its behavior is unchanged.
-export default function BeatMaker({ onPattern, restore }: {
+export type BeatData = { grid: Grid; bpm: number; swing: number; kitId: string }
+
+export default function BeatMaker({ onPattern, restore, open, onHome }: {
   onPattern?: (notes: MidiNote[]) => void
   restore?: { notes: MidiNote[]; nonce: number }
+  // The home screen drives this: open a saved beat, start from a groove, or a blank beat.
+  open?: { data?: BeatData | null; presetId?: string; nonce: number }
+  onHome?: () => void
 } = {}) {
   const [grid, setGrid] = useState<Grid>(emptyGrid)
   const [bpm, setBpm] = useState(120)
@@ -419,6 +424,22 @@ export default function BeatMaker({ onPattern, restore }: {
 
   const clearGrid = useCallback(() => { setGrid(g => emptyGrid(g[DRUM_LANES[0].key]?.length || STEPS_PER_BAR)); setPatternId('') }, [])
 
+  // Load a saved beat (grid + tempo + swing + kit), inferring bar count from the grid length.
+  const applyBeat = useCallback((d: Partial<BeatData>) => {
+    if (d.grid) {
+      const savedLen = Array.isArray(d.grid[DRUM_LANES[0].key]) ? d.grid[DRUM_LANES[0].key]!.length : STEPS_PER_BAR
+      const nb = Math.min(MAX_BARS, Math.max(1, Math.round(savedLen / STEPS_PER_BAR)))
+      const steps = nb * STEPS_PER_BAR
+      const ng = emptyGrid(steps)
+      for (const l of DRUM_LANES) if (Array.isArray(d.grid[l.key])) for (let i = 0; i < steps; i++) ng[l.key][i] = !!d.grid![l.key][i]
+      setBars(nb); setGrid(ng)
+    }
+    if (typeof d.bpm === 'number') { const b = clampBpm(d.bpm); setBpm(b); setBpmText(String(b)) }
+    if (typeof d.swing === 'number') setSwing(clamp(d.swing, 0, SWING_MAX))
+    if (typeof d.kitId === 'string' && DRUM_KITS.some(k => k.id === d.kitId)) setKitId(d.kitId)
+    setPatternId('')
+  }, [])
+
   // ── Expand / section the sequencer ────────────────────────────────────────────
   const changeBars = useCallback((n: number) => {
     const nb = clamp(Math.round(n), 1, MAX_BARS)
@@ -543,22 +564,18 @@ export default function BeatMaker({ onPattern, restore }: {
 
   useEffect(() => {
     if (!shell) return
-    shell.registerRestore((data) => {
-      const d = data as Partial<{ grid: Grid; bpm: number; swing: number; kitId: string }>
-      if (d.grid) {
-        const savedLen = Array.isArray(d.grid[DRUM_LANES[0].key]) ? d.grid[DRUM_LANES[0].key]!.length : STEPS_PER_BAR
-        const nb = Math.min(MAX_BARS, Math.max(1, Math.round(savedLen / STEPS_PER_BAR)))
-        const steps = nb * STEPS_PER_BAR
-        const ng = emptyGrid(steps)
-        for (const l of DRUM_LANES) if (Array.isArray(d.grid[l.key])) for (let i = 0; i < steps; i++) ng[l.key][i] = !!d.grid![l.key][i]
-        setBars(nb); setGrid(ng)
-      }
-      if (typeof d.bpm === 'number') { const b = clampBpm(d.bpm); setBpm(b); setBpmText(String(b)) }
-      if (typeof d.swing === 'number') setSwing(clamp(d.swing, 0, SWING_MAX))
-      if (typeof d.kitId === 'string' && DRUM_KITS.some(k => k.id === d.kitId)) setKitId(d.kitId)
-      setPatternId('')
-    })
-  }, [shell])
+    shell.registerRestore((data) => applyBeat(data as Partial<BeatData>))
+  }, [shell, applyBeat])
+
+  // Home-screen driven open: a saved beat, a groove preset, or a fresh blank beat.
+  const openNonce = open?.nonce
+  useEffect(() => {
+    if (!open || !open.nonce) return
+    if (open.presetId) loadPattern(open.presetId)
+    else if (open.data) applyBeat(open.data)
+    else { setBars(1); setGrid(emptyGrid()); setPatternId('') }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openNonce])
 
   // Put the play-animation control in the app's Settings sheet (re-register when it changes).
   useEffect(() => {
@@ -630,6 +647,12 @@ export default function BeatMaker({ onPattern, restore }: {
       `}</style>
       {/* Transport + controls */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', marginBottom: 16 }}>
+        {onHome && (
+          <button onClick={onHome} aria-label="Back to home" title="Home"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '10px 12px', borderRadius: 10, cursor: 'pointer', border: '1px solid var(--border-subtle,#333)', background: 'transparent', color: 'var(--text-secondary,#bbb)', fontSize: 13, fontWeight: 700, alignSelf: 'stretch' }}>
+            <ChevronLeft size={16} /> Home
+          </button>
+        )}
         <button
           onClick={togglePlay}
           data-help-id="beatmaker-play"

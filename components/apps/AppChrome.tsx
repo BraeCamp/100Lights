@@ -26,6 +26,8 @@ interface AppShell {
   registerRestore: (fn: (data: unknown) => void) => void
   /** Contribute app-specific controls into the Account & settings sheet (pass null to clear). */
   setSettings: (node: React.ReactNode | null) => void
+  /** Start the guided tour. force=false only starts if unseen (call on first reaching the tool). */
+  startTour: (force?: boolean) => void
   openSheet: (s: Exclude<SheetId, null>) => void
 }
 
@@ -75,15 +77,14 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
     return () => clearTimeout(t)
   }, [slug, motion])
 
-  // Auto-play the interactive tour the first time this app opens (after the intro fades).
-  useEffect(() => {
-    if (!tourSteps || intro) return
-    const seen = (() => { try { return localStorage.getItem(`100lights-tour-${slug}`) } catch { return null } })()
-    if (seen) return
-    const t = setTimeout(() => setTour(true), 500)
-    return () => clearTimeout(t)
-  }, [slug, intro, tourSteps])
-
+  // Start the tour. force=false only starts if it hasn't been seen yet — apps call that when the
+  // user first reaches the tool screen (targets live in the tool, not the home). The Learn button
+  // forces a replay.
+  const startTour = useCallback((force = true) => {
+    if (!tourFor(slug)) return
+    if (!force) { try { if (localStorage.getItem(`100lights-tour-${slug}`)) return } catch { return } }
+    setTour(true)
+  }, [slug])
   const endTour = useCallback(() => {
     setTour(false)
     try { localStorage.setItem(`100lights-tour-${slug}`, '1') } catch { /* off */ }
@@ -92,7 +93,7 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
   const registerRestore = useCallback((fn: (data: unknown) => void) => { restoreRef.current = fn }, [])
   const openSheet = useCallback((s: Exclude<SheetId, null>) => setSheet(s), [])
   const setSettings = useCallback((node: React.ReactNode | null) => setAppSettings(node), [])
-  const ctx = useMemo<AppShell>(() => ({ slug, motion, history, registerRestore, setSettings, openSheet }), [slug, motion, history, registerRestore, setSettings, openSheet])
+  const ctx = useMemo<AppShell>(() => ({ slug, motion, history, registerRestore, setSettings, startTour, openSheet }), [slug, motion, history, registerRestore, setSettings, startTour, openSheet])
 
   return (
     <Ctx.Provider value={ctx}>
@@ -103,7 +104,7 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
 
         {/* Floating toolbar — one cluster, top-right, safe-area aware. */}
         <div className="app-toolbar" style={{ position: 'fixed', top: 'calc(12px + env(safe-area-inset-top))', right: 12, zIndex: 25, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {tourSteps && <ToolBtn label="Show me around" onClick={() => setTour(true)}><GraduationCap size={18} /></ToolBtn>}
+          {tourSteps && <ToolBtn label="Show me around" onClick={() => startTour(true)}><GraduationCap size={18} /></ToolBtn>}
           {slug && <ToolBtn label="History" onClick={() => setSheet('history')}><HistoryIcon size={18} /></ToolBtn>}
           <ToolBtn label="Account & settings" onClick={() => setSheet('account')}><User size={18} /></ToolBtn>
           <ToolBtn label="Customize appearance" onClick={() => setSheet('customize')}><Palette size={18} /></ToolBtn>

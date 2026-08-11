@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
 import AppChrome from '@/components/apps/AppChrome'
 
-const BeatMaker = dynamic(() => import('@/components/apps/BeatMaker'))
+const BeatMakerApp = dynamic(() => import('@/components/apps/BeatMakerApp'))
 
 export const metadata: Metadata = {
   title: 'Beat Maker — Free Online Drum Machine & Step Sequencer',
@@ -20,35 +20,7 @@ export const metadata: Metadata = {
 export default function BeatMakerPage() {
   return (
     <AppChrome slug="beatmaker">
-      <main id="main" className="max-w-3xl mx-auto px-6 py-14">
-        <header style={{ marginBottom: 28 }}>
-          <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>
-            Beat Maker
-          </h1>
-          <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.65, margin: 0 }}>
-            A drum machine in your browser. Click the grid to place hits, pick a kit, load a
-            starter groove, and set your tempo. Hit play to hear it loop, then export your beat
-            as a MIDI or WAV file to drop into any DAW.
-          </p>
-        </header>
-
-        <BeatMaker />
-
-        <div style={{ marginTop: 26, fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px' }}>How to use it</h2>
-          <p style={{ margin: '0 0 10px' }}>
-            Each row is a drum. Each column is a 16th-note step across one bar. Click cells to turn
-            hits on and off. Choose a <strong>kit</strong> to re-voice the same pattern, or load a
-            <strong> preset</strong> to start from a known groove. Set the <strong>tempo</strong>,
-            add a little <strong>swing</strong> for feel, and press <strong>Play</strong>. When you
-            like it, <strong>Download MIDI</strong> or <strong>Download WAV</strong>.
-          </p>
-          <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-muted)' }}>
-            Everything runs in your browser — nothing is uploaded. Your pattern is saved locally so
-            it&rsquo;s here when you come back.
-          </p>
-        </div>
-      </main>
+      <BeatMakerApp />
     </AppChrome>
   )
 }
