@@ -7,7 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Upload, Film, Loader2, Play, Square } from 'lucide-react'
+import { Upload, Film, Loader2, Play, Square, Mic, Radio, Maximize2, X } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -44,6 +44,7 @@ function MusicVideoApp() {
   const [poolBgs, setPoolBgs] = useState<{ key: string; url: string; genre: string }[]>([])
   const [accent, setAccent] = useState('#a78bfa')
   const [font, setFont] = useState('system-ui')
+  const [live, setLive] = useState(false)   // party mode: visualize live audio from the device
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -166,12 +167,24 @@ function MusicVideoApp() {
         <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent)', margin: '0 0 10px' }}>100Lights</p>
         <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 10px', letterSpacing: '-0.02em' }}>Music Video</h1>
         <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0, maxWidth: '54ch' }}>
-          Upload a video and its melody becomes a visual overlay — falling notes, flowing shapes, colours, fonts — synced to playback. Then tweak the look freely (no AI).
+          Put visuals on a video, or turn on Live mode to visualize whatever is playing in the room — great for parties. All on your device, no AI.
         </p>
       </header>
 
-      {!videoUrl ? (
-        <UploadZone busy={busy} onFile={handleFile} />
+      {live ? (
+        <LiveVisualizer accent={accent} onExit={() => setLive(false)} />
+      ) : !videoUrl ? (
+        <div style={{ display: 'grid', gap: 12 }}>
+          <UploadZone busy={busy} onFile={handleFile} />
+          <button type="button" onClick={() => setLive(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 18px', borderRadius: 16, cursor: 'pointer', textAlign: 'left', border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+            <span style={{ display: 'grid', placeItems: 'center', width: 44, height: 44, borderRadius: 12, background: 'var(--accent-subtle, var(--bg-base))', color: 'var(--accent)', flexShrink: 0 }}><Radio size={22} /></span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 15, fontWeight: 750, color: 'var(--text-primary)' }}>Live visuals (party mode)</span>
+              <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-secondary)' }}>React to music playing in the room — full-screen it on a TV or projector.</span>
+            </span>
+          </button>
+        </div>
       ) : (
         <>
           <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: '#000', border: '1px solid var(--border)' }}>
@@ -250,6 +263,188 @@ function MusicVideoApp() {
       )}
       {error && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 14 }}>{error}</p>}
     </main>
+  )
+}
+
+// ── Live party visualizer ────────────────────────────────────────────────────────
+// Drives the canvas from live audio: the microphone (universal — point the phone at
+// the speaker) or, on desktop, captured tab/system audio (getDisplayMedia). A sync
+// delay buffers recent frames so visuals can be nudged to line up with sound that
+// reaches the room late over Bluetooth to a TV/projector.
+type LiveStyle = 'bars' | 'radial' | 'wave'
+
+function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, style: LiveStyle, accent: string) {
+  const dpr = Math.min(2, (typeof devicePixelRatio === 'number' ? devicePixelRatio : 1))
+  const w = cv.clientWidth, h = cv.clientHeight
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr) }
+  const ctx = cv.getContext('2d'); if (!ctx) return
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+  ctx.fillStyle = '#08070d'; ctx.fillRect(0, 0, w, h)
+  const n = freq.length
+  const level = freq.reduce((s, v) => s + v, 0) / (n * 255)  // 0..1 overall energy
+  if (style === 'bars') {
+    const bars = 48
+    const bw = w / bars
+    for (let i = 0; i < bars; i++) {
+      const idx = Math.floor((i / bars) * (n * 0.7))
+      const v = freq[idx] / 255
+      const bh = Math.max(2, v * h * 0.92)
+      ctx.fillStyle = accent
+      ctx.globalAlpha = 0.35 + v * 0.65
+      ctx.fillRect(i * bw + 1, h - bh, bw - 2, bh)
+    }
+    ctx.globalAlpha = 1
+  } else if (style === 'radial') {
+    const cx = w / 2, cy = h / 2
+    const R = Math.min(w, h) * 0.18 * (1 + level * 0.9)
+    const spokes = 72
+    ctx.lineWidth = Math.max(2, Math.min(w, h) / 220)
+    ctx.strokeStyle = accent
+    for (let i = 0; i < spokes; i++) {
+      const idx = Math.floor((i / spokes) * (n * 0.6))
+      const v = freq[idx] / 255
+      const a = (i / spokes) * Math.PI * 2
+      const len = R + v * Math.min(w, h) * 0.36
+      ctx.globalAlpha = 0.25 + v * 0.75
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len); ctx.stroke()
+    }
+    ctx.globalAlpha = 1
+  } else {
+    ctx.lineWidth = Math.max(2, Math.min(w, h) / 240)
+    ctx.strokeStyle = accent
+    ctx.beginPath()
+    for (let i = 0; i < wave.length; i++) {
+      const x = (i / (wave.length - 1)) * w
+      const y = h / 2 + ((wave[i] - 128) / 128) * h * 0.42
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)
+    }
+    ctx.stroke()
+  }
+}
+
+function LiveVisualizer({ accent, onExit }: { accent: string; onExit: () => void }) {
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [running, setRunning] = useState(false)
+  const [source, setSource] = useState<'mic' | 'device' | null>(null)
+  const [style, setStyle] = useState<LiveStyle>('bars')
+  const [delayMs, setDelayMs] = useState(0)
+  const [err, setErr] = useState<string | null>(null)
+  const [fs, setFs] = useState(false)
+
+  const audioRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const rafRef = useRef<number | null>(null)
+  const bufRef = useRef<Array<{ t: number; freq: Uint8Array; wave: Uint8Array }>>([])
+  const styleRef = useRef(style); useEffect(() => { styleRef.current = style }, [style])
+  const accentRef = useRef(accent); useEffect(() => { accentRef.current = accent }, [accent])
+  const delayRef = useRef(delayMs); useEffect(() => { delayRef.current = delayMs }, [delayMs])
+
+  const stop = useCallback(() => {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+    streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null
+    void audioRef.current?.close().catch(() => {}); audioRef.current = null
+    analyserRef.current = null; bufRef.current = []
+    setRunning(false); setSource(null)
+  }, [])
+
+  const start = useCallback(async (src: 'mic' | 'device') => {
+    setErr(null)
+    try {
+      const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c: unknown) => Promise<MediaStream> }
+      let stream: MediaStream
+      if (src === 'device') {
+        if (!md.getDisplayMedia) throw new Error('Capturing device audio is desktop-only. On a phone, use the microphone and point it at the speaker.')
+        stream = await md.getDisplayMedia({ video: true, audio: true })
+        if (!stream.getAudioTracks().length) { stream.getTracks().forEach(t => t.stop()); throw new Error('No audio was shared — in the picker, pick a tab/screen and turn on “Share audio”.') }
+      } else {
+        stream = await md.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+      }
+      streamRef.current = stream
+      const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const ctx = new AC(); audioRef.current = ctx
+      await ctx.resume().catch(() => {})
+      const node = ctx.createMediaStreamSource(stream)
+      const an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0.78
+      node.connect(an); analyserRef.current = an
+      setSource(src); setRunning(true)
+      const draw = () => {
+        const a = analyserRef.current, cv = canvasRef.current
+        if (a && cv) {
+          const freq = new Uint8Array(a.frequencyBinCount); a.getByteFrequencyData(freq)
+          const wave = new Uint8Array(a.fftSize); a.getByteTimeDomainData(wave)
+          const now = performance.now()
+          const buf = bufRef.current
+          buf.push({ t: now, freq, wave })
+          while (buf.length && now - buf[0].t > 1300) buf.shift()
+          const target = now - delayRef.current
+          let f = buf[buf.length - 1]
+          for (let i = buf.length - 1; i >= 0; i--) { if (buf[i].t <= target) { f = buf[i]; break } }
+          drawLive(cv, f.freq, f.wave, styleRef.current, accentRef.current)
+        }
+        rafRef.current = requestAnimationFrame(draw)
+      }
+      rafRef.current = requestAnimationFrame(draw)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not access audio.')
+      stop()
+    }
+  }, [stop])
+
+  const toggleFs = useCallback(() => {
+    const el = wrapRef.current; if (!el) return
+    if (!document.fullscreenElement) el.requestFullscreen?.().catch(() => {})
+    else document.exitFullscreen?.().catch(() => {})
+  }, [])
+  useEffect(() => {
+    const on = () => setFs(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', on)
+    return () => document.removeEventListener('fullscreenchange', on)
+  }, [])
+  useEffect(() => () => stop(), [stop])
+
+  return (
+    <div>
+      <div ref={wrapRef} style={{ position: 'relative', width: '100%', aspectRatio: fs ? undefined : '16 / 9', height: fs ? '100dvh' : undefined, borderRadius: fs ? 0 : 14, overflow: 'hidden', background: '#08070d', border: fs ? 'none' : '1px solid var(--border)' }}>
+        <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }} />
+        {!running && (
+          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 12, padding: 20, textAlign: 'center' }}>
+            <p style={{ fontSize: 14, color: 'var(--text-secondary)', maxWidth: 340, margin: 0 }}>Pick an audio source. Point your mic at the speaker, or (on a computer) capture a tab’s sound.</p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 11, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 14, fontWeight: 800, cursor: 'pointer' }}><Mic size={17} /> Use microphone</button>
+              <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 18px', borderRadius: 11, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}><Radio size={17} /> Capture device audio</button>
+            </div>
+          </div>
+        )}
+        {running && (
+          <button type="button" onClick={toggleFs} aria-label="Fullscreen" style={{ position: 'absolute', top: 10, right: 10, display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 10, background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}><Maximize2 size={17} /></button>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '14px 0 4px', flexWrap: 'wrap' }}>
+        {running
+          ? <button type="button" onClick={stop} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}><Square size={15} /> Stop</button>
+          : <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Not listening</span>}
+        <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{source === 'device' ? 'Capturing device audio' : source === 'mic' ? 'Listening to the room' : ''}</span>
+        <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
+      </div>
+
+      <Section label="Visual style">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+          {(['bars', 'radial', 'wave'] as LiveStyle[]).map(s => (
+            <button key={s} type="button" onClick={() => setStyle(s)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: style === s ? 'var(--accent)' : 'var(--bg-card)', color: style === s ? '#0e0d12' : 'var(--text-secondary)' }}>{s[0].toUpperCase() + s.slice(1)}</button>
+          ))}
+        </div>
+      </Section>
+      <Section label={`Sync delay — ${delayMs} ms`}>
+        <input type="range" min={0} max={600} step={10} value={delayMs} onChange={e => setDelayMs(parseInt(e.target.value, 10))} style={{ width: '100%', maxWidth: 320 }} />
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0' }}>Nudge the visuals later to match sound that reaches the room a beat behind — e.g. streaming to a TV or Bluetooth speaker.</p>
+      </Section>
+      {err && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 8 }}>{err}</p>}
+      <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10 }}>Phones can visualize the microphone (point it at the speaker); capturing another app’s audio directly isn’t possible on mobile. On a computer you can capture a browser tab’s sound.</p>
+    </div>
   )
 }
 
