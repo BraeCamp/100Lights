@@ -1,9 +1,13 @@
+import { auth } from '@clerk/nextjs/server'
 import { runMatchPipeline, AudioBuf } from '@/lib/server/pipeline'
 import { decodeAudioAny, encodeWav } from '@/lib/wav-codec'
 
 export const maxDuration = 60
 
 export async function POST(req: Request): Promise<Response> {
+  const { userId } = await auth()
+  if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   let formData: FormData
   try {
     formData = await req.formData()

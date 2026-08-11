@@ -59,7 +59,11 @@ export async function POST(req: Request) {
   // Namespace by userId so users can only access their own files
   // 500 MB limit
   const MAX_BYTES = 500 * 1024 * 1024
-  const size = Number(body.size ?? 0)
+  // Clamp to a sane non-negative number — a NaN/negative `size` would make every
+  // `size > cap` comparison false and silently bypass both the 500 MB and the
+  // per-plan storage caps (and sign no ContentLength into the URL).
+  const rawSize = Number(body.size)
+  const size = Number.isFinite(rawSize) && rawSize > 0 ? rawSize : 0
   if (size > MAX_BYTES) {
     return Response.json({ error: 'File too large. Maximum size is 500 MB.' }, { status: 413 })
   }

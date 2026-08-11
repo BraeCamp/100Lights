@@ -46,7 +46,9 @@ export async function POST(request: Request) {
     if (!access) return new Response('Forbidden', { status: 403 })
     session.allow(room, access === 'view' ? session.READ_ACCESS : session.FULL_ACCESS)
   } else {
-    session.allow(room, session.FULL_ACCESS)
+    // Every real room is `project-<id>` and gated above. Anything else is
+    // unrecognized — deny rather than hand out FULL_ACCESS to an arbitrary room.
+    return new Response('Forbidden', { status: 403 })
   }
   const { body: token, status } = await session.authorize()
   return new Response(token, { status })
