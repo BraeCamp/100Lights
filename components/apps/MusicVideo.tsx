@@ -19,7 +19,7 @@ import { FORMATS } from '@/lib/song-video/formats.mjs'
 import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
-import { BG_LIBRARY, BG_CATEGORIES, clipsByCategory, type BgClip, type BgCategory } from '@/lib/bg-library'
+import { BG_CATEGORIES, clipsByCategory, clipById, type BgClip, type BgCategory } from '@/lib/bg-library'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
@@ -530,11 +530,12 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   // Genre "Looks" — apply a whole scene, with a random genre-appropriate background.
   const [activeLook, setActiveLook] = useState<GenreLook | null>(null)
   const shuffleTo = useCallback((look: GenreLook) => {
-    const clips = look.bg.categories.flatMap(c => clipsByCategory(c))
-    const pool: Array<{ a: string } | { c: BgClip }> = [...look.bg.ambients.map(id => ({ a: id })), ...clips.map(c => ({ c }))]
+    const pool = look.bg.pool
     if (!pool.length) return
-    const pick = pool[Math.floor(Math.random() * pool.length)]
-    if ('a' in pick) { setBgKind(pick.a); setBgClip(null) } else { setBgClip(pick.c); setBgKind('library') }
+    const id = pool[Math.floor(Math.random() * pool.length)]
+    const clip = clipById(id)            // an image/video clip in the library…
+    if (clip) { setBgClip(clip); setBgKind('library') }
+    else { setBgKind(id); setBgClip(null) }   // …otherwise it's an ambient gradient id
   }, [])
   const applyLook = useCallback((look: GenreLook) => {
     setStyle(look.style)
@@ -543,7 +544,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
     setMirror(look.mirror); setGlow(look.glow); setTrail(look.trail)
     setMatchVisuals(look.match); setEqFilters(look.eq)
     setBlur(look.filters.blur); setBrightness(look.filters.brightness); setSaturate(look.filters.saturate); setHueRot(look.filters.hue)
-    setBgCat(look.bg.categories[0]); setActiveLook(look); shuffleTo(look)
+    setBgCat(look.bg.browse); setActiveLook(look); shuffleTo(look)
   }, [shuffleTo])
 
   useEffect(() => { try { const r = localStorage.getItem('musicvideo-colorpresets'); if (r) setPresets(JSON.parse(r)) } catch { /* off */ } }, [])
@@ -672,10 +673,16 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
                 : <img src={bgUrl ?? undefined} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : bgKind === 'library' && bgClip ? (
               <>
-                {/* poster/tint shows offline or until the clip streams in */}
+                {/* tint fallback shows offline or until the asset loads */}
                 <div style={{ position: 'absolute', inset: 0, backgroundImage: bgClip.tint, backgroundSize: 'cover' }} />
-                <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                <video key={bgClip.id} src={bgClip.src} poster={bgClip.preview} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+                {bgClip.kind === 'image' ? (
+                  <img key={bgClip.id} src={bgClip.src} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                ) : (
+                  <>
+                    <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                    <video key={bgClip.id} src={bgClip.src} poster={bgClip.preview} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+                  </>
+                )}
               </>
             ) : (
               <div className="mv-ambient" style={{ position: 'absolute', inset: 0, backgroundImage: ambient?.css, backgroundSize: '240% 240%' }} />
@@ -720,7 +727,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
         </div>
         {activeLook && (
           <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '9px 0 0' }}>
-            {activeLook.desc} · a random {activeLook.bg.categories.join(' / ')} background.{' '}
+            {activeLook.desc} · a random on-theme background.{' '}
             <button type="button" onClick={() => shuffleTo(activeLook)} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontWeight: 700, cursor: 'pointer', padding: 0 }}>Shuffle background</button>
           </p>
         )}

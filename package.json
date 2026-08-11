@@ -24,6 +24,7 @@
     "store:metadata:check": "node scripts/gen-store-metadata.mjs --check",
     "store:icons": "node scripts/gen-app-icons.mjs",
     "store:screenshots": "node scripts/gen-app-screenshots.mjs",
+    "bg:images": "node scripts/gen-bg-images.mjs",
     "store:upload": "bundle exec fastlane ios metadata"
   },
   "dependencies": {
