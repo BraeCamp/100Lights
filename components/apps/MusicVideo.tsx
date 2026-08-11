@@ -7,7 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload, Download, DownloadCloud, Check } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -169,7 +169,7 @@ function MusicVideoApp() {
   if (!live && !videoUrl) return <MusicVideoHome busy={busy} onFile={handleFile} onLive={() => setLive(true)} />
 
   return (
-    <main id="main" className="max-w-2xl mx-auto" style={{ padding: '20px 18px 40px' }}>
+    <main id="main" className={`${live ? 'max-w-6xl' : 'max-w-2xl'} mx-auto`} style={{ padding: '20px 18px 40px' }}>
       <header style={{ marginBottom: 18 }}>
         <button type="button" onClick={() => { setLive(false); setVideoUrl(null); setNotes([]) }}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 12, padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
@@ -370,9 +370,13 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
   const colorAt = (t: number, i: number) => o.mode === 'solid' ? mid : o.mode === 'spectrum' ? o.colors[Math.min(N - 1, Math.max(0, Math.floor(t * N)))] : randColor(i)
 
   // Perceptual frequency sampling — spreads bass/mid/treble evenly instead of bunching low.
+  // Music is naturally bass-heavy, so apply a gentle linear spectral tilt: leave the low
+  // (left) end alone and lift the high (right) end slightly, ~1× → 1.5× across the range,
+  // so the bars aren't always tall on the deep side.
   const samp = (t: number) => {
     const idx = Math.min(n - 1, Math.max(0, Math.floor(Math.pow(t, 1.7) * n * 0.85)))
-    return Math.min(1, (freq[idx] / 255) * g)
+    const tilt = 1 + 0.5 * t
+    return Math.min(1, (freq[idx] / 255) * g * tilt)
   }
   let sum = 0; for (let i = 0; i < n; i++) sum += freq[i]
   const level = Math.min(1, (sum / (n * 255)) * g)
@@ -501,6 +505,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const [mirror, setMirror] = useState(false)
   const [glow, setGlow] = useState(true)
   const [trail, setTrail] = useState(true)
+  const [openPanel, setOpenPanel] = useState<string | null>('look')   // accordion — one control group open at a time
   // Background layer + filters + "no audio" ambient mode
   const [bgKind, setBgKind] = useState<'none' | 'media' | 'library' | string>('none')   // 'none' | ambient id | 'media' | 'library'
   const [bgUrl, setBgUrl] = useState<string | null>(null)
@@ -723,8 +728,15 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   useEffect(() => () => stop(), [stop])
 
   return (
-    <div>
-      <style>{`@keyframes mv-amb{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}} .mv-ambient{animation:mv-amb 16s ease-in-out infinite}`}</style>
+    <div className="mv-live">
+      <style>{`@keyframes mv-amb{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}} .mv-ambient{animation:mv-amb 16s ease-in-out infinite}
+.mv-live{container-type:inline-size}
+.mv-split{display:flex;flex-direction:column}
+.mv-stage{position:sticky;top:0;z-index:3;background:var(--bg-base);padding-bottom:12px}
+.mv-panels{display:flex;flex-direction:column}
+@container (min-width:760px){.mv-split{flex-direction:row;align-items:flex-start;gap:20px}.mv-stage{flex:1 1 60%;min-width:0;padding-bottom:4px}.mv-panels{flex:1 1 40%;min-width:280px;max-height:calc(100dvh - 16px);overflow:auto;padding-right:4px}}`}</style>
+      <div className="mv-split">
+        <div className="mv-stage">
       <div ref={wrapRef} style={{ position: 'relative', width: '100%', aspectRatio: fs ? undefined : '16 / 9', height: fs ? '100dvh' : undefined, borderRadius: fs ? 0 : 14, overflow: 'hidden', background: '#08070d', border: fs ? 'none' : '1px solid var(--border)' }}>
         {/* Background layer — ambient gradient, library clip (streamed), or your own upload; filtered here */}
         {hasBg && (
@@ -783,8 +795,10 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
         <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{source === 'file' ? 'Playing your track' : source === 'device' ? 'Capturing device audio' : source === 'mic' ? 'Listening to the room' : ''}</span>
         <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
       </div>
+        </div>{/* /mv-stage */}
 
-      <Section label="Genre look">
+        <div className="mv-panels">
+      <Panel id="look" label="Genre look" open={openPanel === 'look'} onToggle={() => setOpenPanel(p => (p === 'look' ? null : 'look'))}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
           {GENRE_LOOKS.map(l => (
             <button key={l.id} type="button" onClick={() => applyLook(l)} title={l.desc}
@@ -797,16 +811,16 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
             <button type="button" onClick={() => shuffleTo(activeLook)} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontWeight: 700, cursor: 'pointer', padding: 0 }}>Shuffle background</button>
           </p>
         )}
-      </Section>
+      </Panel>
 
-      <Section label="Visual style">
+      <Panel id="style" label="Visual style" open={openPanel === 'style'} onToggle={() => setOpenPanel(p => (p === 'style' ? null : 'style'))}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
           {(['bars', 'radial', 'wave'] as LiveStyle[]).map(s => (
             <button key={s} type="button" onClick={() => setStyle(s)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: style === s ? 'var(--accent)' : 'var(--bg-card)', color: style === s ? '#0e0d12' : 'var(--text-secondary)' }}>{s[0].toUpperCase() + s.slice(1)}</button>
           ))}
         </div>
-      </Section>
-      <Section label="Colour">
+      </Panel>
+      <Panel id="colour" label="Colour" open={openPanel === 'colour'} onToggle={() => setOpenPanel(p => (p === 'colour' ? null : 'colour'))}>
         {/* Palettes */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
           {PALETTES.map(p => {
@@ -850,9 +864,9 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
             </span>
           ))}
         </div>
-      </Section>
+      </Panel>
 
-      <Section label="Feel">
+      <Panel id="feel" label="Feel" open={openPanel === 'feel'} onToggle={() => setOpenPanel(p => (p === 'feel' ? null : 'feel'))}>
         <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 14 }}>
           <button type="button" onClick={() => setMirror(v => !v)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: mirror ? 'var(--accent)' : 'var(--bg-card)', color: mirror ? '#0e0d12' : 'var(--text-secondary)' }}>Mirror</button>
           <button type="button" onClick={() => setGlow(v => !v)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: glow ? 'var(--accent)' : 'var(--bg-card)', color: glow ? '#0e0d12' : 'var(--text-secondary)' }}>Glow</button>
@@ -862,9 +876,9 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
         <input type="range" min={0.5} max={2.6} step={0.1} value={gain} onChange={e => setGain(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
         <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '12px 0 5px' }}>Smoothness</label>
         <input type="range" min={0} max={0.95} step={0.01} value={smoothing} onChange={e => setSmoothing(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
-      </Section>
+      </Panel>
 
-      <Section label="Background">
+      <Panel id="bg" label="Background" open={openPanel === 'bg'} onToggle={() => setOpenPanel(p => (p === 'bg' ? null : 'bg'))}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 6 }}>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
             <input type="checkbox" checked={reactive} onChange={e => setReactive(e.target.checked)} /> Audio-reactive visuals
@@ -920,10 +934,10 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
           </div>
         )}
         <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0 0' }}>Saved backgrounds play with no connection. Bundled images already work offline once viewed.</p>
-      </Section>
+      </Panel>
 
       {hasBg && (
-        <Section label="Background filters">
+        <Panel id="filters" label="Background filters" open={openPanel === 'filters'} onToggle={() => setOpenPanel(p => (p === 'filters' ? null : 'filters'))}>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: reactive ? 'pointer' : 'not-allowed', opacity: reactive ? 1 : 0.5, marginBottom: 12 }}>
             <input type="checkbox" checked={eqFilters} onChange={e => setEqFilters(e.target.checked)} disabled={!reactive} /> React to the audio (EQ)
           </label>
@@ -938,17 +952,19 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
           <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Hue shift — {hueRot}°</label>
           <input type="range" min={0} max={360} step={5} value={hueRot} onChange={e => setHueRot(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
           <button type="button" onClick={() => { setBlur(0); setBrightness(1); setSaturate(1); setHueRot(0) }} style={{ marginTop: 12, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Reset filters</button>
-        </Section>
+        </Panel>
       )}
 
-      <Section label={`Sync delay — ${delayMs} ms`}>
+      <Panel id="sync" label={`Sync delay — ${delayMs} ms`} open={openPanel === 'sync'} onToggle={() => setOpenPanel(p => (p === 'sync' ? null : 'sync'))}>
         <input type="range" min={0} max={600} step={10} value={delayMs} onChange={e => setDelayMs(parseInt(e.target.value, 10))} style={{ width: '100%', maxWidth: 320 }} />
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0' }}>Nudge the visuals later to match sound that reaches the room a beat behind — e.g. streaming to a TV or Bluetooth speaker.</p>
-      </Section>
+      </Panel>
       {err && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 8 }}>{err}</p>}
       <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.55 }}>
         <strong style={{ color: 'var(--text-secondary)' }}>Party setup:</strong> tap fullscreen and drag this window onto your TV or projector — it keeps running while its window stays visible, so you can use other apps beside it. The mic is the reliable way to visualize the room: point your device at the speaker. Grabbing another app’s audio directly (Spotify, Apple Music) isn’t possible on iPhone and is limited on Android — a phone can’t silently tap another app’s sound — so the mic stays the go-to; on a computer you can also capture a browser tab’s sound.
       </p>
+        </div>{/* /mv-panels */}
+      </div>{/* /mv-split */}
     </div>
   )
 }
@@ -958,6 +974,21 @@ function Section({ label, children }: { label: string; children: React.ReactNode
     <section style={{ marginBottom: 18 }}>
       <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, var(--text-secondary))', margin: '0 0 9px' }}>{label}</p>
       {children}
+    </section>
+  )
+}
+
+// Collapsible control group for the live visualizer — a tap-to-open tab so the panel
+// column stays calm (one group open at a time) instead of a long wall of buttons.
+function Panel({ label, open, onToggle, children }: { id: string; label: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+  return (
+    <section style={{ borderTop: '1px solid var(--border)' }}>
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '13px 2px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: open ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{label}</span>
+        <ChevronDown size={16} style={{ flexShrink: 0, color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s ease' }} />
+      </button>
+      {open && <div style={{ padding: '0 2px 18px' }}>{children}</div>}
     </section>
   )
 }
