@@ -7,7 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -19,7 +19,7 @@ import { FORMATS } from '@/lib/song-video/formats.mjs'
 import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
-import { BG_CATEGORIES, clipsByCategory, clipById, type BgClip, type BgCategory } from '@/lib/bg-library'
+import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, type BgClip, type BgCategory } from '@/lib/bg-library'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
 import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '@/lib/offline-media'
 
@@ -594,6 +594,10 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const [hueRot, setHueRot] = useState(0)
   const [videoLook, setVideoLook] = useState('none')       // Snapchat-style look on the background
   const lookFilterRef = useRef('')                          // look's svg+css prefix, kept for the per-frame EQ update
+  const [autoShuffle, setAutoShuffle] = useState(false)     // play a clip, then move to the next one
+  const [shuffleScope, setShuffleScope] = useState<'category' | 'all'>('all')
+  const shuffleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bgClipIdRef = useRef<string | null>(null)           // current clip id, so nextClip avoids repeats without re-binding
   const bgInputRef = useRef<HTMLInputElement | null>(null)
   const bgFilterRef = useRef<HTMLDivElement | null>(null)  // filters applied here; EQ mode drives it per frame
   // Offline save/download for the selected library clip
@@ -608,6 +612,25 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const lookFilterStr = [activeVideoLook.svg ? `url(#${activeVideoLook.svg})` : '', activeVideoLook.css || ''].filter(Boolean).join(' ')
   lookFilterRef.current = lookFilterStr
   const bgFilter = [lookFilterStr, `blur(${blur}px) brightness(${brightness}) saturate(${saturate}) hue-rotate(${hueRot}deg)`].filter(Boolean).join(' ')
+
+  // Auto-shuffle: advance to a different clip in the pool (this category, or the whole
+  // library). Driven by the video's 'ended' event, with a timer fallback below so it never
+  // gets stuck on a still or a clip that fails to fire 'ended'.
+  const nextClip = useCallback(() => {
+    const pool = (shuffleScope === 'all' ? BG_LIBRARY : clipsByCategory(bgCat)).filter(c => c.kind === 'video')
+    if (pool.length < 2) return
+    let next = pool[Math.floor(Math.random() * pool.length)]
+    for (let i = 0; next.id === bgClipIdRef.current && i < 8; i++) next = pool[Math.floor(Math.random() * pool.length)]
+    setBgClip(next); setBgKind('library')
+  }, [shuffleScope, bgCat])
+  useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null }, [bgClip])
+  // Fallback advance — if a clip is a still, or its 'ended' never fires, move on anyway.
+  useEffect(() => {
+    if (shuffleTimerRef.current) { clearTimeout(shuffleTimerRef.current); shuffleTimerRef.current = null }
+    if (!autoShuffle || bgKind !== 'library' || !bgClip) return
+    shuffleTimerRef.current = setTimeout(nextClip, 20000)
+    return () => { if (shuffleTimerRef.current) clearTimeout(shuffleTimerRef.current) }
+  }, [autoShuffle, bgKind, bgClip, nextClip])
   const pickBgFile = useCallback((f: File) => {
     setBgUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
     setBgVideo(f.type.startsWith('video/')); setBgKind('media')
@@ -834,7 +857,7 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle} muted playsInline onEnded={() => { if (autoShuffle) nextClip() }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
                   </>
                 )}
               </>
@@ -980,6 +1003,20 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
           <button type="button" onClick={() => bgInputRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgKind === 'media' ? 'var(--accent)' : 'var(--bg-card)', color: bgKind === 'media' ? '#0e0d12' : 'var(--text-secondary)' }}><Upload size={13} /> Upload</button>
           <input ref={bgInputRef} type="file" accept="video/*,image/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) pickBgFile(f); e.currentTarget.value = '' }} />
         </div>
+
+        {/* Auto-shuffle — play a clip, then move to the next one automatically */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '18px 0 4px' }}>
+          <button type="button" onClick={() => { setAutoShuffle(v => !v); if (!autoShuffle) nextClip() }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: autoShuffle ? 'var(--accent)' : 'var(--bg-card)', color: autoShuffle ? '#0e0d12' : 'var(--text-secondary)' }}>
+            <Shuffle size={14} /> Auto-shuffle clips
+          </button>
+          {autoShuffle && (['all', 'category'] as const).map(s => (
+            <button key={s} type="button" onClick={() => setShuffleScope(s)}
+              style={{ padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: shuffleScope === s ? 'var(--bg-card-hover, var(--bg-card))' : 'transparent', color: shuffleScope === s ? 'var(--text-primary)' : 'var(--text-muted)' }}>{s === 'all' ? 'From everything' : `Just ${bgCat}`}</button>
+          ))}
+          {autoShuffle && <button type="button" onClick={nextClip} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}><SkipForward size={13} /> Next</button>}
+        </div>
+        {autoShuffle && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>Each clip plays through, then a new one comes on — like a living wallpaper. Great full-screen on a TV.</p>}
 
         {/* Streamed video library */}
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '16px 0 8px' }}>Library — streams online, low-res preview offline:</p>

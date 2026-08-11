@@ -23,7 +23,7 @@ export interface BgClip {
   tint: string      // gradient shown until the asset loads (and if it 404s)
 }
 
-export const BG_CATEGORIES = ['Patterns', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
+export const BG_CATEGORIES = ['Patterns', 'Streets', 'Night', 'Cozy', 'Nature', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
 export type BgCategory = typeof BG_CATEGORIES[number]
 
 import { FETCHED_NATURE } from './bg-fetched'
@@ -62,6 +62,24 @@ const NATURE: { id: string; category: BgCategory; title: string; tint: string }[
   { id: 'animals-jellyfish', category: 'Animals', title: 'Jellyfish drift', tint: 'linear-gradient(135deg,#4c1d95,#c084fc)' },
   { id: 'city-night', category: 'City', title: 'City at night', tint: 'linear-gradient(135deg,#111827,#a78bfa)' },
   { id: 'city-timelapse', category: 'City', title: 'Traffic trails', tint: 'linear-gradient(135deg,#7c2d12,#f97316)' },
+  // Streets — daylight, people, movement
+  { id: 'street-golden', category: 'Streets', title: 'Golden-hour street', tint: 'linear-gradient(135deg,#7c2d12,#fbbf24)' },
+  { id: 'street-crosswalk', category: 'Streets', title: 'Busy crosswalk', tint: 'linear-gradient(135deg,#334155,#e2e8f0)' },
+  { id: 'street-cafe', category: 'Streets', title: 'Café terrace', tint: 'linear-gradient(135deg,#7c2d12,#fde68a)' },
+  // Night — streetlights, neon, rain
+  { id: 'night-streetlamps', category: 'Night', title: 'Streetlamps & walkers', tint: 'linear-gradient(135deg,#111827,#fbbf24)' },
+  { id: 'night-neon', category: 'Night', title: 'Neon alley', tint: 'linear-gradient(135deg,#0b1020,#22d3ee)' },
+  { id: 'night-rain-neon', category: 'Night', title: 'Rainy neon', tint: 'linear-gradient(135deg,#0b1020,#7c3aed)' },
+  { id: 'night-aurora', category: 'Night', title: 'Aurora sky', tint: 'linear-gradient(135deg,#052e2b,#a78bfa)' },
+  // Cozy — lofi / indoor warmth
+  { id: 'cozy-rain-window', category: 'Cozy', title: 'Rain on glass', tint: 'linear-gradient(135deg,#1e293b,#38bdf8)' },
+  { id: 'cozy-fireplace', category: 'Cozy', title: 'Fireplace', tint: 'linear-gradient(135deg,#3b1106,#fbbf24)' },
+  { id: 'cozy-coffee', category: 'Cozy', title: 'Coffee steam', tint: 'linear-gradient(135deg,#3b2415,#d6b48a)' },
+  // Nature — daylight scenic
+  { id: 'nature-sunbeams', category: 'Nature', title: 'Forest sunbeams', tint: 'linear-gradient(135deg,#14532d,#fde047)' },
+  { id: 'nature-flowers', category: 'Nature', title: 'Flower field', tint: 'linear-gradient(135deg,#be185d,#fde047)' },
+  { id: 'nature-clouds', category: 'Nature', title: 'Cloud drift', tint: 'linear-gradient(135deg,#1e3a8a,#e0f2fe)' },
+  { id: 'nature-underwater', category: 'Nature', title: 'Sun-dappled water', tint: 'linear-gradient(135deg,#083344,#67e8f9)' },
 ]
 
 // Generative styles that also have an animated WebM loop (scripts/gen-bg-videos.mjs).

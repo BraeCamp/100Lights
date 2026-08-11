@@ -53,5 +53,75 @@
     "photographer": "Ivan Chumak",
     "url": "https://www.pexels.com/video/berlin-timelapse-night-city-traffic-lights-34665162/",
     "source": "Pexels"
+  },
+  "street-golden": {
+    "photographer": "Lukas Kosc",
+    "url": "https://www.pexels.com/video/charming-city-street-at-sunset-in-europe-34597899/",
+    "source": "Pexels"
+  },
+  "street-crosswalk": {
+    "photographer": "Teresa Lencastre",
+    "url": "https://www.pexels.com/video/pedestrians-in-the-streets-of-toronto-city-in-ontario-canada-14365420/",
+    "source": "Pexels"
+  },
+  "street-cafe": {
+    "photographer": "George Morina",
+    "url": "https://www.pexels.com/video/leicester-square-london-england-18125021/",
+    "source": "Pexels"
+  },
+  "night-streetlamps": {
+    "photographer": "Sergei Skrynnik",
+    "url": "https://www.pexels.com/video/people-walking-in-city-at-night-during-rainfall-11839648/",
+    "source": "Pexels"
+  },
+  "night-neon": {
+    "photographer": "Nastya Gorskaya",
+    "url": "https://www.pexels.com/video/neon-signs-pointing-towards-gate-11356540/",
+    "source": "Pexels"
+  },
+  "night-rain-neon": {
+    "photographer": "Pixabay",
+    "url": "https://www.pexels.com/video/video-of-people-waiting-for-a-taxi-on-a-rainy-night-855432/",
+    "source": "Pexels"
+  },
+  "night-aurora": {
+    "photographer": "T Honkamies",
+    "url": "https://www.pexels.com/video/northern-lights-timelapse-28492331/",
+    "source": "Pexels"
+  },
+  "cozy-rain-window": {
+    "photographer": "Mark Warner",
+    "url": "https://www.pexels.com/video/droplets-of-water-over-glass-surface-4786522/",
+    "source": "Pexels"
+  },
+  "cozy-fireplace": {
+    "photographer": "K",
+    "url": "https://www.pexels.com/video/a-close-up-of-burning-coals-3987800/",
+    "source": "Pexels"
+  },
+  "cozy-coffee": {
+    "photographer": "Life Of Pix",
+    "url": "https://www.pexels.com/video/morning-coffee-852222/",
+    "source": "Pexels"
+  },
+  "nature-sunbeams": {
+    "photographer": "Saulo Nulo",
+    "url": "https://www.pexels.com/video/sunlight-filtering-through-lush-green-jungle-canopy-37218119/",
+    "source": "Pexels"
+  },
+  "nature-flowers": {
+    "photographer": "ROMAN ODINTSOV",
+    "url": "https://www.pexels.com/video/golden-field-at-sunset-9153883/",
+    "source": "Pexels"
+  },
+  "nature-clouds": {
+    "photographer": "Ruslan Sikunov",
+    "url": "https://www.pexels.com/video/clouds-on-sky-11519743/",
+    "source": "Pexels"
+  },
+  "nature-underwater": {
+    "photographer": "Kindel Media",
+    "url": "https://www.pexels.com/video/underwater-camera-used-in-a-swimming-pool-7293898/",
+    "source": "Pexels"
   }
 }

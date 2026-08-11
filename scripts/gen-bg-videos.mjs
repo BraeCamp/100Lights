@@ -43,9 +43,26 @@ const NATURE = [
   { id: 'animals-jellyfish', kind: 'liquid', colors: ['#4c1d95', '#a855f7', '#f0abfc'] },
   { id: 'city-night', kind: 'bokeh', colors: ['#111827', '#a78bfa', '#f472b6', '#22d3ee'] },
   { id: 'city-timelapse', kind: 'bokeh', colors: ['#7c2d12', '#f97316', '#fbbf24', '#f472b6'] },
+  { id: 'street-golden', kind: 'bokeh', colors: ['#7c2d12', '#f59e0b', '#fbbf24'] },
+  { id: 'street-crosswalk', kind: 'particles', colors: ['#334155', '#94a3b8', '#e2e8f0'] },
+  { id: 'street-cafe', kind: 'bokeh', colors: ['#7c2d12', '#d97706', '#fde68a'] },
+  { id: 'night-streetlamps', kind: 'bokeh', colors: ['#111827', '#f59e0b', '#fbbf24'] },
+  { id: 'night-neon', kind: 'bokeh', colors: ['#0b1020', '#f472b6', '#22d3ee'] },
+  { id: 'night-rain-neon', kind: 'waves', colors: ['#0b1020', '#7c3aed', '#22d3ee'] },
+  { id: 'night-aurora', kind: 'mesh', colors: ['#052e2b', '#10b981', '#a78bfa'] },
+  { id: 'cozy-rain-window', kind: 'particles', colors: ['#1e293b', '#38bdf8', '#cbd5e1'] },
+  { id: 'cozy-fireplace', kind: 'liquid', colors: ['#3b1106', '#b45309', '#fbbf24'] },
+  { id: 'cozy-coffee', kind: 'mesh', colors: ['#3b2415', '#7c5c3b', '#d6b48a'] },
+  { id: 'nature-sunbeams', kind: 'mesh', colors: ['#14532d', '#65a30d', '#fde047'] },
+  { id: 'nature-flowers', kind: 'mesh', colors: ['#be185d', '#84cc16', '#fde047'] },
+  { id: 'nature-clouds', kind: 'mesh', colors: ['#1e3a8a', '#60a5fa', '#e0f2fe'] },
+  { id: 'nature-underwater', kind: 'liquid', colors: ['#083344', '#0e7490', '#67e8f9'] },
 ].map(d => ({ ...d, dir: 'nature', poster: true }))
 
-const ALL = [...GEN, ...NATURE]
+// Optional id filter: `node scripts/gen-bg-videos.mjs street-golden night-neon` renders just
+// those (handy so re-running for new clips doesn't overwrite fetched real posters).
+const only = process.argv.slice(2)
+const ALL = [...GEN, ...NATURE].filter(d => !only.length || only.includes(d.id))
 const W = 960, H = 540, SECONDS = 6
 
 const browser = await chromium.launch()

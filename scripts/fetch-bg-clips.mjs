@@ -11,7 +11,7 @@
 //
 // Re-running refreshes everything; pass ids to limit, e.g. `npm run bg:fetch -- beach-waves city-night`.
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
@@ -34,6 +34,20 @@ const QUERIES = {
   'animals-jellyfish': 'jellyfish underwater ocean',
   'city-night': 'city skyline night lights',
   'city-timelapse': 'city traffic night timelapse',
+  'street-golden': 'city street golden hour people walking',
+  'street-crosswalk': 'people crossing busy street daytime',
+  'street-cafe': 'outdoor cafe street people daytime',
+  'night-streetlamps': 'street lamp people walking night',
+  'night-neon': 'neon signs alley night city',
+  'night-rain-neon': 'rainy street night neon reflections',
+  'night-aurora': 'aurora borealis night sky',
+  'cozy-rain-window': 'rain drops on window glass',
+  'cozy-fireplace': 'cozy fireplace fire closeup',
+  'cozy-coffee': 'coffee cup steam morning',
+  'nature-sunbeams': 'sunlight rays through forest trees',
+  'nature-flowers': 'wildflower field breeze sunny',
+  'nature-clouds': 'clouds timelapse blue sky',
+  'nature-underwater': 'underwater sunlight caustics ocean',
 }
 
 // --- key ---------------------------------------------------------------------------------
@@ -82,10 +96,9 @@ async function download(url, dest) {
 }
 
 const credits = existsSync(join(OUT, 'CREDITS.json')) ? JSON.parse(readFileSync(join(OUT, 'CREDITS.json'), 'utf8')) : {}
-const fetched = new Set()
-// Seed with any ids already fetched previously so a partial run doesn't drop them.
 const fetchedTs = join(ROOT, 'lib', 'bg-fetched.ts')
-if (existsSync(fetchedTs)) { const m = readFileSync(fetchedTs, 'utf8').match(/\[([^\]]*)\]/); if (m) m[1].match(/'[^']+'/g)?.forEach(s => fetched.add(s.slice(1, -1))) }
+// Seed from the real .mp4 files already on disk, so a partial run never drops earlier clips.
+const fetched = new Set(readdirSync(OUT).filter(f => f.endsWith('.mp4')).map(f => f.replace(/\.mp4$/, '')))
 
 // --- run ---------------------------------------------------------------------------------
 for (const id of ids) {
