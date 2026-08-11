@@ -7,7 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -267,7 +267,7 @@ type LiveStyle = 'bars' | 'radial' | 'wave'
 type ColorMode = 'solid' | 'spectrum' | 'random'
 interface Plane { h0: number; h1: number; sat: number; light: number }   // a hue band selected off the colour map
 interface LiveColor { paletteId: string | null; plane: Plane | null; mode: ColorMode }
-interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: number; gain: number; mirror: boolean; glow: boolean; trail: boolean }
+interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: number; gain: number; mirror: boolean; glow: boolean; trail: boolean; bg: boolean }
 
 // Curated multi-colour palettes the user can pick, or derive their own from the colour map.
 const PALETTES: { id: string; name: string; colors: string[] }[] = [
@@ -279,6 +279,16 @@ const PALETTES: { id: string; name: string; colors: string[] }[] = [
   { id: 'ice', name: 'Ice', colors: ['#e0f2fe', '#7dd3fc', '#818cf8'] },
   { id: 'candy', name: 'Candy', colors: ['#f472b6', '#c084fc', '#60a5fa'] },
   { id: 'mono', name: 'Mono', colors: ['#f8fafc', '#c7c7d1'] },
+]
+
+// Built-in animated backgrounds (no assets needed). A curated video library (aerial,
+// beach, animals, mountains) can be added here once the clips are hosted.
+const AMBIENTS: { id: string; name: string; css: string }[] = [
+  { id: 'aurora', name: 'Aurora', css: 'linear-gradient(120deg,#0ea5e9,#22d3ee,#34d399,#a78bfa)' },
+  { id: 'sunset', name: 'Sunset', css: 'linear-gradient(120deg,#f59e0b,#f43f5e,#a855f7)' },
+  { id: 'ocean', name: 'Ocean', css: 'linear-gradient(120deg,#082f49,#0ea5e9,#22d3ee)' },
+  { id: 'nebula', name: 'Nebula', css: 'linear-gradient(120deg,#4c1d95,#db2777,#f472b6)' },
+  { id: 'forest', name: 'Forest', css: 'linear-gradient(120deg,#064e3b,#10b981,#a3e635)' },
 ]
 
 function hsl(h: number, s: number, l: number): string {
@@ -337,9 +347,15 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
   const ctx = cv.getContext('2d'); if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.globalAlpha = 1
-  // Trails: paint a translucent wash instead of clearing, so motion leaves a soft comet tail.
-  ctx.fillStyle = o.trail ? 'rgba(8,7,13,0.30)' : '#08070d'
-  ctx.fillRect(0, 0, w, h)
+  // Over a background layer, keep the canvas see-through; on its own, paint the dark base.
+  // Trails leave a soft comet tail either way (a translucent wash instead of a hard clear).
+  if (o.bg) {
+    ctx.clearRect(0, 0, w, h)
+    if (o.trail) { ctx.fillStyle = 'rgba(8,7,13,0.20)'; ctx.fillRect(0, 0, w, h) }
+  } else {
+    ctx.fillStyle = o.trail ? 'rgba(8,7,13,0.30)' : '#08070d'
+    ctx.fillRect(0, 0, w, h)
+  }
   ctx.lineCap = 'round'; ctx.lineJoin = 'round'
   ctx.shadowBlur = o.glow ? Math.max(6, Math.min(w, h) * 0.03) : 0
 
@@ -480,6 +496,24 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const [mirror, setMirror] = useState(false)
   const [glow, setGlow] = useState(true)
   const [trail, setTrail] = useState(true)
+  // Background layer + filters + "no audio" ambient mode
+  const [bgKind, setBgKind] = useState<'none' | 'media' | string>('none')   // 'none' | ambient id | 'media'
+  const [bgUrl, setBgUrl] = useState<string | null>(null)
+  const [bgVideo, setBgVideo] = useState(false)
+  const [reactive, setReactive] = useState(true)
+  const [blur, setBlur] = useState(0)
+  const [brightness, setBrightness] = useState(1)
+  const [saturate, setSaturate] = useState(1)
+  const [hueRot, setHueRot] = useState(0)
+  const bgInputRef = useRef<HTMLInputElement | null>(null)
+  const ambient = AMBIENTS.find(a => a.id === bgKind)
+  const hasBg = bgKind === 'media' ? !!bgUrl : !!ambient
+  const bgFilter = `blur(${blur}px) brightness(${brightness}) saturate(${saturate}) hue-rotate(${hueRot}deg)`
+  const pickBgFile = useCallback((f: File) => {
+    setBgUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
+    setBgVideo(f.type.startsWith('video/')); setBgKind('media')
+  }, [])
+  useEffect(() => () => { if (bgUrl) URL.revokeObjectURL(bgUrl) }, [bgUrl])
 
   useEffect(() => { try { const r = localStorage.getItem('musicvideo-colorpresets'); if (r) setPresets(JSON.parse(r)) } catch { /* off */ } }, [])
   const savePreset = useCallback(() => {
@@ -499,8 +533,8 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
   const rafRef = useRef<number | null>(null)
   const wakeRef = useRef<{ release: () => Promise<void> } | null>(null)
   const bufRef = useRef<Array<{ t: number; freq: Uint8Array; wave: Uint8Array }>>([])
-  const optsRef = useRef<LiveOpts>({ style, colors, mode: colorCfg.mode, seed, gain, mirror, glow, trail })
-  useEffect(() => { optsRef.current = { style, colors, mode: colorCfg.mode, seed, gain, mirror, glow, trail } }, [style, colors, colorCfg.mode, seed, gain, mirror, glow, trail])
+  const optsRef = useRef<LiveOpts>({ style, colors, mode: colorCfg.mode, seed, gain, mirror, glow, trail, bg: hasBg })
+  useEffect(() => { optsRef.current = { style, colors, mode: colorCfg.mode, seed, gain, mirror, glow, trail, bg: hasBg } }, [style, colors, colorCfg.mode, seed, gain, mirror, glow, trail, hasBg])
   const delayRef = useRef(delayMs); useEffect(() => { delayRef.current = delayMs }, [delayMs])
   const smoothingRef = useRef(smoothing)
   useEffect(() => { smoothingRef.current = smoothing; if (analyserRef.current) analyserRef.current.smoothingTimeConstant = smoothing }, [smoothing])
@@ -589,17 +623,29 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
 
   return (
     <div>
+      <style>{`@keyframes mv-amb{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}} .mv-ambient{animation:mv-amb 16s ease-in-out infinite}`}</style>
       <div ref={wrapRef} style={{ position: 'relative', width: '100%', aspectRatio: fs ? undefined : '16 / 9', height: fs ? '100dvh' : undefined, borderRadius: fs ? 0 : 14, overflow: 'hidden', background: '#08070d', border: fs ? 'none' : '1px solid var(--border)' }}>
-        <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }} />
-        {!running && (
-          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 14, padding: 24, textAlign: 'center' }}>
+        {/* Background layer — an ambient gradient or your own photo/video, with filters */}
+        {hasBg && (bgKind === 'media'
+          ? (bgVideo
+            ? <video src={bgUrl ?? undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: bgFilter }} />
+            : <img src={bgUrl ?? undefined} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: bgFilter }} />)
+          : <div className="mv-ambient" style={{ position: 'absolute', inset: 0, backgroundImage: ambient?.css, backgroundSize: '240% 240%', filter: bgFilter }} />)}
+
+        <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: reactive ? 'block' : 'none' }} />
+
+        {reactive && !running && (
+          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 14, padding: 24, textAlign: 'center', background: hasBg ? 'rgba(6,5,10,0.45)' : 'transparent' }}>
             <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Visualize the music in the room</p>
             <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '13px 22px', borderRadius: 12, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 15, fontWeight: 850, cursor: 'pointer' }}><Mic size={18} /> Use microphone</button>
             <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: 0, maxWidth: 320, lineHeight: 1.5 }}>Point your device at the speaker — no prompts, nothing recorded.</p>
             <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}><Radio size={14} /> Or capture a tab’s sound (desktop)</button>
           </div>
         )}
-        {running && (
+        {!reactive && (
+          <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '5px 10px', borderRadius: 999, background: 'rgba(0,0,0,0.4)', color: '#fff', fontSize: 12, fontWeight: 700 }}>Background only</div>
+        )}
+        {(running || !reactive) && (
           <button type="button" onClick={toggleFs} aria-label="Fullscreen" style={{ position: 'absolute', top: 10, right: 10, display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 10, background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}><Maximize2 size={17} /></button>
         )}
       </div>
@@ -676,6 +722,37 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
         <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '12px 0 5px' }}>Smoothness</label>
         <input type="range" min={0} max={0.95} step={0.01} value={smoothing} onChange={e => setSmoothing(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
       </Section>
+
+      <Section label="Background">
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={reactive} onChange={e => setReactive(e.target.checked)} /> Audio-reactive visuals
+        </label>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '6px 0 12px' }}>Turn this off to just play a background with filters — no audio needed.</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <button type="button" onClick={() => setBgKind('none')} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgKind === 'none' ? 'var(--accent)' : 'var(--bg-card)', color: bgKind === 'none' ? '#0e0d12' : 'var(--text-secondary)' }}>None</button>
+          {AMBIENTS.map(a => (
+            <button key={a.id} type="button" onClick={() => setBgKind(a.id)} title={a.name} aria-label={a.name}
+              style={{ width: 54, height: 26, borderRadius: 8, backgroundImage: a.css, backgroundSize: '160% 160%', border: bgKind === a.id ? '2px solid #fff' : '2px solid var(--border)', cursor: 'pointer', padding: 0 }} />
+          ))}
+          <button type="button" onClick={() => bgInputRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgKind === 'media' ? 'var(--accent)' : 'var(--bg-card)', color: bgKind === 'media' ? '#0e0d12' : 'var(--text-secondary)' }}><Upload size={13} /> Upload</button>
+          <input ref={bgInputRef} type="file" accept="video/*,image/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) pickBgFile(f); e.currentTarget.value = '' }} />
+        </div>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0 0' }}>Upload your own photo or clip (aerial, beach, mountains…). A curated video library can be added once the clips are hosted.</p>
+      </Section>
+
+      {hasBg && (
+        <Section label="Background filters">
+          <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Blur — {blur}px</label>
+          <input type="range" min={0} max={24} step={1} value={blur} onChange={e => setBlur(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+          <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Brightness</label>
+          <input type="range" min={0.3} max={1.6} step={0.05} value={brightness} onChange={e => setBrightness(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+          <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Saturation</label>
+          <input type="range" min={0} max={2.2} step={0.05} value={saturate} onChange={e => setSaturate(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+          <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Hue shift — {hueRot}°</label>
+          <input type="range" min={0} max={360} step={5} value={hueRot} onChange={e => setHueRot(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+          <button type="button" onClick={() => { setBlur(0); setBrightness(1); setSaturate(1); setHueRot(0) }} style={{ marginTop: 12, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Reset filters</button>
+        </Section>
+      )}
 
       <Section label={`Sync delay — ${delayMs} ms`}>
         <input type="range" min={0} max={600} step={10} value={delayMs} onChange={e => setDelayMs(parseInt(e.target.value, 10))} style={{ width: '100%', maxWidth: 320 }} />
