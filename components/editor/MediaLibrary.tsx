@@ -93,6 +93,7 @@ export default function MediaLibrary({
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
   const [tab, setTab] = useState<'local' | 'library'>('local')
   const [showAudioMenu, setShowAudioMenu] = useState(false)
   const [audioMenuPos, setAudioMenuPos] = useState<{ top: number; left: number } | null>(null)
@@ -173,10 +174,31 @@ export default function MediaLibrary({
 
   const localItemIds = new Set(items.map(m => m.id))
 
+  // Import one or more dropped/selected OS files (validating each).
+  function importFiles(files: FileList | File[]) {
+    const arr = Array.from(files)
+    if (!arr.length) return
+    let firstErr = ''
+    for (const f of arr) {
+      const err = validateFile(f)
+      if (err) { if (!firstErr) firstErr = err }
+      else onImport(f)
+    }
+    setImportError(firstErr)
+  }
+
+  // Accept OS file drops on the whole panel (the "drop a file here" promise).
+  // Guard on the 'Files' type so internal clip drags (which carry 'mediaId')
+  // pass through untouched.
+  const isFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files')
+
   return (
     <div
       className="flex flex-col h-full select-none"
-      style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
+      style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', outline: dragOver ? '2px dashed var(--accent)' : undefined, outlineOffset: '-3px' }}
+      onDragOver={e => { if (isFileDrag(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (!dragOver) setDragOver(true) } }}
+      onDragLeave={e => { if (isFileDrag(e) && !e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false) }}
+      onDrop={e => { if (isFileDrag(e)) { e.preventDefault(); e.stopPropagation(); setDragOver(false); importFiles(e.dataTransfer.files) } }}
     >
       {/* Panel header */}
       <div

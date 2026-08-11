@@ -3349,7 +3349,19 @@ export default function VideoEditor({
   ], [activePage, hasVideo, hasAudio])
 
   return (
-    <div data-editor="true" data-editor-kind="video" className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
+    <div data-editor="true" data-editor-kind="video" className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}
+      // Drop an OS file anywhere in the editor (viewer, empty space) to import it.
+      // The media panel handles its own drops (and stops propagation); internal
+      // clip drags carry 'mediaId', not 'Files', so they pass straight through.
+      onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
+      onDrop={e => {
+        if (!e.dataTransfer.types.includes('Files')) return
+        e.preventDefault()
+        for (const f of Array.from(e.dataTransfer.files)) {
+          if (f.type.startsWith('video/') || f.type.startsWith('audio/') || f.name.toLowerCase().endsWith('.cube')) handleFileImport(f)
+        }
+      }}
+    >
 
       {/* ── Header ───────────────────────────────────────────── */}
       <div className="electron-drag-container flex items-center gap-3 px-4 shrink-0" style={{ height: 40, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', paddingLeft: isElectronMac ? 80 : 16 }}>
