@@ -131,6 +131,7 @@ export default function BeatMaker({ onPattern, restore }: {
   const [animStyle, setAnimStyle] = useState<AnimStyle>('pulse')
   const [resolvedAnim, setResolvedAnim] = useState<Exclude<AnimStyle, 'random'>>('pulse')
   const [savedNote, setSavedNote] = useState('')
+  const [tapNonce, setTapNonce] = useState<Record<string, number>>({})   // per-pad click flash (light up only on tap)
 
   // Optional — present on the standalone /apps/beatmaker page (inside AppChrome), absent when
   // BeatMaker is embedded (Firefly). Gates Save-to-history and the History restore hook.
@@ -331,6 +332,7 @@ export default function BeatMaker({ onPattern, restore }: {
   // playing, lands a hit on the grid quantized to the nearest 16th step.
   const padHit = useCallback((laneKey: string) => {
     auditionLane(laneKey)
+    setTapNonce(m => ({ ...m, [laneKey]: (m[laneKey] ?? 0) + 1 }))   // light up + slight jump on click only
     if (!recordingRef.current || !playing) return
     const c = ctxRef.current
     if (!c) return
@@ -529,17 +531,19 @@ export default function BeatMaker({ onPattern, restore }: {
   return (
     <div style={{ border: '1px solid var(--border-subtle, #2a2a2a)', borderRadius: 14, padding: 18, background: 'var(--bg-surface, #14141a)' }}>
       <style>{`
-        @keyframes bm-pulse { 0%{transform:scale(1)} 38%{transform:scale(1.32); filter:brightness(1.7)} 100%{transform:scale(1)} }
-        @keyframes bm-ripple { 0%{box-shadow:0 0 0 0 rgba(96,165,250,.65)} 100%{box-shadow:0 0 0 9px rgba(96,165,250,0)} }
-        @keyframes bm-bounce { 0%{transform:translateY(0)} 34%{transform:translateY(-5px)} 68%{transform:translateY(1px)} 100%{transform:translateY(0)} }
-        @keyframes bm-rec-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.55)} 50%{box-shadow:0 0 0 6px rgba(239,68,68,0)} }
-        .bm-anim-pulse { animation: bm-pulse .22s ease-out }
-        .bm-anim-ripple { animation: bm-ripple .32s ease-out }
-        .bm-anim-bounce { animation: bm-bounce .26s ease-out }
+        @keyframes bm-pulse { 0%{transform:scale(1)} 42%{transform:scale(1.11); filter:brightness(1.18)} 100%{transform:scale(1)} }
+        @keyframes bm-ripple { 0%{box-shadow:0 0 0 0 rgba(96,165,250,.32)} 100%{box-shadow:0 0 0 5px rgba(96,165,250,0)} }
+        @keyframes bm-bounce { 0%{transform:translateY(0)} 45%{transform:translateY(-2px)} 100%{transform:translateY(0)} }
+        @keyframes bm-rec-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)} 50%{box-shadow:0 0 0 5px rgba(239,68,68,0)} }
+        @keyframes bm-tap { 0%{ background: var(--accent); transform: scale(1.04) } 100%{ background: transparent; transform: scale(1) } }
+        .bm-anim-pulse { animation: bm-pulse .2s ease-out }
+        .bm-anim-ripple { animation: bm-ripple .3s ease-out }
+        .bm-anim-bounce { animation: bm-bounce .22s ease-out }
         .bm-rec-armed { animation: bm-rec-pulse 1.1s ease-in-out infinite }
+        .bm-tap { animation: bm-tap .26s ease-out }
         .bm-pad { -webkit-tap-highlight-color: transparent }
-        .bm-pad:active { transform: scale(.93) }
-        @media (prefers-reduced-motion: reduce) { .bm-anim-pulse,.bm-anim-ripple,.bm-anim-bounce,.bm-rec-armed { animation: none !important } }
+        .bm-pad:active { transform: scale(.97) }
+        @media (prefers-reduced-motion: reduce) { .bm-anim-pulse,.bm-anim-ripple,.bm-anim-bounce,.bm-rec-armed,.bm-tap { animation: none !important } }
       `}</style>
       {/* Transport + controls */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', marginBottom: 16 }}>
@@ -548,7 +552,7 @@ export default function BeatMaker({ onPattern, restore }: {
           data-help-id="beatmaker-play"
           style={{
             fontSize: 15, fontWeight: 700, padding: '10px 22px', borderRadius: 10, cursor: 'pointer',
-            border: 'none', color: '#fff', background: playing ? '#dc2626' : '#16a34a', minWidth: 96,
+            border: 'none', color: playing ? '#fff' : '#0e0d12', background: playing ? '#dc2626' : 'var(--accent, #16a34a)', minWidth: 96,
           }}
         >
           {playing ? 'Stop' : 'Play'}
@@ -651,21 +655,18 @@ export default function BeatMaker({ onPattern, restore }: {
           </div>
 
           {DRUM_LANES.map(lane => {
-            const laneFiring = displayStep >= 0 && !!grid[lane.key]?.[displayStep]
-            const laneAnim = resolvedAnim !== 'off' && laneFiring ? `bm-anim-${resolvedAnim}` : ''
+            const n = tapNonce[lane.key] ?? 0
             return (
             <div key={lane.key} style={{ display: 'flex', alignItems: 'center', marginBottom: 3 }}>
               <button
                 type="button"
+                key={`${lane.key}-${n}`}
                 onClick={() => padHit(lane.key)}
                 aria-label={`Play ${lane.label}`}
-                className={`bm-pad ${laneAnim}`}
+                className={`bm-pad ${n > 0 ? 'bm-tap' : ''}`}
                 style={{
                   width: 84, marginRight: 4, fontSize: 11.5, fontWeight: 700, textAlign: 'right', padding: '4px 6px', borderRadius: 6, cursor: 'pointer',
-                  border: '1px solid ' + (laneFiring ? 'var(--accent,#60a5fa)' : 'transparent'),
-                  background: laneFiring ? 'var(--accent,#60a5fa)' : 'transparent',
-                  color: laneFiring ? '#0e0d12' : 'var(--text-secondary,#bbb)',
-                  transition: 'background 60ms, color 60ms, border-color 60ms',
+                  border: '1px solid transparent', background: 'transparent', color: 'var(--text-secondary,#bbb)',
                 }}
               >
                 {lane.label}
