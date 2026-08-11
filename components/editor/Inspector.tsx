@@ -958,7 +958,7 @@ export default function Inspector({
                 {/* Add a music visual driven by the audio (moved off the toolbar —
                     it's a per-audio option now). */}
                 {selectedItem.contentType === 'audio' && onAddMusicViz && (
-                  <button onClick={onAddMusicViz}
+                  <button onClick={onAddMusicViz} data-help-id="add-music-viz"
                     className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-xs font-medium"
                     style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', color: 'var(--text-primary)' }}>
                     <AudioLines size={13} /> Add Music Visual

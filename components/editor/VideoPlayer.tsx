@@ -532,6 +532,9 @@ export default function VideoPlayer({
     | { mode: 'crop'; edge: 'l' | 't' | 'r' | 'b'; startX: number; startY: number; base: { l: number; t: number; r: number; b: number }; zoom: number; rect: DOMRect }
     | null
   >(null)
+  // Active viewport snap guide lines, as frame fractions (0..1) on each axis,
+  // shown while the gizmo snaps an element edge/center to a frame edge/center/quarter.
+  const [snapGuides, setSnapGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
   const [monitorSize, setMonitorSize] = useState({ w: 640, h: 360 })
   useEffect(() => {
     const el = monitorRef.current
@@ -1337,30 +1340,89 @@ export default function VideoPlayer({
               base: { ...base }, zoom: gizmo.cropZoom, rect,
             }
           }
+          // Snapping: frame edges (0,1), center (0.5), quarters (0.25,0.75).
+          // Hold Option/Alt to bypass. Move snaps the element's edges+center to
+          // these frame lines; crop snaps the dragged inset to a frame line;
+          // resize snaps the scale to round stops.
+          const FRAME_LINES = [0, 0.25, 0.5, 0.75, 1]
+          const SNAP_PX = 8
+          const ZOOM_STOPS = [100, 125, 150, 200, 250, 300, 350, 400]
+          // Snap one pan axis: return the cropX/Y that lands the nearest element
+          // anchor (center / left|top edge / right|bottom edge) on a frame line,
+          // plus the frame fraction to draw a guide at. null = no snap in range.
+          const snapPan = (crop: number, dim: number, z: number): { crop: number; frac: number } | null => {
+            const span = z * dim / 2               // element half-extent, px
+            const shift = (crop / 100) * z * dim    // element-center offset from frame center, px
+            const anchors = [
+              { pos: shift, kind: 'c' as const },
+              { pos: shift - span, kind: 'l' as const },
+              { pos: shift + span, kind: 'r' as const },
+            ]
+            let best: { crop: number; frac: number; dpx: number } | null = null
+            for (const f of FRAME_LINES) {
+              const linePx = (f - 0.5) * dim
+              for (const a of anchors) {
+                const dpx = Math.abs(a.pos - linePx)
+                if (dpx > SNAP_PX || (best && dpx >= best.dpx)) continue
+                const targetShift = a.kind === 'c' ? linePx : a.kind === 'l' ? linePx + span : linePx - span
+                best = { crop: clamp(-50, 50, (targetShift / (z * dim)) * 100), frac: f, dpx }
+              }
+            }
+            return best ? { crop: best.crop, frac: best.frac } : null
+          }
           const onMove = (e: React.PointerEvent) => {
             const d = gizmoDragRef.current
             if (!d) return
+            const noSnap = e.altKey
             if (d.mode === 'move') {
               const dxPx = e.clientX - d.startX
               const dyPx = e.clientY - d.startY
-              const newX = clamp(-50, 50, d.baseX + (100 * dxPx) / ((d.zoom / 100) * d.rect.width))
-              const newY = clamp(-50, 50, d.baseY + (100 * dyPx) / ((d.zoom / 100) * d.rect.height))
+              let newX = clamp(-50, 50, d.baseX + (100 * dxPx) / ((d.zoom / 100) * d.rect.width))
+              let newY = clamp(-50, 50, d.baseY + (100 * dyPx) / ((d.zoom / 100) * d.rect.height))
+              const gx: number[] = [], gy: number[] = []
+              if (!noSnap) {
+                const z = d.zoom / 100
+                const sx = snapPan(newX, d.rect.width, z)
+                const sy = snapPan(newY, d.rect.height, z)
+                if (sx) { newX = sx.crop; gx.push(sx.frac) }
+                if (sy) { newY = sy.crop; gy.push(sy.frac) }
+              }
+              setSnapGuides({ x: gx, y: gy })
               onGizmoChange({ cropX: round2(newX), cropY: round2(newY) })
             } else if (d.mode === 'resize') {
               const dist = Math.hypot(e.clientX - d.cx, e.clientY - d.cy)
-              const newZoom = clamp(100, 400, d.baseZoom * (dist / d.startDist))
+              let newZoom = clamp(100, 400, d.baseZoom * (dist / d.startDist))
+              if (!noSnap) {
+                for (const s of ZOOM_STOPS) { if (Math.abs(newZoom - s) <= 6) { newZoom = s; break } }
+              }
+              if (snapGuides.x.length || snapGuides.y.length) setSnapGuides({ x: [], y: [] })
               onGizmoChange({ cropZoom: round2(newZoom) })
             } else {
               const zf = d.zoom / 100
               const dxF = (e.clientX - d.startX) / (zf * d.rect.width)
               const dyF = (e.clientY - d.startY) / (zf * d.rect.height)
+              // Snap a dragged inset to a frame line (edge 0, quarter 0.25).
+              const snapInset = (v: number) => {
+                if (noSnap) return v
+                for (const s of [0, 0.25]) { if (Math.abs(v - s) <= 0.025) return s }
+                return v
+              }
               let { l, t, r, b } = d.base
-              if (d.edge === 'l') l = clamp(0, 0.45, d.base.l + dxF)
-              if (d.edge === 'r') r = clamp(0, 0.45, d.base.r - dxF)
-              if (d.edge === 't') t = clamp(0, 0.45, d.base.t + dyF)
-              if (d.edge === 'b') b = clamp(0, 0.45, d.base.b - dyF)
+              if (d.edge === 'l') l = snapInset(clamp(0, 0.45, d.base.l + dxF))
+              if (d.edge === 'r') r = snapInset(clamp(0, 0.45, d.base.r - dxF))
+              if (d.edge === 't') t = snapInset(clamp(0, 0.45, d.base.t + dyF))
+              if (d.edge === 'b') b = snapInset(clamp(0, 0.45, d.base.b - dyF))
               if (l + r > 0.9) { if (d.edge === 'l') l = 0.9 - r; else r = 0.9 - l }
               if (t + b > 0.9) { if (d.edge === 't') t = 0.9 - b; else b = 0.9 - t }
+              // Guide on the cropped edge's frame fraction (left = l, right = 1-r, …).
+              const gx: number[] = [], gy: number[] = []
+              if (!noSnap) {
+                if (d.edge === 'l' && [0, 0.25].includes(l)) gx.push(l)
+                if (d.edge === 'r' && [0, 0.25].includes(r)) gx.push(1 - r)
+                if (d.edge === 't' && [0, 0.25].includes(t)) gy.push(t)
+                if (d.edge === 'b' && [0, 0.25].includes(b)) gy.push(1 - b)
+              }
+              setSnapGuides({ x: gx, y: gy })
               onGizmoChange({ crop: { l: round2(l), t: round2(t), r: round2(r), b: round2(b) } })
             }
           }
@@ -1368,6 +1430,7 @@ export default function VideoPlayer({
             if (gizmoDragRef.current) {
               try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {}
               gizmoDragRef.current = null
+              setSnapGuides({ x: [], y: [] })
             }
           }
           const handle = (corner: 'nw' | 'ne' | 'sw' | 'se'): React.CSSProperties => {
@@ -1409,6 +1472,13 @@ export default function VideoPlayer({
           }
           return (
             <div style={{ position: 'absolute', inset: 0, zIndex: 9, pointerEvents: 'none' }}>
+              {/* Snap guides — frame edge/center/quarter lines the drag locked to */}
+              {snapGuides.x.map((f, i) => (
+                <div key={`gx${i}`} style={{ position: 'absolute', left: `${f * 100}%`, top: 0, bottom: 0, width: 1, transform: 'translateX(-0.5px)', background: 'var(--accent)', boxShadow: '0 0 5px var(--accent)', opacity: 0.9 }} />
+              ))}
+              {snapGuides.y.map((f, i) => (
+                <div key={`gy${i}`} style={{ position: 'absolute', top: `${f * 100}%`, left: 0, right: 0, height: 1, transform: 'translateY(-0.5px)', background: 'var(--accent)', boxShadow: '0 0 5px var(--accent)', opacity: 0.9 }} />
+              ))}
               <div
                 style={{
                   position: 'absolute', inset: 0,

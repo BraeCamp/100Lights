@@ -1,45 +1,13 @@
 'use client'
 
 import { useRef, useState, useEffect, useLayoutEffect } from 'react'
-import { ZoomIn, ZoomOut, Maximize2, Plus, Magnet, Scissors, MousePointer2, ChevronDown, Music2, X } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize2, Plus, Magnet, Scissors, MousePointer2, ChevronDown } from 'lucide-react'
 import type { Caption } from '@/lib/types'
-import type { TimelineItem, Track, TransitionType, MediaItem, BeatGrid } from '@/lib/editor-types'
-import { PIXELS_PER_SECOND, RULER_HEIGHT, TOOLBAR_HEIGHT, beatDur, nearestBeat } from '@/lib/editor-types'
+import type { TimelineItem, Track, TransitionType, MediaItem } from '@/lib/editor-types'
+import { PIXELS_PER_SECOND, RULER_HEIGHT, TOOLBAR_HEIGHT } from '@/lib/editor-types'
+import { nearestSorted } from '@/lib/video-beats'
 import type { EditorTool } from './VideoEditor'
 import type { ContextMenuItem } from './ContextMenu'
-import { clampBpm } from '@/lib/tempo-map'
-
-// Beat-grid BPM box using the studio's clean numeric-input pattern: a free-typed
-// string draft (no clamping mid-type), select-all on focus, and clamp (40–300) +
-// commit only on blur / Enter. Invalid or empty input reverts to the current bpm.
-function BeatGridBpmInput({ bpm, onCommit }: { bpm: number; onCommit: (bpm: number) => void }) {
-  const [draft, setDraft] = useState<string | null>(null)
-  function commit() {
-    if (draft !== null) {
-      const n = parseFloat(draft)
-      if (Number.isFinite(n)) onCommit(clampBpm(n))
-    }
-    setDraft(null)
-  }
-  return (
-    <input
-      type="text"
-      inputMode="decimal"
-      value={draft ?? String(bpm)}
-      onChange={e => setDraft(e.target.value)}
-      onFocus={e => { setDraft(String(bpm)); e.currentTarget.select() }}
-      onBlur={commit}
-      onKeyDown={e => {
-        e.stopPropagation()
-        if (e.key === 'Enter') e.currentTarget.blur()
-        else if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur() }
-      }}
-      className="text-xs font-mono rounded px-1"
-      style={{ width: 52, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none', height: 20 }}
-      title="Beat grid BPM"
-    />
-  )
-}
 
 interface Props {
   items: TimelineItem[]
@@ -85,11 +53,9 @@ interface Props {
   mediaItems?: MediaItem[]
   playbackRate?: number
   syncAnchorRef?: React.MutableRefObject<{ time: number; wall: number }>
-  // Beat grid
-  beatGrid?: BeatGrid | null
-  onBeatGridChange?: (grid: BeatGrid | null) => void
-  onDetectBpm?: () => void
-  detectBpmStatus?: 'idle' | 'working' | 'error'
+  // Beat grid — precomputed snap points derived from per-clip tempo maps.
+  beatLines?: { beats: number[]; bars: number[] }
+  onEditBeatMap?: (id: string) => void
   onSplitAtBeats?: (id: string, unit: 'beat' | 'bar') => void
   onQuantizeToBeat?: (id: string) => void
   /** Lock/unlock a linked DAW-mix clip (stops/resumes following audio changes). */
@@ -124,7 +90,7 @@ const TRANSITION_LABELS: Record<TransitionType, string> = {
   dissolve: 'DIS', dip_black: 'DIP', wipe_right: 'WPE', push: 'PSH',
 }
 
-function snapFn(t: number, candidates: number[], pps: number, enabled: boolean, grid?: BeatGrid | null): number {
+function snapFn(t: number, candidates: number[], pps: number, enabled: boolean, beats?: number[]): number {
   if (!enabled) return t
   const range = SNAP_PX / pps
   let best = t, bestDist = range
@@ -132,12 +98,13 @@ function snapFn(t: number, candidates: number[], pps: number, enabled: boolean, 
     const d = Math.abs(t - c)
     if (d < bestDist) { bestDist = d; best = c }
   }
-  // Beat grid: the nearest beat competes with clip edges / markers (O(1), no
-  // candidate list — computed analytically from the grid).
-  if (grid) {
-    const b = nearestBeat(grid, t)
-    const d = Math.abs(t - b)
-    if (d < bestDist) { bestDist = d; best = b }
+  // Beat grid: the nearest per-clip beat competes with clip edges / markers.
+  if (beats && beats.length) {
+    const b = nearestSorted(beats, t)
+    if (b !== null) {
+      const d = Math.abs(t - b)
+      if (d < bestDist) { bestDist = d; best = b }
+    }
   }
   return best
 }
@@ -185,10 +152,8 @@ export default function Timeline({
   playbackRate = 1,
   syncAnchorRef: syncAnchorRefProp,
   onCreateFocusClip,
-  beatGrid = null,
-  onBeatGridChange,
-  onDetectBpm,
-  detectBpmStatus = 'idle',
+  beatLines,
+  onEditBeatMap,
   onSplitAtBeats,
   onQuantizeToBeat,
   onToggleDawLock,
@@ -208,41 +173,15 @@ export default function Timeline({
     settleTimerRef.current = setTimeout(() => setSettleId(null), 240)
   }
   useEffect(() => () => { if (settleTimerRef.current) clearTimeout(settleTimerRef.current) }, [])
-  // Position readout: bar.beat (when a grid is set) + timecode.
+  // Position readout: timecode.
   const fmtPos = (t: number) => {
     const m = Math.floor(t / 60), s = Math.max(0, t % 60)
-    const tc = `${m}:${s.toFixed(1).padStart(4, '0')}`
-    if (beatGrid) {
-      const spb = 60 / beatGrid.bpm, bpb = beatGrid.beatsPerBar || 4
-      const beat = Math.max(0, (t - beatGrid.offset) / spb)
-      return `${Math.floor(beat / bpb) + 1}.${Math.floor(beat % bpb) + 1} · ${tc}`
-    }
-    return tc
+    return `${m}:${s.toFixed(1).padStart(4, '0')}`
   }
   const [creatingFocus, setCreatingFocus] = useState<{ trackId: string; x0: number; x1: number } | null>(null)
   // null = not scrubbing; number = current scrub speed multiplier (1 = normal)
   const [scrubSpeed, setScrubSpeed] = useState<number | null>(null)
   const [showAddMenu, setShowAddMenu] = useState(false)
-
-  // Tap tempo — median of the last few tap intervals sets the grid BPM.
-  const tapsRef = useRef<number[]>([])
-  const [tapCount, setTapCount] = useState(0)
-  function handleTapTempo() {
-    const now = performance.now()
-    const taps = tapsRef.current
-    if (taps.length && now - taps[taps.length - 1] > 2500) taps.length = 0
-    taps.push(now)
-    if (taps.length > 8) taps.shift()
-    setTapCount(taps.length)
-    if (taps.length >= 4 && onBeatGridChange) {
-      const iv = taps.slice(1).map((t, i) => t - taps[i]).sort((a, b) => a - b)
-      const med = iv[Math.floor(iv.length / 2)]
-      if (med > 0) {
-        const bpm = Math.round((60000 / med) * 10) / 10
-        onBeatGridChange({ beatsPerBar: 4, offset: 0, ...(beatGrid ?? {}), bpm })
-      }
-    }
-  }
 
   // Playhead DOM refs — updated via RAF, bypassing React re-renders for 60fps motion.
   const phLineRef = useRef<HTMLDivElement>(null)   // vertical line over tracks
@@ -432,9 +371,9 @@ export default function Timeline({
 
       if (type === 'move') {
         let rawStart = origStart + dt
-        rawStart = snapFn(Math.max(0, rawStart), snapCandidates, capturedPps, snapEnabled, beatGrid)
+        rawStart = snapFn(Math.max(0, rawStart), snapCandidates, capturedPps, snapEnabled, beatLines?.beats)
         const rawEnd = rawStart + itemDuration
-        const snappedEnd = snapFn(rawEnd, snapCandidates, capturedPps, snapEnabled, beatGrid)
+        const snappedEnd = snapFn(rawEnd, snapCandidates, capturedPps, snapEnabled, beatLines?.beats)
         if (snappedEnd !== rawEnd) rawStart = snappedEnd - itemDuration
         const newStart = Math.max(0, rawStart)
 
@@ -459,7 +398,7 @@ export default function Timeline({
         // space), then map back to the source in-point.
         const rawIn = origIn + dt
         const edgeTime = origStart + (rawIn - origIn)
-        const snappedEdge = snapFn(edgeTime, snapCandidates, capturedPps, snapEnabled, beatGrid)
+        const snappedEdge = snapFn(edgeTime, snapCandidates, capturedPps, snapEnabled, beatLines?.beats)
         const newIn = Math.max(0, Math.min(origIn + (snappedEdge - origStart), origOut - 0.1))
         const newStart = origStart + (newIn - origIn)
         lastTrim = { edge: 'in', newIn, newOut: origOut, newStart: Math.max(0, newStart) }
@@ -469,7 +408,7 @@ export default function Timeline({
       } else {
         const rawOut = origOut + dt
         const edgeTime = origStart + (rawOut - origIn)
-        const snappedEdge = snapFn(edgeTime, snapCandidates, capturedPps, snapEnabled, beatGrid)
+        const snappedEdge = snapFn(edgeTime, snapCandidates, capturedPps, snapEnabled, beatLines?.beats)
         let newOut = origIn + (snappedEdge - origStart)
         // Loop boundaries live in source space — a second pass against those.
         newOut = snapFn(newOut, loopSnapPts, capturedPps, snapEnabled)
@@ -537,25 +476,29 @@ export default function Timeline({
   const ticks: number[] = []
   for (let t = 0; t <= duration + tickInt; t += tickInt) ticks.push(t)
 
-  // Beat/bar ticks — only when the grid is set and zoom gives them room.
+  // Beat/bar ticks — drawn from the per-clip tempo maps (beatLines), only when
+  // zoom gives them room. Multi-clip/multi-tempo, so ticks come from the union
+  // of every clip's snap points rather than one project grid.
   const beatTicks: Array<{ t: number; bar: boolean; n?: number }> = []
-  let showBarNumbers = false
-  if (beatGrid) {
-    const spb = beatDur(beatGrid)
-    const bpb = Math.max(1, beatGrid.beatsPerBar ?? 4)
-    const beatPx = spb * pps
-    const showBeats = beatPx >= 7
-    const showBars  = beatPx * bpb >= 22
-    showBarNumbers  = beatPx * bpb >= 44
+  const showBarNumbers = false
+  if (beatLines && beatLines.beats.length) {
+    const beats = beatLines.beats
+    const bars = beatLines.bars
+    // Smallest gap between adjacent lines → whether there's room to draw them.
+    let beatGap = Infinity
+    for (let i = 1; i < beats.length; i++) beatGap = Math.min(beatGap, beats[i] - beats[i - 1])
+    let barGap = Infinity
+    for (let i = 1; i < bars.length; i++) barGap = Math.min(barGap, bars[i] - bars[i - 1])
+    const showBeats = isFinite(beatGap) && beatGap * pps >= 7
+    const showBars = (isFinite(barGap) ? barGap * pps : (isFinite(beatGap) ? beatGap * 4 * pps : 0)) >= 22
     if (showBeats || showBars) {
-      const first = Math.ceil((0 - beatGrid.offset) / spb)
-      const last  = Math.floor((duration + tickInt - beatGrid.offset) / spb)
-      for (let k = first; k <= last && beatTicks.length < 6000; k++) {
-        const isBar = ((k % bpb) + bpb) % bpb === 0
-        if (!isBar && !showBeats) continue
-        const t = beatGrid.offset + k * spb
+      const barSet = new Set(bars.map(t => Math.round(t * 1000)))
+      for (const t of beats) {
         if (t < 0) continue
-        beatTicks.push({ t, bar: isBar, n: isBar ? Math.round(k / bpb) + 1 : undefined })
+        const bar = barSet.has(Math.round(t * 1000))
+        if (!bar && !showBeats) continue
+        beatTicks.push({ t, bar })
+        if (beatTicks.length >= 6000) break
       }
     }
   }
@@ -571,11 +514,15 @@ export default function Timeline({
       { id: 'dup',       label: 'Duplicate',          shortcut: '⌘D', onClick: () => onDuplicateItem(item.id) },
       { id: 's1',        separator: true, label: '' },
       { id: 'split',     label: 'Split at Playhead',  shortcut: '⌘B', onClick: () => onSplitItem(item.id, currentTime) },
-      ...(beatGrid && onSplitAtBeats ? [
+      // Beat grid — audio clips carry their own BPM/tempo sections (snap points).
+      ...(item.contentType === 'audio' && onEditBeatMap ? [
+        { id: 'beatmap', label: item.beatMap?.length ? 'Beat grid…' : 'Set BPM / beat grid…', onClick: () => onEditBeatMap(item.id) },
+      ] : []),
+      ...(item.beatMap?.length && onSplitAtBeats ? [
         { id: 'splitBars',  label: 'Split at Bars',   onClick: () => onSplitAtBeats(item.id, 'bar' as const) },
         { id: 'splitBeats', label: 'Split at Beats',  onClick: () => onSplitAtBeats(item.id, 'beat' as const) },
       ] : []),
-      ...(beatGrid && onQuantizeToBeat ? [
+      ...(item.beatMap?.length && onQuantizeToBeat ? [
         { id: 'quant', label: 'Snap Start to Beat', onClick: () => onQuantizeToBeat(item.id) },
       ] : []),
       ...(item.dawMixLinked && onToggleDawLock ? [
@@ -682,53 +629,6 @@ export default function Timeline({
             : <><Scissors     size={10} color="#e11d48"            /><span className="text-xs" style={{ color: '#e11d48', fontSize: 9 }}>BLADE</span></>
           }
         </div>
-
-        <div className="w-px h-4 mx-1" style={{ background: 'var(--border)' }} />
-
-        {/* Beat grid — BPM, tap, detect, downbeat */}
-        {onBeatGridChange && (beatGrid ? (
-          <div className="flex items-center gap-1">
-            <Music2 size={11} color="var(--accent-light)" />
-            <BeatGridBpmInput bpm={beatGrid.bpm} onCommit={bpm => onBeatGridChange({ ...beatGrid, bpm })} />
-            <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>BPM</span>
-            <button
-              onClick={handleTapTempo}
-              className="px-1.5 py-0.5 rounded text-xs"
-              style={{ color: 'var(--text-muted)', background: tapCount > 0 && tapCount < 4 ? 'var(--accent-subtle)' : 'transparent', border: '1px solid var(--border)' }}
-              title="Tap tempo — tap along with the music (4+ taps)"
-            >{tapCount > 0 && tapCount < 4 ? `Tap ${tapCount}` : 'Tap'}</button>
-            {onDetectBpm && (
-              <button
-                onClick={onDetectBpm}
-                disabled={detectBpmStatus === 'working'}
-                className="px-1.5 py-0.5 rounded text-xs"
-                style={{ color: detectBpmStatus === 'error' ? '#f87171' : 'var(--text-muted)', border: '1px solid var(--border)' }}
-                title="Detect BPM from the selected clip's audio (or the first audio clip)"
-              >{detectBpmStatus === 'working' ? 'Detecting…' : detectBpmStatus === 'error' ? 'No beat' : 'Detect'}</button>
-            )}
-            <button
-              onClick={() => onBeatGridChange({ ...beatGrid, offset: currentTime })}
-              className="px-1.5 py-0.5 rounded text-xs"
-              style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
-              title="Move bar 1 / beat 1 to the playhead"
-            >Set 1</button>
-            <button
-              onClick={() => onBeatGridChange(null)}
-              className="p-0.5 rounded"
-              style={{ color: 'var(--text-muted)' }}
-              title="Remove beat grid"
-            ><X size={11} /></button>
-          </div>
-        ) : (
-          <button
-            onClick={() => onBeatGridChange({ bpm: 120, offset: 0, beatsPerBar: 4 })}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs"
-            style={{ color: 'var(--text-muted)' }}
-            title="Add a beat grid — snap cuts and clips to the music"
-          >
-            <Music2 size={11} /> Beat grid
-          </button>
-        ))}
 
         <div className="w-px h-4 mx-1" style={{ background: 'var(--border)' }} />
 

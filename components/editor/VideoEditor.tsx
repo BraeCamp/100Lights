@@ -13,6 +13,7 @@ import MediaLibrary from '@/components/editor/MediaLibrary'
 import ContextMenu from '@/components/editor/ContextMenu'
 import { LogoMark } from '@/components/Logo'
 import { useResizable, ResizeHandle } from '@/components/editor/daw/useResizable'
+import { highlightHelpTargets } from '@/components/editor/daw/HelpButton'
 import { usePerfMode } from '@/lib/perf-mode'
 import { useRegisterCommands } from '@/lib/commands'
 import { readWorkspace, writeWorkspace } from '@/lib/editor-workspace'
@@ -68,11 +69,13 @@ import { writeAutosave, readAutosave, clearAutosave } from '@/lib/autosave'
 import {
   DEFAULT_ADJUSTMENTS, DEFAULT_TRACKS, DEFAULT_ASPECT, PROJECT_ASPECTS,
   RULER_HEIGHT, TRACK_HEIGHT, AUDIO_TRACK_HEIGHT, TOOLBAR_HEIGHT, PIXELS_PER_SECOND,
-  MODULE_DEFS, ALL_MODULE_KEYS, beatDur, nearestBeat,
-  type ModuleKey, type ProjectAspect, type BeatGrid,
+  MODULE_DEFS, ALL_MODULE_KEYS,
+  type ModuleKey, type ProjectAspect,
 } from '@/lib/editor-types'
 import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
-import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType } from '@/lib/editor-types'
+import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType, TempoSeg } from '@/lib/editor-types'
+import { projectBeatLines, clipBeatLines, nearestSorted } from '@/lib/video-beats'
+import BeatMapEditor from './BeatMapEditor'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { interpSpeedRamp } from '@/lib/video-export/speed'
 import { pickVisibleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss } from '@/lib/video-export/compositor'
@@ -736,6 +739,7 @@ export default function VideoEditor({
   const [showExport, setShowExport] = useState(false)
   const [showAppearance, setShowAppearance] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [helpTab, setHelpTab] = useState<'shortcuts' | 'features'>('features')
 
   // Viewport layout
   const [viewportTab, setViewportTab] = useState<'video' | 'audio'>(wsInit.viewportTab)
@@ -760,11 +764,14 @@ export default function VideoEditor({
   const [showSafeAreas, setShowSafeAreas] = useState(false)
   // Project frame shape — sizes the preview stage AND the export canvas
   const [projectAspect, setProjectAspect] = useState<ProjectAspect>(DEFAULT_ASPECT)
-  // Musical beat grid — ruler ticks, snap-to-beat, cut-on-beat tools
-  const [beatGrid, setBeatGrid] = useState<BeatGrid | null>(null)
+  // Per-audio-clip beat grids drive the timeline snap points (lib/video-beats).
+  // Opening the editor for one clip (via its right-click menu):
+  const [beatMapEditor, setBeatMapEditor] = useState<{ clipId: string } | null>(null)
   // Burned-in caption look (size/color/position/karaoke)
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(DEFAULT_CAPTION_STYLE)
-  const [detectBpmStatus, setDetectBpmStatus] = useState<'idle' | 'working' | 'error'>('idle')
+  // Union of every audio clip's tempo-derived beat/bar lines (timeline seconds) —
+  // the ruler ticks and drag/trim snapping both read this.
+  const beatLines = useMemo(() => projectBeatLines(timelineItems), [timelineItems])
   // Full DAW arrangement carried by this project (audio module) — lets the
   // video editor bounce the real mix without opening the DAW.
   const dawProjectRef = useRef<import('@/lib/daw-types').DawProject | null>(null)
@@ -1256,7 +1263,9 @@ export default function VideoEditor({
     const w = window as unknown as { __video?: Record<string, unknown> }
     const fetchToFile = async (url: string, name?: string, type?: string) => {
       const r = await fetch(url); const b = await r.blob()
-      return new File([b], name || url.split('/').pop() || 'media', { type: type || b.type })
+      // normalize shorthand ('video'/'audio') → a real MIME so handleFileImport's `startsWith('video/')` check works
+      const mime = type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/mpeg' : (type || b.type)
+      return new File([b], name || url.split('/').pop() || 'media', { type: mime })
     }
     w.__video = {
       getState: () => ({ name: localProjectName, captions: captionsRef.current, captionStyle,
@@ -1268,6 +1277,11 @@ export default function VideoEditor({
       setCaptions: (c: Caption[]) => setCaptionsWithHistory(c),
       setCaptionStyle: (s: CaptionStyle) => setCaptionStyle(s),
       selectMedia: (id: string) => setSelectedMediaId(id),
+      addTrack: (type: 'media' | 'video' | 'audio' = 'audio', id?: string) => {
+        const tid = id ?? `${type[0]}${Date.now() % 100000}`
+        setTracks(prev => prev.some(t => t.id === tid) ? prev : [...prev, { id: tid, label: type.toUpperCase(), type, height: 56 }])
+        return tid
+      },
       addToTimeline: (mediaId: string, o: { trackId?: string; startTime?: number } = {}) =>
         handleDropMedia(mediaId, o.trackId ?? (tracksRef.current.find(t => t.type === 'media' || t.type === 'video')?.id ?? 'v1'), o.startTime ?? 0),
       openExport: () => setShowExport(true),
@@ -1327,7 +1341,6 @@ export default function VideoEditor({
       setChapters(loaded.chapters ?? [])
       setMediaItems(resolvedMedia)
       setProjectAspect(loaded.aspect)
-      setBeatGrid(loaded.beatGrid)
       setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
       dawProjectRef.current = cfproj.dawProject ?? null
       setHasDawProject(!!cfproj.dawProject)
@@ -1425,7 +1438,7 @@ export default function VideoEditor({
         cloudAutoSaveFnRef.current()
       }, 30_000)
     }
-  }, [timelineItems, tracks, adjustments, projectAspect, beatGrid, captionStyle, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
+  }, [timelineItems, tracks, adjustments, projectAspect, captionStyle, localCaptions, localOutputs, localProjectName, chapters, mediaItems]) // eslint-disable-line
 
   // ── beforeunload guard ─────────────────────────────────────
   useEffect(() => {
@@ -1917,54 +1930,43 @@ export default function VideoEditor({
     setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, transitionIn: type, transitionDuration: dur } : i))
   }
 
-  // ── Beat grid ───────────────────────────────────────────────
+  // ── Beat grid (per audio clip) ──────────────────────────────
 
-  /** Detect BPM from the selected clip's audio (falls back to the first audio-bearing clip). */
-  async function handleDetectBpm() {
-    const source =
-      (selectedItem?.url && selectedItem.contentType !== 'title' ? selectedItem : null) ??
-      timelineItems.find(i => i.url && (i.contentType === 'audio' || i.contentType === 'video' || !i.contentType)) ??
-      null
-    const url = source?.url ?? mediaItems.find(m => m.url && m.contentType !== 'lut')?.url
-    if (!url) { setDetectBpmStatus('error'); setTimeout(() => setDetectBpmStatus('idle'), 2500); return }
-    setDetectBpmStatus('working')
+  /** Detect BPM + downbeat from ONE clip's audio (source seconds). Used by the
+   *  beat-grid editor's Detect button. Returns null on failure. */
+  async function detectClipBpm(clip: TimelineItem): Promise<{ bpm: number; offsetSrc: number } | null> {
+    if (!clip.url) return null
     try {
       const [{ estimateTempo }, ab] = await Promise.all([
         import('@/lib/beat-analyzer'),
-        fetch(url).then(r => r.arrayBuffer()),
+        fetch(clip.url).then(r => r.arrayBuffer()),
       ])
       const ctx = new AudioContext()
       const buffer = await ctx.decodeAudioData(ab)
       ctx.close?.().catch(() => {})
       const { bpm, firstOnset } = estimateTempo(buffer)
-      if (!bpm) throw new Error('no tempo')
-      // Downbeat: align the grid to the first strong onset, mapped to the
-      // timeline through the clip it came from (source ⇒ timeline seconds).
-      const offset = source ? Math.max(0, source.startTime + (firstOnset - source.inPoint)) : firstOnset
-      setBeatGrid(g => ({ beatsPerBar: 4, ...(g ?? {}), bpm, offset }))
-      setDetectBpmStatus('idle')
+      if (!bpm) return null
+      return { bpm, offsetSrc: Math.max(0, firstOnset) }
     } catch {
-      setDetectBpmStatus('error')
-      setTimeout(() => setDetectBpmStatus('idle'), 2500)
+      return null
     }
   }
 
-  /** Split a clip at every beat (or bar) boundary the grid puts inside it. */
+  /** Save (or clear) a clip's tempo map from the beat-grid editor. */
+  function handleSaveBeatMap(clipId: string, beatMap: TempoSeg[] | undefined) {
+    setTimelineItems(prev => prev.map(i => i.id === clipId ? { ...i, beatMap } : i))
+  }
+
+  /** Split a clip at every beat (or bar) line its own tempo map puts inside it. */
   function handleSplitAtBeats(id: string, unit: 'beat' | 'bar') {
-    const grid = beatGrid
-    if (!grid) return
     setTimelineItems(prev => {
       const clip = prev.find(i => i.id === id)
-      if (!clip) return prev
-      const step = beatDur(grid) * (unit === 'bar' ? (grid.beatsPerBar ?? 4) : 1)
+      if (!clip?.beatMap?.length) return prev
+      const { beats, bars } = clipBeatLines(clip)
+      const lines = unit === 'bar' ? bars : beats
       const clipStart = clip.startTime
       const clipEnd = clip.startTime + (clip.outPoint - clip.inPoint)
-      const cuts: number[] = []
-      let k = Math.ceil((clipStart + 0.05 - grid.offset) / step)
-      for (; grid.offset + k * step < clipEnd - 0.05; k++) {
-        const t = grid.offset + k * step
-        if (t > clipStart + 0.05) cuts.push(t)
-      }
+      const cuts = lines.filter(t => t > clipStart + 0.05 && t < clipEnd - 0.05)
       if (!cuts.length) return prev
       const segments: TimelineItem[] = []
       let segStart = clipStart
@@ -2023,11 +2025,11 @@ export default function VideoEditor({
     if (next === 'live') setTimeout(() => { void resyncLinkedClip(clip) }, 50)
   }
 
-  /** Move a clip's start to the nearest beat. */
+  /** Move a clip's start to the nearest beat across all clips' grids. */
   function handleQuantizeToBeat(id: string) {
-    const grid = beatGrid
-    if (!grid) return
-    setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, startTime: nearestBeat(grid, i.startTime) } : i))
+    const lines = projectBeatLines(timelineItemsRef.current).beats
+    if (!lines.length) return
+    setTimelineItems(prev => prev.map(i => i.id === id ? { ...i, startTime: nearestSorted(lines, i.startTime) ?? i.startTime } : i))
   }
 
   /**
@@ -2228,9 +2230,9 @@ export default function VideoEditor({
       }
       // Peaks came back with the render — no re-decode of the file needed.
       if (renderedPeaks.length) setMediaItems(prev => prev.map(m => m.url === url ? { ...m, peaks: renderedPeaks } : m))
-      // The mix defines the musical grid — adopt the DAW tempo unless the user
-      // already tuned a grid of their own.
-      if (daw.tempo) setBeatGrid(g => g ?? { bpm: daw.tempo, offset: 0, beatsPerBar: 4 })
+      // NOTE: the beat grid is NOT seeded from the linked DAW tempo — the video
+      // module's snap points come from each audio clip's own beat map (set via
+      // its right-click menu), which always takes priority.
       lastMixErrorRef.current = ''
       lastRenderFpRef.current.set(linkKey, fp)   // remember what we rendered so an unchanged re-sync skips
       setBounceStatus('idle')
@@ -3030,7 +3032,6 @@ export default function VideoEditor({
       timelineItems,
       adjustments,
       aspect: projectAspect,
-      beatGrid,
       captionStyle,
       zoomLevel,
       captions: localCaptions,
@@ -3070,7 +3071,6 @@ export default function VideoEditor({
     setLocalOutputs(loaded.outputs)
     setChapters(loaded.chapters ?? [])
     setProjectAspect(loaded.aspect)
-    setBeatGrid(loaded.beatGrid)
     setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
     resetHistory({ timelineItems: loaded.timelineItems, tracks: loadedTracks, adjustments: DEFAULT_ADJUSTMENTS, captions: loaded.captions })
     // Cloud autosave: clear it now that we've loaded it (manual save will write fresh data)
@@ -3420,6 +3420,7 @@ export default function VideoEditor({
         {activePage === 'edit' && (
           <button
             onClick={addTitleClip}
+            data-help-id="add-title"
             className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
             title="Add a text / title clip at the playhead"
             style={{ color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)' }}
@@ -3444,6 +3445,7 @@ export default function VideoEditor({
             </button>
             <button
               onClick={() => setActiveTool('blade')}
+              data-help-id="blade-tool"
               className="flex items-center gap-1 px-2 py-1 rounded text-xs"
               title="Blade tool (B) — click to split clips"
               style={{
@@ -3596,6 +3598,7 @@ export default function VideoEditor({
         <button
           onClick={() => setShowExport(true)}
           disabled={timelineItems.length === 0}
+          data-help-id="export-btn"
           className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium shrink-0"
           style={{
             background: timelineItems.length === 0 ? 'var(--border)' : 'var(--accent)',
@@ -4136,10 +4139,8 @@ export default function VideoEditor({
             selectedIds={selectedIds}
             onMultiSelect={setSelectedIds}
             mediaItems={mediaItems}
-            beatGrid={beatGrid}
-            onBeatGridChange={setBeatGrid}
-            onDetectBpm={handleDetectBpm}
-            detectBpmStatus={detectBpmStatus}
+            beatLines={beatLines}
+            onEditBeatMap={id => setBeatMapEditor({ clipId: id })}
             onSplitAtBeats={handleSplitAtBeats}
             onQuantizeToBeat={handleQuantizeToBeat}
             onToggleDawLock={handleToggleDawLock}
@@ -4195,6 +4196,7 @@ export default function VideoEditor({
               <button
                 key={id}
                 onClick={() => setActivePage(id)}
+                data-help-id={`page-${id}`}
                 className="flex items-center justify-center gap-1.5 px-5 transition-colors rounded-sm"
                 style={{
                   height: 30,
@@ -4215,6 +4217,20 @@ export default function VideoEditor({
       </div>
 
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
+
+      {/* Per-audio-clip beat-grid editor (opened from a clip's right-click menu) */}
+      {beatMapEditor && (() => {
+        const clip = timelineItems.find(i => i.id === beatMapEditor.clipId)
+        if (!clip) return null
+        return (
+          <BeatMapEditor
+            clip={clip}
+            onSave={(bm) => handleSaveBeatMap(clip.id, bm)}
+            onClose={() => setBeatMapEditor(null)}
+            onDetect={() => detectClipBpm(clip)}
+          />
+        )
+      })()}
 
       {/* Live audio→video link: listen to the project's DAW collab room and
           re-bounce the linked mix track when the arrangement changes. */}
@@ -4357,10 +4373,60 @@ export default function VideoEditor({
             style={{ width: 560, maxHeight: '85vh', overflow: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border-light)' }}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
-              <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Keyboard Shortcuts</span>
+            <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+              <div className="flex items-center gap-1">
+                {([['features', 'Features'], ['shortcuts', 'Shortcuts']] as const).map(([id, label]) => (
+                  <button key={id} onClick={() => setHelpTab(id)}
+                    className="text-xs font-semibold px-3 py-1.5 rounded"
+                    style={{
+                      background: helpTab === id ? 'var(--accent)' : 'transparent',
+                      color: helpTab === id ? '#fff' : 'var(--text-muted)',
+                    }}>{label}</button>
+                ))}
+              </div>
               <button onClick={() => setShowShortcuts(false)} style={{ color: 'var(--text-muted)', fontSize: 18, lineHeight: 1 }}><X size={18} /></button>
             </div>
+
+            {/* ── Features tab: click a feature to jump to (and glow) its control ── */}
+            {helpTab === 'features' && (() => {
+              const go = (page: EditorPage | undefined, ids: string[]) => {
+                setShowShortcuts(false)
+                const nav = page && page !== activePage
+                if (nav) setActivePage(page)
+                if (ids.length) window.setTimeout(() => highlightHelpTargets(ids), nav ? 400 : 80)
+              }
+              const FEATURES: { title: string; desc: string; page?: EditorPage; ids: string[] }[] = [
+                { title: 'Turn audio into visuals', desc: 'Add a waveform / spectrum visual driven by an audio clip. Select an audio clip on the timeline first, then hit Add Music Visual in the inspector.', page: 'edit', ids: ['add-music-viz'] },
+                { title: 'Beat grid & BPM snapping', desc: "Right-click an audio clip → Beat grid to set its BPM (and extra tempo sections by timestamp or bar). The clip's beats then become snapping points.", page: 'edit', ids: [] },
+                { title: 'Reposition, resize & crop', desc: "Select a clip, then drag inside the preview to move, corners to resize, edges to crop. Items snap to the frame's edges, center and quarters — hold Option to bypass.", page: 'edit', ids: [] },
+                { title: 'Add a title / text', desc: 'Drop a text or title clip at the playhead, then style it in the inspector.', page: 'edit', ids: ['add-title'] },
+                { title: 'Blade (split) tool', desc: 'Click clips to cut them where you click. Press A or Esc to go back to the select tool.', page: 'edit', ids: ['blade-tool'] },
+                { title: 'Import media', desc: 'Bring in video, audio, images and LUTs — or import from a URL.', page: 'edit', ids: ['media-library'] },
+                { title: 'Color grading', desc: 'Grade the look — exposure, contrast, color balance and LUTs — on the Color page.', page: 'color', ids: ['page-color'] },
+                { title: 'Audio mixer', desc: 'Levels, fades and per-track mixing on the Audio page.', page: 'audio', ids: ['page-audio'] },
+                { title: 'Export the video', desc: 'Render the finished timeline to a downloadable video file.', ids: ['export-btn'] },
+              ]
+              return (
+                <div className="p-4 flex flex-col gap-1.5">
+                  {FEATURES.map(f => (
+                    <button key={f.title} onClick={() => go(f.page, f.ids)}
+                      className="text-left rounded-lg px-3 py-2.5 transition-colors"
+                      style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{f.title}</span>
+                        <span className="text-xs shrink-0" style={{ color: 'var(--accent-light)' }}>Show me →</span>
+                      </div>
+                      <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)', lineHeight: 1.45 }}>{f.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              )
+            })()}
+
+            {helpTab === 'shortcuts' && (
+            <>
             <div className="p-5 grid gap-5" style={{ gridTemplateColumns: '1fr 1fr' }}>
               {[
                 { section: 'Transport', rows: [
@@ -4421,6 +4487,8 @@ export default function VideoEditor({
             <p className="px-5 pb-4 text-xs text-center" style={{ color: 'var(--text-muted)' }}>
               Ruler: drag left/right to scrub · drag down while scrubbing for finer control
             </p>
+            </>
+            )}
           </div>
         </div>
       )}

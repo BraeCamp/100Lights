@@ -11,7 +11,7 @@ import { BundleImportError, importFireflyBundle, isZipFile } from './firefly-bun
 import { loadFolder, verifyWritePermission, writeToFolder } from './local-folder'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
-import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle } from '@/lib/editor-types'
+import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle, TempoSeg } from '@/lib/editor-types'
 
 export const CF_VERSION = 1
 export const CF_EXT     = '.cfproj'
@@ -88,6 +88,7 @@ export interface SerializedClip {
   focusKeyframes?: Array<{ time: number; x: number; y: number }>
   followFocusClipId?: string
   crop?: { l: number; t: number; r: number; b: number }
+  beatMap?: TempoSeg[]
 }
 
 export interface SerializedOutput {
@@ -242,6 +243,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       focusKeyframes:   item.focusKeyframes,
       followFocusClipId: item.followFocusClipId,
       crop:             item.crop,
+      beatMap:          item.beatMap,
     })),
     adjustments: snap.adjustments,
     aspect: snap.aspect,
@@ -343,6 +345,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     focusKeyframes:   clip.focusKeyframes,
     followFocusClipId: clip.followFocusClipId,
     crop:             clip.crop,
+    beatMap:          clip.beatMap,
     // url is intentionally absent — media is offline until re-linked
   }))
 

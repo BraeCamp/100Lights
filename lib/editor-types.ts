@@ -45,6 +45,17 @@ export function nearestBeat(grid: BeatGrid, t: number): number {
   return Math.max(0, grid.offset + Math.round((t - grid.offset) / spb) * spb)
 }
 
+// Per-audio-clip tempo map — a clip can carry its own BPM, and split into
+// several tempo sections (each starting at a source-time in the audio file).
+// This is what creates a clip's snapping points; it is NOT tied to any linked
+// DAW project (the clip's own map always wins). See lib/video-beats.ts.
+export interface TempoSeg {
+  src: number          // seconds into the audio SOURCE where this tempo begins
+                       // (the first segment's src is the downbeat / beat-1 offset)
+  bpm: number          // > 0
+  beatsPerBar?: number // default 4
+}
+
 // ── Caption style ─────────────────────────────────────────────
 // Project-wide look for burned-in captions. `size` scales the base size the
 // renderer derives from frame height, so the same style reads correctly at
@@ -168,6 +179,8 @@ export interface TimelineItem {
   // transformed space in preview (CSS clip-path) and export (ctx.clip), so the two
   // stay pixel-identical. Constraint: l+r ≤ 0.9 and t+b ≤ 0.9.
   crop?: { l: number; t: number; r: number; b: number }
+  /** Per-clip tempo map (audio clips) — BPM sections that create snap points. */
+  beatMap?: TempoSeg[]
 }
 
 export interface Track {
