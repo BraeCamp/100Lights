@@ -25,13 +25,20 @@ async function localTracks(slug: string): Promise<BroadcastTrack[]> {
 async function jamendoTracks(tags: string, order = 'popularity_total', limit = 40): Promise<BroadcastTrack[]> {
   const cid = process.env.JAMENDO_CLIENT_ID
   if (!cid) return []
-  const url = `https://api.jamendo.com/v3.0/tracks/?client_id=${cid}&format=json&limit=${limit}` +
-    `&fuzzytags=${encodeURIComponent(tags)}&order=${order}&audioformat=mp32&include=licenses&groupby=artist_id`
+  // fuzzytags uses '+' to separate tags — DON'T url-encode it (that turns '+' into %2B → 0 results).
+  // Encode each tag's spaces, keep the '+' separators.
+  const ft = tags.split('+').map(t => encodeURIComponent(t.trim())).filter(Boolean).join('+')
+  // Fetch Jamendo's max (200) so plenty survive the NonCommercial filter below; `limit` then caps
+  // the returned playlist.
+  const url = `https://api.jamendo.com/v3.0/tracks/?client_id=${cid}&format=json&limit=200` +
+    `&fuzzytags=${ft}&order=${order}&audioformat=mp32&include=licenses&groupby=artist_id`
   try {
     const r = await fetch(url, { next: { revalidate: 1800 } })
     if (!r.ok) return []
     const data = await r.json() as { results?: { name: string; artist_name: string; audio: string; license_ccurl?: string }[] }
-    return (data.results ?? []).filter(t => t.audio).map(t => ({
+    // Drop NonCommercial (by-nc*) tracks — not usable on a monetized stream. For the full catalogue
+    // + guaranteed clearance, buy Jamendo's commercial radio licence (then all tags are fair game).
+    return (data.results ?? []).filter(t => t.audio && !/\/by-nc/i.test(t.license_ccurl || '')).map(t => ({
       title: t.name,
       artist: t.artist_name,
       url: t.audio,
