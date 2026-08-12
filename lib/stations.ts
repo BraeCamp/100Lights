@@ -42,7 +42,27 @@ export interface Station {
   showNowPlaying?: boolean
 }
 
+// Kevin MacLeod (incompetech.com) — CC BY 3.0. We control the playlist, so the credit is stored
+// per track (no recognition/AudD needed — that's only for unknown audio). Streams through the
+// broadcast audio proxy (incompetech is allow-listed). Put the full credit in the video description.
+const km = (title: string): BroadcastTrack => ({
+  title,
+  artist: 'Kevin MacLeod',
+  url: `https://incompetech.com/music/royalty-free/mp3-royaltyfree/${encodeURIComponent(title)}.mp3`,
+  license: 'CC BY 3.0',
+  attribution: `“${title}” by Kevin MacLeod (incompetech.com) · CC BY 3.0`,
+})
+
 export const STATIONS: Station[] = [
+  {
+    slug: 'cinematic',
+    title: 'Cinematic — Epic & Orchestral Radio',
+    tagline: 'Sweeping, dramatic instrumentals — royalty-free (Kevin MacLeod, CC BY).',
+    scene: { style: 'none', videoMode: 'none', videoLook: 'noir', videoSet: ['Abstract', 'Film', 'Aerial'], brightnessSet: ['dark', 'mid'], speedSet: ['slow', 'standard'], matchEnergy: true, reactive: true },
+    tracks: ['Prelude and Action', 'The Descent', 'Impact Prelude', 'At Rest', 'Anguish', 'Killers', 'Crossing the Chasm', 'Ossuary 1 - A Beginning', 'Volatile Reaction', 'Despair and Triumph', 'Hitman', 'Echoes of Time', 'Heavy Interlude'].map(km),
+    shuffle: true,
+    showNowPlaying: true,
+  },
   {
     slug: 'dnd-tavern',
     title: 'D&D Tavern — Ambience Radio',
