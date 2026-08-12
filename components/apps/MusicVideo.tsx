@@ -277,7 +277,7 @@ type LiveStyle = 'none' | 'bars' | 'radial' | 'wave'
 type ColorMode = 'solid' | 'spectrum' | 'random'
 interface Plane { h0: number; h1: number; sat: number; light: number }   // a hue band selected off the colour map
 interface LiveColor { paletteId: string | null; plane: Plane | null; mode: ColorMode }
-interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: number; gain: number; mirror: boolean; glow: boolean; trail: boolean; bg: boolean }
+interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: number; gain: number; mirror: boolean; glow: boolean; trail: boolean; bg: boolean; beatColor?: boolean; beatShift?: number }
 
 // Curated multi-colour palettes the user can pick, or derive their own from the colour map.
 const PALETTES: { id: string; name: string; colors: string[] }[] = [
@@ -554,10 +554,13 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
 
   const n = freq.length, g = o.gain
   const N = o.colors.length
-  const mid = o.colors[Math.floor(N / 2)]
+  // Beat-synced colour: rotate the palette by one step on each detected beat.
+  const sh = o.beatColor ? (((o.beatShift ?? 0) % N) + N) % N : 0
+  const cols = sh ? o.colors.map((_, i) => o.colors[(i + sh) % N]) : o.colors
+  const mid = cols[Math.floor(N / 2)]
   ctx.shadowColor = mid
-  const randColor = (i: number) => { const x = Math.sin((i + 1) * 97.13 + o.seed) * 43758.5453; return o.colors[Math.floor((x - Math.floor(x)) * N)] }
-  const colorAt = (t: number, i: number) => o.mode === 'solid' ? mid : o.mode === 'spectrum' ? o.colors[Math.min(N - 1, Math.max(0, Math.floor(t * N)))] : randColor(i)
+  const randColor = (i: number) => { const x = Math.sin((i + 1) * 97.13 + o.seed) * 43758.5453; return cols[Math.floor((x - Math.floor(x)) * N)] }
+  const colorAt = (t: number, i: number) => o.mode === 'solid' ? mid : o.mode === 'spectrum' ? cols[Math.min(N - 1, Math.max(0, Math.floor(t * N)))] : randColor(i)
 
   // Perceptual frequency sampling — spreads bass/mid/treble evenly instead of bunching low.
   // Music is naturally bass-heavy, so apply a gentle linear spectral tilt: leave the low
@@ -609,13 +612,13 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
     ctx.closePath()
     const rg = ctx.createRadialGradient(cx, cy, base * 0.5, cx, cy, base + amp)
     if (o.mode === 'solid') { rg.addColorStop(0, lighten(mid, 0.4)); rg.addColorStop(1, mid) }
-    else { rg.addColorStop(0, o.colors[0]); rg.addColorStop(0.5, mid); rg.addColorStop(1, o.colors[N - 1]) }
+    else { rg.addColorStop(0, cols[0]); rg.addColorStop(0.5, mid); rg.addColorStop(1, cols[N - 1]) }
     ctx.fillStyle = rg; ctx.globalAlpha = 0.32; ctx.fill()
     ctx.globalAlpha = 1; ctx.lineWidth = Math.max(2, Math.min(w, h) / 260); ctx.strokeStyle = lighten(mid, 0.35); ctx.stroke()
   } else {
     if (o.mode === 'spectrum') {
       const lg = ctx.createLinearGradient(0, 0, w, 0)
-      for (let i = 0; i < N; i++) lg.addColorStop(i / (N - 1), o.colors[i])
+      for (let i = 0; i < N; i++) lg.addColorStop(i / (N - 1), cols[i])
       ctx.strokeStyle = lg
     } else ctx.strokeStyle = lighten(mid, 0.3)
     ctx.lineWidth = Math.max(2.5, Math.min(w, h) / 200)
@@ -682,6 +685,15 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const [running, setRunning] = useState(false)
   const [source, setSource] = useState<'mic' | 'device' | 'file' | null>(null)
   const [style, setStyle] = useState<LiveStyle>('bars')
+  const [beatColor, setBeatColor] = useState(false)         // cycle colours on each detected beat
+  const [bpm, setBpm] = useState(0)                         // detected tempo (0 = not locked yet)
+  const beatColorRef = useRef(false); beatColorRef.current = beatColor
+  const bassAvgRef = useRef(0)                              // running bass energy, for onset detection
+  const lastBeatRef = useRef(0)                            // debounce beats
+  const prevBeatRef = useRef(0)                            // for the inter-beat interval → BPM
+  const beatShiftRef = useRef(0)                            // colour rotation, bumped each beat
+  const bpmEmaRef = useRef(0)
+  const lastBpmUiRef = useRef(0)
   const [delayMs, setDelayMs] = useState(0)
   const [err, setErr] = useState<string | null>(null)
   const [fs, setFs] = useState(false)
@@ -831,7 +843,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     setColorCfg({ paletteId: look.palette, plane: null, mode: look.mode })
     setGain(look.gain); setSmoothing(look.smoothing)
     setMirror(look.mirror); setGlow(look.glow); setTrail(look.trail)
-    setMatchVisuals(look.match); setEqFilters(look.eq)
+    setMatchVisuals(look.match); setEqFilters(look.eq); setBeatColor(!!look.beat)
     setBlur(look.filters.blur); setBrightness(look.filters.brightness); setSaturate(look.filters.saturate); setHueRot(look.filters.hue)
     setBgCat(look.bg.browse); setActiveLook(look); shuffleTo(look)
   }, [shuffleTo])
@@ -858,7 +870,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const wakeRef = useRef<{ release: () => Promise<void> } | null>(null)
   const bufRef = useRef<Array<{ t: number; freq: Uint8Array; wave: Uint8Array }>>([])
   const optsRef = useRef<LiveOpts>({ style, colors, mode: colorCfg.mode, seed, gain, mirror, glow, trail, bg: hasBg })
-  useEffect(() => { optsRef.current = { style, colors, mode: colorCfg.mode, seed, gain, mirror, glow, trail, bg: hasBg } }, [style, colors, colorCfg.mode, seed, gain, mirror, glow, trail, hasBg])
+  useEffect(() => { optsRef.current = { style, colors, mode: colorCfg.mode, seed, gain, mirror, glow, trail, bg: hasBg, beatColor } }, [style, colors, colorCfg.mode, seed, gain, mirror, glow, trail, hasBg, beatColor])
   const delayRef = useRef(delayMs); useEffect(() => { delayRef.current = delayMs }, [delayMs])
   const smoothingRef = useRef(smoothing)
   useEffect(() => { smoothingRef.current = smoothing; if (analyserRef.current) analyserRef.current.smoothingTimeConstant = smoothing }, [smoothing])
@@ -930,7 +942,21 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           const target = now - delayRef.current
           let f = buf[buf.length - 1]
           for (let i = buf.length - 1; i >= 0; i--) { if (buf[i].t <= target) { f = buf[i]; break } }
-          drawLive(cv, f.freq, f.wave, optsRef.current)
+          // Beat detection off the low band (kick): energy rising above a running average,
+          // debounced → a beat pulse that cycles the palette + estimates BPM.
+          let bass = 0; for (let i = 0; i < 12; i++) bass += f.freq[i]
+          bass /= 12 * 255
+          bassAvgRef.current = bassAvgRef.current * 0.94 + bass * 0.06
+          if (bass > bassAvgRef.current * 1.35 && bass > 0.12 && now - lastBeatRef.current > 250) {
+            const iv = now - prevBeatRef.current; prevBeatRef.current = now; lastBeatRef.current = now
+            beatShiftRef.current++
+            if (iv > 250 && iv < 2000) {
+              const inst = 60000 / iv
+              bpmEmaRef.current = bpmEmaRef.current ? bpmEmaRef.current * 0.8 + inst * 0.2 : inst
+              if (now - lastBpmUiRef.current > 500) { lastBpmUiRef.current = now; setBpm(Math.round(bpmEmaRef.current)) }
+            }
+          }
+          drawLive(cv, f.freq, f.wave, { ...optsRef.current, beatShift: beatShiftRef.current })
           // Overall loudness off the spectrum — drives both the EQ filter pulse and the
           // rolling "song energy" that picks energy-matched backgrounds.
           let s = 0; for (let i = 0; i < f.freq.length; i++) s += f.freq[i]
@@ -996,6 +1022,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     <div className="mv-live">
       <style>{`@keyframes mv-amb{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}} .mv-ambient{animation:mv-amb 16s ease-in-out infinite}
 @keyframes mv-grain{0%{background-position:0 0}25%{background-position:-6% 5%}50%{background-position:5% -4%}75%{background-position:-4% -6%}100%{background-position:0 0}} .mv-grain{animation:mv-grain .6s steps(3) infinite}
+@keyframes mv-beat{0%,100%{transform:scale(1);opacity:.6}50%{transform:scale(1.5);opacity:1}}
 .mv-live{container-type:inline-size}
 .mv-split{display:flex;flex-direction:column}
 .mv-stage{position:sticky;top:0;z-index:3;background:var(--bg-base);padding-bottom:12px}
@@ -1137,6 +1164,20 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             <button type="button" onClick={() => setSeed(Math.floor(Math.random() * 1e6))} style={{ padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>Shuffle</button>
           )}
         </div>
+
+        {/* Beat-synced colour */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '14px 0 0' }}>
+          <button type="button" onClick={() => setBeatColor(v => !v)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: beatColor ? 'var(--accent)' : 'var(--bg-card)', color: beatColor ? '#0e0d12' : 'var(--text-secondary)' }}>
+            <Activity size={13} /> Colour on the beat
+          </button>
+          {running && bpm > 0 && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--accent)', animation: 'mv-beat 0.5s ease-in-out infinite' }} /> {bpm} BPM
+            </span>
+          )}
+        </div>
+        {beatColor && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0', lineHeight: 1.5 }}>The palette steps forward on every kick — punchy for EDM, hip-hop and pop. Genre looks turn this on for the beat-driven genres.</p>}
 
         {/* Saved colour presets */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '14px 0 0' }}>

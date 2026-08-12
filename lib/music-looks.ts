@@ -25,6 +25,7 @@ export interface GenreLook {
   trail: boolean
   match: boolean
   eq: boolean
+  beat?: boolean   // cycle colours on the beat (on for beat-driven genres)
   filters: { blur: number; brightness: number; saturate: number; hue: number }
   // Random background pool (mix of image ids, video ids, ambient ids). `browse` =
   // the library category to preselect for manual picking.
@@ -50,6 +51,7 @@ export const GENRE_LOOKS: GenreLook[] = [
     id: 'edm', name: 'EDM', desc: 'Punchy, bright, reactive',
     style: 'bars', palette: 'neon', mode: 'spectrum', gain: 1.7, smoothing: 0.6,
     mirror: true, glow: true, trail: false, match: true, eq: true,
+    beat: true,
     filters: { blur: 0, brightness: 1.05, saturate: 1.4, hue: 0 },
     bg: { pool: ['artsy-neon-grid', 'artsy-strobe', 'artsy-disco', 'artsy-laser', 'artsy-neon-tunnel', 'artsy-powder', 'artsy-plasma-ball', 'particles-cyan', 'nebula-violet', 'city-night', 'nebula'], browse: 'Neon' },
   },
@@ -57,6 +59,7 @@ export const GENRE_LOOKS: GenreLook[] = [
     id: 'hiphop', name: 'Hip-hop', desc: 'Bold and heavy',
     style: 'bars', palette: 'fire', mode: 'spectrum', gain: 1.5, smoothing: 0.75,
     mirror: true, glow: true, trail: true, match: true, eq: true,
+    beat: true,
     filters: { blur: 1, brightness: 0.95, saturate: 1.2, hue: 0 },
     bg: { pool: ['artsy-neon-signs', 'artsy-light-trails', 'artsy-city-bokeh-night', 'artsy-smoke-dance', 'artsy-liquid-metal', 'artsy-spotlight', 'city-timelapse', 'night-neon', 'liquid-magma', 'nebula'], browse: 'Neon' },
   },
@@ -78,6 +81,7 @@ export const GENRE_LOOKS: GenreLook[] = [
     id: 'pop', name: 'Pop', desc: 'Bright and playful',
     style: 'bars', palette: 'candy', mode: 'spectrum', gain: 1.3, smoothing: 0.75,
     mirror: true, glow: true, trail: true, match: true, eq: true,
+    beat: true,
     filters: { blur: 0, brightness: 1.05, saturate: 1.25, hue: 0 },
     bg: { pool: ['artsy-bubbles', 'artsy-glitter', 'artsy-holographic', 'artsy-disco', 'artsy-liquid-color', 'artsy-lens-flare', 'bokeh-lights', 'particles-cyan', 'beach-sunset', 'aurora'], browse: 'Light' },
   },
