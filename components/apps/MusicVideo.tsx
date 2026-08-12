@@ -8,7 +8,7 @@
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -20,7 +20,7 @@ import { FORMATS } from '@/lib/song-video/formats.mjs'
 import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
-import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, clipEnergy, clipBrightness, BRIGHTNESS_LABEL, type BgClip, type BgCategory, type Energy, type Brightness } from '@/lib/bg-library'
+import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, clipEnergy, clipBrightness, BRIGHTNESS_LABEL, clipSpeed, SPEED_LABEL, TRANSITION_CLIPS, type BgClip, type BgCategory, type Energy, type Brightness, type Speed } from '@/lib/bg-library'
 import { detectMediaKind } from '@/lib/media-import'
 import { useMediaDrop } from '@/lib/use-media-drop'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
@@ -283,6 +283,10 @@ interface LiveColor { paletteId: string | null; plane: Plane | null; mode: Color
 interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: number; gain: number; mirror: boolean; glow: boolean; trail: boolean; bg: boolean; beatColor?: boolean; beatShift?: number; density?: number }
 
 // A saved "scene" — the whole Lightning Bug setup (look, filters, reactivity + video set).
+// Calm, low-movement clips for idle mode (measured — see scripts/tag-bg-clips.mjs), intersected
+// with whatever is actually in the library.
+const TRANSITION_SET = new Set(TRANSITION_CLIPS.filter(id => BG_LIBRARY.some(c => c.id === id && c.kind === 'video')))
+
 interface Scene {
   id: string; name: string
   style: LiveStyle; colorCfg: LiveColor; seed: number; videoMode: string; videoLook: string
@@ -290,7 +294,7 @@ interface Scene {
   blur: number; brightness: number; saturate: number; hueRot: number
   beatColor: boolean; punchAmt: number
   reactive: boolean; matchVisuals: boolean; matchEnergy: boolean; autoShuffle: boolean
-  videoSet: BgCategory[]; brightnessSet?: Brightness[]; switchChance: number
+  videoSet: BgCategory[]; brightnessSet?: Brightness[]; speedSet?: Speed[]; idleTransition?: boolean; switchChance: number
   bgCat: BgCategory; bgKind: string; bgClipId: string | null
   isDefault?: boolean   // auto-loads when Lightning Bug opens
 }
@@ -794,6 +798,18 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const videoSetRef = useRef<BgCategory[]>([]); videoSetRef.current = videoSet
   const [brightnessSet, setBrightnessSet] = useState<Brightness[]>([])   // brightness filter ([] = all); e.g. ['dark'] for a dark room
   const brightnessSetRef = useRef<Brightness[]>([]); brightnessSetRef.current = brightnessSet
+  const [speedSet, setSpeedSet] = useState<Speed[]>([])   // motion filter ([] = all): Slow / Standard / Fast
+  const speedSetRef = useRef<Speed[]>([]); speedSetRef.current = speedSet
+  // Dark-room = only dark clips selected → also softens the reactive beat-flash so nobody's blinded.
+  const darkRoomRef = useRef(false); darkRoomRef.current = brightnessSet.length === 1 && brightnessSet[0] === 'dark'
+  // Idle / "between-songs" transition mode: when no music is detected, drift through calm clips
+  // and barely switch, until a song comes back.
+  const [idleTransition, setIdleTransition] = useState(true)
+  const idleTransitionRef = useRef(true); idleTransitionRef.current = idleTransition
+  const [idle, setIdle] = useState(true)                    // true until music is detected
+  const idleRef = useRef(true)
+  const lastLoudRef = useRef(0)                             // last time real audio was heard (perf.now)
+  const onIdleChangeRef = useRef<(nowIdle: boolean) => void>(() => {})
   const autoShuffleRef = useRef(false); autoShuffleRef.current = autoShuffle
   const bgKindRef = useRef(bgKind); bgKindRef.current = bgKind
   const shuffleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -858,28 +874,39 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   // Pick a fresh clip from the pool (no side effects on the visible bg). Excludes clips shown
   // recently AND ones already queued so the lookahead never doubles up.
   const pickClip = useCallback((): BgClip | null => {
-    // The video set is the categories to draw from ([] = the whole library).
-    const set = videoSetRef.current
-    let pool = BG_LIBRARY.filter(c => c.kind === 'video' && (set.length === 0 || set.includes(c.category)))
-    // Brightness filter (dark-room safety): keep only the chosen brightness. This is a hard
-    // promise — never flash-bang — so if the chosen categories don't have enough at that
-    // brightness, we widen the category rather than let a brighter clip through.
     const bset = brightnessSetRef.current
-    if (bset.length) {
-      let bm = pool.filter(c => bset.includes(clipBrightness(c)))
-      if (bm.length < 2) bm = BG_LIBRARY.filter(c => c.kind === 'video' && bset.includes(clipBrightness(c)))
-      if (bm.length >= 1) pool = bm
-    }
-    // Auto: bias backgrounds to energy-appropriate categories (within the set).
-    if (autoRef.current) {
-      const cats = autoCategories(energyBandRef.current)
-      const inCats = pool.filter(c => cats.includes(c.category))
-      if (inCats.length >= 3) pool = inCats
-    }
-    // Match the song's energy when asked (fall back to the full pool if too few match).
-    if (matchEnergyRef.current) {
-      const matched = pool.filter(c => clipEnergy(c) === energyBandRef.current)
-      if (matched.length >= 2) pool = matched
+    let pool: BgClip[]
+    if (idleRef.current) {
+      // Idle (no music): draw only from calm, low-movement transition clips — ignore the party
+      // category/speed set, but still honor the brightness (dark-room) filter.
+      pool = BG_LIBRARY.filter(c => c.kind === 'video' && TRANSITION_SET.has(c.id))
+      if (bset.length) { const bm = pool.filter(c => bset.includes(clipBrightness(c))); if (bm.length >= 1) pool = bm }
+    } else {
+      // The video set is the categories to draw from ([] = the whole library).
+      const set = videoSetRef.current
+      pool = BG_LIBRARY.filter(c => c.kind === 'video' && (set.length === 0 || set.includes(c.category)))
+      // Brightness filter (dark-room safety): keep only the chosen brightness. This is a hard
+      // promise — never flash-bang — so if the chosen categories don't have enough at that
+      // brightness, we widen the category rather than let a brighter clip through.
+      if (bset.length) {
+        let bm = pool.filter(c => bset.includes(clipBrightness(c)))
+        if (bm.length < 2) bm = BG_LIBRARY.filter(c => c.kind === 'video' && bset.includes(clipBrightness(c)))
+        if (bm.length >= 1) pool = bm
+      }
+      // Speed filter (soft): keep the chosen motion levels, fall back if too few.
+      const sset = speedSetRef.current
+      if (sset.length) { const sm = pool.filter(c => sset.includes(clipSpeed(c))); if (sm.length >= 2) pool = sm }
+      // Auto: bias backgrounds to energy-appropriate categories (within the set).
+      if (autoRef.current) {
+        const cats = autoCategories(energyBandRef.current)
+        const inCats = pool.filter(c => cats.includes(c.category))
+        if (inCats.length >= 3) pool = inCats
+      }
+      // Match the song's energy when asked (fall back to the full pool if too few match).
+      if (matchEnergyRef.current) {
+        const matched = pool.filter(c => clipEnergy(c) === energyBandRef.current)
+        if (matched.length >= 2) pool = matched
+      }
     }
     if (pool.length < 2) return null
     // No-repeat history: pick from clips not shown recently, so it works through most of the
@@ -948,6 +975,24 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     return false
   }, [refillQueue, commitHead])
 
+  // Music started / stopped (idle flipped) → repick for the new mode: drop the queue (it was
+  // filled for the old mode) and immediately move to an appropriate clip — a party clip when a
+  // song kicks in, a calm transition when it goes quiet.
+  const onIdleChange = useCallback(() => {
+    if (!autoShuffleRef.current || bgKindRef.current !== 'library') return
+    queueRef.current = []; recentClipsRef.current = []; setPreloadSrcs([])
+    nextClip()
+  }, [nextClip])
+  onIdleChangeRef.current = onIdleChange
+
+  // Keep idle state honest when the toggle flips or audio stops: off = never idle; on-and-silent
+  // = idle. (While a song is running, the draw loop owns the idle flag.)
+  useEffect(() => {
+    if (!idleTransition) { if (idleRef.current) { idleRef.current = false; setIdle(false); onIdleChangeRef.current(false) } }
+    else if (!running) { if (!idleRef.current) { idleRef.current = true; setIdle(true); onIdleChangeRef.current(true) } }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idleTransition, running])
+
   useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null }, [bgClip])
   // Seed / refresh the lookahead whenever shuffle is active and the clip changes; clear it off.
   useEffect(() => {
@@ -967,6 +1012,12 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     let stopped = false
     const tick = () => {
       if (stopped) return
+      if (idleRef.current) {
+        // Idle / between songs: hold the calm clip (it loops) and drift to a new transition only
+        // every ~60s, so it stays quiet until music returns.
+        shuffleTimerRef.current = setTimeout(() => { requestSwitch(); tick() }, 60000)
+        return
+      }
       const bpm = bpmEmaRef.current
       const barMs = bpm > 0 ? Math.max(1000, Math.round((4 * 60000) / bpm)) : 4000
       shuffleTimerRef.current = setTimeout(() => {
@@ -1118,19 +1169,19 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       mirror, glow, trail, gain, smoothing,
       blur, brightness, saturate, hueRot,
       beatColor, punchAmt,
-      reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, switchChance,
+      reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, speedSet, idleTransition, switchChance,
       bgCat, bgKind, bgClipId: bgClip?.id ?? null,
     }
     setScenes(prev => persistScenes([...prev.filter(s => s.name !== name), scene].slice(-24)))
     if (isSignedIn) fetch('/api/scenes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(scene) }).catch(() => { /* stays local */ })
-  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, switchChance, bgCat, bgKind, bgClip, isSignedIn])
+  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, speedSet, idleTransition, switchChance, bgCat, bgKind, bgClip, isSignedIn])
   const loadScene = useCallback((s: Scene) => {
     setAuto(false)   // a saved scene is your own setup — hand control back to you
     setStyle(s.style); setColorCfg(s.colorCfg); setSeed(s.seed); setVideoMode(s.videoMode); setVideoLook(s.videoLook)
     setMirror(s.mirror); setGlow(s.glow); setTrail(s.trail); setGain(s.gain); setSmoothing(s.smoothing)
     setBlur(s.blur); setBrightness(s.brightness); setSaturate(s.saturate); setHueRot(s.hueRot)
     setBeatColor(s.beatColor); setPunchAmt(s.punchAmt)
-    setReactive(s.reactive); setMatchVisuals(s.matchVisuals); setMatchEnergy(s.matchEnergy); setAutoShuffle(s.autoShuffle); setVideoSet(s.videoSet ?? []); setBrightnessSet(s.brightnessSet ?? []); setSwitchChance(s.switchChance)
+    setReactive(s.reactive); setMatchVisuals(s.matchVisuals); setMatchEnergy(s.matchEnergy); setAutoShuffle(s.autoShuffle); setVideoSet(s.videoSet ?? []); setBrightnessSet(s.brightnessSet ?? []); setSpeedSet(s.speedSet ?? []); setIdleTransition(s.idleTransition ?? true); setSwitchChance(s.switchChance)
     setBgCat(s.bgCat)
     if (s.bgKind === 'library' && s.bgClipId) { const c = clipById(s.bgClipId); if (c) { setBgClip(c); setBgKind('library') } }
     else if (s.bgKind && s.bgKind !== 'media') { setBgKind(s.bgKind); setBgClip(null) }
@@ -1193,6 +1244,9 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     void wakeRef.current?.release().catch(() => {}); wakeRef.current = null
     analyserRef.current = null; bufRef.current = []
     setRunning(false); setSource(null)
+    // No audio → back to idle/transition mode (also repicks a calm clip if shuffling).
+    lastLoudRef.current = 0
+    if (idleTransitionRef.current && !idleRef.current) { idleRef.current = true; setIdle(true); onIdleChangeRef.current(true) }
   }, [])
 
   const start = useCallback(async (src: 'mic' | 'device' | 'file', file?: File) => {
@@ -1300,13 +1354,19 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             if (beatColorRef.current) {
               beatFlashRef.current *= 0.82
               beatFlashDivRef.current.style.background = beatFlashColorRef.current
-              beatFlashDivRef.current.style.opacity = (beatFlashRef.current * 0.32).toFixed(3)
+              // Dark-room mode softens the flash so nobody gets blinded.
+              beatFlashDivRef.current.style.opacity = (beatFlashRef.current * (darkRoomRef.current ? 0.12 : 0.32)).toFixed(3)
             } else if (beatFlashDivRef.current.style.opacity !== '0') beatFlashDivRef.current.style.opacity = '0'
           }
           // Overall loudness off the spectrum — drives both the EQ filter pulse and the
           // rolling "song energy" that picks energy-matched backgrounds.
           let s = 0; for (let i = 0; i < f.freq.length; i++) s += f.freq[i]
           const level = Math.min(1, (s / (f.freq.length * 255)) * optsRef.current.gain)
+          // Idle / music detection (gain-independent): note when real audio was last heard; if
+          // it's been quiet for a couple seconds, we're between songs → transition mode.
+          if (s / (f.freq.length * 255) > 0.02) lastLoudRef.current = now
+          const nowIdle = idleTransitionRef.current && now - lastLoudRef.current > 2500
+          if (nowIdle !== idleRef.current) { idleRef.current = nowIdle; setIdle(nowIdle); onIdleChangeRef.current(nowIdle) }
           // Smooth it, then auto-calibrate to THIS song's own range: track a slowly-relaxing
           // min & max so the band reflects the song's structure (builds/drops), not absolute
           // loudness — it "improves to match" the longer it listens. Then bucket with hysteresis.
@@ -1338,8 +1398,9 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             // Onset sharpness auto-gain: normalize the punch by the song's typical kick so drums
             // are consistently visible whatever the track's dynamics.
             const p = Math.min(1.5, (punchEnvRef.current / Math.max(0.12, onsetEmaRef.current)) * 0.55) * punchAmtRef.current
+            const dim = darkRoomRef.current ? 0.45 : 1   // dark room: dampen the brightness pulses
             const bl = eq.blur * (1 - level * 0.4) * (1 - Math.min(1, p) * 0.5)
-            const br = eq.brightness * (0.7 + level * 0.55 + p * 0.55)
+            const br = eq.brightness * (0.7 + (level * 0.55 + p * 0.55) * dim)
             const sa = eq.saturate * (0.85 + level * 0.55 + p * 0.4)
             const hu = eq.hueRot + level * 45 + p * 18
             bgFilterRef.current.style.filter = `${lookFilterRef.current} blur(${bl.toFixed(1)}px) brightness(${br.toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu)}deg)`.trim()
@@ -1433,7 +1494,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle} muted playsInline
+                    <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle || idle} muted playsInline
                       onCanPlay={() => { if (bgClip) readySrcsRef.current.add(bgClip.src) }}
                       onEnded={() => { if (!autoShuffle) return; if (!requestSwitch() && bgVideoRef.current) { bgVideoRef.current.currentTime = 0; bgVideoRef.current.play().catch(() => {}) } }}   // next not buffered yet → replay current (stay smooth) until it is
                       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
@@ -1690,6 +1751,20 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             )}
           </div>
         )}
+        {autoShuffle && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '2px 0 4px' }}>
+            <button type="button" onClick={() => setIdleTransition(v => !v)}
+              title="Between songs, drift through calm low-movement clips and barely switch — resumes the moment music is detected"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: idleTransition ? 'var(--accent)' : 'var(--bg-card)', color: idleTransition ? '#0e0d12' : 'var(--text-secondary)' }}>
+              <Coffee size={13} /> Calm between songs
+            </button>
+            {idleTransition && idle && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 800, color: '#0e0d12', background: '#34d399', padding: '3px 10px', borderRadius: 999 }}>
+                <Turtle size={12} /> {running ? 'Waiting for music — transition mode' : 'Transition mode'}
+              </span>
+            )}
+          </div>
+        )}
         {autoShuffle && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{matchEnergy ? 'Reads the song’s energy off the EQ and pulls matching scenes — calm songs get slow, mellow backgrounds; loud, busy songs get fast, bright ones. When a beat is detected it rolls each bar whether to cut.' : 'A new clip comes on automatically — each bar there’s a chance to cut (set below), otherwise on a timer. Like a living wallpaper; great full-screen on a TV.'}</p>}
         {autoShuffle && (
           <div style={{ margin: '4px 0 6px' }}>
@@ -1718,7 +1793,26 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             ? <button type="button" onClick={() => setBrightnessSet([])} style={{ padding: '5px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>All</button>
             : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· all brightnesses</span>}
         </div>
-        {brightnessSet.length > 0 && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{brightnessSet.includes('dark') && brightnessSet.length === 1 ? 'Dark-room mode — only dim scenes play, so nobody gets flash-banged.' : `Showing ${brightnessSet.map(b => BRIGHTNESS_LABEL[b].toLowerCase()).join(' + ')} scenes only — applies to shuffle and the picker below.`}</p>}
+        {brightnessSet.length > 0 && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{brightnessSet.includes('dark') && brightnessSet.length === 1 ? 'Dark-room mode — only dim scenes play, so nobody gets flash-banged (the beat-flash softens too).' : `Showing ${brightnessSet.map(b => BRIGHTNESS_LABEL[b].toLowerCase()).join(' + ')} scenes only — applies to shuffle and the picker below.`}</p>}
+
+        {/* Speed / motion filter — same deal, governs shuffle + the grid. Slow = calm, low-movement. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '2px 0 6px' }}>
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text-secondary)', marginRight: 2 }}>Speed</span>
+          {(['slow', 'standard', 'fast'] as Speed[]).map(sp => {
+            const on = speedSet.includes(sp)
+            const Icon = sp === 'slow' ? Turtle : sp === 'fast' ? Rabbit : Gauge
+            return (
+              <button key={sp} type="button" onClick={() => setSpeedSet(v => v.includes(sp) ? v.filter(x => x !== sp) : [...v, sp])}
+                title={sp === 'slow' ? 'Calm, low-movement scenes' : sp === 'fast' ? 'High-movement, energetic scenes' : 'Medium movement'}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: on ? 'var(--accent)' : 'var(--bg-card)', color: on ? '#0e0d12' : 'var(--text-secondary)' }}>
+                <Icon size={12} /> {SPEED_LABEL[sp]}
+              </button>
+            )
+          })}
+          {speedSet.length > 0
+            ? <button type="button" onClick={() => setSpeedSet([])} style={{ padding: '5px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>All</button>
+            : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· any speed</span>}
+        </div>
 
         {/* Streamed video library */}
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '10px 0 8px' }}>Library — streams online, low-res preview offline:</p>
@@ -1728,12 +1822,12 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           ))}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 8 }}>
-          {clipsByCategory(bgCat).filter(clip => brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))).map(clip => {
+          {clipsByCategory(bgCat).filter(clip => (brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))) && (speedSet.length === 0 || speedSet.includes(clipSpeed(clip)))).map(clip => {
             const active = bgKind === 'library' && bgClip?.id === clip.id
             const bri = clipBrightness(clip)
             const BriIcon = bri === 'dark' ? Moon : bri === 'bright' ? Sun : Circle
             return (
-              <button key={clip.id} type="button" onClick={() => { setBgClip(clip); setBgKind('library') }} title={`${clip.title} · ${BRIGHTNESS_LABEL[bri]}`}
+              <button key={clip.id} type="button" onClick={() => { setBgClip(clip); setBgKind('library') }} title={`${clip.title} · ${BRIGHTNESS_LABEL[bri]} · ${SPEED_LABEL[clipSpeed(clip)]}`}
                 style={{ position: 'relative', aspectRatio: '16 / 10', borderRadius: 9, overflow: 'hidden', padding: 0, cursor: 'pointer', border: active ? '2px solid var(--accent)' : '1px solid var(--border)', backgroundImage: clip.tint, backgroundSize: 'cover' }}>
                 <img src={clip.preview} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
                 <span title={BRIGHTNESS_LABEL[bri]} style={{ position: 'absolute', top: 4, left: 4, width: 16, height: 16, borderRadius: 999, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.55)', color: '#fff' }}><BriIcon size={9} /></span>
@@ -1741,8 +1835,8 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
               </button>
             )
           })}
-          {clipsByCategory(bgCat).filter(clip => brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))).length === 0 && (
-            <p style={{ gridColumn: '1 / -1', fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0' }}>No {brightnessSet.map(b => BRIGHTNESS_LABEL[b].toLowerCase()).join('/')} clips in {bgCat} — try another category or widen the brightness filter.</p>
+          {clipsByCategory(bgCat).filter(clip => (brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))) && (speedSet.length === 0 || speedSet.includes(clipSpeed(clip)))).length === 0 && (
+            <p style={{ gridColumn: '1 / -1', fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0' }}>No matching clips in {bgCat} — try another category or widen the brightness/speed filters.</p>
           )}
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0 0' }}>Library clips stream from the cloud; a low-res preview is cached for offline. Or upload your own.</p>

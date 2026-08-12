@@ -16,7 +16,9 @@
 export type Energy = 'calm' | 'mid' | 'hot'
 
 import { BRIGHTNESS_MAP, type Brightness } from './bg-brightness'
-export type { Brightness }
+import { MOTION_MAP, TRANSITION_CLIPS, type Speed } from './bg-motion'
+export type { Brightness, Speed }
+export { TRANSITION_CLIPS }
 
 export interface BgClip {
   id: string
@@ -30,11 +32,16 @@ export interface BgClip {
   brightness?: Brightness   // overrides the measured poster brightness (BRIGHTNESS_MAP); for the dark-room filter
 }
 
-// Measured perceptual brightness of the clip's poster (see scripts/tag-bg-brightness.mjs).
-// Lets users filter to dark scenes so a dark room doesn't get flash-banged. Defaults to 'mid'
-// for anything not yet measured (e.g. a brand-new clip before bg:brightness is re-run).
+// Measured, flash-aware brightness of the clip (see scripts/tag-bg-clips.mjs). Lets users filter
+// to dark scenes so a dark room doesn't get flash-banged. Defaults to 'mid' for anything not yet
+// measured (e.g. a brand-new clip before `npm run bg:tag` is re-run).
 export const clipBrightness = (c: BgClip): Brightness => c.brightness ?? BRIGHTNESS_MAP[c.id] ?? 'mid'
 export const BRIGHTNESS_LABEL: Record<Brightness, string> = { dark: 'Dark', mid: 'Mid', bright: 'Bright' }
+
+// Measured motion/speed of the clip (mean inter-frame change). Slow clips are the calm scenes
+// the idle/between-songs transition mode plays. Defaults to 'standard' when unmeasured.
+export const clipSpeed = (c: BgClip): Speed => MOTION_MAP[c.id] ?? 'standard'
+export const SPEED_LABEL: Record<Speed, string> = { slow: 'Slow', standard: 'Standard', fast: 'Fast' }
 
 // Artistic themes first: the library leans music-video by default.
 export const BG_CATEGORIES = ['Abstract', 'Light', 'Neon', 'Film', 'Night', 'Streets', 'Cozy', 'Nature', 'Patterns', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
