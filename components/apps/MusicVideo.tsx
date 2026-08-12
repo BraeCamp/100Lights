@@ -744,6 +744,8 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const energyEmaRef = useRef(0)                             // smoothed loudness
   const energyBandRef = useRef<Energy>('mid')               // current band (hysteresis), read by nextClip
   const lastEnergyUiRef = useRef(0)
+  const energyMinRef = useRef(1)                            // auto-calibrated to THIS song's dynamic range
+  const energyMaxRef = useRef(0)                            // (relative energy → band, so it "improves to match")
   // Reactive amounts + detectors — mostly set by the genre presets.
   const [switchChance, setSwitchChance] = useState(0.35)   // per-bar chance to cut the video
   const [punchAmt, setPunchAmt] = useState(1)              // drum-punch intensity
@@ -948,6 +950,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     // over from the previous track (all non-AI — pure analyser math).
     bpmEmaRef.current = 0; beatIvBufRef.current = []; setBpm(0)
     bassAvgRef.current = 0; energyEmaRef.current = 0; toneEmaRef.current = 0.5; punchEnvRef.current = 0
+    energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
     lastBeatRef.current = 0; prevBeatRef.current = 0; beatCountRef.current = 0
     try {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
@@ -1049,10 +1052,19 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           // rolling "song energy" that picks energy-matched backgrounds.
           let s = 0; for (let i = 0; i < f.freq.length; i++) s += f.freq[i]
           const level = Math.min(1, (s / (f.freq.length * 255)) * optsRef.current.gain)
-          // Smooth it, then bucket into calm/mid/hot with hysteresis so the band doesn't flap.
+          // Smooth it, then auto-calibrate to THIS song's own range: track a slowly-relaxing
+          // min & max so the band reflects the song's structure (builds/drops), not absolute
+          // loudness — it "improves to match" the longer it listens. Then bucket with hysteresis.
           energyEmaRef.current = energyEmaRef.current * 0.92 + level * 0.08
-          const e = energyEmaRef.current, cur = energyBandRef.current
-          const band: Energy = e > (cur === 'hot' ? 0.30 : 0.36) ? 'hot' : e > (cur === 'calm' ? 0.20 : 0.15) ? 'mid' : 'calm'
+          const e = energyEmaRef.current
+          energyMaxRef.current = Math.max(e, energyMaxRef.current - 0.00003)
+          energyMinRef.current = Math.min(e, energyMinRef.current + 0.00003)
+          const rel = Math.min(1, Math.max(0, (e - energyMinRef.current) / Math.max(0.04, energyMaxRef.current - energyMinRef.current)))
+          // Blend absolute loudness with the song-relative position: loud still reads energetic,
+          // and the calibrated dynamics (builds/drops) push it further.
+          const score = 0.5 * Math.min(1, e / 0.3) + 0.5 * rel
+          const cur = energyBandRef.current
+          const band: Energy = score > (cur === 'hot' ? 0.50 : 0.60) ? 'hot' : score > (cur === 'calm' ? 0.35 : 0.28) ? 'mid' : 'calm'
           energyBandRef.current = band
           if (now - lastEnergyUiRef.current > 300) { lastEnergyUiRef.current = now; setEnergyBand(band) }
           // Tone detector — spectral brightness (high-band share of the energy): 0 = dark/bassy,
@@ -1186,6 +1198,10 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         {reactive && !running && style !== 'none' && (
           <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 12, padding: 24, textAlign: 'center', background: hasBg ? 'rgba(6,5,10,0.45)' : 'transparent' }}>
             <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Visualize your music</p>
+            {/* Auto — the casual-user hero on the start screen: flip it on, then just press play. */}
+            <button type="button" onClick={toggleAuto} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 999, cursor: 'pointer', border: auto ? 'none' : '1px solid var(--accent)', background: auto ? 'var(--accent)' : 'transparent', color: auto ? '#0e0d12' : 'var(--accent)', fontSize: 13.5, fontWeight: 850 }}>
+              <Sparkles size={15} /> {auto ? 'Auto is on — just press play' : 'Auto — read the music & do it all'}
+            </button>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
               <button type="button" onClick={() => trackInputRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '13px 22px', borderRadius: 12, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 15, fontWeight: 850, cursor: 'pointer' }}><Play size={17} fill="#0e0d12" /> Play a track</button>
               <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '13px 20px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', fontSize: 15, fontWeight: 750, cursor: 'pointer' }}><Mic size={17} /> Use microphone</button>
