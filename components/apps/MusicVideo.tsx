@@ -7,7 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -19,7 +19,7 @@ import { FORMATS } from '@/lib/song-video/formats.mjs'
 import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
-import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, type BgClip, type BgCategory } from '@/lib/bg-library'
+import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, clipEnergy, type BgClip, type BgCategory, type Energy } from '@/lib/bg-library'
 import { detectMediaKind } from '@/lib/media-import'
 import { useMediaDrop } from '@/lib/use-media-drop'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
@@ -709,6 +709,13 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const [shuffleScope, setShuffleScope] = useState<'category' | 'all'>('all')
   const shuffleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bgClipIdRef = useRef<string | null>(null)           // current clip id, so nextClip avoids repeats without re-binding
+  // Energy-reactive selection: read the song's energy off the analyser and match backgrounds.
+  const [matchEnergy, setMatchEnergy] = useState(false)
+  const [energyBand, setEnergyBand] = useState<Energy>('mid')   // for the UI readout
+  const matchEnergyRef = useRef(false); matchEnergyRef.current = matchEnergy
+  const energyEmaRef = useRef(0)                             // smoothed loudness
+  const energyBandRef = useRef<Energy>('mid')               // current band (hysteresis), read by nextClip
+  const lastEnergyUiRef = useRef(0)
   const bgInputRef = useRef<HTMLInputElement | null>(null)
   const bgFilterRef = useRef<HTMLDivElement | null>(null)  // filters applied here; EQ mode drives it per frame
   // Offline save/download for the selected library clip
@@ -731,20 +738,30 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   // library). Driven by the video's 'ended' event, with a timer fallback below so it never
   // gets stuck on a still or a clip that fails to fire 'ended'.
   const nextClip = useCallback(() => {
-    const pool = (shuffleScope === 'all' ? BG_LIBRARY : clipsByCategory(bgCat)).filter(c => c.kind === 'video')
+    let pool = (shuffleScope === 'all' ? BG_LIBRARY : clipsByCategory(bgCat)).filter(c => c.kind === 'video')
+    // Match the song's energy when asked (fall back to the full pool if too few match).
+    if (matchEnergyRef.current) {
+      const matched = pool.filter(c => clipEnergy(c) === energyBandRef.current)
+      if (matched.length >= 2) pool = matched
+    }
     if (pool.length < 2) return
     let next = pool[Math.floor(Math.random() * pool.length)]
     for (let i = 0; next.id === bgClipIdRef.current && i < 8; i++) next = pool[Math.floor(Math.random() * pool.length)]
     setBgClip(next); setBgKind('library')
   }, [shuffleScope, bgCat])
   useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null }, [bgClip])
-  // Fallback advance — if a clip is a still, or its 'ended' never fires, move on anyway.
+  // Advance timer. In match-energy mode it's the primary driver and the dwell scales with the
+  // song's energy (hot → quick cuts hold attention; calm → let a scene breathe); the clip loops
+  // meanwhile. Otherwise it's just a safety net in case a clip's 'ended' never fires.
   useEffect(() => {
     if (shuffleTimerRef.current) { clearTimeout(shuffleTimerRef.current); shuffleTimerRef.current = null }
     if (!autoShuffle || bgKind !== 'library' || !bgClip) return
-    shuffleTimerRef.current = setTimeout(nextClip, 20000)
+    const ms = matchEnergy
+      ? (energyBandRef.current === 'hot' ? 5000 : energyBandRef.current === 'mid' ? 9000 : 15000)
+      : 20000
+    shuffleTimerRef.current = setTimeout(nextClip, ms)
     return () => { if (shuffleTimerRef.current) clearTimeout(shuffleTimerRef.current) }
-  }, [autoShuffle, bgKind, bgClip, nextClip])
+  }, [autoShuffle, bgKind, bgClip, nextClip, matchEnergy])
   const pickBgFile = useCallback((f: File) => {
     setBgUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
     setBgVideo(f.type.startsWith('video/')); setBgKind('media')
@@ -907,11 +924,19 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           let f = buf[buf.length - 1]
           for (let i = buf.length - 1; i >= 0; i--) { if (buf[i].t <= target) { f = buf[i]; break } }
           drawLive(cv, f.freq, f.wave, optsRef.current)
+          // Overall loudness off the spectrum — drives both the EQ filter pulse and the
+          // rolling "song energy" that picks energy-matched backgrounds.
+          let s = 0; for (let i = 0; i < f.freq.length; i++) s += f.freq[i]
+          const level = Math.min(1, (s / (f.freq.length * 255)) * optsRef.current.gain)
+          // Smooth it, then bucket into calm/mid/hot with hysteresis so the band doesn't flap.
+          energyEmaRef.current = energyEmaRef.current * 0.92 + level * 0.08
+          const e = energyEmaRef.current, cur = energyBandRef.current
+          const band: Energy = e > (cur === 'hot' ? 0.30 : 0.36) ? 'hot' : e > (cur === 'calm' ? 0.20 : 0.15) ? 'mid' : 'calm'
+          energyBandRef.current = band
+          if (now - lastEnergyUiRef.current > 300) { lastEnergyUiRef.current = now; setEnergyBand(band) }
           // Filters interacting with the EQ — pulse brightness/saturation, sharpen on energy.
           const eq = eqRef.current
           if (eq.on && bgFilterRef.current) {
-            let s = 0; for (let i = 0; i < f.freq.length; i++) s += f.freq[i]
-            const level = Math.min(1, (s / (f.freq.length * 255)) * optsRef.current.gain)
             bgFilterRef.current.style.filter = `${lookFilterRef.current} blur(${(eq.blur * (1 - level * 0.4)).toFixed(1)}px) brightness(${(eq.brightness * (0.7 + level * 0.75)).toFixed(2)}) saturate(${(eq.saturate * (0.85 + level * 0.7)).toFixed(2)}) hue-rotate(${Math.round(eq.hueRot + level * 55)}deg)`.trim()
           }
         }
@@ -992,7 +1017,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle} muted playsInline onEnded={() => { if (autoShuffle) nextClip() }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle || matchEnergy} muted playsInline onEnded={() => { if (autoShuffle && !matchEnergy) nextClip() }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
                   </>
                 )}
               </>
@@ -1151,7 +1176,20 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           ))}
           {autoShuffle && <button type="button" onClick={nextClip} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}><SkipForward size={13} /> Next</button>}
         </div>
-        {autoShuffle && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>Each clip plays through, then a new one comes on — like a living wallpaper. Great full-screen on a TV.</p>}
+        {autoShuffle && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '2px 0 4px' }}>
+            <button type="button" onClick={() => setMatchEnergy(v => !v)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: matchEnergy ? 'var(--accent)' : 'var(--bg-card)', color: matchEnergy ? '#0e0d12' : 'var(--text-secondary)' }}>
+              <Activity size={13} /> Match song energy
+            </button>
+            {matchEnergy && running && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                Now: <span style={{ padding: '3px 9px', borderRadius: 999, fontSize: 11, fontWeight: 800, textTransform: 'capitalize', color: '#0e0d12', background: energyBand === 'hot' ? '#f87171' : energyBand === 'mid' ? '#fbbf24' : '#34d399' }}>{energyBand}</span>
+              </span>
+            )}
+          </div>
+        )}
+        {autoShuffle && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{matchEnergy ? 'Reads the song’s energy off the EQ and pulls matching scenes — calm songs get slow, mellow backgrounds; loud, busy songs get fast, bright ones that cut quicker.' : 'Each clip plays through, then a new one comes on — like a living wallpaper. Great full-screen on a TV.'}</p>}
 
         {/* Streamed video library */}
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '16px 0 8px' }}>Library — streams online, low-res preview offline:</p>
