@@ -1,42 +1,25 @@
 // Passive song identification for Lightning Bug ("what's playing"). The client records a short
 // audio clip and POSTs it here; we fingerprint it with AudD (Shazam-like — Shazam itself has no
-// usable web API), then optionally enrich with Spotify audio-features (tempo/energy/…) so the Auto
-// system has ground-truth to check its own analysis against. Degrades gracefully with no keys.
+// usable web API). Genre comes from AudD (Apple genreNames); tempo (BPM) ground-truth comes from
+// Deezer's free API — Spotify deprecated its audio-features endpoint for new apps in late 2024, so
+// we don't rely on it. Degrades gracefully with no AUDD_API_TOKEN.
 import { NextRequest } from 'next/server'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
 
-// ---- optional Spotify audio-features enrichment (needs SPOTIFY_CLIENT_ID/SECRET) ----
-let spToken: { value: string; exp: number } | null = null
-async function spotifyToken(): Promise<string | null> {
-  const id = process.env.SPOTIFY_CLIENT_ID, secret = process.env.SPOTIFY_CLIENT_SECRET
-  if (!id || !secret) return null
-  if (spToken && spToken.exp > Date.now() + 5000) return spToken.value
+// Deezer track BPM (free, no auth). Coverage is partial — many tracks report bpm 0 (unknown).
+async function deezerTempo(title: string, artist: string): Promise<number | null> {
   try {
-    const r = await fetch('https://accounts.spotify.com/api/token', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', Authorization: 'Basic ' + Buffer.from(`${id}:${secret}`).toString('base64') },
-      body: 'grant_type=client_credentials',
-    })
-    if (!r.ok) return null
-    const d = await r.json() as { access_token: string; expires_in: number }
-    spToken = { value: d.access_token, exp: Date.now() + d.expires_in * 1000 }
-    return spToken.value
-  } catch { return null }
-}
-async function spotifyFeatures(title: string, artist: string) {
-  const tok = await spotifyToken(); if (!tok) return null
-  try {
-    const q = encodeURIComponent(`track:${title} artist:${artist}`)
-    const s = await fetch(`https://api.spotify.com/v1/search?q=${q}&type=track&limit=1`, { headers: { Authorization: `Bearer ${tok}` } })
+    const q = encodeURIComponent(`${title} ${artist}`.trim())
+    const s = await fetch(`https://api.deezer.com/search?q=${q}&limit=1`)
     if (!s.ok) return null
-    const sd = await s.json() as { tracks?: { items?: { id: string }[] } }
-    const id = sd.tracks?.items?.[0]?.id; if (!id) return null
-    const f = await fetch(`https://api.spotify.com/v1/audio-features/${id}`, { headers: { Authorization: `Bearer ${tok}` } })
-    if (!f.ok) return null
-    const fd = await f.json() as Record<string, number>
-    return { tempo: Math.round(fd.tempo), energy: fd.energy, danceability: fd.danceability, valence: fd.valence, acousticness: fd.acousticness, instrumentalness: fd.instrumentalness, key: fd.key, mode: fd.mode }
+    const sd = await s.json() as { data?: { id: number }[] }
+    const id = sd.data?.[0]?.id; if (!id) return null
+    const t = await fetch(`https://api.deezer.com/track/${id}`)
+    if (!t.ok) return null
+    const td = await t.json() as { bpm?: number }
+    return td.bpm && td.bpm > 0 ? Math.round(td.bpm) : null
   } catch { return null }
 }
 
@@ -49,7 +32,7 @@ export async function POST(req: NextRequest) {
 
   const body = new FormData()
   body.append('api_token', token)
-  body.append('return', 'apple_music,spotify')
+  body.append('return', 'apple_music,spotify,deezer')
   body.append('file', file, 'clip.webm')
   let d: { status?: string; result?: Record<string, unknown> }
   try {
@@ -60,15 +43,16 @@ export async function POST(req: NextRequest) {
   if (d.status !== 'success' || !d.result) return Response.json({ match: null })
   const res = d.result as Record<string, any>
   const apple = res.apple_music as { genreNames?: string[]; url?: string; artwork?: { url?: string } } | undefined
+  const title = String(res.title ?? ''), artist = String(res.artist ?? '')
+  const tempo = await deezerTempo(title, artist)
   const match = {
-    title: String(res.title ?? ''),
-    artist: String(res.artist ?? ''),
+    title, artist,
     album: res.album ? String(res.album) : null,
     genre: apple?.genreNames?.[0] ?? null,
     appleUrl: apple?.url ?? null,
     spotifyUrl: (res.spotify as { external_urls?: { spotify?: string } } | undefined)?.external_urls?.spotify ?? null,
     artwork: apple?.artwork?.url ? apple.artwork.url.replace('{w}', '300').replace('{h}', '300') : null,
-    features: await spotifyFeatures(String(res.title ?? ''), String(res.artist ?? '')),
+    features: tempo ? { tempo } : null,
   }
   return Response.json({ match })
 }

@@ -1266,7 +1266,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const recognizingRef = useRef(false)
   const [identify, setIdentify] = useState(false)
   const identifyRef = useRef(false); identifyRef.current = identify
-  const [recognized, setRecognized] = useState<{ title: string; artist: string; genre: string | null; artwork: string | null; features: { tempo: number; energy: number } | null } | null>(null)
+  const [recognized, setRecognized] = useState<{ title: string; artist: string; genre: string | null; artwork: string | null; features: { tempo: number } | null } | null>(null)
   const [idMsg, setIdMsg] = useState<string | null>(null)
   const trackInputRef = useRef<HTMLInputElement | null>(null)
   const rafRef = useRef<number | null>(null)
@@ -1339,6 +1339,14 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // A new song after a quiet gap → re-identify right away.
   useEffect(() => { if (!idle && identify && running) recognizeNow() // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idle])
+  // Lean on recognition: seed BPM from the identified track's real tempo (Deezer) so beat-sync and
+  // clip switching lock instantly — with less reliance on live DSP — until the detector locks its own.
+  useEffect(() => {
+    const tempo = recognized?.features?.tempo
+    if (!tempo || !running || bpmEmaRef.current > 0) return
+    let v = tempo; while (v > 175) v /= 2; while (v < 70) v *= 2
+    bpmEmaRef.current = v; setBpm(Math.round(v))
+  }, [recognized, running])
 
   const start = useCallback(async (src: 'mic' | 'device' | 'file' | 'broadcast', file?: File) => {
     setErr(null)
