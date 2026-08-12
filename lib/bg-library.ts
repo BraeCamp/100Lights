@@ -100,7 +100,7 @@ const NATURE: { id: string; category: BgCategory; title: string; tint: string; e
   { id: 'street-alley', category: 'Streets', title: 'Old town alley', tint: 'linear-gradient(135deg,#7c2d12,#d6b48a)' },
   { id: 'night-highway', category: 'Night', title: 'Highway lights', tint: 'linear-gradient(135deg,#111827,#f59e0b)' },
   { id: 'night-bridge', category: 'Night', title: 'Bridge at night', tint: 'linear-gradient(135deg,#0b1020,#38bdf8)' },
-  { id: 'night-market', category: 'Night', title: 'Night market', tint: 'linear-gradient(135deg,#3b0764,#f472b6)' },
+  { id: 'night-market', category: 'City', title: 'Night market', tint: 'linear-gradient(135deg,#3b0764,#f472b6)' },
   { id: 'cozy-tea', category: 'Cozy', title: 'Tea steam', tint: 'linear-gradient(135deg,#3b2415,#d6b48a)' },
   { id: 'cozy-books', category: 'Cozy', title: 'Library nook', tint: 'linear-gradient(135deg,#3b2415,#a8a29e)' },
   { id: 'cozy-snow-window', category: 'Cozy', title: 'Snow at the window', tint: 'linear-gradient(135deg,#1e293b,#e0f2fe)' },
