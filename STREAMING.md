@@ -1,5 +1,11 @@
 # Lightning Bug — 24/7 "Radio with Visuals" Streaming Plan
 
+> **Status: the in-app system in §2 is now BUILT.** Broadcast URL mode, the `lib/stations.ts`
+> registry, the playlist resolver (local files / Jamendo), and the CORS proxy all ship. The
+> operator's guide — music sources + step-by-step YouTube setup — is in **[BROADCAST.md](./BROADCAST.md)**.
+> This file remains the architecture / scale reference.
+
+
 Goal: run Lightning Bug on a server as always-on livestreams to **YouTube Live** and **Twitch** —
 themed "radio stations with visuals" (e.g. _D&D Ambience_, _Study / Focus_, more later). Each
 station = a fixed audio playlist + a saved Lightning Bug scene, rendered and pushed to RTMP 24/7.

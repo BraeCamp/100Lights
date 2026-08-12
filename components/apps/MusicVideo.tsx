@@ -21,6 +21,7 @@ import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
 import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, clipEnergy, clipBrightness, BRIGHTNESS_LABEL, clipSpeed, SPEED_LABEL, TRANSITION_CLIPS, type BgClip, type BgCategory, type Energy, type Brightness, type Speed } from '@/lib/bg-library'
+import type { BroadcastTrack, StationScene } from '@/lib/stations'
 import { detectMediaKind } from '@/lib/media-import'
 import { useMediaDrop } from '@/lib/use-media-drop'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
@@ -53,11 +54,14 @@ function MusicVideoApp() {
   const [font, setFont] = useState('system-ui')
   const [live, setLive] = useState(false)   // party mode: visualize live audio from the device
   const [initialBg, setInitialBg] = useState<string | null>(null)   // deep-link: /apps/musicvideo?bg=<clipId>
+  const [broadcastStation, setBroadcastStation] = useState<string | null>(null)   // ?station=<slug>&broadcast=1
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
     const bg = q.get('bg')
     if (bg && clipById(bg)) { setInitialBg(bg); setLive(true) }
     if (q.get('scene')) setLive(true)   // a shared scene link opens straight into live mode
+    const st = q.get('station')
+    if (st && q.get('broadcast')) { setBroadcastStation(st); setLive(true) }   // 24/7 radio-with-visuals mode
   }, [])
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -174,6 +178,10 @@ function MusicVideoApp() {
     } catch (e) { setError(e instanceof Error ? `Export failed: ${e.message}` : 'Export failed') }
     finally { setExporting(false) }
   }, [exporting])
+
+  // Broadcast / radio mode: a bare, chrome-less full-frame view for streaming (OBS browser source
+  // → YouTube/Twitch). See STREAMING.md.
+  if (broadcastStation) return <LiveVisualizer broadcast={broadcastStation} onExit={() => { setBroadcastStation(null); setLive(false) }} />
 
   // Bespoke home when nothing is chosen yet.
   if (!live && !videoUrl) return <MusicVideoHome busy={busy} onFile={handleFile} onLive={() => setLive(true)} />
@@ -753,11 +761,11 @@ function ColorPlane({ onChange }: { onChange: (p: Plane) => void }) {
   )
 }
 
-function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?: string | null }) {
+function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; initialBg?: string | null; broadcast?: string | null }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [running, setRunning] = useState(false)
-  const [source, setSource] = useState<'mic' | 'device' | 'file' | null>(null)
+  const [source, setSource] = useState<'mic' | 'device' | 'file' | 'broadcast' | null>(null)
   const [style, setStyle] = useState<LiveStyle>('bars')
   const [beatColor, setBeatColor] = useState(false)         // cycle colours on each detected beat
   const [bpm, setBpm] = useState(0)                         // detected tempo (0 = not locked yet)
@@ -1231,6 +1239,11 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const streamRef = useRef<MediaStream | null>(null)
   const audioElRef = useRef<HTMLAudioElement | null>(null)   // "play a track" source
   const fileUrlRef = useRef<string | null>(null)
+  // Broadcast/radio mode: a playlist of tracks fed through the analyser (see lib/stations.ts).
+  const broadcastTracksRef = useRef<BroadcastTrack[]>([])
+  const broadcastIdxRef = useRef(0)
+  const [nowPlaying, setNowPlaying] = useState<BroadcastTrack | null>(null)
+  const [broadcastMsg, setBroadcastMsg] = useState<string | null>(null)
   const trackInputRef = useRef<HTMLInputElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const wakeRef = useRef<{ release: () => Promise<void> } | null>(null)
@@ -1253,28 +1266,58 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     void audioRef.current?.close().catch(() => {}); audioRef.current = null
     void wakeRef.current?.release().catch(() => {}); wakeRef.current = null
     analyserRef.current = null; bufRef.current = []
-    setRunning(false); setSource(null)
+    setRunning(false); setSource(null); setNowPlaying(null)
     // No audio → back to idle/transition mode (also repicks a calm clip if shuffling).
     lastLoudRef.current = 0
     if (idleTransitionRef.current && !idleRef.current) { idleRef.current = true; setIdle(true); onIdleChangeRef.current(true) }
   }, [])
 
-  const start = useCallback(async (src: 'mic' | 'device' | 'file', file?: File) => {
-    setErr(null)
-    // Fresh song → fresh detectors: reset BPM, beat and energy state so nothing carries
-    // over from the previous track (all non-AI — pure analyser math).
+  // Fresh song → fresh detectors: reset BPM, beat and energy state so nothing carries over from
+  // the previous track (all non-AI — pure analyser math). Also called per playlist track.
+  const resetDetectors = useCallback(() => {
     bpmEmaRef.current = 0; beatIvBufRef.current = []; setBpm(0)
     bassAvgRef.current = 0; energyEmaRef.current = 0; punchEnvRef.current = 0
     energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
     prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3
     lastBeatRef.current = 0; prevBeatRef.current = 0
+  }, [])
+
+  const start = useCallback(async (src: 'mic' | 'device' | 'file' | 'broadcast', file?: File) => {
+    setErr(null)
+    resetDetectors()
     try {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       const ctx = new AC(); audioRef.current = ctx
       await ctx.resume().catch(() => {})
       const an = ctx.createAnalyser(); an.fftSize = 2048; an.smoothingTimeConstant = smoothingRef.current
 
-      if (src === 'file') {
+      if (src === 'broadcast') {
+        // Radio mode: play a playlist through the analyser. Same-origin files play directly; remote
+        // URLs stream through /api/broadcast/audio so Web Audio can read them (CORS).
+        const el = new Audio(); el.crossOrigin = 'anonymous'; el.preload = 'auto'
+        audioElRef.current = el
+        const node = ctx.createMediaElementSource(el)
+        node.connect(an); node.connect(ctx.destination)
+        const proxied = (u: string) => u.startsWith('http') ? `/api/broadcast/audio?src=${encodeURIComponent(u)}` : u
+        const playAt = async (i: number) => {
+          const list = broadcastTracksRef.current
+          if (!list.length) return
+          const idx = ((i % list.length) + list.length) % list.length
+          broadcastIdxRef.current = idx
+          const t = list[idx]
+          resetDetectors()
+          setNowPlaying(t)
+          el.src = proxied(t.url)
+          try { await el.play() }
+          catch (e) {
+            if ((e as DOMException)?.name === 'NotAllowedError') { setBroadcastMsg('Tap anywhere to start the broadcast'); return }   // autoplay blocked — wait for a gesture, don't skip
+            window.setTimeout(() => { void playAt(idx + 1) }, 1500)   // dead track → skip on
+          }
+        }
+        el.addEventListener('ended', () => { void playAt(broadcastIdxRef.current + 1) })
+        el.addEventListener('error', () => { window.setTimeout(() => { void playAt(broadcastIdxRef.current + 1) }, 1500) })
+        await playAt(0)
+      } else if (src === 'file') {
         // Play the track THROUGH the app and tap it directly — no mic, no screen prompt.
         // The <audio> element still plays out to the speaker / Bluetooth / AirPlay.
         if (!file) throw new Error('No audio file')
@@ -1424,7 +1467,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       setErr(e instanceof Error ? e.message : 'Could not access audio.')
       stop()
     }
-  }, [stop])
+  }, [stop, resetDetectors])
 
   const toggleFs = useCallback(() => {
     const el = wrapRef.current; if (!el) return
@@ -1461,6 +1504,53 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Apply a station's visual look (broadcast mode). Only sets what the station specifies; forces
+  // the radio essentials (auto-shuffle + calm-between-songs on, background layer on).
+  const applyStationScene = useCallback((sc: StationScene) => {
+    setAuto(false)
+    if (sc.style) setStyle(sc.style as LiveStyle)
+    if (sc.paletteId) setColorCfg(c => ({ ...c, paletteId: sc.paletteId! }))
+    if (sc.videoMode) setVideoMode(sc.videoMode)
+    if (sc.videoLook) setVideoLook(sc.videoLook)
+    if (sc.videoSet) setVideoSet(sc.videoSet as BgCategory[])
+    if (sc.brightnessSet) setBrightnessSet(sc.brightnessSet)
+    if (sc.speedSet) setSpeedSet(sc.speedSet)
+    if (sc.matchEnergy != null) setMatchEnergy(sc.matchEnergy)
+    setReactive(sc.reactive ?? true)
+    setAutoShuffle(true); setIdleTransition(true); setBgKind('library')
+  }, [])
+
+  // Broadcast / radio mode (?station=<slug>&broadcast=1): load the station's scene + playlist and
+  // auto-start. If autoplay is blocked (normal browser), we show a tap-to-start overlay; a headless
+  // broadcast box launches Chrome with --autoplay-policy=no-user-gesture-required so it just plays.
+  const broadcastStartedRef = useRef(false)
+  useEffect(() => {
+    if (!broadcast || broadcastStartedRef.current) return
+    broadcastStartedRef.current = true
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/broadcast/playlist?station=${encodeURIComponent(broadcast)}`)
+        if (!r.ok) { setBroadcastMsg('Unknown station.'); return }
+        const data = await r.json() as { station?: { scene?: StationScene; shuffle?: boolean }; tracks?: BroadcastTrack[] }
+        if (data.station?.scene) applyStationScene(data.station.scene)
+        let tracks = data.tracks ?? []
+        if (data.station?.shuffle) tracks = [...tracks].sort(() => Math.random() - 0.5)
+        broadcastTracksRef.current = tracks
+        nextClipRef.current()   // an initial background so visuals show even before/without audio
+        if (tracks.length) start('broadcast')
+        else setBroadcastMsg(`No tracks yet — drop audio into public/broadcast/${broadcast}/ or set JAMENDO_CLIENT_ID.`)
+      } catch { setBroadcastMsg('Couldn’t load this station.') }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [broadcast])
+
+  // Tap-to-start fallback: a user gesture resumes the audio context + playback.
+  const resumeBroadcast = useCallback(() => {
+    setBroadcastMsg(null)
+    void audioRef.current?.resume().catch(() => {})
+    audioElRef.current?.play().catch(() => {})
+  }, [])
+
   // Drag-and-drop media onto the stage: audio plays into the visualizer, a video/image
   // becomes the background.
   const onDropMedia = useCallback((files: File[]) => {
@@ -1472,7 +1562,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const { isOver, dropProps } = useMediaDrop(onDropMedia, { accept: ['audio', 'video', 'image'] })
 
   return (
-    <div className="mv-live">
+    <div className={`mv-live${broadcast ? ' mv-broadcast' : ''}`}>
       <style>{`@keyframes mv-amb{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}} .mv-ambient{animation:mv-amb 16s ease-in-out infinite}
 @keyframes mv-grain{0%{background-position:0 0}25%{background-position:-6% 5%}50%{background-position:5% -4%}75%{background-position:-4% -6%}100%{background-position:0 0}} .mv-grain{animation:mv-grain .6s steps(3) infinite}
 @keyframes mv-beat{0%,100%{transform:scale(1);opacity:.6}50%{transform:scale(1.5);opacity:1}}
@@ -1480,6 +1570,10 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
 .mv-split{display:flex;flex-direction:column}
 .mv-stage{position:sticky;top:0;z-index:3;background:var(--bg-base);padding-bottom:12px}
 .mv-panels{display:flex;flex-direction:column}
+.mv-broadcast{position:fixed;inset:0;background:#000;z-index:60}
+.mv-broadcast .mv-panels{display:none}
+.mv-broadcast .mv-split{display:block;height:100%}
+.mv-broadcast .mv-stage{position:static;height:100dvh;padding:0;background:#000}
 .mv-tabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:12px 0 2px}
 .mv-tab{display:inline-flex;align-items:center;height:38px;padding:0 11px;border:1px solid var(--border);border-radius:999px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer;flex:0 0 auto;transition:background .15s,color .15s,border-color .15s}
 .mv-tab .mv-tablabel{max-width:0;opacity:0;overflow:hidden;white-space:nowrap;font-size:13px;font-weight:800;margin-left:0;transition:max-width .25s ease,opacity .2s ease,margin-left .25s ease}
@@ -1493,7 +1587,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       <LookSvgDefs />
       <div className="mv-split">
         <div className="mv-stage">
-      <div ref={wrapRef} {...dropProps} style={{ position: 'relative', width: '100%', aspectRatio: fs ? undefined : '16 / 9', height: fs ? '100dvh' : undefined, borderRadius: fs ? 0 : 14, overflow: 'hidden', background: '#08070d', border: fs ? 'none' : '1px solid var(--border)', outline: isOver ? '3px dashed var(--accent)' : 'none', outlineOffset: -3 }}>
+      <div ref={wrapRef} {...dropProps} style={{ position: 'relative', width: '100%', aspectRatio: (fs || broadcast) ? undefined : '16 / 9', height: (fs || broadcast) ? '100dvh' : undefined, borderRadius: (fs || broadcast) ? 0 : 14, overflow: 'hidden', background: '#08070d', border: (fs || broadcast) ? 'none' : '1px solid var(--border)', outline: isOver ? '3px dashed var(--accent)' : 'none', outlineOffset: -3 }}>
         {isOver && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 5, display: 'grid', placeItems: 'center', background: 'rgba(6,5,10,0.6)', color: '#fff', fontSize: 15, fontWeight: 800, pointerEvents: 'none' }}>Drop audio to visualize · video or image for the background</div>
         )}
@@ -1545,7 +1639,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         {/* Beat-colour flash — pulses the whole frame (background included) on each kick. */}
         <div ref={beatFlashDivRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', mixBlendMode: 'screen', opacity: 0 }} />
 
-        {reactive && !running && style !== 'none' && (
+        {!broadcast && reactive && !running && style !== 'none' && (
           <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 12, padding: 24, textAlign: 'center', background: hasBg ? 'rgba(6,5,10,0.45)' : 'transparent' }}>
             <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Visualize your music</p>
             {/* Auto — the casual-user hero on the start screen: flip it on, then just press play. */}
@@ -1561,7 +1655,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           </div>
         )}
         {/* None style: keep the background clean; a compact bar still lets the music drive it. */}
-        {reactive && !running && style === 'none' && (
+        {!broadcast && reactive && !running && style === 'none' && (
           <div style={{ position: 'absolute', left: 0, right: 0, bottom: 12, display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', padding: '0 12px' }}>
             <button type="button" onClick={() => trackInputRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}><Play size={14} fill="#0e0d12" /> React to music</button>
             <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}><Mic size={14} /> Mic</button>
@@ -1571,11 +1665,27 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         {!reactive && (
           <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '5px 10px', borderRadius: 999, background: 'rgba(0,0,0,0.4)', color: '#fff', fontSize: 12, fontWeight: 700 }}>Background only</div>
         )}
-        {(running || !reactive) && (
+        {(running || !reactive) && !broadcast && (
           <button type="button" onClick={toggleFs} aria-label="Fullscreen" style={{ position: 'absolute', top: 10, right: 10, display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 10, background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}><Maximize2 size={17} /></button>
+        )}
+        {/* Broadcast: now-playing card (carries attribution for the description) */}
+        {broadcast && nowPlaying && (
+          <div style={{ position: 'absolute', left: 16, bottom: 16, maxWidth: '72%', padding: '8px 14px', borderRadius: 12, background: 'rgba(0,0,0,0.5)', color: '#fff', pointerEvents: 'none' }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', opacity: 0.7 }}>Now playing</div>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>{nowPlaying.title}{nowPlaying.artist ? ` — ${nowPlaying.artist}` : ''}</div>
+            {nowPlaying.attribution && <div style={{ fontSize: 10.5, opacity: 0.65, marginTop: 2 }}>{nowPlaying.attribution}</div>}
+          </div>
+        )}
+        {/* Broadcast: tap-to-start (autoplay blocked) / status overlay */}
+        {broadcast && broadcastMsg && (
+          <button type="button" onClick={resumeBroadcast} style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 14, background: 'rgba(6,5,10,0.78)', border: 'none', color: '#fff', cursor: 'pointer', zIndex: 6 }}>
+            <span style={{ display: 'grid', placeItems: 'center', width: 74, height: 74, borderRadius: 999, background: 'var(--accent)', color: '#0e0d12' }}><Play size={34} /></span>
+            <span style={{ fontSize: 16, fontWeight: 800, maxWidth: 440, textAlign: 'center', lineHeight: 1.4, padding: '0 20px' }}>{broadcastMsg}</span>
+          </button>
         )}
       </div>
 
+      {!broadcast && (
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '14px 0 4px', flexWrap: 'wrap' }}>
         {running
           ? <button type="button" onClick={stop} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}><Square size={15} /> Stop</button>
@@ -1583,6 +1693,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{source === 'file' ? 'Playing your track' : source === 'device' ? 'Capturing device audio' : source === 'mic' ? 'Listening to the room' : ''}</span>
         <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
       </div>
+      )}
         </div>{/* /mv-stage */}
 
         <div className="mv-panels">
