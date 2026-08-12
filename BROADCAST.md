@@ -31,10 +31,26 @@ architecture and the scale path are in [STREAMING.md](./STREAMING.md).
 or strike unlicensed music. Use only the sources below, and keep an attribution/licence note per
 track (the "now playing" card shows attribution; also put it in the video description).
 
-### Cheap, high-volume (best value for a real channel)
+### ⭐ US-based vendors (recommended — avoids EU-licensing questions; download → local folder)
+This is the cleanest approach: subscribe to a **US** company, download stream-safe tracks, and drop
+them in `public/broadcast/<slug>/`. No API, no CORS, no EU-law ambiguity — the licence is a plain
+US contract and the files play locally (most reliable for 24/7). Confirm the plan tier permits
+**livestreaming + monetisation** (creator/commercial tiers do).
+| Vendor | HQ | ~Cost | Library | Notes |
+|--------|----|-------|---------|-------|
+| **Pond5** | New York | pay-per-track or sub | **~1.6M (biggest)** | Huge marketplace; per-track can add up. Has an API. |
+| **Storyblocks** | Arlington, VA | unlimited-download sub | 100k+ | Best value for **volume** — download as much as you want. Has an API. |
+| **Soundstripe** | Nashville, TN | ~$119/yr unlimited | curated tens of thousands | Simplest, clean licence; used by Amazon/Microsoft. |
+| **PremiumBeat** | US (Shutterstock) | per-track | curated | Higher-end, per-track royalty-free. |
+
+**Free + US:** **YouTube Audio Library** (Google — free, guaranteed safe *on* YouTube), **Free Music
+Archive** (per-track CC), **Incompetech / Kevin MacLeod** (CC-BY — the built-in `cinematic` station
+streams these). All US-based.
+
+### Cheap, high-volume (also fine — note some are EU)
 | Source | ~Cost | Notes |
 |--------|-------|-------|
-| **Jamendo** (API, wired in) | Free API for the catalogue; **commercial "radio" licence** is the paid part | 500k+ tracks, streams by tag. Buy the commercial radio licence for a legally-clean monetised stream (it certifies you so you don't owe collecting-society royalties). Set `JAMENDO_CLIENT_ID`. |
+| **Jamendo** (API, wired in) | Free API; **commercial "radio" licence** is the paid part | 500k+ tracks, streams by tag. EU company (Luxembourg) — a licence is valid globally, but if that's a concern prefer the US vendors above. Set `JAMENDO_CLIENT_ID`. |
 | **Pretzel Rocks** | Free (w/ chat credit) / **$5/mo** | Purpose-built DMCA-safe player for streamers, 50k+ tracks. Not an API — run its app on the broadcast box and capture its audio in OBS (Path A). |
 | **Epidemic Sound** | ~$10–20/mo | Owns all rights, safe on monetised streams. Download tracks → drop in `public/broadcast/<slug>/`. |
 | **Uppbeat** | Free (credit) / ~$7/mo | Free tier with attribution; download → local files. |
@@ -56,9 +72,25 @@ track (the "now playing" card shows attribution; also put it in the video descri
   each clip's licence. Great layered under music for `dnd-tavern` / `dnd-dungeon`.
 - Ambient/foley is the easiest to source stream-safe.
 
-**Rule of thumb:** for a monetised 24/7 channel, pay for **Jamendo commercial radio** or **Epidemic**;
-for a free start, use the **YouTube Audio Library** (on YouTube) or **Pixabay** + CC foley. Never drop
-in commercial/pop tracks "just to test" — one strike can take the channel down.
+**Rule of thumb:** cleanest path — subscribe to a **US vendor** (Storyblocks for volume, Soundstripe
+for simplicity), download stream-safe tracks, drop them in `public/broadcast/<slug>/`. Free start:
+**YouTube Audio Library**. Never drop in commercial/pop tracks "just to test" — one strike can take
+the channel down.
+
+### Crediting a shuffled radio (the video description)
+A shuffle has no fixed order, and a YouTube description is **static** — you can't auto-change it per
+song. You don't need to. Two things together are fully compliant:
+1. **The on-screen "now playing" card changes per song automatically** (it shows each track's stored
+   attribution live), so viewers always see the current credit.
+2. **List the whole playlist once in the description.** Since the station's tracklist is known, that
+   covers every song no matter the order. On the broadcast launcher (`/apps/lightningbug/broadcast`)
+   each station has a **"Copy credits"** button that pulls the station's actual playlist and builds a
+   ready-to-paste block (every track + the CC-BY notice + link). Paste it into the description once.
+
+So: don't just point vaguely at "Kevin MacLeod" — paste the full generated list. (Auto-rewriting the
+description per song via the YouTube API is possible but clunky and pointless — the on-screen card
+already handles "what's playing right now".) For CC-BY (Kevin MacLeod etc.) the description credit is
+the part that actually satisfies the licence; keep the on-screen card too.
 
 ---
 
