@@ -7,6 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useUser } from '@clerk/nextjs'
 import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
@@ -996,9 +997,27 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const removePreset = useCallback((id: string) => setPresets(prev => { const next = prev.filter(p => p.id !== id); try { localStorage.setItem('musicvideo-colorpresets', JSON.stringify(next)) } catch { /* off */ } return next }), [])
 
   // ── Scenes: save/load the WHOLE setup (look, filters, reactivity + video set) ──────────
+  // localStorage is the offline cache; when signed in they also sync to the account so scenes
+  // follow across devices (/api/scenes).
+  const { isSignedIn } = useUser()
   const [scenes, setScenes] = useState<Scene[]>([])
   useEffect(() => { try { const r = localStorage.getItem('lightningbug-scenes'); if (r) setScenes(JSON.parse(r)) } catch { /* off */ } }, [])
   const persistScenes = (next: Scene[]) => { try { localStorage.setItem('lightningbug-scenes', JSON.stringify(next)) } catch { /* off */ } return next }
+  // Merge the account's scenes in when signed in (server wins on id conflicts).
+  useEffect(() => {
+    if (!isSignedIn) return
+    let cancelled = false
+    fetch('/api/scenes').then(r => (r.ok ? r.json() : [])).then((server: Scene[]) => {
+      if (cancelled || !Array.isArray(server) || server.length === 0) return
+      setScenes(prev => {
+        const byId = new Map<string, Scene>()
+        prev.forEach(s => byId.set(s.id, s))
+        server.forEach(s => s?.id && byId.set(s.id, s))
+        return persistScenes([...byId.values()].slice(-48))
+      })
+    }).catch(() => { /* offline — keep local */ })
+    return () => { cancelled = true }
+  }, [isSignedIn])
   const saveScene = useCallback(() => {
     const name = (typeof prompt === 'function' ? prompt('Name this scene') : '')?.trim()
     if (!name) return
@@ -1012,7 +1031,8 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       bgCat, bgKind, bgClipId: bgClip?.id ?? null,
     }
     setScenes(prev => persistScenes([...prev.filter(s => s.name !== name), scene].slice(-24)))
-  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, switchChance, bgCat, bgKind, bgClip])
+    if (isSignedIn) fetch('/api/scenes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(scene) }).catch(() => { /* stays local */ })
+  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, switchChance, bgCat, bgKind, bgClip, isSignedIn])
   const loadScene = useCallback((s: Scene) => {
     setAuto(false)   // a saved scene is your own setup — hand control back to you
     setStyle(s.style); setColorCfg(s.colorCfg); setSeed(s.seed); setVideoMode(s.videoMode); setVideoLook(s.videoLook)
@@ -1024,7 +1044,10 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     if (s.bgKind === 'library' && s.bgClipId) { const c = clipById(s.bgClipId); if (c) { setBgClip(c); setBgKind('library') } }
     else if (s.bgKind && s.bgKind !== 'media') { setBgKind(s.bgKind); setBgClip(null) }
   }, [])
-  const deleteScene = useCallback((id: string) => setScenes(prev => persistScenes(prev.filter(s => s.id !== id))), [])
+  const deleteScene = useCallback((id: string) => {
+    setScenes(prev => persistScenes(prev.filter(s => s.id !== id)))
+    if (isSignedIn) fetch(`/api/scenes?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => { /* ok */ })
+  }, [isSignedIn])
 
   const audioRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
