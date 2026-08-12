@@ -29,7 +29,8 @@
     "bg:fetch": "node scripts/fetch-bg-clips.mjs",
     "bg:publish": "node scripts/publish-bg-clips.mjs",
     "bg:tag": "node scripts/tag-bg-clips.mjs",
-    "store:upload": "bundle exec fastlane ios metadata"
+    "store:upload": "bundle exec fastlane ios metadata",
+    "bg:pexels": "node scripts/seed-pexels-bg.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1067.0",

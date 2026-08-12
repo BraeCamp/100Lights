@@ -41,7 +41,11 @@ export default function BroadcastLauncher() {
         ))}
       </div>
 
-      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '22px 0 0', lineHeight: 1.6 }}>
+      <p style={{ fontSize: 12.5, margin: '20px 0 0' }}>
+        <a href="/admin/lightning-bug" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Background library admin →</a>
+        <span style={{ color: 'var(--text-muted)' }}> (fetch/curate Pexels backgrounds — owner + admin code)</span>
+      </p>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.6 }}>
         Add stations by editing <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>lib/stations.ts</code>.
         Drop licensed audio into <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>public/broadcast/&lt;slug&gt;/</code>,
         or set <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>JAMENDO_CLIENT_ID</code> to pull tracks by tag.

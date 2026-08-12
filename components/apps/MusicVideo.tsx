@@ -8,7 +8,7 @@
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee, Palette, Film, SlidersHorizontal, Menu, type LucideIcon } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee, Palette, Film, SlidersHorizontal, Menu, Search, type LucideIcon } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -818,6 +818,21 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const brightnessSetRef = useRef<Brightness[]>([]); brightnessSetRef.current = brightnessSet
   const [speedSet, setSpeedSet] = useState<Speed[]>([])   // motion filter ([] = all): Slow / Standard / Fast
   const speedSetRef = useRef<Speed[]>([]); speedSetRef.current = speedSet
+  // Search the tagged Pexels catalog (streams from Pexels' CDN; nothing downloaded).
+  const [pexQuery, setPexQuery] = useState('')
+  const [pexResults, setPexResults] = useState<{ id: string; title: string; mp4: string; poster: string; category: string; brightness: Brightness; author: string }[]>([])
+  const [pexLoading, setPexLoading] = useState(false)
+  const [pexSearched, setPexSearched] = useState(false)
+  const searchPexels = useCallback(async () => {
+    setPexLoading(true); setPexSearched(true)
+    try {
+      const bset = brightnessSetRef.current
+      const bp = bset.length === 1 ? `&brightness=${bset[0]}` : ''
+      const r = await fetch(`/api/pexels-bg?q=${encodeURIComponent(pexQuery)}${bp}&limit=48`)
+      const d = await r.json()
+      setPexResults(d.results ?? [])
+    } catch { setPexResults([]) } finally { setPexLoading(false) }
+  }, [pexQuery])
   // Dark-room = only dark clips selected → also softens the reactive beat-flash so nobody's blinded.
   const darkRoomRef = useRef(false); darkRoomRef.current = brightnessSet.length === 1 && brightnessSet[0] === 'dark'
   // Idle / "between-songs" transition mode: when no music is detected, drift through calm clips
@@ -1960,6 +1975,30 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             ? <button type="button" onClick={() => setSpeedSet([])} style={{ padding: '5px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>All</button>
             : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· any speed</span>}
         </div>
+
+        {/* Search the tagged Pexels catalog — thousands of streaming backgrounds, nothing downloaded */}
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '14px 0 6px' }}>Search backgrounds — streams from Pexels{brightnessSet.length === 1 ? ` · ${BRIGHTNESS_LABEL[brightnessSet[0]]} only` : ''}:</p>
+        <form onSubmit={e => { e.preventDefault(); searchPexels() }} style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+          <input value={pexQuery} onChange={e => setPexQuery(e.target.value)} placeholder="e.g. neon, ink in water, forest…" style={{ flex: 1, minWidth: 0, padding: '8px 11px', borderRadius: 9, fontSize: 13, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} />
+          <button type="submit" disabled={pexLoading} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 14px', borderRadius: 9, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#0e0d12', opacity: pexLoading ? 0.6 : 1 }}><Search size={14} /> {pexLoading ? '…' : 'Search'}</button>
+        </form>
+        {pexSearched && (
+          pexResults.length ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 8, marginBottom: 12 }}>
+              {pexResults.map(r => {
+                const active = bgKind === 'library' && bgClip?.id === r.id
+                const clip: BgClip = { id: r.id, category: (r.category as BgCategory), title: r.title, kind: 'video', preview: r.poster, src: r.mp4, tint: 'linear-gradient(135deg,#1e1b4b,#0b1020)', brightness: r.brightness }
+                return (
+                  <button key={r.id} type="button" onClick={() => { setBgClip(clip); setBgKind('library') }} title={`${r.title} · ${BRIGHTNESS_LABEL[r.brightness]} · Pexels/${r.author}`}
+                    style={{ position: 'relative', aspectRatio: '16 / 10', borderRadius: 9, overflow: 'hidden', padding: 0, cursor: 'pointer', border: active ? '2px solid var(--accent)' : '1px solid var(--border)', background: '#08070d' }}>
+                    <img src={r.poster} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                    <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '3px 5px', fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'linear-gradient(0deg, rgba(0,0,0,0.7), transparent)', textAlign: 'left' }}>{r.title}</span>
+                  </button>
+                )
+              })}
+            </div>
+          ) : !pexLoading && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>No tagged matches yet. Add more in the admin (Fetch from Pexels), then search again.</p>
+        )}
 
         {/* Streamed video library */}
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '10px 0 8px' }}>Library — streams online, low-res preview offline:</p>
