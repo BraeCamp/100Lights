@@ -8,7 +8,7 @@
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2 } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -20,7 +20,7 @@ import { FORMATS } from '@/lib/song-video/formats.mjs'
 import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import MusicVideoHome from '@/components/apps/MusicVideoHome'
-import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, clipEnergy, type BgClip, type BgCategory, type Energy } from '@/lib/bg-library'
+import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, clipEnergy, clipBrightness, BRIGHTNESS_LABEL, type BgClip, type BgCategory, type Energy, type Brightness } from '@/lib/bg-library'
 import { detectMediaKind } from '@/lib/media-import'
 import { useMediaDrop } from '@/lib/use-media-drop'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
@@ -290,7 +290,7 @@ interface Scene {
   blur: number; brightness: number; saturate: number; hueRot: number
   beatColor: boolean; punchAmt: number
   reactive: boolean; matchVisuals: boolean; matchEnergy: boolean; autoShuffle: boolean
-  videoSet: BgCategory[]; switchChance: number
+  videoSet: BgCategory[]; brightnessSet?: Brightness[]; switchChance: number
   bgCat: BgCategory; bgKind: string; bgClipId: string | null
   isDefault?: boolean   // auto-loads when Lightning Bug opens
 }
@@ -792,6 +792,8 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const [autoShuffle, setAutoShuffle] = useState(false)     // play a clip, then move to the next one
   const [videoSet, setVideoSet] = useState<BgCategory[]>([])   // categories the shuffle draws from ([] = all)
   const videoSetRef = useRef<BgCategory[]>([]); videoSetRef.current = videoSet
+  const [brightnessSet, setBrightnessSet] = useState<Brightness[]>([])   // brightness filter ([] = all); e.g. ['dark'] for a dark room
+  const brightnessSetRef = useRef<Brightness[]>([]); brightnessSetRef.current = brightnessSet
   const autoShuffleRef = useRef(false); autoShuffleRef.current = autoShuffle
   const bgKindRef = useRef(bgKind); bgKindRef.current = bgKind
   const shuffleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -859,6 +861,15 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     // The video set is the categories to draw from ([] = the whole library).
     const set = videoSetRef.current
     let pool = BG_LIBRARY.filter(c => c.kind === 'video' && (set.length === 0 || set.includes(c.category)))
+    // Brightness filter (dark-room safety): keep only the chosen brightness. This is a hard
+    // promise — never flash-bang — so if the chosen categories don't have enough at that
+    // brightness, we widen the category rather than let a brighter clip through.
+    const bset = brightnessSetRef.current
+    if (bset.length) {
+      let bm = pool.filter(c => bset.includes(clipBrightness(c)))
+      if (bm.length < 2) bm = BG_LIBRARY.filter(c => c.kind === 'video' && bset.includes(clipBrightness(c)))
+      if (bm.length >= 1) pool = bm
+    }
     // Auto: bias backgrounds to energy-appropriate categories (within the set).
     if (autoRef.current) {
       const cats = autoCategories(energyBandRef.current)
@@ -1107,19 +1118,19 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       mirror, glow, trail, gain, smoothing,
       blur, brightness, saturate, hueRot,
       beatColor, punchAmt,
-      reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, switchChance,
+      reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, switchChance,
       bgCat, bgKind, bgClipId: bgClip?.id ?? null,
     }
     setScenes(prev => persistScenes([...prev.filter(s => s.name !== name), scene].slice(-24)))
     if (isSignedIn) fetch('/api/scenes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(scene) }).catch(() => { /* stays local */ })
-  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, switchChance, bgCat, bgKind, bgClip, isSignedIn])
+  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, switchChance, bgCat, bgKind, bgClip, isSignedIn])
   const loadScene = useCallback((s: Scene) => {
     setAuto(false)   // a saved scene is your own setup — hand control back to you
     setStyle(s.style); setColorCfg(s.colorCfg); setSeed(s.seed); setVideoMode(s.videoMode); setVideoLook(s.videoLook)
     setMirror(s.mirror); setGlow(s.glow); setTrail(s.trail); setGain(s.gain); setSmoothing(s.smoothing)
     setBlur(s.blur); setBrightness(s.brightness); setSaturate(s.saturate); setHueRot(s.hueRot)
     setBeatColor(s.beatColor); setPunchAmt(s.punchAmt)
-    setReactive(s.reactive); setMatchVisuals(s.matchVisuals); setMatchEnergy(s.matchEnergy); setAutoShuffle(s.autoShuffle); setVideoSet(s.videoSet ?? []); setSwitchChance(s.switchChance)
+    setReactive(s.reactive); setMatchVisuals(s.matchVisuals); setMatchEnergy(s.matchEnergy); setAutoShuffle(s.autoShuffle); setVideoSet(s.videoSet ?? []); setBrightnessSet(s.brightnessSet ?? []); setSwitchChance(s.switchChance)
     setBgCat(s.bgCat)
     if (s.bgKind === 'library' && s.bgClipId) { const c = clipById(s.bgClipId); if (c) { setBgClip(c); setBgKind('library') } }
     else if (s.bgKind && s.bgKind !== 'media') { setBgKind(s.bgKind); setBgClip(null) }
@@ -1688,24 +1699,51 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           </div>
         )}
 
+        {/* Brightness filter — one control governs BOTH the auto-shuffle pool and the grid
+            below. Pick "Dark" and a dark room never gets flash-banged. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '16px 0 6px' }}>
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text-secondary)', marginRight: 2 }}>Brightness</span>
+          {(['dark', 'mid', 'bright'] as Brightness[]).map(b => {
+            const on = brightnessSet.includes(b)
+            const Icon = b === 'dark' ? Moon : b === 'bright' ? Sun : Circle
+            return (
+              <button key={b} type="button" onClick={() => setBrightnessSet(v => v.includes(b) ? v.filter(x => x !== b) : [...v, b])}
+                title={b === 'dark' ? 'Dim scenes — safe for a dark room' : b === 'bright' ? 'Bright, high-energy scenes' : 'Medium brightness'}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: on ? 'var(--accent)' : 'var(--bg-card)', color: on ? '#0e0d12' : 'var(--text-secondary)' }}>
+                <Icon size={12} /> {BRIGHTNESS_LABEL[b]}
+              </button>
+            )
+          })}
+          {brightnessSet.length > 0
+            ? <button type="button" onClick={() => setBrightnessSet([])} style={{ padding: '5px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>All</button>
+            : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· all brightnesses</span>}
+        </div>
+        {brightnessSet.length > 0 && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{brightnessSet.includes('dark') && brightnessSet.length === 1 ? 'Dark-room mode — only dim scenes play, so nobody gets flash-banged.' : `Showing ${brightnessSet.map(b => BRIGHTNESS_LABEL[b].toLowerCase()).join(' + ')} scenes only — applies to shuffle and the picker below.`}</p>}
+
         {/* Streamed video library */}
-        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '16px 0 8px' }}>Library — streams online, low-res preview offline:</p>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '10px 0 8px' }}>Library — streams online, low-res preview offline:</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
           {BG_CATEGORIES.map(cat => (
             <button key={cat} type="button" onClick={() => setBgCat(cat)} style={{ padding: '6px 11px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgCat === cat ? 'var(--accent)' : 'var(--bg-card)', color: bgCat === cat ? '#0e0d12' : 'var(--text-secondary)' }}>{cat}</button>
           ))}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 8 }}>
-          {clipsByCategory(bgCat).map(clip => {
+          {clipsByCategory(bgCat).filter(clip => brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))).map(clip => {
             const active = bgKind === 'library' && bgClip?.id === clip.id
+            const bri = clipBrightness(clip)
+            const BriIcon = bri === 'dark' ? Moon : bri === 'bright' ? Sun : Circle
             return (
-              <button key={clip.id} type="button" onClick={() => { setBgClip(clip); setBgKind('library') }} title={clip.title}
+              <button key={clip.id} type="button" onClick={() => { setBgClip(clip); setBgKind('library') }} title={`${clip.title} · ${BRIGHTNESS_LABEL[bri]}`}
                 style={{ position: 'relative', aspectRatio: '16 / 10', borderRadius: 9, overflow: 'hidden', padding: 0, cursor: 'pointer', border: active ? '2px solid var(--accent)' : '1px solid var(--border)', backgroundImage: clip.tint, backgroundSize: 'cover' }}>
                 <img src={clip.preview} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                <span title={BRIGHTNESS_LABEL[bri]} style={{ position: 'absolute', top: 4, left: 4, width: 16, height: 16, borderRadius: 999, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.55)', color: '#fff' }}><BriIcon size={9} /></span>
                 <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '3px 5px', fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'linear-gradient(0deg, rgba(0,0,0,0.65), transparent)', textAlign: 'left' }}>{clip.title}</span>
               </button>
             )
           })}
+          {clipsByCategory(bgCat).filter(clip => brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))).length === 0 && (
+            <p style={{ gridColumn: '1 / -1', fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0' }}>No {brightnessSet.map(b => BRIGHTNESS_LABEL[b].toLowerCase()).join('/')} clips in {bgCat} — try another category or widen the brightness filter.</p>
+          )}
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0 0' }}>Library clips stream from the cloud; a low-res preview is cached for offline. Or upload your own.</p>
 

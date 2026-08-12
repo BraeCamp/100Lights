@@ -15,6 +15,9 @@
 
 export type Energy = 'calm' | 'mid' | 'hot'
 
+import { BRIGHTNESS_MAP, type Brightness } from './bg-brightness'
+export type { Brightness }
+
 export interface BgClip {
   id: string
   category: BgCategory
@@ -24,7 +27,14 @@ export interface BgClip {
   src: string       // full asset (image is same-origin; video streams from the CDN)
   tint: string      // gradient shown until the asset loads (and if it 404s)
   energy?: Energy   // used to match the song's energy when auto-shuffling (default: by category)
+  brightness?: Brightness   // overrides the measured poster brightness (BRIGHTNESS_MAP); for the dark-room filter
 }
+
+// Measured perceptual brightness of the clip's poster (see scripts/tag-bg-brightness.mjs).
+// Lets users filter to dark scenes so a dark room doesn't get flash-banged. Defaults to 'mid'
+// for anything not yet measured (e.g. a brand-new clip before bg:brightness is re-run).
+export const clipBrightness = (c: BgClip): Brightness => c.brightness ?? BRIGHTNESS_MAP[c.id] ?? 'mid'
+export const BRIGHTNESS_LABEL: Record<Brightness, string> = { dark: 'Dark', mid: 'Mid', bright: 'Bright' }
 
 // Artistic themes first: the library leans music-video by default.
 export const BG_CATEGORIES = ['Abstract', 'Light', 'Neon', 'Film', 'Night', 'Streets', 'Cozy', 'Nature', 'Patterns', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
