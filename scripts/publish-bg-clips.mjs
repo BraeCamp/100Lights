@@ -50,6 +50,27 @@ const ARTSY = {
   'artsy-holographic': 'holographic iridescent foil abstract',
   'artsy-liquid-metal': 'liquid metal chrome flowing',
   'artsy-glitter': 'gold glitter sparkle falling',
+  // Cinematic / music-video textures
+  'artsy-marble-ink': 'marbling ink paint swirl blue',
+  'artsy-liquid-color': 'colorful liquid paint flow macro',
+  'artsy-bubbles': 'soap bubbles iridescent macro',
+  'artsy-crystal': 'crystal prism light refraction rainbow',
+  'artsy-honey': 'honey pouring golden macro slow',
+  'artsy-powder': 'color powder explosion black background',
+  'artsy-lens-flare': 'anamorphic lens flare light streak',
+  'artsy-god-rays': 'light rays dust atmosphere forest',
+  'artsy-projector': 'film projector light dust beam',
+  'artsy-disco': 'disco ball light reflections party',
+  'artsy-strobe': 'strobe light flashing dark',
+  'artsy-spotlight': 'spotlight stage smoke beam',
+  'artsy-film-grain': 'film grain scratches vintage overlay',
+  'artsy-vhs-static': 'vhs static glitch retro noise',
+  'artsy-silhouette-dance': 'dancer silhouette backlight',
+  'artsy-slow-water': 'water droplets ripple slow motion',
+  'artsy-smoke-dance': 'smoke swirl backlit dark slow',
+  'artsy-particles-float': 'dust particles floating light beam',
+  'artsy-neon-grid': 'retro neon grid synthwave motion',
+  'artsy-galaxy': 'galaxy stars space nebula',
 }
 
 // --- env ---------------------------------------------------------------------------------

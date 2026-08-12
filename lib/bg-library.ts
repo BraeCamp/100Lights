@@ -26,7 +26,8 @@ export interface BgClip {
   energy?: Energy   // used to match the song's energy when auto-shuffling (default: by category)
 }
 
-export const BG_CATEGORIES = ['Patterns', 'Artsy', 'Streets', 'Night', 'Cozy', 'Nature', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
+// Artsy first: the library leans artistic (music-video feel) by default.
+export const BG_CATEGORIES = ['Artsy', 'Night', 'Streets', 'Cozy', 'Nature', 'Patterns', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
 export type BgCategory = typeof BG_CATEGORIES[number]
 
 // Default energy per category when a clip doesn't override it.
@@ -116,6 +117,27 @@ const NATURE: { id: string; category: BgCategory; title: string; tint: string; e
   { id: 'artsy-holographic', category: 'Artsy', title: 'Holographic', tint: 'linear-gradient(135deg,#0ea5e9,#f0abfc)', energy: 'mid' },
   { id: 'artsy-liquid-metal', category: 'Artsy', title: 'Liquid metal', tint: 'linear-gradient(135deg,#334155,#e2e8f0)', energy: 'mid' },
   { id: 'artsy-glitter', category: 'Artsy', title: 'Glitter', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)', energy: 'mid' },
+  // Artsy — cinematic / music-video textures (the bulk of the library)
+  { id: 'artsy-marble-ink', category: 'Artsy', title: 'Marble ink', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)', energy: 'mid' },
+  { id: 'artsy-liquid-color', category: 'Artsy', title: 'Liquid color', tint: 'linear-gradient(135deg,#be185d,#0ea5e9)', energy: 'mid' },
+  { id: 'artsy-bubbles', category: 'Artsy', title: 'Iridescent bubbles', tint: 'linear-gradient(135deg,#0e7490,#f0abfc)', energy: 'mid' },
+  { id: 'artsy-crystal', category: 'Artsy', title: 'Crystal light', tint: 'linear-gradient(135deg,#0ea5e9,#e0f2fe)', energy: 'calm' },
+  { id: 'artsy-honey', category: 'Artsy', title: 'Honey pour', tint: 'linear-gradient(135deg,#7c2d12,#fcd34d)', energy: 'calm' },
+  { id: 'artsy-powder', category: 'Artsy', title: 'Powder burst', tint: 'linear-gradient(135deg,#111827,#f472b6)', energy: 'hot' },
+  { id: 'artsy-lens-flare', category: 'Artsy', title: 'Lens flare', tint: 'linear-gradient(135deg,#1e1b4b,#f59e0b)', energy: 'mid' },
+  { id: 'artsy-god-rays', category: 'Artsy', title: 'God rays', tint: 'linear-gradient(135deg,#1e293b,#fde68a)', energy: 'calm' },
+  { id: 'artsy-projector', category: 'Artsy', title: 'Projector dust', tint: 'linear-gradient(135deg,#0b1020,#e2e8f0)', energy: 'mid' },
+  { id: 'artsy-disco', category: 'Artsy', title: 'Disco lights', tint: 'linear-gradient(135deg,#3b0764,#f472b6)', energy: 'hot' },
+  { id: 'artsy-strobe', category: 'Artsy', title: 'Strobe', tint: 'linear-gradient(135deg,#0b1020,#e2e8f0)', energy: 'hot' },
+  { id: 'artsy-spotlight', category: 'Artsy', title: 'Spotlight smoke', tint: 'linear-gradient(135deg,#111827,#a78bfa)', energy: 'mid' },
+  { id: 'artsy-film-grain', category: 'Artsy', title: 'Film grain', tint: 'linear-gradient(135deg,#292524,#a8a29e)', energy: 'calm' },
+  { id: 'artsy-vhs-static', category: 'Artsy', title: 'VHS static', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)', energy: 'hot' },
+  { id: 'artsy-silhouette-dance', category: 'Artsy', title: 'Dancer silhouette', tint: 'linear-gradient(135deg,#111827,#fb7185)', energy: 'mid' },
+  { id: 'artsy-slow-water', category: 'Artsy', title: 'Water ripple', tint: 'linear-gradient(135deg,#0c4a6e,#7dd3fc)', energy: 'calm' },
+  { id: 'artsy-smoke-dance', category: 'Artsy', title: 'Backlit smoke', tint: 'linear-gradient(135deg,#0b1020,#a78bfa)', energy: 'calm' },
+  { id: 'artsy-particles-float', category: 'Artsy', title: 'Floating dust', tint: 'linear-gradient(135deg,#1e293b,#fde68a)', energy: 'calm' },
+  { id: 'artsy-neon-grid', category: 'Artsy', title: 'Synthwave grid', tint: 'linear-gradient(135deg,#3b0764,#22d3ee)', energy: 'hot' },
+  { id: 'artsy-galaxy', category: 'Artsy', title: 'Galaxy', tint: 'linear-gradient(135deg,#0b1020,#a78bfa)', energy: 'calm' },
 ]
 
 // Generative styles that also have an animated WebM loop (scripts/gen-bg-videos.mjs).
