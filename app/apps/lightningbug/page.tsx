@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
 
-const LightningBug = dynamic(() => import('@/components/apps/MusicVideo'))
+const LightningBug = dynamic(() => import('@/components/apps/LightningBug'))
 
 export const metadata: Metadata = {
   title: 'Lightning Bug — Live Visuals for Your Music',

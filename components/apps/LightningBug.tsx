@@ -19,7 +19,7 @@ import { songVideoData } from '@/lib/song-video/from-project.mjs'
 import { FORMATS } from '@/lib/song-video/formats.mjs'
 import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
-import MusicVideoHome from '@/components/apps/MusicVideoHome'
+import LightningBugHome from '@/components/apps/LightningBugHome'
 import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, clipEnergy, clipBrightness, BRIGHTNESS_LABEL, clipSpeed, SPEED_LABEL, TRANSITION_CLIPS, type BgClip, type BgCategory, type Energy, type Brightness, type Speed } from '@/lib/bg-library'
 import type { BroadcastTrack, StationScene } from '@/lib/stations'
 import { detectMediaKind } from '@/lib/media-import'
@@ -30,15 +30,15 @@ import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
 const FONTS = ['system-ui', 'Georgia, serif', 'ui-monospace, monospace', 'Impact, sans-serif']
 
-export default function MusicVideo() {
+export default function LightningBug() {
   return (
     <AppChrome slug="lightningbug">
-      <MusicVideoApp />
+      <LightningBugApp />
     </AppChrome>
   )
 }
 
-function MusicVideoApp() {
+function LightningBugApp() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [notes, setNotes] = useState<MidiNote[]>([])
   const [busy, setBusy] = useState(false)
@@ -184,7 +184,7 @@ function MusicVideoApp() {
   if (broadcastStation) return <LiveVisualizer broadcast={broadcastStation} onExit={() => { setBroadcastStation(null); setLive(false) }} />
 
   // Bespoke home when nothing is chosen yet.
-  if (!live && !videoUrl) return <MusicVideoHome busy={busy} onFile={handleFile} onLive={() => setLive(true)} />
+  if (!live && !videoUrl) return <LightningBugHome busy={busy} onFile={handleFile} onLive={() => setLive(true)} />
 
   return (
     <main id="main" className={`${live ? 'max-w-6xl' : 'max-w-2xl'} mx-auto`} style={{ padding: '20px 18px 40px' }}>
@@ -1218,17 +1218,19 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     })
   }, [applyAuto])
 
-  useEffect(() => { try { const r = localStorage.getItem('musicvideo-colorpresets'); if (r) setPresets(JSON.parse(r)) } catch { /* off */ } }, [])
+  // Colour presets — new key 'lightningbug-colorpresets'; one-time fall back to the old
+  // 'musicvideo-colorpresets' so nothing saved before the rename is lost.
+  useEffect(() => { try { const r = localStorage.getItem('lightningbug-colorpresets') ?? localStorage.getItem('musicvideo-colorpresets'); if (r) setPresets(JSON.parse(r)) } catch { /* off */ } }, [])
   const savePreset = useCallback(() => {
     const name = (typeof prompt === 'function' ? prompt('Name this colour preset') : '')?.trim()
     if (!name) return
     setPresets(prev => {
       const next = [...prev.filter(p => p.name !== name), { id: `${Date.now()}`, name, cfg: colorCfg }].slice(-24)
-      try { localStorage.setItem('musicvideo-colorpresets', JSON.stringify(next)) } catch { /* off */ }
+      try { localStorage.setItem('lightningbug-colorpresets', JSON.stringify(next)) } catch { /* off */ }
       return next
     })
   }, [colorCfg])
-  const removePreset = useCallback((id: string) => setPresets(prev => { const next = prev.filter(p => p.id !== id); try { localStorage.setItem('musicvideo-colorpresets', JSON.stringify(next)) } catch { /* off */ } return next }), [])
+  const removePreset = useCallback((id: string) => setPresets(prev => { const next = prev.filter(p => p.id !== id); try { localStorage.setItem('lightningbug-colorpresets', JSON.stringify(next)) } catch { /* off */ } return next }), [])
 
   // ── Scenes: save/load the WHOLE setup (look, filters, reactivity + video set) ──────────
   // localStorage is the offline cache; when signed in they also sync to the account so scenes

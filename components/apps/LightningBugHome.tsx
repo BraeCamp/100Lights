@@ -9,7 +9,7 @@ import { relTime } from '@/lib/app-history'
 
 const BARS = 28
 
-export default function MusicVideoHome({ busy, onFile, onLive }: { busy: boolean; onFile: (f: File) => void; onLive: () => void }) {
+export default function LightningBugHome({ busy, onFile, onLive }: { busy: boolean; onFile: (f: File) => void; onLive: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const { history } = useAppShell()
   const recent = history.entries
