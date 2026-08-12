@@ -7,7 +7,7 @@
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -693,6 +693,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const prevBeatRef = useRef(0)                            // for the inter-beat interval → BPM
   const beatShiftRef = useRef(0)                            // colour rotation, bumped each beat
   const bpmEmaRef = useRef(0)
+  const beatIvBufRef = useRef<number[]>([])                 // recent beat intervals → median BPM (adapts fast)
   const lastBpmUiRef = useRef(0)
   const punchEnvRef = useRef(0)                             // sub/bass transient envelope (drum "punch")
   const beatCountRef = useRef(0)                            // beats since the last background cut
@@ -743,6 +744,23 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const energyEmaRef = useRef(0)                             // smoothed loudness
   const energyBandRef = useRef<Energy>('mid')               // current band (hysteresis), read by nextClip
   const lastEnergyUiRef = useRef(0)
+  // Reactive amounts + detectors — mostly set by the genre presets.
+  const [switchChance, setSwitchChance] = useState(0.35)   // per-bar chance to cut the video
+  const [punchAmt, setPunchAmt] = useState(1)              // drum-punch intensity
+  const [toneTint, setToneTint] = useState(false)          // warm/cool tint driven by spectral brightness
+  const [tone, setTone] = useState(0.5)                    // detected tone (0 dark … 1 bright), for the readout
+  const switchChanceRef = useRef(0.35); switchChanceRef.current = switchChance
+  const punchAmtRef = useRef(1); punchAmtRef.current = punchAmt
+  const toneTintRef = useRef(false); toneTintRef.current = toneTint
+  const toneEmaRef = useRef(0.5)
+  const lastToneUiRef = useRef(0)
+  // AUTO mode: one tap → fully automatic. Enables the whole reactive stack and adapts the
+  // genre look to the detected energy + tone. Casual users just play music.
+  const [auto, setAuto] = useState(false)
+  const autoRef = useRef(false); autoRef.current = auto
+  const autoApplyRef = useRef<(band: Energy, tone: number) => void>(() => {})
+  const lastAutoVibeRef = useRef('')
+  const lastAutoChangeRef = useRef(0)
   const bgInputRef = useRef<HTMLInputElement | null>(null)
   const bgFilterRef = useRef<HTMLDivElement | null>(null)  // filters applied here; EQ mode drives it per frame
   // Offline save/download for the selected library clip
@@ -856,9 +874,31 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     setGain(look.gain); setSmoothing(look.smoothing)
     setMirror(look.mirror); setGlow(look.glow); setTrail(look.trail)
     setMatchVisuals(look.match); setEqFilters(look.eq); setBeatColor(!!look.beat)
+    // Reactive amounts — explicit on the preset, else derived from its character.
+    setPunchAmt(look.punch ?? (look.eq ? (look.gain >= 1.4 ? 1.5 : 1.0) : 0.7))
+    setSwitchChance(look.switchChance ?? (look.trail ? 0.25 : 0.45))
+    setToneTint(look.toneTint ?? !look.eq)
     setBlur(look.filters.blur); setBrightness(look.filters.brightness); setSaturate(look.filters.saturate); setHueRot(look.filters.hue)
     setBgCat(look.bg.browse); setActiveLook(look); shuffleTo(look)
   }, [shuffleTo])
+
+  // AUTO: pick a genre look from the detected energy + tone, then force the whole reactive
+  // stack on (so it stays lively regardless of the look's own toggles).
+  const applyAuto = useCallback((band: Energy, tone: number) => {
+    const id = band === 'hot' ? (tone > 0.55 ? 'edm' : 'hiphop')
+      : band === 'calm' ? (tone > 0.55 ? 'chill' : 'lofi')
+        : (tone > 0.55 ? 'pop' : 'hiphop')
+    const look = GENRE_LOOKS.find(l => l.id === id)
+    if (look) applyLook(look)
+    setReactive(true); setEqFilters(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true)
+  }, [applyLook])
+  autoApplyRef.current = applyAuto
+  const toggleAuto = useCallback(() => {
+    setAuto(a => {
+      if (!a) { setToneTint(true); lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0; applyAuto(energyBandRef.current, toneEmaRef.current) }
+      return !a
+    })
+  }, [applyAuto])
 
   useEffect(() => { try { const r = localStorage.getItem('musicvideo-colorpresets'); if (r) setPresets(JSON.parse(r)) } catch { /* off */ } }, [])
   const savePreset = useCallback(() => {
@@ -904,6 +944,11 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
 
   const start = useCallback(async (src: 'mic' | 'device' | 'file', file?: File) => {
     setErr(null)
+    // Fresh song → fresh detectors: reset BPM, beat, energy and tone state so nothing carries
+    // over from the previous track (all non-AI — pure analyser math).
+    bpmEmaRef.current = 0; beatIvBufRef.current = []; setBpm(0)
+    bassAvgRef.current = 0; energyEmaRef.current = 0; toneEmaRef.current = 0.5; punchEnvRef.current = 0
+    lastBeatRef.current = 0; prevBeatRef.current = 0; beatCountRef.current = 0
     try {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       const ctx = new AC(); audioRef.current = ctx
@@ -967,16 +1012,26 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             const iv = now - prevBeatRef.current; prevBeatRef.current = now; lastBeatRef.current = now
             beatShiftRef.current++
             if (iv > 250 && iv < 2000) {
-              const inst = 60000 / iv
-              bpmEmaRef.current = bpmEmaRef.current ? bpmEmaRef.current * 0.8 + inst * 0.2 : inst
-              if (now - lastBpmUiRef.current > 500) { lastBpmUiRef.current = now; setBpm(Math.round(bpmEmaRef.current)) }
+              // Median of the last 6 intervals: robust to missed/double beats, and re-locks
+              // within a few beats when the song (or tempo) changes.
+              const b = beatIvBufRef.current; b.push(iv); if (b.length > 6) b.shift()
+              const sorted = [...b].sort((x, y) => x - y); const med = sorted[sorted.length >> 1]
+              // Fold into a musical range so half/double-time detection reads sanely.
+              let v = 60000 / med
+              while (v > 175) v /= 2
+              while (v < 70) v *= 2
+              bpmEmaRef.current = v
+              if (now - lastBpmUiRef.current > 350) { lastBpmUiRef.current = now; setBpm(Math.round(v)) }
             }
-            // Beat-synced auto-shuffle: cut the background on a bar/phrase boundary. Beats per
-            // change scales with energy when matching (hot 1 bar, mid 2, calm 4), else 2 bars.
+            // Beat-synced auto-shuffle: at every bar (4 beats) roll a chance to cut the video —
+            // organic, not a fixed cadence. Chance = the "Switch chance" setting, nudged by
+            // energy when matching (hot livelier, calm steadier).
             if (autoShuffleRef.current && bgKindRef.current === 'library') {
               beatCountRef.current++
-              const per = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 4 : energyBandRef.current === 'mid' ? 8 : 16) : 8
-              if (beatCountRef.current >= per) { beatCountRef.current = 0; nextClipRef.current() }
+              if (beatCountRef.current % 4 === 0) {
+                const ef = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 1.4 : energyBandRef.current === 'mid' ? 1.0 : 0.6) : 1
+                if (Math.random() < Math.min(1, switchChanceRef.current * ef)) nextClipRef.current()
+              }
             }
             // Beat-colour flash on the whole frame (background included) — arm on the kick.
             if (beatColorRef.current) { beatFlashRef.current = 1; const c = optsRef.current.colors; beatFlashColorRef.current = c[beatShiftRef.current % c.length] }
@@ -1000,18 +1055,36 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           const band: Energy = e > (cur === 'hot' ? 0.30 : 0.36) ? 'hot' : e > (cur === 'calm' ? 0.20 : 0.15) ? 'mid' : 'calm'
           energyBandRef.current = band
           if (now - lastEnergyUiRef.current > 300) { lastEnergyUiRef.current = now; setEnergyBand(band) }
+          // Tone detector — spectral brightness (high-band share of the energy): 0 = dark/bassy,
+          // 1 = bright/airy. Drives a warm↔cool hue tint when Tone tint is on.
+          let lo = 0, hi = 0
+          for (let i = 0; i < f.freq.length; i++) { if (i < 24) lo += f.freq[i]; else hi += f.freq[i] }
+          const bright = lo + hi > 0 ? hi / (lo + hi) : 0.5
+          toneEmaRef.current = toneEmaRef.current * 0.95 + bright * 0.05
+          if (now - lastToneUiRef.current > 400) { lastToneUiRef.current = now; setTone(toneEmaRef.current) }
+          // AUTO: re-vibe the whole look when the energy band or tone bucket changes (with a
+          // cooldown so it adapts on section changes, not every second).
+          if (autoRef.current) {
+            const tb = toneEmaRef.current > 0.55 ? 'b' : toneEmaRef.current < 0.4 ? 'w' : 'm'
+            const vibe = energyBandRef.current + tb
+            if (vibe !== lastAutoVibeRef.current && now - lastAutoChangeRef.current > 12000) {
+              lastAutoVibeRef.current = vibe; lastAutoChangeRef.current = now
+              autoApplyRef.current(energyBandRef.current, toneEmaRef.current)
+            }
+          }
           // Filters interacting with the EQ — brightness/saturation pulse with the overall level,
-          // and the sub/bass PUNCH sharpens + brightens + gives the background a quick scale
-          // "thump" so drums are clearly visible.
+          // the sub/bass PUNCH sharpens + brightens + scale-"thumps" (drums), and the tone tint
+          // shifts warm (dark songs) ↔ cool (bright songs).
           const eq = eqRef.current
           if (eq.on && bgFilterRef.current) {
-            const p = punchEnvRef.current
-            const bl = eq.blur * (1 - level * 0.4) * (1 - p * 0.5)
+            const p = punchEnvRef.current * punchAmtRef.current
+            const toneHue = toneTintRef.current ? (toneEmaRef.current - 0.5) * 70 : 0
+            const bl = eq.blur * (1 - level * 0.4) * (1 - Math.min(1, p) * 0.5)
             const br = eq.brightness * (0.7 + level * 0.55 + p * 0.55)
             const sa = eq.saturate * (0.85 + level * 0.55 + p * 0.4)
-            const hu = eq.hueRot + level * 45 + p * 18
+            const hu = eq.hueRot + level * 45 + p * 18 + toneHue
             bgFilterRef.current.style.filter = `${lookFilterRef.current} blur(${bl.toFixed(1)}px) brightness(${br.toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu)}deg)`.trim()
-            bgFilterRef.current.style.transform = `scale(${(1 + p * 0.035).toFixed(3)})`
+            bgFilterRef.current.style.transform = `scale(${(1 + Math.min(1, p) * 0.035).toFixed(3)})`
           }
         }
         rafRef.current = requestAnimationFrame(draw)
@@ -1147,6 +1220,15 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         </div>{/* /mv-stage */}
 
         <div className="mv-panels">
+      {/* AUTO — the one-tap button. Casual users press this and just play music. */}
+      <button type="button" onClick={toggleAuto}
+        style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '14px 16px', marginBottom: 12, borderRadius: 14, cursor: 'pointer', textAlign: 'left', border: auto ? 'none' : '1px solid var(--border)', background: auto ? 'var(--accent)' : 'var(--bg-card)', color: auto ? '#0e0d12' : 'var(--text-primary)' }}>
+        <span style={{ display: 'grid', placeItems: 'center', width: 34, height: 34, borderRadius: 10, flexShrink: 0, background: auto ? 'rgba(0,0,0,0.15)' : 'var(--accent)', color: auto ? '#0e0d12' : '#0e0d12' }}><Sparkles size={18} /></span>
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: 'block', fontSize: 15, fontWeight: 850 }}>{auto ? 'Auto — on' : 'Auto'}</span>
+          <span style={{ display: 'block', fontSize: 11.5, fontWeight: 600, opacity: 0.85 }}>{auto ? 'Reading the music and setting everything for you' + (activeLook ? ` · ${activeLook.name}` : '') : 'One tap — just play music and it looks great'}</span>
+        </span>
+      </button>
       <Panel id="look" label="Genre look" open={openPanel === 'look'} onToggle={() => setOpenPanel(p => (p === 'look' ? null : 'look'))}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
           {GENRE_LOOKS.map(l => (
@@ -1290,7 +1372,13 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             )}
           </div>
         )}
-        {autoShuffle && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{matchEnergy ? 'Reads the song’s energy off the EQ and pulls matching scenes — calm songs get slow, mellow backgrounds; loud, busy songs get fast, bright ones. When a beat is detected it cuts on the bar.' : 'A new clip comes on automatically — on a bar boundary when there’s a beat, otherwise on a timer. Like a living wallpaper; great full-screen on a TV.'}</p>}
+        {autoShuffle && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{matchEnergy ? 'Reads the song’s energy off the EQ and pulls matching scenes — calm songs get slow, mellow backgrounds; loud, busy songs get fast, bright ones. When a beat is detected it rolls each bar whether to cut.' : 'A new clip comes on automatically — each bar there’s a chance to cut (set below), otherwise on a timer. Like a living wallpaper; great full-screen on a TV.'}</p>}
+        {autoShuffle && (
+          <div style={{ margin: '4px 0 6px' }}>
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Switch chance — {Math.round(switchChance * 100)}% per bar</label>
+            <input type="range" min={0} max={1} step={0.05} value={switchChance} onChange={e => setSwitchChance(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+          </div>
+        )}
 
         {/* Streamed video library */}
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '16px 0 8px' }}>Library — streams online, low-res preview offline:</p>
@@ -1355,6 +1443,16 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           </label>
           {eqFilters && reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-6px 0 12px' }}>Brightness &amp; saturation pulse with the music, and the sub/bass (kick) punches the background — a quick brighten, sharpen and scale-thump so drums pop. The sliders set the baseline.</p>}
           {!reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-6px 0 12px' }}>Turn on audio-reactive visuals to make filters react.</p>}
+          {eqFilters && reactive && (
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Drum punch — {Math.round(punchAmt * 100)}%</label>
+              <input type="range" min={0} max={2} step={0.1} value={punchAmt} onChange={e => setPunchAmt(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer', marginTop: 10 }}>
+                <input type="checkbox" checked={toneTint} onChange={e => setToneTint(e.target.checked)} /> Tone tint (warm ↔ cool)
+                {running && <span style={{ marginLeft: 4, padding: '2px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: '#0e0d12', background: tone > 0.6 ? '#7dd3fc' : tone < 0.4 ? '#fbbf24' : '#a3a3a3' }}>{tone > 0.6 ? 'bright' : tone < 0.4 ? 'warm' : 'neutral'}</span>}
+              </label>
+            </div>
+          )}
           <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Blur — {blur}px</label>
           <input type="range" min={0} max={24} step={1} value={blur} onChange={e => setBlur(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
           <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Brightness</label>

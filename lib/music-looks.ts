@@ -25,7 +25,10 @@ export interface GenreLook {
   trail: boolean
   match: boolean
   eq: boolean
-  beat?: boolean   // cycle colours on the beat (on for beat-driven genres)
+  beat?: boolean          // cycle colours on the beat (on for beat-driven genres)
+  punch?: number          // drum-punch intensity (default derived from eq/gain)
+  switchChance?: number   // per-bar chance to cut the video (default derived from trail)
+  toneTint?: boolean      // warm↔cool tone tint (default derived from eq)
   filters: { blur: number; brightness: number; saturate: number; hue: number }
   // Random background pool (mix of image ids, video ids, ambient ids). `browse` =
   // the library category to preselect for manual picking.
