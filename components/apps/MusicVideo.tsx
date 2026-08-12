@@ -798,6 +798,14 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const bgClipIdRef = useRef<string | null>(null)           // current clip id, so nextClip avoids repeats without re-binding
   const recentClipsRef = useRef<string[]>([])               // recently-played ids → no repeats until most of the pool has shown
   const nextClipRef = useRef<() => void>(() => {})          // so the beat detector can advance on a bar boundary
+  // Preload lookahead: keep the next 2 clips queued + buffering in hidden <video>s, and only
+  // cut when the next one is playable — so slow devices/connections never flash a stalled frame.
+  const queueRef = useRef<BgClip[]>([])                     // upcoming clips (aim for 2)
+  const readySrcsRef = useRef<Set<string>>(new Set())       // srcs buffered enough to play smoothly
+  const wantSwitchRef = useRef(false)                       // an auto-switch is waiting on the next clip to buffer
+  const waitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bgVideoRef = useRef<HTMLVideoElement | null>(null)  // the visible bg video (to replay while we wait)
+  const [preloadSrcs, setPreloadSrcs] = useState<string[]>([])
   // Energy-reactive selection: read the song's energy off the analyser and match backgrounds.
   const [matchEnergy, setMatchEnergy] = useState(false)
   const [energyBand, setEnergyBand] = useState<Energy>('mid')   // for the UI readout
@@ -845,7 +853,9 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   // Auto-shuffle: advance to a different clip in the pool (this category, or the whole
   // library). Driven by the video's 'ended' event, with a timer fallback below so it never
   // gets stuck on a still or a clip that fails to fire 'ended'.
-  const nextClip = useCallback(() => {
+  // Pick a fresh clip from the pool (no side effects on the visible bg). Excludes clips shown
+  // recently AND ones already queued so the lookahead never doubles up.
+  const pickClip = useCallback((): BgClip | null => {
     // The video set is the categories to draw from ([] = the whole library).
     const set = videoSetRef.current
     let pool = BG_LIBRARY.filter(c => c.kind === 'video' && (set.length === 0 || set.includes(c.category)))
@@ -860,22 +870,83 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       const matched = pool.filter(c => clipEnergy(c) === energyBandRef.current)
       if (matched.length >= 2) pool = matched
     }
-    if (pool.length < 2) return
+    if (pool.length < 2) return null
     // No-repeat history: pick from clips not shown recently, so it works through most of the
     // pool before anything comes back (pure random clusters/repeats). Keep the recent window
     // to ~70% of the current pool; relax if that leaves nothing.
     const recent = recentClipsRef.current
-    let candidates = pool.filter(c => !recent.includes(c.id))
+    const queued = queueRef.current.map(c => c.id)
+    let candidates = pool.filter(c => !recent.includes(c.id) && !queued.includes(c.id))
+    if (candidates.length === 0) candidates = pool.filter(c => c.id !== bgClipIdRef.current && !queued.includes(c.id))
     if (candidates.length === 0) candidates = pool.filter(c => c.id !== bgClipIdRef.current)
-    if (candidates.length === 0) candidates = pool
+    if (candidates.length === 0) return null
     const next = candidates[Math.floor(Math.random() * candidates.length)]
     recent.push(next.id)
     const keep = Math.max(4, Math.floor(pool.length * 0.7))
     while (recent.length > keep) recent.shift()
-    setBgClip(next); setBgKind('library')
+    return next
   }, [])
+
+  // Top the lookahead queue up to 2 and (re)publish its srcs so the hidden preloader <video>s
+  // start buffering the upcoming clips before we ever cut.
+  const refillQueue = useCallback(() => {
+    while (queueRef.current.length < 2) {
+      const c = pickClip()
+      if (!c) break
+      queueRef.current.push(c)
+    }
+    const srcs = queueRef.current.map(c => c.src)
+    setPreloadSrcs(prev => (prev.length === srcs.length && prev.every((s, i) => s === srcs[i]) ? prev : srcs))
+  }, [pickClip])
+
+  // A clip is "ready" to cut to once its src has buffered enough to play (images are instant).
+  const clipReady = (c: BgClip | undefined) => !!c && (c.kind !== 'video' || readySrcsRef.current.has(c.src))
+
+  // Cut to the head of the queue, then top the queue back up (starts preloading the new tail).
+  const commitHead = useCallback(() => {
+    if (waitTimerRef.current) { clearTimeout(waitTimerRef.current); waitTimerRef.current = null }
+    wantSwitchRef.current = false
+    const head = queueRef.current.shift()
+    if (head) { setBgClip(head); setBgKind('library') }
+    refillQueue()
+  }, [refillQueue])
+
+  // Immediate switch (manual Next / initial / toggle-on): prefer the preloaded head, else pick
+  // fresh right now. Never waits — the user asked for it.
+  const nextClip = useCallback(() => {
+    refillQueue()
+    if (queueRef.current.length === 0) { const c = pickClip(); if (c) { setBgClip(c); setBgKind('library') } refillQueue(); return }
+    commitHead()
+  }, [refillQueue, pickClip, commitHead])
   nextClipRef.current = nextClip
+
+  // Auto switch (bar timer / clip ended): only cut when the next clip is buffered, so slow
+  // devices/connections stay smooth. If it isn't ready, remember the intent — the preloader
+  // commits it the moment it becomes playable (with a safety timeout so we never wait forever).
+  // Returns whether it actually switched.
+  const requestSwitch = useCallback((): boolean => {
+    refillQueue()
+    const head = queueRef.current[0]
+    if (!head) return false
+    if (clipReady(head)) { commitHead(); return true }
+    if (!wantSwitchRef.current) {
+      wantSwitchRef.current = true
+      if (waitTimerRef.current) clearTimeout(waitTimerRef.current)
+      waitTimerRef.current = setTimeout(() => { if (wantSwitchRef.current) commitHead() }, 6000)   // don't stall forever
+    }
+    return false
+  }, [refillQueue, commitHead])
+
   useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null }, [bgClip])
+  // Seed / refresh the lookahead whenever shuffle is active and the clip changes; clear it off.
+  useEffect(() => {
+    if (!autoShuffle || bgKind !== 'library' || !bgClip) {
+      queueRef.current = []; wantSwitchRef.current = false
+      if (waitTimerRef.current) { clearTimeout(waitTimerRef.current); waitTimerRef.current = null }
+      setPreloadSrcs([]); return
+    }
+    refillQueue()
+  }, [autoShuffle, bgKind, bgClip, refillQueue])
   // Bar timer: each bar (4 beats, from the detected BPM — or ~4s if no beat) roll the
   // "Switch chance" to cut the video, nudged by energy (when matching) and density. The video
   // ALSO advances when it finishes (onEnded), so it always moves on even at 0% chance.
@@ -890,13 +961,13 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       shuffleTimerRef.current = setTimeout(() => {
         const ef = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 1.4 : energyBandRef.current === 'mid' ? 1.0 : 0.6) : 1
         const df = 0.7 + densityEmaRef.current * 0.8
-        if (Math.random() < Math.min(1, switchChanceRef.current * ef * df)) nextClip()
+        if (Math.random() < Math.min(1, switchChanceRef.current * ef * df)) requestSwitch()   // gated: waits for the next clip to buffer
         tick()
       }, barMs)
     }
     tick()
     return () => { stopped = true; if (shuffleTimerRef.current) clearTimeout(shuffleTimerRef.current) }
-  }, [autoShuffle, bgKind, bgClip, nextClip])
+  }, [autoShuffle, bgKind, bgClip, requestSwitch])
   const pickBgFile = useCallback((f: File) => {
     setBgUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
     setBgVideo(f.type.startsWith('video/')); setBgKind('media')
@@ -1351,7 +1422,11 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle} muted playsInline onEnded={() => { if (autoShuffle) nextClip() }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+                    <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle} muted playsInline
+                      onCanPlay={() => { if (bgClip) readySrcsRef.current.add(bgClip.src) }}
+                      onEnded={() => { if (!autoShuffle) return; if (!requestSwitch() && bgVideoRef.current) { bgVideoRef.current.currentTime = 0; bgVideoRef.current.play().catch(() => {}) } }}   // next not buffered yet → replay current (stay smooth) until it is
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                      onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
                   </>
                 )}
               </>
@@ -1364,6 +1439,16 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             <LookOverlays keys={activeOverlays} />
           </div>
         )}
+
+        {/* Hidden preloaders — buffer the next 2 queued clips so switches are instant. A 1px
+            offscreen (not display:none) node so browsers actually fetch it; muted, no autoplay.
+            When one becomes playable we mark it ready and, if a switch is waiting on it, cut now. */}
+        {autoShuffle && preloadSrcs.map(src => (
+          <video key={src} src={src} preload="auto" muted playsInline aria-hidden
+            onCanPlay={() => { readySrcsRef.current.add(src); if (wantSwitchRef.current) requestSwitch() }}
+            onCanPlayThrough={() => { readySrcsRef.current.add(src); if (wantSwitchRef.current) requestSwitch() }}
+            style={{ position: 'absolute', width: 1, height: 1, top: 0, left: 0, opacity: 0, pointerEvents: 'none' }} />
+        ))}
 
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: reactive ? 'block' : 'none' }} />
         {/* Beat-colour flash — pulses the whole frame (background included) on each kick. */}
