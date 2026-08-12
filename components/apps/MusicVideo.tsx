@@ -694,6 +694,10 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const beatShiftRef = useRef(0)                            // colour rotation, bumped each beat
   const bpmEmaRef = useRef(0)
   const lastBpmUiRef = useRef(0)
+  const beatCountRef = useRef(0)                            // beats since the last background cut
+  const beatFlashRef = useRef(0)                            // decaying flash intensity (0..1)
+  const beatFlashColorRef = useRef('#ffffff')
+  const beatFlashDivRef = useRef<HTMLDivElement | null>(null)   // full-frame colour flash overlay
   const [delayMs, setDelayMs] = useState(0)
   const [err, setErr] = useState<string | null>(null)
   const [fs, setFs] = useState(false)
@@ -726,8 +730,11 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const lookFilterRef = useRef('')                          // mode+look svg/css prefix, kept for the per-frame EQ update
   const [autoShuffle, setAutoShuffle] = useState(false)     // play a clip, then move to the next one
   const [shuffleScope, setShuffleScope] = useState<'category' | 'all'>('all')
+  const autoShuffleRef = useRef(false); autoShuffleRef.current = autoShuffle
+  const bgKindRef = useRef(bgKind); bgKindRef.current = bgKind
   const shuffleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bgClipIdRef = useRef<string | null>(null)           // current clip id, so nextClip avoids repeats without re-binding
+  const nextClipRef = useRef<() => void>(() => {})          // so the beat detector can advance on a bar boundary
   // Energy-reactive selection: read the song's energy off the analyser and match backgrounds.
   const [matchEnergy, setMatchEnergy] = useState(false)
   const [energyBand, setEnergyBand] = useState<Energy>('mid')   // for the UI readout
@@ -768,16 +775,20 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     for (let i = 0; next.id === bgClipIdRef.current && i < 8; i++) next = pool[Math.floor(Math.random() * pool.length)]
     setBgClip(next); setBgKind('library')
   }, [shuffleScope, bgCat])
-  useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null }, [bgClip])
+  nextClipRef.current = nextClip
+  useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null; beatCountRef.current = 0 }, [bgClip])
   // Advance timer. In match-energy mode it's the primary driver and the dwell scales with the
   // song's energy (hot → quick cuts hold attention; calm → let a scene breathe); the clip loops
   // meanwhile. Otherwise it's just a safety net in case a clip's 'ended' never fires.
   useEffect(() => {
     if (shuffleTimerRef.current) { clearTimeout(shuffleTimerRef.current); shuffleTimerRef.current = null }
     if (!autoShuffle || bgKind !== 'library' || !bgClip) return
-    const ms = matchEnergy
-      ? (energyBandRef.current === 'hot' ? 5000 : energyBandRef.current === 'mid' ? 9000 : 15000)
-      : 20000
+    // When a beat is locked, the beat detector cuts on a bar/phrase boundary — the timer is
+    // then just a safety net for silence. Otherwise the dwell scales with energy.
+    const ms = bpmEmaRef.current > 0
+      ? 30000
+      : matchEnergy ? (energyBandRef.current === 'hot' ? 5000 : energyBandRef.current === 'mid' ? 9000 : 15000)
+        : 20000
     shuffleTimerRef.current = setTimeout(nextClip, ms)
     return () => { if (shuffleTimerRef.current) clearTimeout(shuffleTimerRef.current) }
   }, [autoShuffle, bgKind, bgClip, nextClip, matchEnergy])
@@ -955,8 +966,25 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
               bpmEmaRef.current = bpmEmaRef.current ? bpmEmaRef.current * 0.8 + inst * 0.2 : inst
               if (now - lastBpmUiRef.current > 500) { lastBpmUiRef.current = now; setBpm(Math.round(bpmEmaRef.current)) }
             }
+            // Beat-synced auto-shuffle: cut the background on a bar/phrase boundary. Beats per
+            // change scales with energy when matching (hot 1 bar, mid 2, calm 4), else 2 bars.
+            if (autoShuffleRef.current && bgKindRef.current === 'library') {
+              beatCountRef.current++
+              const per = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 4 : energyBandRef.current === 'mid' ? 8 : 16) : 8
+              if (beatCountRef.current >= per) { beatCountRef.current = 0; nextClipRef.current() }
+            }
+            // Beat-colour flash on the whole frame (background included) — arm on the kick.
+            if (beatColorRef.current) { beatFlashRef.current = 1; const c = optsRef.current.colors; beatFlashColorRef.current = c[beatShiftRef.current % c.length] }
           }
           drawLive(cv, f.freq, f.wave, { ...optsRef.current, beatShift: beatShiftRef.current })
+          // Decay + apply the beat flash overlay every frame.
+          if (beatFlashDivRef.current) {
+            if (beatColorRef.current) {
+              beatFlashRef.current *= 0.82
+              beatFlashDivRef.current.style.background = beatFlashColorRef.current
+              beatFlashDivRef.current.style.opacity = (beatFlashRef.current * 0.32).toFixed(3)
+            } else if (beatFlashDivRef.current.style.opacity !== '0') beatFlashDivRef.current.style.opacity = '0'
+          }
           // Overall loudness off the spectrum — drives both the EQ filter pulse and the
           // rolling "song energy" that picks energy-matched backgrounds.
           let s = 0; for (let i = 0; i < f.freq.length; i++) s += f.freq[i]
@@ -1051,7 +1079,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle || matchEnergy} muted playsInline onEnded={() => { if (autoShuffle && !matchEnergy) nextClip() }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle || matchEnergy || bpm > 0} muted playsInline onEnded={() => { if (autoShuffle && !matchEnergy && bpm === 0) nextClip() }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
                   </>
                 )}
               </>
@@ -1066,6 +1094,8 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         )}
 
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: reactive ? 'block' : 'none' }} />
+        {/* Beat-colour flash — pulses the whole frame (background included) on each kick. */}
+        <div ref={beatFlashDivRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', mixBlendMode: 'screen', opacity: 0 }} />
 
         {reactive && !running && style !== 'none' && (
           <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 12, padding: 24, textAlign: 'center', background: hasBg ? 'rgba(6,5,10,0.45)' : 'transparent' }}>
@@ -1177,7 +1207,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             </span>
           )}
         </div>
-        {beatColor && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0', lineHeight: 1.5 }}>The palette steps forward on every kick — punchy for EDM, hip-hop and pop. Genre looks turn this on for the beat-driven genres.</p>}
+        {beatColor && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0', lineHeight: 1.5 }}>The palette steps forward on every kick and the whole frame flashes with it — so the background pulses to the beat even in the None style. Genre looks turn this on for the beat-driven genres.</p>}
 
         {/* Saved colour presets */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '14px 0 0' }}>
@@ -1247,7 +1277,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             )}
           </div>
         )}
-        {autoShuffle && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{matchEnergy ? 'Reads the song’s energy off the EQ and pulls matching scenes — calm songs get slow, mellow backgrounds; loud, busy songs get fast, bright ones that cut quicker.' : 'Each clip plays through, then a new one comes on — like a living wallpaper. Great full-screen on a TV.'}</p>}
+        {autoShuffle && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{matchEnergy ? 'Reads the song’s energy off the EQ and pulls matching scenes — calm songs get slow, mellow backgrounds; loud, busy songs get fast, bright ones. When a beat is detected it cuts on the bar.' : 'A new clip comes on automatically — on a bar boundary when there’s a beat, otherwise on a timer. Like a living wallpaper; great full-screen on a TV.'}</p>}
 
         {/* Streamed video library */}
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '16px 0 8px' }}>Library — streams online, low-res preview offline:</p>
