@@ -694,6 +694,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const beatShiftRef = useRef(0)                            // colour rotation, bumped each beat
   const bpmEmaRef = useRef(0)
   const lastBpmUiRef = useRef(0)
+  const punchEnvRef = useRef(0)                             // sub/bass transient envelope (drum "punch")
   const beatCountRef = useRef(0)                            // beats since the last background cut
   const beatFlashRef = useRef(0)                            // decaying flash intensity (0..1)
   const beatFlashColorRef = useRef('#ffffff')
@@ -837,7 +838,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const eqRef = useRef({ on: false, blur, brightness, saturate, hueRot })
   useEffect(() => { eqRef.current = { on: eqFilters && reactive, blur, brightness, saturate, hueRot } }, [eqFilters, reactive, blur, brightness, saturate, hueRot])
   // Restore the static filter whenever EQ mode is off (the loop may have left an imperative value).
-  useEffect(() => { if ((!eqFilters || !reactive) && bgFilterRef.current) bgFilterRef.current.style.filter = bgFilter }, [eqFilters, reactive, bgFilter])
+  useEffect(() => { if ((!eqFilters || !reactive) && bgFilterRef.current) { bgFilterRef.current.style.filter = bgFilter; bgFilterRef.current.style.transform = '' } }, [eqFilters, reactive, bgFilter])
 
   // Genre "Looks" — apply a whole scene, with a random genre-appropriate background.
   const [activeLook, setActiveLook] = useState<GenreLook | null>(null)
@@ -958,6 +959,10 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           let bass = 0; for (let i = 0; i < 12; i++) bass += f.freq[i]
           bass /= 12 * 255
           bassAvgRef.current = bassAvgRef.current * 0.94 + bass * 0.06
+          // Sub/bass transient → a "punch" envelope: how far the low end jumps above its own
+          // average right now (fast attack, slow release), so kicks/drums pop the filters.
+          const punch = Math.max(0, (bass - bassAvgRef.current) * 4)
+          punchEnvRef.current = Math.max(Math.min(1, punch), punchEnvRef.current * 0.85)
           if (bass > bassAvgRef.current * 1.35 && bass > 0.12 && now - lastBeatRef.current > 250) {
             const iv = now - prevBeatRef.current; prevBeatRef.current = now; lastBeatRef.current = now
             beatShiftRef.current++
@@ -995,10 +1000,18 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           const band: Energy = e > (cur === 'hot' ? 0.30 : 0.36) ? 'hot' : e > (cur === 'calm' ? 0.20 : 0.15) ? 'mid' : 'calm'
           energyBandRef.current = band
           if (now - lastEnergyUiRef.current > 300) { lastEnergyUiRef.current = now; setEnergyBand(band) }
-          // Filters interacting with the EQ — pulse brightness/saturation, sharpen on energy.
+          // Filters interacting with the EQ — brightness/saturation pulse with the overall level,
+          // and the sub/bass PUNCH sharpens + brightens + gives the background a quick scale
+          // "thump" so drums are clearly visible.
           const eq = eqRef.current
           if (eq.on && bgFilterRef.current) {
-            bgFilterRef.current.style.filter = `${lookFilterRef.current} blur(${(eq.blur * (1 - level * 0.4)).toFixed(1)}px) brightness(${(eq.brightness * (0.7 + level * 0.75)).toFixed(2)}) saturate(${(eq.saturate * (0.85 + level * 0.7)).toFixed(2)}) hue-rotate(${Math.round(eq.hueRot + level * 55)}deg)`.trim()
+            const p = punchEnvRef.current
+            const bl = eq.blur * (1 - level * 0.4) * (1 - p * 0.5)
+            const br = eq.brightness * (0.7 + level * 0.55 + p * 0.55)
+            const sa = eq.saturate * (0.85 + level * 0.55 + p * 0.4)
+            const hu = eq.hueRot + level * 45 + p * 18
+            bgFilterRef.current.style.filter = `${lookFilterRef.current} blur(${bl.toFixed(1)}px) brightness(${br.toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu)}deg)`.trim()
+            bgFilterRef.current.style.transform = `scale(${(1 + p * 0.035).toFixed(3)})`
           }
         }
         rafRef.current = requestAnimationFrame(draw)
@@ -1340,7 +1353,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: reactive ? 'pointer' : 'not-allowed', opacity: reactive ? 1 : 0.5, marginBottom: 12 }}>
             <input type="checkbox" checked={eqFilters} onChange={e => setEqFilters(e.target.checked)} disabled={!reactive} /> React to the audio (EQ)
           </label>
-          {eqFilters && reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-6px 0 12px' }}>Brightness &amp; saturation pulse with the music; the sliders set the baseline.</p>}
+          {eqFilters && reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-6px 0 12px' }}>Brightness &amp; saturation pulse with the music, and the sub/bass (kick) punches the background — a quick brighten, sharpen and scale-thump so drums pop. The sliders set the baseline.</p>}
           {!reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-6px 0 12px' }}>Turn on audio-reactive visuals to make filters react.</p>}
           <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Blur — {blur}px</label>
           <input type="range" min={0} max={24} step={1} value={blur} onChange={e => setBlur(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
