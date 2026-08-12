@@ -773,6 +773,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const bgKindRef = useRef(bgKind); bgKindRef.current = bgKind
   const shuffleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bgClipIdRef = useRef<string | null>(null)           // current clip id, so nextClip avoids repeats without re-binding
+  const recentClipsRef = useRef<string[]>([])               // recently-played ids → no repeats until most of the pool has shown
   const nextClipRef = useRef<() => void>(() => {})          // so the beat detector can advance on a bar boundary
   // Energy-reactive selection: read the song's energy off the analyser and match backgrounds.
   const [matchEnergy, setMatchEnergy] = useState(false)
@@ -835,8 +836,17 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       if (matched.length >= 2) pool = matched
     }
     if (pool.length < 2) return
-    let next = pool[Math.floor(Math.random() * pool.length)]
-    for (let i = 0; next.id === bgClipIdRef.current && i < 8; i++) next = pool[Math.floor(Math.random() * pool.length)]
+    // No-repeat history: pick from clips not shown recently, so it works through most of the
+    // pool before anything comes back (pure random clusters/repeats). Keep the recent window
+    // to ~70% of the current pool; relax if that leaves nothing.
+    const recent = recentClipsRef.current
+    let candidates = pool.filter(c => !recent.includes(c.id))
+    if (candidates.length === 0) candidates = pool.filter(c => c.id !== bgClipIdRef.current)
+    if (candidates.length === 0) candidates = pool
+    const next = candidates[Math.floor(Math.random() * candidates.length)]
+    recent.push(next.id)
+    const keep = Math.max(4, Math.floor(pool.length * 0.7))
+    while (recent.length > keep) recent.shift()
     setBgClip(next); setBgKind('library')
   }, [shuffleScope, bgCat])
   nextClipRef.current = nextClip
