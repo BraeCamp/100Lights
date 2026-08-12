@@ -38,7 +38,7 @@ const ICONS = {
     grad: ['#60a5fa', '#2563eb'],
     glyph: `<rect x="22" y="40" width="56" height="13" rx="6" fill="#fff"/><rect x="22" y="59" width="34" height="13" rx="6" fill="#fff" opacity="0.6"/>`,
   },
-  musicvideo: { grad: ['#f472b6', '#db2777'], glyph: bars([30, 52, 38, 66, 44, 58, 34]) },
+  lightningbug: { grad: ['#f472b6', '#db2777'], glyph: bars([30, 52, 38, 66, 44, 58, 34]) },
   voicemidi: {
     grad: ['#22d3ee', '#0891b2'],
     glyph: `<rect x="43" y="24" width="14" height="30" rx="7" fill="#fff"/><path d="M35 48 a15 15 0 0 0 30 0" stroke="#fff" stroke-width="4.5" fill="none" stroke-linecap="round"/><line x1="50" y1="63" x2="50" y2="74" stroke="#fff" stroke-width="4.5" stroke-linecap="round"/><line x1="41" y1="74" x2="59" y2="74" stroke="#fff" stroke-width="4.5" stroke-linecap="round"/>`,

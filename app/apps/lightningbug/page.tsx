@@ -1,17 +1,17 @@
 import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
 
-const MusicVideo = dynamic(() => import('@/components/apps/MusicVideo'))
+const LightningBug = dynamic(() => import('@/components/apps/MusicVideo'))
 
 export const metadata: Metadata = {
   title: 'Lightning Bug — Live Visuals for Your Music',
   description: 'Turn any track into a glowing live visual — reactive bars, radial glow, artsy video backgrounds, and cinematic look modes. Full-screen it for a party, or lay visuals over your own video. Free, in your browser.',
-  alternates: { canonical: 'https://100lights.com/apps/musicvideo' },
+  alternates: { canonical: 'https://100lights.com/apps/lightningbug' },
   keywords: ['music visualizer', 'live visuals', 'audio reactive video', 'party visuals', 'VJ app', 'D&D ambience visuals', 'lofi study visuals', 'beat detection visualizer', 'browser music visualizer'],
   openGraph: {
     title: 'Lightning Bug — 100Lights',
     description: 'Turn any track into a glowing live visual — reactive visuals, artsy video backgrounds, and cinematic look modes, synced to your music.',
-    url: 'https://100lights.com/apps/musicvideo',
+    url: 'https://100lights.com/apps/lightningbug',
     type: 'website',
     siteName: '100Lights',
   },
@@ -27,7 +27,7 @@ const jsonLd = {
   '@context': 'https://schema.org',
   '@type': 'WebApplication',
   name: 'Lightning Bug',
-  url: 'https://100lights.com/apps/musicvideo',
+  url: 'https://100lights.com/apps/lightningbug',
   applicationCategory: 'MultimediaApplication',
   operatingSystem: 'Any (web browser)',
   browserRequirements: 'Requires a modern browser with Web Audio support',
@@ -36,11 +36,11 @@ const jsonLd = {
   publisher: { '@type': 'Organization', name: '100Lights', url: 'https://100lights.com' },
 }
 
-export default function MusicVideoPage() {
+export default function LightningBugPage() {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <MusicVideo />
+      <LightningBug />
     </>
   )
 }

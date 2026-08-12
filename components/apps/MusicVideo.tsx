@@ -1,6 +1,6 @@
 'use client'
 
-// Music Video — put a transcription ON a video as visuals. Upload a video, its audio is
+// Lightning Bug — put a transcription ON a video as visuals. Upload a video, its audio is
 // transcribed (the hybrid confidence engine — free for clean lines, AI only for the hard bits),
 // and the notes drive a visual overlay synced to playback: falling notes, flowing shapes, radial
 // spectrum, and more, with colour/font controls. Reuses lib/song-video (the falling-notes engine,
@@ -32,7 +32,7 @@ const FONTS = ['system-ui', 'Georgia, serif', 'ui-monospace, monospace', 'Impact
 
 export default function MusicVideo() {
   return (
-    <AppChrome slug="musicvideo">
+    <AppChrome slug="lightningbug">
       <MusicVideoApp />
     </AppChrome>
   )
@@ -53,7 +53,7 @@ function MusicVideoApp() {
   const [accent, setAccent] = useState('#a78bfa')
   const [font, setFont] = useState('system-ui')
   const [live, setLive] = useState(false)   // party mode: visualize live audio from the device
-  const [initialBg, setInitialBg] = useState<string | null>(null)   // deep-link: /apps/musicvideo?bg=<clipId>
+  const [initialBg, setInitialBg] = useState<string | null>(null)   // deep-link: /apps/lightningbug?bg=<clipId>
   const [broadcastStation, setBroadcastStation] = useState<string | null>(null)   // ?station=<slug>&broadcast=1
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
@@ -1219,7 +1219,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   }, [pushScene])
   const [sharedMsg, setSharedMsg] = useState('')
   const shareScene = useCallback((s: Scene) => {
-    const url = `${location.origin}/apps/musicvideo?scene=${sceneEncode({ ...s, id: undefined, isDefault: undefined })}`
+    const url = `${location.origin}/apps/lightningbug?scene=${sceneEncode({ ...s, id: undefined, isDefault: undefined })}`
     navigator.clipboard?.writeText(url).then(() => { setSharedMsg(`Link copied for “${s.name}”`); setTimeout(() => setSharedMsg(''), 2500) }).catch(() => setSharedMsg('Couldn’t copy the link'))
   }, [])
   // Auto-load the default scene once, when it first becomes available — unless a shared

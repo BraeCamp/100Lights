@@ -1,4 +1,4 @@
-// Background library for the Music Video live visualizer.
+// Background library for the Lightning Bug live visualizer.
 //
 // Two kinds of clip:
 //  • Bundled generative backgrounds (public/bg/generative/), gen by scripts/gen-bg-*.mjs.

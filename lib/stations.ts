@@ -1,5 +1,5 @@
 // Broadcast "stations" — themed radio-with-visuals presets for the 24/7 streaming mode
-// (/apps/musicvideo?station=<slug>&broadcast=1). Each = a visual scene + a way to get its audio.
+// (/apps/lightningbug?station=<slug>&broadcast=1). Each = a visual scene + a way to get its audio.
 // See STREAMING.md for how this drives YouTube/Twitch. Pure data + types (no React), so the
 // server playlist route and the client both import it.
 

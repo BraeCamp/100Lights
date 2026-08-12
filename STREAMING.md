@@ -51,11 +51,11 @@ winners to Path B when you want several stations 24/7 without per-stream hand-ho
 ## 2. In-app hooks to build (small, enables both paths)
 
 ### 2a. A broadcast/kiosk URL mode
-Add a query mode to `/apps/musicvideo` that boots straight into a clean full-frame live view with no
+Add a query mode to `/apps/lightningbug` that boots straight into a clean full-frame live view with no
 UI chrome, auto-starts a station, and never shows prompts:
 
 ```
-/apps/musicvideo?station=dnd-tavern&broadcast=1
+/apps/lightningbug?station=dnd-tavern&broadcast=1
 ```
 
 `broadcast=1` should: enter live mode immediately, hide the panel column + "Exit live" + eyebrow,

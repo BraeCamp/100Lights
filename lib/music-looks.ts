@@ -1,4 +1,4 @@
-// Genre "Looks" for the Music Video live visualizer — a full scene per music type.
+// Genre "Looks" for the Lightning Bug live visualizer — a full scene per music type.
 //
 // A Look sets the whole visualizer (style, palette, feel, filters, match/EQ) AND
 // constrains the BACKGROUND to a genre-appropriate pool of background ids — bundled

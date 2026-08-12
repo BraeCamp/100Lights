@@ -20,7 +20,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const URL = (process.argv.find(a => a.startsWith('--url=')) || '').split('=')[1] || 'http://localhost:3001'
 
 // slug → the shots to take. Each is [filename, prep] where prep runs after load.
-const APPS = ['beatmaker', 'captions', 'musicvideo', 'voicemidi', 'transcribe', 'sheetmusic', 'autotune']
+const APPS = ['beatmaker', 'captions', 'lightningbug', 'voicemidi', 'transcribe', 'sheetmusic', 'autotune']
 
 // 6.7" iPhone: 1290×2796 physical = 430×932 CSS @ dpr 3 (App Store Connect's largest required size).
 const W = 430, H = 932, DPR = 3
@@ -28,7 +28,7 @@ const W = 430, H = 932, DPR = 3
 const browser = await chromium.launch()
 const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: DPR, colorScheme: 'dark', isMobile: true, hasTouch: true })
 // Skip the intro splash so the home is captured clean.
-await ctx.addInitScript(() => { try { for (const s of ['beatmaker','captions','musicvideo','voicemidi','transcribe','sheetmusic','autotune']) sessionStorage.setItem(`100lights-intro-${s}`, '1') } catch {} })
+await ctx.addInitScript(() => { try { for (const s of ['beatmaker','captions','lightningbug','voicemidi','transcribe','sheetmusic','autotune']) sessionStorage.setItem(`100lights-intro-${s}`, '1') } catch {} })
 
 let n = 0
 for (const slug of APPS) {

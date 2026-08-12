@@ -8,7 +8,7 @@ architecture and the scale path are in [STREAMING.md](./STREAMING.md).
 
 ## What's built
 
-- **Broadcast URL:** `/apps/musicvideo?station=<slug>&broadcast=1` — a chrome-less, full-frame live
+- **Broadcast URL:** `/apps/lightningbug?station=<slug>&broadcast=1` — a chrome-less, full-frame live
   view that loads a station's visual scene + playlist and plays it, with a "now playing" card.
 - **Stations:** `lib/stations.ts` — `dnd-tavern`, `dnd-dungeon`, `study-lofi`, `deep-focus`. Each is
   a visual scene + a way to get audio. Add more by editing that file (data only).
@@ -21,7 +21,7 @@ architecture and the scale path are in [STREAMING.md](./STREAMING.md).
   don't use it.
 
 **Fastest start:** drop a few mp3s into `public/broadcast/study-lofi/`, open
-`/apps/musicvideo?station=study-lofi&broadcast=1`, and it plays with visuals. (Verified end-to-end.)
+`/apps/lightningbug?station=study-lofi&broadcast=1`, and it plays with visuals. (Verified end-to-end.)
 
 ---
 
@@ -79,7 +79,7 @@ This is the reliable v1 (Path A). You need OBS Studio (free) on an always-on mac
 
 **3. Point OBS at your Lightning Bug station**
 - In OBS, **Sources → + → Browser**. URL:
-  `https://100lights.com/apps/musicvideo?station=dnd-tavern&broadcast=1`
+  `https://100lights.com/apps/lightningbug?station=dnd-tavern&broadcast=1`
   Width **1920**, Height **1080**. Tick **"Control audio via OBS"** so the station's audio goes into
   your stream. (Locally you can use `http://localhost:3001/...`.)
 - If the page shows a "Tap to start" overlay (browser autoplay block), either **click it once** in an

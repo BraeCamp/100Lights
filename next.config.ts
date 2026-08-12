@@ -2,6 +2,15 @@ import type { NextConfig } from 'next'
 import { withSentryConfig } from '@sentry/nextjs'
 
 const nextConfig: NextConfig = {
+  async redirects() {
+    // Lightning Bug was renamed from "Music Video" (/apps/musicvideo → /apps/lightningbug).
+    // Permanent redirects so old links, shared scenes, and SEO carry over (query strings are
+    // preserved automatically).
+    return [
+      { source: '/apps/musicvideo', destination: '/apps/lightningbug', permanent: true },
+      { source: '/apps/musicvideo/:path*', destination: '/apps/lightningbug/:path*', permanent: true },
+    ]
+  },
   async headers() {
     return [
       {

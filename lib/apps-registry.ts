@@ -40,11 +40,11 @@ export const MINI_APPS: MiniApp[] = [
     status: 'live',
   },
   {
-    slug: 'musicvideo',
+    slug: 'lightningbug',
     title: 'Lightning Bug',
     tagline: 'Light up your music with live visuals.',
     description: 'Turn any track into a glowing live visual — reactive bars and radial glow, artsy video backgrounds, cinematic look modes, and auto-shuffling scenes. Full-screen it for a party, or lay visuals over your own video. Runs on your device.',
-    href: '/apps/musicvideo',
+    href: '/apps/lightningbug',
     status: 'beta',
   },
   {

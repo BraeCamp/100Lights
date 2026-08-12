@@ -1,6 +1,6 @@
 'use client'
 
-// Music Video — its own home screen. Identity: a live audio spectrum (reactive bars).
+// Lightning Bug — its own home screen. Identity: a live audio spectrum (reactive bars).
 // Distinct to this app (not a shared template).
 import { useRef } from 'react'
 import { Film, Radio, Upload, Play } from 'lucide-react'
