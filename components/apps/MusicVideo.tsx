@@ -1119,7 +1119,8 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         )}
       </Panel>
 
-      <Panel id="style" label="Visual style" open={openPanel === 'style'} onToggle={() => setOpenPanel(p => (p === 'style' ? null : 'style'))}>
+      <Panel id="visualizer" label="Visualizer" open={openPanel === 'visualizer'} onToggle={() => setOpenPanel(p => (p === 'visualizer' ? null : 'visualizer'))}>
+        <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', margin: '0 0 9px' }}>Style</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
           {(['none', 'bars', 'radial', 'wave'] as LiveStyle[]).map(s => (
             <button key={s} type="button" onClick={() => setStyle(s)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: style === s ? 'var(--accent)' : 'var(--bg-card)', color: style === s ? '#0e0d12' : 'var(--text-secondary)' }}>{s[0].toUpperCase() + s.slice(1)}</button>
@@ -1127,11 +1128,10 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         </div>
         {style === 'none' && (
           <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.5 }}>
-            Just the background — no bars or shapes over it. The music can still react to it: turn on <strong style={{ color: 'var(--text-secondary)' }}>React to the audio (EQ)</strong> in Look &amp; filters to pulse the filters, and <strong style={{ color: 'var(--text-secondary)' }}>Match my palette</strong> in Background to tint it with your colours.
+            Just the background — no bars or shapes over it. The music can still react to it: in the <strong style={{ color: 'var(--text-secondary)' }}>Background</strong> panel turn on <strong style={{ color: 'var(--text-secondary)' }}>React to the audio (EQ)</strong> to pulse the filters and <strong style={{ color: 'var(--text-secondary)' }}>Match my palette</strong> to tint it with your colours.
           </p>
         )}
-      </Panel>
-      <Panel id="colour" label="Colour" open={openPanel === 'colour'} onToggle={() => setOpenPanel(p => (p === 'colour' ? null : 'colour'))}>
+        <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', margin: '20px 0 12px', paddingTop: 14, borderTop: '1px solid var(--border)' }}>Colour</p>
         {/* Palettes */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
           {PALETTES.map(p => {
@@ -1189,9 +1189,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             </span>
           ))}
         </div>
-      </Panel>
-
-      <Panel id="feel" label="Feel" open={openPanel === 'feel'} onToggle={() => setOpenPanel(p => (p === 'feel' ? null : 'feel'))}>
+        <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', margin: '20px 0 12px', paddingTop: 14, borderTop: '1px solid var(--border)' }}>Feel</p>
         <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 14 }}>
           <button type="button" onClick={() => setMirror(v => !v)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: mirror ? 'var(--accent)' : 'var(--bg-card)', color: mirror ? '#0e0d12' : 'var(--text-secondary)' }}>Mirror</button>
           <button type="button" onClick={() => setGlow(v => !v)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: glow ? 'var(--accent)' : 'var(--bg-card)', color: glow ? '#0e0d12' : 'var(--text-secondary)' }}>Glow</button>
@@ -1286,10 +1284,10 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           </div>
         )}
         <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0 0' }}>Saved backgrounds play with no connection. Bundled images already work offline once viewed.</p>
-      </Panel>
 
-      {hasBg && (
-        <Panel id="filters" label="Look & filters" open={openPanel === 'filters'} onToggle={() => setOpenPanel(p => (p === 'filters' ? null : 'filters'))}>
+        {hasBg && (
+        <div style={{ paddingTop: 14, marginTop: 18, borderTop: '1px solid var(--border)' }}>
+          <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', margin: '0 0 12px' }}>Look &amp; filters</p>
           {/* MODE — dramatic live transform of the whole frame */}
           <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 7px' }}>Mode — transform the whole look</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 6 }}>
@@ -1323,8 +1321,9 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Hue shift — {hueRot}°</label>
           <input type="range" min={0} max={360} step={5} value={hueRot} onChange={e => setHueRot(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
           <button type="button" onClick={() => { setBlur(0); setBrightness(1); setSaturate(1); setHueRot(0) }} style={{ marginTop: 12, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Reset filters</button>
-        </Panel>
-      )}
+        </div>
+        )}
+      </Panel>
 
       <Panel id="sync" label={`Sync delay — ${delayMs} ms`} open={openPanel === 'sync'} onToggle={() => setOpenPanel(p => (p === 'sync' ? null : 'sync'))}>
         <input type="range" min={0} max={600} step={10} value={delayMs} onChange={e => setDelayMs(parseInt(e.target.value, 10))} style={{ width: '100%', maxWidth: 320 }} />
