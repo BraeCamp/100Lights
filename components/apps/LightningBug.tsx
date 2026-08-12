@@ -871,16 +871,23 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [pexResults, setPexResults] = useState<{ id: string; title: string; mp4: string; poster: string; category: string; brightness: Brightness; author: string }[]>([])
   const [pexLoading, setPexLoading] = useState(false)
   const [pexSearched, setPexSearched] = useState(false)
-  const searchPexels = useCallback(async () => {
+  const [pexMore, setPexMore] = useState(false)          // a full page came back → more to load
+  const [pexHover, setPexHover] = useState<string | null>(null)   // tile being hover-previewed (video loads only then)
+  const PEX_PAGE = 36
+  // Search the tagged catalog. append=true pages in more (offset = current count) for infinite-ish browsing.
+  const searchPexels = useCallback(async (append = false) => {
     setPexLoading(true); setPexSearched(true)
     try {
       const bset = brightnessSetRef.current
       const bp = bset.length === 1 ? `&brightness=${bset[0]}` : ''
-      const r = await fetch(`/api/pexels-bg?q=${encodeURIComponent(pexQuery)}${bp}&limit=48`)
+      const offset = append ? pexResults.length : 0
+      const r = await fetch(`/api/pexels-bg?q=${encodeURIComponent(pexQuery)}${bp}&limit=${PEX_PAGE}&offset=${offset}`)
       const d = await r.json()
-      setPexResults(d.results ?? [])
-    } catch { setPexResults([]) } finally { setPexLoading(false) }
-  }, [pexQuery])
+      const results = d.results ?? []
+      setPexResults(prev => (append ? [...prev, ...results] : results))
+      setPexMore(results.length === PEX_PAGE)
+    } catch { if (!append) setPexResults([]) } finally { setPexLoading(false) }
+  }, [pexQuery, pexResults.length])
   // Dark-room = only dark clips selected → also softens the reactive beat-flash so nobody's blinded.
   const darkRoomRef = useRef(false); darkRoomRef.current = brightnessSet.length === 1 && brightnessSet[0] === 'dark'
   // Idle / "between-songs" transition mode: when no music is detected, drift through calm clips
@@ -2124,19 +2131,29 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         </form>
         {pexSearched && (
           pexResults.length ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 8, marginBottom: 12 }}>
+            <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 8, marginBottom: 8 }}>
               {pexResults.map(r => {
                 const active = bgKind === 'library' && bgClip?.id === r.id
                 const clip: BgClip = { id: r.id, category: (r.category as BgCategory), title: r.title, kind: 'video', preview: r.poster, src: r.mp4, tint: 'linear-gradient(135deg,#1e1b4b,#0b1020)', brightness: r.brightness }
                 return (
-                  <button key={r.id} type="button" onClick={() => { setBgClip(clip); setBgKind('library') }} title={`${r.title} · ${BRIGHTNESS_LABEL[r.brightness]} · Pexels/${r.author}`}
+                  <button key={r.id} type="button" onClick={() => { setBgClip(clip); setBgKind('library') }}
+                    onMouseEnter={() => setPexHover(r.id)} onMouseLeave={() => setPexHover(h => (h === r.id ? null : h))}
+                    title={`${r.title} · ${BRIGHTNESS_LABEL[r.brightness]} · Pexels/${r.author}`}
                     style={{ position: 'relative', aspectRatio: '16 / 10', borderRadius: 9, overflow: 'hidden', padding: 0, cursor: 'pointer', border: active ? '2px solid var(--accent)' : '1px solid var(--border)', background: '#08070d' }}>
                     <img src={r.poster} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                    {/* Lazy preview: the video is only loaded/played while hovered. */}
+                    {pexHover === r.id && <video src={r.mp4} autoPlay muted loop playsInline preload="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />}
                     <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '3px 5px', fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'linear-gradient(0deg, rgba(0,0,0,0.7), transparent)', textAlign: 'left' }}>{r.title}</span>
                   </button>
                 )
               })}
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              {pexMore && <button type="button" onClick={() => searchPexels(true)} disabled={pexLoading} style={{ padding: '7px 14px', borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', opacity: pexLoading ? 0.6 : 1 }}>{pexLoading ? 'Loading…' : 'Load more'}</button>}
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{pexResults.length} shown{pexMore ? '' : ' · end'} · hover a tile to preview</span>
+            </div>
+            </>
           ) : !pexLoading && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>No tagged matches yet. Add more in the admin (Fetch from Pexels), then search again.</p>
         )}
 
