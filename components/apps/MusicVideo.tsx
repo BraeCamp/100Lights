@@ -295,6 +295,33 @@ interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: 
 // with whatever is actually in the library.
 const TRANSITION_SET = new Set(TRANSITION_CLIPS.filter(id => BG_LIBRARY.some(c => c.id === id && c.kind === 'video')))
 
+// On-device "sounds like" classifier — pure DSP, no AI, no API. Maps measured acoustic character
+// (tempo, energy, bass/brightness balance, busyness, beatiness) to a COARSE family. Honest limits:
+// it's reliable for clear-cut cases and a guess for ambiguous ones — fine genre isn't separable
+// from audio alone (that's what AudD/Song ID is for). All inputs are 0–1 except bpm.
+function classifySonic(o: { bpm: number; energy: number; bass: number; bright: number; density: number; beaty: number }): { family: string; profile: string; confidence: number } {
+  const { bpm, energy, bass, bright, density, beaty } = o
+  const s: Record<string, number> = {}
+  const add = (k: string, v: number) => { s[k] = (s[k] || 0) + v }
+  add('Ambient', (density < 0.18 ? 1 : 0) + (energy < 0.35 ? 0.8 : 0) + (beaty < 0.25 ? 0.9 : 0) + (bpm === 0 ? 0.6 : 0))
+  add('Lofi / Chill', (bpm > 60 && bpm < 100 ? 0.7 : 0) + (energy >= 0.3 && energy < 0.6 ? 0.7 : 0) + (bright < 0.25 ? 0.6 : 0) + (density >= 0.2 && density < 0.5 ? 0.5 : 0))
+  add('Hip-hop', (bass > 0.32 ? 1 : 0) + (bpm >= 70 && bpm <= 104 ? 0.8 : 0) + (beaty > 0.4 ? 0.6 : 0) + (density < 0.55 ? 0.4 : 0))
+  add('Electronic', (bpm >= 118 && bpm <= 140 ? 1 : 0) + (energy > 0.55 ? 0.8 : 0) + (beaty > 0.5 ? 0.8 : 0) + (bright > 0.22 ? 0.4 : 0))
+  add('Rock / Band', (energy > 0.5 ? 0.7 : 0) + (density > 0.5 ? 0.8 : 0) + (bright > 0.2 && bright < 0.45 ? 0.5 : 0) + (bass < 0.3 ? 0.4 : 0) + (bpm >= 100 && bpm <= 160 ? 0.4 : 0))
+  add('Pop', (bpm >= 100 && bpm <= 132 ? 0.6 : 0) + (bright > 0.28 ? 0.7 : 0) + (energy > 0.45 ? 0.5 : 0) + (density >= 0.4 && density < 0.7 ? 0.4 : 0))
+  add('Orchestral', (beaty < 0.3 ? 0.7 : 0) + (density > 0.45 ? 0.5 : 0) + (bright > 0.3 ? 0.5 : 0) + (bass < 0.22 ? 0.5 : 0))
+  const ranked = Object.entries(s).sort((a, b) => b[1] - a[1])
+  const family = ranked[0][0], top = ranked[0][1], second = ranked[1]?.[1] ?? 0
+  const confidence = Math.max(0, Math.min(1, (top - second) / 1.4))   // margin over the runner-up
+  const profile = [
+    bpm > 0 ? `${bpm} BPM` : 'no clear beat',
+    energy > 0.6 ? 'high energy' : energy > 0.35 ? 'medium energy' : 'calm',
+    bass > 0.32 ? 'bass-heavy' : bright > 0.3 ? 'bright' : 'warm',
+    density > 0.55 ? 'busy' : density > 0.25 ? 'flowing' : 'sparse',
+  ].join(' · ')
+  return { family, profile, confidence }
+}
+
 // The control groups, shown as icon tabs that expand to their name on hover (or via the mobile
 // collapse toggle). The selected one renders below with a title header.
 const SECTIONS: { id: string; label: string; Icon: LucideIcon }[] = [
@@ -873,6 +900,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const punchAmtRef = useRef(1); punchAmtRef.current = punchAmt
   const prevFreqRef = useRef<Uint8Array | null>(null)      // for spectral flux
   const densityEmaRef = useRef(0)                          // busyness (0 sparse … 1 busy)
+  const bassRatioRef = useRef(0)                           // low-band share of the spectrum
+  const brightRatioRef = useRef(0)                         // high-band share (brightness)
+  // On-device "sounds like" read (free, non-AI heuristic from the DSP features). A character guess,
+  // not a definitive genre — displayed so you can judge its accuracy before it drives anything.
+  const [sonic, setSonic] = useState<{ family: string; profile: string; confidence: number } | null>(null)
+  const lastSonicUiRef = useRef(0)
   const [density, setDensity] = useState(0)                // readout
   const lastDensityUiRef = useRef(0)
   const onsetEmaRef = useRef(0.3)                          // typical kick strength → auto-gains the drum punch
@@ -1290,7 +1323,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     void audioRef.current?.close().catch(() => {}); audioRef.current = null
     void wakeRef.current?.release().catch(() => {}); wakeRef.current = null
     analyserRef.current = null; bufRef.current = []; recDestRef.current = null
-    setRunning(false); setSource(null); setNowPlaying(null); setRecognized(null)
+    setRunning(false); setSource(null); setNowPlaying(null); setRecognized(null); setSonic(null)
     // No audio → back to idle/transition mode (also repicks a calm clip if shuffling).
     lastLoudRef.current = 0
     if (idleTransitionRef.current && !idleRef.current) { idleRef.current = true; setIdle(true); onIdleChangeRef.current(true) }
@@ -1329,12 +1362,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     }
     try { rec.start(); window.setTimeout(() => { try { rec.stop() } catch { /* already stopped */ } }, 7000) } catch { recognizingRef.current = false }
   }, [])
-  // Identify on toggle-on / start, then periodically (catches song changes without a gap).
+  // Identify ONCE when turned on (cost control — AudD is billed per call). It also re-IDs on a new
+  // song after a quiet gap (below). No polling; the visuals never depend on it.
   useEffect(() => {
     if (!identify || !running) return
     const t0 = window.setTimeout(() => recognizeNow(), 1500)
-    const iv = window.setInterval(() => recognizeNow(), 75000)
-    return () => { clearTimeout(t0); clearInterval(iv) }
+    return () => clearTimeout(t0)
   }, [identify, running, recognizeNow])
   // A new song after a quiet gap → re-identify right away.
   useEffect(() => { if (!idle && identify && running) recognizeNow() // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1447,6 +1480,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           if (!prevF || prevF.length !== f.freq.length) prevFreqRef.current = new Uint8Array(f.freq.length)
           prevFreqRef.current!.set(f.freq)
           if (now - lastDensityUiRef.current > 400) { lastDensityUiRef.current = now; setDensity(densityEmaRef.current) }
+          // Spectral balance (bass vs bright) for the on-device "sounds like" read.
+          { let low = 0, mid = 0, high = 0
+            for (let i = 0; i < f.freq.length; i++) { const v = f.freq[i]; if (i < 24) low += v; else if (i < 160) mid += v; else high += v }
+            const spTot = low + mid + high || 1
+            bassRatioRef.current = bassRatioRef.current * 0.9 + (low / spTot) * 0.1
+            brightRatioRef.current = brightRatioRef.current * 0.9 + (high / spTot) * 0.1 }
           if (bass > bassAvgRef.current * 1.35 && bass > 0.12 && now - lastBeatRef.current > 250) {
             // Onset sharpness — track the typical kick strength so the drum punch auto-gains
             // (soft kicks stay visible, slamming ones don't blow out).
@@ -1502,6 +1541,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           const band: Energy = score > (cur === 'hot' ? 0.50 : 0.60) ? 'hot' : score > (cur === 'calm' ? 0.35 : 0.28) ? 'mid' : 'calm'
           energyBandRef.current = band
           if (now - lastEnergyUiRef.current > 300) { lastEnergyUiRef.current = now; setEnergyBand(band) }
+          // On-device "sounds like" read (free, no API) — updated ~every 1.5s.
+          if (now - lastSonicUiRef.current > 1500) {
+            lastSonicUiRef.current = now
+            const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
+            setSonic(classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty }))
+          }
           // AUTO: follow the energy — nudge the visual style on a band change (cooldown so it
           // adapts on section changes, not every second). No genre, no palette override.
           if (autoRef.current) {
@@ -1750,7 +1795,16 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             <span style={{ fontSize: 16, fontWeight: 800, maxWidth: 440, textAlign: 'center', lineHeight: 1.4, padding: '0 20px' }}>{broadcastMsg}</span>
           </button>
         )}
-        {/* Song ID — the recognized track (+ a BPM accuracy check vs the DSP when Spotify data is on) */}
+        {/* On-device "sounds like" — free DSP guess, shown so you can judge its accuracy (and vs
+            AudD's real genre when Song ID is on). Character read, not a definitive genre. */}
+        {running && sonic && (
+          <div style={{ position: 'absolute', right: 12, bottom: 12, padding: '6px 11px', borderRadius: 10, background: 'rgba(0,0,0,0.5)', color: '#fff', textAlign: 'right', pointerEvents: 'none', maxWidth: '60%' }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.65 }}>Sounds like{sonic.confidence < 0.25 ? ' (unsure)' : ''}{recognized?.genre ? ` · AudD: ${recognized.genre}` : ''}</div>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>{sonic.family}</div>
+            <div style={{ fontSize: 10, opacity: 0.7 }}>{sonic.profile}</div>
+          </div>
+        )}
+        {/* Song ID — the recognized track (+ a BPM accuracy check vs the DSP) */}
         {identify && !broadcast && recognized && (
           <div style={{ position: 'absolute', left: 16, bottom: 16, display: 'flex', alignItems: 'center', gap: 10, maxWidth: '80%', padding: '8px 12px 8px 8px', borderRadius: 12, background: 'rgba(0,0,0,0.55)', color: '#fff', pointerEvents: 'none' }}>
             {recognized.artwork && <img src={recognized.artwork} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />}
