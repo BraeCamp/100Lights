@@ -8,7 +8,7 @@
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee, Palette, Film, SlidersHorizontal, Menu, type LucideIcon } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -286,6 +286,15 @@ interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: 
 // Calm, low-movement clips for idle mode (measured — see scripts/tag-bg-clips.mjs), intersected
 // with whatever is actually in the library.
 const TRANSITION_SET = new Set(TRANSITION_CLIPS.filter(id => BG_LIBRARY.some(c => c.id === id && c.kind === 'video')))
+
+// The control groups, shown as icon tabs that expand to their name on hover (or via the mobile
+// collapse toggle). The selected one renders below with a title header.
+const SECTIONS: { id: string; label: string; Icon: LucideIcon }[] = [
+  { id: 'look', label: 'Genre look', Icon: Palette },
+  { id: 'visualizer', label: 'Visualizer', Icon: Activity },
+  { id: 'bg', label: 'Background', Icon: Film },
+  { id: 'sync', label: 'Sync', Icon: SlidersHorizontal },
+]
 
 interface Scene {
   id: string; name: string
@@ -777,7 +786,8 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const [mirror, setMirror] = useState(false)
   const [glow, setGlow] = useState(true)
   const [trail, setTrail] = useState(true)
-  const [openPanel, setOpenPanel] = useState<string | null>('look')   // accordion — one control group open at a time
+  const [openPanel, setOpenPanel] = useState<string | null>('look')   // which control group's section is open
+  const [tabsOpen, setTabsOpen] = useState(false)                     // mobile: expand all tab labels into words
   // Background layer + filters + "no audio" ambient mode
   const [bgKind, setBgKind] = useState<'none' | 'media' | 'library' | string>('none')   // 'none' | ambient id | 'media' | 'library'
   const [bgUrl, setBgUrl] = useState<string | null>(null)
@@ -1470,7 +1480,16 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
 .mv-split{display:flex;flex-direction:column}
 .mv-stage{position:sticky;top:0;z-index:3;background:var(--bg-base);padding-bottom:12px}
 .mv-panels{display:flex;flex-direction:column}
-@container (min-width:760px){.mv-split{flex-direction:row;align-items:flex-start;gap:20px}.mv-stage{flex:1 1 60%;min-width:0;padding-bottom:4px}.mv-panels{flex:1 1 40%;min-width:280px;max-height:calc(100dvh - 16px);overflow:auto;padding-right:4px}}`}</style>
+.mv-tabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:12px 0 2px}
+.mv-tab{display:inline-flex;align-items:center;height:38px;padding:0 11px;border:1px solid var(--border);border-radius:999px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer;flex:0 0 auto;transition:background .15s,color .15s,border-color .15s}
+.mv-tab .mv-tablabel{max-width:0;opacity:0;overflow:hidden;white-space:nowrap;font-size:13px;font-weight:800;margin-left:0;transition:max-width .25s ease,opacity .2s ease,margin-left .25s ease}
+.mv-tab:hover{color:var(--text-primary);border-color:var(--text-muted)}
+.mv-tab:hover .mv-tablabel,.mv-tab.is-active .mv-tablabel,.mv-tabs.is-open .mv-tablabel{max-width:150px;opacity:1;margin-left:7px}
+.mv-tab.is-active{background:var(--accent);color:#0e0d12;border-color:transparent}
+.mv-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mv-tabcollapse{display:none;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--border);border-radius:999px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer;flex:0 0 auto}
+@container (min-width:760px){.mv-split{flex-direction:row;align-items:flex-start;gap:20px}.mv-stage{flex:1 1 60%;min-width:0;padding-bottom:4px}.mv-panels{flex:1 1 40%;min-width:280px;max-height:calc(100dvh - 16px);overflow:auto;padding-right:4px}}
+@container (max-width:759px){.mv-tabcollapse{display:inline-flex}}`}</style>
       <LookSvgDefs />
       <div className="mv-split">
         <div className="mv-stage">
@@ -1596,7 +1615,22 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         {sharedMsg && <p style={{ fontSize: 11.5, color: 'var(--accent)', margin: '8px 0 0', fontWeight: 700 }}>{sharedMsg}</p>}
       </div>
 
-      <Panel id="look" label="Genre look" open={openPanel === 'look'} onToggle={() => setOpenPanel(p => (p === 'look' ? null : 'look'))}>
+      {/* Section tabs — compact symbols that expand to their name on hover (desktop) or via the
+          collapse toggle (mobile). The selected section shows a title header below. */}
+      <div className={`mv-tabs${tabsOpen ? ' is-open' : ''}`} role="tablist">
+        <button type="button" className="mv-tabcollapse" onClick={() => setTabsOpen(o => !o)} aria-label={tabsOpen ? 'Collapse to symbols' : 'Show section names'} aria-expanded={tabsOpen}>{tabsOpen ? <ChevronLeft size={16} /> : <Menu size={16} />}</button>
+        {SECTIONS.map(s => (
+          <button key={s.id} type="button" role="tab" aria-selected={openPanel === s.id} title={s.label}
+            className={`mv-tab${openPanel === s.id ? ' is-active' : ''}`}
+            onClick={() => setOpenPanel(p => (p === s.id ? null : s.id))}>
+            <s.Icon size={16} />
+            <span className="mv-tablabel">{s.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {openPanel === 'look' && (
+      <TabSection title="Genre look">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
           {GENRE_LOOKS.map(l => (
             <button key={l.id} type="button" onClick={() => applyLook(l)} title={l.desc}
@@ -1609,9 +1643,10 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             <button type="button" onClick={() => shuffleTo(activeLook)} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontWeight: 700, cursor: 'pointer', padding: 0 }}>Shuffle background</button>
           </p>
         )}
-      </Panel>
+      </TabSection>)}
 
-      <Panel id="visualizer" label="Visualizer" open={openPanel === 'visualizer'} onToggle={() => setOpenPanel(p => (p === 'visualizer' ? null : 'visualizer'))}>
+      {openPanel === 'visualizer' && (
+      <TabSection title="Visualizer">
         <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', margin: '0 0 9px' }}>Style</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
           {(['none', 'bars', 'area', 'rings', 'dots', 'radial', 'wave'] as LiveStyle[]).map(s => (
@@ -1691,9 +1726,10 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         <input type="range" min={0.5} max={2.6} step={0.1} value={gain} onChange={e => setGain(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
         <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '12px 0 5px' }}>Smoothness</label>
         <input type="range" min={0} max={0.95} step={0.01} value={smoothing} onChange={e => setSmoothing(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
-      </Panel>
+      </TabSection>)}
 
-      <Panel id="bg" label="Background" open={openPanel === 'bg'} onToggle={() => setOpenPanel(p => (p === 'bg' ? null : 'bg'))}>
+      {openPanel === 'bg' && (
+      <TabSection title="Background & video set">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 6 }}>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
             <input type="checkbox" checked={reactive} onChange={e => setReactive(e.target.checked)} /> React to the music
@@ -1897,12 +1933,13 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           <button type="button" onClick={() => { setBlur(0); setBrightness(1); setSaturate(1); setHueRot(0) }} style={{ marginTop: 12, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Reset filters</button>
         </div>
         )}
-      </Panel>
+      </TabSection>)}
 
-      <Panel id="sync" label={`Sync delay — ${delayMs} ms`} open={openPanel === 'sync'} onToggle={() => setOpenPanel(p => (p === 'sync' ? null : 'sync'))}>
+      {openPanel === 'sync' && (
+      <TabSection title={`Sync delay — ${delayMs} ms`}>
         <input type="range" min={0} max={600} step={10} value={delayMs} onChange={e => setDelayMs(parseInt(e.target.value, 10))} style={{ width: '100%', maxWidth: 320 }} />
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0' }}>Nudge the visuals later to match sound that reaches the room a beat behind — e.g. streaming to a TV or Bluetooth speaker.</p>
-      </Panel>
+      </TabSection>)}
       {err && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 8 }}>{err}</p>}
       <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.55 }}>
         <strong style={{ color: 'var(--text-secondary)' }}>Party setup:</strong> tap fullscreen and drag this window onto your TV or projector — it keeps running while its window stays visible, so you can use other apps beside it. The mic is the reliable way to visualize the room: point your device at the speaker. Grabbing another app’s audio directly (Spotify, Apple Music) isn’t possible on iPhone and is limited on Android — a phone can’t silently tap another app’s sound — so the mic stays the go-to; on a computer you can also capture a browser tab’s sound.
@@ -1924,15 +1961,12 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 
 // Collapsible control group for the live visualizer — a tap-to-open tab so the panel
 // column stays calm (one group open at a time) instead of a long wall of buttons.
-function Panel({ label, open, onToggle, children }: { id: string; label: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+// The open control group: a title header for the selected category + its controls.
+function TabSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section style={{ borderTop: '1px solid var(--border)' }}>
-      <button type="button" onClick={onToggle} aria-expanded={open}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '13px 2px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
-        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: open ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{label}</span>
-        <ChevronDown size={16} style={{ flexShrink: 0, color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s ease' }} />
-      </button>
-      {open && <div style={{ padding: '0 2px 18px' }}>{children}</div>}
+    <section style={{ borderTop: '1px solid var(--border)', marginTop: 8 }}>
+      <h3 style={{ fontSize: 13, fontWeight: 900, letterSpacing: '0.02em', margin: '13px 2px 6px', color: 'var(--text-primary)' }}>{title}</h3>
+      <div style={{ padding: '0 2px 18px' }}>{children}</div>
     </section>
   )
 }
