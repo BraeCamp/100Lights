@@ -526,12 +526,11 @@ function fillRR(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, 
   else ctx.fillRect(x, y, w, h)
 }
 
-// Auto background selection: which categories fit the current energy + tone (bright/dark).
-function autoCategories(band: Energy, tone: number): BgCategory[] {
-  const bright = tone > 0.55
-  if (band === 'hot') return bright ? ['Neon', 'Light', 'City', 'Streets'] : ['Neon', 'Film', 'Night', 'Streets']
-  if (band === 'calm') return bright ? ['Nature', 'Light', 'Beach', 'Aerial'] : ['Cozy', 'Film', 'Nature']
-  return bright ? ['Abstract', 'Light', 'Streets', 'Aerial', 'City'] : ['Abstract', 'Film', 'Streets', 'Night']
+// Auto background selection: which categories fit the current energy.
+function autoCategories(band: Energy): BgCategory[] {
+  if (band === 'hot') return ['Neon', 'Night', 'City', 'Streets', 'Light']
+  if (band === 'calm') return ['Cozy', 'Nature', 'Beach', 'Film', 'Light']
+  return ['Abstract', 'Streets', 'Aerial', 'City', 'Light']
 }
 
 function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: LiveOpts) {
@@ -736,7 +735,6 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const beatIvBufRef = useRef<number[]>([])                 // recent beat intervals → median BPM (adapts fast)
   const lastBpmUiRef = useRef(0)
   const punchEnvRef = useRef(0)                             // sub/bass transient envelope (drum "punch")
-  const beatCountRef = useRef(0)                            // beats since the last background cut
   const beatFlashRef = useRef(0)                            // decaying flash intensity (0..1)
   const beatFlashColorRef = useRef('#ffffff')
   const beatFlashDivRef = useRef<HTMLDivElement | null>(null)   // full-frame colour flash overlay
@@ -762,7 +760,6 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const [bgCat, setBgCat] = useState<BgCategory>(BG_CATEGORIES[0])
   const [reactive, setReactive] = useState(true)
   const [matchVisuals, setMatchVisuals] = useState(true)   // tint the background with the palette
-  const [eqFilters, setEqFilters] = useState(false)        // make the filters react to the audio
   const [blur, setBlur] = useState(0)
   const [brightness, setBrightness] = useState(1)
   const [saturate, setSaturate] = useState(1)
@@ -789,20 +786,15 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   // Reactive amounts + detectors — mostly set by the genre presets.
   const [switchChance, setSwitchChance] = useState(0.35)   // per-bar chance to cut the video
   const [punchAmt, setPunchAmt] = useState(1)              // drum-punch intensity
-  const [toneTint, setToneTint] = useState(false)          // warm/cool tint driven by spectral brightness
-  const [tone, setTone] = useState(0.5)                    // detected tone (0 dark … 1 bright), for the readout
   const switchChanceRef = useRef(0.35); switchChanceRef.current = switchChance
   const punchAmtRef = useRef(1); punchAmtRef.current = punchAmt
-  const toneTintRef = useRef(false); toneTintRef.current = toneTint
-  const toneEmaRef = useRef(0.5)
-  const lastToneUiRef = useRef(0)
   const prevFreqRef = useRef<Uint8Array | null>(null)      // for spectral flux
   const densityEmaRef = useRef(0)                          // busyness (0 sparse … 1 busy)
   const [density, setDensity] = useState(0)                // readout
   const lastDensityUiRef = useRef(0)
   const onsetEmaRef = useRef(0.3)                          // typical kick strength → auto-gains the drum punch
   // AUTO mode: one tap → fully automatic. Enables the whole reactive stack and adapts the
-  // genre look to the detected energy + tone. Casual users just play music.
+  // style/mode/backgrounds to the detected energy. Casual users just play music.
   const [auto, setAuto] = useState(false)
   const autoRef = useRef(false); autoRef.current = auto
   const autoApplyRef = useRef<(band: Energy) => void>(() => {})
@@ -831,9 +823,9 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   // gets stuck on a still or a clip that fails to fire 'ended'.
   const nextClip = useCallback(() => {
     let pool = (shuffleScope === 'all' ? BG_LIBRARY : clipsByCategory(bgCat)).filter(c => c.kind === 'video')
-    // Auto: bias backgrounds to vibe-appropriate categories (energy + tone).
+    // Auto: bias backgrounds to energy-appropriate categories.
     if (autoRef.current && shuffleScope === 'all') {
-      const cats = autoCategories(energyBandRef.current, toneEmaRef.current)
+      const cats = autoCategories(energyBandRef.current)
       const inCats = pool.filter(c => cats.includes(c.category))
       if (inCats.length >= 3) pool = inCats
     }
@@ -848,22 +840,28 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     setBgClip(next); setBgKind('library')
   }, [shuffleScope, bgCat])
   nextClipRef.current = nextClip
-  useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null; beatCountRef.current = 0 }, [bgClip])
-  // Advance timer. In match-energy mode it's the primary driver and the dwell scales with the
-  // song's energy (hot → quick cuts hold attention; calm → let a scene breathe); the clip loops
-  // meanwhile. Otherwise it's just a safety net in case a clip's 'ended' never fires.
+  useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null }, [bgClip])
+  // Bar timer: each bar (4 beats, from the detected BPM — or ~4s if no beat) roll the
+  // "Switch chance" to cut the video, nudged by energy (when matching) and density. The video
+  // ALSO advances when it finishes (onEnded), so it always moves on even at 0% chance.
   useEffect(() => {
     if (shuffleTimerRef.current) { clearTimeout(shuffleTimerRef.current); shuffleTimerRef.current = null }
     if (!autoShuffle || bgKind !== 'library' || !bgClip) return
-    // When a beat is locked, the beat detector cuts on a bar/phrase boundary — the timer is
-    // then just a safety net for silence. Otherwise the dwell scales with energy.
-    const ms = bpmEmaRef.current > 0
-      ? 30000
-      : matchEnergy ? (energyBandRef.current === 'hot' ? 5000 : energyBandRef.current === 'mid' ? 9000 : 15000)
-        : 20000
-    shuffleTimerRef.current = setTimeout(nextClip, ms)
-    return () => { if (shuffleTimerRef.current) clearTimeout(shuffleTimerRef.current) }
-  }, [autoShuffle, bgKind, bgClip, nextClip, matchEnergy])
+    let stopped = false
+    const tick = () => {
+      if (stopped) return
+      const bpm = bpmEmaRef.current
+      const barMs = bpm > 0 ? Math.max(1000, Math.round((4 * 60000) / bpm)) : 4000
+      shuffleTimerRef.current = setTimeout(() => {
+        const ef = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 1.4 : energyBandRef.current === 'mid' ? 1.0 : 0.6) : 1
+        const df = 0.7 + densityEmaRef.current * 0.8
+        if (Math.random() < Math.min(1, switchChanceRef.current * ef * df)) nextClip()
+        tick()
+      }, barMs)
+    }
+    tick()
+    return () => { stopped = true; if (shuffleTimerRef.current) clearTimeout(shuffleTimerRef.current) }
+  }, [autoShuffle, bgKind, bgClip, nextClip])
   const pickBgFile = useCallback((f: File) => {
     setBgUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
     setBgVideo(f.type.startsWith('video/')); setBgKind('media')
@@ -907,9 +905,9 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   }, [bgClip])
   // EQ-filter driver: the draw loop reads this; when off (or no audio), the static filter applies.
   const eqRef = useRef({ on: false, blur, brightness, saturate, hueRot })
-  useEffect(() => { eqRef.current = { on: eqFilters && reactive, blur, brightness, saturate, hueRot } }, [eqFilters, reactive, blur, brightness, saturate, hueRot])
+  useEffect(() => { eqRef.current = { on: reactive, blur, brightness, saturate, hueRot } }, [reactive, blur, brightness, saturate, hueRot])
   // Restore the static filter whenever EQ mode is off (the loop may have left an imperative value).
-  useEffect(() => { if ((!eqFilters || !reactive) && bgFilterRef.current) { bgFilterRef.current.style.filter = bgFilter; bgFilterRef.current.style.transform = '' } }, [eqFilters, reactive, bgFilter])
+  useEffect(() => { if (!reactive && bgFilterRef.current) { bgFilterRef.current.style.filter = bgFilter; bgFilterRef.current.style.transform = '' } }, [reactive, bgFilter])
 
   // Genre "Looks" — apply a whole scene, with a random genre-appropriate background.
   const [activeLook, setActiveLook] = useState<GenreLook | null>(null)
@@ -926,24 +924,19 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     setColorCfg({ paletteId: look.palette, plane: null, mode: look.mode })
     setGain(look.gain); setSmoothing(look.smoothing)
     setMirror(look.mirror); setGlow(look.glow); setTrail(look.trail)
-    setMatchVisuals(look.match); setEqFilters(look.eq); setBeatColor(!!look.beat)
+    setMatchVisuals(look.match); setBeatColor(!!look.beat)
     // Reactive amounts — explicit on the preset, else derived from its character.
     setPunchAmt(look.punch ?? (look.eq ? (look.gain >= 1.4 ? 1.5 : 1.0) : 0.7))
     setSwitchChance(look.switchChance ?? (look.trail ? 0.25 : 0.45))
-    setToneTint(look.toneTint ?? !look.eq)
     setBlur(look.filters.blur); setBrightness(look.filters.brightness); setSaturate(look.filters.saturate); setHueRot(look.filters.hue)
     setBgCat(look.bg.browse); setActiveLook(look); shuffleTo(look)
   }, [shuffleTo])
 
-  // AUTO: decide the reactivity from the live detectors — NO genre preset. It leaves your
-  // palette and backgrounds alone; the only thing it sets is the visual style (from energy),
-  // and everything else (bg selection, cut timing, punch, tint, colour) is driven continuously
-  // by energy/tone/BPM/kick/density.
+  // AUTO re-vibe (called on section changes): ONLY the style + filter mode adapt to the energy.
+  // It deliberately does NOT touch the reactive toggles, so anything you switch off (e.g. colour
+  // on the beat) stays off while Auto runs.
   const applyAuto = useCallback((band: Energy) => {
-    setReactive(true); setEqFilters(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true); setToneTint(true)
-    setShuffleScope('all')
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
-    // Style + filter mode follow the energy, with variety so section changes feel fresh.
     const styles: LiveStyle[] = band === 'calm' ? ['wave', 'area', 'rings'] : band === 'hot' ? ['bars', 'dots', 'rings'] : ['radial', 'rings', 'area', 'dots']
     setStyle(pick(styles))
     const modes = band === 'calm' ? ['none', 'living', 'ink'] : band === 'hot' ? ['neonedge', 'glitch', 'vhs', 'cartoon'] : ['none', 'anime', 'comic', 'oil']
@@ -952,7 +945,15 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   autoApplyRef.current = applyAuto
   const toggleAuto = useCallback(() => {
     setAuto(a => {
-      if (!a) { setSwitchChance(0.4); setPunchAmt(1); lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0; applyAuto(energyBandRef.current) }
+      if (!a) {
+        // Turning Auto ON: set the reactive stack + baselines ONCE — you can tweak any of it after.
+        setReactive(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true)
+        setShuffleScope('all'); setSwitchChance(0.4); setPunchAmt(1)
+        lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0
+        applyAuto(energyBandRef.current)
+        nextClipRef.current()   // pick an initial background so there's something to play/switch
+
+      }
       return !a
     })
   }, [applyAuto])
@@ -1001,13 +1002,13 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
 
   const start = useCallback(async (src: 'mic' | 'device' | 'file', file?: File) => {
     setErr(null)
-    // Fresh song → fresh detectors: reset BPM, beat, energy and tone state so nothing carries
+    // Fresh song → fresh detectors: reset BPM, beat and energy state so nothing carries
     // over from the previous track (all non-AI — pure analyser math).
     bpmEmaRef.current = 0; beatIvBufRef.current = []; setBpm(0)
-    bassAvgRef.current = 0; energyEmaRef.current = 0; toneEmaRef.current = 0.5; punchEnvRef.current = 0
+    bassAvgRef.current = 0; energyEmaRef.current = 0; punchEnvRef.current = 0
     energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
     prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3
-    lastBeatRef.current = 0; prevBeatRef.current = 0; beatCountRef.current = 0
+    lastBeatRef.current = 0; prevBeatRef.current = 0
     try {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       const ctx = new AC(); audioRef.current = ctx
@@ -1095,17 +1096,6 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
               bpmEmaRef.current = v
               if (now - lastBpmUiRef.current > 350) { lastBpmUiRef.current = now; setBpm(Math.round(v)) }
             }
-            // Beat-synced auto-shuffle: at every bar (4 beats) roll a chance to cut the video —
-            // organic, not a fixed cadence. Chance = the "Switch chance" setting, nudged by
-            // energy when matching (hot livelier, calm steadier).
-            if (autoShuffleRef.current && bgKindRef.current === 'library') {
-              beatCountRef.current++
-              if (beatCountRef.current % 4 === 0) {
-                const ef = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 1.4 : energyBandRef.current === 'mid' ? 1.0 : 0.6) : 1
-                const df = 0.7 + densityEmaRef.current * 0.8   // busier → cut more often
-                if (Math.random() < Math.min(1, switchChanceRef.current * ef * df)) nextClipRef.current()
-              }
-            }
             // Beat-colour flash on the whole frame (background included) — arm on the kick.
             if (beatColorRef.current) { beatFlashRef.current = 1; const c = optsRef.current.colors; beatFlashColorRef.current = c[beatShiftRef.current % c.length] }
           }
@@ -1137,13 +1127,6 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           const band: Energy = score > (cur === 'hot' ? 0.50 : 0.60) ? 'hot' : score > (cur === 'calm' ? 0.35 : 0.28) ? 'mid' : 'calm'
           energyBandRef.current = band
           if (now - lastEnergyUiRef.current > 300) { lastEnergyUiRef.current = now; setEnergyBand(band) }
-          // Tone detector — spectral brightness (high-band share of the energy): 0 = dark/bassy,
-          // 1 = bright/airy. Drives a warm↔cool hue tint when Tone tint is on.
-          let lo = 0, hi = 0
-          for (let i = 0; i < f.freq.length; i++) { if (i < 24) lo += f.freq[i]; else hi += f.freq[i] }
-          const bright = lo + hi > 0 ? hi / (lo + hi) : 0.5
-          toneEmaRef.current = toneEmaRef.current * 0.95 + bright * 0.05
-          if (now - lastToneUiRef.current > 400) { lastToneUiRef.current = now; setTone(toneEmaRef.current) }
           // AUTO: follow the energy — nudge the visual style on a band change (cooldown so it
           // adapts on section changes, not every second). No genre, no palette override.
           if (autoRef.current) {
@@ -1154,18 +1137,16 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             }
           }
           // Filters interacting with the EQ — brightness/saturation pulse with the overall level,
-          // the sub/bass PUNCH sharpens + brightens + scale-"thumps" (drums), and the tone tint
-          // shifts warm (dark songs) ↔ cool (bright songs).
+          // and the sub/bass PUNCH sharpens + brightens + scale-"thumps" (drums).
           const eq = eqRef.current
           if (eq.on && bgFilterRef.current) {
             // Onset sharpness auto-gain: normalize the punch by the song's typical kick so drums
             // are consistently visible whatever the track's dynamics.
             const p = Math.min(1.5, (punchEnvRef.current / Math.max(0.12, onsetEmaRef.current)) * 0.55) * punchAmtRef.current
-            const toneHue = toneTintRef.current ? (toneEmaRef.current - 0.5) * 70 : 0
             const bl = eq.blur * (1 - level * 0.4) * (1 - Math.min(1, p) * 0.5)
             const br = eq.brightness * (0.7 + level * 0.55 + p * 0.55)
             const sa = eq.saturate * (0.85 + level * 0.55 + p * 0.4)
-            const hu = eq.hueRot + level * 45 + p * 18 + toneHue
+            const hu = eq.hueRot + level * 45 + p * 18
             bgFilterRef.current.style.filter = `${lookFilterRef.current} blur(${bl.toFixed(1)}px) brightness(${br.toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu)}deg)`.trim()
             bgFilterRef.current.style.transform = `scale(${(1 + Math.min(1, p) * 0.035).toFixed(3)})`
           }
@@ -1248,7 +1229,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle || matchEnergy || bpm > 0} muted playsInline onEnded={() => { if (autoShuffle && !matchEnergy && bpm === 0) nextClip() }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+                    <video key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle} muted playsInline onEnded={() => { if (autoShuffle) nextClip() }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
                   </>
                 )}
               </>
@@ -1340,7 +1321,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         </div>
         {style === 'none' && (
           <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.5 }}>
-            Just the background — no bars or shapes over it. The music can still react to it: in the <strong style={{ color: 'var(--text-secondary)' }}>Background</strong> panel turn on <strong style={{ color: 'var(--text-secondary)' }}>React to the audio (EQ)</strong> to pulse the filters and <strong style={{ color: 'var(--text-secondary)' }}>Match my palette</strong> to tint it with your colours.
+            Just the background — no bars or shapes over it. The music can still react to it: in the <strong style={{ color: 'var(--text-secondary)' }}>Background</strong> panel keep <strong style={{ color: 'var(--text-secondary)' }}>React to the music</strong> on to pulse the filters, and <strong style={{ color: 'var(--text-secondary)' }}>Match my palette</strong> to tint it with your colours.
           </p>
         )}
         <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', margin: '20px 0 12px', paddingTop: 14, borderTop: '1px solid var(--border)' }}>Colour</p>
@@ -1416,13 +1397,13 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       <Panel id="bg" label="Background" open={openPanel === 'bg'} onToggle={() => setOpenPanel(p => (p === 'bg' ? null : 'bg'))}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 6 }}>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-            <input type="checkbox" checked={reactive} onChange={e => setReactive(e.target.checked)} /> Audio-reactive visuals
+            <input type="checkbox" checked={reactive} onChange={e => setReactive(e.target.checked)} /> React to the music
           </label>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
             <input type="checkbox" checked={matchVisuals} onChange={e => setMatchVisuals(e.target.checked)} /> Match my palette
           </label>
         </div>
-        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>Reactive off = play a background with filters, no audio. Match tints the background toward your visualizer colours.</p>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>One switch for all reactivity — the visualizer AND the background filters/drum-punch move with the audio. Off = a still background. Match tints the background toward your visualizer colours.</p>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <button type="button" onClick={() => setBgKind('none')} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgKind === 'none' ? 'var(--accent)' : 'var(--bg-card)', color: bgKind === 'none' ? '#0e0d12' : 'var(--text-secondary)' }}>None</button>
@@ -1465,6 +1446,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           <div style={{ margin: '4px 0 6px' }}>
             <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Switch chance — {Math.round(switchChance * 100)}% per bar</label>
             <input type="range" min={0} max={1} step={0.05} value={switchChance} onChange={e => setSwitchChance(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0', lineHeight: 1.5 }}>A “bar” = 4 beats of the detected tempo{running && bpm > 0 ? ` (~${(4 * 60 / bpm).toFixed(1)}s at ${bpm} BPM)` : ' (≈4s until a beat is found)'}. Each bar it rolls this chance to cut. The clip always changes when it finishes, so 0% = only when the video ends.</p>
           </div>
         )}
 
@@ -1526,19 +1508,12 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             ))}
           </div>
           <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 14px' }}>A grade stacks under the mode and the sliders below — Film/Noir add grain &amp; vignette, Warm/Cool shift the temperature.</p>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: reactive ? 'pointer' : 'not-allowed', opacity: reactive ? 1 : 0.5, marginBottom: 12 }}>
-            <input type="checkbox" checked={eqFilters} onChange={e => setEqFilters(e.target.checked)} disabled={!reactive} /> React to the audio (EQ)
-          </label>
-          {eqFilters && reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-6px 0 12px' }}>Brightness &amp; saturation pulse with the music, and the sub/bass (kick) punches the background — a quick brighten, sharpen and scale-thump so drums pop. The sliders set the baseline.</p>}
-          {!reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-6px 0 12px' }}>Turn on audio-reactive visuals to make filters react.</p>}
-          {eqFilters && reactive && (
+          {reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 12px' }}>These filters react to the music (turned on by <strong style={{ color: 'var(--text-secondary)' }}>React to the music</strong> in Background): brightness &amp; saturation pulse, and the sub/bass kick punches the background — a quick brighten, sharpen and scale-thump so drums pop. The sliders set the baseline.</p>}
+          {!reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 12px' }}>Turn on <strong style={{ color: 'var(--text-secondary)' }}>React to the music</strong> in Background to make these filters move with the audio; otherwise the sliders are a static grade.</p>}
+          {reactive && (
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Drum punch — {Math.round(punchAmt * 100)}%</label>
               <input type="range" min={0} max={2} step={0.1} value={punchAmt} onChange={e => setPunchAmt(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer', marginTop: 10 }}>
-                <input type="checkbox" checked={toneTint} onChange={e => setToneTint(e.target.checked)} /> Tone tint (warm ↔ cool)
-                {running && <span style={{ marginLeft: 4, padding: '2px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 800, color: '#0e0d12', background: tone > 0.6 ? '#7dd3fc' : tone < 0.4 ? '#fbbf24' : '#a3a3a3' }}>{tone > 0.6 ? 'bright' : tone < 0.4 ? 'warm' : 'neutral'}</span>}
-              </label>
             </div>
           )}
           <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Blur — {blur}px</label>
