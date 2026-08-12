@@ -768,7 +768,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   // genre look to the detected energy + tone. Casual users just play music.
   const [auto, setAuto] = useState(false)
   const autoRef = useRef(false); autoRef.current = auto
-  const autoApplyRef = useRef<(band: Energy, tone: number) => void>(() => {})
+  const autoApplyRef = useRef<(band: Energy) => void>(() => {})
   const lastAutoVibeRef = useRef('')
   const lastAutoChangeRef = useRef(0)
   const bgInputRef = useRef<HTMLInputElement | null>(null)
@@ -892,20 +892,19 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     setBgCat(look.bg.browse); setActiveLook(look); shuffleTo(look)
   }, [shuffleTo])
 
-  // AUTO: pick a genre look from the detected energy + tone, then force the whole reactive
-  // stack on (so it stays lively regardless of the look's own toggles).
-  const applyAuto = useCallback((band: Energy, tone: number) => {
-    const id = band === 'hot' ? (tone > 0.55 ? 'edm' : 'hiphop')
-      : band === 'calm' ? (tone > 0.55 ? 'chill' : 'lofi')
-        : (tone > 0.55 ? 'pop' : 'hiphop')
-    const look = GENRE_LOOKS.find(l => l.id === id)
-    if (look) applyLook(look)
-    setReactive(true); setEqFilters(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true)
-  }, [applyLook])
+  // AUTO: decide the reactivity from the live detectors — NO genre preset. It leaves your
+  // palette and backgrounds alone; the only thing it sets is the visual style (from energy),
+  // and everything else (bg selection, cut timing, punch, tint, colour) is driven continuously
+  // by energy/tone/BPM/kick/density.
+  const applyAuto = useCallback((band: Energy) => {
+    setReactive(true); setEqFilters(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true); setToneTint(true)
+    setShuffleScope('all')
+    setStyle(band === 'calm' ? 'wave' : band === 'hot' ? 'bars' : 'radial')
+  }, [])
   autoApplyRef.current = applyAuto
   const toggleAuto = useCallback(() => {
     setAuto(a => {
-      if (!a) { setToneTint(true); lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0; applyAuto(energyBandRef.current, toneEmaRef.current) }
+      if (!a) { setSwitchChance(0.4); setPunchAmt(1); lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0; applyAuto(energyBandRef.current) }
       return !a
     })
   }, [applyAuto])
@@ -1097,14 +1096,13 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           const bright = lo + hi > 0 ? hi / (lo + hi) : 0.5
           toneEmaRef.current = toneEmaRef.current * 0.95 + bright * 0.05
           if (now - lastToneUiRef.current > 400) { lastToneUiRef.current = now; setTone(toneEmaRef.current) }
-          // AUTO: re-vibe the whole look when the energy band or tone bucket changes (with a
-          // cooldown so it adapts on section changes, not every second).
+          // AUTO: follow the energy — nudge the visual style on a band change (cooldown so it
+          // adapts on section changes, not every second). No genre, no palette override.
           if (autoRef.current) {
-            const tb = toneEmaRef.current > 0.55 ? 'b' : toneEmaRef.current < 0.4 ? 'w' : 'm'
-            const vibe = energyBandRef.current + tb
+            const vibe = energyBandRef.current
             if (vibe !== lastAutoVibeRef.current && now - lastAutoChangeRef.current > 12000) {
               lastAutoVibeRef.current = vibe; lastAutoChangeRef.current = now
-              autoApplyRef.current(energyBandRef.current, toneEmaRef.current)
+              autoApplyRef.current(energyBandRef.current)
             }
           }
           // Filters interacting with the EQ — brightness/saturation pulse with the overall level,
@@ -1267,7 +1265,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         <span style={{ display: 'grid', placeItems: 'center', width: 34, height: 34, borderRadius: 10, flexShrink: 0, background: auto ? 'rgba(0,0,0,0.15)' : 'var(--accent)', color: auto ? '#0e0d12' : '#0e0d12' }}><Sparkles size={18} /></span>
         <span style={{ minWidth: 0 }}>
           <span style={{ display: 'block', fontSize: 15, fontWeight: 850 }}>{auto ? 'Auto — on' : 'Auto'}</span>
-          <span style={{ display: 'block', fontSize: 11.5, fontWeight: 600, opacity: 0.85 }}>{auto ? 'Reading the music and setting everything for you' + (activeLook ? ` · ${activeLook.name}` : '') : 'One tap — just play music and it looks great'}</span>
+          <span style={{ display: 'block', fontSize: 11.5, fontWeight: 600, opacity: 0.85 }}>{auto ? 'Reading the music and deciding it all for you' + (running ? ` · ${energyBand}` : '') : 'One tap — just play music and it looks great'}</span>
         </span>
       </button>
       <Panel id="look" label="Genre look" open={openPanel === 'look'} onToggle={() => setOpenPanel(p => (p === 'look' ? null : 'look'))}>
