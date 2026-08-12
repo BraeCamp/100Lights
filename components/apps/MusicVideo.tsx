@@ -273,7 +273,7 @@ function MusicVideoApp() {
 // the speaker) or, on desktop, captured tab/system audio (getDisplayMedia). A sync
 // delay buffers recent frames so visuals can be nudged to line up with sound that
 // reaches the room late over Bluetooth to a TV/projector.
-type LiveStyle = 'none' | 'bars' | 'radial' | 'wave'
+type LiveStyle = 'none' | 'bars' | 'area' | 'rings' | 'dots' | 'radial' | 'wave'
 type ColorMode = 'solid' | 'spectrum' | 'random'
 interface Plane { h0: number; h1: number; sat: number; light: number }   // a hue band selected off the colour map
 interface LiveColor { paletteId: string | null; plane: Plane | null; mode: ColorMode }
@@ -526,6 +526,14 @@ function fillRR(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, 
   else ctx.fillRect(x, y, w, h)
 }
 
+// Auto background selection: which categories fit the current energy + tone (bright/dark).
+function autoCategories(band: Energy, tone: number): BgCategory[] {
+  const bright = tone > 0.55
+  if (band === 'hot') return bright ? ['Neon', 'Light', 'City', 'Streets'] : ['Neon', 'Film', 'Night', 'Streets']
+  if (band === 'calm') return bright ? ['Nature', 'Light', 'Beach', 'Aerial'] : ['Cozy', 'Film', 'Nature']
+  return bright ? ['Abstract', 'Light', 'Streets', 'Aerial', 'City'] : ['Abstract', 'Film', 'Streets', 'Night']
+}
+
 function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: LiveOpts) {
   const dpr = Math.min(2, (typeof devicePixelRatio === 'number' ? devicePixelRatio : 1))
   const w = cv.clientWidth, h = cv.clientHeight
@@ -618,6 +626,35 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
     else { rg.addColorStop(0, cols[0]); rg.addColorStop(0.5, mid); rg.addColorStop(1, cols[N - 1]) }
     ctx.fillStyle = rg; ctx.globalAlpha = 0.32; ctx.fill()
     ctx.globalAlpha = 1; ctx.lineWidth = Math.max(2, Math.min(w, h) / 260); ctx.strokeStyle = lighten(mid, 0.35); ctx.stroke()
+  } else if (o.style === 'area') {
+    ctx.beginPath(); ctx.moveTo(0, h)
+    const steps = 72
+    for (let i = 0; i <= steps; i++) { const t = i / steps; ctx.lineTo(t * w, h - Math.max(2, samp(t) * h * 0.9)) }
+    ctx.lineTo(w, h); ctx.closePath()
+    const lg = ctx.createLinearGradient(0, 0, w, 0)
+    if (o.mode === 'solid') { lg.addColorStop(0, lighten(mid, 0.5)); lg.addColorStop(1, mid) }
+    else for (let i = 0; i < N; i++) lg.addColorStop(i / (N - 1), cols[i])
+    ctx.fillStyle = lg; ctx.globalAlpha = 0.8; ctx.fill(); ctx.globalAlpha = 1
+    ctx.strokeStyle = lighten(mid, 0.4); ctx.lineWidth = Math.max(2, Math.min(w, h) / 220); ctx.stroke()
+  } else if (o.style === 'rings') {
+    const cx = w / 2, cy = h / 2, maxR = Math.min(w, h) * 0.46, rings = 20
+    for (let i = 0; i < rings; i++) {
+      const t = i / rings, amp = samp(t)
+      ctx.beginPath(); ctx.arc(cx, cy, maxR * (0.12 + t * 0.88), 0, Math.PI * 2)
+      ctx.lineWidth = Math.max(1, amp * maxR * 0.09)
+      ctx.strokeStyle = colorAt(t, i); ctx.globalAlpha = 0.22 + amp * 0.72; ctx.stroke()
+    }
+    ctx.globalAlpha = 1
+  } else if (o.style === 'dots') {
+    const count = 44, gap = w / count, midY = h / 2
+    for (let i = 0; i < count; i++) {
+      const t = i / count, amp = samp(t)
+      const x = gap * i + gap / 2, r = Math.max(1.5, amp * Math.min(w, h) * 0.09), off = amp * h * 0.32
+      ctx.fillStyle = colorAt(t, i); ctx.globalAlpha = 0.5 + amp * 0.5
+      ctx.beginPath(); ctx.arc(x, midY - off, r, 0, Math.PI * 2); ctx.fill()
+      ctx.beginPath(); ctx.arc(x, midY + off, r, 0, Math.PI * 2); ctx.fill()
+    }
+    ctx.globalAlpha = 1
   } else {
     if (o.mode === 'spectrum') {
       const lg = ctx.createLinearGradient(0, 0, w, 0)
@@ -794,6 +831,12 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   // gets stuck on a still or a clip that fails to fire 'ended'.
   const nextClip = useCallback(() => {
     let pool = (shuffleScope === 'all' ? BG_LIBRARY : clipsByCategory(bgCat)).filter(c => c.kind === 'video')
+    // Auto: bias backgrounds to vibe-appropriate categories (energy + tone).
+    if (autoRef.current && shuffleScope === 'all') {
+      const cats = autoCategories(energyBandRef.current, toneEmaRef.current)
+      const inCats = pool.filter(c => cats.includes(c.category))
+      if (inCats.length >= 3) pool = inCats
+    }
     // Match the song's energy when asked (fall back to the full pool if too few match).
     if (matchEnergyRef.current) {
       const matched = pool.filter(c => clipEnergy(c) === energyBandRef.current)
@@ -899,7 +942,12 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const applyAuto = useCallback((band: Energy) => {
     setReactive(true); setEqFilters(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true); setToneTint(true)
     setShuffleScope('all')
-    setStyle(band === 'calm' ? 'wave' : band === 'hot' ? 'bars' : 'radial')
+    const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
+    // Style + filter mode follow the energy, with variety so section changes feel fresh.
+    const styles: LiveStyle[] = band === 'calm' ? ['wave', 'area', 'rings'] : band === 'hot' ? ['bars', 'dots', 'rings'] : ['radial', 'rings', 'area', 'dots']
+    setStyle(pick(styles))
+    const modes = band === 'calm' ? ['none', 'living', 'ink'] : band === 'hot' ? ['neonedge', 'glitch', 'vhs', 'cartoon'] : ['none', 'anime', 'comic', 'oil']
+    setVideoMode(pick(modes))
   }, [])
   autoApplyRef.current = applyAuto
   const toggleAuto = useCallback(() => {
@@ -1286,7 +1334,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       <Panel id="visualizer" label="Visualizer" open={openPanel === 'visualizer'} onToggle={() => setOpenPanel(p => (p === 'visualizer' ? null : 'visualizer'))}>
         <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', margin: '0 0 9px' }}>Style</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-          {(['none', 'bars', 'radial', 'wave'] as LiveStyle[]).map(s => (
+          {(['none', 'bars', 'area', 'rings', 'dots', 'radial', 'wave'] as LiveStyle[]).map(s => (
             <button key={s} type="button" onClick={() => setStyle(s)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: style === s ? 'var(--accent)' : 'var(--bg-card)', color: style === s ? '#0e0d12' : 'var(--text-secondary)' }}>{s[0].toUpperCase() + s.slice(1)}</button>
           ))}
         </div>
