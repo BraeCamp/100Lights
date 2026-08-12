@@ -1259,6 +1259,15 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const broadcastIdxRef = useRef(0)
   const [nowPlaying, setNowPlaying] = useState<BroadcastTrack | null>(null)
   const [broadcastMsg, setBroadcastMsg] = useState<string | null>(null)
+  // Passive song identification (AudD, Shazam-like) — records a short clip off the audio and
+  // recognizes it. Gives the "now playing" name + ground-truth (Spotify) tempo/energy to sanity-
+  // check the DSP. recDest is a silent tap on the audio graph we record from.
+  const recDestRef = useRef<MediaStreamAudioDestinationNode | null>(null)
+  const recognizingRef = useRef(false)
+  const [identify, setIdentify] = useState(false)
+  const identifyRef = useRef(false); identifyRef.current = identify
+  const [recognized, setRecognized] = useState<{ title: string; artist: string; genre: string | null; artwork: string | null; features: { tempo: number; energy: number } | null } | null>(null)
+  const [idMsg, setIdMsg] = useState<string | null>(null)
   const trackInputRef = useRef<HTMLInputElement | null>(null)
   const rafRef = useRef<number | null>(null)
   const wakeRef = useRef<{ release: () => Promise<void> } | null>(null)
@@ -1280,8 +1289,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     if (fileUrlRef.current) { URL.revokeObjectURL(fileUrlRef.current); fileUrlRef.current = null }
     void audioRef.current?.close().catch(() => {}); audioRef.current = null
     void wakeRef.current?.release().catch(() => {}); wakeRef.current = null
-    analyserRef.current = null; bufRef.current = []
-    setRunning(false); setSource(null); setNowPlaying(null)
+    analyserRef.current = null; bufRef.current = []; recDestRef.current = null
+    setRunning(false); setSource(null); setNowPlaying(null); setRecognized(null)
     // No audio → back to idle/transition mode (also repicks a calm clip if shuffling).
     lastLoudRef.current = 0
     if (idleTransitionRef.current && !idleRef.current) { idleRef.current = true; setIdle(true); onIdleChangeRef.current(true) }
@@ -1297,6 +1306,40 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     lastBeatRef.current = 0; prevBeatRef.current = 0
   }, [])
 
+  // Record ~7s off the audio tap and ask the recognizer what's playing (once at a time).
+  const recognizeNow = useCallback(async () => {
+    const dest = recDestRef.current
+    if (!identifyRef.current || !dest || recognizingRef.current || typeof MediaRecorder === 'undefined') return
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(m => MediaRecorder.isTypeSupported(m)) || ''
+    let rec: MediaRecorder
+    try { rec = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined) } catch { return }
+    recognizingRef.current = true
+    const chunks: Blob[] = []
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
+    rec.onstop = async () => {
+      try {
+        const blob = new Blob(chunks, { type: mime || 'audio/webm' })
+        if (blob.size < 2000) return   // basically silence
+        const fd = new FormData(); fd.append('audio', blob, 'clip.webm')
+        const r = await fetch('/api/recognize', { method: 'POST', body: fd })
+        const d = await r.json()
+        if (d.error === 'not_configured') setIdMsg('Add AUDD_API_TOKEN to enable song ID')
+        else if (d.match) { setRecognized(d.match); setIdMsg(null) }
+      } catch { /* ignore — try again next tick */ } finally { recognizingRef.current = false }
+    }
+    try { rec.start(); window.setTimeout(() => { try { rec.stop() } catch { /* already stopped */ } }, 7000) } catch { recognizingRef.current = false }
+  }, [])
+  // Identify on toggle-on / start, then periodically (catches song changes without a gap).
+  useEffect(() => {
+    if (!identify || !running) return
+    const t0 = window.setTimeout(() => recognizeNow(), 1500)
+    const iv = window.setInterval(() => recognizeNow(), 75000)
+    return () => { clearTimeout(t0); clearInterval(iv) }
+  }, [identify, running, recognizeNow])
+  // A new song after a quiet gap → re-identify right away.
+  useEffect(() => { if (!idle && identify && running) recognizeNow() // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idle])
+
   const start = useCallback(async (src: 'mic' | 'device' | 'file' | 'broadcast', file?: File) => {
     setErr(null)
     resetDetectors()
@@ -1305,6 +1348,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       const ctx = new AC(); audioRef.current = ctx
       await ctx.resume().catch(() => {})
       const an = ctx.createAnalyser(); an.fftSize = 2048; an.smoothingTimeConstant = smoothingRef.current
+      const recDest = ctx.createMediaStreamDestination(); recDestRef.current = recDest   // silent tap for song ID
 
       if (src === 'broadcast') {
         // Radio mode: play a playlist through the analyser. Same-origin files play directly; remote
@@ -1312,7 +1356,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         const el = new Audio(); el.crossOrigin = 'anonymous'; el.preload = 'auto'
         audioElRef.current = el
         const node = ctx.createMediaElementSource(el)
-        node.connect(an); node.connect(ctx.destination)
+        node.connect(an); node.connect(ctx.destination); node.connect(recDest)
         const proxied = (u: string) => u.startsWith('http') ? `/api/broadcast/audio?src=${encodeURIComponent(u)}` : u
         const playAt = async (i: number) => {
           const list = broadcastTracksRef.current
@@ -1340,7 +1384,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         const el = new Audio(); el.src = url; el.loop = true; el.crossOrigin = 'anonymous'
         audioElRef.current = el
         const node = ctx.createMediaElementSource(el)
-        node.connect(an); node.connect(ctx.destination)   // audible, and tapped for the visualizer
+        node.connect(an); node.connect(ctx.destination); node.connect(recDest)   // audible, tapped for visuals + song ID
         await el.play().catch(() => { throw new Error('Couldn’t play that file — try an MP3, M4A, or WAV.') })
       } else {
         const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c: unknown) => Promise<MediaStream> }
@@ -1359,7 +1403,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         }
         streamRef.current = stream
         stream.getTracks().forEach(t => t.addEventListener('ended', () => stop()))   // user hit "Stop sharing"
-        ctx.createMediaStreamSource(stream).connect(an)
+        const srcNode = ctx.createMediaStreamSource(stream); srcNode.connect(an); srcNode.connect(recDest)
       }
       analyserRef.current = an
       setSource(src); setRunning(true)
@@ -1698,6 +1742,19 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             <span style={{ fontSize: 16, fontWeight: 800, maxWidth: 440, textAlign: 'center', lineHeight: 1.4, padding: '0 20px' }}>{broadcastMsg}</span>
           </button>
         )}
+        {/* Song ID — the recognized track (+ a BPM accuracy check vs the DSP when Spotify data is on) */}
+        {identify && !broadcast && recognized && (
+          <div style={{ position: 'absolute', left: 16, bottom: 16, display: 'flex', alignItems: 'center', gap: 10, maxWidth: '80%', padding: '8px 12px 8px 8px', borderRadius: 12, background: 'rgba(0,0,0,0.55)', color: '#fff', pointerEvents: 'none' }}>
+            {recognized.artwork && <img src={recognized.artwork} alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', opacity: 0.7 }}>Now playing{recognized.genre ? ` · ${recognized.genre}` : ''}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{recognized.title}{recognized.artist ? ` — ${recognized.artist}` : ''}</div>
+              {recognized.features && running && bpm > 0 && (
+                <div style={{ fontSize: 10.5, opacity: 0.7, marginTop: 1 }}>Track {recognized.features.tempo} BPM · detected {bpm} {Math.abs(recognized.features.tempo - bpm) <= 3 || Math.abs(recognized.features.tempo - bpm * 2) <= 4 || Math.abs(recognized.features.tempo - bpm / 2) <= 3 ? '✓' : '≈'}</div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {!broadcast && (
@@ -1706,9 +1763,14 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           ? <button type="button" onClick={stop} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}><Square size={15} /> Stop</button>
           : <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Not listening</span>}
         <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{source === 'file' ? 'Playing your track' : source === 'device' ? 'Capturing device audio' : source === 'mic' ? 'Listening to the room' : ''}</span>
+        <button type="button" onClick={() => { setIdentify(v => !v); if (identify) setRecognized(null) }} title="Passively recognize the song that's playing (AudD) and show its name"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: identify ? 'var(--accent)' : 'transparent', color: identify ? '#0e0d12' : 'var(--text-secondary)' }}>
+          <Radio size={14} /> Song ID{identify ? ' · on' : ''}
+        </button>
         <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
       </div>
       )}
+      {!broadcast && idMsg && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0 0' }}>{idMsg}</p>}
         </div>{/* /mv-stage */}
 
         <div className="mv-panels">
