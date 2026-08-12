@@ -20,7 +20,8 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { S3Client, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = join(ROOT, 'public', 'bg', 'nature')
@@ -71,6 +72,23 @@ const ARTSY = {
   'artsy-particles-float': 'dust particles floating light beam',
   'artsy-neon-grid': 'retro neon grid synthwave motion',
   'artsy-galaxy': 'galaxy stars space nebula',
+  // Fill
+  'artsy-acrylic-pour': 'acrylic paint pour fluid art macro',
+  'artsy-alcohol-ink': 'alcohol ink abstract flowing color',
+  'artsy-frost': 'frost ice crystals forming macro',
+  'artsy-mercury': 'mercury liquid metal droplets macro',
+  'artsy-star-bokeh': 'star bokeh lights defocused night',
+  'artsy-light-painting': 'light painting long exposure spiral',
+  'artsy-sparks': 'sparks flying dark slow motion',
+  'artsy-dappled': 'dappled sunlight through leaves',
+  'artsy-neon-heart': 'neon heart sign glowing pink',
+  'artsy-led-wall': 'led screen colorful pixels abstract',
+  'artsy-glow-sticks': 'glow sticks light trails dark',
+  'artsy-old-film': 'old film countdown leader scratches',
+  'artsy-super8': 'super 8 film vintage light leak',
+  'artsy-noir-blinds': 'window blinds shadow film noir',
+  'artsy-rain-window-cine': 'rain on window night bokeh cinematic',
+  'artsy-silhouette-crowd': 'concert crowd silhouette hands up',
 }
 
 // --- env ---------------------------------------------------------------------------------
@@ -101,6 +119,7 @@ const s3 = new S3Client({
 // --- args --------------------------------------------------------------------------------
 const argv = process.argv.slice(2)
 const alsoNature = argv.includes('--nature')
+const pull = argv.includes('--pull')   // mirror the R2 clips into public/bg/nature so they play without the CDN
 const explicit = argv.filter(a => !a.startsWith('--'))
 
 // --- helpers -----------------------------------------------------------------------------
@@ -135,7 +154,7 @@ async function uploadMp4(id, mp4Path) {
 }
 
 // --- run ---------------------------------------------------------------------------------
-const artsyIds = explicit.length ? explicit.filter(id => ARTSY[id]) : Object.keys(ARTSY)
+const artsyIds = pull ? [] : (explicit.length ? explicit.filter(id => ARTSY[id]) : Object.keys(ARTSY))
 
 for (const id of artsyIds) {
   if (!KEY) { console.warn('  – artsy clips need PEXELS_API_KEY — skipping'); break }
@@ -179,5 +198,25 @@ writeFileSync(join(ROOT, 'lib', 'bg-cdn.ts'),
   `// small poster is bundled (the "poster-only" catalog). Do not edit by hand; re-run the\n` +
   `// publish script to refresh.\n` +
   `export const CDN_CLIPS: string[] = [${ids.map(s => `'${s}'`).join(', ')}]\n`)
+
+if (pull) {
+  // Bundle a local copy of every R2 clip so it plays as VIDEO even before the CDN is set
+  // (bg-library falls back to /bg/nature/<id>.mp4 for anything in FETCHED_NATURE).
+  console.log(`  Pulling ${ids.length} clips into public/bg/nature/ …`)
+  for (const id of ids) {
+    try {
+      const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: `bg/${id}.mp4` }), { expiresIn: 600 })
+      const r = await fetch(url)
+      if (!r.ok) { console.warn(`  ✗ pull ${id}: ${r.status}`); continue }
+      writeFileSync(join(OUT, `${id}.mp4`), Buffer.from(await r.arrayBuffer()))
+    } catch (e) { console.warn(`  ✗ pull ${id}: ${e.message}`) }
+  }
+  const local = readdirSync(OUT).filter(f => f.endsWith('.mp4')).map(f => f.replace(/\.mp4$/, '')).sort()
+  writeFileSync(join(ROOT, 'lib', 'bg-fetched.ts'),
+    `// Auto-generated — nature/artsy clip ids with a bundled local MP4 at public/bg/nature/<id>.mp4\n` +
+    `// (plays without the CDN). Do not edit by hand; re-run \`npm run bg:publish -- --pull\`.\n` +
+    `export const FETCHED_NATURE: string[] = [${local.map(s => `'${s}'`).join(', ')}]\n`)
+  console.log(`  ✓ bundled ${local.length} local mp4s (play without the CDN)`)
+}
 
 console.log(`\n✓ ${ids.length} clips on R2. Set NEXT_PUBLIC_BG_CDN to the bucket's public URL to stream them.`)

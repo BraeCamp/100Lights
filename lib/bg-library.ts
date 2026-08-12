@@ -26,13 +26,14 @@ export interface BgClip {
   energy?: Energy   // used to match the song's energy when auto-shuffling (default: by category)
 }
 
-// Artsy first: the library leans artistic (music-video feel) by default.
-export const BG_CATEGORIES = ['Artsy', 'Night', 'Streets', 'Cozy', 'Nature', 'Patterns', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
+// Artistic themes first: the library leans music-video by default.
+export const BG_CATEGORIES = ['Abstract', 'Light', 'Neon', 'Film', 'Night', 'Streets', 'Cozy', 'Nature', 'Patterns', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
 export type BgCategory = typeof BG_CATEGORIES[number]
 
 // Default energy per category when a clip doesn't override it.
 const CATEGORY_ENERGY: Record<BgCategory, Energy> = {
-  Patterns: 'mid', Artsy: 'mid', Streets: 'mid', Night: 'hot', Cozy: 'calm', Nature: 'calm',
+  Abstract: 'mid', Light: 'calm', Neon: 'hot', Film: 'mid',
+  Patterns: 'mid', Streets: 'mid', Night: 'hot', Cozy: 'calm', Nature: 'calm',
   Aerial: 'mid', Beach: 'calm', Mountains: 'calm', Animals: 'calm', City: 'hot', Ambient: 'calm',
 }
 export const clipEnergy = (c: BgClip): Energy => c.energy ?? CATEGORY_ENERGY[c.category]
@@ -93,51 +94,69 @@ const NATURE: { id: string; category: BgCategory; title: string; tint: string; e
   { id: 'nature-flowers', category: 'Nature', title: 'Flower field', tint: 'linear-gradient(135deg,#be185d,#fde047)' },
   { id: 'nature-clouds', category: 'Nature', title: 'Cloud drift', tint: 'linear-gradient(135deg,#1e3a8a,#e0f2fe)' },
   { id: 'nature-underwater', category: 'Nature', title: 'Sun-dappled water', tint: 'linear-gradient(135deg,#083344,#67e8f9)' },
-  // Artsy — abstract, textural, cinematic. Poster-only (streamed from R2 when the CDN is set).
-  { id: 'artsy-ink-water', category: 'Artsy', title: 'Ink in water', tint: 'linear-gradient(135deg,#0b1020,#6366f1)', energy: 'calm' },
-  { id: 'artsy-light-leaks', category: 'Artsy', title: 'Light leaks', tint: 'linear-gradient(135deg,#7c2d12,#fb7185)', energy: 'hot' },
-  { id: 'artsy-smoke', category: 'Artsy', title: 'Colored smoke', tint: 'linear-gradient(135deg,#1e1b4b,#f472b6)', energy: 'mid' },
-  { id: 'artsy-prism', category: 'Artsy', title: 'Prism light', tint: 'linear-gradient(135deg,#0ea5e9,#f0abfc)', energy: 'mid' },
-  { id: 'artsy-oil-macro', category: 'Artsy', title: 'Oil & water', tint: 'linear-gradient(135deg,#0c4a6e,#22d3ee)', energy: 'calm' },
-  { id: 'artsy-paint-mix', category: 'Artsy', title: 'Paint mixing', tint: 'linear-gradient(135deg,#be185d,#f59e0b)', energy: 'mid' },
-  { id: 'artsy-fireworks', category: 'Artsy', title: 'Fireworks', tint: 'linear-gradient(135deg,#111827,#fbbf24)', energy: 'hot' },
-  { id: 'artsy-water-caustics', category: 'Artsy', title: 'Water caustics', tint: 'linear-gradient(135deg,#0e7490,#a5f3fc)', energy: 'calm' },
-  { id: 'artsy-gold-particles', category: 'Artsy', title: 'Gold particles', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)', energy: 'mid' },
-  { id: 'artsy-silk', category: 'Artsy', title: 'Flowing silk', tint: 'linear-gradient(135deg,#4c1d95,#f0abfc)', energy: 'calm' },
-  { id: 'artsy-lava-lamp', category: 'Artsy', title: 'Lava lamp', tint: 'linear-gradient(135deg,#7c2d12,#f97316)', energy: 'calm' },
-  { id: 'artsy-bokeh-drift', category: 'Artsy', title: 'Bokeh drift', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)', energy: 'mid' },
-  // Artsy — night / neon, punchy. Shorter clips (quick changes hold attention).
-  { id: 'artsy-neon-signs', category: 'Artsy', title: 'Neon signs', tint: 'linear-gradient(135deg,#0b1020,#f472b6)', energy: 'hot' },
-  { id: 'artsy-light-trails', category: 'Artsy', title: 'Light trails', tint: 'linear-gradient(135deg,#0b1020,#f59e0b)', energy: 'hot' },
-  { id: 'artsy-neon-tunnel', category: 'Artsy', title: 'Neon tunnel', tint: 'linear-gradient(135deg,#3b0764,#22d3ee)', energy: 'hot' },
-  { id: 'artsy-laser', category: 'Artsy', title: 'Laser show', tint: 'linear-gradient(135deg,#0b1020,#a3e635)', energy: 'hot' },
-  { id: 'artsy-rain-neon', category: 'Artsy', title: 'Neon rain', tint: 'linear-gradient(135deg,#0b1020,#7c3aed)', energy: 'hot' },
-  { id: 'artsy-city-bokeh-night', category: 'Artsy', title: 'City bokeh', tint: 'linear-gradient(135deg,#111827,#38bdf8)', energy: 'hot' },
-  { id: 'artsy-plasma-ball', category: 'Artsy', title: 'Plasma ball', tint: 'linear-gradient(135deg,#1e1b4b,#e879f9)', energy: 'hot' },
-  { id: 'artsy-holographic', category: 'Artsy', title: 'Holographic', tint: 'linear-gradient(135deg,#0ea5e9,#f0abfc)', energy: 'mid' },
-  { id: 'artsy-liquid-metal', category: 'Artsy', title: 'Liquid metal', tint: 'linear-gradient(135deg,#334155,#e2e8f0)', energy: 'mid' },
-  { id: 'artsy-glitter', category: 'Artsy', title: 'Glitter', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)', energy: 'mid' },
-  // Artsy — cinematic / music-video textures (the bulk of the library)
-  { id: 'artsy-marble-ink', category: 'Artsy', title: 'Marble ink', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)', energy: 'mid' },
-  { id: 'artsy-liquid-color', category: 'Artsy', title: 'Liquid color', tint: 'linear-gradient(135deg,#be185d,#0ea5e9)', energy: 'mid' },
-  { id: 'artsy-bubbles', category: 'Artsy', title: 'Iridescent bubbles', tint: 'linear-gradient(135deg,#0e7490,#f0abfc)', energy: 'mid' },
-  { id: 'artsy-crystal', category: 'Artsy', title: 'Crystal light', tint: 'linear-gradient(135deg,#0ea5e9,#e0f2fe)', energy: 'calm' },
-  { id: 'artsy-honey', category: 'Artsy', title: 'Honey pour', tint: 'linear-gradient(135deg,#7c2d12,#fcd34d)', energy: 'calm' },
-  { id: 'artsy-powder', category: 'Artsy', title: 'Powder burst', tint: 'linear-gradient(135deg,#111827,#f472b6)', energy: 'hot' },
-  { id: 'artsy-lens-flare', category: 'Artsy', title: 'Lens flare', tint: 'linear-gradient(135deg,#1e1b4b,#f59e0b)', energy: 'mid' },
-  { id: 'artsy-god-rays', category: 'Artsy', title: 'God rays', tint: 'linear-gradient(135deg,#1e293b,#fde68a)', energy: 'calm' },
-  { id: 'artsy-projector', category: 'Artsy', title: 'Projector dust', tint: 'linear-gradient(135deg,#0b1020,#e2e8f0)', energy: 'mid' },
-  { id: 'artsy-disco', category: 'Artsy', title: 'Disco lights', tint: 'linear-gradient(135deg,#3b0764,#f472b6)', energy: 'hot' },
-  { id: 'artsy-strobe', category: 'Artsy', title: 'Strobe', tint: 'linear-gradient(135deg,#0b1020,#e2e8f0)', energy: 'hot' },
-  { id: 'artsy-spotlight', category: 'Artsy', title: 'Spotlight smoke', tint: 'linear-gradient(135deg,#111827,#a78bfa)', energy: 'mid' },
-  { id: 'artsy-film-grain', category: 'Artsy', title: 'Film grain', tint: 'linear-gradient(135deg,#292524,#a8a29e)', energy: 'calm' },
-  { id: 'artsy-vhs-static', category: 'Artsy', title: 'VHS static', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)', energy: 'hot' },
-  { id: 'artsy-silhouette-dance', category: 'Artsy', title: 'Dancer silhouette', tint: 'linear-gradient(135deg,#111827,#fb7185)', energy: 'mid' },
-  { id: 'artsy-slow-water', category: 'Artsy', title: 'Water ripple', tint: 'linear-gradient(135deg,#0c4a6e,#7dd3fc)', energy: 'calm' },
-  { id: 'artsy-smoke-dance', category: 'Artsy', title: 'Backlit smoke', tint: 'linear-gradient(135deg,#0b1020,#a78bfa)', energy: 'calm' },
-  { id: 'artsy-particles-float', category: 'Artsy', title: 'Floating dust', tint: 'linear-gradient(135deg,#1e293b,#fde68a)', energy: 'calm' },
-  { id: 'artsy-neon-grid', category: 'Artsy', title: 'Synthwave grid', tint: 'linear-gradient(135deg,#3b0764,#22d3ee)', energy: 'hot' },
-  { id: 'artsy-galaxy', category: 'Artsy', title: 'Galaxy', tint: 'linear-gradient(135deg,#0b1020,#a78bfa)', energy: 'calm' },
+  // ── Abstract — fluid, textural, macro (music-video textures). Poster-only → R2.
+  { id: 'artsy-ink-water', category: 'Abstract', title: 'Ink in water', tint: 'linear-gradient(135deg,#0b1020,#6366f1)', energy: 'calm' },
+  { id: 'artsy-marble-ink', category: 'Abstract', title: 'Marble ink', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)', energy: 'mid' },
+  { id: 'artsy-liquid-color', category: 'Abstract', title: 'Liquid color', tint: 'linear-gradient(135deg,#be185d,#0ea5e9)', energy: 'mid' },
+  { id: 'artsy-oil-macro', category: 'Abstract', title: 'Oil & water', tint: 'linear-gradient(135deg,#0c4a6e,#22d3ee)', energy: 'calm' },
+  { id: 'artsy-paint-mix', category: 'Abstract', title: 'Paint mixing', tint: 'linear-gradient(135deg,#be185d,#f59e0b)', energy: 'mid' },
+  { id: 'artsy-smoke', category: 'Abstract', title: 'Colored smoke', tint: 'linear-gradient(135deg,#1e1b4b,#f472b6)', energy: 'mid' },
+  { id: 'artsy-powder', category: 'Abstract', title: 'Powder burst', tint: 'linear-gradient(135deg,#111827,#f472b6)', energy: 'hot' },
+  { id: 'artsy-bubbles', category: 'Abstract', title: 'Iridescent bubbles', tint: 'linear-gradient(135deg,#0e7490,#f0abfc)', energy: 'mid' },
+  { id: 'artsy-honey', category: 'Abstract', title: 'Honey pour', tint: 'linear-gradient(135deg,#7c2d12,#fcd34d)', energy: 'calm' },
+  { id: 'artsy-silk', category: 'Abstract', title: 'Flowing silk', tint: 'linear-gradient(135deg,#4c1d95,#f0abfc)', energy: 'calm' },
+  { id: 'artsy-lava-lamp', category: 'Abstract', title: 'Lava lamp', tint: 'linear-gradient(135deg,#7c2d12,#f97316)', energy: 'calm' },
+  { id: 'artsy-liquid-metal', category: 'Abstract', title: 'Liquid metal', tint: 'linear-gradient(135deg,#334155,#e2e8f0)', energy: 'mid' },
+  { id: 'artsy-holographic', category: 'Abstract', title: 'Holographic', tint: 'linear-gradient(135deg,#0ea5e9,#f0abfc)', energy: 'mid' },
+  // ── Light — prisms, particles, flares, bokeh
+  { id: 'artsy-light-leaks', category: 'Light', title: 'Light leaks', tint: 'linear-gradient(135deg,#7c2d12,#fb7185)', energy: 'hot' },
+  { id: 'artsy-prism', category: 'Light', title: 'Prism light', tint: 'linear-gradient(135deg,#0ea5e9,#f0abfc)', energy: 'mid' },
+  { id: 'artsy-crystal', category: 'Light', title: 'Crystal light', tint: 'linear-gradient(135deg,#0ea5e9,#e0f2fe)', energy: 'calm' },
+  { id: 'artsy-lens-flare', category: 'Light', title: 'Lens flare', tint: 'linear-gradient(135deg,#1e1b4b,#f59e0b)', energy: 'mid' },
+  { id: 'artsy-god-rays', category: 'Light', title: 'God rays', tint: 'linear-gradient(135deg,#1e293b,#fde68a)', energy: 'calm' },
+  { id: 'artsy-gold-particles', category: 'Light', title: 'Gold particles', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)', energy: 'mid' },
+  { id: 'artsy-glitter', category: 'Light', title: 'Glitter', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)', energy: 'mid' },
+  { id: 'artsy-particles-float', category: 'Light', title: 'Floating dust', tint: 'linear-gradient(135deg,#1e293b,#fde68a)', energy: 'calm' },
+  { id: 'artsy-water-caustics', category: 'Light', title: 'Water caustics', tint: 'linear-gradient(135deg,#0e7490,#a5f3fc)', energy: 'calm' },
+  { id: 'artsy-slow-water', category: 'Light', title: 'Water ripple', tint: 'linear-gradient(135deg,#0c4a6e,#7dd3fc)', energy: 'calm' },
+  { id: 'artsy-bokeh-drift', category: 'Light', title: 'Bokeh drift', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)', energy: 'mid' },
+  { id: 'artsy-galaxy', category: 'Light', title: 'Galaxy', tint: 'linear-gradient(135deg,#0b1020,#a78bfa)', energy: 'calm' },
+  // ── Neon — electric, night, punchy (shorter clips)
+  { id: 'artsy-neon-signs', category: 'Neon', title: 'Neon signs', tint: 'linear-gradient(135deg,#0b1020,#f472b6)', energy: 'hot' },
+  { id: 'artsy-light-trails', category: 'Neon', title: 'Light trails', tint: 'linear-gradient(135deg,#0b1020,#f59e0b)', energy: 'hot' },
+  { id: 'artsy-neon-tunnel', category: 'Neon', title: 'Neon tunnel', tint: 'linear-gradient(135deg,#3b0764,#22d3ee)', energy: 'hot' },
+  { id: 'artsy-laser', category: 'Neon', title: 'Laser show', tint: 'linear-gradient(135deg,#0b1020,#a3e635)', energy: 'hot' },
+  { id: 'artsy-rain-neon', category: 'Neon', title: 'Neon rain', tint: 'linear-gradient(135deg,#0b1020,#7c3aed)', energy: 'hot' },
+  { id: 'artsy-city-bokeh-night', category: 'Neon', title: 'City bokeh', tint: 'linear-gradient(135deg,#111827,#38bdf8)', energy: 'hot' },
+  { id: 'artsy-plasma-ball', category: 'Neon', title: 'Plasma ball', tint: 'linear-gradient(135deg,#1e1b4b,#e879f9)', energy: 'hot' },
+  { id: 'artsy-neon-grid', category: 'Neon', title: 'Synthwave grid', tint: 'linear-gradient(135deg,#3b0764,#22d3ee)', energy: 'hot' },
+  { id: 'artsy-disco', category: 'Neon', title: 'Disco lights', tint: 'linear-gradient(135deg,#3b0764,#f472b6)', energy: 'hot' },
+  { id: 'artsy-strobe', category: 'Neon', title: 'Strobe', tint: 'linear-gradient(135deg,#0b1020,#e2e8f0)', energy: 'hot' },
+  { id: 'artsy-fireworks', category: 'Neon', title: 'Fireworks', tint: 'linear-gradient(135deg,#111827,#fbbf24)', energy: 'hot' },
+  // ── Film — cinematic, moody, retro
+  { id: 'artsy-film-grain', category: 'Film', title: 'Film grain', tint: 'linear-gradient(135deg,#292524,#a8a29e)', energy: 'calm' },
+  { id: 'artsy-vhs-static', category: 'Film', title: 'VHS static', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)', energy: 'hot' },
+  { id: 'artsy-silhouette-dance', category: 'Film', title: 'Dancer silhouette', tint: 'linear-gradient(135deg,#111827,#fb7185)', energy: 'mid' },
+  { id: 'artsy-spotlight', category: 'Film', title: 'Spotlight smoke', tint: 'linear-gradient(135deg,#111827,#a78bfa)', energy: 'mid' },
+  { id: 'artsy-projector', category: 'Film', title: 'Projector dust', tint: 'linear-gradient(135deg,#0b1020,#e2e8f0)', energy: 'mid' },
+  { id: 'artsy-smoke-dance', category: 'Film', title: 'Backlit smoke', tint: 'linear-gradient(135deg,#0b1020,#a78bfa)', energy: 'calm' },
+  // ── More artistic fill (published to R2)
+  { id: 'artsy-acrylic-pour', category: 'Abstract', title: 'Acrylic pour', tint: 'linear-gradient(135deg,#be185d,#22d3ee)', energy: 'mid' },
+  { id: 'artsy-alcohol-ink', category: 'Abstract', title: 'Alcohol ink', tint: 'linear-gradient(135deg,#4c1d95,#22d3ee)', energy: 'mid' },
+  { id: 'artsy-frost', category: 'Abstract', title: 'Frost crystals', tint: 'linear-gradient(135deg,#0e7490,#e0f2fe)', energy: 'calm' },
+  { id: 'artsy-mercury', category: 'Abstract', title: 'Mercury drops', tint: 'linear-gradient(135deg,#334155,#cbd5e1)', energy: 'mid' },
+  { id: 'artsy-star-bokeh', category: 'Light', title: 'Star bokeh', tint: 'linear-gradient(135deg,#1e1b4b,#fde68a)', energy: 'mid' },
+  { id: 'artsy-light-painting', category: 'Light', title: 'Light painting', tint: 'linear-gradient(135deg,#0b1020,#22d3ee)', energy: 'hot' },
+  { id: 'artsy-sparks', category: 'Light', title: 'Sparks', tint: 'linear-gradient(135deg,#111827,#f59e0b)', energy: 'hot' },
+  { id: 'artsy-dappled', category: 'Light', title: 'Dappled light', tint: 'linear-gradient(135deg,#14532d,#fde68a)', energy: 'calm' },
+  { id: 'artsy-neon-heart', category: 'Neon', title: 'Neon heart', tint: 'linear-gradient(135deg,#0b1020,#fb7185)', energy: 'hot' },
+  { id: 'artsy-led-wall', category: 'Neon', title: 'LED wall', tint: 'linear-gradient(135deg,#0b1020,#22d3ee)', energy: 'hot' },
+  { id: 'artsy-glow-sticks', category: 'Neon', title: 'Glow sticks', tint: 'linear-gradient(135deg,#0b1020,#a3e635)', energy: 'hot' },
+  { id: 'artsy-old-film', category: 'Film', title: 'Old film', tint: 'linear-gradient(135deg,#292524,#a8a29e)', energy: 'mid' },
+  { id: 'artsy-super8', category: 'Film', title: 'Super 8', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)', energy: 'calm' },
+  { id: 'artsy-noir-blinds', category: 'Film', title: 'Noir blinds', tint: 'linear-gradient(135deg,#111827,#94a3b8)', energy: 'mid' },
+  { id: 'artsy-rain-window-cine', category: 'Film', title: 'Rainy window', tint: 'linear-gradient(135deg,#0b1020,#38bdf8)', energy: 'calm' },
+  { id: 'artsy-silhouette-crowd', category: 'Film', title: 'Crowd silhouette', tint: 'linear-gradient(135deg,#111827,#a78bfa)', energy: 'hot' },
 ]
 
 // Generative styles that also have an animated WebM loop (scripts/gen-bg-videos.mjs).
