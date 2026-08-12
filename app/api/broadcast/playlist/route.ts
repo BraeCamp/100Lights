@@ -32,22 +32,31 @@ async function jamendoTracks(tags: string, order = 'popularity_total', limit = 4
   // the returned playlist.
   const url = `https://api.jamendo.com/v3.0/tracks/?client_id=${cid}&format=json&limit=200` +
     `&fuzzytags=${ft}&order=${order}&audioformat=mp32&include=licenses&groupby=artist_id`
-  try {
-    const r = await fetch(url, { next: { revalidate: 1800 } })
-    if (!r.ok) return []
-    const data = await r.json() as { results?: { name: string; artist_name: string; audio: string; license_ccurl?: string }[] }
-    // Without a licence, drop NonCommercial (by-nc*) tracks — not usable on a monetized stream.
-    // Once you hold Jamendo's commercial RADIO licence (on the same account as this client_id), set
-    // JAMENDO_COMMERCIAL=true and the full catalogue (incl. NC) is cleared for you.
-    const licensed = process.env.JAMENDO_COMMERCIAL === 'true'
-    return (data.results ?? []).filter(t => t.audio && (licensed || !/\/by-nc/i.test(t.license_ccurl || ''))).map(t => ({
-      title: t.name,
-      artist: t.artist_name,
-      url: t.audio,
-      license: t.license_ccurl || 'Jamendo',
-      attribution: `${t.name} by ${t.artist_name}${t.license_ccurl ? ` (${t.license_ccurl})` : ''} — via Jamendo`,
-    }))
-  } catch { return [] }
+  // With a commercial licence the CC terms (incl. attribution + NonCommercial) don't bind you.
+  const licensed = process.env.JAMENDO_COMMERCIAL === 'true'
+  // Jamendo's fuzzytags endpoint is FLAKY — the identical query returns tracks, then 0, then tracks.
+  // Retry (no-store, so a flaky empty isn't cached) until it yields results.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const r = await fetch(url, { cache: 'no-store' })
+      if (!r.ok) continue
+      const data = await r.json() as { results?: { name: string; artist_name: string; audio: string; license_ccurl?: string }[] }
+      const rows = (data.results ?? []).filter(t => t.audio && (licensed || !/\/by-nc/i.test(t.license_ccurl || '')))
+      if (!rows.length) continue
+      return rows.map(t => ({
+        title: t.name,
+        artist: t.artist_name,
+        url: t.audio,
+        license: licensed ? 'Jamendo (licensed)' : (t.license_ccurl || 'Jamendo'),
+        // Licensed → attribution isn't required, so keep it to a courtesy "Title — Artist" (no CC
+        // link). Unlicensed → the full CC credit (needed for CC-BY/BY-SA use).
+        attribution: licensed
+          ? `${t.name} — ${t.artist_name} · Jamendo`
+          : `${t.name} by ${t.artist_name}${t.license_ccurl ? ` (${t.license_ccurl})` : ''} — via Jamendo`,
+      }))
+    } catch { /* retry */ }
+  }
+  return []
 }
 
 export async function GET(req: NextRequest) {
