@@ -279,6 +279,18 @@ interface Plane { h0: number; h1: number; sat: number; light: number }   // a hu
 interface LiveColor { paletteId: string | null; plane: Plane | null; mode: ColorMode }
 interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: number; gain: number; mirror: boolean; glow: boolean; trail: boolean; bg: boolean; beatColor?: boolean; beatShift?: number; density?: number }
 
+// A saved "scene" — the whole Lightning Bug setup (look, filters, reactivity + video set).
+interface Scene {
+  id: string; name: string
+  style: LiveStyle; colorCfg: LiveColor; seed: number; videoMode: string; videoLook: string
+  mirror: boolean; glow: boolean; trail: boolean; gain: number; smoothing: number
+  blur: number; brightness: number; saturate: number; hueRot: number
+  beatColor: boolean; punchAmt: number
+  reactive: boolean; matchVisuals: boolean; matchEnergy: boolean; autoShuffle: boolean
+  shuffleScope: 'category' | 'all'; switchChance: number
+  bgCat: BgCategory; bgKind: string; bgClipId: string | null
+}
+
 // Curated multi-colour palettes the user can pick, or derive their own from the colour map.
 const PALETTES: { id: string; name: string; colors: string[] }[] = [
   { id: 'aurora', name: 'Aurora', colors: ['#22d3ee', '#34d399', '#a78bfa'] },
@@ -980,6 +992,37 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   }, [colorCfg])
   const removePreset = useCallback((id: string) => setPresets(prev => { const next = prev.filter(p => p.id !== id); try { localStorage.setItem('musicvideo-colorpresets', JSON.stringify(next)) } catch { /* off */ } return next }), [])
 
+  // ── Scenes: save/load the WHOLE setup (look, filters, reactivity + video set) ──────────
+  const [scenes, setScenes] = useState<Scene[]>([])
+  useEffect(() => { try { const r = localStorage.getItem('lightningbug-scenes'); if (r) setScenes(JSON.parse(r)) } catch { /* off */ } }, [])
+  const persistScenes = (next: Scene[]) => { try { localStorage.setItem('lightningbug-scenes', JSON.stringify(next)) } catch { /* off */ } return next }
+  const saveScene = useCallback(() => {
+    const name = (typeof prompt === 'function' ? prompt('Name this scene') : '')?.trim()
+    if (!name) return
+    const scene: Scene = {
+      id: `${Date.now()}`, name,
+      style, colorCfg, seed, videoMode, videoLook,
+      mirror, glow, trail, gain, smoothing,
+      blur, brightness, saturate, hueRot,
+      beatColor, punchAmt,
+      reactive, matchVisuals, matchEnergy, autoShuffle, shuffleScope, switchChance,
+      bgCat, bgKind, bgClipId: bgClip?.id ?? null,
+    }
+    setScenes(prev => persistScenes([...prev.filter(s => s.name !== name), scene].slice(-24)))
+  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, shuffleScope, switchChance, bgCat, bgKind, bgClip])
+  const loadScene = useCallback((s: Scene) => {
+    setAuto(false)   // a saved scene is your own setup — hand control back to you
+    setStyle(s.style); setColorCfg(s.colorCfg); setSeed(s.seed); setVideoMode(s.videoMode); setVideoLook(s.videoLook)
+    setMirror(s.mirror); setGlow(s.glow); setTrail(s.trail); setGain(s.gain); setSmoothing(s.smoothing)
+    setBlur(s.blur); setBrightness(s.brightness); setSaturate(s.saturate); setHueRot(s.hueRot)
+    setBeatColor(s.beatColor); setPunchAmt(s.punchAmt)
+    setReactive(s.reactive); setMatchVisuals(s.matchVisuals); setMatchEnergy(s.matchEnergy); setAutoShuffle(s.autoShuffle); setShuffleScope(s.shuffleScope); setSwitchChance(s.switchChance)
+    setBgCat(s.bgCat)
+    if (s.bgKind === 'library' && s.bgClipId) { const c = clipById(s.bgClipId); if (c) { setBgClip(c); setBgKind('library') } }
+    else if (s.bgKind && s.bgKind !== 'media') { setBgKind(s.bgKind); setBgClip(null) }
+  }, [])
+  const deleteScene = useCallback((id: string) => setScenes(prev => persistScenes(prev.filter(s => s.id !== id))), [])
+
   const audioRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -1307,6 +1350,19 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           <span style={{ display: 'block', fontSize: 11.5, fontWeight: 600, opacity: 0.85 }}>{auto ? 'Reading the music and deciding it all for you' + (running ? ` · ${energyBand}` : '') : 'One tap — just play music and it looks great'}</span>
         </span>
       </button>
+
+      {/* Scenes — save your whole setup (look + filters + reactivity + video set) and reload it. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '0 0 12px' }}>
+        <button type="button" onClick={saveScene} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}><Save size={13} /> Save scene</button>
+        {scenes.map(s => (
+          <span key={s.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 4px 4px 11px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg-base)', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
+            <button type="button" onClick={() => loadScene(s)} title="Load this scene" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontWeight: 700 }}>{s.name}</button>
+            <button type="button" onClick={() => deleteScene(s.id)} aria-label="Delete scene" style={{ display: 'grid', placeItems: 'center', width: 20, height: 20, borderRadius: 999, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={12} /></button>
+          </span>
+        ))}
+        {scenes.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Save your style, colours, filters &amp; video set to reuse later.</span>}
+      </div>
+
       <Panel id="look" label="Genre look" open={openPanel === 'look'} onToggle={() => setOpenPanel(p => (p === 'look' ? null : 'look'))}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
           {GENRE_LOOKS.map(l => (
