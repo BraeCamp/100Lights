@@ -44,6 +44,17 @@ const POOL = [
   ['geometric pattern', 'Patterns'], ['kaleidoscope', 'Patterns'], ['fractal', 'Patterns'], ['tunnel motion', 'Patterns'],
   ['misty mountains', 'Mountains'], ['mountain peaks', 'Mountains'], ['snowy mountains', 'Mountains'],
   ['jellyfish', 'Animals'], ['birds flying', 'Animals'], ['fish swimming', 'Animals'], ['water caustics', 'Nature'],
+  // Wave 2 — more variety to push toward 10k unique.
+  ['liquid crystal', 'Abstract'], ['motion blur lights', 'Abstract'], ['digital waves', 'Abstract'], ['plasma', 'Abstract'], ['energy waves', 'Abstract'], ['gradient flow', 'Abstract'], ['silk fabric', 'Abstract'], ['mercury', 'Abstract'], ['oil bubbles', 'Abstract'], ['chromatic', 'Abstract'], ['abstract loop', 'Abstract'], ['smoke trails', 'Abstract'],
+  ['rainforest', 'Nature'], ['ocean surface', 'Nature'], ['coral reef', 'Nature'], ['lava', 'Nature'], ['sand dunes', 'Nature'], ['ice crystals', 'Nature'], ['dew drops', 'Nature'], ['bamboo', 'Nature'], ['cherry blossom', 'Nature'], ['lavender field', 'Nature'], ['wheat field', 'Nature'], ['river', 'Nature'], ['lake reflection', 'Nature'], ['fog', 'Nature'], ['moss', 'Nature'],
+  ['milky way', 'Ambient'], ['star trails', 'Ambient'], ['moon', 'Ambient'], ['sunrise', 'Ambient'], ['twilight', 'Ambient'], ['storm clouds', 'Ambient'], ['lightning', 'Ambient'], ['pink sky', 'Ambient'],
+  ['subway', 'City'], ['tokyo night', 'City'], ['bridge night', 'City'], ['harbor', 'City'], ['rooftop', 'City'], ['airport', 'City'], ['highway timelapse', 'City'],
+  ['fiber optics', 'Light'], ['led wall', 'Light'], ['hologram', 'Light'], ['laser show', 'Neon'], ['ultraviolet', 'Neon'], ['prism rainbow', 'Light'], ['light rays', 'Light'], ['candlelight', 'Cozy'],
+  ['bookshelf', 'Cozy'], ['vinyl record', 'Cozy'], ['warm lamp', 'Cozy'], ['snow window', 'Cozy'], ['tea cup', 'Cozy'],
+  ['dancing silhouette', 'Streets'], ['crowd', 'Streets'], ['festival lights', 'Night'], ['concert', 'Night'], ['confetti', 'Night'],
+  ['spiral', 'Patterns'], ['mandala', 'Patterns'], ['grid lines', 'Patterns'], ['waveform', 'Patterns'], ['particles floating', 'Patterns'], ['op art', 'Patterns'],
+  ['foggy forest', 'Mountains'], ['mountain lake', 'Mountains'], ['alps', 'Mountains'], ['canyon', 'Mountains'], ['volcano', 'Mountains'],
+  ['butterfly', 'Animals'], ['deer', 'Animals'], ['horses', 'Animals'], ['whale', 'Animals'],
 ]
 
 async function ensure() {
