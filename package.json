@@ -27,6 +27,7 @@
     "bg:images": "node scripts/gen-bg-images.mjs",
     "bg:videos": "node scripts/gen-bg-videos.mjs",
     "bg:fetch": "node scripts/fetch-bg-clips.mjs",
+    "bg:publish": "node scripts/publish-bg-clips.mjs",
     "store:upload": "bundle exec fastlane ios metadata"
   },
   "dependencies": {

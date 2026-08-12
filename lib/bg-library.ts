@@ -23,12 +23,14 @@ export interface BgClip {
   tint: string      // gradient shown until the asset loads (and if it 404s)
 }
 
-export const BG_CATEGORIES = ['Patterns', 'Streets', 'Night', 'Cozy', 'Nature', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
+export const BG_CATEGORIES = ['Patterns', 'Artsy', 'Streets', 'Night', 'Cozy', 'Nature', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
 export type BgCategory = typeof BG_CATEGORIES[number]
 
 import { FETCHED_NATURE } from './bg-fetched'
+import { CDN_CLIPS } from './bg-cdn'
 
 const CDN = (process.env.NEXT_PUBLIC_BG_CDN || '').replace(/\/$/, '')
+const CDN_SET = new Set(CDN_CLIPS)
 
 // Bundled generative images — render immediately, offline, no hosting.
 const GENERATIVE: { id: string; title: string; tint: string }[] = [
@@ -80,6 +82,19 @@ const NATURE: { id: string; category: BgCategory; title: string; tint: string }[
   { id: 'nature-flowers', category: 'Nature', title: 'Flower field', tint: 'linear-gradient(135deg,#be185d,#fde047)' },
   { id: 'nature-clouds', category: 'Nature', title: 'Cloud drift', tint: 'linear-gradient(135deg,#1e3a8a,#e0f2fe)' },
   { id: 'nature-underwater', category: 'Nature', title: 'Sun-dappled water', tint: 'linear-gradient(135deg,#083344,#67e8f9)' },
+  // Artsy — abstract, textural, cinematic. Poster-only (streamed from R2 when the CDN is set).
+  { id: 'artsy-ink-water', category: 'Artsy', title: 'Ink in water', tint: 'linear-gradient(135deg,#0b1020,#6366f1)' },
+  { id: 'artsy-light-leaks', category: 'Artsy', title: 'Light leaks', tint: 'linear-gradient(135deg,#7c2d12,#fb7185)' },
+  { id: 'artsy-smoke', category: 'Artsy', title: 'Colored smoke', tint: 'linear-gradient(135deg,#1e1b4b,#f472b6)' },
+  { id: 'artsy-prism', category: 'Artsy', title: 'Prism light', tint: 'linear-gradient(135deg,#0ea5e9,#f0abfc)' },
+  { id: 'artsy-oil-macro', category: 'Artsy', title: 'Oil & water', tint: 'linear-gradient(135deg,#0c4a6e,#22d3ee)' },
+  { id: 'artsy-paint-mix', category: 'Artsy', title: 'Paint mixing', tint: 'linear-gradient(135deg,#be185d,#f59e0b)' },
+  { id: 'artsy-fireworks', category: 'Artsy', title: 'Fireworks', tint: 'linear-gradient(135deg,#111827,#fbbf24)' },
+  { id: 'artsy-water-caustics', category: 'Artsy', title: 'Water caustics', tint: 'linear-gradient(135deg,#0e7490,#a5f3fc)' },
+  { id: 'artsy-gold-particles', category: 'Artsy', title: 'Gold particles', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)' },
+  { id: 'artsy-silk', category: 'Artsy', title: 'Flowing silk', tint: 'linear-gradient(135deg,#4c1d95,#f0abfc)' },
+  { id: 'artsy-lava-lamp', category: 'Artsy', title: 'Lava lamp', tint: 'linear-gradient(135deg,#7c2d12,#f97316)' },
+  { id: 'artsy-bokeh-drift', category: 'Artsy', title: 'Bokeh drift', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)' },
 ]
 
 // Generative styles that also have an animated WebM loop (scripts/gen-bg-videos.mjs).
@@ -99,8 +114,9 @@ export const BG_LIBRARY: BgClip[] = [
   ...NATURE.map(c => ({
     ...c, kind: 'video' as const,
     preview: `/bg/nature/${c.id}.jpg`,                                   // bundled poster (offline, never blank)
-    // Priority: hosted CDN footage → real footage fetched by bg:fetch → procedural loop.
-    src: CDN ? `${CDN}/${c.id}.mp4`
+    // Priority: published to R2 (CDN set) → real footage fetched locally → procedural loop.
+    // Poster-only clips (artsy) have no local mp4/webm, so off-CDN they show their poster.
+    src: CDN && CDN_SET.has(c.id) ? `${CDN}/bg/${c.id}.mp4`
       : FETCHED_NATURE.includes(c.id) ? `/bg/nature/${c.id}.mp4`
         : `/bg/nature/${c.id}.webm`,
   })),
