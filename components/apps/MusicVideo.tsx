@@ -295,9 +295,9 @@ interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: 
 // with whatever is actually in the library.
 const TRANSITION_SET = new Set(TRANSITION_CLIPS.filter(id => BG_LIBRARY.some(c => c.id === id && c.kind === 'video')))
 
-// AudD song naming is DISABLED (billed per call). The free on-device "Sounds like" read covers the
-// visuals. Flip to true (and keep AUDD_API_TOKEN set) to bring back exact-song naming.
-const AUDD_ENABLED = false
+// AudD song naming (billed per call). Set AUDD_API_TOKEN to use it; the Song ID toggle appears
+// only when enabled.
+const AUDD_ENABLED = true
 
 // On-device "sounds like" classifier — pure DSP, no AI, no API. Maps measured acoustic character
 // (tempo, energy, bass/brightness balance, busyness, beatiness) to a COARSE family. Honest limits:
@@ -908,7 +908,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const brightRatioRef = useRef(0)                         // high-band share (brightness)
   // On-device "sounds like" read (free, non-AI heuristic from the DSP features). A character guess,
   // not a definitive genre — displayed so you can judge its accuracy before it drives anything.
-  const [sonic, setSonic] = useState<{ family: string; profile: string; confidence: number } | null>(null)
+  // The on-device "sounds like" read runs in the BACKGROUND (no visible chip) so we can keep
+  // testing/tuning it. Latest result lives on this ref + window.__lbSonic for inspection.
+  const sonicRef = useRef<{ family: string; profile: string; confidence: number } | null>(null)
   const lastSonicUiRef = useRef(0)
   const [density, setDensity] = useState(0)                // readout
   const lastDensityUiRef = useRef(0)
@@ -1327,7 +1329,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     void audioRef.current?.close().catch(() => {}); audioRef.current = null
     void wakeRef.current?.release().catch(() => {}); wakeRef.current = null
     analyserRef.current = null; bufRef.current = []; recDestRef.current = null
-    setRunning(false); setSource(null); setNowPlaying(null); setRecognized(null); setSonic(null)
+    setRunning(false); setSource(null); setNowPlaying(null); setRecognized(null); sonicRef.current = null
     // No audio → back to idle/transition mode (also repicks a calm clip if shuffling).
     lastLoudRef.current = 0
     if (idleTransitionRef.current && !idleRef.current) { idleRef.current = true; setIdle(true); onIdleChangeRef.current(true) }
@@ -1549,7 +1551,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           if (now - lastSonicUiRef.current > 1500) {
             lastSonicUiRef.current = now
             const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
-            setSonic(classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty }))
+            const sc = classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty })
+            sonicRef.current = sc; (window as unknown as { __lbSonic?: unknown }).__lbSonic = sc   // background — no UI, for testing/tuning
           }
           // AUTO: follow the energy — nudge the visual style on a band change (cooldown so it
           // adapts on section changes, not every second). No genre, no palette override.
@@ -1799,15 +1802,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             <span style={{ fontSize: 16, fontWeight: 800, maxWidth: 440, textAlign: 'center', lineHeight: 1.4, padding: '0 20px' }}>{broadcastMsg}</span>
           </button>
         )}
-        {/* On-device "sounds like" — free DSP guess, shown so you can judge its accuracy (and vs
-            AudD's real genre when Song ID is on). Character read, not a definitive genre. */}
-        {running && sonic && (
-          <div style={{ position: 'absolute', right: 12, bottom: 12, padding: '6px 11px', borderRadius: 10, background: 'rgba(0,0,0,0.5)', color: '#fff', textAlign: 'right', pointerEvents: 'none', maxWidth: '60%' }}>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.65 }}>Sounds like{sonic.confidence < 0.25 ? ' (unsure)' : ''}{recognized?.genre ? ` · AudD: ${recognized.genre}` : ''}</div>
-            <div style={{ fontSize: 14, fontWeight: 800 }}>{sonic.family}</div>
-            <div style={{ fontSize: 10, opacity: 0.7 }}>{sonic.profile}</div>
-          </div>
-        )}
+        {/* The on-device "sounds like" read runs in the background (window.__lbSonic) — no chip. */}
         {/* Song ID — the recognized track (+ a BPM accuracy check vs the DSP) */}
         {identify && !broadcast && recognized && (
           <div style={{ position: 'absolute', left: 16, bottom: 16, display: 'flex', alignItems: 'center', gap: 10, maxWidth: '80%', padding: '8px 12px 8px 8px', borderRadius: 12, background: 'rgba(0,0,0,0.55)', color: '#fff', pointerEvents: 'none' }}>
