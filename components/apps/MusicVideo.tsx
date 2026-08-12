@@ -277,7 +277,7 @@ type LiveStyle = 'none' | 'bars' | 'radial' | 'wave'
 type ColorMode = 'solid' | 'spectrum' | 'random'
 interface Plane { h0: number; h1: number; sat: number; light: number }   // a hue band selected off the colour map
 interface LiveColor { paletteId: string | null; plane: Plane | null; mode: ColorMode }
-interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: number; gain: number; mirror: boolean; glow: boolean; trail: boolean; bg: boolean; beatColor?: boolean; beatShift?: number }
+interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: number; gain: number; mirror: boolean; glow: boolean; trail: boolean; bg: boolean; beatColor?: boolean; beatShift?: number; density?: number }
 
 // Curated multi-colour palettes the user can pick, or derive their own from the colour map.
 const PALETTES: { id: string; name: string; colors: string[] }[] = [
@@ -542,11 +542,14 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
   }
   // Over a background layer, keep the canvas see-through; on its own, paint the dark base.
   // Trails leave a soft comet tail either way (a translucent wash instead of a hard clear).
+  // Trail length adapts to density: busy songs clear faster (short trails, legible), sparse
+  // songs leave a longer dreamy tail.
+  const wash = 0.12 + (o.density ?? 0) * 0.4
   if (o.bg) {
     ctx.clearRect(0, 0, w, h)
-    if (o.trail) { ctx.fillStyle = 'rgba(8,7,13,0.20)'; ctx.fillRect(0, 0, w, h) }
+    if (o.trail) { ctx.fillStyle = `rgba(8,7,13,${wash.toFixed(2)})`; ctx.fillRect(0, 0, w, h) }
   } else {
-    ctx.fillStyle = o.trail ? 'rgba(8,7,13,0.30)' : '#08070d'
+    if (o.trail) { ctx.fillStyle = `rgba(8,7,13,${(wash + 0.06).toFixed(2)})` } else ctx.fillStyle = '#08070d'
     ctx.fillRect(0, 0, w, h)
   }
   ctx.lineCap = 'round'; ctx.lineJoin = 'round'
@@ -756,6 +759,11 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const toneTintRef = useRef(false); toneTintRef.current = toneTint
   const toneEmaRef = useRef(0.5)
   const lastToneUiRef = useRef(0)
+  const prevFreqRef = useRef<Uint8Array | null>(null)      // for spectral flux
+  const densityEmaRef = useRef(0)                          // busyness (0 sparse … 1 busy)
+  const [density, setDensity] = useState(0)                // readout
+  const lastDensityUiRef = useRef(0)
+  const onsetEmaRef = useRef(0.3)                          // typical kick strength → auto-gains the drum punch
   // AUTO mode: one tap → fully automatic. Enables the whole reactive stack and adapts the
   // genre look to the detected energy + tone. Casual users just play music.
   const [auto, setAuto] = useState(false)
@@ -951,6 +959,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     bpmEmaRef.current = 0; beatIvBufRef.current = []; setBpm(0)
     bassAvgRef.current = 0; energyEmaRef.current = 0; toneEmaRef.current = 0.5; punchEnvRef.current = 0
     energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
+    prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3
     lastBeatRef.current = 0; prevBeatRef.current = 0; beatCountRef.current = 0
     try {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
@@ -1011,7 +1020,20 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           // average right now (fast attack, slow release), so kicks/drums pop the filters.
           const punch = Math.max(0, (bass - bassAvgRef.current) * 4)
           punchEnvRef.current = Math.max(Math.min(1, punch), punchEnvRef.current * 0.85)
+          // Density / busyness — spectral flux (how much the spectrum is changing). Busy songs
+          // (lots of notes/percussion) read high; drones read low.
+          const prevF = prevFreqRef.current
+          if (prevF && prevF.length === f.freq.length) {
+            let flux = 0; for (let i = 0; i < f.freq.length; i++) { const d = f.freq[i] - prevF[i]; if (d > 0) flux += d }
+            densityEmaRef.current = densityEmaRef.current * 0.9 + Math.min(1, (flux / (f.freq.length * 255)) * 12) * 0.1
+          }
+          if (!prevF || prevF.length !== f.freq.length) prevFreqRef.current = new Uint8Array(f.freq.length)
+          prevFreqRef.current!.set(f.freq)
+          if (now - lastDensityUiRef.current > 400) { lastDensityUiRef.current = now; setDensity(densityEmaRef.current) }
           if (bass > bassAvgRef.current * 1.35 && bass > 0.12 && now - lastBeatRef.current > 250) {
+            // Onset sharpness — track the typical kick strength so the drum punch auto-gains
+            // (soft kicks stay visible, slamming ones don't blow out).
+            onsetEmaRef.current = onsetEmaRef.current * 0.9 + punchEnvRef.current * 0.1
             const iv = now - prevBeatRef.current; prevBeatRef.current = now; lastBeatRef.current = now
             beatShiftRef.current++
             if (iv > 250 && iv < 2000) {
@@ -1033,13 +1055,14 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
               beatCountRef.current++
               if (beatCountRef.current % 4 === 0) {
                 const ef = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 1.4 : energyBandRef.current === 'mid' ? 1.0 : 0.6) : 1
-                if (Math.random() < Math.min(1, switchChanceRef.current * ef)) nextClipRef.current()
+                const df = 0.7 + densityEmaRef.current * 0.8   // busier → cut more often
+                if (Math.random() < Math.min(1, switchChanceRef.current * ef * df)) nextClipRef.current()
               }
             }
             // Beat-colour flash on the whole frame (background included) — arm on the kick.
             if (beatColorRef.current) { beatFlashRef.current = 1; const c = optsRef.current.colors; beatFlashColorRef.current = c[beatShiftRef.current % c.length] }
           }
-          drawLive(cv, f.freq, f.wave, { ...optsRef.current, beatShift: beatShiftRef.current })
+          drawLive(cv, f.freq, f.wave, { ...optsRef.current, beatShift: beatShiftRef.current, density: densityEmaRef.current })
           // Decay + apply the beat flash overlay every frame.
           if (beatFlashDivRef.current) {
             if (beatColorRef.current) {
@@ -1089,7 +1112,9 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
           // shifts warm (dark songs) ↔ cool (bright songs).
           const eq = eqRef.current
           if (eq.on && bgFilterRef.current) {
-            const p = punchEnvRef.current * punchAmtRef.current
+            // Onset sharpness auto-gain: normalize the punch by the song's typical kick so drums
+            // are consistently visible whatever the track's dynamics.
+            const p = Math.min(1.5, (punchEnvRef.current / Math.max(0.12, onsetEmaRef.current)) * 0.55) * punchAmtRef.current
             const toneHue = toneTintRef.current ? (toneEmaRef.current - 0.5) * 70 : 0
             const bl = eq.blur * (1 - level * 0.4) * (1 - Math.min(1, p) * 0.5)
             const br = eq.brightness * (0.7 + level * 0.55 + p * 0.55)
@@ -1384,6 +1409,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             {matchEnergy && running && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
                 Now: <span style={{ padding: '3px 9px', borderRadius: 999, fontSize: 11, fontWeight: 800, textTransform: 'capitalize', color: '#0e0d12', background: energyBand === 'hot' ? '#f87171' : energyBand === 'mid' ? '#fbbf24' : '#34d399' }}>{energyBand}</span>
+                <span style={{ padding: '3px 9px', borderRadius: 999, fontSize: 11, fontWeight: 800, color: '#0e0d12', background: '#a78bfa' }}>{density > 0.5 ? 'busy' : density > 0.22 ? 'flowing' : 'sparse'}</span>
               </span>
             )}
           </div>
