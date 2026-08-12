@@ -40,7 +40,7 @@ US contract and the files play locally (most reliable for 24/7). Confirm the pla
 |--------|----|-------|---------|-------|
 | **Pond5** | New York | pay-per-track or sub | **~1.6M (biggest)** | Huge marketplace; per-track can add up. Has an API. |
 | **Storyblocks** | Arlington, VA | unlimited-download sub | 100k+ | Best value for **volume** — download as much as you want. Has an API. |
-| **Soundstripe** | Nashville, TN | ~$119/yr unlimited | curated tens of thousands | Simplest, clean licence; used by Amazon/Microsoft. |
+| **Soundstripe** ⭐ | Nashville, TN | ~$119/yr unlimited | curated tens of thousands | **Recommended default** — simplest, clean licence, used by Amazon/Microsoft. Also includes a curated **Warner Chappell Production Music** selection (WCPM partnered with Soundstripe), so you get WCPM tracks without licensing WCPM directly. |
 | **PremiumBeat** | US (Shutterstock) | per-track | curated | Higher-end, per-track royalty-free. |
 
 **Free + US:** **YouTube Audio Library** (Google — free, guaranteed safe *on* YouTube), **Free Music

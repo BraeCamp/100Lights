@@ -326,6 +326,23 @@ function classifySonic(o: { bpm: number; energy: number; bass: number; bright: n
   return { family, profile, confidence }
 }
 
+// Genre → filters (mode + look) + colours (palette). Auto applies these on each video change.
+// Arrays give variety within a genre. Falls back to ENERGY_LOOK when the genre read is unsure.
+const GENRE_LOOK: Record<string, { modes: string[]; looks: string[]; palettes: string[] }> = {
+  'Ambient': { modes: ['living', 'ink', 'none'], looks: ['dream', 'cool'], palettes: ['ice', 'aurora', 'ocean'] },
+  'Lofi / Chill': { modes: ['none', 'living', 'oil'], looks: ['warm', 'dream', 'film'], palettes: ['sunset', 'candy', 'aurora'] },
+  'Hip-hop': { modes: ['vhs', 'cartoon', 'glitch'], looks: ['noir', 'film'], palettes: ['fire', 'neon', 'mono'] },
+  'Electronic': { modes: ['neonedge', 'glitch', 'infrared'], looks: ['dream', 'cool'], palettes: ['neon', 'aurora', 'candy'] },
+  'Rock / Band': { modes: ['comic', 'vhs', 'anime'], looks: ['noir', 'film'], palettes: ['fire', 'mono', 'sunset'] },
+  'Pop': { modes: ['cartoon', 'anime', 'comic'], looks: ['warm', 'dream'], palettes: ['candy', 'sunset', 'neon'] },
+  'Orchestral': { modes: ['ink', 'oil', 'none'], looks: ['noir', 'film', 'dream'], palettes: ['ice', 'ocean', 'mono'] },
+}
+const ENERGY_LOOK: Record<'calm' | 'mid' | 'hot', { modes: string[]; looks: string[]; palettes: string[] }> = {
+  calm: { modes: ['none', 'living', 'ink'], looks: ['dream', 'warm'], palettes: ['aurora', 'ice', 'sunset'] },
+  mid: { modes: ['none', 'anime', 'comic', 'oil'], looks: ['film', 'dream'], palettes: ['aurora', 'ocean', 'candy'] },
+  hot: { modes: ['neonedge', 'glitch', 'vhs', 'cartoon'], looks: ['noir', 'cool'], palettes: ['neon', 'fire', 'candy'] },
+}
+
 // The control groups, shown as icon tabs that expand to their name on hover (or via the mobile
 // collapse toggle). The selected one renders below with a title header.
 const SECTIONS: { id: string; label: string; Icon: LucideIcon }[] = [
@@ -919,7 +936,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // style/mode/backgrounds to the detected energy. Casual users just play music.
   const [auto, setAuto] = useState(false)
   const autoRef = useRef(false); autoRef.current = auto
-  const autoApplyRef = useRef<(band: Energy) => void>(() => {})
+  const autoApplyRef = useRef<() => void>(() => {})
   const lastAutoVibeRef = useRef('')
   const lastAutoChangeRef = useRef(0)
   const bgInputRef = useRef<HTMLInputElement | null>(null)
@@ -1018,6 +1035,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     wantSwitchRef.current = false
     const head = queueRef.current.shift()
     if (head) { setBgClip(head); setBgKind('library') }
+    if (autoRef.current) autoApplyRef.current()   // Auto: re-fit filters + colours to the genre on each video change
     refillQueue()
   }, [refillQueue])
 
@@ -1175,12 +1193,14 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // AUTO re-vibe (called on section changes): ONLY the style + filter mode adapt to the energy.
   // It deliberately does NOT touch the reactive toggles, so anything you switch off (e.g. colour
   // on the beat) stays off while Auto runs.
-  const applyAuto = useCallback((band: Energy) => {
+  const applyAuto = useCallback(() => {
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
-    // Auto adapts the background video MODE/look to the energy — but NOT the audio visualizer
-    // style, which stays whatever you picked.
-    const modes = band === 'calm' ? ['none', 'living', 'ink'] : band === 'hot' ? ['neonedge', 'glitch', 'vhs', 'cartoon'] : ['none', 'anime', 'comic', 'oil']
-    setVideoMode(pick(modes))
+    // Fit the filters (mode + look) + colours (palette) to the DETECTED genre (on-device read),
+    // else fall back to the energy band. Called on each video change — NOT on a timer — and never
+    // touches the audio visualizer style.
+    const s = sonicRef.current
+    const src = (s && s.confidence >= 0.2 && GENRE_LOOK[s.family]) || ENERGY_LOOK[energyBandRef.current]
+    setVideoMode(pick(src.modes)); setVideoLook(pick(src.looks)); setColorCfg(c => ({ ...c, paletteId: pick(src.palettes) }))
   }, [])
   autoApplyRef.current = applyAuto
   const toggleAuto = useCallback(() => {
@@ -1190,7 +1210,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         setReactive(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true)
         setSwitchChance(0.4); setPunchAmt(1)
         lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0
-        applyAuto(energyBandRef.current)
+        applyAuto()
         nextClipRef.current()   // pick an initial background so there's something to play/switch
 
       }
@@ -1554,15 +1574,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const sc = classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty })
             sonicRef.current = sc; (window as unknown as { __lbSonic?: unknown }).__lbSonic = sc   // background — no UI, for testing/tuning
           }
-          // AUTO: follow the energy — nudge the visual style on a band change (cooldown so it
-          // adapts on section changes, not every second). No genre, no palette override.
-          if (autoRef.current) {
-            const vibe = energyBandRef.current
-            if (vibe !== lastAutoVibeRef.current && now - lastAutoChangeRef.current > 12000) {
-              lastAutoVibeRef.current = vibe; lastAutoChangeRef.current = now
-              autoApplyRef.current(energyBandRef.current)
-            }
-          }
+          // AUTO re-fits filters + colours to the genre only when the video changes (see commitHead),
+          // so the look doesn't churn mid-clip. Nothing to do here per-frame.
           // Filters interacting with the EQ — brightness/saturation pulse with the overall level,
           // and the sub/bass PUNCH sharpens + brightens + scale-"thumps" (drums).
           const eq = eqRef.current
