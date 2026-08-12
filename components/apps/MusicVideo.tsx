@@ -273,7 +273,7 @@ function MusicVideoApp() {
 // the speaker) or, on desktop, captured tab/system audio (getDisplayMedia). A sync
 // delay buffers recent frames so visuals can be nudged to line up with sound that
 // reaches the room late over Bluetooth to a TV/projector.
-type LiveStyle = 'bars' | 'radial' | 'wave'
+type LiveStyle = 'none' | 'bars' | 'radial' | 'wave'
 type ColorMode = 'solid' | 'spectrum' | 'random'
 interface Plane { h0: number; h1: number; sat: number; light: number }   // a hue band selected off the colour map
 interface LiveColor { paletteId: string | null; plane: Plane | null; mode: ColorMode }
@@ -533,6 +533,13 @@ function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: 
   const ctx = cv.getContext('2d'); if (!ctx) return
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.globalAlpha = 1
+  // 'none' — no visualizer shapes, just the background. The audio loop keeps running so the
+  // EQ filters + palette coloration can still react to the music (see the EQ toggle).
+  if (o.style === 'none') {
+    if (o.bg) ctx.clearRect(0, 0, w, h)
+    else { ctx.fillStyle = '#08070d'; ctx.fillRect(0, 0, w, h) }
+    return
+  }
   // Over a background layer, keep the canvas see-through; on its own, paint the dark base.
   // Trails leave a soft comet tail either way (a translucent wash instead of a hard clear).
   if (o.bg) {
@@ -1033,7 +1040,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
 
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: reactive ? 'block' : 'none' }} />
 
-        {reactive && !running && (
+        {reactive && !running && style !== 'none' && (
           <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 12, padding: 24, textAlign: 'center', background: hasBg ? 'rgba(6,5,10,0.45)' : 'transparent' }}>
             <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Visualize your music</p>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -1042,9 +1049,16 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: 0, maxWidth: 360, lineHeight: 1.5 }}>Play a track through the app for perfect sync — no prompts, no mic. Or point the mic at the speaker to visualize whatever’s in the room.</p>
             <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}><Radio size={14} /> Capture system audio (desktop)</button>
-            <input ref={trackInputRef} type="file" accept="audio/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) start('file', f); e.currentTarget.value = '' }} />
           </div>
         )}
+        {/* None style: keep the background clean; a compact bar still lets the music drive it. */}
+        {reactive && !running && style === 'none' && (
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 12, display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', padding: '0 12px' }}>
+            <button type="button" onClick={() => trackInputRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}><Play size={14} fill="#0e0d12" /> React to music</button>
+            <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}><Mic size={14} /> Mic</button>
+          </div>
+        )}
+        <input ref={trackInputRef} type="file" accept="audio/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) start('file', f); e.currentTarget.value = '' }} />
         {!reactive && (
           <div style={{ position: 'absolute', left: 12, bottom: 12, padding: '5px 10px', borderRadius: 999, background: 'rgba(0,0,0,0.4)', color: '#fff', fontSize: 12, fontWeight: 700 }}>Background only</div>
         )}
@@ -1080,10 +1094,15 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
 
       <Panel id="style" label="Visual style" open={openPanel === 'style'} onToggle={() => setOpenPanel(p => (p === 'style' ? null : 'style'))}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-          {(['bars', 'radial', 'wave'] as LiveStyle[]).map(s => (
+          {(['none', 'bars', 'radial', 'wave'] as LiveStyle[]).map(s => (
             <button key={s} type="button" onClick={() => setStyle(s)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: style === s ? 'var(--accent)' : 'var(--bg-card)', color: style === s ? '#0e0d12' : 'var(--text-secondary)' }}>{s[0].toUpperCase() + s.slice(1)}</button>
           ))}
         </div>
+        {style === 'none' && (
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.5 }}>
+            Just the background — no bars or shapes over it. The music can still react to it: turn on <strong style={{ color: 'var(--text-secondary)' }}>React to the audio (EQ)</strong> in Look &amp; filters to pulse the filters, and <strong style={{ color: 'var(--text-secondary)' }}>Match my palette</strong> in Background to tint it with your colours.
+          </p>
+        )}
       </Panel>
       <Panel id="colour" label="Colour" open={openPanel === 'colour'} onToggle={() => setOpenPanel(p => (p === 'colour' ? null : 'colour'))}>
         {/* Palettes */}
