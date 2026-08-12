@@ -286,6 +286,12 @@ export default function DashboardPage() {
                 Sound library <ArrowRight size={11} />
               </Link>
               <Link
+                href="/library/backgrounds"
+                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}
+              >
+                Backgrounds <ArrowRight size={11} />
+              </Link>
+              <Link
                 href="/new"
                 style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}
               >

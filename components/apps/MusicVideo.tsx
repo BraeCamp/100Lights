@@ -51,6 +51,11 @@ function MusicVideoApp() {
   const [accent, setAccent] = useState('#a78bfa')
   const [font, setFont] = useState('system-ui')
   const [live, setLive] = useState(false)   // party mode: visualize live audio from the device
+  const [initialBg, setInitialBg] = useState<string | null>(null)   // deep-link: /apps/musicvideo?bg=<clipId>
+  useEffect(() => {
+    const bg = new URLSearchParams(window.location.search).get('bg')
+    if (bg && clipById(bg)) { setInitialBg(bg); setLive(true) }
+  }, [])
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -181,7 +186,7 @@ function MusicVideoApp() {
       </header>
 
       {live ? (
-        <LiveVisualizer onExit={() => setLive(false)} />
+        <LiveVisualizer onExit={() => setLive(false)} initialBg={initialBg} />
       ) : (
         <>
           <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: '#000', border: '1px solid var(--border)' }}>
@@ -664,7 +669,7 @@ function ColorPlane({ onChange }: { onChange: (p: Plane) => void }) {
   )
 }
 
-function LiveVisualizer({ onExit }: { onExit: () => void }) {
+function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?: string | null }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [running, setRunning] = useState(false)
@@ -936,6 +941,14 @@ function LiveVisualizer({ onExit }: { onExit: () => void }) {
     return () => document.removeEventListener('visibilitychange', onVis)
   }, [wake])
   useEffect(() => () => stop(), [stop])
+
+  // Deep-link: open with a chosen background (from the Background Library).
+  useEffect(() => {
+    if (!initialBg) return
+    const c = clipById(initialBg)
+    if (c) { setBgClip(c); setBgKind('library'); if (c.category) setBgCat(c.category) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialBg])
 
   // Drag-and-drop media onto the stage: audio plays into the visualizer, a video/image
   // becomes the background.
