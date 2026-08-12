@@ -8,7 +8,7 @@
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2 } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -54,8 +54,10 @@ function MusicVideoApp() {
   const [live, setLive] = useState(false)   // party mode: visualize live audio from the device
   const [initialBg, setInitialBg] = useState<string | null>(null)   // deep-link: /apps/musicvideo?bg=<clipId>
   useEffect(() => {
-    const bg = new URLSearchParams(window.location.search).get('bg')
+    const q = new URLSearchParams(window.location.search)
+    const bg = q.get('bg')
     if (bg && clipById(bg)) { setInitialBg(bg); setLive(true) }
+    if (q.get('scene')) setLive(true)   // a shared scene link opens straight into live mode
   }, [])
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -290,6 +292,13 @@ interface Scene {
   reactive: boolean; matchVisuals: boolean; matchEnergy: boolean; autoShuffle: boolean
   videoSet: BgCategory[]; switchChance: number
   bgCat: BgCategory; bgKind: string; bgClipId: string | null
+  isDefault?: boolean   // auto-loads when Lightning Bug opens
+}
+
+// Encode/decode a scene to a URL-safe string for sharing (unicode-safe).
+const sceneEncode = (s: object) => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(s)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+const sceneDecode = (b: string): Scene | null => {
+  try { return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)))) } catch { return null }
 }
 
 // Curated multi-colour palettes the user can pick, or derive their own from the colour map.
@@ -1048,6 +1057,31 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     setScenes(prev => persistScenes(prev.filter(s => s.id !== id)))
     if (isSignedIn) fetch(`/api/scenes?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => { /* ok */ })
   }, [isSignedIn])
+  const pushScene = useCallback((s: Scene) => { if (isSignedIn) fetch('/api/scenes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(s) }).catch(() => {}) }, [isSignedIn])
+  const renameScene = useCallback((id: string) => {
+    const name = (typeof prompt === 'function' ? prompt('Rename scene') : '')?.trim()
+    if (!name) return
+    setScenes(prev => { const next = prev.map(s => s.id === id ? { ...s, name } : s); persistScenes(next); const s = next.find(x => x.id === id); if (s) pushScene(s); return next })
+  }, [pushScene])
+  const setDefaultScene = useCallback((id: string) => {
+    setScenes(prev => { const next = prev.map(s => ({ ...s, isDefault: s.id === id ? !s.isDefault : false })); persistScenes(next); next.forEach(pushScene); return next })
+  }, [pushScene])
+  const [sharedMsg, setSharedMsg] = useState('')
+  const shareScene = useCallback((s: Scene) => {
+    const url = `${location.origin}/apps/musicvideo?scene=${sceneEncode({ ...s, id: undefined, isDefault: undefined })}`
+    navigator.clipboard?.writeText(url).then(() => { setSharedMsg(`Link copied for “${s.name}”`); setTimeout(() => setSharedMsg(''), 2500) }).catch(() => setSharedMsg('Couldn’t copy the link'))
+  }, [])
+  // Auto-load the default scene once, when it first becomes available — unless a shared
+  // ?scene= link is opening, which takes precedence.
+  const autoLoadedRef = useRef(false)
+  useEffect(() => {
+    if (autoLoadedRef.current || scenes.length === 0) return
+    autoLoadedRef.current = true
+    if (new URLSearchParams(window.location.search).get('scene')) return   // shared link wins
+    const def = scenes.find(s => s.isDefault)
+    if (def) loadScene(def)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenes])
 
   const audioRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
@@ -1265,6 +1299,15 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialBg])
 
+  // Shared scene link (?scene=...) — decode and apply it on open.
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('scene')
+    if (!code) return
+    const s = sceneDecode(code)
+    if (s) { loadScene({ ...s, id: `${Date.now()}` }); setSharedMsg(`Loaded shared scene${s.name ? ` “${s.name}”` : ''} — press Save scene to keep it`); setTimeout(() => setSharedMsg(''), 5000) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Drag-and-drop media onto the stage: audio plays into the visualizer, a video/image
   // becomes the background.
   const onDropMedia = useCallback((files: File[]) => {
@@ -1377,16 +1420,23 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
         </span>
       </button>
 
-      {/* Scenes — save your whole setup (look + filters + reactivity + video set) and reload it. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '0 0 12px' }}>
-        <button type="button" onClick={saveScene} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}><Save size={13} /> Save scene</button>
-        {scenes.map(s => (
-          <span key={s.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 4px 4px 11px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg-base)', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
-            <button type="button" onClick={() => loadScene(s)} title="Load this scene" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontWeight: 700 }}>{s.name}</button>
-            <button type="button" onClick={() => deleteScene(s.id)} aria-label="Delete scene" style={{ display: 'grid', placeItems: 'center', width: 20, height: 20, borderRadius: 999, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={12} /></button>
-          </span>
-        ))}
-        {scenes.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Save your style, colours, filters &amp; video set to reuse later.</span>}
+      {/* Scenes — save your whole setup (look + filters + reactivity + video set), reload, set a
+          default that opens with the app, rename, and share via a link. */}
+      <div style={{ margin: '0 0 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" onClick={saveScene} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}><Save size={13} /> Save scene</button>
+          {scenes.map(s => (
+            <span key={s.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '3px 5px 3px 11px', borderRadius: 999, border: s.isDefault ? '1px solid var(--accent)' : '1px solid var(--border)', background: 'var(--bg-base)', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
+              <button type="button" onClick={() => loadScene(s)} title="Load this scene" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontWeight: 700 }}>{s.name}</button>
+              <button type="button" onClick={() => setDefaultScene(s.id)} title={s.isDefault ? 'Default — opens with the app' : 'Set as default'} style={{ display: 'grid', placeItems: 'center', width: 20, height: 20, borderRadius: 999, background: 'transparent', border: 'none', color: s.isDefault ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}><Star size={12} fill={s.isDefault ? 'currentColor' : 'none'} /></button>
+              <button type="button" onClick={() => shareScene(s)} title="Copy a share link" style={{ display: 'grid', placeItems: 'center', width: 20, height: 20, borderRadius: 999, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><Link2 size={12} /></button>
+              <button type="button" onClick={() => renameScene(s.id)} aria-label="Rename scene" style={{ display: 'grid', placeItems: 'center', width: 20, height: 20, borderRadius: 999, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><Pencil size={11} /></button>
+              <button type="button" onClick={() => deleteScene(s.id)} aria-label="Delete scene" style={{ display: 'grid', placeItems: 'center', width: 20, height: 20, borderRadius: 999, background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={12} /></button>
+            </span>
+          ))}
+          {scenes.length === 0 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Save your style, colours, filters &amp; video set to reuse, set a default, or share it.</span>}
+        </div>
+        {sharedMsg && <p style={{ fontSize: 11.5, color: 'var(--accent)', margin: '8px 0 0', fontWeight: 700 }}>{sharedMsg}</p>}
       </div>
 
       <Panel id="look" label="Genre look" open={openPanel === 'look'} onToggle={() => setOpenPanel(p => (p === 'look' ? null : 'look'))}>
