@@ -295,6 +295,10 @@ interface LiveOpts { style: LiveStyle; colors: string[]; mode: ColorMode; seed: 
 // with whatever is actually in the library.
 const TRANSITION_SET = new Set(TRANSITION_CLIPS.filter(id => BG_LIBRARY.some(c => c.id === id && c.kind === 'video')))
 
+// AudD song naming is DISABLED (billed per call). The free on-device "Sounds like" read covers the
+// visuals. Flip to true (and keep AUDD_API_TOKEN set) to bring back exact-song naming.
+const AUDD_ENABLED = false
+
 // On-device "sounds like" classifier — pure DSP, no AI, no API. Maps measured acoustic character
 // (tempo, energy, bass/brightness balance, busyness, beatiness) to a COARSE family. Honest limits:
 // it's reliable for clear-cut cases and a guess for ambiguous ones — fine genre isn't separable
@@ -1171,8 +1175,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // on the beat) stays off while Auto runs.
   const applyAuto = useCallback((band: Energy) => {
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
-    const styles: LiveStyle[] = band === 'calm' ? ['wave', 'area', 'rings'] : band === 'hot' ? ['bars', 'dots', 'rings'] : ['radial', 'rings', 'area', 'dots']
-    setStyle(pick(styles))
+    // Auto adapts the background video MODE/look to the energy — but NOT the audio visualizer
+    // style, which stays whatever you picked.
     const modes = band === 'calm' ? ['none', 'living', 'ink'] : band === 'hot' ? ['neonedge', 'glitch', 'vhs', 'cartoon'] : ['none', 'anime', 'comic', 'oil']
     setVideoMode(pick(modes))
   }, [])
@@ -1825,10 +1829,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           ? <button type="button" onClick={stop} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}><Square size={15} /> Stop</button>
           : <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Not listening</span>}
         <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{source === 'file' ? 'Playing your track' : source === 'device' ? 'Capturing device audio' : source === 'mic' ? 'Listening to the room' : ''}</span>
+        {AUDD_ENABLED && (
         <button type="button" onClick={() => { setIdentify(v => !v); if (identify) setRecognized(null) }} title="Passively recognize the song that's playing (AudD) and show its name"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: identify ? 'var(--accent)' : 'transparent', color: identify ? '#0e0d12' : 'var(--text-secondary)' }}>
           <Radio size={14} /> Song ID{identify ? ' · on' : ''}
         </button>
+        )}
         <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
       </div>
       )}
