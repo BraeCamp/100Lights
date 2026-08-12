@@ -8,7 +8,7 @@
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, ChevronDown, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee, Palette, Film, SlidersHorizontal, Menu, type LucideIcon } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee, Palette, Film, SlidersHorizontal, Menu, type LucideIcon } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
