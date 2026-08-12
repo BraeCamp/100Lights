@@ -287,7 +287,7 @@ interface Scene {
   blur: number; brightness: number; saturate: number; hueRot: number
   beatColor: boolean; punchAmt: number
   reactive: boolean; matchVisuals: boolean; matchEnergy: boolean; autoShuffle: boolean
-  shuffleScope: 'category' | 'all'; switchChance: number
+  videoSet: BgCategory[]; switchChance: number
   bgCat: BgCategory; bgKind: string; bgClipId: string | null
 }
 
@@ -780,7 +780,8 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   const [videoLook, setVideoLook] = useState('none')       // subtle grade layered under the mode
   const lookFilterRef = useRef('')                          // mode+look svg/css prefix, kept for the per-frame EQ update
   const [autoShuffle, setAutoShuffle] = useState(false)     // play a clip, then move to the next one
-  const [shuffleScope, setShuffleScope] = useState<'category' | 'all'>('all')
+  const [videoSet, setVideoSet] = useState<BgCategory[]>([])   // categories the shuffle draws from ([] = all)
+  const videoSetRef = useRef<BgCategory[]>([]); videoSetRef.current = videoSet
   const autoShuffleRef = useRef(false); autoShuffleRef.current = autoShuffle
   const bgKindRef = useRef(bgKind); bgKindRef.current = bgKind
   const shuffleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -835,9 +836,11 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
   // library). Driven by the video's 'ended' event, with a timer fallback below so it never
   // gets stuck on a still or a clip that fails to fire 'ended'.
   const nextClip = useCallback(() => {
-    let pool = (shuffleScope === 'all' ? BG_LIBRARY : clipsByCategory(bgCat)).filter(c => c.kind === 'video')
-    // Auto: bias backgrounds to energy-appropriate categories.
-    if (autoRef.current && shuffleScope === 'all') {
+    // The video set is the categories to draw from ([] = the whole library).
+    const set = videoSetRef.current
+    let pool = BG_LIBRARY.filter(c => c.kind === 'video' && (set.length === 0 || set.includes(c.category)))
+    // Auto: bias backgrounds to energy-appropriate categories (within the set).
+    if (autoRef.current) {
       const cats = autoCategories(energyBandRef.current)
       const inCats = pool.filter(c => cats.includes(c.category))
       if (inCats.length >= 3) pool = inCats
@@ -860,7 +863,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
     const keep = Math.max(4, Math.floor(pool.length * 0.7))
     while (recent.length > keep) recent.shift()
     setBgClip(next); setBgKind('library')
-  }, [shuffleScope, bgCat])
+  }, [])
   nextClipRef.current = nextClip
   useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null }, [bgClip])
   // Bar timer: each bar (4 beats, from the detected BPM — or ~4s if no beat) roll the
@@ -970,7 +973,7 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       if (!a) {
         // Turning Auto ON: set the reactive stack + baselines ONCE — you can tweak any of it after.
         setReactive(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true)
-        setShuffleScope('all'); setSwitchChance(0.4); setPunchAmt(1)
+        setSwitchChance(0.4); setPunchAmt(1)
         lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0
         applyAuto(energyBandRef.current)
         nextClipRef.current()   // pick an initial background so there's something to play/switch
@@ -1005,18 +1008,18 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
       mirror, glow, trail, gain, smoothing,
       blur, brightness, saturate, hueRot,
       beatColor, punchAmt,
-      reactive, matchVisuals, matchEnergy, autoShuffle, shuffleScope, switchChance,
+      reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, switchChance,
       bgCat, bgKind, bgClipId: bgClip?.id ?? null,
     }
     setScenes(prev => persistScenes([...prev.filter(s => s.name !== name), scene].slice(-24)))
-  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, shuffleScope, switchChance, bgCat, bgKind, bgClip])
+  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, switchChance, bgCat, bgKind, bgClip])
   const loadScene = useCallback((s: Scene) => {
     setAuto(false)   // a saved scene is your own setup — hand control back to you
     setStyle(s.style); setColorCfg(s.colorCfg); setSeed(s.seed); setVideoMode(s.videoMode); setVideoLook(s.videoLook)
     setMirror(s.mirror); setGlow(s.glow); setTrail(s.trail); setGain(s.gain); setSmoothing(s.smoothing)
     setBlur(s.blur); setBrightness(s.brightness); setSaturate(s.saturate); setHueRot(s.hueRot)
     setBeatColor(s.beatColor); setPunchAmt(s.punchAmt)
-    setReactive(s.reactive); setMatchVisuals(s.matchVisuals); setMatchEnergy(s.matchEnergy); setAutoShuffle(s.autoShuffle); setShuffleScope(s.shuffleScope); setSwitchChance(s.switchChance)
+    setReactive(s.reactive); setMatchVisuals(s.matchVisuals); setMatchEnergy(s.matchEnergy); setAutoShuffle(s.autoShuffle); setVideoSet(s.videoSet ?? []); setSwitchChance(s.switchChance)
     setBgCat(s.bgCat)
     if (s.bgKind === 'library' && s.bgClipId) { const c = clipById(s.bgClipId); if (c) { setBgClip(c); setBgKind('library') } }
     else if (s.bgKind && s.bgKind !== 'media') { setBgKind(s.bgKind); setBgClip(null) }
@@ -1487,12 +1490,23 @@ function LiveVisualizer({ onExit, initialBg }: { onExit: () => void; initialBg?:
             style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: autoShuffle ? 'var(--accent)' : 'var(--bg-card)', color: autoShuffle ? '#0e0d12' : 'var(--text-secondary)' }}>
             <Shuffle size={14} /> Auto-shuffle clips
           </button>
-          {autoShuffle && (['all', 'category'] as const).map(s => (
-            <button key={s} type="button" onClick={() => setShuffleScope(s)}
-              style={{ padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: shuffleScope === s ? 'var(--bg-card-hover, var(--bg-card))' : 'transparent', color: shuffleScope === s ? 'var(--text-primary)' : 'var(--text-muted)' }}>{s === 'all' ? 'From everything' : `Just ${bgCat}`}</button>
-          ))}
           {autoShuffle && <button type="button" onClick={nextClip} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}><SkipForward size={13} /> Next</button>}
         </div>
+        {autoShuffle && (
+          <div style={{ margin: '6px 0 4px' }}>
+            <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 6px' }}>Shuffle from — pick the categories for your set, or leave all off for everything:</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {BG_CATEGORIES.map(cat => {
+                const on = videoSet.includes(cat)
+                return (
+                  <button key={cat} type="button" onClick={() => setVideoSet(v => v.includes(cat) ? v.filter(c => c !== cat) : [...v, cat])}
+                    style={{ padding: '5px 11px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: on ? 'var(--accent)' : 'var(--bg-card)', color: on ? '#0e0d12' : 'var(--text-secondary)' }}>{cat}</button>
+                )
+              })}
+              {videoSet.length > 0 && <button type="button" onClick={() => setVideoSet([])} style={{ padding: '5px 11px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>Clear ({videoSet.length})</button>}
+            </div>
+          </div>
+        )}
         {autoShuffle && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '2px 0 4px' }}>
             <button type="button" onClick={() => setMatchEnergy(v => !v)}
