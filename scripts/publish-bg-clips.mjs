@@ -39,6 +39,17 @@ const ARTSY = {
   'artsy-silk': 'flowing silk fabric slow motion',
   'artsy-lava-lamp': 'lava lamp blobs macro',
   'artsy-bokeh-drift': 'bokeh lights drifting abstract',
+  // Night / neon — punchy
+  'artsy-neon-signs': 'neon sign glowing night close up',
+  'artsy-light-trails': 'long exposure light trails night traffic',
+  'artsy-neon-tunnel': 'neon tunnel light motion',
+  'artsy-laser': 'laser light show concert beams',
+  'artsy-rain-neon': 'rain neon reflection night city',
+  'artsy-city-bokeh-night': 'city bokeh lights night defocused',
+  'artsy-plasma-ball': 'plasma ball electricity purple',
+  'artsy-holographic': 'holographic iridescent foil abstract',
+  'artsy-liquid-metal': 'liquid metal chrome flowing',
+  'artsy-glitter': 'gold glitter sparkle falling',
 }
 
 // --- env ---------------------------------------------------------------------------------
@@ -89,7 +100,8 @@ async function download(url, dest) {
   writeFileSync(dest, Buffer.from(await res.arrayBuffer()))
 }
 function transcode(input, outMp4) {
-  execFileSync('ffmpeg', ['-y', '-i', input, '-t', '12', '-an',
+  // ~8s keeps clips punchy — quick changes hold attention when auto-shuffling.
+  execFileSync('ffmpeg', ['-y', '-i', input, '-t', '8', '-an',
     '-vf', 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=30',
     '-c:v', 'libx264', '-crf', '25', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart', outMp4], { stdio: 'ignore' })

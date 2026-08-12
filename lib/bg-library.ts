@@ -13,6 +13,8 @@
 // Adding a clip = add a row here (no code change). Hosting the nature clips + a CSP
 // media-src for the CDN are the ops step; the bundled images need neither.
 
+export type Energy = 'calm' | 'mid' | 'hot'
+
 export interface BgClip {
   id: string
   category: BgCategory
@@ -21,10 +23,18 @@ export interface BgClip {
   preview: string   // thumbnail / poster (same-origin, cached offline)
   src: string       // full asset (image is same-origin; video streams from the CDN)
   tint: string      // gradient shown until the asset loads (and if it 404s)
+  energy?: Energy   // used to match the song's energy when auto-shuffling (default: by category)
 }
 
 export const BG_CATEGORIES = ['Patterns', 'Artsy', 'Streets', 'Night', 'Cozy', 'Nature', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
 export type BgCategory = typeof BG_CATEGORIES[number]
+
+// Default energy per category when a clip doesn't override it.
+const CATEGORY_ENERGY: Record<BgCategory, Energy> = {
+  Patterns: 'mid', Artsy: 'mid', Streets: 'mid', Night: 'hot', Cozy: 'calm', Nature: 'calm',
+  Aerial: 'mid', Beach: 'calm', Mountains: 'calm', Animals: 'calm', City: 'hot', Ambient: 'calm',
+}
+export const clipEnergy = (c: BgClip): Energy => c.energy ?? CATEGORY_ENERGY[c.category]
 
 import { FETCHED_NATURE } from './bg-fetched'
 import { CDN_CLIPS } from './bg-cdn'
@@ -52,7 +62,7 @@ const GENERATIVE: { id: string; title: string; tint: string }[] = [
 ]
 
 // Curated nature clips — stream online; poster cached offline.
-const NATURE: { id: string; category: BgCategory; title: string; tint: string }[] = [
+const NATURE: { id: string; category: BgCategory; title: string; tint: string; energy?: Energy }[] = [
   { id: 'aerial-coastline', category: 'Aerial', title: 'Coastline from above', tint: 'linear-gradient(135deg,#0e7490,#22d3ee)' },
   { id: 'aerial-forest', category: 'Aerial', title: 'Forest canopy', tint: 'linear-gradient(135deg,#065f46,#34d399)' },
   { id: 'aerial-desert', category: 'Aerial', title: 'Desert dunes', tint: 'linear-gradient(135deg,#b45309,#fbbf24)' },
@@ -83,18 +93,29 @@ const NATURE: { id: string; category: BgCategory; title: string; tint: string }[
   { id: 'nature-clouds', category: 'Nature', title: 'Cloud drift', tint: 'linear-gradient(135deg,#1e3a8a,#e0f2fe)' },
   { id: 'nature-underwater', category: 'Nature', title: 'Sun-dappled water', tint: 'linear-gradient(135deg,#083344,#67e8f9)' },
   // Artsy — abstract, textural, cinematic. Poster-only (streamed from R2 when the CDN is set).
-  { id: 'artsy-ink-water', category: 'Artsy', title: 'Ink in water', tint: 'linear-gradient(135deg,#0b1020,#6366f1)' },
-  { id: 'artsy-light-leaks', category: 'Artsy', title: 'Light leaks', tint: 'linear-gradient(135deg,#7c2d12,#fb7185)' },
-  { id: 'artsy-smoke', category: 'Artsy', title: 'Colored smoke', tint: 'linear-gradient(135deg,#1e1b4b,#f472b6)' },
-  { id: 'artsy-prism', category: 'Artsy', title: 'Prism light', tint: 'linear-gradient(135deg,#0ea5e9,#f0abfc)' },
-  { id: 'artsy-oil-macro', category: 'Artsy', title: 'Oil & water', tint: 'linear-gradient(135deg,#0c4a6e,#22d3ee)' },
-  { id: 'artsy-paint-mix', category: 'Artsy', title: 'Paint mixing', tint: 'linear-gradient(135deg,#be185d,#f59e0b)' },
-  { id: 'artsy-fireworks', category: 'Artsy', title: 'Fireworks', tint: 'linear-gradient(135deg,#111827,#fbbf24)' },
-  { id: 'artsy-water-caustics', category: 'Artsy', title: 'Water caustics', tint: 'linear-gradient(135deg,#0e7490,#a5f3fc)' },
-  { id: 'artsy-gold-particles', category: 'Artsy', title: 'Gold particles', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)' },
-  { id: 'artsy-silk', category: 'Artsy', title: 'Flowing silk', tint: 'linear-gradient(135deg,#4c1d95,#f0abfc)' },
-  { id: 'artsy-lava-lamp', category: 'Artsy', title: 'Lava lamp', tint: 'linear-gradient(135deg,#7c2d12,#f97316)' },
-  { id: 'artsy-bokeh-drift', category: 'Artsy', title: 'Bokeh drift', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)' },
+  { id: 'artsy-ink-water', category: 'Artsy', title: 'Ink in water', tint: 'linear-gradient(135deg,#0b1020,#6366f1)', energy: 'calm' },
+  { id: 'artsy-light-leaks', category: 'Artsy', title: 'Light leaks', tint: 'linear-gradient(135deg,#7c2d12,#fb7185)', energy: 'hot' },
+  { id: 'artsy-smoke', category: 'Artsy', title: 'Colored smoke', tint: 'linear-gradient(135deg,#1e1b4b,#f472b6)', energy: 'mid' },
+  { id: 'artsy-prism', category: 'Artsy', title: 'Prism light', tint: 'linear-gradient(135deg,#0ea5e9,#f0abfc)', energy: 'mid' },
+  { id: 'artsy-oil-macro', category: 'Artsy', title: 'Oil & water', tint: 'linear-gradient(135deg,#0c4a6e,#22d3ee)', energy: 'calm' },
+  { id: 'artsy-paint-mix', category: 'Artsy', title: 'Paint mixing', tint: 'linear-gradient(135deg,#be185d,#f59e0b)', energy: 'mid' },
+  { id: 'artsy-fireworks', category: 'Artsy', title: 'Fireworks', tint: 'linear-gradient(135deg,#111827,#fbbf24)', energy: 'hot' },
+  { id: 'artsy-water-caustics', category: 'Artsy', title: 'Water caustics', tint: 'linear-gradient(135deg,#0e7490,#a5f3fc)', energy: 'calm' },
+  { id: 'artsy-gold-particles', category: 'Artsy', title: 'Gold particles', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)', energy: 'mid' },
+  { id: 'artsy-silk', category: 'Artsy', title: 'Flowing silk', tint: 'linear-gradient(135deg,#4c1d95,#f0abfc)', energy: 'calm' },
+  { id: 'artsy-lava-lamp', category: 'Artsy', title: 'Lava lamp', tint: 'linear-gradient(135deg,#7c2d12,#f97316)', energy: 'calm' },
+  { id: 'artsy-bokeh-drift', category: 'Artsy', title: 'Bokeh drift', tint: 'linear-gradient(135deg,#1e1b4b,#22d3ee)', energy: 'mid' },
+  // Artsy — night / neon, punchy. Shorter clips (quick changes hold attention).
+  { id: 'artsy-neon-signs', category: 'Artsy', title: 'Neon signs', tint: 'linear-gradient(135deg,#0b1020,#f472b6)', energy: 'hot' },
+  { id: 'artsy-light-trails', category: 'Artsy', title: 'Light trails', tint: 'linear-gradient(135deg,#0b1020,#f59e0b)', energy: 'hot' },
+  { id: 'artsy-neon-tunnel', category: 'Artsy', title: 'Neon tunnel', tint: 'linear-gradient(135deg,#3b0764,#22d3ee)', energy: 'hot' },
+  { id: 'artsy-laser', category: 'Artsy', title: 'Laser show', tint: 'linear-gradient(135deg,#0b1020,#a3e635)', energy: 'hot' },
+  { id: 'artsy-rain-neon', category: 'Artsy', title: 'Neon rain', tint: 'linear-gradient(135deg,#0b1020,#7c3aed)', energy: 'hot' },
+  { id: 'artsy-city-bokeh-night', category: 'Artsy', title: 'City bokeh', tint: 'linear-gradient(135deg,#111827,#38bdf8)', energy: 'hot' },
+  { id: 'artsy-plasma-ball', category: 'Artsy', title: 'Plasma ball', tint: 'linear-gradient(135deg,#1e1b4b,#e879f9)', energy: 'hot' },
+  { id: 'artsy-holographic', category: 'Artsy', title: 'Holographic', tint: 'linear-gradient(135deg,#0ea5e9,#f0abfc)', energy: 'mid' },
+  { id: 'artsy-liquid-metal', category: 'Artsy', title: 'Liquid metal', tint: 'linear-gradient(135deg,#334155,#e2e8f0)', energy: 'mid' },
+  { id: 'artsy-glitter', category: 'Artsy', title: 'Glitter', tint: 'linear-gradient(135deg,#3b2415,#fcd34d)', energy: 'mid' },
 ]
 
 // Generative styles that also have an animated WebM loop (scripts/gen-bg-videos.mjs).

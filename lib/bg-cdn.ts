@@ -2,4 +2,4 @@
 // key `bg/<id>.mp4`. When NEXT_PUBLIC_BG_CDN is set, these stream from the CDN and only their
 // small poster is bundled (the "poster-only" catalog). Do not edit by hand; re-run the
 // publish script to refresh.
-export const CDN_CLIPS: string[] = ['artsy-bokeh-drift', 'artsy-fireworks', 'artsy-gold-particles', 'artsy-ink-water', 'artsy-lava-lamp', 'artsy-light-leaks', 'artsy-oil-macro', 'artsy-paint-mix', 'artsy-prism', 'artsy-silk', 'artsy-smoke', 'artsy-water-caustics']
+export const CDN_CLIPS: string[] = ['artsy-bokeh-drift', 'artsy-city-bokeh-night', 'artsy-fireworks', 'artsy-glitter', 'artsy-gold-particles', 'artsy-holographic', 'artsy-ink-water', 'artsy-laser', 'artsy-lava-lamp', 'artsy-light-leaks', 'artsy-light-trails', 'artsy-liquid-metal', 'artsy-neon-signs', 'artsy-neon-tunnel', 'artsy-oil-macro', 'artsy-paint-mix', 'artsy-plasma-ball', 'artsy-prism', 'artsy-rain-neon', 'artsy-silk', 'artsy-smoke', 'artsy-water-caustics']
