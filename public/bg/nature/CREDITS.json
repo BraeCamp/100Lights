@@ -123,5 +123,115 @@
     "photographer": "Kindel Media",
     "url": "https://www.pexels.com/video/underwater-camera-used-in-a-swimming-pool-7293898/",
     "source": "Pexels"
+  },
+  "street-market2": {
+    "photographer": "K",
+    "url": "https://www.pexels.com/video/daily-activities-in-the-market-3967170/",
+    "source": "Pexels"
+  },
+  "street-rain-day": {
+    "photographer": "Pixabay",
+    "url": "https://www.pexels.com/video/woman-walking-around-the-city-854367/",
+    "source": "Pexels"
+  },
+  "street-alley": {
+    "photographer": "Leon Möhring",
+    "url": "https://www.pexels.com/video/couple-holding-hands-and-walking-12258203/",
+    "source": "Pexels"
+  },
+  "night-highway": {
+    "photographer": "Rob Zohrab",
+    "url": "https://www.pexels.com/video/a-long-exposure-of-a-highway-at-night-9299639/",
+    "source": "Pexels"
+  },
+  "night-bridge": {
+    "photographer": "Annie Chen",
+    "url": "https://www.pexels.com/video/colorful-night-view-of-illuminated-city-bridge-32004988/",
+    "source": "Pexels"
+  },
+  "night-market": {
+    "photographer": "Media Dung",
+    "url": "https://www.pexels.com/video/a-crowded-market-at-night-with-people-eating-and-drinking-19926187/",
+    "source": "Pexels"
+  },
+  "cozy-tea": {
+    "photographer": "Edward Eyer",
+    "url": "https://www.pexels.com/video/close-up-shot-of-a-smoking-cup-4290129/",
+    "source": "Pexels"
+  },
+  "cozy-books": {
+    "photographer": "Taryn Elliott",
+    "url": "https://www.pexels.com/video/revolving-shot-of-books-in-the-shelf-4440118/",
+    "source": "Pexels"
+  },
+  "cozy-snow-window": {
+    "photographer": "H.Espinosa Films",
+    "url": "https://www.pexels.com/video/window-view-of-snow-falling-6503967/",
+    "source": "Pexels"
+  },
+  "nature-waterfall": {
+    "photographer": "Najafi Photos",
+    "url": "https://www.pexels.com/video/a-footage-of-waterfalls-6405064/",
+    "source": "Pexels"
+  },
+  "nature-autumn": {
+    "photographer": "mark soetebier",
+    "url": "https://www.pexels.com/video/scenery-with-forest-in-autumn-10090581/",
+    "source": "Pexels"
+  },
+  "nature-desert-night": {
+    "photographer": "Alex Moliski",
+    "url": "https://www.pexels.com/video/stunning-timelapse-of-starry-night-sky-37526465/",
+    "source": "Pexels"
+  },
+  "aerial-mountains2": {
+    "photographer": "Jozef Papp",
+    "url": "https://www.pexels.com/video/stunning-aerial-view-of-coastal-mountain-range-33757028/",
+    "source": "Pexels"
+  },
+  "aerial-ocean": {
+    "photographer": "Rohingya Creative Production (RCP)",
+    "url": "https://www.pexels.com/video/aerial-view-of-waves-crashing-on-shore-35371141/",
+    "source": "Pexels"
+  },
+  "beach-palm": {
+    "photographer": "Taryn Elliott",
+    "url": "https://www.pexels.com/video/coconut-trees-in-the-beach-6473354/",
+    "source": "Pexels"
+  },
+  "beach-aerial": {
+    "photographer": "Agung Pandit Wiguna",
+    "url": "https://www.pexels.com/video/aerial-view-of-a-beach-and-a-green-forest-26341147/",
+    "source": "Pexels"
+  },
+  "mountains-snow": {
+    "photographer": "Ray Raimundo",
+    "url": "https://www.pexels.com/video/snow-on-mountain-11447869/",
+    "source": "Pexels"
+  },
+  "mountains-lake": {
+    "photographer": "Amay Jain",
+    "url": "https://www.pexels.com/video/beautiful-scenery-of-a-calm-lake-across-the-mountains-under-cloudy-sky-5383179/",
+    "source": "Pexels"
+  },
+  "animals-fish": {
+    "photographer": "Nat 77",
+    "url": "https://www.pexels.com/video/marine-life-inside-the-aquarium-4926075/",
+    "source": "Pexels"
+  },
+  "animals-deer": {
+    "photographer": "Townsend Walton",
+    "url": "https://www.pexels.com/video/mother-and-child-17994257/",
+    "source": "Pexels"
+  },
+  "city-rooftop": {
+    "photographer": "K",
+    "url": "https://www.pexels.com/video/aerial-view-of-urban-neighborhood-with-skyline-38879368/",
+    "source": "Pexels"
+  },
+  "city-aerial-traffic": {
+    "photographer": "K",
+    "url": "https://www.pexels.com/video/top-view-footage-of-the-road-without-traffic-3845373/",
+    "source": "Pexels"
   }
 }

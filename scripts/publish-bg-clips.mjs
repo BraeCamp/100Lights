@@ -89,6 +89,19 @@ const ARTSY = {
   'artsy-noir-blinds': 'window blinds shadow film noir',
   'artsy-rain-window-cine': 'rain on window night bokeh cinematic',
   'artsy-silhouette-crowd': 'concert crowd silhouette hands up',
+  // More per theme
+  'artsy-ferrofluid': 'ferrofluid magnetic liquid black abstract',
+  'artsy-water-drop': 'water drop ripple macro slow motion',
+  'artsy-clay': 'clay morphing abstract colorful',
+  'artsy-fiber-optic': 'fiber optic lights strands glowing',
+  'artsy-sun-flare': 'sun flare through trees warm light',
+  'artsy-candles': 'candles flames dark bokeh',
+  'artsy-neon-palm': 'neon palm trees retro synthwave',
+  'artsy-club-lights': 'nightclub lights party colorful',
+  'artsy-vapor-street': 'vaporwave neon street night',
+  'artsy-super8-city': 'super 8 film city vintage street',
+  'artsy-grain-warm': 'warm film grain texture overlay',
+  'artsy-flicker': 'old projector flicker light dust',
 }
 
 // --- env ---------------------------------------------------------------------------------
