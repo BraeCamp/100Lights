@@ -36,9 +36,11 @@ async function jamendoTracks(tags: string, order = 'popularity_total', limit = 4
     const r = await fetch(url, { next: { revalidate: 1800 } })
     if (!r.ok) return []
     const data = await r.json() as { results?: { name: string; artist_name: string; audio: string; license_ccurl?: string }[] }
-    // Drop NonCommercial (by-nc*) tracks — not usable on a monetized stream. For the full catalogue
-    // + guaranteed clearance, buy Jamendo's commercial radio licence (then all tags are fair game).
-    return (data.results ?? []).filter(t => t.audio && !/\/by-nc/i.test(t.license_ccurl || '')).map(t => ({
+    // Without a licence, drop NonCommercial (by-nc*) tracks — not usable on a monetized stream.
+    // Once you hold Jamendo's commercial RADIO licence (on the same account as this client_id), set
+    // JAMENDO_COMMERCIAL=true and the full catalogue (incl. NC) is cleared for you.
+    const licensed = process.env.JAMENDO_COMMERCIAL === 'true'
+    return (data.results ?? []).filter(t => t.audio && (licensed || !/\/by-nc/i.test(t.license_ccurl || ''))).map(t => ({
       title: t.name,
       artist: t.artist_name,
       url: t.audio,
