@@ -60,6 +60,8 @@
     "@neondatabase/serverless": "^1.1.0",
     "@sentry/nextjs": "^10.57.0",
     "@stripe/stripe-js": "^9.8.0",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
     "jszip": "^3.10.1",
     "lucide-react": "^1.17.0",
     "mp4-muxer": "^5.2.2",

@@ -8,7 +8,7 @@
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee, Palette, Film, SlidersHorizontal, Menu, Search, type LucideIcon } from 'lucide-react'
+import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee, Palette, Film, SlidersHorizontal, Menu, Search, Scan, Crosshair, type LucideIcon } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
 import { scoreNotes, lowConfidenceFraction } from '@/lib/transcribe-confidence'
 import { buildSketchProject } from '@/lib/open-in-studio'
@@ -27,6 +27,7 @@ import { useMediaDrop } from '@/lib/use-media-drop'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
 import { classifyFamily } from '@/lib/classify-core'
 import { tagsToFamily, type Family } from '@/lib/genre-map'
+import { MotionDetector, lerpBox, loadObjectDetector, detectObjects, type Box } from '@/lib/vision'
 import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '@/lib/offline-media'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
@@ -337,11 +338,83 @@ const ENERGY_LOOK: Record<'calm' | 'mid' | 'hot', { modes: string[]; looks: stri
   hot: { modes: ['neonedge', 'glitch', 'vhs', 'cartoon'], looks: ['noir', 'cool'], palettes: ['neon', 'fire', 'candy'] },
 }
 
+// ── EDITS ─────────────────────────────────────────────────────────────────────
+// Region-TARGETED effects driven by on-device vision (lib/vision): they change only the thing the
+// program detects — the moving subject, or a labelled person/car/animal — not the whole frame.
+// 'motion' edits use frame-diff (free, instant); 'object' edits use COCO-SSD (loads a small model).
+const EDITS: { id: string; name: string; kind: 'off' | 'motion' | 'object'; desc: string }[] = [
+  { id: 'none', name: 'Off', kind: 'off', desc: '' },
+  { id: 'spotlight', name: 'Motion spotlight', kind: 'motion', desc: 'Glow whatever is moving; dim the rest.' },
+  { id: 'freeze', name: 'Motion freeze', kind: 'motion', desc: 'Trail, ramp to a freeze on the beat, then highlight the mover.' },
+  { id: 'track', name: 'Detect & tag', kind: 'object', desc: 'Box + label people, cars, animals as they move.' },
+  { id: 'invert', name: 'Invert subject', kind: 'object', desc: 'Invert the colours of just the main detected subject.' },
+  { id: 'isolate', name: 'Colour-isolate', kind: 'object', desc: 'Keep the subject in colour; drain the rest to grey.' },
+]
+
+// Map the displayed video (object-fit: cover) so region boxes land on the right pixels despite the crop.
+function coverMap(W: number, H: number, vw: number, vh: number) {
+  const s = Math.max(W / vw, H / vh); const dw = vw * s, dh = vh * s
+  return { ox: (W - dw) / 2, oy: (H - dh) / 2, dw, dh }
+}
+const boxToStage = (b: Box, m: { ox: number; oy: number; dw: number; dh: number }) =>
+  ({ x: m.ox + b.x * m.dw, y: m.oy + b.y * m.dh, w: b.w * m.dw, h: b.h * m.dh })
+
+// Paint the continuous edits (freeze is handled in the loop — it manages canvas persistence + playback).
+function drawEditFx(ctx: CanvasRenderingContext2D, W: number, H: number, edit: string, video: HTMLVideoElement, box: Box | null, boxes: Box[]) {
+  ctx.clearRect(0, 0, W, H)
+  const vw = video.videoWidth || 16, vh = video.videoHeight || 9
+  const m = coverMap(W, H, vw, vh)
+  if (edit === 'spotlight') {
+    if (!box) return
+    const b = boxToStage(box, m), cx = b.x + b.w / 2, cy = b.y + b.h / 2
+    const rx = Math.max(46, b.w * 0.72), ry = Math.max(46, b.h * 0.72)
+    ctx.fillStyle = 'rgba(4,4,10,0.5)'; ctx.fillRect(0, 0, W, H)
+    const g = ctx.createRadialGradient(cx, cy, Math.min(rx, ry) * 0.35, cx, cy, Math.max(rx, ry))
+    g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = g
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 7); ctx.fill()
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.strokeStyle = 'rgba(147,197,255,0.85)'; ctx.lineWidth = 2; ctx.shadowColor = '#93c5ff'; ctx.shadowBlur = 18
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 7); ctx.stroke(); ctx.shadowBlur = 0
+  } else if (edit === 'track') {
+    ctx.lineWidth = 2; ctx.font = '700 13px system-ui, sans-serif'
+    for (const bx of boxes) {
+      const b = boxToStage(bx, m)
+      ctx.strokeStyle = 'rgba(52,211,153,0.95)'; ctx.shadowColor = '#34d399'; ctx.shadowBlur = 10
+      ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.shadowBlur = 0
+      const label = `${bx.label ?? ''} ${Math.round((bx.score ?? 0) * 100)}%`
+      const tw = ctx.measureText(label).width + 10
+      ctx.fillStyle = 'rgba(6,20,14,0.85)'; ctx.fillRect(b.x, Math.max(0, b.y - 18), tw, 18)
+      ctx.fillStyle = '#34d399'; ctx.fillText(label, b.x + 5, Math.max(13, b.y - 5))
+    }
+  } else if (edit === 'invert') {
+    if (!box) return
+    const b = boxToStage(box, m)
+    ctx.save(); ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip()
+    try { ctx.drawImage(video, m.ox, m.oy, m.dw, m.dh) } catch { ctx.restore(); return }
+    ctx.globalCompositeOperation = 'difference'; ctx.fillStyle = '#fff'; ctx.fillRect(b.x, b.y, b.w, b.h)
+    ctx.restore(); ctx.globalCompositeOperation = 'source-over'
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.strokeRect(b.x, b.y, b.w, b.h)
+  } else if (edit === 'isolate') {
+    ctx.filter = 'grayscale(1) brightness(0.82)'
+    try { ctx.drawImage(video, m.ox, m.oy, m.dw, m.dh) } catch { ctx.filter = 'none'; return }
+    ctx.filter = 'none'
+    if (box) {
+      const b = boxToStage(box, m), cx = b.x + b.w / 2, cy = b.y + b.h / 2
+      const r = ctx.createRadialGradient(cx, cy, Math.min(b.w, b.h) * 0.3, cx, cy, Math.max(b.w, b.h) * 0.72)
+      r.addColorStop(0, '#000'); r.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = r
+      ctx.fillRect(b.x - b.w, b.y - b.h, b.w * 3, b.h * 3); ctx.globalCompositeOperation = 'source-over'
+    }
+  }
+}
+
 // The control groups, shown as icon tabs that expand to their name on hover (or via the mobile
 // collapse toggle). The selected one renders below with a title header.
 const SECTIONS: { id: string; label: string; Icon: LucideIcon }[] = [
   { id: 'look', label: 'Genre look', Icon: Palette },
   { id: 'visualizer', label: 'Visualizer', Icon: Activity },
+  { id: 'edits', label: 'Edits', Icon: Scan },
   { id: 'bg', label: 'Background', Icon: Film },
   { id: 'sync', label: 'Sync', Icon: SlidersHorizontal },
 ]
@@ -906,6 +979,16 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [cutEvery, setCutEvery] = useState(8)               // kicks per cut (8 ≈ two bars of 4/4)
   const cutEveryRef = useRef(8); cutEveryRef.current = cutEvery
   const beatCutCountRef = useRef(0)
+  // EDITS — region-targeted effects from on-device vision (lib/vision). See EDITS registry above.
+  const [edit, setEdit] = useState('none')
+  const editRef = useRef('none'); editRef.current = edit
+  const fxCanvasRef = useRef<HTMLCanvasElement | null>(null)   // overlay the edit effects paint on
+  const motionRef = useRef<MotionDetector | null>(null)
+  const boxRef = useRef<Box | null>(null)                      // smoothed primary region of interest
+  const boxesRef = useRef<Box[]>([])                           // all detected object boxes (Detect & tag)
+  const [modelState, setModelState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const freezeRef = useRef<{ t0: number; frozen: boolean; box: Box | null } | null>(null)
+  const freezeArmedRef = useRef(false)                         // Trigger sets this; the next beat fires the freeze
   const bassAvgRef = useRef(0)                              // running bass energy, for onset detection
   const lastBeatRef = useRef(0)                            // debounce beats
   const prevBeatRef = useRef(0)                            // for the inter-beat interval → BPM
@@ -1282,6 +1365,75 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     return () => cancelAnimationFrame(r)
   }, [bgClip?.id, bgUrl, bgKind])
 
+  // EDITS render loop — sample the on-screen video, find the region (motion diff or COCO-SSD objects),
+  // and paint the region-targeted effect on the FX canvas. Only runs while an edit is active.
+  useEffect(() => {
+    const clearFx = () => { const fx = fxCanvasRef.current; if (fx) fx.getContext('2d')?.clearRect(0, 0, fx.width, fx.height) }
+    if (edit === 'none') { boxRef.current = null; boxesRef.current = []; freezeRef.current = null; clearFx(); return }
+    const kind = EDITS.find(e => e.id === edit)?.kind
+    const detector = (motionRef.current ||= new MotionDetector())
+    detector.reset(); boxRef.current = null; boxesRef.current = []; freezeRef.current = null
+    let alive = true, raf = 0, lastDetect = 0
+    let model: Awaited<ReturnType<typeof loadObjectDetector>> | null = null
+    if (kind === 'object') {
+      setModelState('loading')
+      loadObjectDetector().then(m => { if (alive) { model = m; setModelState('ready') } }).catch(() => { if (alive) setModelState('error') })
+    }
+    const getVideo = () => (bgFilterRef.current?.querySelector('video') ?? null) as HTMLVideoElement | null   // the main bg video only (not the 1px preloaders)
+
+    const loop = (t: number) => {
+      if (!alive) return
+      raf = requestAnimationFrame(loop)
+      const video = getVideo(), fx = fxCanvasRef.current, wrap = wrapRef.current
+      if (!video || !fx || !wrap || video.readyState < 2 || !video.videoWidth) { return }
+      const w = wrap.clientWidth, h = wrap.clientHeight
+      if (fx.width !== w || fx.height !== h) { fx.width = w; fx.height = h }
+      const ctx = fx.getContext('2d'); if (!ctx) return
+      const vw = video.videoWidth, vh = video.videoHeight, m = coverMap(w, h, vw, vh)
+
+      if (edit === 'freeze') {
+        // keep tracking the mover so we know where to highlight when we freeze
+        boxRef.current = lerpBox(boxRef.current, detector.detect(video), 0.3)
+        const fz = freezeRef.current
+        if (!fz) { ctx.clearRect(0, 0, w, h); return }
+        const dt = t - fz.t0
+        if (dt < 600) {                                   // TRAIL — ghost frames, ramp toward slow-mo
+          video.playbackRate = Math.max(0.25, 1 - (dt / 600) * 0.75)
+          ctx.fillStyle = 'rgba(6,5,10,0.26)'; ctx.fillRect(0, 0, w, h)
+          ctx.globalAlpha = 0.5; try { ctx.drawImage(video, m.ox, m.oy, m.dw, m.dh) } catch {} ctx.globalAlpha = 1
+        } else if (dt < 1900) {                           // FREEZE — pause, clean frame, highlight the mover
+          if (!fz.frozen) { video.pause(); fz.frozen = true; fz.box = boxRef.current }
+          ctx.clearRect(0, 0, w, h); try { ctx.drawImage(video, m.ox, m.oy, m.dw, m.dh) } catch {}
+          if (fz.box) {
+            const b = boxToStage(fz.box, m), cx = b.x + b.w / 2, cy = b.y + b.h / 2
+            const rx = Math.max(48, b.w * 0.75), ry = Math.max(48, b.h * 0.75)
+            ctx.fillStyle = 'rgba(4,4,10,0.55)'; ctx.fillRect(0, 0, w, h)
+            const g = ctx.createRadialGradient(cx, cy, Math.min(rx, ry) * 0.3, cx, cy, Math.max(rx, ry))
+            g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)')
+            ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = g
+            ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 7); ctx.fill(); ctx.globalCompositeOperation = 'source-over'
+            ctx.strokeStyle = 'rgba(147,197,255,0.9)'; ctx.lineWidth = 2.5; ctx.shadowColor = '#93c5ff'; ctx.shadowBlur = 22
+            ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 7); ctx.stroke(); ctx.shadowBlur = 0
+          }
+        } else if (dt < 2300) {                           // RELEASE — resume + fade the overlay out
+          if (fz.frozen) { video.playbackRate = 1; video.play().catch(() => {}); fz.frozen = false }
+          ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(0, 0, w, h); ctx.globalCompositeOperation = 'source-over'
+        } else { freezeRef.current = null; ctx.clearRect(0, 0, w, h) }
+        return
+      }
+
+      if (kind === 'motion') boxRef.current = lerpBox(boxRef.current, detector.detect(video), 0.3)
+      else if (kind === 'object' && model && t - lastDetect > 170) {
+        lastDetect = t
+        detectObjects(model, video).then(bs => { if (alive) { boxesRef.current = bs; boxRef.current = lerpBox(boxRef.current, bs[0] ?? null, 0.4) } }).catch(() => {})
+      }
+      drawEditFx(ctx, w, h, edit, video, boxRef.current, boxesRef.current)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => { alive = false; cancelAnimationFrame(raf); clearFx() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edit])
+
   // Genre "Looks" — apply a whole scene, with a random genre-appropriate background.
   const [activeLook, setActiveLook] = useState<GenreLook | null>(null)
   const shuffleTo = useCallback((look: GenreLook) => {
@@ -1651,6 +1803,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // Cut on the beat: hard-switch the clip every Nth kick (a real edit-style cut). No-ops
             // safely if there's nothing queued to cut to.
             if (cutOnBeatRef.current && ++beatCutCountRef.current % Math.max(1, cutEveryRef.current) === 0) requestSwitch()
+            // Motion-freeze edit: armed by the Trigger button, fires on the next kick so it lands on-beat.
+            if (editRef.current === 'freeze' && freezeArmedRef.current && !freezeRef.current) { freezeRef.current = { t0: performance.now(), frozen: false, box: null }; freezeArmedRef.current = false }
             if (iv > 250 && iv < 2000) {
               // Median of the last 6 intervals: robust to missed/double beats, and re-locks
               // within a few beats when the song (or tempo) changes.
@@ -1871,7 +2025,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter, isolation: 'isolate', transition: 'opacity .5s ease' }}>
             {bgKind === 'media' ? (
               bgVideo
-                ? <video src={bgUrl ?? undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                ? <video src={bgUrl ?? undefined} crossOrigin="anonymous" autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
                 : <img src={bgUrl ?? undefined} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : bgKind === 'library' && bgClip ? (
               <>
@@ -1882,7 +2036,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} poster={bgClip.preview} autoPlay loop={!autoShuffle || idle} muted playsInline
+                    <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} crossOrigin="anonymous" poster={bgClip.preview} autoPlay loop={!autoShuffle || idle} muted playsInline
                       onCanPlay={() => { if (bgClip) readySrcsRef.current.add(bgClip.src) }}
                       onEnded={() => { if (!autoShuffle) return; if (!requestSwitch() && bgVideoRef.current) { bgVideoRef.current.currentTime = 0; bgVideoRef.current.play().catch(() => {}) } }}   // next not buffered yet → replay current (stay smooth) until it is
                       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
@@ -1910,6 +2064,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             style={{ position: 'absolute', width: 1, height: 1, top: 0, left: 0, opacity: 0, pointerEvents: 'none' }} />
         ))}
 
+        {/* Edits FX layer — region-targeted effects (motion/object) paint here, over the video. */}
+        <canvas ref={fxCanvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', display: edit === 'none' ? 'none' : 'block' }} />
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: reactive ? 'block' : 'none' }} />
         {/* Beat-colour flash — pulses the whole frame (background included) on each kick. */}
         <div ref={beatFlashDivRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', mixBlendMode: 'screen', opacity: 0 }} />
@@ -2133,6 +2289,30 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         <input type="range" min={0.5} max={2.6} step={0.1} value={gain} onChange={e => setGain(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
         <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '12px 0 5px' }}>Smoothness</label>
         <input type="range" min={0} max={0.95} step={0.01} value={smoothing} onChange={e => setSmoothing(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
+      </TabSection>)}
+
+      {openPanel === 'edits' && (
+      <TabSection title="Edits — effects that target what's on screen">
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>These change only the <strong style={{ color: 'var(--text-secondary)' }}>thing the program detects</strong> — the moving subject, or a person / car / animal — not the whole frame. They read the video pixels, so they work on a <strong style={{ color: 'var(--text-secondary)' }}>video background</strong> (library clips or your upload), not stills.</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+          {EDITS.map(e => (
+            <button key={e.id} type="button" onClick={() => setEdit(e.id)} title={e.desc}
+              style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: edit === e.id ? 'var(--accent)' : 'var(--bg-card)', color: edit === e.id ? '#0e0d12' : 'var(--text-secondary)' }}>
+              {e.kind === 'object' && <Crosshair size={12} style={{ marginRight: 5, verticalAlign: '-1px' }} />}{e.name}
+            </button>
+          ))}
+        </div>
+        {edit !== 'none' && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '10px 0 0' }}>{EDITS.find(e => e.id === edit)?.desc}</p>}
+        {edit === 'freeze' && (
+          <button type="button" onClick={() => { freezeArmedRef.current = true }} style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 999, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#0e0d12' }}>
+            <Activity size={14} /> Trigger freeze (fires on the next beat)
+          </button>
+        )}
+        {EDITS.find(e => e.id === edit)?.kind === 'object' && (
+          <p style={{ fontSize: 11.5, margin: '10px 0 0', color: modelState === 'error' ? '#f87171' : 'var(--text-muted)' }}>
+            {modelState === 'loading' ? 'Loading the on-device detector (one-time, ~a few MB)…' : modelState === 'ready' ? '● Detector ready — runs entirely on your device.' : modelState === 'error' ? 'Couldn’t load the detector.' : ''}
+          </p>
+        )}
       </TabSection>)}
 
       {openPanel === 'bg' && (
