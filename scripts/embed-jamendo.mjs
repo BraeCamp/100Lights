@@ -34,6 +34,12 @@ const POOL = [
   'darkpop+synthpop+melancholic', 'bedroompop+dreampop+moody', 'rnb+soul+sensual', 'house+techno+dance',
   'metal+heavy+guitar', 'folk+singer+songwriter', 'orchestral+epic+soundtrack', 'funk+groove+disco',
   'trap+beats+808', 'chillout+relax+study',
+  // deeper / more specific pockets for richer seeds
+  'indie+pop+vocal', 'alternative+moody+guitar', 'electropop+catchy+female', 'dreampop+shoegaze+reverb',
+  'sad+emotional+piano', 'phonk+dark+trap', 'ambient+cinematic+emotional', 'soul+rnb+smooth',
+  'punk+garage+energetic', 'reggae+dub+chill', 'country+acoustic+storytelling', 'edm+festival+drop',
+  'jazz+lounge+piano', 'world+ethnic+percussion', 'blues+guitar+soulful', 'gospel+choir+uplifting',
+  'kpop+dance+pop', 'latin+pop+rhythm', 'drumandbass+breakbeat', 'vaporwave+chill+retro',
 ]
 
 async function ensure() {
@@ -51,10 +57,10 @@ async function ensure() {
 
 const isCommercial = ccurl => !/\/by-nc/i.test(ccurl || '')   // exclude NonCommercial
 
-async function jamendo(tags, limit) {
+async function jamendo(tags, limit, offset = 0) {
   const ft = tags.split('+').map(t => encodeURIComponent(t.trim())).filter(Boolean).join('+')
   for (let i = 0; i < 4; i++) {
-    const r = await fetch(`https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO}&format=json&limit=${limit}&fuzzytags=${ft}&order=popularity_total&audioformat=mp32&include=licenses+musicinfo&groupby=artist_id`, { cache: 'no-store' })
+    const r = await fetch(`https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO}&format=json&limit=${limit}&offset=${offset}&fuzzytags=${ft}&order=popularity_total&audioformat=mp32&include=licenses+musicinfo&groupby=artist_id`, { cache: 'no-store' })
     if (r.ok) { const d = await r.json(); const rows = (d.results || []).filter(t => t.audio && isCommercial(t.license_ccurl)); if (rows.length) return rows }
   }
   return []
@@ -85,23 +91,27 @@ await readyP
 console.log('CLAP ready. embedding commercial-safe tracks…\n')
 
 const queries = has('--tags') ? [argV('--tags')] : POOL
-const perTag = Number(argV('--limit', has('--tags') ? '150' : '60'))
+const perTag = Number(argV('--limit', '60'))
+const pages = Number(argV('--pages', has('--tags') ? '3' : '2'))   // paginate to get more distinct artists per tag
 let added = 0, skipped = 0, failed = 0
 outer: for (const tags of queries) {
-  const tracks = await jamendo(tags, perTag)
-  for (const t of tracks) {
-    const id = 'jam-' + t.id
-    const [{ n }] = await sql`SELECT COUNT(*)::int n FROM track_embeddings WHERE id = ${id}`
-    if (n) { skipped++; continue }
-    const { vec, err } = await embed(t.audio)
-    if (!vec) { failed++; if (err) process.stderr.write(`\n  ✗ ${t.name}: ${err}`); continue }
-    const mi = t.musicinfo?.tags || {}
-    const tt = [...(mi.genres || []), ...(mi.vartags || []), ...(mi.instruments || [])].map(x => String(x).toLowerCase())
-    await sql`INSERT INTO track_embeddings (id, title, artist, audio, tags, source, license, embedding)
-      VALUES (${id}, ${t.name}, ${t.artist_name}, ${t.audio}, ${tt}, 'jamendo', ${t.license_ccurl || ''}, ${'[' + vec.join(',') + ']'})
-      ON CONFLICT (id) DO NOTHING`
-    added++; process.stdout.write(`\r  ${tags.slice(0, 22).padEnd(22)} · +${added} embedded  (${skipped} skip, ${failed} fail)   `)
-    if (target && added + skipped >= target) break outer
+  for (let page = 0; page < pages; page++) {
+    const tracks = await jamendo(tags, perTag, page * perTag)
+    if (!tracks.length) break   // no more pages for this tag
+    for (const t of tracks) {
+      const id = 'jam-' + t.id
+      const [{ n }] = await sql`SELECT COUNT(*)::int n FROM track_embeddings WHERE id = ${id}`
+      if (n) { skipped++; continue }
+      const { vec, err } = await embed(t.audio)
+      if (!vec) { failed++; if (err) process.stderr.write(`\n  ✗ ${t.name}: ${err}`); continue }
+      const mi = t.musicinfo?.tags || {}
+      const tt = [...(mi.genres || []), ...(mi.vartags || []), ...(mi.instruments || [])].map(x => String(x).toLowerCase())
+      await sql`INSERT INTO track_embeddings (id, title, artist, audio, tags, source, license, embedding)
+        VALUES (${id}, ${t.name}, ${t.artist_name}, ${t.audio}, ${tt}, 'jamendo', ${t.license_ccurl || ''}, ${'[' + vec.join(',') + ']'})
+        ON CONFLICT (id) DO NOTHING`
+      added++; process.stdout.write(`\r  ${tags.slice(0, 22).padEnd(22)} · +${added} embedded  (${skipped} skip, ${failed} fail)   `)
+      if (target && added + skipped >= target) break outer
+    }
   }
 }
 py.stdin.end()
