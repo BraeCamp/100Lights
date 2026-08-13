@@ -20,7 +20,7 @@ import { FORMATS } from '@/lib/song-video/formats.mjs'
 import { BG_STYLES } from '@/lib/song-video/backgrounds.mjs'
 import AppChrome from '@/components/apps/AppChrome'
 import LightningBugHome from '@/components/apps/LightningBugHome'
-import { BG_CATEGORIES, BG_LIBRARY, clipsByCategory, clipById, clipEnergy, clipBrightness, BRIGHTNESS_LABEL, clipSpeed, SPEED_LABEL, TRANSITION_CLIPS, type BgClip, type BgCategory, type Energy, type Brightness, type Speed } from '@/lib/bg-library'
+import { BG_CATEGORIES, BG_LIBRARY, clipById, clipEnergy, clipBrightness, BRIGHTNESS_LABEL, clipSpeed, SPEED_LABEL, TRANSITION_CLIPS, type BgClip, type BgCategory, type Energy, type Brightness, type Speed } from '@/lib/bg-library'
 import type { BroadcastTrack, StationScene } from '@/lib/stations'
 import { detectMediaKind } from '@/lib/media-import'
 import { useMediaDrop } from '@/lib/use-media-drop'
@@ -1105,6 +1105,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       setPexMore(results.length === PEX_PAGE)
     } catch { if (!append) setPexResults([]) } finally { setPexLoading(false) }
   }, [pexQuery, pexResults.length])
+  // Show something to browse right away (the search IS the library now) — one initial fetch on mount.
+  const didInitSearchRef = useRef(false)
+  useEffect(() => { if (!didInitSearchRef.current) { didInitSearchRef.current = true; searchPexels() } }, [searchPexels])
   // Dark-room = only dark clips selected → also softens the reactive beat-flash so nobody's blinded.
   const darkRoomRef = useRef(false); darkRoomRef.current = brightnessSet.length === 1 && brightnessSet[0] === 'dark'
   // Idle / "between-songs" transition mode: when no music is detected, drift through calm clips
@@ -1121,6 +1124,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const lastErrSwitchRef = useRef(0)                        // debounce error-driven clip skips (no rapid cascade)
   const bgClipIdRef = useRef<string | null>(null)           // current clip id, so nextClip avoids repeats without re-binding
   const recentClipsRef = useRef<string[]>([])               // recently-played ids → no repeats until most of the pool has shown
+  const tagRunRef = useRef<{ cat: BgCategory | null; left: number }>({ cat: null, left: 0 })   // stay on one theme for a run of clips
   const nextClipRef = useRef<() => void>(() => {})          // so the beat detector can advance on a bar boundary
   // Preload lookahead: keep the next 2 clips queued + buffering in hidden <video>s, and only
   // cut when the next one is playable — so slow devices/connections never flash a stalled frame.
@@ -1232,16 +1236,28 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       }
     }
     if (pool.length < 2) return null
+    // Tag cohesion: stay on ONE theme (category) for a run of clips — usually a few, sometimes a whole
+    // song — before switching, so the visuals feel intentional instead of random channel-surfing.
+    const run = tagRunRef.current
+    let cohesive = pool
+    if (run.cat && run.left > 0) {
+      const same = pool.filter(c => c.category === run.cat)
+      if (same.length >= 2) cohesive = same; else run.left = 0   // not enough on this theme → end the run
+    }
     // No-repeat history: pick from clips not shown recently, so it works through most of the
     // pool before anything comes back (pure random clusters/repeats). Keep the recent window
     // to ~70% of the current pool; relax if that leaves nothing.
     const recent = recentClipsRef.current
     const queued = queueRef.current.map(c => c.id)
-    let candidates = pool.filter(c => !recent.includes(c.id) && !queued.includes(c.id))
-    if (candidates.length === 0) candidates = pool.filter(c => c.id !== bgClipIdRef.current && !queued.includes(c.id))
-    if (candidates.length === 0) candidates = pool.filter(c => c.id !== bgClipIdRef.current)
+    let candidates = cohesive.filter(c => !recent.includes(c.id) && !queued.includes(c.id))
+    if (candidates.length === 0) candidates = cohesive.filter(c => c.id !== bgClipIdRef.current && !queued.includes(c.id))
+    if (candidates.length === 0) candidates = cohesive.filter(c => c.id !== bgClipIdRef.current)
     if (candidates.length === 0) return null
     const next = candidates[Math.floor(Math.random() * candidates.length)]
+    // Advance / (re)start the theme run: exhausted → pick a fresh theme, mostly a few clips (1-3 more),
+    // sometimes a long run (~a whole song).
+    if (run.left > 0) run.left--
+    else { run.cat = next.category; run.left = Math.random() < 0.3 ? 6 + Math.floor(Math.random() * 4) : 1 + Math.floor(Math.random() * 3) }
     recent.push(next.id)
     const keep = Math.max(4, Math.floor(pool.length * 0.7))
     while (recent.length > keep) recent.shift()
@@ -1305,6 +1321,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const onIdleChange = useCallback(() => {
     if (!autoShuffleRef.current || bgKindRef.current !== 'library') return
     queueRef.current = []; recentClipsRef.current = []; setPreloadSrcs([])
+    tagRunRef.current = { cat: null, left: 0 }   // new song → let it pick a fresh theme to settle on
     nextClip()
   }, [nextClip])
   onIdleChangeRef.current = onIdleChange
@@ -2578,7 +2595,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         </div>
 
         {/* Search the tagged Pexels catalog — thousands of streaming backgrounds, nothing downloaded */}
-        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '14px 0 6px' }}>Search backgrounds — streams from Pexels{brightnessSet.length === 1 ? ` · ${BRIGHTNESS_LABEL[brightnessSet[0]]} only` : ''}:</p>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '14px 0 6px' }}>Backgrounds — search or tap a tag ({(15000).toLocaleString()}+ clips){brightnessSet.length === 1 ? ` · ${BRIGHTNESS_LABEL[brightnessSet[0]]} only` : ''}:</p>
         <form onSubmit={e => { e.preventDefault(); searchPexels() }} style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
           <input value={pexQuery} onChange={e => setPexQuery(e.target.value)} placeholder="e.g. neon, ink in water, forest…" style={{ flex: 1, minWidth: 0, padding: '8px 11px', borderRadius: 9, fontSize: 13, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} />
           <button type="submit" disabled={pexLoading} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 14px', borderRadius: 9, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#0e0d12', opacity: pexLoading ? 0.6 : 1 }}><Search size={14} /> {pexLoading ? '…' : 'Search'}</button>
@@ -2621,32 +2638,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           ) : !pexLoading && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>No tagged matches yet. Add more in the admin (Fetch from Pexels), then search again.</p>
         )}
 
-        {/* Streamed video library */}
-        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '10px 0 8px' }}>Library — streams online, low-res preview offline:</p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-          {BG_CATEGORIES.map(cat => (
-            <button key={cat} type="button" onClick={() => setBgCat(cat)} style={{ padding: '6px 11px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgCat === cat ? 'var(--accent)' : 'var(--bg-card)', color: bgCat === cat ? '#0e0d12' : 'var(--text-secondary)' }}>{cat}</button>
-          ))}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 8 }}>
-          {[...clipsByCategory(bgCat), ...catalogPool.filter(c => c.category === bgCat)].filter(clip => (brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))) && (speedSet.length === 0 || speedSet.includes(clipSpeed(clip)))).map(clip => {
-            const active = bgKind === 'library' && bgClip?.id === clip.id
-            const bri = clipBrightness(clip)
-            const BriIcon = bri === 'dark' ? Moon : bri === 'bright' ? Sun : Circle
-            return (
-              <button key={clip.id} type="button" onClick={() => { setBgClip(clip); setBgKind('library') }} title={`${clip.title} · ${BRIGHTNESS_LABEL[bri]} · ${SPEED_LABEL[clipSpeed(clip)]}`}
-                style={{ position: 'relative', aspectRatio: '16 / 10', borderRadius: 9, overflow: 'hidden', padding: 0, cursor: 'pointer', border: active ? '2px solid var(--accent)' : '1px solid var(--border)', backgroundImage: clip.tint, backgroundSize: 'cover' }}>
-                <img src={clip.preview} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                <span title={BRIGHTNESS_LABEL[bri]} style={{ position: 'absolute', top: 4, left: 4, width: 16, height: 16, borderRadius: 999, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.55)', color: '#fff' }}><BriIcon size={9} /></span>
-                <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '3px 5px', fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'linear-gradient(0deg, rgba(0,0,0,0.65), transparent)', textAlign: 'left' }}>{clip.title}</span>
-              </button>
-            )
-          })}
-          {[...clipsByCategory(bgCat), ...catalogPool.filter(c => c.category === bgCat)].filter(clip => (brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))) && (speedSet.length === 0 || speedSet.includes(clipSpeed(clip)))).length === 0 && (
-            <p style={{ gridColumn: '1 / -1', fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0' }}>No matching clips in {bgCat} — try another category or widen the brightness/speed filters.</p>
-          )}
-        </div>
-        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0 0' }}>Library clips stream from the cloud; a low-res preview is cached for offline. Or upload your own.</p>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '10px 0 0' }}>Backgrounds stream from the cloud; a low-res preview is cached for offline. Or upload your own.</p>
 
         {/* Offline: save the selected background to the device */}
         {bgKind === 'library' && bgClip && (
