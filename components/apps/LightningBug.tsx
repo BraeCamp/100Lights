@@ -1562,10 +1562,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     // when the voted genre actually changes, so a stable song doesn't recolour every clip.
     const changed = known !== lastAutoFamilyRef.current
     lastAutoFamilyRef.current = known
-    // Auto stays on the CLEAN look: it fits a subtle grade + palette to the genre but never applies a
-    // full-frame transform (Mode) — the untransformed video is the nicest default. Users pick a Mode
-    // themselves in Advanced when they want one.
-    setVideoMode('none'); setVideoLook(pick(src.looks))
+    // Auto fits a subtle grade + palette to the genre but NEVER touches the transform (Mode): the
+    // clean untransformed video is the default (Mode starts 'none'), and if the user picks a Mode
+    // themselves it persists — Auto won't override their choice.
+    setVideoLook(pick(src.looks))
     if (changed || !known) setColorCfg(c => ({ ...c, paletteId: pick(src.palettes) }))
   }, [])
   autoApplyRef.current = applyAuto
@@ -2162,7 +2162,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         {/* Beat-colour flash — pulses the whole frame (background included) on each kick. */}
         <div ref={beatFlashDivRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', mixBlendMode: 'screen', opacity: 0 }} />
 
-        {!broadcast && reactive && !running && style !== 'none' && (
+        {!broadcast && reactive && !running && (
           <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', gap: 12, padding: 24, textAlign: 'center', background: hasBg ? 'rgba(6,5,10,0.45)' : 'transparent' }}>
             <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Visualize your music</p>
             {/* Auto — the casual-user hero on the start screen: flip it on, then just press play. */}
@@ -2175,13 +2175,6 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: 0, maxWidth: 360, lineHeight: 1.5 }}>Play a track through the app for perfect sync — no prompts, no mic. Or point the mic at the speaker to visualize whatever’s in the room.</p>
             <button type="button" onClick={() => start('device')} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}><Radio size={14} /> Capture system audio (desktop)</button>
-          </div>
-        )}
-        {/* None style: keep the background clean; a compact bar still lets the music drive it. */}
-        {!broadcast && reactive && !running && style === 'none' && (
-          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 12, display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', padding: '0 12px' }}>
-            <button type="button" onClick={() => trackInputRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}><Play size={14} fill="#0e0d12" /> React to music</button>
-            <button type="button" onClick={() => start('mic')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}><Mic size={14} /> Mic</button>
           </div>
         )}
         <input ref={trackInputRef} type="file" accept="audio/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) start('file', f); e.currentTarget.value = '' }} />
