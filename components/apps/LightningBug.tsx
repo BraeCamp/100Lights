@@ -388,6 +388,15 @@ const BAND_EDITS: Record<'bass' | 'mid' | 'high', string[]> = {
   mid: ['flash', 'freeze', 'mirror', 'skip', 'crop', 'spin'],
   high: ['rgb', 'strobe', 'huespin', 'invert', 'spin'],
 }
+// On PEOPLE-oriented clips (Portrait / models / dancers), favor flattering, motion-following moves —
+// reframe (crop onto the subject), freeze, punch-zoom, soft flash — and go easy on the harsh glitch/
+// invert/strobe that mangle faces. Used instead of BAND_EDITS when the current clip reads as people.
+const PEOPLE_BAND_EDITS: Record<'bass' | 'mid' | 'high', string[]> = {
+  bass: ['crop', 'zoom', 'freeze', 'crop', 'zoom'],
+  mid: ['freeze', 'crop', 'zoom', 'flash', 'crop', 'skip'],
+  high: ['flash', 'crop', 'rgb', 'flash'],
+}
+const PEOPLE_RE = /portrait|model|people|person|dance|fashion|silhouette|beauty|editorial|studio/i
 
 // Quick background-SWITCH transitions (masks the clip swap). All fast (100–280ms) and varied so the
 // look stays snappy; picked at random, and only on ~55% of switches (the rest are clean hard cuts).
@@ -1092,8 +1101,14 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     const s = 1.25 + Math.random() * 0.75                    // 1.25–2.0 zoom → region 80%–50% of the frame (never below ½)
     const maxShift = (1 - 1 / s) * 45                        // % pan that keeps the region inside the frame edges
     cropScaleRef.current = s
-    cropXRef.current = (Math.random() * 2 - 1) * maxShift
-    cropYRef.current = (Math.random() * 2 - 1) * maxShift
+    if (curClipPeopleRef.current) {
+      // People clip → frame the subject: keep X near center, bias toward the UPPER frame (faces/torso).
+      cropXRef.current = (Math.random() * 2 - 1) * maxShift * 0.5
+      cropYRef.current = Math.random() * maxShift * 0.85     // positive translateY reveals the top of the frame
+    } else {
+      cropXRef.current = (Math.random() * 2 - 1) * maxShift
+      cropYRef.current = (Math.random() * 2 - 1) * maxShift
+    }
   }
   const songEditRef = useRef({ on: false, intensity: 0.6 })  // rolled per song — only "some songs" get edits
   // Transient effect envelopes the EQ write reads (decay each frame) + timed effects.
@@ -1645,7 +1660,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idleTransition, running])
 
-  useEffect(() => { bgClipIdRef.current = bgClip?.id ?? null }, [bgClip])
+  const curClipPeopleRef = useRef(false)   // the current clip reads as people-oriented (Portrait / model / dancer) → focus people effects
+  useEffect(() => {
+    bgClipIdRef.current = bgClip?.id ?? null
+    curClipPeopleRef.current = !!bgClip && (bgClip.category === 'Portrait' || PEOPLE_RE.test(bgClip.title || ''))
+  }, [bgClip])
   // Seed / refresh the lookahead whenever shuffle is active and the clip changes; clear it off.
   useEffect(() => {
     if (!autoShuffle || bgKind !== 'library' || !bgClip) {
@@ -2330,16 +2349,20 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // slow baseline (scale-independent), per-band + global cooldowns, gated by the per-song roll.
             if (autoEditRef.current && !idleRef.current && songEditRef.current.on && (spTot / (f.freq.length * 255)) > 0.04) {
               const getBgVideo = () => (bgFilterRef.current?.querySelector('video') ?? null) as HTMLVideoElement | null
+              // Effects PUNCTUATE, not saturate (pro videos change something ~every 3-5s). But the pace
+              // ADAPTS to how busy/fast the song is: a busy, intense track earns more frequent accents, a
+              // calm one stays sparse. busy 0..1 shrinks the global + per-band cooldowns.
+              const busy = Math.min(1, songIntensityRef.current * 0.6 + densityEmaRef.current * 0.5)
+              const globalCd = 2600 - busy * 1500          // ~2.6s calm … ~1.1s busy
+              const cdMul = 1.3 - busy * 0.8               // per-band cooldown scale (1.3 calm … 0.5 busy)
+              const editMap = curClipPeopleRef.current ? PEOPLE_BAND_EDITS : BAND_EDITS   // focus flattering moves on people clips
               const spike = (b: 'bass' | 'mid' | 'high', val: number, k: number, cd: number) => {
                 const fa = bandFastRef.current, sl = bandSlowRef.current
                 fa[b] = fa[b] * 0.45 + val * 0.55; sl[b] = sl[b] * 0.93 + val * 0.07
                 if (sl[b] < 1) return
-                // Effects PUNCTUATE, they don't saturate: pro music videos change something ~every 3-5s,
-                // not every beat. Big global cooldown (~1.8s) + long per-band cooldowns + strong-spike-only
-                // thresholds keep effects to an accent every few seconds.
-                if ((fa[b] - sl[b]) / sl[b] > k && now - bandCdRef.current[b] > cd && now - lastEditRef.current > 1800) {
+                if ((fa[b] - sl[b]) / sl[b] > k && now - bandCdRef.current[b] > cd * cdMul && now - lastEditRef.current > globalCd) {
                   bandCdRef.current[b] = now
-                  if (Math.random() < songEditRef.current.intensity) { const list = BAND_EDITS[b]; execEditCmd(list[Math.floor(Math.random() * list.length)], getBgVideo(), now) }
+                  if (Math.random() < songEditRef.current.intensity) { const list = editMap[b]; execEditCmd(list[Math.floor(Math.random() * list.length)], getBgVideo(), now) }
                 }
               }
               spike('bass', low, 0.75, 2200); spike('mid', mid, 1.05, 2600); spike('high', high, 1.3, 2400)
