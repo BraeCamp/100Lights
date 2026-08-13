@@ -14,6 +14,7 @@ export async function GET(req: Request) {
       brightness: p.get('brightness') ?? undefined,
       speed: p.get('speed') ?? undefined,
       status: 'active',
+      order: p.get('order') === 'random' ? 'random' : undefined,
       limit: p.get('limit') ? Number(p.get('limit')) : 48,
       offset: p.get('offset') ? Number(p.get('offset')) : 0,
     })

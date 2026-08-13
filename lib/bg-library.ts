@@ -30,6 +30,7 @@ export interface BgClip {
   tint: string      // gradient shown until the asset loads (and if it 404s)
   energy?: Energy   // used to match the song's energy when auto-shuffling (default: by category)
   brightness?: Brightness   // overrides the measured poster brightness (BRIGHTNESS_MAP); for the dark-room filter
+  speed?: Speed     // overrides MOTION_MAP (catalog clips carry their own tagged speed)
 }
 
 // Measured, flash-aware brightness of the clip (see scripts/tag-bg-clips.mjs). Lets users filter
@@ -40,7 +41,7 @@ export const BRIGHTNESS_LABEL: Record<Brightness, string> = { dark: 'Dark', mid:
 
 // Measured motion/speed of the clip (mean inter-frame change). Slow clips are the calm scenes
 // the idle/between-songs transition mode plays. Defaults to 'standard' when unmeasured.
-export const clipSpeed = (c: BgClip): Speed => MOTION_MAP[c.id] ?? 'standard'
+export const clipSpeed = (c: BgClip): Speed => c.speed ?? MOTION_MAP[c.id] ?? 'standard'
 export const SPEED_LABEL: Record<Speed, string> = { slow: 'Slow', standard: 'Standard', fast: 'Fast' }
 
 // Artistic themes first: the library leans music-video by default.

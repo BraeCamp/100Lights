@@ -1059,6 +1059,19 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const brightnessSetRef = useRef<Brightness[]>([]); brightnessSetRef.current = brightnessSet
   const [speedSet, setSpeedSet] = useState<Speed[]>([])   // motion filter ([] = all): Slow / Standard / Fast
   const speedSetRef = useRef<Speed[]>([]); speedSetRef.current = speedSet
+  // Catalogue pool — a random batch from the ~15k tagged Pexels catalogue (lib/pexels-bg), converted
+  // to clips so Auto-shuffle + the browse grid draw from the WHOLE catalogue, not just the bundled set.
+  const pexToClip = (r: { id: string; title: string; mp4: string; poster: string; category: string; brightness: Brightness; speed?: Speed }): BgClip =>
+    ({ id: r.id, category: r.category as BgCategory, title: r.title, kind: 'video', preview: r.poster, src: r.mp4, tint: 'linear-gradient(135deg,#1e1b4b,#0b1020)', brightness: r.brightness, speed: r.speed })
+  const [catalogPool, setCatalogPool] = useState<BgClip[]>([])
+  const catalogPoolRef = useRef<BgClip[]>([]); catalogPoolRef.current = catalogPool
+  useEffect(() => {
+    // Pull a fresh random batch from the catalogue (respect a single-brightness pick for dark-room safety).
+    const bp = brightnessSet.length === 1 ? `&brightness=${brightnessSet[0]}` : ''
+    fetch(`/api/pexels-bg?order=random&limit=400${bp}`).then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.results) setCatalogPool(d.results.map(pexToClip)) }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brightnessSet])
   // Search the tagged Pexels catalog (streams from Pexels' CDN; nothing downloaded).
   const [pexQuery, setPexQuery] = useState('')
   const [pexResults, setPexResults] = useState<{ id: string; title: string; mp4: string; poster: string; category: string; brightness: Brightness; author: string }[]>([])
@@ -1179,15 +1192,17 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       pool = BG_LIBRARY.filter(c => c.kind === 'video' && TRANSITION_SET.has(c.id))
       if (bset.length) { const bm = pool.filter(c => bset.includes(clipBrightness(c))); if (bm.length >= 1) pool = bm }
     } else {
+      // Draw from the bundled clips PLUS the ~15k-clip Pexels catalogue pool (fetched at runtime).
+      const allVideos = [...BG_LIBRARY.filter(c => c.kind === 'video'), ...catalogPoolRef.current]
       // The video set is the categories to draw from ([] = the whole library).
       const set = videoSetRef.current
-      pool = BG_LIBRARY.filter(c => c.kind === 'video' && (set.length === 0 || set.includes(c.category)))
+      pool = allVideos.filter(c => set.length === 0 || set.includes(c.category))
       // Brightness filter (dark-room safety): keep only the chosen brightness. This is a hard
       // promise — never flash-bang — so if the chosen categories don't have enough at that
       // brightness, we widen the category rather than let a brighter clip through.
       if (bset.length) {
         let bm = pool.filter(c => bset.includes(clipBrightness(c)))
-        if (bm.length < 2) bm = BG_LIBRARY.filter(c => c.kind === 'video' && bset.includes(clipBrightness(c)))
+        if (bm.length < 2) bm = allVideos.filter(c => bset.includes(clipBrightness(c)))
         if (bm.length >= 1) pool = bm
       }
       // Speed filter (soft): keep the chosen motion levels, fall back if too few.
@@ -1547,7 +1562,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     // when the voted genre actually changes, so a stable song doesn't recolour every clip.
     const changed = known !== lastAutoFamilyRef.current
     lastAutoFamilyRef.current = known
-    setVideoMode(pick(src.modes)); setVideoLook(pick(src.looks))
+    // Auto stays on the CLEAN look: it fits a subtle grade + palette to the genre but never applies a
+    // full-frame transform (Mode) — the untransformed video is the nicest default. Users pick a Mode
+    // themselves in Advanced when they want one.
+    setVideoMode('none'); setVideoLook(pick(src.looks))
     if (changed || !known) setColorCfg(c => ({ ...c, paletteId: pick(src.palettes) }))
   }, [])
   autoApplyRef.current = applyAuto
@@ -2569,7 +2587,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           ))}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 8 }}>
-          {clipsByCategory(bgCat).filter(clip => (brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))) && (speedSet.length === 0 || speedSet.includes(clipSpeed(clip)))).map(clip => {
+          {[...clipsByCategory(bgCat), ...catalogPool.filter(c => c.category === bgCat)].filter(clip => (brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))) && (speedSet.length === 0 || speedSet.includes(clipSpeed(clip)))).map(clip => {
             const active = bgKind === 'library' && bgClip?.id === clip.id
             const bri = clipBrightness(clip)
             const BriIcon = bri === 'dark' ? Moon : bri === 'bright' ? Sun : Circle
@@ -2582,7 +2600,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               </button>
             )
           })}
-          {clipsByCategory(bgCat).filter(clip => (brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))) && (speedSet.length === 0 || speedSet.includes(clipSpeed(clip)))).length === 0 && (
+          {[...clipsByCategory(bgCat), ...catalogPool.filter(c => c.category === bgCat)].filter(clip => (brightnessSet.length === 0 || brightnessSet.includes(clipBrightness(clip))) && (speedSet.length === 0 || speedSet.includes(clipSpeed(clip)))).length === 0 && (
             <p style={{ gridColumn: '1 / -1', fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0' }}>No matching clips in {bgCat} — try another category or widen the brightness/speed filters.</p>
           )}
         </div>

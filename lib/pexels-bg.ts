@@ -77,15 +77,17 @@ export async function insertMany(rows: PexelsBg[]): Promise<number> {
   return added
 }
 
-export interface ListOpts { q?: string; category?: string; brightness?: string; speed?: string; status?: string; limit?: number; offset?: number }
+export interface ListOpts { q?: string; category?: string; brightness?: string; speed?: string; status?: string; limit?: number; offset?: number; order?: 'recent' | 'random' }
 
 export async function list(o: ListOpts = {}): Promise<PexelsBg[]> {
   await ensure()
   const status = o.status ?? 'active'
-  const limit = Math.min(200, o.limit ?? 60)
+  const limit = Math.min(500, o.limit ?? 60)
   const offset = o.offset ?? 0
   const q = (o.q ?? '').trim().toLowerCase()
-  // Search over title/category/tags. Keep it simple + index-friendly (small catalog).
+  // Search over title/category/tags. Keep it simple + index-friendly (small catalog). 'random' feeds
+  // the live shuffle pool with varied clips from across the whole catalogue.
+  const order = o.order === 'random' ? 'random()' : 'added_at DESC'
   const rows = await sql`
     SELECT * FROM pexels_bg
     WHERE (${status} = 'any' OR status = ${status})
@@ -93,7 +95,7 @@ export async function list(o: ListOpts = {}): Promise<PexelsBg[]> {
       AND (${o.brightness ?? ''} = '' OR brightness = ${o.brightness ?? ''})
       AND (${o.speed ?? ''} = '' OR speed = ${o.speed ?? ''})
       AND (${q} = '' OR lower(title) LIKE ${'%' + q + '%'} OR lower(category) LIKE ${'%' + q + '%'} OR EXISTS (SELECT 1 FROM unnest(tags) t WHERE lower(t) LIKE ${'%' + q + '%'}))
-    ORDER BY added_at DESC
+    ORDER BY ${sql.unsafe(order)}
     LIMIT ${limit} OFFSET ${offset}`
   return rows.map(toRow)
 }
