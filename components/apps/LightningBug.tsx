@@ -1114,7 +1114,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // Transient effect envelopes the EQ write reads (decay each frame) + timed effects.
   const zoomEnvRef = useRef(0); const shakeEnvRef = useRef(0); const hueSpinRef = useRef(0)
   const rgbUntilRef = useRef(0); const strobeUntilRef = useRef(0); const freezeHitUntilRef = useRef(0)
-  const spinEnvRef = useRef(0)                  // geometric rotate kick (decays)
+  const spinEnvRef = useRef(0)                  // geometric rotate/tilt kick (decays)
+  const spinMagRef = useRef(14)                 // tilt magnitude in deg — varies per fire (small ↔ big)
   const mirrorUntilRef = useRef(0); const mirrorSignRef = useRef(1)   // brief horizontal flip
   const invertUntilRef = useRef(0)             // brief colour invert
   const blackUntilRef = useRef(0)              // brief black-frame blink
@@ -1178,6 +1179,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const beatPeriodRef = useRef(0)              // ms per beat (60000 / grid bpm)
   const gridBpmRef = useRef(0)                 // the STABLE tempo the grid runs on (only confident reads move it)
   const bpmConfRef = useRef(0)                 // beat-interval consistency 0..1 (gates grid updates → no jitter)
+  const bpmDisagreeRef = useRef(0)             // consecutive reads that disagree with the locked tempo → re-lock only if sustained
+  const lastCutMsRef = useRef(0)               // perf.now of the last clip cut → safety net so nothing plays too long
   const bassPrevRef = useRef(0)                // previous-frame bass, for onset FLUX (rising-edge beat detection)
   const onsetFloorRef = useRef(0)              // slow floor of the onset flux — a beat = a flux peak above it
   const energyAvgRef = useRef(0)               // VERY slow song-average loudness → relative intensity (works for orchestral)
@@ -1510,6 +1513,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const commitHead = useCallback(() => {
     if (waitTimerRef.current) { clearTimeout(waitTimerRef.current); waitTimerRef.current = null }
     wantSwitchRef.current = false
+    lastCutMsRef.current = performance.now()   // safety-net timestamp: nothing plays much longer than a max shot
     // Choose WHICH queued clip to cut to (sync mode): usually the one whose colour CONTRASTS most with the
     // current clip (no two same-colour shots back-to-back); ~30% of the time prefer one whose motion
     // direction MATCHES for a seamless match-cut. Falls back to FIFO when scans aren't ready.
@@ -1634,7 +1638,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       case 'rgb': rgbUntilRef.current = now + 150; break
       case 'strobe': strobeUntilRef.current = now + 320; break
       case 'huespin': hueSpinRef.current = 1; break
-      case 'spin': spinEnvRef.current = 1; break
+      case 'spin': spinEnvRef.current = 1; spinMagRef.current = 6 + Math.random() * 20; break   // variable tilt: sometimes small, sometimes big
       case 'mirror': mirrorUntilRef.current = now + 200; mirrorSignRef.current = -1; break
       case 'invert': invertUntilRef.current = now + 130; break
       case 'blink': blackUntilRef.current = now + 90; break
@@ -1695,9 +1699,13 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       const bpm = bpmEmaRef.current
       const barMs = bpm > 0 ? Math.max(1000, Math.round((4 * 60000) / bpm)) : 4000
       shuffleTimerRef.current = setTimeout(() => {
+        const gridOwns = barSyncRef.current && beatPeriodRef.current > 0 && beatAnchorRef.current > 0
+        // SAFETY NET: never let a clip sit too long. If it's been >9s since the last cut (grid stalled, a
+        // clip failed to buffer, whatever), force a switch regardless of who's meant to own pacing.
+        if (performance.now() - lastCutMsRef.current > 9000) requestSwitch()
         // When Beat-sync/Auto has a locked grid, the bar clock OWNS cut pacing (section-paced, on downbeats)
         // — the timer stays out of the way. Otherwise (no clear beat) fall back to the classic random timing.
-        if (!(barSyncRef.current && beatPeriodRef.current > 0 && beatAnchorRef.current > 0)) {
+        else if (!gridOwns) {
           const ef = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 1.4 : energyBandRef.current === 'mid' ? 1.0 : 0.6) : 1
           const df = 0.7 + densityEmaRef.current * 0.8
           if (Math.random() < Math.min(1, switchChanceRef.current * ef * df)) requestSwitch()
@@ -2356,8 +2364,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               // ADAPTS to how busy/fast the song is: a busy, intense track earns more frequent accents, a
               // calm one stays sparse. busy 0..1 shrinks the global + per-band cooldowns.
               const busy = Math.min(1, songIntensityRef.current * 0.6 + densityEmaRef.current * 0.5)
-              const globalCd = 2600 - busy * 1500          // ~2.6s calm … ~1.1s busy
-              const cdMul = 1.3 - busy * 0.8               // per-band cooldown scale (1.3 calm … 0.5 busy)
+              const globalCd = 3600 - busy * 1500          // ~3.6s calm … ~2.1s busy (effects stay an accent, not busy)
+              const cdMul = 1.5 - busy * 0.7               // per-band cooldown scale (1.5 calm … 0.8 busy)
               const editMap = curClipPeopleRef.current ? PEOPLE_BAND_EDITS : BAND_EDITS   // focus flattering moves on people clips
               const spike = (b: 'bass' | 'mid' | 'high', val: number, k: number, cd: number) => {
                 const fa = bandFastRef.current, sl = bandSlowRef.current
@@ -2476,7 +2484,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               while (v > 175) v /= 2
               while (v < 70) v *= 2
               bpmEmaRef.current = v
-              if (now - lastBpmUiRef.current > 350) { lastBpmUiRef.current = now; setBpm(Math.round(v)) }
+              // Show the STABLE grid tempo once locked (not the jumpy raw read) so the readout doesn't flap.
+              if (now - lastBpmUiRef.current > 350) { lastBpmUiRef.current = now; setBpm(Math.round(gridBpmRef.current > 0 ? gridBpmRef.current : v)) }
               // BPM CONFIDENCE — how consistent the recent intervals are (tight = trustworthy). Gates the
               // grid tempo so a stray missed/double beat can't yank it (was jumping to 80/116).
               if (b.length >= 4) { let mad = 0; for (const x of b) mad += Math.abs(x - med); mad /= b.length; bpmConfRef.current = Math.max(0, 1 - (mad / med) * 2.4) }
@@ -2484,10 +2493,19 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // ── Feed the BAR CLOCK: only CONFIDENT reads move the grid tempo; PLL-align the anchor; detect meter ──
             if (bpmEmaRef.current > 0) {
               const conf = bpmConfRef.current
-              if (conf > 0.4) {   // move the grid tempo only on a fairly-confident read (else coast on the lock → no jitter)
-                const nb = bpmEmaRef.current
-                if (gridBpmRef.current === 0) gridBpmRef.current = nb
-                else if (Math.abs(nb / gridBpmRef.current - 1) < 0.08 || conf > 0.8) gridBpmRef.current = gridBpmRef.current * 0.75 + nb * 0.25
+              if (conf > 0.4) {   // move the grid tempo only on a fairly-confident read
+                const raw = bpmEmaRef.current
+                if (gridBpmRef.current === 0) { gridBpmRef.current = raw; bpmDisagreeRef.current = 0 }
+                else {
+                  // Octave-normalize the read INTO the grid's range first — kills the half/double-time jumps
+                  // that made BPM flip around. Then only nudge GENTLY when it's genuinely close, so the tempo
+                  // drifts gradually and the machine can catch up instead of snapping.
+                  let nb = raw
+                  while (nb < gridBpmRef.current / 1.4) nb *= 2
+                  while (nb > gridBpmRef.current * 1.4) nb /= 2
+                  if (Math.abs(nb / gridBpmRef.current - 1) < 0.15) { gridBpmRef.current = gridBpmRef.current * 0.92 + nb * 0.08; bpmDisagreeRef.current = 0 }
+                  else if (++bpmDisagreeRef.current > 16) { gridBpmRef.current = raw; bpmDisagreeRef.current = 0 }   // a real, sustained tempo change → re-lock
+                }
                 beatPeriodRef.current = 60000 / gridBpmRef.current
               }
               const period = beatPeriodRef.current
@@ -2496,7 +2514,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 else {
                   const nIdx = Math.round((now - beatAnchorRef.current) / period)
                   const err = now - (beatAnchorRef.current + nIdx * period)
-                  if (Math.abs(err) < period * 0.35) beatAnchorRef.current += err * 0.12
+                  if (Math.abs(err) < period * 0.35) beatAnchorRef.current += err * 0.07   // gentle PLL nudge → smooth, no anchor jumps
                   // TIME-SIGNATURE: accumulate the kick accent under BOTH a 3- and 4-beat grouping; whichever is
                   // more "peaked" (one dominant slot) is the meter. Bias to 4/4; only pick 3/4 when clearly peaked.
                   // Use the RAW low-band level as the accent weight (punchEnv saturates at 1.0, which would
@@ -2535,15 +2553,16 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             if (montageBeatsRef.current > 0 && barSyncRef.current && idxNow > lastMontageBeatRef.current) {
               lastMontageBeatRef.current = idxNow; montageBeatsRef.current--; requestSwitch()
             }
-            // Find the next downbeat and fire LEAD ms EARLY (anticipation cut) so incoming motion lands ON the "1".
-            let nIdx = Math.ceil(posBeats - 1e-6)
-            while ((((nIdx - downbeatOffsetRef.current) % bpb) + bpb) % bpb !== 0) nIdx++
-            const tNextDown = beatAnchorRef.current + nIdx * period
-            // Vary the cut timing like a real editor: ~half land a hair EARLY (anticipation, so motion resolves
-            // on the "1"), ~half land ON the beat. Drop-montage cuts are always on-beat (idxNow path above).
+            // Next downbeat, CROSSING-based (reliable — advances with wall time; no ceil race). phaseNow===0
+            // means we're ON the downbeat now; otherwise it's `bpb - phaseNow` beats ahead.
+            const phaseNow = (((idxNow - downbeatOffsetRef.current) % bpb) + bpb) % bpb
+            const nextDownIdx = idxNow + (phaseNow === 0 ? 0 : bpb - phaseNow)
+            const tNextDown = beatAnchorRef.current + nextDownIdx * period
+            // Vary the cut timing like a real editor: with a bit of LEAD it lands a hair EARLY (anticipation,
+            // so incoming motion resolves on the "1"); with LEAD 0 it lands ON the beat. Rolled per cut.
             const LEAD = nextLeadRef.current
-            if (nIdx !== lastFiredDownbeatRef.current && now >= tNextDown - LEAD) {
-              lastFiredDownbeatRef.current = nIdx; lastDownbeatRef.current = tNextDown; barCountRef.current++
+            if (nextDownIdx !== lastFiredDownbeatRef.current && now >= tNextDown - LEAD) {
+              lastFiredDownbeatRef.current = nextDownIdx; lastDownbeatRef.current = tNextDown; barCountRef.current++
               nextLeadRef.current = Math.random() < 0.5 ? 0 : 30 + Math.random() * 30   // roll the NEXT cut's timing (on-beat vs 30-60ms early)
               // Section detection: L1 distance of this bar's signature vs the running section average.
               const sig = [Math.min(1, energyEmaRef.current * 3), bassRatioRef.current, brightRatioRef.current, densityEmaRef.current]
@@ -2573,7 +2592,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 // Shot length by section, per the research (~3.5s chorus, ~5-6s verse): chorus/drop 2 bars,
                 // verse 3, intro/breakdown 6 — then the genre's holdMul stretches/tightens it.
                 const paceBars = Math.max(1, Math.round((e > 0.55 ? 2 : e > 0.32 ? 3 : 6) * ge.holdMul))
-                if (bigUp && ge.montage) { montageBeatsRef.current = bpb + 2; lastMontageBeatRef.current = nIdx - 1 }   // drop montage only for genres that suit it
+                if (bigUp && ge.montage) { montageBeatsRef.current = bpb + 2; lastMontageBeatRef.current = idxNow }   // drop montage only for genres that suit it
                 if (boundary || pendingBarSwitchRef.current || barsSinceCutRef.current >= paceBars) {
                   pendingBarSwitchRef.current = false; sectionCutRef.current = boundary; barsSinceCutRef.current = 0; requestSwitch()
                 }
@@ -2605,7 +2624,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // gets an intensity, so it stays selective (not every song, not every hit). Also reset the
             // look budget (so the new song gets a fresh look, then holds it) + the key detector.
             if (!nowIdle) {
-              songEditRef.current = { on: Math.random() < 0.45, intensity: 0.3 + Math.random() * 0.3 }
+              songEditRef.current = { on: Math.random() < 0.4, intensity: 0.25 + Math.random() * 0.25 }
               songLookCountRef.current = 0; chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []
               contentClassRef.current = Math.random() < 0.4 ? 'anim' : 'live'   // pick a class for the song; applyAuto refines by genre
               // Re-anchor the bar clock + sections to the new song's start ("backfill from the beginning").
@@ -2700,9 +2719,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // Crop-reframe jump (auto-editor 'crop'): while active, zoom into the rolled random region.
             const cropOn = now < cropUntilRef.current
             const cS = cropOn ? cropScaleRef.current : 1, cX = cropOn ? cropXRef.current : 0, cY = cropOn ? cropYRef.current : 0
-            const baseS = (1 + Math.min(1, p) * 0.035 + zoomAdd) * cS
             const mir = now < mirrorUntilRef.current ? mirrorSignRef.current : 1        // brief horizontal flip
-            const rot = spinEnvRef.current * 14                                          // quick rotate kick (deg)
+            const rot = spinEnvRef.current * spinMagRef.current                          // tilt kick (deg), variable magnitude
+            // Zoom just enough to cover the black corners a tilt would expose (cos+sin·aspect, aspect≈1.8).
+            const tiltRad = rot * Math.PI / 180
+            const tiltZoom = spinEnvRef.current > 0.01 ? Math.cos(tiltRad) + Math.sin(Math.abs(tiltRad)) * 1.8 : 1
+            const baseS = (1 + Math.min(1, p) * 0.035 + zoomAdd) * cS * tiltZoom
             bgFilterRef.current.style.transform = `scale(${(baseS * mir).toFixed(3)}, ${baseS.toFixed(3)}) rotate(${rot.toFixed(1)}deg) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(${cX.toFixed(1)}%, ${cY.toFixed(1)}%)`
           }
         }
