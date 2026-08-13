@@ -899,6 +899,13 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [beatColor, setBeatColor] = useState(false)         // cycle colours on each detected beat
   const [bpm, setBpm] = useState(0)                         // detected tempo (0 = not locked yet)
   const beatColorRef = useRef(false); beatColorRef.current = beatColor
+  // Cut on the beat — switch the background clip on musical phrases (a hard cut, like a real edit,
+  // not a random per-bar chance). Pros cut on downbeats, not every beat, so we cut every N kicks.
+  const [cutOnBeat, setCutOnBeat] = useState(false)
+  const cutOnBeatRef = useRef(false); cutOnBeatRef.current = cutOnBeat
+  const [cutEvery, setCutEvery] = useState(8)               // kicks per cut (8 ≈ two bars of 4/4)
+  const cutEveryRef = useRef(8); cutEveryRef.current = cutEvery
+  const beatCutCountRef = useRef(0)
   const bassAvgRef = useRef(0)                              // running bass energy, for onset detection
   const lastBeatRef = useRef(0)                            // debounce beats
   const prevBeatRef = useRef(0)                            // for the inter-beat interval → BPM
@@ -1641,6 +1648,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             onsetEmaRef.current = onsetEmaRef.current * 0.9 + punchEnvRef.current * 0.1
             const iv = now - prevBeatRef.current; prevBeatRef.current = now; lastBeatRef.current = now
             beatShiftRef.current++
+            // Cut on the beat: hard-switch the clip every Nth kick (a real edit-style cut). No-ops
+            // safely if there's nothing queued to cut to.
+            if (cutOnBeatRef.current && ++beatCutCountRef.current % Math.max(1, cutEveryRef.current) === 0) requestSwitch()
             if (iv > 250 && iv < 2000) {
               // Median of the last 6 intervals: robust to missed/double beats, and re-locks
               // within a few beats when the song (or tempo) changes.
@@ -2154,7 +2164,23 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             <Shuffle size={14} /> Auto-shuffle clips
           </button>
           {autoShuffle && <button type="button" onClick={nextClip} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}><SkipForward size={13} /> Next</button>}
+          {/* Cut on beat — hard-cut clips on the music (an edit, not a slow shuffle). */}
+          <button type="button" onClick={() => { setCutOnBeat(v => { const nv = !v; if (nv) { setAutoShuffle(true); setBgKind('library'); beatCutCountRef.current = 0 } return nv }) }}
+            title="Hard-cut to a new clip on the beat, like a real edit"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: cutOnBeat ? 'var(--accent)' : 'var(--bg-card)', color: cutOnBeat ? '#0e0d12' : 'var(--text-secondary)' }}>
+            <Activity size={14} /> Cut on beat
+          </button>
         </div>
+        {cutOnBeat && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0 4px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Cut every</span>
+            {[4, 8, 16].map(n => (
+              <button key={n} type="button" onClick={() => setCutEvery(n)}
+                style={{ padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: cutEvery === n ? 'var(--accent)' : 'var(--bg-card)', color: cutEvery === n ? '#0e0d12' : 'var(--text-secondary)' }}>{n === 4 ? '1 bar' : n === 8 ? '2 bars' : '4 bars'}</button>
+            ))}
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· cuts land on downbeats{bpm ? ` · ~${bpm} BPM` : ''}</span>
+          </div>
+        )}
         {autoShuffle && (
           <div style={{ margin: '6px 0 4px' }}>
             <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 6px' }}>Shuffle from — pick the categories for your set, or leave all off for everything:</p>
