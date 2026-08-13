@@ -397,6 +397,28 @@ const SWITCH_TRANSITIONS: { id: string; dur: number; o0: string; t0: string; f0:
   { id: 'spin',     dur: 220, o0: '0',    t0: 'scale(1.12) rotate(3deg)', f0: 'none', tier: 2 },       // rotate-in
 ]
 
+// Categories that read as ANIMATION / motion-graphics vs live-action footage. Mixing the two too much
+// looks messy, so a song mostly stays on ONE class (Brae) — animation suits electronic especially.
+const ANIMATED_CATS = new Set<string>(['Abstract', 'Patterns', 'Neon', 'Light'])
+const isAnimClip = (cat: string) => ANIMATED_CATS.has(cat)
+
+// GENRE → EDITING style. Universal, intensity-scaled behavior is the baseline; this just NUDGES it per
+// genre. holdMul scales the cut pacing (metal fast, lofi/orchestral hold long); tierCap limits transition
+// energy; snareAccent flashes on the backbeat (rock/metal); montage allows the drop burst; anim biases the
+// content class. Fields are read via genreEditFor(family); unknown genres fall back to a neutral default.
+type GenreEdit = { holdMul: number; tierCap: number; snareAccent: boolean; montage: boolean; anim: 'anim' | 'live' | null }
+const GENRE_EDIT: Record<string, GenreEdit> = {
+  'Electronic':   { holdMul: 0.8, tierCap: 2, snareAccent: false, montage: true,  anim: 'anim' },
+  'Rock / Band':  { holdMul: 0.8, tierCap: 2, snareAccent: true,  montage: true,  anim: 'live' },  // hard rock/metal/grunge
+  'Hip-hop':      { holdMul: 0.9, tierCap: 2, snareAccent: true,  montage: true,  anim: 'live' },
+  'Pop':          { holdMul: 1.0, tierCap: 2, snareAccent: false, montage: true,  anim: null },
+  'Lofi / Chill': { holdMul: 1.6, tierCap: 0, snareAccent: false, montage: false, anim: null },
+  'Ambient':      { holdMul: 2.0, tierCap: 0, snareAccent: false, montage: false, anim: 'anim' },
+  'Orchestral':   { holdMul: 1.8, tierCap: 1, snareAccent: false, montage: false, anim: 'live' },
+}
+const GENRE_EDIT_DEFAULT: GenreEdit = { holdMul: 1.0, tierCap: 2, snareAccent: false, montage: true, anim: null }
+const genreEditFor = (family: string | undefined | null) => (family && GENRE_EDIT[family]) || GENRE_EDIT_DEFAULT
+
 // Quick tag filters for the catalog search — the most common, useful tags across the ~15k clips.
 const POPULAR_TAGS = ['neon', 'city', 'nature', 'ocean', 'forest', 'night', 'rain', 'sunset', 'abstract', 'smoke', 'clouds', 'water', 'lights', 'timelapse', 'mountains', 'beach', 'aerial', 'underwater', 'ink', 'vhs']
 
@@ -1127,6 +1149,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const beatInBarRef = useRef(0)               // 0..beatsPerBar-1 (for the readout)
   const lastDownbeatRef = useRef(0)            // perf.now of the last downbeat (drives the pulse)
   const lastFiredDownbeatRef = useRef(-1)      // last downbeat index we ACTED on (anticipation-cut dedup)
+  const lastBeatIdxRef = useRef(-1)            // last beat index crossed (for the snare/backbeat accent flash)
   const pendingBarSwitchRef = useRef(false)    // a switch is queued to fire on the next downbeat
   const barsSinceCutRef = useRef(0)            // bars since the last cut → cut PACING follows the section
   const montageBeatsRef = useRef(0)            // >0 = drop montage: cut every beat for this many beats
@@ -1302,6 +1325,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // read, so it doesn't churn on an intro, a breakdown, or one ambiguous bar.
   const familyVotesRef = useRef<Family[]>([])
   const votedFamilyRef = useRef<{ family: Family; conf: number } | null>(null)
+  const contentClassRef = useRef<'anim' | 'live' | null>(null)   // this song's content class (animation vs live-action) → keep a song mostly one class
   const [density, setDensity] = useState(0)                // readout
   const lastDensityUiRef = useRef(0)
   const onsetEmaRef = useRef(0.3)                          // typical kick strength → auto-gains the drum punch
@@ -1381,6 +1405,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         const want = MOOD_LOOK[moodFrom(keyRef.current.mode, energyBandRef.current)].brightness
         if (want.length) { const mm = pool.filter(c => want.includes(clipBrightness(c))); if (mm.length >= 3) pool = mm }
       }
+      // CONTENT-CLASS cohesion: keep a song mostly animation OR mostly live-action (mixing looks messy).
+      const cc = contentClassRef.current
+      if (cc) { const m = pool.filter(c => isAnimClip(c.category) === (cc === 'anim')); if (m.length >= 3) pool = m }
     }
     if (pool.length < 2) return null
     // Tag cohesion: stay on ONE theme (category) for a run of clips — usually a few, sometimes a whole
@@ -1689,6 +1716,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     const intensity = songIntensityRef.current
     let maxTier = intensity > 0.75 ? 2 : intensity > 0.4 ? 1 : 0
     if (brightRatioRef.current > 0.5 && maxTier > 0) maxTier -= 1   // bright/airy songs → one notch gentler
+    maxTier = Math.min(maxTier, genreEditFor(votedFamilyRef.current?.family).tierCap)   // genre also caps transition energy (lofi/ambient gentle)
     const pool = SWITCH_TRANSITIONS.filter(t => t.tier <= maxTier)
     const tr = pool[Math.floor(Math.random() * pool.length)]
     el.style.transition = 'none'
@@ -1907,6 +1935,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     // song (on the first fit, a genre change, or after a long stretch) so it doesn't restyle every cut.
     const v = votedFamilyRef.current
     const known = v && v.conf >= 0.34 && GENRE_LOOK[v.family] ? v.family : null
+    if (known) { const ge = genreEditFor(known); if (ge.anim) contentClassRef.current = ge.anim }   // lock the content class to the genre's preference
     const src = (known && GENRE_LOOK[known]) || ENERGY_LOOK[energyBandRef.current]
     const familyChanged = known !== lastAutoFamilyRef.current
     lastAutoFamilyRef.current = known
@@ -2093,11 +2122,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
     prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3; songIntensityRef.current = 0
     bassPrevRef.current = 0; onsetFloorRef.current = 0; energyAvgRef.current = 0
+    contentClassRef.current = Math.random() < 0.4 ? 'anim' : 'live'
     lastBeatRef.current = 0; prevBeatRef.current = 0
     chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []; binPcRef.current = null; binWRef.current = null; songLookCountRef.current = 0
     beatAnchorRef.current = 0; beatPeriodRef.current = 0; gridBpmRef.current = 0; bpmConfRef.current = 0; barCountRef.current = 0; beatInBarRef.current = 0
     beatsPerBarRef.current = 4; accent3Ref.current = [0, 0, 0]; accent4Ref.current = [0, 0, 0, 0]; downbeatOffsetRef.current = 0
-    lastFiredDownbeatRef.current = -1; pendingBarSwitchRef.current = false; barsSinceCutRef.current = 0
+    lastFiredDownbeatRef.current = -1; lastBeatIdxRef.current = -1; pendingBarSwitchRef.current = false; barsSinceCutRef.current = 0
     montageBeatsRef.current = 0; lastMontageBeatRef.current = -1; prevSecEnergyRef.current = 0; pendingSectionRef.current = null
     secSigRef.current = [0, 0, 0, 0]; secBarsRef.current = 0; sectionRef.current = 'intro'; sectionIdxRef.current = 0; secChangeBarsRef.current = 0
   }, [])
@@ -2234,8 +2264,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           bass /= 12 * 255
           bassAvgRef.current = bassAvgRef.current * 0.94 + bass * 0.06
           // Onset FLUX = the rising edge of the low band (the kick ATTACK). Beats are detected off this,
-          // not off the sustained level — so a soft off-beat kick right after a loud downbeat still shows a
-          // clear attack and gets caught (the old level threshold missed them → grid wouldn't lock).
+          // not the sustained level, so a soft off-beat kick after a loud downbeat still shows a clear attack
+          // and gets caught (the old level threshold missed them → the grid wouldn't lock).
           const bassFlux = Math.max(0, bass - bassPrevRef.current); bassPrevRef.current = bass
           onsetFloorRef.current = onsetFloorRef.current * 0.995 + bassFlux * 0.005   // slow floor: a loud kick can't suppress the next
           // Sub/bass transient → a "punch" envelope: how far the low end jumps above its own
@@ -2420,6 +2450,14 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const posBeats = (now - beatAnchorRef.current) / period
             const idxNow = Math.floor(posBeats)
             beatInBarRef.current = (((idxNow - downbeatOffsetRef.current) % bpb) + bpb) % bpb
+            // SNARE / BACKBEAT accent (rock / metal / hip-hop): flash on beats 2 & 4 — where the snare
+            // cracks — for genres that call for it. Fires on each new beat.
+            if (idxNow > lastBeatIdxRef.current) {
+              lastBeatIdxRef.current = idxNow
+              if (barSyncRef.current && bpb === 4 && (beatInBarRef.current === 1 || beatInBarRef.current === 3) && genreEditFor(votedFamilyRef.current?.family).snareAccent) {
+                beatFlashRef.current = Math.max(beatFlashRef.current, 0.7); beatFlashColorRef.current = '#ffffff'
+              }
+            }
             // DROP MONTAGE: a rapid burst of on-every-beat cuts right after a big energy jump (a drop).
             if (montageBeatsRef.current > 0 && barSyncRef.current && idxNow > lastMontageBeatRef.current) {
               lastMontageBeatRef.current = idxNow; montageBeatsRef.current--; requestSwitch()
@@ -2454,9 +2492,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               // boundaries cut now to a contrasting clip; a big up-jump kicks off a ~1-bar drop montage.
               barsSinceCutRef.current++
               if (barSyncRef.current) {
+                const ge = genreEditFor(votedFamilyRef.current?.family)
                 const e = sig[0]
-                const paceBars = e > 0.55 ? 2 : e > 0.32 ? 4 : 8
-                if (bigUp) { montageBeatsRef.current = bpb + 2; lastMontageBeatRef.current = nIdx - 1 }
+                const paceBars = Math.max(1, Math.round((e > 0.55 ? 2 : e > 0.32 ? 4 : 8) * ge.holdMul))   // genre paces the cuts (metal fast, lofi/orchestral hold)
+                if (bigUp && ge.montage) { montageBeatsRef.current = bpb + 2; lastMontageBeatRef.current = nIdx - 1 }   // drop montage only for genres that suit it
                 if (boundary || pendingBarSwitchRef.current || barsSinceCutRef.current >= paceBars) {
                   pendingBarSwitchRef.current = false; sectionCutRef.current = boundary; barsSinceCutRef.current = 0; requestSwitch()
                 }
@@ -2490,12 +2529,13 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             if (!nowIdle) {
               songEditRef.current = { on: Math.random() < 0.6, intensity: 0.45 + Math.random() * 0.5 }
               songLookCountRef.current = 0; chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []
+              contentClassRef.current = Math.random() < 0.4 ? 'anim' : 'live'   // pick a class for the song; applyAuto refines by genre
               // Re-anchor the bar clock + sections to the new song's start ("backfill from the beginning").
               beatIvBufRef.current = []; bpmEmaRef.current = 0   // drop the previous song's tempo so we re-lock cleanly
               onsetFloorRef.current = 0; energyAvgRef.current = 0   // re-baseline the onset floor + loudness average
               beatAnchorRef.current = 0; beatPeriodRef.current = 0; gridBpmRef.current = 0; bpmConfRef.current = 0; barCountRef.current = 0
               beatInBarRef.current = 0; beatsPerBarRef.current = 4; accent3Ref.current = [0, 0, 0]; accent4Ref.current = [0, 0, 0, 0]; downbeatOffsetRef.current = 0
-              lastFiredDownbeatRef.current = -1; pendingBarSwitchRef.current = false; barsSinceCutRef.current = 0
+              lastFiredDownbeatRef.current = -1; lastBeatIdxRef.current = -1; pendingBarSwitchRef.current = false; barsSinceCutRef.current = 0
               montageBeatsRef.current = 0; lastMontageBeatRef.current = -1; prevSecEnergyRef.current = 0; pendingSectionRef.current = null
               secSigRef.current = [0, 0, 0, 0]; secBarsRef.current = 0; sectionRef.current = 'intro'; sectionIdxRef.current = 0; secChangeBarsRef.current = 0
             }
