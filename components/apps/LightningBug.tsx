@@ -354,6 +354,9 @@ const EDITS: { id: string; name: string; kind: 'off' | 'motion' | 'object' | 'vi
   { id: 'isolate', name: 'Colour-isolate', kind: 'object', desc: 'Keep the subject in colour; drain the rest to grey.' },
 ]
 
+// Quick tag filters for the catalog search — the most common, useful tags across the ~15k clips.
+const POPULAR_TAGS = ['neon', 'city', 'nature', 'ocean', 'forest', 'night', 'rain', 'sunset', 'abstract', 'smoke', 'clouds', 'water', 'lights', 'timelapse', 'mountains', 'beach', 'aerial', 'underwater', 'ink', 'vhs']
+
 // Map the displayed video (object-fit: cover) so region boxes land on the right pixels despite the crop.
 function coverMap(W: number, H: number, vw: number, vh: number) {
   const s = Math.max(W / vw, H / vh); const dw = vw * s, dh = vh * s
@@ -1081,13 +1084,16 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [pexHover, setPexHover] = useState<string | null>(null)   // tile being hover-previewed (video loads only then)
   const PEX_PAGE = 36
   // Search the tagged catalog. append=true pages in more (offset = current count) for infinite-ish browsing.
-  const searchPexels = useCallback(async (append = false) => {
+  const searchPexels = useCallback(async (append = false, qOverride?: string) => {
+    const q = qOverride ?? pexQuery
     setPexLoading(true); setPexSearched(true)
     try {
       const bset = brightnessSetRef.current
       const bp = bset.length === 1 ? `&brightness=${bset[0]}` : ''
+      const sset = speedSetRef.current
+      const sp = sset.length === 1 ? `&speed=${sset[0]}` : ''
       const offset = append ? pexResults.length : 0
-      const r = await fetch(`/api/pexels-bg?q=${encodeURIComponent(pexQuery)}${bp}&limit=${PEX_PAGE}&offset=${offset}`)
+      const r = await fetch(`/api/pexels-bg?q=${encodeURIComponent(q)}${bp}${sp}&limit=${PEX_PAGE}&offset=${offset}`)
       const d = await r.json()
       const results = d.results ?? []
       setPexResults(prev => (append ? [...prev, ...results] : results))
@@ -2544,6 +2550,16 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           <input value={pexQuery} onChange={e => setPexQuery(e.target.value)} placeholder="e.g. neon, ink in water, forest…" style={{ flex: 1, minWidth: 0, padding: '8px 11px', borderRadius: 9, fontSize: 13, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)' }} />
           <button type="submit" disabled={pexLoading} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 14px', borderRadius: 9, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#0e0d12', opacity: pexLoading ? 0.6 : 1 }}><Search size={14} /> {pexLoading ? '…' : 'Search'}</button>
         </form>
+        {/* Tag filters — one tap searches the whole catalogue by that tag. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+          {POPULAR_TAGS.map(tag => {
+            const on = pexQuery.trim().toLowerCase() === tag
+            return (
+              <button key={tag} type="button" onClick={() => { const nq = on ? '' : tag; setPexQuery(nq); searchPexels(false, nq) }}
+                style={{ padding: '4px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: on ? 'var(--accent)' : 'var(--bg-card)', color: on ? '#0e0d12' : 'var(--text-secondary)' }}>{tag}</button>
+            )
+          })}
+        </div>
         {pexSearched && (
           pexResults.length ? (
             <>
