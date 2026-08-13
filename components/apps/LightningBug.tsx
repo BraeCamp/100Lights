@@ -1042,6 +1042,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const chromaRef = useRef(new Float32Array(12))
   const frameChromaRef = useRef(new Float32Array(12))
   const binPcRef = useRef<Int16Array | null>(null)   // bin → pitch class lookup (computed once per audio session)
+  const binWRef = useRef<Float32Array | null>(null)  // bin → chroma weight (bass-heavy: the root lives in the bass)
   const ampLutRef = useRef<Float32Array | null>(null)   // byte-dB → linear amplitude lookup
   const lastKeyMsRef = useRef(0)
   const keyVotesRef = useRef<KeyResult[]>([])        // recent key estimates → plurality vote for stability
@@ -1893,7 +1894,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
     prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3
     lastBeatRef.current = 0; prevBeatRef.current = 0
-    chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []; binPcRef.current = null; songLookCountRef.current = 0
+    chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []; binPcRef.current = null; binWRef.current = null; songLookCountRef.current = 0
   }, [])
 
   // Record ~7s off the audio tap and ask the recognizer what's playing (once at a time).
@@ -2067,9 +2068,16 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             if (now < strobeUntilRef.current) { beatFlashRef.current = (Math.floor(now / 50) % 2) ? 0.85 : 0.06; beatFlashColorRef.current = '#ffffff' }
             // Key / scale: accumulate a chroma profile (bins → pitch classes) and estimate key + mode.
             if (!binPcRef.current || binPcRef.current.length !== f.freq.length) {
-              const sr = audioRef.current?.sampleRate ?? 44100, N = a.fftSize, map = new Int16Array(f.freq.length)
-              for (let i = 0; i < f.freq.length; i++) { const fr = i * sr / N; map[i] = (fr < 60 || fr > 3000) ? -1 : ((Math.round(12 * Math.log2(fr / 440) + 69) % 12) + 12) % 12 }
-              binPcRef.current = map
+              const sr = audioRef.current?.sampleRate ?? 44100, N = a.fftSize, map = new Int16Array(f.freq.length), wmap = new Float32Array(f.freq.length)
+              for (let i = 0; i < f.freq.length; i++) {
+                const fr = i * sr / N
+                map[i] = (fr < 60 || fr > 3000) ? -1 : ((Math.round(12 * Math.log2(fr / 440) + 69) % 12) + 12) % 12
+                // Bass-heavy weighting: the tonic root sits in the bass, and it's what separates a key from
+                // its relative major/minor (which share all 7 notes). Weighting the low register more makes
+                // the accumulated chroma lean toward the true tonic instead of the relative key.
+                wmap[i] = fr < 260 ? 1.6 : fr < 520 ? 1.25 : 1.0
+              }
+              binPcRef.current = map; binWRef.current = wmap
               // getByteFrequencyData is dB-scaled (min/max Decibels) — convert back to LINEAR amplitude so
               // chroma weights match real magnitude (the dB domain over-weights noise/harmonics → wrong key).
               const lo = a.minDecibels, hi = a.maxDecibels, lut = new Float32Array(256)
@@ -2077,8 +2085,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               ampLutRef.current = lut
             }
             const fc = frameChromaRef.current; fc.fill(0)
-            const pcMap = binPcRef.current, lut = ampLutRef.current!
-            for (let i = 2; i < f.freq.length; i++) { const pc = pcMap[i]; if (pc >= 0) fc[pc] += lut[f.freq[i]] }
+            const pcMap = binPcRef.current, lut = ampLutRef.current!, wm = binWRef.current!
+            for (let i = 2; i < f.freq.length; i++) { const pc = pcMap[i]; if (pc >= 0) fc[pc] += lut[f.freq[i]] * wm[i] }
             const chr = chromaRef.current
             // Running accumulation (near-sum, gentle 0.9997 decay to bound it + adapt over a long mix).
             // A short window just reports the CURRENT CHORD; the summed profile lets Krumhansl extract the
