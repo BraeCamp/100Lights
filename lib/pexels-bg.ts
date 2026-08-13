@@ -22,6 +22,7 @@ export interface PexelsBg {
   author: string
   authorUrl: string
   status: 'active' | 'hidden'
+  blockEdits?: string[]   // auto-editor effect ids DISABLED for this clip (curated in /admin/lightning-bug)
   addedAt?: string
 }
 
@@ -45,8 +46,10 @@ async function ensure() {
       author     TEXT NOT NULL DEFAULT '',
       author_url TEXT NOT NULL DEFAULT '',
       status     TEXT NOT NULL DEFAULT 'active',
+      block_edits TEXT[] NOT NULL DEFAULT '{}',
       added_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`
+  await sql`ALTER TABLE pexels_bg ADD COLUMN IF NOT EXISTS block_edits TEXT[] NOT NULL DEFAULT '{}'`   // migrate existing tables
   await sql`CREATE INDEX IF NOT EXISTS pexels_bg_status_idx ON pexels_bg (status, category)`
   ready = true
 }
@@ -58,7 +61,8 @@ function toRow(r: Record<string, unknown>): PexelsBg {
     width: Number(r.width ?? 0), height: Number(r.height ?? 0), duration: Number(r.duration ?? 0),
     category: String(r.category ?? 'Abstract'), brightness: (r.brightness as Brightness) ?? 'mid', speed: (r.speed as Speed) ?? 'standard',
     tags: (r.tags as string[] | null) ?? [], author: String(r.author ?? ''), authorUrl: String(r.author_url ?? ''),
-    status: (r.status as 'active' | 'hidden') ?? 'active', addedAt: r.added_at ? String(r.added_at) : undefined,
+    status: (r.status as 'active' | 'hidden') ?? 'active', blockEdits: (r.block_edits as string[] | null) ?? [],
+    addedAt: r.added_at ? String(r.added_at) : undefined,
   }
 }
 
@@ -107,7 +111,7 @@ export async function countActive(): Promise<number> {
 }
 
 // Per-field updates (Neon template can't do dynamic SET lists cleanly, so update explicitly).
-export async function patchRow(id: string, patch: Partial<Pick<PexelsBg, 'title' | 'category' | 'brightness' | 'speed' | 'tags' | 'status'>>): Promise<void> {
+export async function patchRow(id: string, patch: Partial<Pick<PexelsBg, 'title' | 'category' | 'brightness' | 'speed' | 'tags' | 'status' | 'blockEdits'>>): Promise<void> {
   await ensure()
   if (patch.title != null) await sql`UPDATE pexels_bg SET title = ${patch.title} WHERE id = ${id}`
   if (patch.category != null) await sql`UPDATE pexels_bg SET category = ${patch.category} WHERE id = ${id}`
@@ -115,6 +119,7 @@ export async function patchRow(id: string, patch: Partial<Pick<PexelsBg, 'title'
   if (patch.speed != null) await sql`UPDATE pexels_bg SET speed = ${patch.speed} WHERE id = ${id}`
   if (patch.tags != null) await sql`UPDATE pexels_bg SET tags = ${patch.tags} WHERE id = ${id}`
   if (patch.status != null) await sql`UPDATE pexels_bg SET status = ${patch.status} WHERE id = ${id}`
+  if (patch.blockEdits != null) await sql`UPDATE pexels_bg SET block_edits = ${patch.blockEdits} WHERE id = ${id}`
 }
 
 export async function remove(id: string): Promise<void> {

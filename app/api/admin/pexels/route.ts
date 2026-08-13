@@ -47,7 +47,7 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   if (!await isAdmin()) return Response.json({ error: 'Unauthorized' }, { status: 401 })
-  let body: { id?: string; title?: string; category?: string; brightness?: string; speed?: string; tags?: string[]; status?: string }
+  let body: { id?: string; title?: string; category?: string; brightness?: string; speed?: string; tags?: string[]; status?: string; blockEdits?: string[] }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
   if (!body.id) return Response.json({ error: 'Missing id' }, { status: 400 })
   await patchRow(body.id, {
@@ -55,6 +55,7 @@ export async function PATCH(req: Request) {
     brightness: body.brightness as 'bright' | 'mid' | 'dark' | undefined,
     speed: body.speed as 'fast' | 'standard' | 'slow' | undefined,
     tags: body.tags, status: body.status as 'active' | 'hidden' | undefined,
+    blockEdits: body.blockEdits,
   })
   return Response.json({ ok: true })
 }

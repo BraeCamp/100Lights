@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     })
     // Trim to what the browser needs.
     return Response.json({
-      results: rows.map(r => ({ id: r.id, title: r.title, mp4: r.mp4, poster: r.poster, category: r.category, brightness: r.brightness, speed: r.speed, tags: r.tags, author: r.author })),
+      results: rows.map(r => ({ id: r.id, title: r.title, mp4: r.mp4, poster: r.poster, category: r.category, brightness: r.brightness, speed: r.speed, tags: r.tags, author: r.author, blockEdits: r.blockEdits })),
     })
   } catch {
     return Response.json({ results: [] })   // table may not exist yet

@@ -31,6 +31,7 @@ export interface BgClip {
   energy?: Energy   // used to match the song's energy when auto-shuffling (default: by category)
   brightness?: Brightness   // overrides the measured poster brightness (BRIGHTNESS_MAP); for the dark-room filter
   speed?: Speed     // overrides MOTION_MAP (catalog clips carry their own tagged speed)
+  blockEdits?: string[]   // auto-editor effect ids disabled for this clip (curated in /admin/lightning-bug)
 }
 
 // Measured, flash-aware brightness of the clip (see scripts/tag-bg-clips.mjs). Lets users filter

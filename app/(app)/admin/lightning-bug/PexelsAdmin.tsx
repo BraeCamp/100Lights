@@ -4,10 +4,12 @@ import { BG_CATEGORIES } from '@/lib/bg-library'
 
 interface Row {
   id: string; title: string; mp4: string; poster: string; category: string
-  brightness: string; speed: string; tags: string[]; author: string; status: string
+  brightness: string; speed: string; tags: string[]; author: string; status: string; blockEdits?: string[]
 }
 const BRIGHT = ['dark', 'mid', 'bright']
 const SPEED = ['slow', 'standard', 'fast']
+// Auto-editor effects that can be enabled/disabled per clip (matches EDIT_CMDS in LightningBug).
+const EFFECTS = ['cut', 'zoom', 'crop', 'skip', 'shake', 'flash', 'freeze', 'blink', 'spin', 'mirror', 'rgb', 'strobe', 'huespin', 'invert']
 
 const sel = { padding: '4px 6px', borderRadius: 7, fontSize: 12, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-secondary)' } as const
 
@@ -97,6 +99,18 @@ export default function PexelsAdmin() {
                 <select value={r.speed} onChange={e => patch(r.id, { speed: e.target.value })} style={sel}>{SPEED.map(s => <option key={s}>{s}</option>)}</select>
               </div>
               <input defaultValue={r.tags.join(', ')} onBlur={e => { const tags = e.target.value.split(',').map(t => t.trim()).filter(Boolean); patch(r.id, { tags }) }} placeholder="tags, comma separated" style={{ ...sel, padding: '5px 8px' }} />
+              {/* Per-clip auto-editor effects: click to disable one on this video (dim = off). Green = allowed. */}
+              <div>
+                <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 4 }}>Effects</div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {EFFECTS.map(fx => {
+                    const off = (r.blockEdits ?? []).includes(fx)
+                    return <button key={fx} type="button" title={off ? 'Disabled on this clip — click to enable' : 'Enabled — click to disable'}
+                      onClick={() => { const cur = new Set(r.blockEdits ?? []); if (cur.has(fx)) cur.delete(fx); else cur.add(fx); patch(r.id, { blockEdits: [...cur] }) }}
+                      style={{ padding: '2px 7px', borderRadius: 999, fontSize: 10.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', textDecoration: off ? 'line-through' : 'none', background: off ? 'transparent' : 'rgba(52,211,153,0.16)', color: off ? 'var(--text-muted)' : '#34d399', opacity: off ? 0.55 : 1 }}>{fx}</button>
+                  })}
+                </div>
+              </div>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <button type="button" onClick={() => patch(r.id, { status: r.status === 'hidden' ? 'active' : 'hidden' })} style={{ flex: 1, padding: '5px 8px', borderRadius: 7, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>{r.status === 'hidden' ? 'Unhide' : 'Hide'}</button>
                 <button type="button" onClick={() => del(r.id)} style={{ padding: '5px 10px', borderRadius: 7, fontSize: 11.5, fontWeight: 800, cursor: 'pointer', border: '1px solid #7f1d1d', background: 'transparent', color: '#f87171' }}>Delete</button>

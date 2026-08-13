@@ -1189,6 +1189,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const beatInBarRef = useRef(0)               // 0..beatsPerBar-1 (for the readout)
   const lastDownbeatRef = useRef(0)            // perf.now of the last downbeat (drives the pulse)
   const lastFiredDownbeatRef = useRef(-1)      // last downbeat index we ACTED on (anticipation-cut dedup)
+  const nextLeadRef = useRef(0)                // ms a cut fires BEFORE the downbeat — varies per cut (some early, some on-beat)
   const lastBeatIdxRef = useRef(-1)            // last beat index crossed (for the snare/backbeat accent flash)
   const pendingBarSwitchRef = useRef(false)    // a switch is queued to fire on the next downbeat
   const barsSinceCutRef = useRef(0)            // bars since the last cut → cut PACING follows the section
@@ -1249,8 +1250,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const speedSetRef = useRef<Speed[]>([]); speedSetRef.current = speedSet
   // Catalogue pool — a random batch from the ~15k tagged Pexels catalogue (lib/pexels-bg), converted
   // to clips so Auto-shuffle + the browse grid draw from the WHOLE catalogue, not just the bundled set.
-  const pexToClip = (r: { id: string; title: string; mp4: string; poster: string; category: string; brightness: Brightness; speed?: Speed }): BgClip =>
-    ({ id: r.id, category: r.category as BgCategory, title: r.title, kind: 'video', preview: r.poster, src: r.mp4, tint: 'linear-gradient(135deg,#1e1b4b,#0b1020)', brightness: r.brightness, speed: r.speed })
+  const pexToClip = (r: { id: string; title: string; mp4: string; poster: string; category: string; brightness: Brightness; speed?: Speed; blockEdits?: string[] }): BgClip =>
+    ({ id: r.id, category: r.category as BgCategory, title: r.title, kind: 'video', preview: r.poster, src: r.mp4, tint: 'linear-gradient(135deg,#1e1b4b,#0b1020)', brightness: r.brightness, speed: r.speed, blockEdits: r.blockEdits })
   const [catalogPool, setCatalogPool] = useState<BgClip[]>([])
   const catalogPoolRef = useRef<BgClip[]>([]); catalogPoolRef.current = catalogPool
   // Load the shuffle pool from the ~15k catalogue. Two goals from Brae: (1) WIDER variety — draw a fresh
@@ -1661,9 +1662,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   }, [idleTransition, running])
 
   const curClipPeopleRef = useRef(false)   // the current clip reads as people-oriented (Portrait / model / dancer) → focus people effects
+  const curClipBlockRef = useRef<Set<string>>(new Set())   // effect ids DISABLED on the current clip (from the admin curation)
   useEffect(() => {
     bgClipIdRef.current = bgClip?.id ?? null
     curClipPeopleRef.current = !!bgClip && (bgClip.category === 'Portrait' || PEOPLE_RE.test(bgClip.title || ''))
+    curClipBlockRef.current = new Set(bgClip?.blockEdits ?? [])
   }, [bgClip])
   // Seed / refresh the lookahead whenever shuffle is active and the clip changes; clear it off.
   useEffect(() => {
@@ -2362,7 +2365,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 if (sl[b] < 1) return
                 if ((fa[b] - sl[b]) / sl[b] > k && now - bandCdRef.current[b] > cd * cdMul && now - lastEditRef.current > globalCd) {
                   bandCdRef.current[b] = now
-                  if (Math.random() < songEditRef.current.intensity) { const list = editMap[b]; execEditCmd(list[Math.floor(Math.random() * list.length)], getBgVideo(), now) }
+                  if (Math.random() < songEditRef.current.intensity) {
+                    // Respect the clip's admin-curated blocklist: only pick from effects allowed on this clip.
+                    const blocked = curClipBlockRef.current
+                    const list = editMap[b].filter(id => !blocked.has(id))
+                    if (list.length) execEditCmd(list[Math.floor(Math.random() * list.length)], getBgVideo(), now)
+                  }
                 }
               }
               spike('bass', low, 0.75, 2200); spike('mid', mid, 1.05, 2600); spike('high', high, 1.3, 2400)
@@ -2531,9 +2539,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             let nIdx = Math.ceil(posBeats - 1e-6)
             while ((((nIdx - downbeatOffsetRef.current) % bpb) + bpb) % bpb !== 0) nIdx++
             const tNextDown = beatAnchorRef.current + nIdx * period
-            const LEAD = 45
+            // Vary the cut timing like a real editor: ~half land a hair EARLY (anticipation, so motion resolves
+            // on the "1"), ~half land ON the beat. Drop-montage cuts are always on-beat (idxNow path above).
+            const LEAD = nextLeadRef.current
             if (nIdx !== lastFiredDownbeatRef.current && now >= tNextDown - LEAD) {
               lastFiredDownbeatRef.current = nIdx; lastDownbeatRef.current = tNextDown; barCountRef.current++
+              nextLeadRef.current = Math.random() < 0.5 ? 0 : 30 + Math.random() * 30   // roll the NEXT cut's timing (on-beat vs 30-60ms early)
               // Section detection: L1 distance of this bar's signature vs the running section average.
               const sig = [Math.min(1, energyEmaRef.current * 3), bassRatioRef.current, brightRatioRef.current, densityEmaRef.current]
               const avg = secSigRef.current
