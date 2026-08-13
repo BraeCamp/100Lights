@@ -354,6 +354,32 @@ const EDITS: { id: string; name: string; kind: 'off' | 'motion' | 'object' | 'vi
   { id: 'isolate', name: 'Colour-isolate', kind: 'object', desc: 'Keep the subject in colour; drain the rest to grey.' },
 ]
 
+// ── AUTO-EDITOR ────────────────────────────────────────────────────────────────
+// The auto-editor watches for SPIKES in three EQ bands and fires a discrete edit "command" on each,
+// like a live editor cutting to the music. Research-informed mapping (No Film School / Beat2Cut /
+// editors' guides): don't hit every beat; BASS/downbeats carry structural moves (hard cuts, hit-zooms,
+// shake); MID/snares+vocals get punchy accents (jump cuts, flashes, freeze-stutters); HIGHS/hats+
+// risers get fast shine (RGB split, strobe, hue sweeps). Each command is executable + on a cooldown,
+// and only "some songs" get aggressive edits (rolled per song) so it stays selective, not frantic.
+const EDIT_CMDS: Record<string, string> = {
+  skip: 'Jump the video ~½s — a jump cut on the hit',
+  cut: 'Hard-cut to a new clip',
+  zoom: 'Punch-zoom in',
+  shake: 'Camera shake',
+  flash: 'White flash',
+  freeze: 'Freeze-frame stutter',
+  rgb: 'RGB / chroma-split burst',
+  strobe: 'Strobe',
+  huespin: 'Hue-rotate sweep',
+}
+// Which band's spike fires which command. Repeat an id to weight it. bass = weighty/structural,
+// mid = punchy accents, high = fast/glitchy shine.
+const BAND_EDITS: Record<'bass' | 'mid' | 'high', string[]> = {
+  bass: ['zoom', 'cut', 'shake', 'zoom', 'skip'],
+  mid: ['skip', 'flash', 'freeze', 'skip', 'zoom'],
+  high: ['rgb', 'strobe', 'huespin', 'rgb'],
+}
+
 // Quick tag filters for the catalog search — the most common, useful tags across the ~15k clips.
 const POPULAR_TAGS = ['neon', 'city', 'nature', 'ocean', 'forest', 'night', 'rain', 'sunset', 'abstract', 'smoke', 'clouds', 'water', 'lights', 'timelapse', 'mountains', 'beach', 'aerial', 'underwater', 'ink', 'vhs']
 
@@ -1000,6 +1026,17 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [cutEvery, setCutEvery] = useState(8)               // kicks per cut (8 ≈ two bars of 4/4)
   const cutEveryRef = useRef(8); cutEveryRef.current = cutEvery
   const beatCutCountRef = useRef(0)
+  // Auto-editor — spike-triggered edits per EQ band (see EDIT_CMDS / BAND_EDITS).
+  const [autoEdit, setAutoEdit] = useState(false)
+  const autoEditRef = useRef(false); autoEditRef.current = autoEdit
+  const bandFastRef = useRef({ bass: 0, mid: 0, high: 0 })
+  const bandSlowRef = useRef({ bass: 0, mid: 0, high: 0 })
+  const bandCdRef = useRef({ bass: 0, mid: 0, high: 0 })     // per-band cooldown timestamps
+  const lastEditRef = useRef(0)                              // global edit cooldown
+  const songEditRef = useRef({ on: false, intensity: 0.6 })  // rolled per song — only "some songs" get edits
+  // Transient effect envelopes the EQ write reads (decay each frame) + timed effects.
+  const zoomEnvRef = useRef(0); const shakeEnvRef = useRef(0); const hueSpinRef = useRef(0)
+  const rgbUntilRef = useRef(0); const strobeUntilRef = useRef(0); const freezeHitUntilRef = useRef(0)
   // EDITS — region-targeted effects from on-device vision (lib/vision). See EDITS registry above.
   const [edit, setEdit] = useState('none')
   const editRef = useRef('none'); editRef.current = edit
@@ -1315,6 +1352,22 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     }
     return false
   }, [refillQueue, commitHead])
+
+  // Execute one auto-editor command — the discrete, executable edit actions fired on band spikes.
+  const execEditCmd = useCallback((id: string, video: HTMLVideoElement | null, now: number) => {
+    switch (id) {
+      case 'skip': if (video && video.readyState >= 2) { try { const d = video.duration; const t = video.currentTime + 0.4 + Math.random() * 0.35; video.currentTime = (isFinite(d) && d > 1.5) ? (t % (d - 0.2)) : t } catch { /* not seekable */ } } break
+      case 'cut': requestSwitch(); break
+      case 'zoom': zoomEnvRef.current = 1; break
+      case 'shake': shakeEnvRef.current = 1; break
+      case 'flash': beatFlashRef.current = 1; beatFlashColorRef.current = '#ffffff'; break
+      case 'freeze': if (video) { try { video.pause() } catch { /* */ } freezeHitUntilRef.current = now + 130 } break
+      case 'rgb': rgbUntilRef.current = now + 150; break
+      case 'strobe': strobeUntilRef.current = now + 320; break
+      case 'huespin': hueSpinRef.current = 1; break
+    }
+    lastEditRef.current = now
+  }, [requestSwitch])
 
   // Music started / stopped (idle flipped) → repick for the new mode: drop the queue (it was
   // filled for the old mode) and immediately move to an appropriate clip — a party clip when a
@@ -1926,7 +1979,26 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             for (let i = 0; i < f.freq.length; i++) { const v = f.freq[i]; if (i < 24) low += v; else if (i < 160) mid += v; else high += v }
             const spTot = low + mid + high || 1
             bassRatioRef.current = bassRatioRef.current * 0.9 + (low / spTot) * 0.1
-            brightRatioRef.current = brightRatioRef.current * 0.9 + (high / spTot) * 0.1 }
+            brightRatioRef.current = brightRatioRef.current * 0.9 + (high / spTot) * 0.1
+            // AUTO-EDITOR: fire a band-appropriate edit on a spike in each band. Relative rise over a
+            // slow baseline (scale-independent), per-band + global cooldowns, gated by the per-song roll.
+            if (autoEditRef.current && !idleRef.current && songEditRef.current.on && (spTot / (f.freq.length * 255)) > 0.04) {
+              const getBgVideo = () => (bgFilterRef.current?.querySelector('video') ?? null) as HTMLVideoElement | null
+              const spike = (b: 'bass' | 'mid' | 'high', val: number, k: number, cd: number) => {
+                const fa = bandFastRef.current, sl = bandSlowRef.current
+                fa[b] = fa[b] * 0.45 + val * 0.55; sl[b] = sl[b] * 0.93 + val * 0.07
+                if (sl[b] < 1) return
+                if ((fa[b] - sl[b]) / sl[b] > k && now - bandCdRef.current[b] > cd && now - lastEditRef.current > 220) {
+                  bandCdRef.current[b] = now
+                  if (Math.random() < songEditRef.current.intensity) { const list = BAND_EDITS[b]; execEditCmd(list[Math.floor(Math.random() * list.length)], getBgVideo(), now) }
+                }
+              }
+              spike('bass', low, 0.55, 260); spike('mid', mid, 0.8, 300); spike('high', high, 1.0, 240)
+            }
+            // Freeze-stutter resume + strobe pulse.
+            if (freezeHitUntilRef.current && now > freezeHitUntilRef.current) { (bgFilterRef.current?.querySelector('video') as HTMLVideoElement | null)?.play().catch(() => {}); freezeHitUntilRef.current = 0 }
+            if (now < strobeUntilRef.current) { beatFlashRef.current = (Math.floor(now / 50) % 2) ? 0.85 : 0.06; beatFlashColorRef.current = '#ffffff' }
+          }
           if (bass > bassAvgRef.current * 1.35 && bass > 0.12 && now - lastBeatRef.current > 250) {
             // Onset sharpness — track the typical kick strength so the drum punch auto-gains
             // (soft kicks stay visible, slamming ones don't blow out).
@@ -1954,9 +2026,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             if (beatColorRef.current) { beatFlashRef.current = 1; const c = optsRef.current.colors; beatFlashColorRef.current = c[beatShiftRef.current % c.length] }
           }
           drawLive(cv, f.freq, f.wave, { ...optsRef.current, beatShift: beatShiftRef.current, density: densityEmaRef.current })
-          // Decay + apply the beat flash overlay every frame.
+          // Decay + apply the beat flash overlay every frame. Shows for beat-colour flashes AND
+          // auto-editor flash/strobe commands (both drive beatFlashRef), regardless of beat-colour.
           if (beatFlashDivRef.current) {
-            if (beatColorRef.current) {
+            if (beatFlashRef.current > 0.02) {
               beatFlashRef.current *= 0.82
               beatFlashDivRef.current.style.background = beatFlashColorRef.current
               // Dark-room mode softens the flash so nobody gets blinded.
@@ -1971,7 +2044,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           // it's been quiet for a couple seconds, we're between songs → transition mode.
           if (s / (f.freq.length * 255) > 0.02) lastLoudRef.current = now
           const nowIdle = idleTransitionRef.current && now - lastLoudRef.current > 2500
-          if (nowIdle !== idleRef.current) { idleRef.current = nowIdle; setIdle(nowIdle); onIdleChangeRef.current(nowIdle) }
+          if (nowIdle !== idleRef.current) {
+            idleRef.current = nowIdle; setIdle(nowIdle); onIdleChangeRef.current(nowIdle)
+            // New song → roll its edit "character": only some songs get aggressive spike-edits, and each
+            // gets an intensity, so it stays selective (not every song, not every hit).
+            if (!nowIdle) songEditRef.current = { on: Math.random() < 0.6, intensity: 0.45 + Math.random() * 0.5 }
+          }
           // Smooth it, then auto-calibrate to THIS song's own range: track a slowly-relaxing
           // min & max so the band reflects the song's structure (builds/drops), not absolute
           // loudness — it "improves to match" the longer it listens. Then bucket with hysteresis.
@@ -2015,8 +2093,16 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const br = eq.brightness * (0.7 + (level * 0.55 + p * 0.55) * dim)
             const sa = eq.saturate * (0.85 + level * 0.55 + p * 0.4)
             const hu = eq.hueRot + level * 45 + p * 18
-            bgFilterRef.current.style.filter = `${lookFilterRef.current} blur(${bl.toFixed(1)}px) brightness(${br.toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu)}deg)`.trim()
-            bgFilterRef.current.style.transform = `scale(${(1 + Math.min(1, p) * 0.035).toFixed(3)})`
+            // Auto-editor transient envelopes (decay each frame) layered on the reactive filter/transform.
+            zoomEnvRef.current *= 0.85; shakeEnvRef.current *= 0.78; hueSpinRef.current *= 0.88
+            const zoomAdd = zoomEnvRef.current * 0.16
+            const shk = shakeEnvRef.current * 9
+            const sx = shk > 0.3 ? (Math.random() - 0.5) * shk : 0
+            const sy = shk > 0.3 ? (Math.random() - 0.5) * shk : 0
+            const rgbOn = now < rgbUntilRef.current
+            const hu2 = hu + hueSpinRef.current * 200
+            bgFilterRef.current.style.filter = `${rgbOn ? 'url(#mv-chroma) ' : ''}${lookFilterRef.current} blur(${bl.toFixed(1)}px) brightness(${br.toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu2)}deg)`.trim()
+            bgFilterRef.current.style.transform = `scale(${(1 + Math.min(1, p) * 0.035 + zoomAdd).toFixed(3)}) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`
           }
         }
         rafRef.current = requestAnimationFrame(draw)
@@ -2496,7 +2582,16 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: cutOnBeat ? 'var(--accent)' : 'var(--bg-card)', color: cutOnBeat ? '#0e0d12' : 'var(--text-secondary)' }}>
             <Activity size={14} /> Cut on beat
           </button>
+          {/* Auto-edit — spike-triggered edits (bass/mid/high spikes each fire different edits). */}
+          <button type="button" onClick={() => { setAutoEdit(v => { const nv = !v; if (nv) { setReactive(true); setAutoShuffle(true); setBgKind('library'); songEditRef.current = { on: true, intensity: 0.65 } } return nv }) }}
+            title="Live auto-editor: spikes in bass / mid / high each fire a different edit (jump-cut, zoom, flash, RGB split, strobe…)"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: autoEdit ? 'var(--accent)' : 'var(--bg-card)', color: autoEdit ? '#0e0d12' : 'var(--text-secondary)' }}>
+            <Sparkles size={14} /> Auto-edit
+          </button>
         </div>
+        {autoEdit && (
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 4px', lineHeight: 1.5 }}>Live auto-editor — a spike in the <strong style={{ color: 'var(--text-secondary)' }}>bass</strong> fires a weighty edit (cut, hit-zoom, shake, ½s skip), a <strong style={{ color: 'var(--text-secondary)' }}>mid</strong> spike a punchy one (jump-cut, flash, freeze-stutter), a <strong style={{ color: 'var(--text-secondary)' }}>high</strong> spike fast shine (RGB split, strobe, hue sweep). Selective — only some songs get busy.</p>
+        )}
         {cutOnBeat && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0 4px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Cut every</span>
