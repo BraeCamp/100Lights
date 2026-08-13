@@ -28,6 +28,7 @@ import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
 import { classifyFamily } from '@/lib/classify-core'
 import { tagsToFamily, type Family } from '@/lib/genre-map'
 import { MotionDetector, lerpBox, loadObjectDetector, detectObjects, type Box } from '@/lib/vision'
+import { estimateKey, moodFrom, MOOD_LOOK, type KeyResult } from '@/lib/key-detect'
 import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '@/lib/offline-media'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
@@ -1037,6 +1038,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // Transient effect envelopes the EQ write reads (decay each frame) + timed effects.
   const zoomEnvRef = useRef(0); const shakeEnvRef = useRef(0); const hueSpinRef = useRef(0)
   const rgbUntilRef = useRef(0); const strobeUntilRef = useRef(0); const freezeHitUntilRef = useRef(0)
+  // Key/scale detection — chroma profile → Krumhansl key + major/minor.
+  const chromaRef = useRef(new Float32Array(12))
+  const frameChromaRef = useRef(new Float32Array(12))
+  const binPcRef = useRef<Int16Array | null>(null)   // bin → pitch class lookup (computed once per audio session)
+  const lastKeyMsRef = useRef(0)
+  const [keyView, setKeyView] = useState<KeyResult | null>(null)   // for the Detector readout
   // EDITS — region-targeted effects from on-device vision (lib/vision). See EDITS registry above.
   const [edit, setEdit] = useState('none')
   const editRef = useRef('none'); editRef.current = edit
@@ -1271,6 +1278,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       if (matchEnergyRef.current) {
         const matched = pool.filter(c => clipEnergy(c) === energyBandRef.current)
         if (matched.length >= 2) pool = matched
+      }
+      // Mood from the key's major/minor softly biases brightness (minor → darker/moodier clips, major →
+      // brighter) — only when Auto's energy-match is on and the user hasn't set an explicit brightness.
+      if (autoRef.current && matchEnergyRef.current && bset.length === 0 && keyRef.current) {
+        const want = MOOD_LOOK[moodFrom(keyRef.current.mode, energyBandRef.current)].brightness
+        if (want.length) { const mm = pool.filter(c => want.includes(clipBrightness(c))); if (mm.length >= 3) pool = mm }
       }
     }
     if (pool.length < 2) return null
@@ -1643,24 +1656,29 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // on the beat) stays off while Auto runs.
   const lastAutoFamilyRef = useRef<Family | null>(null)
   const userPaletteRef = useRef(false)   // the user picked a palette → Auto stops re-rolling it (drum flash follows their choice)
+  const lastLookMsRef = useRef(0)        // when the look/palette last changed
+  const songLookCountRef = useRef(0)     // look changes this song (cap ~2 → don't restyle every cut)
+  const keyRef = useRef<KeyResult | null>(null)   // detected musical key/mode (major/minor)
   const applyAuto = useCallback(() => {
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
-    // Fit the filters (mode + look) + colours (palette) to the VOTED genre (smoothed over ~15s,
-    // biased by any known prior), else fall back to the energy band. Called on each video change —
-    // NOT on a timer — and never touches the audio visualizer style.
+    // Fit a subtle grade + palette to the VOTED genre + MOOD. Never touches the transform (Mode) or a
+    // user-picked palette. Called on each video change, but the look is CHANGED only ~once or twice per
+    // song (on the first fit, a genre change, or after a long stretch) so it doesn't restyle every cut.
     const v = votedFamilyRef.current
     const known = v && v.conf >= 0.34 && GENRE_LOOK[v.family] ? v.family : null
     const src = (known && GENRE_LOOK[known]) || ENERGY_LOOK[energyBandRef.current]
-    // Hysteresis: keep the same palette family while the genre holds — only fully re-roll the look
-    // when the voted genre actually changes, so a stable song doesn't recolour every clip.
-    const changed = known !== lastAutoFamilyRef.current
+    const familyChanged = known !== lastAutoFamilyRef.current
     lastAutoFamilyRef.current = known
-    // Auto fits a subtle grade + palette to the genre but NEVER touches the transform (Mode): the
-    // clean untransformed video is the default (Mode starts 'none'), and if the user picks a Mode
-    // themselves it persists — Auto won't override their choice.
+    const now = performance.now()
+    const allow = songLookCountRef.current === 0 || familyChanged || (now - lastLookMsRef.current > 30000 && songLookCountRef.current < 2)
+    if (!allow) return
+    lastLookMsRef.current = now; songLookCountRef.current++
     setVideoLook(pick(src.looks))
-    // Don't override a palette the user picked — the beat flash / drum bump should follow THEIR colour.
-    if ((changed || !known) && !userPaletteRef.current) setColorCfg(c => ({ ...c, paletteId: pick(src.palettes), plane: null }))
+    if (!userPaletteRef.current) {
+      // Mood from the key's major/minor steers the palette warm/bright (major) vs cool/dark (minor).
+      const moodPals = MOOD_LOOK[moodFrom(keyRef.current?.mode ?? null, energyBandRef.current)].palettes
+      setColorCfg(c => ({ ...c, paletteId: pick([...src.palettes, ...moodPals]), plane: null }))
+    }
   }, [])
   autoApplyRef.current = applyAuto
   const toggleAuto = useCallback(() => {
@@ -1827,6 +1845,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
     prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3
     lastBeatRef.current = 0; prevBeatRef.current = 0
+    chromaRef.current.fill(0); keyRef.current = null; binPcRef.current = null; songLookCountRef.current = 0
   }, [])
 
   // Record ~7s off the audio tap and ask the recognizer what's playing (once at a time).
@@ -1998,6 +2017,22 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // Freeze-stutter resume + strobe pulse.
             if (freezeHitUntilRef.current && now > freezeHitUntilRef.current) { (bgFilterRef.current?.querySelector('video') as HTMLVideoElement | null)?.play().catch(() => {}); freezeHitUntilRef.current = 0 }
             if (now < strobeUntilRef.current) { beatFlashRef.current = (Math.floor(now / 50) % 2) ? 0.85 : 0.06; beatFlashColorRef.current = '#ffffff' }
+            // Key / scale: accumulate a chroma profile (bins → pitch classes) and estimate key + mode ~1x/s.
+            if (!binPcRef.current || binPcRef.current.length !== f.freq.length) {
+              const sr = audioRef.current?.sampleRate ?? 44100, N = a.fftSize, map = new Int16Array(f.freq.length)
+              for (let i = 0; i < f.freq.length; i++) { const fr = i * sr / N; map[i] = (fr < 60 || fr > 3000) ? -1 : ((Math.round(12 * Math.log2(fr / 440) + 69) % 12) + 12) % 12 }
+              binPcRef.current = map
+            }
+            const fc = frameChromaRef.current; fc.fill(0)
+            const pcMap = binPcRef.current
+            for (let i = 2; i < f.freq.length; i++) { const pc = pcMap[i]; if (pc >= 0) fc[pc] += f.freq[i] }
+            const chr = chromaRef.current
+            for (let p = 0; p < 12; p++) chr[p] = chr[p] * 0.96 + fc[p] * 0.04
+            if (now - lastKeyMsRef.current > 1200) {
+              lastKeyMsRef.current = now
+              const kr = estimateKey(chr)
+              if (kr && kr.conf > 0.04) { keyRef.current = kr; if (detectorRef.current) setKeyView(kr) }
+            }
           }
           if (bass > bassAvgRef.current * 1.35 && bass > 0.12 && now - lastBeatRef.current > 250) {
             // Onset sharpness — track the typical kick strength so the drum punch auto-gains
@@ -2047,8 +2082,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           if (nowIdle !== idleRef.current) {
             idleRef.current = nowIdle; setIdle(nowIdle); onIdleChangeRef.current(nowIdle)
             // New song → roll its edit "character": only some songs get aggressive spike-edits, and each
-            // gets an intensity, so it stays selective (not every song, not every hit).
-            if (!nowIdle) songEditRef.current = { on: Math.random() < 0.6, intensity: 0.45 + Math.random() * 0.5 }
+            // gets an intensity, so it stays selective (not every song, not every hit). Also reset the
+            // look budget (so the new song gets a fresh look, then holds it) + the key detector.
+            if (!nowIdle) {
+              songEditRef.current = { on: Math.random() < 0.6, intensity: 0.45 + Math.random() * 0.5 }
+              songLookCountRef.current = 0; chromaRef.current.fill(0); keyRef.current = null
+            }
           }
           // Smooth it, then auto-calibrate to THIS song's own range: track a slowly-relaxing
           // min & max so the band reflects the song's structure (builds/drops), not absolute
@@ -2339,6 +2378,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Crosshair size={12} style={{ opacity: 0.8 }} /> Objects: {modelState === 'ready' ? 'boxing people · cars · animals' : modelState === 'loading' ? 'loading detector…' : modelState === 'error' ? 'detector failed to load' : 'starting…'}{modelState === 'ready' && !hasBg ? ' (add a video background)' : ''}</div>
             <div style={{ fontSize: 12.5, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Activity size={12} style={{ opacity: 0.8 }} /> Genre read: {sonicView ? <><strong>{sonicView.family}</strong> · {Math.round(sonicView.confidence * 100)}% confident</> : running ? 'listening…' : 'play audio to read'}</div>
             {sonicView && <div style={{ fontSize: 11, opacity: 0.78, marginTop: 2, marginLeft: 18 }}>{sonicView.profile}</div>}
+            <div style={{ fontSize: 12.5, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Palette size={12} style={{ opacity: 0.8 }} /> Key / mood: {keyView ? <><strong>{keyView.name}</strong> · {moodFrom(keyView.mode, energyBandRef.current)}</> : running ? 'reading the scale…' : 'play audio to read'}</div>
             <div style={{ fontSize: 10, opacity: 0.55, marginTop: 6, lineHeight: 1.4 }}>All on-device. The genre is a rough sound-based guess (often low-confidence) — it nudges Auto’s grade &amp; palette, so a wrong read is why visuals can miss the tone.</div>
           </div>
         )}
