@@ -7,6 +7,7 @@ import { NextRequest } from 'next/server'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { getStation, type BroadcastTrack } from '@/lib/stations'
+import { jamendoSearch, jamendoLicensed } from '@/lib/jamendo'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -22,41 +23,14 @@ async function localTracks(slug: string): Promise<BroadcastTrack[]> {
   } catch { return [] }   // folder doesn't exist yet
 }
 
-async function jamendoTracks(tags: string, order = 'popularity_total', limit = 40): Promise<BroadcastTrack[]> {
-  const cid = process.env.JAMENDO_CLIENT_ID
-  if (!cid) return []
-  // fuzzytags uses '+' to separate tags — DON'T url-encode it (that turns '+' into %2B → 0 results).
-  // Encode each tag's spaces, keep the '+' separators.
-  const ft = tags.split('+').map(t => encodeURIComponent(t.trim())).filter(Boolean).join('+')
-  // Fetch Jamendo's max (200) so plenty survive the NonCommercial filter below; `limit` then caps
-  // the returned playlist.
-  const url = `https://api.jamendo.com/v3.0/tracks/?client_id=${cid}&format=json&limit=200` +
-    `&fuzzytags=${ft}&order=${order}&audioformat=mp32&include=licenses&groupby=artist_id`
-  // With a commercial licence the CC terms (incl. attribution + NonCommercial) don't bind you.
-  const licensed = process.env.JAMENDO_COMMERCIAL === 'true'
-  // Jamendo's fuzzytags endpoint is FLAKY — the identical query returns tracks, then 0, then tracks.
-  // Retry (no-store, so a flaky empty isn't cached) until it yields results.
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      const r = await fetch(url, { cache: 'no-store' })
-      if (!r.ok) continue
-      const data = await r.json() as { results?: { name: string; artist_name: string; audio: string; license_ccurl?: string }[] }
-      const rows = (data.results ?? []).filter(t => t.audio && (licensed || !/\/by-nc/i.test(t.license_ccurl || '')))
-      if (!rows.length) continue
-      return rows.map(t => ({
-        title: t.name,
-        artist: t.artist_name,
-        url: t.audio,
-        license: licensed ? 'Jamendo (licensed)' : (t.license_ccurl || 'Jamendo'),
-        // Licensed → attribution isn't required, so keep it to a courtesy "Title — Artist" (no CC
-        // link). Unlicensed → the full CC credit (needed for CC-BY/BY-SA use).
-        attribution: licensed
-          ? `${t.name} — ${t.artist_name} · Jamendo`
-          : `${t.name} by ${t.artist_name}${t.license_ccurl ? ` (${t.license_ccurl})` : ''} — via Jamendo`,
-      }))
-    } catch { /* retry */ }
-  }
-  return []
+async function jamendoTracks(tags: string, order = 'popularity_total'): Promise<BroadcastTrack[]> {
+  const rows = await jamendoSearch({ tags, order })
+  const licensed = jamendoLicensed()
+  return rows.map(t => ({
+    title: t.title, artist: t.artist, url: t.audio, license: t.license,
+    // Licensed → attribution isn't required (courtesy line, no CC link). Unlicensed → full CC credit.
+    attribution: licensed ? `${t.title} — ${t.artist} · Jamendo` : `${t.title} by ${t.artist} (${t.license}) — via Jamendo`,
+  }))
 }
 
 export async function GET(req: NextRequest) {
@@ -68,7 +42,7 @@ export async function GET(req: NextRequest) {
   let source: 'local' | 'static' | 'jamendo' | 'none' = tracks.length ? 'local' : 'none'
   if (!tracks.length && station.tracks?.length) { tracks = station.tracks; source = 'static' }
   if (!tracks.length && station.jamendo) {
-    tracks = await jamendoTracks(station.jamendo.tags, station.jamendo.order, station.jamendo.limit)
+    tracks = await jamendoTracks(station.jamendo.tags, station.jamendo.order)
     if (tracks.length) source = 'jamendo'
   }
 

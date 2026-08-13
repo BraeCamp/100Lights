@@ -56,10 +56,11 @@ export default function PexelsAdmin() {
   return (
     <main style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 18px 60px' }}>
       <h1 style={{ fontSize: 24, fontWeight: 850, color: 'var(--text-primary)', margin: '0 0 4px' }}>Lightning Bug — Background Library</h1>
-      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 20px' }}>
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 8px' }}>
         Fetch background videos from Pexels (we store only the stream link + tags, never the file), preview them,
         correct tags, and delete ones that don’t fit. <strong>{total}</strong> active in the catalog.
       </p>
+      <p style={{ fontSize: 12.5, margin: '0 0 20px' }}><a href="/admin/lightning-bug/radio" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Radio admin (playlists + Jamendo search) →</a></p>
 
       {/* Fetch */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: 14, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)', marginBottom: 14 }}>

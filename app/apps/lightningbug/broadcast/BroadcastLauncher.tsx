@@ -66,10 +66,11 @@ export default function BroadcastLauncher() {
         ))}
       </div>
 
-      <p style={{ fontSize: 12.5, margin: '20px 0 0' }}>
+      <p style={{ fontSize: 12.5, margin: '20px 0 0', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <a href="/admin/lightning-bug/radio" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Radio admin →</a>
         <a href="/admin/lightning-bug" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Background library admin →</a>
-        <span style={{ color: 'var(--text-muted)' }}> (fetch/curate Pexels backgrounds — owner + admin code)</span>
       </p>
+      <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0 0' }}>Radio admin: listen to each station's playlist + search Jamendo. Background admin: curate Pexels. (Owner + admin code.)</p>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.6 }}>
         Add stations by editing <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>lib/stations.ts</code>.
         Drop licensed audio into <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>public/broadcast/&lt;slug&gt;/</code>,
