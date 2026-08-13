@@ -1571,6 +1571,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // It deliberately does NOT touch the reactive toggles, so anything you switch off (e.g. colour
   // on the beat) stays off while Auto runs.
   const lastAutoFamilyRef = useRef<Family | null>(null)
+  const userPaletteRef = useRef(false)   // the user picked a palette → Auto stops re-rolling it (drum flash follows their choice)
   const applyAuto = useCallback(() => {
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
     // Fit the filters (mode + look) + colours (palette) to the VOTED genre (smoothed over ~15s,
@@ -1587,7 +1588,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     // clean untransformed video is the default (Mode starts 'none'), and if the user picks a Mode
     // themselves it persists — Auto won't override their choice.
     setVideoLook(pick(src.looks))
-    if (changed || !known) setColorCfg(c => ({ ...c, paletteId: pick(src.palettes) }))
+    // Don't override a palette the user picked — the beat flash / drum bump should follow THEIR colour.
+    if ((changed || !known) && !userPaletteRef.current) setColorCfg(c => ({ ...c, paletteId: pick(src.palettes), plane: null }))
   }, [])
   autoApplyRef.current = applyAuto
   const toggleAuto = useCallback(() => {
@@ -1597,6 +1599,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         setReactive(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true)
         setSwitchChance(0.4); setPunchAmt(1)
         lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0
+        userPaletteRef.current = false   // fresh Auto session picks palettes by genre; a palette you pick after persists
         applyAuto()
         nextClipRef.current()   // pick an initial background so there's something to play/switch
 
@@ -2349,7 +2352,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const active = colorCfg.paletteId === p.id
             return (
               <button key={p.id} type="button" title={p.name} aria-label={p.name}
-                onClick={() => setColorCfg(c => ({ ...c, paletteId: p.id, plane: null }))}
+                onClick={() => { userPaletteRef.current = true; setColorCfg(c => ({ ...c, paletteId: p.id, plane: null })) }}
                 style={{ width: 54, height: 26, borderRadius: 8, background: `linear-gradient(90deg, ${p.colors.join(', ')})`, border: active ? '2px solid #fff' : '2px solid var(--border)', cursor: 'pointer', padding: 0 }} />
             )
           })}
@@ -2357,7 +2360,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
 
         {/* Colour map — drag a rectangle to pick a hue band + lightness */}
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 7px' }}>Or drag a spectrum off the colour map:</p>
-        <ColorPlane onChange={p => setColorCfg(c => ({ ...c, plane: p, paletteId: null }))} />
+        <ColorPlane onChange={p => { userPaletteRef.current = true; setColorCfg(c => ({ ...c, plane: p, paletteId: null })) }} />
         {colorCfg.plane && <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '6px 0 0' }}>Custom spectrum · hue {Math.round(colorCfg.plane.h0)}–{Math.round(colorCfg.plane.h1)}°</p>}
 
         {/* Live spectrum preview */}
