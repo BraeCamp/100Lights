@@ -1116,6 +1116,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const beatPeriodRef = useRef(0)              // ms per beat (60000 / grid bpm)
   const gridBpmRef = useRef(0)                 // the STABLE tempo the grid runs on (only confident reads move it)
   const bpmConfRef = useRef(0)                 // beat-interval consistency 0..1 (gates grid updates → no jitter)
+  const bassPrevRef = useRef(0)                // previous-frame bass, for onset FLUX (rising-edge beat detection)
+  const onsetFloorRef = useRef(0)              // slow floor of the onset flux — a beat = a flux peak above it
+  const energyAvgRef = useRef(0)               // VERY slow song-average loudness → relative intensity (works for orchestral)
   const beatsPerBarRef = useRef(4)             // time-signature numerator (detected 3 vs 4)
   const accent3Ref = useRef([0, 0, 0])         // decayed kick accent per (beatIndex % 3) — 3/4 hypothesis
   const accent4Ref = useRef([0, 0, 0, 0])      // decayed kick accent per (beatIndex % 4) — 4/4 hypothesis
@@ -1847,7 +1850,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   useEffect(() => {
     if (!detector) { setSonicView(null); setDetStats(null); return }
     const id = setInterval(() => {
-      setSonicView(sonicRef.current ? { ...sonicRef.current } : null)
+      // Show the STABLE voted family (30s history) + its agreement %, with the live profile — no flip-flopping.
+      const sv = sonicRef.current, voted = votedFamilyRef.current
+      setSonicView(sv ? { family: voted ? voted.family : sv.family, profile: sv.profile, confidence: voted ? voted.conf : sv.confidence } : null)
       const ch = chromaRef.current; let mx = 0; for (let p = 0; p < 12; p++) if (ch[p] > mx) mx = ch[p]
       const notes = mx > 1e-6
         ? Array.from({ length: 12 }, (_, p) => ({ p, v: ch[p] })).filter(x => x.v > mx * 0.5).sort((x, y) => y.v - x.v).slice(0, 5).map(x => NOTE_NAMES[x.p])
@@ -2087,6 +2092,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     bassAvgRef.current = 0; energyEmaRef.current = 0; punchEnvRef.current = 0
     energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
     prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3; songIntensityRef.current = 0
+    bassPrevRef.current = 0; onsetFloorRef.current = 0; energyAvgRef.current = 0
     lastBeatRef.current = 0; prevBeatRef.current = 0
     chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []; binPcRef.current = null; binWRef.current = null; songLookCountRef.current = 0
     beatAnchorRef.current = 0; beatPeriodRef.current = 0; gridBpmRef.current = 0; bpmConfRef.current = 0; barCountRef.current = 0; beatInBarRef.current = 0
@@ -2227,6 +2233,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           let bass = 0; for (let i = 0; i < 12; i++) bass += f.freq[i]
           bass /= 12 * 255
           bassAvgRef.current = bassAvgRef.current * 0.94 + bass * 0.06
+          // Onset FLUX = the rising edge of the low band (the kick ATTACK). Beats are detected off this,
+          // not off the sustained level — so a soft off-beat kick right after a loud downbeat still shows a
+          // clear attack and gets caught (the old level threshold missed them → grid wouldn't lock).
+          const bassFlux = Math.max(0, bass - bassPrevRef.current); bassPrevRef.current = bass
+          onsetFloorRef.current = onsetFloorRef.current * 0.995 + bassFlux * 0.005   // slow floor: a loud kick can't suppress the next
           // Sub/bass transient → a "punch" envelope: how far the low end jumps above its own
           // average right now (fast attack, slow release), so kicks/drums pop the filters.
           const punch = Math.max(0, (bass - bassAvgRef.current) * 4)
@@ -2341,7 +2352,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               } else da.chord = ''
             }
           }
-          if (bass > bassAvgRef.current * 1.35 && bass > 0.12 && now - lastBeatRef.current > 250) {
+          if (bassFlux > Math.max(onsetFloorRef.current * 2.4, 0.012) && bass > 0.06 && now - lastBeatRef.current > 200) {
             // Onset sharpness — track the typical kick strength so the drum punch auto-gains
             // (soft kicks stay visible, slamming ones don't blow out).
             onsetEmaRef.current = onsetEmaRef.current * 0.9 + punchEnvRef.current * 0.1
@@ -2480,6 +2491,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               songEditRef.current = { on: Math.random() < 0.6, intensity: 0.45 + Math.random() * 0.5 }
               songLookCountRef.current = 0; chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []
               // Re-anchor the bar clock + sections to the new song's start ("backfill from the beginning").
+              beatIvBufRef.current = []; bpmEmaRef.current = 0   // drop the previous song's tempo so we re-lock cleanly
+              onsetFloorRef.current = 0; energyAvgRef.current = 0   // re-baseline the onset floor + loudness average
               beatAnchorRef.current = 0; beatPeriodRef.current = 0; gridBpmRef.current = 0; bpmConfRef.current = 0; barCountRef.current = 0
               beatInBarRef.current = 0; beatsPerBarRef.current = 4; accent3Ref.current = [0, 0, 0]; accent4Ref.current = [0, 0, 0, 0]; downbeatOffsetRef.current = 0
               lastFiredDownbeatRef.current = -1; pendingBarSwitchRef.current = false; barsSinceCutRef.current = 0
@@ -2502,23 +2515,40 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           const band: Energy = score > (cur === 'hot' ? 0.50 : 0.60) ? 'hot' : score > (cur === 'calm' ? 0.35 : 0.28) ? 'mid' : 'calm'
           energyBandRef.current = band
           if (now - lastEnergyUiRef.current > 300) { lastEnergyUiRef.current = now; setEnergyBand(band) }
-          // SONG INTENSITY (0..1.2) — loudness + busyness + drum strength, GATED by whether there's actually
-          // a beat, so a loud-but-drumless drone reads ~0% (calm) while beat-driven music scales up. Mapped so
-          // calm≈0% and a full mix≈120%. VERY slow EMA (~3s) so it drifts over the song and never misreads.
+          // SONG INTENSITY (0..1.2) = the LOUDER of two signals: (a) relative loudness — how loud right now
+          // vs the song's own average (this is what makes ORCHESTRAL work: a swell reads intense, a soft
+          // passage reads calm, with no drums needed); and (b) the beat drive (drum strength × beat presence).
+          // Very slow EMA (~3s) so it drifts over the song and never misreads a moment.
+          energyAvgRef.current = energyAvgRef.current * 0.9985 + e * 0.0015          // song-average loudness
+          const loudRatio = energyAvgRef.current > 0.002 ? e / energyAvgRef.current : 1
+          const relComp = Math.max(0, Math.min(1, (loudRatio - 1.0) / 0.55)) * Math.min(1, e / 0.06)  // above-average & not near-silence
           const beatPresence = Math.min(1, beatIvBufRef.current.length / 5)
-          const rawInt = (0.35 * Math.min(1, e * 3) + 0.30 * densityEmaRef.current + 0.35 * Math.min(1, onsetEmaRef.current * 1.3)) * (0.3 + 0.7 * beatPresence)
-          const tgtInt = Math.max(0, Math.min(1.2, ((rawInt - 0.10) / 0.6) * 1.2))
+          // Beat drive uses ABSOLUTE loudness + kick strength (so a steadily-loud rock/metal track stays
+          // intense, not just its swells), gated by beat presence.
+          const beatComp = Math.min(1, (e / 0.22) * 0.6 + Math.min(1, onsetEmaRef.current * 1.3) * 0.4) * beatPresence
+          const rawInt = Math.max(relComp, beatComp) * 1.15 + Math.min(relComp, beatComp) * 0.3   // dominant signal + a bonus when both
+          const tgtInt = Math.max(0, Math.min(1.2, rawInt))
           songIntensityRef.current += (tgtInt - songIntensityRef.current) * 0.006
           // On-device "sounds like" read (free, no API) — updated ~every 1.5s.
           if (now - lastSonicUiRef.current > 1500) {
             lastSonicUiRef.current = now
             const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
-            const sc = classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty }, genrePriorRef.current)
+            // On-device ORCHESTRAL/CINEMATIC hint: a real recognized genre wins; otherwise, tonal (clear key)
+            // + dark/warm (not synth-bright) + a weak/irregular beat (not a tight electronic pulse) nudges the
+            // guess toward Orchestral. Fires on cinematic passages (e.g. Skyfall verses) and, with the 30s
+            // vote, pulls the whole read off "Electronic". A soft prior (bonus), so it won't force it.
+            let devPrior = genrePriorRef.current
+            if (!devPrior) {
+              const tonal = keyRef.current && keyRef.current.conf > 0.14
+              const weakBeat = bpmConfRef.current < 0.5 || beatIvBufRef.current.length < 3
+              if (tonal && brightRatioRef.current < 0.32 && weakBeat) devPrior = 'Orchestral'
+            }
+            const sc = classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty }, devPrior)
             sonicRef.current = sc; (window as unknown as { __lbSonic?: unknown }).__lbSonic = sc   // background — no UI, for testing/tuning
-            // Roll the family into a ~15s vote (10 reads × 1.5s) and take the plurality winner; conf =
-            // share of the window that agrees. votedFamily is what Auto actually acts on.
+            // Roll the family into a ~30s vote (20 reads × 1.5s) and take the plurality winner; conf =
+            // share of the window that agrees. Longer history → the guess stops flip-flopping second-to-second.
             const votes = familyVotesRef.current
-            votes.push(sc.family); if (votes.length > 10) votes.shift()
+            votes.push(sc.family); if (votes.length > 20) votes.shift()
             const tally = votes.reduce((m, f) => (m[f] = (m[f] || 0) + 1, m), {} as Record<Family, number>)
             const win = (Object.entries(tally) as [Family, number][]).sort((a, b) => b[1] - a[1])[0]
             votedFamilyRef.current = { family: win[0], conf: win[1] / votes.length }
@@ -2697,7 +2727,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter, isolation: 'isolate' }}>
             {bgKind === 'media' ? (
               bgVideo
-                ? <video key={(bgUrl ?? '') + (edit !== 'none' ? '-x' : '')} src={bgUrl ?? undefined} crossOrigin={edit !== 'none' ? 'anonymous' : undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                ? <video key={(bgUrl ?? '') + ((edit !== 'none' || detector) ? '-x' : '')} src={bgUrl ?? undefined} crossOrigin={(edit !== 'none' || detector) ? 'anonymous' : undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
                 : <img src={bgUrl ?? undefined} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : bgKind === 'library' && bgClip ? (
               <>
@@ -2708,7 +2738,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '') + (edit !== 'none' ? '-x' : '')} src={bgSrcOverride ?? bgClip.src} crossOrigin={edit !== 'none' ? 'anonymous' : undefined} poster={bgClip.preview} autoPlay loop={!autoShuffle || idle} muted playsInline
+                    <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '') + ((edit !== 'none' || detector) ? '-x' : '')} src={bgSrcOverride ?? bgClip.src} crossOrigin={(edit !== 'none' || detector) ? 'anonymous' : undefined} poster={bgClip.preview} autoPlay loop={!autoShuffle || idle} muted playsInline
                       onCanPlay={() => { if (bgClip) readySrcsRef.current.add(bgClip.src); applyMotionOffset() }}
                       onEnded={() => { if (!autoShuffle) return; if (!requestSwitch() && bgVideoRef.current) { bgVideoRef.current.currentTime = 0; bgVideoRef.current.play().catch(() => {}) } }}   // next not buffered yet → replay current (stay smooth) until it is
                       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
@@ -2732,7 +2762,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             When one becomes playable we mark it ready and, if a switch is waiting on it, cut now. */}
         {autoShuffle && preloadSrcs.map(src => (
           // crossOrigin must match the main video's, or the cached response won't be CORS-usable there.
-          <video key={src + (edit !== 'none' ? '-x' : '')} src={src} crossOrigin={edit !== 'none' ? 'anonymous' : undefined} preload="auto" muted playsInline aria-hidden
+          <video key={src + ((edit !== 'none' || detector) ? '-x' : '')} src={src} crossOrigin={(edit !== 'none' || detector) ? 'anonymous' : undefined} preload="auto" muted playsInline aria-hidden
             onCanPlay={() => { readySrcsRef.current.add(src); if (wantSwitchRef.current) requestSwitch() }}
             onCanPlayThrough={() => { readySrcsRef.current.add(src); if (wantSwitchRef.current) requestSwitch() }}
             style={{ position: 'absolute', width: 1, height: 1, top: 0, left: 0, opacity: 0, pointerEvents: 'none' }} />
