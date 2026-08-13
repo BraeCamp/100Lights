@@ -28,7 +28,7 @@ import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
 import { classifyFamily } from '@/lib/classify-core'
 import { tagsToFamily, type Family } from '@/lib/genre-map'
 import { MotionDetector, lerpBox, loadObjectDetector, detectObjects, type Box } from '@/lib/vision'
-import { estimateKey, moodFrom, MOOD_LOOK, type KeyResult } from '@/lib/key-detect'
+import { estimateKey, moodFrom, MOOD_LOOK, NOTE_NAMES, type KeyResult } from '@/lib/key-detect'
 import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '@/lib/offline-media'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
@@ -1054,6 +1054,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [detector, setDetector] = useState(false)
   const detectorRef = useRef(false); detectorRef.current = detector
   const [sonicView, setSonicView] = useState<{ family: string; profile: string; confidence: number } | null>(null)
+  // Extra live diagnostics for the Detector panel (input level, beat, tone, notes it's hearing, objects
+  // in frame) — snapshotted ~1.5×/s in the audio loop only while the Detector is open.
+  const [detStats, setDetStats] = useState<{ level: number; beaty: number; bass: number; bright: number; notes: string[]; objs: { label: string; n: number }[] } | null>(null)
   const fxCanvasRef = useRef<HTMLCanvasElement | null>(null)   // overlay the edit effects paint on
   const motionRef = useRef<MotionDetector | null>(null)
   const boxRef = useRef<Box | null>(null)                      // smoothed primary region of interest
@@ -1624,7 +1627,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // Detector genre readout — surface the on-device "sounds like" classification (normally silent) so
   // you can watch what genre/tone it reads. Polls the ref the audio loop writes ~2x/sec.
   useEffect(() => {
-    if (!detector) { setSonicView(null); return }
+    if (!detector) { setSonicView(null); setDetStats(null); return }
     const id = setInterval(() => setSonicView(sonicRef.current ? { ...sonicRef.current } : null), 500)
     return () => clearInterval(id)
   }, [detector])
@@ -2133,6 +2136,17 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
             const sc = classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty }, genrePriorRef.current)
             sonicRef.current = sc; (window as unknown as { __lbSonic?: unknown }).__lbSonic = sc   // background — no UI, for testing/tuning
+            // Detector-only extras: the notes it's hearing (top of the accumulated chroma → validates the
+            // key read), beat strength, tonal balance, input level, and the live objects in frame.
+            if (detectorRef.current) {
+              const ch = chromaRef.current; let mx = 0; for (let p = 0; p < 12; p++) if (ch[p] > mx) mx = ch[p]
+              const notes = mx > 1e-6
+                ? Array.from({ length: 12 }, (_, p) => ({ p, v: ch[p] })).filter(x => x.v > mx * 0.5).sort((x, y) => y.v - x.v).slice(0, 5).map(x => NOTE_NAMES[x.p])
+                : []
+              const counts = boxesRef.current.reduce((m, b) => (b.label && (m[b.label] = (m[b.label] || 0) + 1), m), {} as Record<string, number>)
+              const objs = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label, n]) => ({ label, n }))
+              setDetStats({ level, beaty, bass: bassRatioRef.current, bright: brightRatioRef.current, notes, objs })
+            }
             // Roll the family into a ~15s vote (10 reads × 1.5s) and take the plurality winner; conf =
             // share of the window that agrees. votedFamily is what Auto actually acts on.
             const votes = familyVotesRef.current
@@ -2396,13 +2410,39 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         {/* The on-device "sounds like" read runs in the background (window.__lbSonic) — no chip. */}
         {/* Detector readout — what the program thinks it's seeing (objects) + hearing (genre/tone). */}
         {detector && (
-          <div style={{ position: 'absolute', left: 12, top: 12, maxWidth: '78%', padding: '10px 13px', borderRadius: 12, background: 'rgba(0,0,0,0.62)', color: '#fff', pointerEvents: 'none', backdropFilter: 'blur(4px)' }}>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', opacity: 0.7, marginBottom: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Scan size={12} /> Detector</div>
-            <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Crosshair size={12} style={{ opacity: 0.8 }} /> Objects: {modelState === 'ready' ? 'boxing people · cars · animals' : modelState === 'loading' ? 'loading detector…' : modelState === 'error' ? 'detector failed to load' : 'starting…'}{modelState === 'ready' && !hasBg ? ' (add a video background)' : ''}</div>
-            <div style={{ fontSize: 12.5, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Activity size={12} style={{ opacity: 0.8 }} /> Genre read: {sonicView ? <><strong>{sonicView.family}</strong> · {Math.round(sonicView.confidence * 100)}% confident</> : running ? 'listening…' : 'play audio to read'}</div>
-            {sonicView && <div style={{ fontSize: 11, opacity: 0.78, marginTop: 2, marginLeft: 18 }}>{sonicView.profile}</div>}
-            <div style={{ fontSize: 12.5, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Palette size={12} style={{ opacity: 0.8 }} /> Key / mood: {keyView ? <><strong>{keyView.name}</strong> · {moodFrom(keyView.mode, energyBandRef.current)} · {Math.round(keyView.conf * 100)}%</> : running ? 'no clear key (percussive / atonal)' : 'play audio to read'}</div>
-            <div style={{ fontSize: 10, opacity: 0.55, marginTop: 6, lineHeight: 1.4 }}>All on-device. The genre is a rough sound-based guess (often low-confidence) — it nudges Auto’s grade &amp; palette, so a wrong read is why visuals can miss the tone.</div>
+          <div style={{ position: 'absolute', left: 12, top: 12, width: 258, maxWidth: '82%', padding: '11px 13px', borderRadius: 12, background: 'rgba(0,0,0,0.66)', color: '#fff', pointerEvents: 'none', backdropFilter: 'blur(4px)', fontVariantNumeric: 'tabular-nums' }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', opacity: 0.65, marginBottom: 7, display: 'flex', alignItems: 'center', gap: 6 }}><Scan size={12} /> Detector {running ? <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 800, color: '#34d399' }}>● LIVE</span> : null}</div>
+
+            {/* HEARING */}
+            <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, marginBottom: 3 }}>Hearing</div>
+            <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Activity size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> Genre: {sonicView ? <><strong>{sonicView.family}</strong> · {Math.round(sonicView.confidence * 100)}%</> : running ? 'listening…' : 'play audio'}</div>
+            <div style={{ fontSize: 12.5, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}><Palette size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> Key: {keyView ? <><strong>{keyView.name}</strong> · {moodFrom(keyView.mode, energyBandRef.current)} · {Math.round(keyView.conf * 100)}%</> : running ? 'no clear key (percussive)' : '—'}</div>
+            {detStats && detStats.notes.length > 0 && <div style={{ fontSize: 11, opacity: 0.8, marginTop: 3, marginLeft: 18, display: 'flex', alignItems: 'center', gap: 5 }}>Notes: {detStats.notes.map(n => <span key={n} style={{ padding: '1px 5px', borderRadius: 5, background: 'rgba(147,197,255,0.22)', fontWeight: 700 }}>{n}</span>)}</div>}
+            <div style={{ fontSize: 11.5, marginTop: 5, marginLeft: 18, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>♩ <strong>{bpm > 0 ? bpm : '—'}</strong> BPM</span>
+              <span style={{ textTransform: 'capitalize', color: energyBand === 'hot' ? '#f87171' : energyBand === 'mid' ? '#fbbf24' : '#34d399', fontWeight: 700 }}>{running ? energyBand : '—'}</span>
+              <span style={{ opacity: 0.85 }}>beat {detStats ? (detStats.beaty > 0.6 ? 'strong' : detStats.beaty > 0.3 ? 'some' : 'sparse') : '—'}</span>
+            </div>
+            {detStats && (
+              <div style={{ marginTop: 5, marginLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {([['input', detStats.level * 2.2, '#34d399'], ['bass', detStats.bass, '#a78bfa'], ['treble', detStats.bright, '#60a5fa']] as [string, number, string][]).map(([lbl, v, c]) => (
+                  <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10, opacity: 0.85 }}>
+                    <span style={{ width: 36 }}>{lbl}</span>
+                    <span style={{ display: 'inline-block', width: 88, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.15)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.round(Math.min(1, Math.max(0, v)) * 100)}%`, background: c, borderRadius: 3 }} /></span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* SEEING */}
+            <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Seeing</div>
+            <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Crosshair size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> {modelState === 'ready' ? (!hasBg ? 'add a video background' : detStats && detStats.objs.length > 0 ? <span>{detStats.objs.map(o => `${o.n > 1 ? o.n + ' ' : ''}${o.label}${o.n > 1 ? 's' : ''}`).join(' · ')}</span> : 'nothing in frame') : modelState === 'loading' ? 'loading detector…' : modelState === 'error' ? 'detector failed to load' : 'starting…'}</div>
+
+            {/* SHOWING */}
+            <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Showing</div>
+            <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Sparkles size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> {activeVideoLook.name}{videoMode !== 'none' ? ` + ${activeVideoMode.name}` : ''} · {PALETTES.find(p => p.id === colorCfg.paletteId)?.name ?? 'custom'}</div>
+
+            <div style={{ fontSize: 9.5, opacity: 0.5, marginTop: 7, lineHeight: 1.4 }}>All on-device. Genre is a rough sound-based guess — it nudges Auto’s grade &amp; palette, so a wrong read is why visuals can miss the tone.</div>
           </div>
         )}
         {/* Song ID — the recognized track (+ a BPM accuracy check vs the DSP) */}
