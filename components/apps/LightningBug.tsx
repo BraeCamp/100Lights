@@ -25,6 +25,8 @@ import type { BroadcastTrack, StationScene } from '@/lib/stations'
 import { detectMediaKind } from '@/lib/media-import'
 import { useMediaDrop } from '@/lib/use-media-drop'
 import { GENRE_LOOKS, type GenreLook } from '@/lib/music-looks'
+import { classifyFamily } from '@/lib/classify-core'
+import { tagsToFamily, type Family } from '@/lib/genre-map'
 import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '@/lib/offline-media'
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
@@ -303,20 +305,12 @@ const AUDD_ENABLED = true
 // (tempo, energy, bass/brightness balance, busyness, beatiness) to a COARSE family. Honest limits:
 // it's reliable for clear-cut cases and a guess for ambiguous ones — fine genre isn't separable
 // from audio alone (that's what AudD/Song ID is for). All inputs are 0–1 except bpm.
-function classifySonic(o: { bpm: number; energy: number; bass: number; bright: number; density: number; beaty: number }): { family: string; profile: string; confidence: number } {
+// Genre read for a moment of audio. The scoring lives in lib/classify-core (shared with the offline
+// calibrator so what we tune is what runs); here we add the human-readable profile string. `prior`
+// is a known genre (from song recognition / a broadcast track's tags) that biases the result.
+function classifySonic(o: { bpm: number; energy: number; bass: number; bright: number; density: number; beaty: number }, prior?: Family | null): { family: Family; profile: string; confidence: number } {
   const { bpm, energy, bass, bright, density, beaty } = o
-  const s: Record<string, number> = {}
-  const add = (k: string, v: number) => { s[k] = (s[k] || 0) + v }
-  add('Ambient', (density < 0.18 ? 1 : 0) + (energy < 0.35 ? 0.8 : 0) + (beaty < 0.25 ? 0.9 : 0) + (bpm === 0 ? 0.6 : 0))
-  add('Lofi / Chill', (bpm > 60 && bpm < 100 ? 0.7 : 0) + (energy >= 0.3 && energy < 0.6 ? 0.7 : 0) + (bright < 0.25 ? 0.6 : 0) + (density >= 0.2 && density < 0.5 ? 0.5 : 0))
-  add('Hip-hop', (bass > 0.32 ? 1 : 0) + (bpm >= 70 && bpm <= 104 ? 0.8 : 0) + (beaty > 0.4 ? 0.6 : 0) + (density < 0.55 ? 0.4 : 0))
-  add('Electronic', (bpm >= 118 && bpm <= 140 ? 1 : 0) + (energy > 0.55 ? 0.8 : 0) + (beaty > 0.5 ? 0.8 : 0) + (bright > 0.22 ? 0.4 : 0))
-  add('Rock / Band', (energy > 0.5 ? 0.7 : 0) + (density > 0.5 ? 0.8 : 0) + (bright > 0.2 && bright < 0.45 ? 0.5 : 0) + (bass < 0.3 ? 0.4 : 0) + (bpm >= 100 && bpm <= 160 ? 0.4 : 0))
-  add('Pop', (bpm >= 100 && bpm <= 132 ? 0.6 : 0) + (bright > 0.28 ? 0.7 : 0) + (energy > 0.45 ? 0.5 : 0) + (density >= 0.4 && density < 0.7 ? 0.4 : 0))
-  add('Orchestral', (beaty < 0.3 ? 0.7 : 0) + (density > 0.45 ? 0.5 : 0) + (bright > 0.3 ? 0.5 : 0) + (bass < 0.22 ? 0.5 : 0))
-  const ranked = Object.entries(s).sort((a, b) => b[1] - a[1])
-  const family = ranked[0][0], top = ranked[0][1], second = ranked[1]?.[1] ?? 0
-  const confidence = Math.max(0, Math.min(1, (top - second) / 1.4))   // margin over the runner-up
+  const { family, confidence } = classifyFamily(o, prior)
   const profile = [
     bpm > 0 ? `${bpm} BPM` : 'no clear beat',
     energy > 0.6 ? 'high energy' : energy > 0.35 ? 'medium energy' : 'calm',
@@ -934,8 +928,15 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // not a definitive genre — displayed so you can judge its accuracy before it drives anything.
   // The on-device "sounds like" read runs in the BACKGROUND (no visible chip) so we can keep
   // testing/tuning it. Latest result lives on this ref + window.__lbSonic for inspection.
-  const sonicRef = useRef<{ family: string; profile: string; confidence: number } | null>(null)
+  const sonicRef = useRef<{ family: Family; profile: string; confidence: number } | null>(null)
   const lastSonicUiRef = useRef(0)
+  // Genre prior — a known genre (from song recognition or a broadcast track's tags) that biases the
+  // per-frame read so the classifier isn't guessing blind when we already know the answer.
+  const genrePriorRef = useRef<Family | null>(null)
+  // Temporal voting — the look follows the majority genre over a ~15s window, not a single noisy
+  // read, so it doesn't churn on an intro, a breakdown, or one ambiguous bar.
+  const familyVotesRef = useRef<Family[]>([])
+  const votedFamilyRef = useRef<{ family: Family; conf: number } | null>(null)
   const [density, setDensity] = useState(0)                // readout
   const lastDensityUiRef = useRef(0)
   const onsetEmaRef = useRef(0.3)                          // typical kick strength → auto-gains the drum punch
@@ -1173,6 +1174,18 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   useEffect(() => { eqRef.current = { on: reactive, blur, brightness, saturate, hueRot } }, [reactive, blur, brightness, saturate, hueRot])
   // Restore the static filter whenever EQ mode is off (the loop may have left an imperative value).
   useEffect(() => { if (!reactive && bgFilterRef.current) { bgFilterRef.current.style.filter = bgFilter; bgFilterRef.current.style.transform = '' } }, [reactive, bgFilter])
+  // Cross-dissolve on every background switch: black out instantly (transition off + reflow), then
+  // fade the new clip in over .5s. Masks the hard cut AND the Auto look change that lands with it.
+  // Opacity is independent of the per-frame EQ filter/transform, so reactivity stays instant.
+  const firstBgRef = useRef(true)
+  useEffect(() => {
+    if (firstBgRef.current) { firstBgRef.current = false; return }
+    const el = bgFilterRef.current; if (!el) return
+    el.style.transition = 'none'; el.style.opacity = '0'; void el.offsetHeight
+    el.style.transition = 'opacity .5s ease'
+    const r = requestAnimationFrame(() => { if (bgFilterRef.current) bgFilterRef.current.style.opacity = '1' })
+    return () => cancelAnimationFrame(r)
+  }, [bgClip?.id, bgUrl, bgKind])
 
   // Genre "Looks" — apply a whole scene, with a random genre-appropriate background.
   const [activeLook, setActiveLook] = useState<GenreLook | null>(null)
@@ -1200,14 +1213,21 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // AUTO re-vibe (called on section changes): ONLY the style + filter mode adapt to the energy.
   // It deliberately does NOT touch the reactive toggles, so anything you switch off (e.g. colour
   // on the beat) stays off while Auto runs.
+  const lastAutoFamilyRef = useRef<Family | null>(null)
   const applyAuto = useCallback(() => {
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
-    // Fit the filters (mode + look) + colours (palette) to the DETECTED genre (on-device read),
-    // else fall back to the energy band. Called on each video change — NOT on a timer — and never
-    // touches the audio visualizer style.
-    const s = sonicRef.current
-    const src = (s && s.confidence >= 0.2 && GENRE_LOOK[s.family]) || ENERGY_LOOK[energyBandRef.current]
-    setVideoMode(pick(src.modes)); setVideoLook(pick(src.looks)); setColorCfg(c => ({ ...c, paletteId: pick(src.palettes) }))
+    // Fit the filters (mode + look) + colours (palette) to the VOTED genre (smoothed over ~15s,
+    // biased by any known prior), else fall back to the energy band. Called on each video change —
+    // NOT on a timer — and never touches the audio visualizer style.
+    const v = votedFamilyRef.current
+    const known = v && v.conf >= 0.34 && GENRE_LOOK[v.family] ? v.family : null
+    const src = (known && GENRE_LOOK[known]) || ENERGY_LOOK[energyBandRef.current]
+    // Hysteresis: keep the same palette family while the genre holds — only fully re-roll the look
+    // when the voted genre actually changes, so a stable song doesn't recolour every clip.
+    const changed = known !== lastAutoFamilyRef.current
+    lastAutoFamilyRef.current = known
+    setVideoMode(pick(src.modes)); setVideoLook(pick(src.looks))
+    if (changed || !known) setColorCfg(c => ({ ...c, paletteId: pick(src.palettes) }))
   }, [])
   autoApplyRef.current = applyAuto
   const toggleAuto = useCallback(() => {
@@ -1359,6 +1379,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     void wakeRef.current?.release().catch(() => {}); wakeRef.current = null
     analyserRef.current = null; bufRef.current = []; recDestRef.current = null
     setRunning(false); setSource(null); setNowPlaying(null); setRecognized(null); sonicRef.current = null
+    genrePriorRef.current = null; familyVotesRef.current = []; votedFamilyRef.current = null
     // No audio → back to idle/transition mode (also repicks a calm clip if shuffling).
     lastLoudRef.current = 0
     if (idleTransitionRef.current && !idleRef.current) { idleRef.current = true; setIdle(true); onIdleChangeRef.current(true) }
@@ -1392,7 +1413,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         const r = await fetch('/api/recognize', { method: 'POST', body: fd })
         const d = await r.json()
         if (d.error === 'not_configured') setIdMsg('Add AUDD_API_TOKEN to enable song ID')
-        else if (d.match) { setRecognized(d.match); setIdMsg(null) }
+        else if (d.match) { setRecognized(d.match); setIdMsg(null); genrePriorRef.current = tagsToFamily(d.match.genre ? [d.match.genre] : null) }   // recognized genre → classifier prior
       } catch { /* ignore — try again next tick */ } finally { recognizingRef.current = false }
     }
     try { rec.start(); window.setTimeout(() => { try { rec.stop() } catch { /* already stopped */ } }, 7000) } catch { recognizingRef.current = false }
@@ -1441,6 +1462,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           broadcastIdxRef.current = idx
           const t = list[idx]
           resetDetectors()
+          // Each broadcast track carries its known genre (resolved server-side from its tags) → feed
+          // it as the classifier prior and reset the vote so the read locks on fast.
+          genrePriorRef.current = (t.genre as Family | undefined) ?? null
+          familyVotesRef.current = []; votedFamilyRef.current = null
           setNowPlaying(t)
           el.src = proxied(t.url)
           try { await el.play() }
@@ -1580,8 +1605,15 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           if (now - lastSonicUiRef.current > 1500) {
             lastSonicUiRef.current = now
             const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
-            const sc = classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty })
+            const sc = classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty }, genrePriorRef.current)
             sonicRef.current = sc; (window as unknown as { __lbSonic?: unknown }).__lbSonic = sc   // background — no UI, for testing/tuning
+            // Roll the family into a ~15s vote (10 reads × 1.5s) and take the plurality winner; conf =
+            // share of the window that agrees. votedFamily is what Auto actually acts on.
+            const votes = familyVotesRef.current
+            votes.push(sc.family); if (votes.length > 10) votes.shift()
+            const tally = votes.reduce((m, f) => (m[f] = (m[f] || 0) + 1, m), {} as Record<Family, number>)
+            const win = (Object.entries(tally) as [Family, number][]).sort((a, b) => b[1] - a[1])[0]
+            votedFamilyRef.current = { family: win[0], conf: win[1] / votes.length }
           }
           // AUTO re-fits filters + colours to the genre only when the video changes (see commitHead),
           // so the look doesn't churn mid-clip. Nothing to do here per-frame.
@@ -1734,7 +1766,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         )}
         {/* Background layer — ambient gradient, library clip (streamed), or your own upload; filtered here */}
         {hasBg && (
-          <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter, isolation: 'isolate' }}>
+          <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter, isolation: 'isolate', transition: 'opacity .5s ease' }}>
             {bgKind === 'media' ? (
               bgVideo
                 ? <video src={bgUrl ?? undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -1812,7 +1844,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         {/* Broadcast: now-playing card (carries attribution for the description) */}
         {broadcast && nowPlaying && (
           <div style={{ position: 'absolute', left: 16, bottom: 16, maxWidth: '72%', padding: '8px 14px', borderRadius: 12, background: 'rgba(0,0,0,0.5)', color: '#fff', pointerEvents: 'none' }}>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', opacity: 0.7 }}>Now playing</div>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', opacity: 0.7 }}>Now playing{nowPlaying.genre ? ` · ${nowPlaying.genre}` : ''}</div>
             <div style={{ fontSize: 15, fontWeight: 800 }}>{nowPlaying.title}{nowPlaying.artist ? ` — ${nowPlaying.artist}` : ''}</div>
             {nowPlaying.attribution && <div style={{ fontSize: 10.5, opacity: 0.65, marginTop: 2 }}>{nowPlaying.attribution}</div>}
           </div>

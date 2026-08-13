@@ -11,6 +11,7 @@ export interface BroadcastTrack {
   url: string
   license?: string        // e.g. "CC BY 3.0", "Jamendo commercial", "Pixabay Content License"
   attribution?: string    // shown in the now-playing overlay; also put this in the video description
+  genre?: string          // resolved genre family (lib/genre-map) → feeds the visual classifier prior
 }
 
 // Visual look for a station — a light subset of the full scene; everything else stays at defaults.

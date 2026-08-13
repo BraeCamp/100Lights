@@ -72,3 +72,5 @@ corr-fixture/
 
 # Local CLAP embedding venv (large, rebuildable)
 .venv-clap/
+.calib-cache.json
+lib/genre-centroids.json
