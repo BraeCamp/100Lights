@@ -384,7 +384,9 @@ const BAND_EDITS: Record<'bass' | 'mid' | 'high', string[]> = {
   // 'skip' (time hop) and 'crop' (reframe to a random region) are the JUMP family — they share ONE long
   // cooldown, so a jump is an occasional accent (~once/9s), not every clip. Other moves (zoom/shake/
   // flash/freeze) don't disturb the footage and fire freely.
-  bass: ['zoom', 'cut', 'shake', 'blink', 'crop'],
+  // No 'cut' here — the bar clock owns cutting (on downbeats); the auto-editor only adds effects, so cuts
+  // stay bar-synced instead of getting extra off-beat ones.
+  bass: ['zoom', 'shake', 'blink', 'zoom', 'crop'],
   mid: ['flash', 'freeze', 'mirror', 'skip', 'crop', 'spin'],
   high: ['rgb', 'strobe', 'huespin', 'invert', 'spin'],
 }
