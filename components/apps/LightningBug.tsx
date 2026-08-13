@@ -1042,7 +1042,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const chromaRef = useRef(new Float32Array(12))
   const frameChromaRef = useRef(new Float32Array(12))
   const binPcRef = useRef<Int16Array | null>(null)   // bin → pitch class lookup (computed once per audio session)
+  const ampLutRef = useRef<Float32Array | null>(null)   // byte-dB → linear amplitude lookup
   const lastKeyMsRef = useRef(0)
+  const keyVotesRef = useRef<KeyResult[]>([])        // recent key estimates → plurality vote for stability
   const [keyView, setKeyView] = useState<KeyResult | null>(null)   // for the Detector readout
   // EDITS — region-targeted effects from on-device vision (lib/vision). See EDITS registry above.
   const [edit, setEdit] = useState('none')
@@ -1281,7 +1283,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       }
       // Mood from the key's major/minor softly biases brightness (minor → darker/moodier clips, major →
       // brighter) — only when Auto's energy-match is on and the user hasn't set an explicit brightness.
-      if (autoRef.current && matchEnergyRef.current && bset.length === 0 && keyRef.current) {
+      if (autoRef.current && matchEnergyRef.current && bset.length === 0 && keyRef.current && keyRef.current.conf > 0.12) {
         const want = MOOD_LOOK[moodFrom(keyRef.current.mode, energyBandRef.current)].brightness
         if (want.length) { const mm = pool.filter(c => want.includes(clipBrightness(c))); if (mm.length >= 3) pool = mm }
       }
@@ -1675,8 +1677,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     lastLookMsRef.current = now; songLookCountRef.current++
     setVideoLook(pick(src.looks))
     if (!userPaletteRef.current) {
-      // Mood from the key's major/minor steers the palette warm/bright (major) vs cool/dark (minor).
-      const moodPals = MOOD_LOOK[moodFrom(keyRef.current?.mode ?? null, energyBandRef.current)].palettes
+      // Mood from the key's major/minor steers the palette warm/bright (major) vs cool/dark (minor) —
+      // only when the key read is confident (a percussive/atonal read shouldn't push the palette).
+      const km = keyRef.current && keyRef.current.conf > 0.12 ? keyRef.current.mode : null
+      const moodPals = MOOD_LOOK[moodFrom(km, energyBandRef.current)].palettes
       setColorCfg(c => ({ ...c, paletteId: pick([...src.palettes, ...moodPals]), plane: null }))
     }
   }, [])
@@ -1845,7 +1849,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
     prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3
     lastBeatRef.current = 0; prevBeatRef.current = 0
-    chromaRef.current.fill(0); keyRef.current = null; binPcRef.current = null; songLookCountRef.current = 0
+    chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []; binPcRef.current = null; songLookCountRef.current = 0
   }, [])
 
   // Record ~7s off the audio tap and ask the recognizer what's playing (once at a time).
@@ -2017,21 +2021,40 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // Freeze-stutter resume + strobe pulse.
             if (freezeHitUntilRef.current && now > freezeHitUntilRef.current) { (bgFilterRef.current?.querySelector('video') as HTMLVideoElement | null)?.play().catch(() => {}); freezeHitUntilRef.current = 0 }
             if (now < strobeUntilRef.current) { beatFlashRef.current = (Math.floor(now / 50) % 2) ? 0.85 : 0.06; beatFlashColorRef.current = '#ffffff' }
-            // Key / scale: accumulate a chroma profile (bins → pitch classes) and estimate key + mode ~1x/s.
+            // Key / scale: accumulate a chroma profile (bins → pitch classes) and estimate key + mode.
             if (!binPcRef.current || binPcRef.current.length !== f.freq.length) {
               const sr = audioRef.current?.sampleRate ?? 44100, N = a.fftSize, map = new Int16Array(f.freq.length)
               for (let i = 0; i < f.freq.length; i++) { const fr = i * sr / N; map[i] = (fr < 60 || fr > 3000) ? -1 : ((Math.round(12 * Math.log2(fr / 440) + 69) % 12) + 12) % 12 }
               binPcRef.current = map
+              // getByteFrequencyData is dB-scaled (min/max Decibels) — convert back to LINEAR amplitude so
+              // chroma weights match real magnitude (the dB domain over-weights noise/harmonics → wrong key).
+              const lo = a.minDecibels, hi = a.maxDecibels, lut = new Float32Array(256)
+              for (let b = 0; b < 256; b++) lut[b] = b === 0 ? 0 : Math.pow(10, (lo + (b / 255) * (hi - lo)) / 20)
+              ampLutRef.current = lut
             }
             const fc = frameChromaRef.current; fc.fill(0)
-            const pcMap = binPcRef.current
-            for (let i = 2; i < f.freq.length; i++) { const pc = pcMap[i]; if (pc >= 0) fc[pc] += f.freq[i] }
+            const pcMap = binPcRef.current, lut = ampLutRef.current!
+            for (let i = 2; i < f.freq.length; i++) { const pc = pcMap[i]; if (pc >= 0) fc[pc] += lut[f.freq[i]] }
             const chr = chromaRef.current
-            for (let p = 0; p < 12; p++) chr[p] = chr[p] * 0.96 + fc[p] * 0.04
-            if (now - lastKeyMsRef.current > 1200) {
+            // Running accumulation (near-sum, gentle 0.9997 decay to bound it + adapt over a long mix).
+            // A short window just reports the CURRENT CHORD; the summed profile lets Krumhansl extract the
+            // song's actual tonic — it converges in ~7s and stays locked. Reset per song.
+            for (let p = 0; p < 12; p++) chr[p] = chr[p] * 0.9997 + fc[p]
+            if (now - lastKeyMsRef.current > 700) {
               lastKeyMsRef.current = now
               const kr = estimateKey(chr)
-              if (kr && kr.conf > 0.04) { keyRef.current = kr; if (detectorRef.current) setKeyView(kr) }
+              if (kr) {
+                const votes = keyVotesRef.current; votes.push(kr); if (votes.length > 6) votes.shift()
+                // Confidence doubles as a TONALNESS gate: drummy/atonal audio → flat chroma → low conf →
+                // it doesn't vote, so a percussive stretch won't commit a bogus key.
+                const tonal = votes.filter(vv => vv.conf > 0.1)
+                if (tonal.length >= 2) {
+                  const tally = tonal.reduce((m, vv) => (m[vv.name] = (m[vv.name] || 0) + 1, m), {} as Record<string, number>)
+                  const winName = Object.entries(tally).sort((x, y) => y[1] - x[1])[0][0]
+                  const rep = [...tonal].reverse().find(vv => vv.name === winName) ?? kr
+                  keyRef.current = rep; if (detectorRef.current) setKeyView(rep)
+                } else if (detectorRef.current && tonal.length === 0) { keyRef.current = null; setKeyView(null) }
+              }
             }
           }
           if (bass > bassAvgRef.current * 1.35 && bass > 0.12 && now - lastBeatRef.current > 250) {
@@ -2086,7 +2109,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // look budget (so the new song gets a fresh look, then holds it) + the key detector.
             if (!nowIdle) {
               songEditRef.current = { on: Math.random() < 0.6, intensity: 0.45 + Math.random() * 0.5 }
-              songLookCountRef.current = 0; chromaRef.current.fill(0); keyRef.current = null
+              songLookCountRef.current = 0; chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []
             }
           }
           // Smooth it, then auto-calibrate to THIS song's own range: track a slowly-relaxing
@@ -2378,7 +2401,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Crosshair size={12} style={{ opacity: 0.8 }} /> Objects: {modelState === 'ready' ? 'boxing people · cars · animals' : modelState === 'loading' ? 'loading detector…' : modelState === 'error' ? 'detector failed to load' : 'starting…'}{modelState === 'ready' && !hasBg ? ' (add a video background)' : ''}</div>
             <div style={{ fontSize: 12.5, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Activity size={12} style={{ opacity: 0.8 }} /> Genre read: {sonicView ? <><strong>{sonicView.family}</strong> · {Math.round(sonicView.confidence * 100)}% confident</> : running ? 'listening…' : 'play audio to read'}</div>
             {sonicView && <div style={{ fontSize: 11, opacity: 0.78, marginTop: 2, marginLeft: 18 }}>{sonicView.profile}</div>}
-            <div style={{ fontSize: 12.5, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Palette size={12} style={{ opacity: 0.8 }} /> Key / mood: {keyView ? <><strong>{keyView.name}</strong> · {moodFrom(keyView.mode, energyBandRef.current)}</> : running ? 'reading the scale…' : 'play audio to read'}</div>
+            <div style={{ fontSize: 12.5, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Palette size={12} style={{ opacity: 0.8 }} /> Key / mood: {keyView ? <><strong>{keyView.name}</strong> · {moodFrom(keyView.mode, energyBandRef.current)} · {Math.round(keyView.conf * 100)}%</> : running ? 'no clear key (percussive / atonal)' : 'play audio to read'}</div>
             <div style={{ fontSize: 10, opacity: 0.55, marginTop: 6, lineHeight: 1.4 }}>All on-device. The genre is a rough sound-based guess (often low-confidence) — it nudges Auto’s grade &amp; palette, so a wrong read is why visuals can miss the tone.</div>
           </div>
         )}
