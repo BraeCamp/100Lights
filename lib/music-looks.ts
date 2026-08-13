@@ -53,7 +53,7 @@ export const GENRE_LOOKS: GenreLook[] = [
   },
   {
     id: 'edm', name: 'EDM', desc: 'Punchy, bright, reactive',
-    style: 'bars', palette: 'neon', mode: 'spectrum', grade: 'neonnoir', gain: 1.7, smoothing: 0.6,
+    style: 'bars', palette: 'neon', mode: 'spectrum', grade: 'synthgrid', gain: 1.7, smoothing: 0.6,
     mirror: true, glow: true, trail: false, match: true, eq: true,
     beat: true,
     filters: { blur: 0, brightness: 1.05, saturate: 1.4, hue: 0 },

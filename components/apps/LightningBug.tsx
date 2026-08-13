@@ -324,12 +324,12 @@ function classifySonic(o: { bpm: number; energy: number; bass: number; bright: n
 // Arrays give variety within a genre. Falls back to ENERGY_LOOK when the genre read is unsure.
 const GENRE_LOOK: Record<string, { modes: string[]; looks: string[]; palettes: string[] }> = {
   'Ambient': { modes: ['living', 'ink', 'none'], looks: ['dream', 'cool'], palettes: ['ice', 'aurora', 'ocean'] },
-  'Lofi / Chill': { modes: ['none', 'living', 'oil'], looks: ['warm', 'dream', 'film'], palettes: ['sunset', 'candy', 'aurora'] },
-  'Hip-hop': { modes: ['vhs', 'cartoon', 'glitch'], looks: ['noir', 'film', 'blockbuster', 'lean'], palettes: ['fire', 'neon', 'mono'] },
-  'Electronic': { modes: ['neonedge', 'glitch', 'infrared'], looks: ['neonnoir', 'dream', 'cool'], palettes: ['neon', 'aurora', 'candy'] },
+  'Lofi / Chill': { modes: ['none', 'living', 'oil', 'super8'], looks: ['warm', 'dream', 'film'], palettes: ['sunset', 'candy', 'aurora'] },
+  'Hip-hop': { modes: ['vhs', 'cartoon', 'glitch'], looks: ['noir', 'film', 'blockbuster', 'lean', 'spotlight'], palettes: ['fire', 'neon', 'mono'] },
+  'Electronic': { modes: ['neonedge', 'glitch', 'infrared'], looks: ['neonnoir', 'synthgrid', 'dream', 'cool'], palettes: ['neon', 'aurora', 'candy'] },
   'Rock / Band': { modes: ['comic', 'vhs', 'anime'], looks: ['noir', 'film', 'bleach'], palettes: ['fire', 'mono', 'sunset'] },
-  'Pop': { modes: ['cartoon', 'anime', 'comic'], looks: ['warm', 'dream', 'blockbuster', 'giallo', 'neonnoir'], palettes: ['candy', 'sunset', 'neon'] },
-  'Orchestral': { modes: ['ink', 'oil', 'none'], looks: ['noir', 'film', 'dream', 'blockbuster'], palettes: ['ice', 'ocean', 'mono'] },
+  'Pop': { modes: ['cartoon', 'anime', 'comic', 'chroma'], looks: ['warm', 'dream', 'blockbuster', 'giallo', 'neonnoir', 'synthgrid'], palettes: ['candy', 'sunset', 'neon'] },
+  'Orchestral': { modes: ['ink', 'oil', 'none'], looks: ['noir', 'film', 'dream', 'blockbuster', 'spotlight'], palettes: ['ice', 'ocean', 'mono'] },
 }
 const ENERGY_LOOK: Record<'calm' | 'mid' | 'hot', { modes: string[]; looks: string[]; palettes: string[] }> = {
   calm: { modes: ['none', 'living', 'ink'], looks: ['dream', 'warm'], palettes: ['aurora', 'ice', 'sunset'] },
@@ -390,7 +390,7 @@ const AMBIENTS: { id: string; name: string; css: string }[] = [
 // filter, an SVG filter (posterize/aberration/bloom/ripple, defined once in LookSvgDefs),
 // and overlay layers (vignette/grain/scanlines/duotone). Pure CSS+SVG — cheap, no WebGL,
 // works over video and stills alike, and composes on top of the user's blur/hue sliders.
-type Overlay = 'vignette' | 'grain' | 'scanlines' | 'duotone' | 'halftone'
+type Overlay = 'vignette' | 'grain' | 'scanlines' | 'duotone' | 'halftone' | 'grid' | 'spotlight' | 'flicker'
 interface VideoLook { id: string; name: string; css?: string; svg?: string; overlays?: Overlay[] }
 
 // LOOK = a subtle grade/atmosphere you leave on. Composes UNDER a Mode.
@@ -408,6 +408,8 @@ const VIDEO_LOOKS: VideoLook[] = [
   { id: 'bleach', name: 'Bleach', css: 'saturate(0.42) contrast(1.4) brightness(1.05)', overlays: ['grain', 'vignette'] },   // desaturated grit (grunge/rock)
   { id: 'giallo', name: 'Giallo', css: 'saturate(1.65) contrast(1.16) hue-rotate(-6deg) brightness(1.02)', overlays: ['vignette'] },  // lurid technicolor reds
   { id: 'lean', name: 'Lean', css: 'sepia(0.5) hue-rotate(215deg) saturate(1.5) contrast(1.05)', overlays: ['scanlines', 'grain'] },  // purple phonk wash
+  { id: 'synthgrid', name: 'Synth grid', css: 'saturate(1.3) contrast(1.1) brightness(1.02)', overlays: ['grid'] },        // neon perspective grid (synthwave)
+  { id: 'spotlight', name: 'Spotlight', css: 'contrast(1.32) brightness(0.97) saturate(1.05)', overlays: ['spotlight'] },  // chiaroscuro performance-in-void
 ]
 
 // MODE = a dramatic, live full-frame transform — the "change the whole look" layer, more
@@ -427,6 +429,8 @@ const VIDEO_MODES: VideoLook[] = [
   { id: 'vhs', name: 'VHS', svg: 'mv-vhs', css: 'saturate(1.2) contrast(1.05)', overlays: ['scanlines', 'grain'] },
   { id: 'glitch', name: 'Glitch', svg: 'mv-glitch', overlays: ['scanlines'] },
   { id: 'living', name: 'Living', svg: 'mv-living' },
+  { id: 'super8', name: 'Super-8', svg: 'mv-super8', css: 'contrast(0.92) brightness(1.04) saturate(1.12)', overlays: ['grain', 'vignette', 'flicker'] },  // warm home-movie: weave + flicker + grain
+  { id: 'chroma', name: 'Chroma', svg: 'mv-chroma', css: 'saturate(1.12)' },   // clean RGB fringe (aberration)
 ]
 // Tileable film-grain noise (feTurbulence baked into a data-URI so it needs no network).
 const GRAIN_URI = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
@@ -443,6 +447,14 @@ function LookOverlays({ keys }: { keys: Overlay[] }) {
         if (k === 'grain') return <div key={k} className="mv-grain" style={{ ...base, backgroundImage: `url("${GRAIN_URI}")`, backgroundSize: '160px 160px', opacity: 0.16, mixBlendMode: 'overlay' }} />
         if (k === 'duotone') return <div key={k} style={{ ...base, backgroundImage: 'linear-gradient(125deg,#12b3ff,#ff2fd0)', mixBlendMode: 'color', opacity: 0.4 }} />
         if (k === 'halftone') return <div key={k} style={{ ...base, backgroundImage: 'radial-gradient(circle at center, rgba(0,0,0,0.55) 30%, transparent 32%)', backgroundSize: '6px 6px', mixBlendMode: 'multiply', opacity: 0.55 }} />
+        // Synth grid — a neon perspective floor receding to a horizon, scrolling toward the viewer.
+        if (k === 'grid') return <div key={k} style={{ ...base, top: 'auto', overflow: 'hidden', height: '58%', maskImage: 'linear-gradient(to top, #000 8%, transparent 78%)', WebkitMaskImage: 'linear-gradient(to top, #000 8%, transparent 78%)' }}>
+          <div className="mv-grid" style={{ position: 'absolute', left: '-60%', right: '-60%', bottom: 0, height: '260%', transform: 'perspective(340px) rotateX(76deg)', transformOrigin: 'bottom center', backgroundImage: 'repeating-linear-gradient(90deg, transparent 0 39px, #ff2e97 39px 40px), repeating-linear-gradient(0deg, transparent 0 39px, #22d3ee 39px 40px)', backgroundSize: '40px 40px', mixBlendMode: 'screen', opacity: 0.55 }} />
+        </div>
+        // Spotlight void — a tight radial that sinks everything but the centre into near-black.
+        if (k === 'spotlight') return <div key={k} style={{ ...base, background: 'radial-gradient(ellipse 58% 54% at 50% 46%, transparent 26%, rgba(0,0,0,0.93) 82%)' }} />
+        // Projector flicker — a black multiply layer whose opacity stutters like old film.
+        if (k === 'flicker') return <div key={k} className="mv-flicker" style={{ ...base, background: '#000', mixBlendMode: 'multiply' }} />
         return null
       })}
     </>
@@ -470,6 +482,26 @@ function LookSvgDefs() {
             <feFuncG type="table" tableValues="0.04 0.40 0.70 0.92" />
             <feFuncB type="table" tableValues="0.14 0.46 0.42 0.28" />
           </feComponentTransfer>
+        </filter>
+        {/* Super-8: warm cast + lifted blacks, plus a subtle animated displacement = gate weave. */}
+        <filter id="mv-super8">
+          <feComponentTransfer result="warm">
+            <feFuncR type="linear" slope="1.06" intercept="0.03" />
+            <feFuncG type="linear" slope="1.00" intercept="0.02" />
+            <feFuncB type="linear" slope="0.86" intercept="0.015" />
+          </feComponentTransfer>
+          <feTurbulence type="fractalNoise" baseFrequency="0.02 0.03" numOctaves="1" seed="4" result="n">
+            <animate attributeName="baseFrequency" dur="0.45s" values="0.02 0.03;0.026 0.028;0.02 0.031;0.02 0.03" repeatCount="indefinite" />
+          </feTurbulence>
+          <feDisplacementMap in="warm" in2="n" scale="4" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+        {/* Chroma-split: gentle RGB fringe (aberration) with no scanlines/tracking — cleaner than VHS. */}
+        <filter id="mv-chroma" x="-3%" width="106%">
+          <feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r" />
+          <feOffset in="r" dx="2.5" dy="0" result="ro" />
+          <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0" result="gb" />
+          <feOffset in="gb" dx="-2.5" dy="0" result="gbo" />
+          <feBlend in="ro" in2="gbo" mode="screen" />
         </filter>
         <filter id="mv-vhs" x="-6%" y="-2%" width="112%" height="104%">
           <feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r" />
@@ -1756,6 +1788,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       <style>{`@keyframes mv-amb{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}} .mv-ambient{animation:mv-amb 16s ease-in-out infinite}
 @keyframes mv-grain{0%{background-position:0 0}25%{background-position:-6% 5%}50%{background-position:5% -4%}75%{background-position:-4% -6%}100%{background-position:0 0}} .mv-grain{animation:mv-grain .6s steps(3) infinite}
 @keyframes mv-beat{0%,100%{transform:scale(1);opacity:.6}50%{transform:scale(1.5);opacity:1}}
+@keyframes mv-grid{from{background-position:0 0}to{background-position:0 40px}} .mv-grid{animation:mv-grid 1.1s linear infinite}
+@keyframes mv-flicker{0%,100%{opacity:.05}18%{opacity:.14}36%{opacity:.02}52%{opacity:.16}68%{opacity:.05}84%{opacity:.11}} .mv-flicker{animation:mv-flicker .3s steps(2) infinite}
+@media (prefers-reduced-motion: reduce){.mv-grid,.mv-flicker,.mv-grain,.mv-ambient{animation:none}}
 .mv-live{container-type:inline-size}
 .mv-split{display:flex;flex-direction:column}
 .mv-stage{position:sticky;top:0;z-index:3;background:var(--bg-base);padding-bottom:12px}
