@@ -376,8 +376,10 @@ const EDIT_CMDS: Record<string, string> = {
 // Which band's spike fires which command. Repeat an id to weight it. bass = weighty/structural,
 // mid = punchy accents, high = fast/glitchy shine.
 const BAND_EDITS: Record<'bass' | 'mid' | 'high', string[]> = {
-  bass: ['zoom', 'cut', 'shake', 'zoom', 'skip'],
-  mid: ['skip', 'flash', 'freeze', 'skip', 'zoom'],
+  // 'skip' = hop forward in the clip's OWN timeline. Kept rare (one slot, mids only) — it was jumpy;
+  // the punchier moves (zoom/shake/flash/freeze) don't disturb the footage's playback.
+  bass: ['zoom', 'cut', 'shake', 'zoom', 'zoom'],
+  mid: ['flash', 'freeze', 'zoom', 'skip', 'flash'],
   high: ['rgb', 'strobe', 'huespin', 'rgb'],
 }
 
@@ -1576,7 +1578,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // Execute one auto-editor command — the discrete, executable edit actions fired on band spikes.
   const execEditCmd = useCallback((id: string, video: HTMLVideoElement | null, now: number) => {
     switch (id) {
-      case 'skip': if (video && video.readyState >= 2) { try { const d = video.duration; const t = video.currentTime + 0.4 + Math.random() * 0.35; video.currentTime = (isFinite(d) && d > 1.5) ? (t % (d - 0.2)) : t } catch { /* not seekable */ } } break
+      case 'skip': if (video && video.readyState >= 2) { try { const d = video.duration; const t = video.currentTime + 0.2 + Math.random() * 0.15; video.currentTime = (isFinite(d) && d > 1.5) ? (t % (d - 0.2)) : t } catch { /* not seekable */ } } break
       case 'cut': requestSwitch(); break
       case 'zoom': zoomEnvRef.current = 1; break
       case 'shake': shakeEnvRef.current = 1; break
@@ -2527,7 +2529,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // gets an intensity, so it stays selective (not every song, not every hit). Also reset the
             // look budget (so the new song gets a fresh look, then holds it) + the key detector.
             if (!nowIdle) {
-              songEditRef.current = { on: Math.random() < 0.6, intensity: 0.45 + Math.random() * 0.5 }
+              songEditRef.current = { on: Math.random() < 0.45, intensity: 0.4 + Math.random() * 0.45 }
               songLookCountRef.current = 0; chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []
               contentClassRef.current = Math.random() < 0.4 ? 'anim' : 'live'   // pick a class for the song; applyAuto refines by genre
               // Re-anchor the bar clock + sections to the new song's start ("backfill from the beginning").
