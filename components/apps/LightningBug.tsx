@@ -1329,7 +1329,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const energyMaxRef = useRef(0)                            // (relative energy → band, so it "improves to match")
   // Reactive amounts + detectors — mostly set by the genre presets.
   const [switchChance, setSwitchChance] = useState(0.35)   // per-bar chance to cut the video
-  const [punchAmt, setPunchAmt] = useState(1)              // drum-punch intensity
+  const [punchAmt, setPunchAmt] = useState(0)              // drum-punch intensity (default OFF — Brae)
   const switchChanceRef = useRef(0.35); switchChanceRef.current = switchChance
   const punchAmtRef = useRef(1); punchAmtRef.current = punchAmt
   const songIntensityRef = useRef(0)   // 0..1.2 overall song intensity, VERY slow EMA → scales the drum punch + transition energy without misreads
@@ -1999,8 +1999,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     setAuto(a => {
       if (!a) {
         // Turning Auto ON: set the reactive stack + baselines ONCE — you can tweak any of it after.
-        setReactive(true); setMatchEnergy(true); setBeatColor(true); setAutoShuffle(true)
-        setSwitchChance(0.4); setPunchAmt(1)
+        // Drum punch + colour-on-beat default OFF (Brae) — turn them on manually if wanted.
+        setReactive(true); setMatchEnergy(true); setBeatColor(false); setAutoShuffle(true)
+        setSwitchChance(0.4); setPunchAmt(0)
         lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0
         userPaletteRef.current = false   // fresh Auto session picks palettes by genre; a palette you pick after persists
         applyAuto()
