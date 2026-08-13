@@ -51,11 +51,27 @@ export async function POST(req: Request) {
   }
 
   // 2) AI-interpreted catalogue search (works now, no embeddings needed).
+  //    Jamendo's fuzzytags is a loose keyword OR — it can't tell "dark & moody" from "upbeat disco".
+  //    So we pull a wide commercial-safe candidate set, then re-rank by how many of Claude's
+  //    interpreted mood/genre tags each track actually carries. Commercial-safe only (no NC) so
+  //    every result is usable on a monetized broadcast.
   const spec = await interpret(prompt)
-  let rows = spec.tags ? await jamendoSearch({ tags: spec.tags, limit: 60 }) : []
-  if (rows.length < 8 && spec.name) rows = [...rows, ...await jamendoSearch({ name: spec.name, limit: 30 })]
+  let rows = spec.tags ? await jamendoSearch({ tags: spec.tags, limit: 200, commercialOnly: true }) : []
+  if (rows.length < 12 && spec.name) rows = [...rows, ...await jamendoSearch({ name: spec.name, limit: 40, commercialOnly: true })]
+
+  // Score each track by how many of its own tags relate to Claude's interpreted tags. Substring match
+  // both ways (min 3 chars) so "synth" counts a track tagged "synthpop", "melanchol" catches
+  // "melancholic", etc.
+  const targets = spec.tags.split('+').map(t => t.trim().toLowerCase()).filter(t => t.length >= 3)
+  const vibe = (t: { tags?: string[] }) =>
+    (t.tags ?? []).reduce((s, x) => s + (targets.some(g => x.includes(g) || g.includes(x)) ? 1 : 0), 0)
+
   const seen = new Set<string>()
-  const tracks: OutTrack[] = rows.filter(t => (seen.has(t.id) ? false : seen.add(t.id))).slice(0, 40)
-    .map(t => ({ id: t.id, title: t.title, artist: t.artist, audio: t.audio }))
+  const tracks: OutTrack[] = rows
+    .filter(t => (seen.has(t.id) ? false : seen.add(t.id)))
+    .map(t => ({ t, s: vibe(t) }))
+    .sort((a, b) => b.s - a.s)                                     // best vibe-overlap first; stable keeps popularity order within a tie
+    .slice(0, 40)
+    .map(({ t, s }) => ({ id: t.id, title: t.title, artist: t.artist, audio: t.audio, score: s || undefined }))
   return Response.json({ method: 'ai-search', tracks, interpretation: spec })
 }

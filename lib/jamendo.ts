@@ -11,15 +11,22 @@ export interface JamendoTrack {
   album?: string
   duration?: number
   shareurl?: string   // the track's page on jamendo.com
+  tags?: string[]     // the track's own genre/mood tags (from musicinfo) — used to re-rank by vibe
 }
+
+// A CC license permits commercial use unless it's NonCommercial (…/by-nc…).
+export const isCommercialLicense = (ccurl: string) => !/\/by-nc/i.test(ccurl || '')
 
 export const jamendoConfigured = () => !!process.env.JAMENDO_CLIENT_ID
 export const jamendoLicensed = () => process.env.JAMENDO_COMMERCIAL === 'true'
 
-export async function jamendoSearch(opts: { tags?: string; name?: string; order?: string; limit?: number }): Promise<JamendoTrack[]> {
+export async function jamendoSearch(opts: { tags?: string; name?: string; order?: string; limit?: number; commercialOnly?: boolean }): Promise<JamendoTrack[]> {
   const cid = process.env.JAMENDO_CLIENT_ID
   if (!cid) return []
-  const licensed = jamendoLicensed()
+  // Normally JAMENDO_COMMERCIAL lets NonCommercial tracks through (they don't bind us). But when a
+  // caller asks for commercialOnly (e.g. "inspired by ___" results meant for a monetized stream),
+  // exclude NC regardless so every result is safe to broadcast.
+  const licensed = jamendoLicensed() && !opts.commercialOnly
   const params = new URLSearchParams({
     client_id: cid, format: 'json', limit: String(opts.limit ?? 200),
     audioformat: 'mp32', include: 'musicinfo licenses', groupby: 'artist_id',
@@ -36,13 +43,18 @@ export async function jamendoSearch(opts: { tags?: string; name?: string; order?
       const d = await r.json() as { results?: Record<string, unknown>[] }
       const rows = (d.results ?? []).filter(t => t.audio && (licensed || !/\/by-nc/i.test(String(t.license_ccurl || ''))))
       if (!rows.length) continue
-      return rows.map(t => ({
-        id: String(t.id), title: String(t.name ?? ''), artist: String(t.artist_name ?? ''), audio: String(t.audio),
-        license: licensed ? 'Jamendo (licensed)' : String(t.license_ccurl || 'Jamendo'),
-        album: t.album_name ? String(t.album_name) : undefined,
-        duration: t.duration ? Number(t.duration) : undefined,
-        shareurl: t.shareurl ? String(t.shareurl) : undefined,
-      }))
+      return rows.map(t => {
+        const mi = (t.musicinfo as { tags?: { genres?: string[]; instruments?: string[]; vartags?: string[] } })?.tags
+        const tags = [...(mi?.genres ?? []), ...(mi?.vartags ?? []), ...(mi?.instruments ?? [])].map(x => String(x).toLowerCase())
+        return {
+          id: String(t.id), title: String(t.name ?? ''), artist: String(t.artist_name ?? ''), audio: String(t.audio),
+          license: licensed ? 'Jamendo (licensed)' : String(t.license_ccurl || 'Jamendo'),
+          album: t.album_name ? String(t.album_name) : undefined,
+          duration: t.duration ? Number(t.duration) : undefined,
+          shareurl: t.shareurl ? String(t.shareurl) : undefined,
+          tags: tags.length ? tags : undefined,
+        }
+      })
     } catch { /* retry */ }
   }
   return []

@@ -109,7 +109,8 @@ export default function RadioAdmin() {
       {/* Inspired by… */}
       <h2 style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-secondary)', margin: '0 0 6px' }}>Inspired by…</h2>
       <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 8px' }}>
-        Describe a vibe, artist, or song. Claude maps it to the catalogue now; once the library is embedded
+        Describe a vibe, artist, or song. Claude maps it to the catalogue and re-ranks by vibe —
+        <strong> commercial-safe results only</strong> (no NonCommercial). Once the library is embedded
         (<code>npm run embed:jamendo</code>) and Replicate has credit, it matches by <strong>actual sound</strong>.
       </p>
       <form onSubmit={e => { e.preventDefault(); findInspired() }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
@@ -121,7 +122,13 @@ export default function RadioAdmin() {
           {iMethod && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 6px' }}>{iMethod === 'audio-embeddings' ? '🔊 matched by sound (embeddings)' : '🤖 AI-interpreted catalogue search'}{iNote ? ` · ${iNote}` : ''}</p>}
           {iRes.length ? (
             <div style={{ maxHeight: 520, overflowY: 'auto', paddingRight: 4, marginBottom: 28 }}>
-              {iRes.map(t => row(t.title, `${t.artist}${typeof (t as JTrack & { score?: number }).score === 'number' ? ` · match ${Math.round(((t as JTrack & { score?: number }).score || 0) * 100)}%` : ''}`, t.audio, t.shareurl ? <a href={t.shareurl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)', flexShrink: 0 }}><ExternalLink size={15} /></a> : null))}
+              {iRes.map(t => {
+                const sc = (t as JTrack & { score?: number }).score
+                const badge = typeof sc === 'number'
+                  ? (iMethod === 'audio-embeddings' ? ` · match ${Math.round(sc * 100)}%` : ` · vibe ${sc}`)
+                  : ''
+                return row(t.title, `${t.artist}${badge}`, t.audio, t.shareurl ? <a href={t.shareurl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)', flexShrink: 0 }}><ExternalLink size={15} /></a> : null)
+              })}
             </div>
           ) : <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 28px' }}>Nothing came back — try describing the vibe differently.</p>}
         </>
