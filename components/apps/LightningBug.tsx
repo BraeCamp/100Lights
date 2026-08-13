@@ -381,6 +381,20 @@ const BAND_EDITS: Record<'bass' | 'mid' | 'high', string[]> = {
   high: ['rgb', 'strobe', 'huespin', 'rgb'],
 }
 
+// Quick background-SWITCH transitions (masks the clip swap). All fast (100–280ms) and varied so the
+// look stays snappy; picked at random, and only on ~55% of switches (the rest are clean hard cuts).
+// o0/t0/f0 = the "from" opacity / transform / filter the new clip animates OUT of (to opacity 1, none).
+const SWITCH_TRANSITIONS: { id: string; dur: number; o0: string; t0: string; f0: string; flash?: boolean }[] = [
+  { id: 'dip',      dur: 150, o0: '0',    t0: 'none',              f0: 'none' },              // quick fade through black
+  { id: 'flash',    dur: 120, o0: '0',    t0: 'none',              f0: 'none', flash: true }, // white camera-flash cut
+  { id: 'punch-in', dur: 200, o0: '0',    t0: 'scale(1.18)',       f0: 'none' },              // zoom-punch inward
+  { id: 'pull-out', dur: 220, o0: '0',    t0: 'scale(0.84)',       f0: 'none' },              // pop out from small
+  { id: 'slide-l',  dur: 200, o0: '0',    t0: 'translateX(7%)',    f0: 'none' },              // quick slide from right
+  { id: 'slide-up', dur: 200, o0: '0',    t0: 'translateY(7%)',    f0: 'none' },              // quick slide up
+  { id: 'whip',     dur: 160, o0: '0.15', t0: 'translateX(14%)',   f0: 'blur(7px)' },         // whip-pan with motion blur
+  { id: 'spin',     dur: 220, o0: '0',    t0: 'scale(1.12) rotate(3deg)', f0: 'none' },       // slight rotate-in
+]
+
 // Quick tag filters for the catalog search — the most common, useful tags across the ~15k clips.
 const POPULAR_TAGS = ['neon', 'city', 'nature', 'ocean', 'forest', 'night', 'rain', 'sunset', 'abstract', 'smoke', 'clouds', 'water', 'lights', 'timelapse', 'mountains', 'beach', 'aerial', 'underwater', 'ink', 'vhs']
 
@@ -1236,6 +1250,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const lastAutoChangeRef = useRef(0)
   const bgInputRef = useRef<HTMLInputElement | null>(null)
   const bgFilterRef = useRef<HTMLDivElement | null>(null)  // filters applied here; EQ mode drives it per frame
+  const bgTransRef = useRef<HTMLDivElement | null>(null)   // outer layer for switch TRANSITIONS (EQ loop never touches it)
   // Offline save/download for the selected library clip
   const [savedCurrent, setSavedCurrent] = useState(false)
   const [savingBg, setSavingBg] = useState(false)
@@ -1498,16 +1513,30 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   useEffect(() => { eqRef.current = { on: reactive, blur, brightness, saturate, hueRot } }, [reactive, blur, brightness, saturate, hueRot])
   // Restore the static filter whenever EQ mode is off (the loop may have left an imperative value).
   useEffect(() => { if (!reactive && bgFilterRef.current) { bgFilterRef.current.style.filter = bgFilter; bgFilterRef.current.style.transform = '' } }, [reactive, bgFilter])
-  // Cross-dissolve on every background switch: black out instantly (transition off + reflow), then
-  // fade the new clip in over .5s. Masks the hard cut AND the Auto look change that lands with it.
-  // Opacity is independent of the per-frame EQ filter/transform, so reactivity stays instant.
+  // Background-switch TRANSITIONS. Brae's ask: don't transition on every switch (many should be clean
+  // hard cuts), and when we do transition make them QUICK and varied. Applied to bgTransRef — an outer
+  // layer the per-frame EQ loop never writes to (it only drives bgFilterRef), so transforms don't fight.
   const firstBgRef = useRef(true)
   useEffect(() => {
     if (firstBgRef.current) { firstBgRef.current = false; return }
-    const el = bgFilterRef.current; if (!el) return
-    el.style.transition = 'none'; el.style.opacity = '0'; void el.offsetHeight
-    el.style.transition = 'opacity .5s ease'
-    const r = requestAnimationFrame(() => { if (bgFilterRef.current) bgFilterRef.current.style.opacity = '1' })
+    const el = bgTransRef.current; if (!el) return
+    const reset = () => { el.style.transition = 'none'; el.style.opacity = '1'; el.style.transform = 'none'; el.style.filter = 'none' }
+    // Idle / between-songs: a single calm dissolve (few switches happen here anyway).
+    if (idleRef.current) {
+      el.style.transition = 'none'; el.style.opacity = '0'; el.style.transform = 'none'; el.style.filter = 'none'; void el.offsetHeight
+      el.style.transition = 'opacity .5s ease'
+      const r = requestAnimationFrame(() => { if (bgTransRef.current) bgTransRef.current.style.opacity = '1' })
+      return () => cancelAnimationFrame(r)
+    }
+    // Active: ~45% clean cut (no transition), else a quick, randomly-picked transition.
+    if (Math.random() < 0.45) { reset(); return }
+    const tr = SWITCH_TRANSITIONS[Math.floor(Math.random() * SWITCH_TRANSITIONS.length)]
+    el.style.transition = 'none'
+    el.style.opacity = tr.o0; el.style.transform = tr.t0; el.style.filter = tr.f0
+    void el.offsetHeight
+    if (tr.flash) { beatFlashRef.current = 1; beatFlashColorRef.current = '#ffffff' }   // camera-flash cut (loop renders+decays it)
+    el.style.transition = `opacity ${tr.dur}ms ease, transform ${tr.dur}ms cubic-bezier(.2,.7,.2,1), filter ${tr.dur}ms ease`
+    const r = requestAnimationFrame(() => { const e = bgTransRef.current; if (e) { e.style.opacity = '1'; e.style.transform = 'none'; e.style.filter = 'none' } })
     return () => cancelAnimationFrame(r)
   }, [bgClip?.id, bgUrl, bgKind])
 
@@ -2390,9 +2419,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         {isOver && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 5, display: 'grid', placeItems: 'center', background: 'rgba(6,5,10,0.6)', color: '#fff', fontSize: 15, fontWeight: 800, pointerEvents: 'none' }}>Drop audio to visualize · video or image for the background</div>
         )}
-        {/* Background layer — ambient gradient, library clip (streamed), or your own upload; filtered here */}
+        {/* Background layer — ambient gradient, library clip (streamed), or your own upload; filtered here.
+            bgTransRef is the outer transition layer (opacity/transform on switch); bgFilterRef is the inner
+            EQ-driven filter layer. Keeping them separate lets transitions and reactivity coexist. */}
         {hasBg && (
-          <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter, isolation: 'isolate', transition: 'opacity .5s ease' }}>
+          <div ref={bgTransRef} style={{ position: 'absolute', inset: 0, willChange: 'opacity, transform' }}>
+          <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter, isolation: 'isolate' }}>
             {bgKind === 'media' ? (
               bgVideo
                 ? <video key={(bgUrl ?? '') + (edit !== 'none' ? '-x' : '')} src={bgUrl ?? undefined} crossOrigin={edit !== 'none' ? 'anonymous' : undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -2421,6 +2453,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             {matchVisuals && <div style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(120deg, ${colors.join(', ')})`, mixBlendMode: 'overlay', opacity: 0.5, pointerEvents: 'none' }} />}
             {/* Mode + look overlays (vignette / grain / scanlines / duotone / halftone) */}
             <LookOverlays keys={activeOverlays} />
+          </div>
           </div>
         )}
 
