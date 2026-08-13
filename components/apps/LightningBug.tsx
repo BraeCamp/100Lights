@@ -1094,6 +1094,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const autoShuffleRef = useRef(false); autoShuffleRef.current = autoShuffle
   const bgKindRef = useRef(bgKind); bgKindRef.current = bgKind
   const shuffleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastErrSwitchRef = useRef(0)                        // debounce error-driven clip skips (no rapid cascade)
   const bgClipIdRef = useRef<string | null>(null)           // current clip id, so nextClip avoids repeats without re-binding
   const recentClipsRef = useRef<string[]>([])               // recently-played ids → no repeats until most of the pool has shown
   const nextClipRef = useRef<() => void>(() => {})          // so the beat detector can advance on a bar boundary
@@ -2097,7 +2098,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           <div ref={bgFilterRef} style={{ position: 'absolute', inset: 0, filter: bgFilter, isolation: 'isolate', transition: 'opacity .5s ease' }}>
             {bgKind === 'media' ? (
               bgVideo
-                ? <video src={bgUrl ?? undefined} crossOrigin="anonymous" autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                ? <video key={(bgUrl ?? '') + (edit !== 'none' ? '-x' : '')} src={bgUrl ?? undefined} crossOrigin={edit !== 'none' ? 'anonymous' : undefined} autoPlay loop muted playsInline style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
                 : <img src={bgUrl ?? undefined} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : bgKind === 'library' && bgClip ? (
               <>
@@ -2108,11 +2109,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 ) : (
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                    <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '')} src={bgSrcOverride ?? bgClip.src} crossOrigin="anonymous" poster={bgClip.preview} autoPlay loop={!autoShuffle || idle} muted playsInline
+                    <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '') + (edit !== 'none' ? '-x' : '')} src={bgSrcOverride ?? bgClip.src} crossOrigin={edit !== 'none' ? 'anonymous' : undefined} poster={bgClip.preview} autoPlay loop={!autoShuffle || idle} muted playsInline
                       onCanPlay={() => { if (bgClip) readySrcsRef.current.add(bgClip.src) }}
                       onEnded={() => { if (!autoShuffle) return; if (!requestSwitch() && bgVideoRef.current) { bgVideoRef.current.currentTime = 0; bgVideoRef.current.play().catch(() => {}) } }}   // next not buffered yet → replay current (stay smooth) until it is
                       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-                      onError={e => { if (autoShuffle) nextClip(); else (e.currentTarget as HTMLVideoElement).style.display = 'none' }} />
+                      onError={() => { if (!autoShuffle) return; const now = performance.now(); if (now - lastErrSwitchRef.current < 1500) return; lastErrSwitchRef.current = now; nextClip() }} />
                   </>
                 )}
               </>
@@ -2130,7 +2131,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             offscreen (not display:none) node so browsers actually fetch it; muted, no autoplay.
             When one becomes playable we mark it ready and, if a switch is waiting on it, cut now. */}
         {autoShuffle && preloadSrcs.map(src => (
-          <video key={src} src={src} preload="auto" muted playsInline aria-hidden
+          // crossOrigin must match the main video's, or the cached response won't be CORS-usable there.
+          <video key={src + (edit !== 'none' ? '-x' : '')} src={src} crossOrigin={edit !== 'none' ? 'anonymous' : undefined} preload="auto" muted playsInline aria-hidden
             onCanPlay={() => { readySrcsRef.current.add(src); if (wantSwitchRef.current) requestSwitch() }}
             onCanPlayThrough={() => { readySrcsRef.current.add(src); if (wantSwitchRef.current) requestSwitch() }}
             style={{ position: 'absolute', width: 1, height: 1, top: 0, left: 0, opacity: 0, pointerEvents: 'none' }} />
