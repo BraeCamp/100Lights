@@ -1045,6 +1045,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [openPanel, setOpenPanel] = useState<string | null>('look')   // which control group's section is open
   const [tabsOpen, setTabsOpen] = useState(false)                     // mobile: expand all tab labels into words
   const [advOpen, setAdvOpen] = useState(false)                       // reveal the manual mode/grade/filter controls
+  const [shufOpen, setShufOpen] = useState(false)                     // reveal the granular auto-shuffle options
   // Background layer + filters + "no audio" ambient mode
   const [bgKind, setBgKind] = useState<'none' | 'media' | 'library' | string>('none')   // 'none' | ambient id | 'media' | 'library'
   const [bgUrl, setBgUrl] = useState<string | null>(null)
@@ -2130,7 +2131,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
 .mv-live{container-type:inline-size}
 .mv-split{display:flex;flex-direction:column}
 .mv-stage{position:sticky;top:0;z-index:3;background:var(--bg-base);padding-bottom:12px}
-.mv-panels{display:flex;flex-direction:column}
+.mv-panels{display:flex;flex-direction:column;container-type:inline-size}
+.mv-two{display:grid;grid-template-columns:1fr;gap:8px 20px;align-items:start}
+@container (min-width:430px){.mv-two{grid-template-columns:1fr 1fr}}
+.mv-disc{width:100%;display:flex;align-items:center;gap:8px;padding:0;background:none;border:none;cursor:pointer;text-align:left}
+.mv-disc-lbl{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary)}
 .mv-broadcast{position:fixed;inset:0;background:#000;z-index:60}
 .mv-broadcast .mv-panels{display:none}
 .mv-broadcast .mv-split{display:block;height:100%}
@@ -2466,7 +2471,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             <input type="checkbox" checked={matchVisuals} onChange={e => setMatchVisuals(e.target.checked)} /> Match my palette
           </label>
         </div>
-        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>One switch for all reactivity — the visualizer AND the background filters/drum-punch move with the audio. Off = a still background. Match tints the background toward your visualizer colours.</p>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 12px' }}>React = the background filters/drum-punch move with the audio (off = still). Match tints it toward your palette.</p>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <button type="button" onClick={() => setBgKind('none')} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: bgKind === 'none' ? 'var(--accent)' : 'var(--bg-card)', color: bgKind === 'none' ? '#0e0d12' : 'var(--text-secondary)' }}>None</button>
@@ -2503,6 +2508,13 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           </div>
         )}
         {autoShuffle && (
+          <button type="button" onClick={() => setShufOpen(o => !o)} className="mv-disc" aria-expanded={shufOpen} style={{ margin: '10px 0 2px' }}>
+            <SlidersHorizontal size={13} style={{ color: 'var(--text-muted)' }} />
+            <span className="mv-disc-lbl">Shuffle options</span>
+            <ChevronLeft size={14} style={{ marginLeft: 'auto', color: 'var(--text-muted)', transform: shufOpen ? 'rotate(-90deg)' : 'rotate(-90deg) scaleX(-1)', transition: 'transform .15s' }} />
+          </button>
+        )}
+        {autoShuffle && shufOpen && (
           <div style={{ margin: '6px 0 4px' }}>
             <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 6px' }}>Shuffle from — pick the categories for your set, or leave all off for everything:</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -2517,7 +2529,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             </div>
           </div>
         )}
-        {autoShuffle && (
+        {autoShuffle && shufOpen && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '2px 0 4px' }}>
             <button type="button" onClick={() => setMatchEnergy(v => !v)}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: matchEnergy ? 'var(--accent)' : 'var(--bg-card)', color: matchEnergy ? '#0e0d12' : 'var(--text-secondary)' }}>
@@ -2531,7 +2543,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             )}
           </div>
         )}
-        {autoShuffle && (
+        {autoShuffle && shufOpen && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '2px 0 4px' }}>
             <button type="button" onClick={() => setIdleTransition(v => !v)}
               title="Between songs, drift through calm low-movement clips and barely switch — resumes the moment music is detected"
@@ -2545,8 +2557,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             )}
           </div>
         )}
-        {autoShuffle && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{matchEnergy ? 'Reads the song’s energy off the EQ and pulls matching scenes — calm songs get slow, mellow backgrounds; loud, busy songs get fast, bright ones. When a beat is detected it rolls each bar whether to cut.' : 'A new clip comes on automatically — each bar there’s a chance to cut (set below), otherwise on a timer. Like a living wallpaper; great full-screen on a TV.'}</p>}
-        {autoShuffle && (
+        {autoShuffle && shufOpen && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{matchEnergy ? 'Reads the song’s energy off the EQ and pulls matching scenes — calm songs get slow, mellow backgrounds; loud, busy songs get fast, bright ones.' : 'A new clip comes on automatically — each bar there’s a chance to cut (set below), otherwise on a timer.'}</p>}
+        {autoShuffle && shufOpen && (
           <div style={{ margin: '4px 0 6px' }}>
             <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Switch chance — {Math.round(switchChance * 100)}% per bar</label>
             <input type="range" min={0} max={1} step={0.05} value={switchChance} onChange={e => setSwitchChance(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
@@ -2554,9 +2566,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           </div>
         )}
 
-        {/* Brightness filter — one control governs BOTH the auto-shuffle pool and the grid
-            below. Pick "Dark" and a dark room never gets flash-banged. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '16px 0 6px' }}>
+        {/* Brightness + Speed — side by side on a wide panel. Both govern the shuffle pool + browse. */}
+        <div className="mv-two" style={{ margin: '14px 0 6px' }}>
+        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text-secondary)', marginRight: 2 }}>Brightness</span>
           {(['dark', 'mid', 'bright'] as Brightness[]).map(b => {
             const on = brightnessSet.includes(b)
@@ -2573,10 +2586,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             ? <button type="button" onClick={() => setBrightnessSet([])} style={{ padding: '5px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>All</button>
             : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· all brightnesses</span>}
         </div>
-        {brightnessSet.length > 0 && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{brightnessSet.includes('dark') && brightnessSet.length === 1 ? 'Dark-room mode — only dim scenes play, so nobody gets flash-banged (the beat-flash softens too).' : `Showing ${brightnessSet.map(b => BRIGHTNESS_LABEL[b].toLowerCase()).join(' + ')} scenes only — applies to shuffle and the picker below.`}</p>}
-
-        {/* Speed / motion filter — same deal, governs shuffle + the grid. Slow = calm, low-movement. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '2px 0 6px' }}>
+        {brightnessSet.length > 0 && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0' }}>{brightnessSet.includes('dark') && brightnessSet.length === 1 ? 'Dark-room mode — only dim scenes play, so nobody gets flash-banged.' : `${brightnessSet.map(b => BRIGHTNESS_LABEL[b].toLowerCase()).join(' + ')} scenes only.`}</p>}
+        </div>
+        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text-secondary)', marginRight: 2 }}>Speed</span>
           {(['slow', 'standard', 'fast'] as Speed[]).map(sp => {
             const on = speedSet.includes(sp)
@@ -2592,6 +2605,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           {speedSet.length > 0
             ? <button type="button" onClick={() => setSpeedSet([])} style={{ padding: '5px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}>All</button>
             : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· any speed</span>}
+        </div>
+        </div>
         </div>
 
         {/* Search the tagged Pexels catalog — thousands of streaming backgrounds, nothing downloaded */}
