@@ -364,6 +364,7 @@ const EDITS: { id: string; name: string; kind: 'off' | 'motion' | 'object' | 'vi
 // and only "some songs" get aggressive edits (rolled per song) so it stays selective, not frantic.
 const EDIT_CMDS: Record<string, string> = {
   skip: 'Jump the video ~½s — a jump cut on the hit',
+  crop: 'Punch to a random region of the frame (reframes over ~3 beats)',
   cut: 'Hard-cut to a new clip',
   zoom: 'Punch-zoom in',
   shake: 'Camera shake',
@@ -372,15 +373,20 @@ const EDIT_CMDS: Record<string, string> = {
   rgb: 'RGB / chroma-split burst',
   strobe: 'Strobe',
   huespin: 'Hue-rotate sweep',
+  spin: 'Quick rotate kick',
+  mirror: 'Flip horizontally for a beat',
+  invert: 'Colour invert flash',
+  blink: 'Black-frame blink (cut to black on the hit)',
 }
 // Which band's spike fires which command. Repeat an id to weight it. bass = weighty/structural,
 // mid = punchy accents, high = fast/glitchy shine.
 const BAND_EDITS: Record<'bass' | 'mid' | 'high', string[]> = {
-  // 'skip' = hop forward in the clip's OWN timeline. Kept rare (one slot, mids only) — it was jumpy;
-  // the punchier moves (zoom/shake/flash/freeze) don't disturb the footage's playback.
-  bass: ['zoom', 'cut', 'shake', 'zoom', 'zoom'],
-  mid: ['flash', 'freeze', 'zoom', 'skip', 'flash'],
-  high: ['rgb', 'strobe', 'huespin', 'rgb'],
+  // 'skip' (time hop) and 'crop' (reframe to a random region) are the JUMP family — they share ONE long
+  // cooldown, so a jump is an occasional accent (~once/9s), not every clip. Other moves (zoom/shake/
+  // flash/freeze) don't disturb the footage and fire freely.
+  bass: ['zoom', 'cut', 'shake', 'blink', 'crop'],
+  mid: ['flash', 'freeze', 'mirror', 'skip', 'crop', 'spin'],
+  high: ['rgb', 'strobe', 'huespin', 'invert', 'spin'],
 }
 
 // Quick background-SWITCH transitions (masks the clip swap). All fast (100–280ms) and varied so the
@@ -1076,10 +1082,27 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const bandSlowRef = useRef({ bass: 0, mid: 0, high: 0 })
   const bandCdRef = useRef({ bass: 0, mid: 0, high: 0 })     // per-band cooldown timestamps
   const lastEditRef = useRef(0)                              // global edit cooldown
+  const lastSkipRef = useRef(0)                              // the JUMP family (skip + crop) shares one long cooldown → an occasional accent, not every clip
+  const cropUntilRef = useRef(0)                             // crop-reframe (punch to a random region) active until this time
+  const cropScaleRef = useRef(1)                             // current crop zoom (1 = full frame; ≤2 so the region stays ≥½ the frame)
+  const cropXRef = useRef(0)                                 // crop pan X (%)
+  const cropYRef = useRef(0)                                 // crop pan Y (%)
+  const reframeCropRef = useRef(() => {})                    // roll a new random region (position + size ≥½ frame)
+  reframeCropRef.current = () => {
+    const s = 1.25 + Math.random() * 0.75                    // 1.25–2.0 zoom → region 80%–50% of the frame (never below ½)
+    const maxShift = (1 - 1 / s) * 45                        // % pan that keeps the region inside the frame edges
+    cropScaleRef.current = s
+    cropXRef.current = (Math.random() * 2 - 1) * maxShift
+    cropYRef.current = (Math.random() * 2 - 1) * maxShift
+  }
   const songEditRef = useRef({ on: false, intensity: 0.6 })  // rolled per song — only "some songs" get edits
   // Transient effect envelopes the EQ write reads (decay each frame) + timed effects.
   const zoomEnvRef = useRef(0); const shakeEnvRef = useRef(0); const hueSpinRef = useRef(0)
   const rgbUntilRef = useRef(0); const strobeUntilRef = useRef(0); const freezeHitUntilRef = useRef(0)
+  const spinEnvRef = useRef(0)                  // geometric rotate kick (decays)
+  const mirrorUntilRef = useRef(0); const mirrorSignRef = useRef(1)   // brief horizontal flip
+  const invertUntilRef = useRef(0)             // brief colour invert
+  const blackUntilRef = useRef(0)              // brief black-frame blink
   // Key/scale detection — chroma profile → Krumhansl key + major/minor.
   const chromaRef = useRef(new Float32Array(12))
   const frameChromaRef = useRef(new Float32Array(12))
@@ -1369,9 +1392,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     const bset = brightnessSetRef.current
     let pool: BgClip[]
     if (idleRef.current) {
-      // Idle (no music): draw only from calm, low-movement transition clips — ignore the party
-      // category/speed set, but still honor the brightness (dark-room) filter.
-      pool = BG_LIBRARY.filter(c => c.kind === 'video' && TRANSITION_SET.has(c.id))
+      // Idle (no music): a restful look — prefer DARKER, SLOWER footage. Calm bundled transition clips
+      // plus dark clips from the big catalogue for variety; favor dark + not-fast, then fall back.
+      const calm = [...BG_LIBRARY.filter(c => c.kind === 'video' && TRANSITION_SET.has(c.id)), ...catalogPoolRef.current.filter(c => clipBrightness(c) === 'dark')]
+      let pref = calm.filter(c => clipBrightness(c) === 'dark' && clipSpeed(c) !== 'fast')
+      if (pref.length < 3) pref = calm.filter(c => clipBrightness(c) === 'dark')
+      pool = pref.length >= 3 ? pref : calm
       if (bset.length) { const bm = pool.filter(c => bset.includes(clipBrightness(c))); if (bm.length >= 1) pool = bm }
     } else {
       // Draw from the bundled clips PLUS the ~15k-clip Pexels catalogue pool (fetched at runtime).
@@ -1496,16 +1522,18 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // the clip cuts in, seek it so that motion peak lands ON an upcoming downbeat — the way a pro editor
   // drops the action on the beat. Scans run off the lookahead queue and cache per clip id.
   const motionScanRef = useRef<Map<string, { tPeak: number; dur: number; hue: number; dir: number }>>(new Map())
+  const scanInFlightRef = useRef(0)   // cap concurrent off-screen video decodes so pre-scanning can't lag the page
   const scanClipMotion = useCallback((src: string, id: string) => {
     const cache = motionScanRef.current
-    if (!src || cache.has(id) || cache.size > 160) return
+    if (!src || cache.has(id) || cache.size > 160 || scanInFlightRef.current >= 2) return
     cache.set(id, { tPeak: 0, dur: 0, hue: -1, dir: 0 })   // reserve so we never scan the same clip twice
+    scanInFlightRef.current++
     const v = document.createElement('video'); v.src = src; v.muted = true; v.crossOrigin = 'anonymous'; v.preload = 'auto'
     const cv = document.createElement('canvas'); cv.width = 32; cv.height = 18
     const cx = cv.getContext('2d', { willReadFrequently: true })
-    let prev: Uint8ClampedArray | null = null, best = { score: -1, t: 0, hue: -1, dir: 0 }, i = 0, dur = 0
-    const SAMPLES = 8
-    const finish = () => { cache.set(id, { tPeak: best.t, dur, hue: best.hue, dir: best.dir }); v.removeAttribute('src'); try { v.load() } catch {} }
+    let prev: Uint8ClampedArray | null = null, best = { score: -1, t: 0, hue: -1, dir: 0 }, i = 0, dur = 0, done = false
+    const SAMPLES = 6
+    const finish = () => { if (done) return; done = true; scanInFlightRef.current = Math.max(0, scanInFlightRef.current - 1); cache.set(id, { tPeak: best.t, dur, hue: best.hue, dir: best.dir }); v.removeAttribute('src'); try { v.load() } catch {} }
     const seekNext = () => { if (i >= SAMPLES) return finish(); try { v.currentTime = ((i + 0.5) / SAMPLES) * dur } catch { finish() } }
     v.onloadedmetadata = () => { dur = v.duration || 0; if (!dur || !isFinite(dur) || dur < 1) return finish(); seekNext() }
     v.onseeked = () => {
@@ -1546,7 +1574,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // Pre-scan the upcoming clips for their motion peak whenever the lookahead queue changes (sync modes only).
   useEffect(() => {
     if (!barSync && !auto) return
-    for (const c of queueRef.current) if (c.kind === 'video') scanClipMotion(c.src, c.id)
+    const nextClip = queueRef.current.find(c => c.kind === 'video'); if (nextClip) scanClipMotion(nextClip.src, nextClip.id)   // only the next clip → far less decode load
   }, [preloadSrcs, barSync, auto, scanClipMotion])
 
   // Immediate switch (manual Next / initial / toggle-on): prefer the preloaded head, else pick
@@ -1578,7 +1606,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // Execute one auto-editor command — the discrete, executable edit actions fired on band spikes.
   const execEditCmd = useCallback((id: string, video: HTMLVideoElement | null, now: number) => {
     switch (id) {
-      case 'skip': if (video && video.readyState >= 2) { try { const d = video.duration; const t = video.currentTime + 0.2 + Math.random() * 0.15; video.currentTime = (isFinite(d) && d > 1.5) ? (t % (d - 0.2)) : t } catch { /* not seekable */ } } break
+      case 'skip': if (video && video.readyState >= 2 && now - lastSkipRef.current > 9000) { lastSkipRef.current = now; try { const d = video.duration; const t = video.currentTime + 0.2 + Math.random() * 0.15; video.currentTime = (isFinite(d) && d > 1.5) ? (t % (d - 0.2)) : t } catch { /* not seekable */ } } break
+      // Crop-reframe jump: punch to a random region of the frame (size ≥½ the frame), held for ~3 beats and
+      // re-rolled on each beat inside that window (the "quick 3-beat cycle"). Same cooldown as skip.
+      case 'crop': if (now - lastSkipRef.current > 9000) { lastSkipRef.current = now; const bp = beatPeriodRef.current > 0 ? beatPeriodRef.current : 320; cropUntilRef.current = now + bp * 3.2; reframeCropRef.current() } break
       case 'cut': requestSwitch(); break
       case 'zoom': zoomEnvRef.current = 1; break
       case 'shake': shakeEnvRef.current = 1; break
@@ -1587,6 +1618,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       case 'rgb': rgbUntilRef.current = now + 150; break
       case 'strobe': strobeUntilRef.current = now + 320; break
       case 'huespin': hueSpinRef.current = 1; break
+      case 'spin': spinEnvRef.current = 1; break
+      case 'mirror': mirrorUntilRef.current = now + 200; mirrorSignRef.current = -1; break
+      case 'invert': invertUntilRef.current = now + 130; break
+      case 'blink': blackUntilRef.current = now + 90; break
     }
     lastEditRef.current = now
   }, [requestSwitch])
@@ -2388,6 +2423,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // Onset sharpness — track the typical kick strength so the drum punch auto-gains
             // (soft kicks stay visible, slamming ones don't blow out).
             onsetEmaRef.current = onsetEmaRef.current * 0.9 + punchEnvRef.current * 0.1
+            if (now < cropUntilRef.current) reframeCropRef.current()   // crop jump active → reframe to a new random region on this beat
             const iv = now - prevBeatRef.current; prevBeatRef.current = now; lastBeatRef.current = now
             beatShiftRef.current++
             // Cut on the beat: hard-switch the clip every Nth kick (a real edit-style cut). No-ops
@@ -2612,15 +2648,22 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const sa = eq.saturate * (0.85 + level * 0.55 + p * 0.4)
             const hu = eq.hueRot + level * 45 + p * 18
             // Auto-editor transient envelopes (decay each frame) layered on the reactive filter/transform.
-            zoomEnvRef.current *= 0.85; shakeEnvRef.current *= 0.78; hueSpinRef.current *= 0.88
+            zoomEnvRef.current *= 0.85; shakeEnvRef.current *= 0.78; hueSpinRef.current *= 0.88; spinEnvRef.current *= 0.86
             const zoomAdd = zoomEnvRef.current * 0.16
             const shk = shakeEnvRef.current * 9
             const sx = shk > 0.3 ? (Math.random() - 0.5) * shk : 0
             const sy = shk > 0.3 ? (Math.random() - 0.5) * shk : 0
             const rgbOn = now < rgbUntilRef.current
             const hu2 = hu + hueSpinRef.current * 200
-            bgFilterRef.current.style.filter = `${rgbOn ? 'url(#mv-chroma) ' : ''}${lookFilterRef.current} blur(${bl.toFixed(1)}px) brightness(${br.toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu2)}deg)`.trim()
-            bgFilterRef.current.style.transform = `scale(${(1 + Math.min(1, p) * 0.035 + zoomAdd).toFixed(3)}) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`
+            const invertOn = now < invertUntilRef.current, blackOn = now < blackUntilRef.current
+            bgFilterRef.current.style.filter = `${rgbOn ? 'url(#mv-chroma) ' : ''}${lookFilterRef.current} blur(${bl.toFixed(1)}px) brightness(${(blackOn ? 0 : br).toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu2)}deg)${invertOn ? ' invert(1)' : ''}`.trim()
+            // Crop-reframe jump (auto-editor 'crop'): while active, zoom into the rolled random region.
+            const cropOn = now < cropUntilRef.current
+            const cS = cropOn ? cropScaleRef.current : 1, cX = cropOn ? cropXRef.current : 0, cY = cropOn ? cropYRef.current : 0
+            const baseS = (1 + Math.min(1, p) * 0.035 + zoomAdd) * cS
+            const mir = now < mirrorUntilRef.current ? mirrorSignRef.current : 1        // brief horizontal flip
+            const rot = spinEnvRef.current * 14                                          // quick rotate kick (deg)
+            bgFilterRef.current.style.transform = `scale(${(baseS * mir).toFixed(3)}, ${baseS.toFixed(3)}) rotate(${rot.toFixed(1)}deg) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(${cX.toFixed(1)}%, ${cY.toFixed(1)}%)`
           }
         }
         rafRef.current = requestAnimationFrame(draw)
