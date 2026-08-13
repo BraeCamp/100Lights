@@ -34,5 +34,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const isAdmin = !!token && token === process.env.ADMIN_CODE
 
   if (!isAdmin) return <AdminLogin />
-  return <>{children}</>
+  // The desktop shell wraps pages in an `overflow-hidden` <main>, expecting each page to own its
+  // scroll. Admin pages render plain content, so give them a scroll container here (covers every
+  // /admin/* page, not just Lightning Bug).
+  return <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>{children}</div>
 }
