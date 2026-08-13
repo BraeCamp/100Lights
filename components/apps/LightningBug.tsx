@@ -1003,6 +1003,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // EDITS — region-targeted effects from on-device vision (lib/vision). See EDITS registry above.
   const [edit, setEdit] = useState('none')
   const editRef = useRef('none'); editRef.current = edit
+  // Detector — a DIAGNOSTIC toggle: draws labelled boxes on detected people/cars/animals AND shows the
+  // live on-device genre/tone read, so you can see what the program thinks it's looking at + hearing.
+  const [detector, setDetector] = useState(false)
+  const detectorRef = useRef(false); detectorRef.current = detector
+  const [sonicView, setSonicView] = useState<{ family: string; profile: string; confidence: number } | null>(null)
   const fxCanvasRef = useRef<HTMLCanvasElement | null>(null)   // overlay the edit effects paint on
   const motionRef = useRef<MotionDetector | null>(null)
   const boxRef = useRef<Box | null>(null)                      // smoothed primary region of interest
@@ -1412,10 +1417,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // and paint the region-targeted effect on the FX canvas. Only runs while an edit is active.
   useEffect(() => {
     const clearFx = () => { const fx = fxCanvasRef.current; if (fx) fx.getContext('2d')?.clearRect(0, 0, fx.width, fx.height) }
-    if (edit === 'none') { boxRef.current = null; boxesRef.current = []; freezeRef.current = null; clearFx(); return }
-    const kind = EDITS.find(e => e.id === edit)?.kind
-    const detector = (motionRef.current ||= new MotionDetector())
-    detector.reset(); boxRef.current = null; boxesRef.current = []; freezeRef.current = null
+    if (edit === 'none' && !detector) { boxRef.current = null; boxesRef.current = []; freezeRef.current = null; clearFx(); return }
+    // Detector diagnostic forces labelled-box ('track') rendering regardless of the chosen edit.
+    const activeEdit = detector ? 'track' : edit
+    const kind = EDITS.find(e => e.id === activeEdit)?.kind
+    const motion = (motionRef.current ||= new MotionDetector())
+    motion.reset(); boxRef.current = null; boxesRef.current = []; freezeRef.current = null
     let alive = true, raf = 0, lastDetect = 0
     let model: Awaited<ReturnType<typeof loadObjectDetector>> | null = null
     if (kind === 'object') {
@@ -1434,9 +1441,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       const ctx = fx.getContext('2d'); if (!ctx) return
       const vw = video.videoWidth, vh = video.videoHeight, m = coverMap(w, h, vw, vh)
 
-      if (edit === 'freeze') {
+      if (activeEdit === 'freeze') {
         // keep tracking the mover so we know where to highlight when we freeze
-        boxRef.current = lerpBox(boxRef.current, detector.detect(video), 0.3)
+        boxRef.current = lerpBox(boxRef.current, motion.detect(video), 0.3)
         const fz = freezeRef.current
         if (!fz) { ctx.clearRect(0, 0, w, h); return }
         const dt = t - fz.t0
@@ -1465,12 +1472,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         return
       }
 
-      if (edit === 'kaleido') { drawKaleido(ctx, w, h, video); return }
+      if (activeEdit === 'kaleido') { drawKaleido(ctx, w, h, video); return }
 
-      if (edit === 'trails') {
+      if (activeEdit === 'trails') {
         // fade the existing trail toward transparent, then stamp the current moving region → an echo
         ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(0, 0, w, h); ctx.globalCompositeOperation = 'source-over'
-        const b0 = detector.detect(video); boxRef.current = lerpBox(boxRef.current, b0, 0.4)
+        const b0 = motion.detect(video); boxRef.current = lerpBox(boxRef.current, b0, 0.4)
         if (b0) {
           const b = boxToStage(b0, m)
           ctx.save(); ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip()
@@ -1480,7 +1487,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         return
       }
 
-      if (edit === 'ramp') {
+      if (activeEdit === 'ramp') {
         if (model && t - lastDetect > 170) {
           lastDetect = t
           detectObjects(model, video).then(bs => {
@@ -1512,12 +1519,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         return
       }
 
-      if (kind === 'motion') boxRef.current = lerpBox(boxRef.current, detector.detect(video), 0.3)
+      if (kind === 'motion') boxRef.current = lerpBox(boxRef.current, motion.detect(video), 0.3)
       else if (kind === 'object' && model && t - lastDetect > 170) {
         lastDetect = t
         detectObjects(model, video).then(bs => { if (alive) { boxesRef.current = bs; boxRef.current = lerpBox(boxRef.current, bs[0] ?? null, 0.4) } }).catch(() => {})
       }
-      drawEditFx(ctx, w, h, edit, video, boxRef.current, boxesRef.current)
+      drawEditFx(ctx, w, h, activeEdit, video, boxRef.current, boxesRef.current)
     }
     raf = requestAnimationFrame(loop)
     return () => {
@@ -1526,7 +1533,15 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       const v = getVideo(); if (v) { v.playbackRate = 1; if (v.paused) v.play().catch(() => {}) }   // undo any slow-mo/freeze
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edit])
+  }, [edit, detector])
+
+  // Detector genre readout — surface the on-device "sounds like" classification (normally silent) so
+  // you can watch what genre/tone it reads. Polls the ref the audio loop writes ~2x/sec.
+  useEffect(() => {
+    if (!detector) { setSonicView(null); return }
+    const id = setInterval(() => setSonicView(sonicRef.current ? { ...sonicRef.current } : null), 500)
+    return () => clearInterval(id)
+  }, [detector])
 
   // Genre "Looks" — apply a whole scene, with a random genre-appropriate background.
   const [activeLook, setActiveLook] = useState<GenreLook | null>(null)
@@ -2163,7 +2178,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         ))}
 
         {/* Edits FX layer — region-targeted effects (motion/object) paint here, over the video. */}
-        <canvas ref={fxCanvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', display: edit === 'none' ? 'none' : 'block' }} />
+        <canvas ref={fxCanvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', display: (edit === 'none' && !detector) ? 'none' : 'block' }} />
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: reactive ? 'block' : 'none' }} />
         {/* Beat-colour flash — pulses the whole frame (background included) on each kick. */}
         <div ref={beatFlashDivRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', mixBlendMode: 'screen', opacity: 0 }} />
@@ -2206,6 +2221,16 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           </button>
         )}
         {/* The on-device "sounds like" read runs in the background (window.__lbSonic) — no chip. */}
+        {/* Detector readout — what the program thinks it's seeing (objects) + hearing (genre/tone). */}
+        {detector && (
+          <div style={{ position: 'absolute', left: 12, top: 12, maxWidth: '78%', padding: '10px 13px', borderRadius: 12, background: 'rgba(0,0,0,0.62)', color: '#fff', pointerEvents: 'none', backdropFilter: 'blur(4px)' }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', opacity: 0.7, marginBottom: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Scan size={12} /> Detector</div>
+            <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Crosshair size={12} style={{ opacity: 0.8 }} /> Objects: {modelState === 'ready' ? 'boxing people · cars · animals' : modelState === 'loading' ? 'loading detector…' : modelState === 'error' ? 'detector failed to load' : 'starting…'}{modelState === 'ready' && !hasBg ? ' (add a video background)' : ''}</div>
+            <div style={{ fontSize: 12.5, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}><Activity size={12} style={{ opacity: 0.8 }} /> Genre read: {sonicView ? <><strong>{sonicView.family}</strong> · {Math.round(sonicView.confidence * 100)}% confident</> : running ? 'listening…' : 'play audio to read'}</div>
+            {sonicView && <div style={{ fontSize: 11, opacity: 0.78, marginTop: 2, marginLeft: 18 }}>{sonicView.profile}</div>}
+            <div style={{ fontSize: 10, opacity: 0.55, marginTop: 6, lineHeight: 1.4 }}>All on-device. The genre is a rough sound-based guess (often low-confidence) — it nudges Auto’s grade &amp; palette, so a wrong read is why visuals can miss the tone.</div>
+          </div>
+        )}
         {/* Song ID — the recognized track (+ a BPM accuracy check vs the DSP) */}
         {identify && !broadcast && recognized && (
           <div style={{ position: 'absolute', left: 16, bottom: 16, display: 'flex', alignItems: 'center', gap: 10, maxWidth: '80%', padding: '8px 12px 8px 8px', borderRadius: 12, background: 'rgba(0,0,0,0.55)', color: '#fff', pointerEvents: 'none' }}>
@@ -2233,6 +2258,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           <Radio size={14} /> Song ID{identify ? ' · on' : ''}
         </button>
         )}
+        {/* Detector — diagnostic: box detected people/cars/animals + show the live genre/tone read. */}
+        <button type="button" onClick={() => setDetector(v => !v)} title="Diagnostic: box people / cars / animals it detects, and show the live genre &amp; tone read"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: detector ? 'var(--accent)' : 'transparent', color: detector ? '#0e0d12' : 'var(--text-secondary)' }}>
+          <Scan size={14} /> Detector{detector ? ' · on' : ''}
+        </button>
         <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
       </div>
       )}
