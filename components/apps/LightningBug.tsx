@@ -326,9 +326,9 @@ const GENRE_LOOK: Record<string, { modes: string[]; looks: string[]; palettes: s
   'Ambient': { modes: ['living', 'ink', 'none'], looks: ['dream', 'cool'], palettes: ['ice', 'aurora', 'ocean'] },
   'Lofi / Chill': { modes: ['none', 'living', 'oil', 'super8'], looks: ['warm', 'dream', 'film'], palettes: ['sunset', 'candy', 'aurora'] },
   'Hip-hop': { modes: ['vhs', 'cartoon', 'glitch'], looks: ['noir', 'film', 'blockbuster', 'lean', 'spotlight'], palettes: ['fire', 'neon', 'mono'] },
-  'Electronic': { modes: ['neonedge', 'glitch', 'infrared'], looks: ['neonnoir', 'synthgrid', 'dream', 'cool'], palettes: ['neon', 'aurora', 'candy'] },
-  'Rock / Band': { modes: ['comic', 'vhs', 'anime'], looks: ['noir', 'film', 'bleach'], palettes: ['fire', 'mono', 'sunset'] },
-  'Pop': { modes: ['cartoon', 'anime', 'comic', 'chroma'], looks: ['warm', 'dream', 'blockbuster', 'giallo', 'neonnoir', 'synthgrid'], palettes: ['candy', 'sunset', 'neon'] },
+  'Electronic': { modes: ['neonedge', 'glitch', 'infrared', 'datamosh', 'fisheye'], looks: ['neonnoir', 'synthgrid', 'halo', 'dream', 'cool'], palettes: ['neon', 'aurora', 'candy'] },
+  'Rock / Band': { modes: ['comic', 'vhs', 'anime', 'datamosh'], looks: ['noir', 'film', 'bleach'], palettes: ['fire', 'mono', 'sunset'] },
+  'Pop': { modes: ['cartoon', 'anime', 'comic', 'chroma', 'fisheye'], looks: ['warm', 'dream', 'blockbuster', 'giallo', 'neonnoir', 'synthgrid', 'halo'], palettes: ['candy', 'sunset', 'neon'] },
   'Orchestral': { modes: ['ink', 'oil', 'none'], looks: ['noir', 'film', 'dream', 'blockbuster', 'spotlight'], palettes: ['ice', 'ocean', 'mono'] },
 }
 const ENERGY_LOOK: Record<'calm' | 'mid' | 'hot', { modes: string[]; looks: string[]; palettes: string[] }> = {
@@ -410,6 +410,7 @@ const VIDEO_LOOKS: VideoLook[] = [
   { id: 'lean', name: 'Lean', css: 'sepia(0.5) hue-rotate(215deg) saturate(1.5) contrast(1.05)', overlays: ['scanlines', 'grain'] },  // purple phonk wash
   { id: 'synthgrid', name: 'Synth grid', css: 'saturate(1.3) contrast(1.1) brightness(1.02)', overlays: ['grid'] },        // neon perspective grid (synthwave)
   { id: 'spotlight', name: 'Spotlight', css: 'contrast(1.32) brightness(0.97) saturate(1.05)', overlays: ['spotlight'] },  // chiaroscuro performance-in-void
+  { id: 'halo', name: 'Halo', svg: 'mv-halo' },  // region-based: neon-glow only the bright shapes on screen
 ]
 
 // MODE = a dramatic, live full-frame transform — the "change the whole look" layer, more
@@ -431,10 +432,20 @@ const VIDEO_MODES: VideoLook[] = [
   { id: 'living', name: 'Living', svg: 'mv-living' },
   { id: 'super8', name: 'Super-8', svg: 'mv-super8', css: 'contrast(0.92) brightness(1.04) saturate(1.12)', overlays: ['grain', 'vignette', 'flicker'] },  // warm home-movie: weave + flicker + grain
   { id: 'chroma', name: 'Chroma', svg: 'mv-chroma', css: 'saturate(1.12)' },   // clean RGB fringe (aberration)
+  { id: 'datamosh', name: 'Datamosh', svg: 'mv-datamosh', css: 'saturate(1.2) contrast(1.05)' },   // melting-pixel glitch
+  { id: 'fisheye', name: 'Warp', svg: 'mv-fisheye' },   // barrel/fisheye bulge (tiny-planet cousin)
 ]
 // Tileable film-grain noise (feTurbulence baked into a data-URI so it needs no network).
 const GRAIN_URI = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
   "<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='140' height='140' filter='url(#n)'/></svg>")
+
+// Displacement map for the Warp/fisheye filter: R encodes horizontal position (0→1 left→right),
+// G encodes vertical — so feDisplacementMap bends coordinates radially into a barrel/lens bulge.
+const WARP_URI = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><defs>" +
+  "<linearGradient id='x' x1='0' y1='0' x2='1' y2='0'><stop offset='0' stop-color='#000'/><stop offset='1' stop-color='#f00'/></linearGradient>" +
+  "<linearGradient id='y' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#000'/><stop offset='1' stop-color='#0f0'/></linearGradient>" +
+  "</defs><rect width='100' height='100' fill='url(#x)'/><rect width='100' height='100' fill='url(#y)' style='mix-blend-mode:screen'/></svg>")
 
 // Overlay layers for a look — absolutely-positioned, non-interactive, blended over the media.
 function LookOverlays({ keys }: { keys: Overlay[] }) {
@@ -502,6 +513,35 @@ function LookSvgDefs() {
           <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0" result="gb" />
           <feOffset in="gb" dx="-2.5" dy="0" result="gbo" />
           <feBlend in="ro" in2="gbo" mode="screen" />
+        </filter>
+        {/* Datamosh: big animated turbulence displacement (pixels smear/melt) + RGB bleed. A stylized
+            approximation of true codec datamoshing — no codec hacking, all live. */}
+        <filter id="mv-datamosh">
+          <feTurbulence type="turbulence" baseFrequency="0.008 0.014" numOctaves="2" seed="8" result="n">
+            <animate attributeName="baseFrequency" dur="0.8s" values="0.008 0.014;0.02 0.006;0.006 0.02;0.008 0.014" repeatCount="indefinite" />
+          </feTurbulence>
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="40" xChannelSelector="R" yChannelSelector="G" result="d" />
+          <feColorMatrix in="d" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r" />
+          <feOffset in="r" dx="6" dy="-2" result="ro" />
+          <feColorMatrix in="d" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0" result="gb" />
+          <feOffset in="gb" dx="-5" dy="2" result="gbo" />
+          <feBlend in="ro" in2="gbo" mode="screen" />
+        </filter>
+        {/* Warp: barrel/fisheye bulge (the no-WebGL cousin of a tiny-planet). */}
+        <filter id="mv-fisheye">
+          <feImage href={WARP_URI} preserveAspectRatio="none" result="map" />
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="-120" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+        {/* Halo: REGION-BASED bloom — a luminance key finds the bright shapes on screen (lights, faces
+            in light, speculars) and neon-glows only those, not the whole frame. First step toward
+            Snapchat-style detect-a-region-and-restyle-it effects (faces/segmentation are the roadmap). */}
+        <filter id="mv-halo">
+          <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.3 0.6 0.1 0 -0.58" result="lum" />
+          <feComponentTransfer in="lum" result="mask"><feFuncA type="linear" slope="7" /></feComponentTransfer>
+          <feGaussianBlur in="mask" stdDeviation="9" result="glow" />
+          <feFlood floodColor="#93c5ff" result="col" />
+          <feComposite in="col" in2="glow" operator="in" result="tint" />
+          <feBlend in="SourceGraphic" in2="tint" mode="screen" />
         </filter>
         <filter id="mv-vhs" x="-6%" y="-2%" width="112%" height="104%">
           <feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r" />
@@ -855,7 +895,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [running, setRunning] = useState(false)
   const [source, setSource] = useState<'mic' | 'device' | 'file' | 'broadcast' | null>(null)
-  const [style, setStyle] = useState<LiveStyle>('bars')
+  const [style, setStyle] = useState<LiveStyle>('none')   // audio spectrum viz OFF by default — video/look is the star; pick a style to add bars/waves
   const [beatColor, setBeatColor] = useState(false)         // cycle colours on each detected beat
   const [bpm, setBpm] = useState(0)                         // detected tempo (0 = not locked yet)
   const beatColorRef = useRef(false); beatColorRef.current = beatColor
