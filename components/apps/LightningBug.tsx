@@ -325,11 +325,11 @@ function classifySonic(o: { bpm: number; energy: number; bass: number; bright: n
 const GENRE_LOOK: Record<string, { modes: string[]; looks: string[]; palettes: string[] }> = {
   'Ambient': { modes: ['living', 'ink', 'none'], looks: ['dream', 'cool'], palettes: ['ice', 'aurora', 'ocean'] },
   'Lofi / Chill': { modes: ['none', 'living', 'oil'], looks: ['warm', 'dream', 'film'], palettes: ['sunset', 'candy', 'aurora'] },
-  'Hip-hop': { modes: ['vhs', 'cartoon', 'glitch'], looks: ['noir', 'film'], palettes: ['fire', 'neon', 'mono'] },
-  'Electronic': { modes: ['neonedge', 'glitch', 'infrared'], looks: ['dream', 'cool'], palettes: ['neon', 'aurora', 'candy'] },
-  'Rock / Band': { modes: ['comic', 'vhs', 'anime'], looks: ['noir', 'film'], palettes: ['fire', 'mono', 'sunset'] },
-  'Pop': { modes: ['cartoon', 'anime', 'comic'], looks: ['warm', 'dream'], palettes: ['candy', 'sunset', 'neon'] },
-  'Orchestral': { modes: ['ink', 'oil', 'none'], looks: ['noir', 'film', 'dream'], palettes: ['ice', 'ocean', 'mono'] },
+  'Hip-hop': { modes: ['vhs', 'cartoon', 'glitch'], looks: ['noir', 'film', 'blockbuster', 'lean'], palettes: ['fire', 'neon', 'mono'] },
+  'Electronic': { modes: ['neonedge', 'glitch', 'infrared'], looks: ['neonnoir', 'dream', 'cool'], palettes: ['neon', 'aurora', 'candy'] },
+  'Rock / Band': { modes: ['comic', 'vhs', 'anime'], looks: ['noir', 'film', 'bleach'], palettes: ['fire', 'mono', 'sunset'] },
+  'Pop': { modes: ['cartoon', 'anime', 'comic'], looks: ['warm', 'dream', 'blockbuster', 'giallo', 'neonnoir'], palettes: ['candy', 'sunset', 'neon'] },
+  'Orchestral': { modes: ['ink', 'oil', 'none'], looks: ['noir', 'film', 'dream', 'blockbuster'], palettes: ['ice', 'ocean', 'mono'] },
 }
 const ENERGY_LOOK: Record<'calm' | 'mid' | 'hot', { modes: string[]; looks: string[]; palettes: string[] }> = {
   calm: { modes: ['none', 'living', 'ink'], looks: ['dream', 'warm'], palettes: ['aurora', 'ice', 'sunset'] },
@@ -402,6 +402,12 @@ const VIDEO_LOOKS: VideoLook[] = [
   { id: 'noir', name: 'Noir', css: 'grayscale(1) contrast(1.32) brightness(1.02)', overlays: ['vignette', 'grain'] },
   { id: 'warm', name: 'Warm', css: 'sepia(0.25) saturate(1.3) contrast(1.05) brightness(1.03)' },
   { id: 'cool', name: 'Cool', css: 'saturate(1.15) hue-rotate(-12deg) brightness(1.02)' },
+  // New cinematic grades (from the look-book research). Grade-only — no footage needed.
+  { id: 'blockbuster', name: 'Blockbuster', svg: 'mv-tealorange', css: 'contrast(1.1) saturate(1.12) brightness(1.02)' },   // teal-orange
+  { id: 'neonnoir', name: 'Neon-noir', css: 'saturate(1.5) contrast(1.32) brightness(0.9)', overlays: ['vignette'] },        // crushed blacks, neon pops (Blinding Lights)
+  { id: 'bleach', name: 'Bleach', css: 'saturate(0.42) contrast(1.4) brightness(1.05)', overlays: ['grain', 'vignette'] },   // desaturated grit (grunge/rock)
+  { id: 'giallo', name: 'Giallo', css: 'saturate(1.65) contrast(1.16) hue-rotate(-6deg) brightness(1.02)', overlays: ['vignette'] },  // lurid technicolor reds
+  { id: 'lean', name: 'Lean', css: 'sepia(0.5) hue-rotate(215deg) saturate(1.5) contrast(1.05)', overlays: ['scanlines', 'grain'] },  // purple phonk wash
 ]
 
 // MODE = a dramatic, live full-frame transform — the "change the whole look" layer, more
@@ -454,6 +460,15 @@ function LookSvgDefs() {
             <feFuncR type="discrete" tableValues="0 0.22 0.45 0.7 1" />
             <feFuncG type="discrete" tableValues="0 0.22 0.45 0.7 1" />
             <feFuncB type="discrete" tableValues="0 0.22 0.45 0.7 1" />
+          </feComponentTransfer>
+        </filter>
+        {/* Teal-orange split-tone (the "blockbuster" grade): shadows keep blue → teal, highlights
+            drop blue + gain red → orange. A true complementary split CSS filters can't do. */}
+        <filter id="mv-tealorange">
+          <feComponentTransfer>
+            <feFuncR type="table" tableValues="0.00 0.42 0.85 1.00" />
+            <feFuncG type="table" tableValues="0.04 0.40 0.70 0.92" />
+            <feFuncB type="table" tableValues="0.14 0.46 0.42 0.28" />
           </feComponentTransfer>
         </filter>
         <filter id="mv-vhs" x="-6%" y="-2%" width="112%" height="104%">
@@ -838,6 +853,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [trail, setTrail] = useState(true)
   const [openPanel, setOpenPanel] = useState<string | null>('look')   // which control group's section is open
   const [tabsOpen, setTabsOpen] = useState(false)                     // mobile: expand all tab labels into words
+  const [advOpen, setAdvOpen] = useState(false)                       // reveal the manual mode/grade/filter controls
   // Background layer + filters + "no audio" ambient mode
   const [bgKind, setBgKind] = useState<'none' | 'media' | 'library' | string>('none')   // 'none' | ambient id | 'media' | 'library'
   const [bgUrl, setBgUrl] = useState<string | null>(null)
@@ -1207,6 +1223,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     setPunchAmt(look.punch ?? (look.eq ? (look.gain >= 1.4 ? 1.5 : 1.0) : 0.7))
     setSwitchChance(look.switchChance ?? (look.trail ? 0.25 : 0.45))
     setBlur(look.filters.blur); setBrightness(look.filters.brightness); setSaturate(look.filters.saturate); setHueRot(look.filters.hue)
+    setVideoLook(look.grade ?? 'none'); setVideoMode('none')   // apply the preset's cinematic grade
     setBgCat(look.bg.browse); setActiveLook(look); shuffleTo(look)
   }, [shuffleTo])
 
@@ -2233,7 +2250,17 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
 
         {hasBg && (
         <div style={{ paddingTop: 14, marginTop: 18, borderTop: '1px solid var(--border)' }}>
-          <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', margin: '0 0 12px' }}>Look &amp; filters</p>
+          {/* Advanced settings — the granular mode/grade/filter controls live here so the everyday
+              surface stays simple. Auto sets all of this for you; open this to do it by hand. */}
+          <button type="button" onClick={() => setAdvOpen(o => !o)} aria-expanded={advOpen}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+            <SlidersHorizontal size={14} style={{ color: 'var(--text-muted)' }} />
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Advanced settings</span>
+            <ChevronLeft size={15} style={{ marginLeft: 'auto', color: 'var(--text-muted)', transform: advOpen ? 'rotate(-90deg)' : 'rotate(-90deg) scaleX(-1)', transition: 'transform .15s' }} />
+          </button>
+          {!advOpen && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0' }}>Auto fits the mode, grade &amp; filters to the music. Open this to set the film look and filters yourself.</p>}
+          {advOpen && (
+          <div style={{ marginTop: 14 }}>
           {/* MODE — dramatic live transform of the whole frame */}
           <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 7px' }}>Mode — transform the whole look</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 6 }}>
@@ -2252,7 +2279,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: videoLook === l.id ? 'var(--accent)' : 'var(--bg-card)', color: videoLook === l.id ? '#0e0d12' : 'var(--text-secondary)' }}>{l.name}</button>
             ))}
           </div>
-          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 14px' }}>A grade stacks under the mode and the sliders below — Film/Noir add grain &amp; vignette, Warm/Cool shift the temperature.</p>
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 14px' }}>A grade stacks under the mode and the sliders below — Film/Noir add grain &amp; vignette, Warm/Cool shift temperature, and the cinematic grades: Blockbuster (teal-orange), Neon-noir, Bleach (gritty), Giallo (lurid reds), Lean (purple).</p>
           {reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 12px' }}>These filters react to the music (turned on by <strong style={{ color: 'var(--text-secondary)' }}>React to the music</strong> in Background): brightness &amp; saturation pulse, and the sub/bass kick punches the background — a quick brighten, sharpen and scale-thump so drums pop. The sliders set the baseline.</p>}
           {!reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 12px' }}>Turn on <strong style={{ color: 'var(--text-secondary)' }}>React to the music</strong> in Background to make these filters move with the audio; otherwise the sliders are a static grade.</p>}
           {reactive && (
@@ -2270,6 +2297,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Hue shift — {hueRot}°</label>
           <input type="range" min={0} max={360} step={5} value={hueRot} onChange={e => setHueRot(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
           <button type="button" onClick={() => { setBlur(0); setBrightness(1); setSaturate(1); setHueRot(0) }} style={{ marginTop: 12, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Reset filters</button>
+          </div>
+          )}
         </div>
         )}
       </TabSection>)}
