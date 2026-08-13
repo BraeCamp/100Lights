@@ -1070,6 +1070,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // live on-device genre/tone read, so you can see what the program thinks it's looking at + hearing.
   const [detector, setDetector] = useState(false)
   const detectorRef = useRef(false); detectorRef.current = detector
+  // "Beat sync" — the pro-video experiments (bar-aligned cuts, section-aware & motion-aligned switching).
+  // A test toggle first (Brae: prove it in test, then move to Auto). Auto force-enables it once trusted.
+  const [barSync, setBarSync] = useState(false)
+  const barSyncRef = useRef(false); barSyncRef.current = barSync
+  const sectionCutRef = useRef(false)          // the pending switch is a section boundary → pick a contrasting clip
   const [sonicView, setSonicView] = useState<{ family: string; profile: string; confidence: number } | null>(null)
   // Extra live diagnostics for the Detector ("test mode") panel. These are heavier / noisier reads that
   // we only want to compute while diagnosing, so they're all gated on detectorRef and published ~2.5×/s.
@@ -1077,6 +1082,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     level: number; beaty: number; bass: number; bright: number; notes: string[]; objs: { label: string; n: number }[]
     kick: number; snare: number; hat: number; centroid: number; flat: number; crest: number; chord: string
     motion: number; luma: number; hue: number
+    gridLocked: boolean; bar: number; beatInBar: number; bpb: number; section: string; sectionIdx: number
   } | null>(null)
   const detAudioRef = useRef({ kick: 0, snare: 0, hat: 0, centroid: 0, flat: 0, crest: 0, chord: '' })  // smoothed test-mode audio reads
   const detVisRef = useRef({ motion: 0, luma: -1, hue: -1 })                                             // smoothed test-mode vision reads
@@ -1099,6 +1105,29 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const bpmEmaRef = useRef(0)
   const beatIvBufRef = useRef<number[]>([])                 // recent beat intervals → median BPM (adapts fast)
   const lastBpmUiRef = useRef(0)
+  // ── Bar / downbeat CLOCK ─────────────────────────────────────────────────────────────────────────
+  // A musical grid extrapolated from the beat + BPM so cuts/transitions can land on BAR STARTS (downbeats),
+  // not random moments. Anchored at the first beat of the song and PLL-corrected by each detected kick;
+  // the downbeat phase is found by which beat-slot carries the strongest kick accent (beat 1 is heaviest).
+  const beatAnchorRef = useRef(0)              // perf.now time of a known beat (grid origin)
+  const beatPeriodRef = useRef(0)              // ms per beat (60000 / bpm)
+  const beatsPerBarRef = useRef(4)             // time-signature numerator (default 4/4)
+  const beatAccentRef = useRef([0, 0, 0, 0])   // decayed kick strength per (beatIndex % 4) → argmax = downbeat
+  const downbeatOffsetRef = useRef(0)          // which phase is beat 1
+  const lastTickBeatRef = useRef(-1)           // last integer beat index we fired a tick for
+  const barCountRef = useRef(0)                // bars since the song started
+  const beatInBarRef = useRef(0)               // 0..beatsPerBar-1 (for the readout)
+  const lastDownbeatRef = useRef(0)            // perf.now of the last downbeat (drives the pulse)
+  const pendingBarSwitchRef = useRef(false)    // a switch is queued to fire on the next downbeat
+  const barsSinceCutRef = useRef(0)            // bars since the last cut → cut PACING follows the section
+  // ── SECTION detection (intro / verse / chorus / drop) ────────────────────────────────────────────
+  // Watches the multi-feature "sound signature" bar-by-bar; a sustained change = a new section.
+  const secSigRef = useRef<number[]>([0, 0, 0, 0])   // running section-average [energy, bass, bright, density]
+  const secBarsRef = useRef(0)                        // bars elapsed in the current section
+  const sectionRef = useRef('intro')                  // current section label
+  const sectionIdxRef = useRef(0)                      // increments each boundary
+  const secChangeBarsRef = useRef(0)                  // consecutive bars the signature has diverged
+  const lastSectionChangeRef = useRef(0)              // perf.now of the last boundary
   const punchEnvRef = useRef(0)                             // sub/bass transient envelope (drum "punch")
   const beatFlashRef = useRef(0)                            // decaying flash intensity (0..1)
   const beatFlashColorRef = useRef('#ffffff')
@@ -1217,6 +1246,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const lastErrSwitchRef = useRef(0)                        // debounce error-driven clip skips (no rapid cascade)
   const bgClipIdRef = useRef<string | null>(null)           // current clip id, so nextClip avoids repeats without re-binding
   const recentClipsRef = useRef<string[]>([])               // recently-played ids → no repeats until most of the pool has shown
+  const recentTitlesRef = useRef<string[]>([])              // recently-played titles → avoid back-to-back near-duplicates (same query)
   const tagRunRef = useRef<{ cat: BgCategory | null; left: number }>({ cat: null, left: 0 })   // stay on one theme for a run of clips
   const nextClipRef = useRef<() => void>(() => {})          // so the beat detector can advance on a bar boundary
   // Preload lookahead: keep the next 2 clips queued + buffering in hidden <video>s, and only
@@ -1265,6 +1295,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   // style/mode/backgrounds to the detected energy. Casual users just play music.
   const [auto, setAuto] = useState(false)
   const autoRef = useRef(false); autoRef.current = auto
+  // Auto rides the pro-sync engine too (bar-aligned cuts, section-aware switching, motion→beat). Proven
+  // in the Beat-sync test toggle first; enabling it here makes Auto build videos like a real editor.
+  barSyncRef.current = barSync || auto
   const autoApplyRef = useRef<() => void>(() => {})
   const lastAutoVibeRef = useRef('')
   const lastAutoChangeRef = useRef(0)
@@ -1339,17 +1372,25 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     // Tag cohesion: stay on ONE theme (category) for a run of clips — usually a few, sometimes a whole
     // song — before switching, so the visuals feel intentional instead of random channel-surfing.
     const run = tagRunRef.current
+    // Section boundary (verse→chorus etc.): break the theme run and prefer a CONTRASTING category, so
+    // each section gets its own distinct look. Consumes the flag set by the bar clock.
+    const sectionCut = sectionCutRef.current; sectionCutRef.current = false
+    if (sectionCut) run.left = 0
     let cohesive = pool
     if (run.cat && run.left > 0) {
       const same = pool.filter(c => c.category === run.cat)
       if (same.length >= 2) cohesive = same; else run.left = 0   // not enough on this theme → end the run
+    } else if (sectionCut && run.cat) {
+      const diff = pool.filter(c => c.category !== run.cat)       // new section → deliberately switch theme
+      if (diff.length >= 2) cohesive = diff
     }
-    // No-repeat history: pick from clips not shown recently, so it works through most of the
-    // pool before anything comes back (pure random clusters/repeats). Keep the recent window
-    // to ~70% of the current pool; relax if that leaves nothing.
-    const recent = recentClipsRef.current
+    // No-repeat history: skip clips shown recently AND recently-used titles (the catalogue has many
+    // near-identical clips per query, e.g. several "woman portrait studio" — never show them back-to-back).
+    const recent = recentClipsRef.current, recentTitles = recentTitlesRef.current
     const queued = queueRef.current.map(c => c.id)
-    let candidates = cohesive.filter(c => !recent.includes(c.id) && !queued.includes(c.id))
+    const fresh = (c: BgClip) => !recent.includes(c.id) && !queued.includes(c.id) && !(c.title && recentTitles.includes(c.title))
+    let candidates = cohesive.filter(fresh)
+    if (candidates.length === 0) candidates = cohesive.filter(c => !recent.includes(c.id) && !queued.includes(c.id))
     if (candidates.length === 0) candidates = cohesive.filter(c => c.id !== bgClipIdRef.current && !queued.includes(c.id))
     if (candidates.length === 0) candidates = cohesive.filter(c => c.id !== bgClipIdRef.current)
     if (candidates.length === 0) return null
@@ -1359,8 +1400,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     if (run.left > 0) run.left--
     else { run.cat = next.category; run.left = Math.random() < 0.3 ? 6 + Math.floor(Math.random() * 4) : 1 + Math.floor(Math.random() * 3) }
     recent.push(next.id)
-    const keep = Math.max(4, Math.floor(pool.length * 0.7))
+    const keep = Math.max(30, Math.floor(pool.length * 0.7))     // absolute floor so small filtered pools still don't repeat quickly
     while (recent.length > keep) recent.shift()
+    if (next.title) { recentTitles.push(next.title); while (recentTitles.length > 8) recentTitles.shift() }
     return next
   }, [])
 
@@ -1388,6 +1430,55 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     if (autoRef.current) autoApplyRef.current()   // Auto: re-fit filters + colours to the genre on each video change
     refillQueue()
   }, [refillQueue])
+
+  // ── Motion → beat alignment (Beat sync) ────────────────────────────────────────────────────────
+  // Pre-scan each upcoming clip for its highest-motion moment (frame-diff over ~8 samples). Then, when
+  // the clip cuts in, seek it so that motion peak lands ON an upcoming downbeat — the way a pro editor
+  // drops the action on the beat. Scans run off the lookahead queue and cache per clip id.
+  const motionScanRef = useRef<Map<string, { tPeak: number; dur: number }>>(new Map())
+  const scanClipMotion = useCallback((src: string, id: string) => {
+    const cache = motionScanRef.current
+    if (!src || cache.has(id) || cache.size > 160) return
+    cache.set(id, { tPeak: 0, dur: 0 })   // reserve so we never scan the same clip twice
+    const v = document.createElement('video'); v.src = src; v.muted = true; v.crossOrigin = 'anonymous'; v.preload = 'auto'
+    const cv = document.createElement('canvas'); cv.width = 32; cv.height = 18
+    const cx = cv.getContext('2d', { willReadFrequently: true })
+    let prev: Uint8ClampedArray | null = null, best = { score: -1, t: 0 }, i = 0, dur = 0
+    const SAMPLES = 8
+    const finish = () => { cache.set(id, { tPeak: best.t, dur }); v.removeAttribute('src'); try { v.load() } catch {} }
+    const seekNext = () => { if (i >= SAMPLES) return finish(); try { v.currentTime = ((i + 0.5) / SAMPLES) * dur } catch { finish() } }
+    v.onloadedmetadata = () => { dur = v.duration || 0; if (!dur || !isFinite(dur) || dur < 1) return finish(); seekNext() }
+    v.onseeked = () => {
+      try {
+        cx!.drawImage(v, 0, 0, 32, 18); const d = cx!.getImageData(0, 0, 32, 18).data
+        if (prev) { let s = 0; for (let k = 0; k < d.length; k += 4) s += Math.abs(d[k] - prev[k]) + Math.abs(d[k + 1] - prev[k + 1]) + Math.abs(d[k + 2] - prev[k + 2]); if (s > best.score) best = { score: s, t: v.currentTime } }
+        prev = new Uint8ClampedArray(d)
+      } catch {}
+      i++; seekNext()
+    }
+    v.onerror = () => finish()
+  }, [])
+  // Seek the freshly-cut video so its motion peak hits the next downbeat (Beat sync only).
+  const applyMotionOffset = useCallback(() => {
+    if (!barSyncRef.current) return
+    const v = bgVideoRef.current, id = bgClipIdRef.current
+    const scan = id ? motionScanRef.current.get(id) : null
+    const period = beatPeriodRef.current, bpb = beatsPerBarRef.current
+    if (!v || !scan || !scan.dur || scan.tPeak <= 0 || period <= 0 || beatAnchorRef.current <= 0) return
+    const now = performance.now()
+    let idx = Math.ceil((now - beatAnchorRef.current) / period)
+    while ((((idx - downbeatOffsetRef.current) % bpb) + bpb) % bpb !== 0) idx++   // next downbeat's beat index
+    const dt = (beatAnchorRef.current + idx * period - now) / 1000                // seconds until that downbeat
+    const barSec = (bpb * period) / 1000
+    let ct = scan.tPeak - dt                                                      // start so that after dt we're at the peak
+    while (ct < 0) ct += barSec                                                   // peak too early → roll forward whole bars
+    if (ct > 0.05 && ct < scan.dur - 0.15) { try { v.currentTime = ct } catch {} }
+  }, [])
+  // Pre-scan the upcoming clips for their motion peak whenever the lookahead queue changes (sync modes only).
+  useEffect(() => {
+    if (!barSync && !auto) return
+    for (const c of queueRef.current) if (c.kind === 'video') scanClipMotion(c.src, c.id)
+  }, [preloadSrcs, barSync, auto, scanClipMotion])
 
   // Immediate switch (manual Next / initial / toggle-on): prefer the preloaded head, else pick
   // fresh right now. Never waits — the user asked for it.
@@ -1478,9 +1569,13 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       const bpm = bpmEmaRef.current
       const barMs = bpm > 0 ? Math.max(1000, Math.round((4 * 60000) / bpm)) : 4000
       shuffleTimerRef.current = setTimeout(() => {
-        const ef = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 1.4 : energyBandRef.current === 'mid' ? 1.0 : 0.6) : 1
-        const df = 0.7 + densityEmaRef.current * 0.8
-        if (Math.random() < Math.min(1, switchChanceRef.current * ef * df)) requestSwitch()   // gated: waits for the next clip to buffer
+        // When Beat-sync/Auto has a locked grid, the bar clock OWNS cut pacing (section-paced, on downbeats)
+        // — the timer stays out of the way. Otherwise (no clear beat) fall back to the classic random timing.
+        if (!(barSyncRef.current && beatPeriodRef.current > 0 && beatAnchorRef.current > 0)) {
+          const ef = matchEnergyRef.current ? (energyBandRef.current === 'hot' ? 1.4 : energyBandRef.current === 'mid' ? 1.0 : 0.6) : 1
+          const df = 0.7 + densityEmaRef.current * 0.8
+          if (Math.random() < Math.min(1, switchChanceRef.current * ef * df)) requestSwitch()
+        }
         tick()
       }, barMs)
     }
@@ -1718,7 +1813,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       const counts = boxesRef.current.reduce((mm, b) => (b.label && (mm[b.label] = (mm[b.label] || 0) + 1), mm), {} as Record<string, number>)
       const objs = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label, n]) => ({ label, n }))
       const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
-      setDetStats({ level: Math.min(1, energyEmaRef.current * 3), beaty, bass: bassRatioRef.current, bright: brightRatioRef.current, notes, objs, ...detAudioRef.current, ...detVisRef.current })
+      const gridLocked = beatPeriodRef.current > 0 && beatAnchorRef.current > 0 && bpmEmaRef.current > 0
+      setDetStats({ level: Math.min(1, energyEmaRef.current * 3), beaty, bass: bassRatioRef.current, bright: brightRatioRef.current, notes, objs, ...detAudioRef.current, ...detVisRef.current,
+        gridLocked, bar: barCountRef.current, beatInBar: beatInBarRef.current, bpb: beatsPerBarRef.current, section: sectionRef.current, sectionIdx: sectionIdxRef.current })
     }, 400)
     return () => clearInterval(id)
   }, [detector])
@@ -1944,6 +2041,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3
     lastBeatRef.current = 0; prevBeatRef.current = 0
     chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []; binPcRef.current = null; binWRef.current = null; songLookCountRef.current = 0
+    beatAnchorRef.current = 0; beatPeriodRef.current = 0; lastTickBeatRef.current = -1; barCountRef.current = 0; beatInBarRef.current = 0
+    downbeatOffsetRef.current = 0; beatAccentRef.current = [0, 0, 0, 0]; pendingBarSwitchRef.current = false
+    secSigRef.current = [0, 0, 0, 0]; secBarsRef.current = 0; sectionRef.current = 'intro'; sectionIdxRef.current = 0; secChangeBarsRef.current = 0
   }, [])
 
   // Record ~7s off the audio tap and ask the recognizer what's playing (once at a time).
@@ -2214,8 +2314,68 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               bpmEmaRef.current = v
               if (now - lastBpmUiRef.current > 350) { lastBpmUiRef.current = now; setBpm(Math.round(v)) }
             }
+            // ── Feed the BAR CLOCK: align the beat grid to this kick (PLL) and learn the downbeat phase ──
+            if (bpmEmaRef.current > 0) {
+              const period = 60000 / bpmEmaRef.current
+              beatPeriodRef.current = period
+              if (beatAnchorRef.current === 0) { beatAnchorRef.current = now; lastTickBeatRef.current = -1 }  // grid origin = first beat of the song
+              else {
+                const nIdx = Math.round((now - beatAnchorRef.current) / period)
+                const err = now - (beatAnchorRef.current + nIdx * period)
+                if (Math.abs(err) < period * 0.35) beatAnchorRef.current += err * 0.12   // gentle nudge so the grid tracks tempo drift
+                const bpb = beatsPerBarRef.current
+                const slot = ((nIdx % bpb) + bpb) % bpb
+                const acc = beatAccentRef.current
+                for (let i = 0; i < acc.length; i++) acc[i] *= 0.96          // decay so the accent adapts
+                acc[slot] += punchEnvRef.current                            // beat 1 carries the heaviest kick
+                let mx = -1, mi = 0; for (let i = 0; i < bpb; i++) if (acc[i] > mx) { mx = acc[i]; mi = i }
+                downbeatOffsetRef.current = mi
+              }
+            }
             // Beat-colour flash on the whole frame (background included) — arm on the kick.
             if (beatColorRef.current) { beatFlashRef.current = 1; const c = optsRef.current.colors; beatFlashColorRef.current = c[beatShiftRef.current % c.length] }
+          }
+          // ── BAR-CLOCK TICK (every frame): advance the grid between sparse kicks; act on DOWNBEATS ──
+          if (beatPeriodRef.current > 0 && beatAnchorRef.current > 0 && bpmEmaRef.current > 0 && !idleRef.current) {
+            const idxNow = Math.floor((now - beatAnchorRef.current) / beatPeriodRef.current)
+            if (idxNow > lastTickBeatRef.current) {
+              lastTickBeatRef.current = idxNow
+              const bpb = beatsPerBarRef.current
+              const phase = (((idxNow - downbeatOffsetRef.current) % bpb) + bpb) % bpb
+              beatInBarRef.current = phase
+              if (phase === 0) {
+                lastDownbeatRef.current = now
+                barCountRef.current++
+                // Section detection: L1 distance of this bar's signature vs the running section average.
+                const sig = [Math.min(1, energyEmaRef.current * 3), bassRatioRef.current, brightRatioRef.current, densityEmaRef.current]
+                const avg = secSigRef.current
+                if (secBarsRef.current === 0) for (let i = 0; i < 4; i++) avg[i] = sig[i]
+                let dist = 0; for (let i = 0; i < 4; i++) dist += Math.abs(sig[i] - avg[i])
+                secBarsRef.current++
+                let boundary = false
+                if (dist > 0.42 && secBarsRef.current > 2) {
+                  if (++secChangeBarsRef.current >= 2) {                        // sustained for ≥2 bars → real boundary
+                    boundary = true
+                    const up = (sig[0] + sig[3]) > (avg[0] + avg[3])
+                    sectionRef.current = up ? (sig[0] > 0.5 ? 'chorus' : 'build') : (sig[0] < 0.28 ? 'breakdown' : 'verse')
+                    sectionIdxRef.current++; lastSectionChangeRef.current = now
+                    secBarsRef.current = 0; secChangeBarsRef.current = 0
+                    for (let i = 0; i < 4; i++) avg[i] = sig[i]
+                  }
+                } else { secChangeBarsRef.current = 0; for (let i = 0; i < 4; i++) avg[i] = avg[i] * 0.7 + sig[i] * 0.3 }
+                // ACTIONS (Beat-sync / Auto): cut on the bar, PACED BY THE SECTION like a real editor —
+                // choruses/drops cut fast, verses hold, intros hold longest; section boundaries cut now
+                // (to a contrasting clip). Only cuts land here, so every cut is on a downbeat.
+                barsSinceCutRef.current++
+                if (barSyncRef.current) {
+                  const e = sig[0]
+                  const paceBars = e > 0.55 ? 2 : e > 0.32 ? 4 : 8       // fast in energetic sections, hold when calm
+                  if (boundary || pendingBarSwitchRef.current || barsSinceCutRef.current >= paceBars) {
+                    pendingBarSwitchRef.current = false; sectionCutRef.current = boundary; barsSinceCutRef.current = 0; requestSwitch()
+                  }
+                }
+              }
+            }
           }
           drawLive(cv, f.freq, f.wave, { ...optsRef.current, beatShift: beatShiftRef.current, density: densityEmaRef.current })
           // Decay + apply the beat flash overlay every frame. Shows for beat-colour flashes AND
@@ -2244,6 +2404,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             if (!nowIdle) {
               songEditRef.current = { on: Math.random() < 0.6, intensity: 0.45 + Math.random() * 0.5 }
               songLookCountRef.current = 0; chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []
+              // Re-anchor the bar clock + sections to the new song's start ("backfill from the beginning").
+              beatAnchorRef.current = 0; beatPeriodRef.current = 0; lastTickBeatRef.current = -1; barCountRef.current = 0
+              beatInBarRef.current = 0; downbeatOffsetRef.current = 0; beatAccentRef.current = [0, 0, 0, 0]; pendingBarSwitchRef.current = false
+              secSigRef.current = [0, 0, 0, 0]; secBarsRef.current = 0; sectionRef.current = 'intro'; sectionIdxRef.current = 0; secChangeBarsRef.current = 0
             }
           }
           // Smooth it, then auto-calibrate to THIS song's own range: track a slowly-relaxing
@@ -2459,7 +2623,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                   <>
                     <img src={bgClip.preview} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
                     <video ref={bgVideoRef} key={bgClip.id + (bgSrcOverride ? '-off' : '') + (edit !== 'none' ? '-x' : '')} src={bgSrcOverride ?? bgClip.src} crossOrigin={edit !== 'none' ? 'anonymous' : undefined} poster={bgClip.preview} autoPlay loop={!autoShuffle || idle} muted playsInline
-                      onCanPlay={() => { if (bgClip) readySrcsRef.current.add(bgClip.src) }}
+                      onCanPlay={() => { if (bgClip) readySrcsRef.current.add(bgClip.src); applyMotionOffset() }}
                       onEnded={() => { if (!autoShuffle) return; if (!requestSwitch() && bgVideoRef.current) { bgVideoRef.current.currentTime = 0; bgVideoRef.current.play().catch(() => {}) } }}   // next not buffered yet → replay current (stay smooth) until it is
                       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                       onError={() => { if (!autoShuffle) return; const now = performance.now(); if (now - lastErrSwitchRef.current < 1500) return; lastErrSwitchRef.current = now; nextClip() }} />
@@ -2566,6 +2730,25 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               </div>
             )}
 
+            {/* TIMING — the musical grid (bars / downbeats) + section, and whether Beat-sync is acting on it */}
+            <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Timing {barSync ? <span style={{ color: '#34d399' }}>· sync on</span> : null}</div>
+            {detStats?.gridLocked ? (
+              <>
+                <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Gauge size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> bar <strong>{detStats.bar}</strong> · {detStats.bpb}/4
+                  <span style={{ display: 'flex', gap: 4, alignItems: 'center', marginLeft: 2 }}>
+                    {Array.from({ length: detStats.bpb }).map((_, i) => {
+                      const on = i === detStats.beatInBar, down = i === 0
+                      return <span key={i} style={{ width: on ? 9 : 6, height: on ? 9 : 6, borderRadius: 999, transition: 'all .08s', background: down ? (on ? '#f87171' : 'rgba(248,113,113,0.45)') : (on ? '#fff' : 'rgba(255,255,255,0.25)') }} />
+                    })}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, marginTop: 4, marginLeft: 18, opacity: 0.85 }}>section <strong style={{ textTransform: 'capitalize' }}>{detStats.section}</strong>{detStats.sectionIdx > 0 ? ` · change #${detStats.sectionIdx}` : ''}</div>
+              </>
+            ) : (
+              <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6, opacity: 0.8 }}><Gauge size={12} style={{ opacity: 0.8 }} /> {running ? 'listening for the beat…' : '—'}</div>
+            )}
+
             {/* SEEING */}
             <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Seeing</div>
             <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Crosshair size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> {modelState === 'ready' ? (!hasBg ? 'add a video background' : detStats && detStats.objs.length > 0 ? <span>{detStats.objs.map(o => `${o.n > 1 ? o.n + ' ' : ''}${o.label}${o.n > 1 ? 's' : ''}`).join(' · ')}</span> : 'nothing in frame') : modelState === 'loading' ? 'loading detector…' : modelState === 'error' ? 'detector failed to load' : 'starting…'}</div>
@@ -2619,6 +2802,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         <button type="button" onClick={() => setDetector(v => !v)} title="Diagnostic: box people / cars / animals it detects, and show the live genre &amp; tone read"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: detector ? 'var(--accent)' : 'transparent', color: detector ? '#0e0d12' : 'var(--text-secondary)' }}>
           <Scan size={14} /> Detector{detector ? ' · on' : ''}
+        </button>
+        {/* Beat sync (beta) — bar-aligned cuts, section-aware + motion-aligned switching. Prove it here, then it rides in Auto. */}
+        <button type="button" onClick={() => { setBarSync(v => { const nv = !v; if (nv) { setReactive(true); setAutoShuffle(true); setBgKind('library') } return nv }) }} title="Sync cuts to bar starts (downbeats), change the look at verse/chorus boundaries, and align each clip's motion peak to the beat"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: barSync ? 'var(--accent)' : 'transparent', color: barSync ? '#0e0d12' : 'var(--text-secondary)' }}>
+          <Gauge size={14} /> Beat sync{barSync ? ' · on' : ''}
         </button>
         <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
       </div>
