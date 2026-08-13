@@ -58,7 +58,9 @@ export const STATIONS: Station[] = [
     slug: 'cinematic',
     title: 'Cinematic — Epic & Orchestral Radio',
     tagline: 'Sweeping, dramatic instrumentals — royalty-free (Kevin MacLeod, CC BY).',
-    scene: { style: 'none', videoMode: 'none', videoLook: 'noir', videoSet: ['Abstract', 'Film', 'Aerial'], brightnessSet: ['dark', 'mid'], speedSet: ['slow', 'standard'], matchEnergy: true, reactive: true },
+    // Sweeping aerials/mountains under an ink engraving + film grain; a radial visualiser breathes
+    // with the orchestral swells. Cool, dark, dramatic.
+    scene: { style: 'radial', paletteId: 'ice', videoMode: 'ink', videoLook: 'film', videoSet: ['Aerial', 'Mountains', 'Film', 'Abstract'], brightnessSet: ['dark', 'mid'], speedSet: ['slow', 'standard'], matchEnergy: true, reactive: true },
     tracks: ['Prelude and Action', 'The Descent', 'Impact Prelude', 'At Rest', 'Anguish', 'Killers', 'Crossing the Chasm', 'Ossuary 1 - A Beginning', 'Volatile Reaction', 'Despair and Triumph', 'Hitman', 'Echoes of Time', 'Heavy Interlude'].map(km),
     shuffle: true,
     showNowPlaying: true,
@@ -67,7 +69,9 @@ export const STATIONS: Station[] = [
     slug: 'dnd-tavern',
     title: 'D&D Tavern — Ambience Radio',
     tagline: 'Warm firelit tavern: lute, hearth, and low murmur.',
-    scene: { style: 'none', videoLook: 'warm', videoSet: ['Cozy', 'Film'], brightnessSet: ['dark', 'mid'], speedSet: ['slow'], matchEnergy: false, reactive: true },
+    // Cozy hearth footage turned into a moving oil painting, warm sepia grade, no visualiser — pure
+    // firelit ambience. Sunset palette keeps the incidental glow warm.
+    scene: { style: 'none', paletteId: 'sunset', videoMode: 'oil', videoLook: 'warm', videoSet: ['Cozy', 'Film'], brightnessSet: ['dark', 'mid'], speedSet: ['slow'], matchEnergy: false, reactive: true },
     jamendo: { tags: 'medieval+folk+acoustic', order: 'popularity_total', limit: 40 },
     shuffle: true,
     showNowPlaying: true,
@@ -76,7 +80,9 @@ export const STATIONS: Station[] = [
     slug: 'dnd-dungeon',
     title: 'D&D Dungeon — Dark Ambience',
     tagline: 'Tense exploration: drones, drips, and distant echoes.',
-    scene: { style: 'none', videoMode: 'ink', videoSet: ['Abstract', 'Neon', 'Night'], brightnessSet: ['dark'], speedSet: ['slow'], matchEnergy: false, reactive: true },
+    // Grim and desaturated: ink etch + noir grade over dark abstract/night footage (no Neon — that
+    // read too upbeat), mono palette, a barely-there wave. Constant dread, so energy-match stays off.
+    scene: { style: 'wave', paletteId: 'mono', videoMode: 'ink', videoLook: 'noir', videoSet: ['Abstract', 'Night', 'Aerial'], brightnessSet: ['dark'], speedSet: ['slow'], matchEnergy: false, reactive: true },
     jamendo: { tags: 'dark+ambient+cinematic', order: 'popularity_total', limit: 40 },
     shuffle: true,
     showNowPlaying: true,
@@ -85,7 +91,9 @@ export const STATIONS: Station[] = [
     slug: 'study-lofi',
     title: 'Study / Focus — Lofi Radio',
     tagline: 'Lo-fi beats to study and chill to, with soft visuals.',
-    scene: { style: 'dots', paletteId: 'aurora', videoLook: 'dream', videoSet: ['Cozy', 'Abstract'], brightnessSet: ['dark', 'mid'], speedSet: ['slow', 'standard'], matchEnergy: true, reactive: true },
+    // Warm hazy lofi: sunset palette, soft "living" motion + warm grade over cozy rooms and rainy
+    // streets, gentle dots that drift with the beat.
+    scene: { style: 'dots', paletteId: 'sunset', videoMode: 'living', videoLook: 'warm', videoSet: ['Cozy', 'Streets', 'Film'], brightnessSet: ['dark', 'mid'], speedSet: ['slow', 'standard'], matchEnergy: true, reactive: true },
     jamendo: { tags: 'lofi+chillhop+instrumental', order: 'popularity_total', limit: 50 },
     shuffle: true,
     showNowPlaying: true,
@@ -94,7 +102,9 @@ export const STATIONS: Station[] = [
     slug: 'deep-focus',
     title: 'Deep Focus — Ambient',
     tagline: 'Minimal ambient pads for deep work.',
-    scene: { style: 'wave', videoMode: 'none', videoSet: ['Abstract', 'Light'], brightnessSet: ['dark'], speedSet: ['slow'], matchEnergy: false, reactive: true },
+    // Cool and still: ice palette, faint "living" drift + cool grade over light/ambient/abstract
+    // fields, one slow wave. Nothing that pulls the eye off the work.
+    scene: { style: 'wave', paletteId: 'ice', videoMode: 'living', videoLook: 'cool', videoSet: ['Light', 'Ambient', 'Abstract'], brightnessSet: ['dark'], speedSet: ['slow'], matchEnergy: false, reactive: true },
     jamendo: { tags: 'ambient+drone+meditation', order: 'popularity_total', limit: 40 },
     shuffle: true,
     showNowPlaying: true,
