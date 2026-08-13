@@ -1054,9 +1054,17 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [detector, setDetector] = useState(false)
   const detectorRef = useRef(false); detectorRef.current = detector
   const [sonicView, setSonicView] = useState<{ family: string; profile: string; confidence: number } | null>(null)
-  // Extra live diagnostics for the Detector panel (input level, beat, tone, notes it's hearing, objects
-  // in frame) — snapshotted ~1.5×/s in the audio loop only while the Detector is open.
-  const [detStats, setDetStats] = useState<{ level: number; beaty: number; bass: number; bright: number; notes: string[]; objs: { label: string; n: number }[] } | null>(null)
+  // Extra live diagnostics for the Detector ("test mode") panel. These are heavier / noisier reads that
+  // we only want to compute while diagnosing, so they're all gated on detectorRef and published ~2.5×/s.
+  const [detStats, setDetStats] = useState<{
+    level: number; beaty: number; bass: number; bright: number; notes: string[]; objs: { label: string; n: number }[]
+    kick: number; snare: number; hat: number; centroid: number; flat: number; crest: number; chord: string
+    motion: number; luma: number; hue: number
+  } | null>(null)
+  const detAudioRef = useRef({ kick: 0, snare: 0, hat: 0, centroid: 0, flat: 0, crest: 0, chord: '' })  // smoothed test-mode audio reads
+  const detVisRef = useRef({ motion: 0, luma: -1, hue: -1 })                                             // smoothed test-mode vision reads
+  const drumBaseRef = useRef({ k: 0, s: 0, h: 0 })                                                       // per-band slow baselines (kick/snare/hat onset)
+  const chordChromaRef = useRef(new Float32Array(12))                                                    // short-window chroma for the live chord read
   const fxCanvasRef = useRef<HTMLCanvasElement | null>(null)   // overlay the edit effects paint on
   const motionRef = useRef<MotionDetector | null>(null)
   const boxRef = useRef<Box | null>(null)                      // smoothed primary region of interest
@@ -1520,6 +1528,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     }
     const getVideo = () => (bgFilterRef.current?.querySelector('video') ?? null) as HTMLVideoElement | null   // the main bg video only (not the 1px preloaders)
 
+    // Test-mode-only scene sampling (motion amount + average brightness/hue of the background), so we can
+    // see how much is moving and whether the picked palette matches the footage. Reads pixels → gated + throttled.
+    let lastScene = 0
+    const scv = document.createElement('canvas'); scv.width = 32; scv.height = 18
+    const sctx = scv.getContext('2d', { willReadFrequently: true })
+
     const loop = (t: number) => {
       if (!alive) return
       raf = requestAnimationFrame(loop)
@@ -1529,6 +1543,23 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       if (fx.width !== w || fx.height !== h) { fx.width = w; fx.height = h }
       const ctx = fx.getContext('2d'); if (!ctx) return
       const vw = video.videoWidth, vh = video.videoHeight, m = coverMap(w, h, vw, vh)
+
+      // Test-mode scene reads: motion amount + average brightness/dominant hue of the footage (~8×/s).
+      if (detectorRef.current && sctx && t - lastScene > 120) {
+        lastScene = t
+        const mb = motion.detect(video)
+        detVisRef.current.motion = mb ? Math.min(1, mb.score * 6) : detVisRef.current.motion * 0.6
+        try {
+          sctx.drawImage(video, 0, 0, 32, 18)
+          const d = sctx.getImageData(0, 0, 32, 18).data
+          let r = 0, g = 0, b = 0; const n = d.length / 4
+          for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2] }
+          r /= n; g /= n; b /= n
+          detVisRef.current.luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b), c = mx - mn
+          detVisRef.current.hue = c < 8 ? -1 : (mx === r ? (((g - b) / c) % 6 + 6) % 6 : mx === g ? (b - r) / c + 2 : (r - g) / c + 4) * 60
+        } catch {}
+      }
 
       if (activeEdit === 'freeze') {
         // keep tracking the mover so we know where to highlight when we freeze
@@ -1624,11 +1655,21 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edit, detector])
 
-  // Detector genre readout — surface the on-device "sounds like" classification (normally silent) so
-  // you can watch what genre/tone it reads. Polls the ref the audio loop writes ~2x/sec.
+  // Detector readout — surface the on-device reads (normally silent) so you can watch what it hears/sees.
+  // Publishes every 400ms from the refs the loops write, so meters stay lively without per-frame setState.
   useEffect(() => {
     if (!detector) { setSonicView(null); setDetStats(null); return }
-    const id = setInterval(() => setSonicView(sonicRef.current ? { ...sonicRef.current } : null), 500)
+    const id = setInterval(() => {
+      setSonicView(sonicRef.current ? { ...sonicRef.current } : null)
+      const ch = chromaRef.current; let mx = 0; for (let p = 0; p < 12; p++) if (ch[p] > mx) mx = ch[p]
+      const notes = mx > 1e-6
+        ? Array.from({ length: 12 }, (_, p) => ({ p, v: ch[p] })).filter(x => x.v > mx * 0.5).sort((x, y) => y.v - x.v).slice(0, 5).map(x => NOTE_NAMES[x.p])
+        : []
+      const counts = boxesRef.current.reduce((mm, b) => (b.label && (mm[b.label] = (mm[b.label] || 0) + 1), mm), {} as Record<string, number>)
+      const objs = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label, n]) => ({ label, n }))
+      const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
+      setDetStats({ level: Math.min(1, energyEmaRef.current * 3), beaty, bass: bassRatioRef.current, bright: brightRatioRef.current, notes, objs, ...detAudioRef.current, ...detVisRef.current })
+    }, 400)
     return () => clearInterval(id)
   }, [detector])
 
@@ -2059,6 +2100,39 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 } else if (detectorRef.current && tonal.length === 0) { keyRef.current = null; setKeyView(null) }
               }
             }
+            // ── TEST-MODE detectors — heavier / noisier reads, only computed while the Detector is on ──
+            if (detectorRef.current) {
+              const sr = audioRef.current?.sampleRate ?? 44100, N = a.fftSize
+              // Drum breakdown: kick(sub) / snare(low-mid) / hat(highs) — activity = transient over the
+              // band's own baseline. Spectral shape in the same pass: centroid (brightness Hz),
+              // flatness (tonal↔noisy), crest (peak/mean → dynamic punch).
+              let kE = 0, sE = 0, hE = 0, wsum = 0, asum = 0, gsum = 0, peak = 0, cnt = 0
+              for (let i = 1; i < f.freq.length; i++) {
+                const m = lut[f.freq[i]], hz = i * sr / N
+                if (hz < 140) kE += m; else if (hz < 900) sE += m; else if (hz > 6000) hE += m
+                if (m > 1e-9) { wsum += m * hz; asum += m; gsum += Math.log(m); if (m > peak) peak = m; cnt++ }
+              }
+              const da = detAudioRef.current, db = drumBaseRef.current
+              const act = (E: number, base: number, prev: number) => Math.max(Math.min(1, (E - base) / Math.max(base, 1e-4)), prev * 0.82)
+              db.k = db.k * 0.95 + kE * 0.05; db.s = db.s * 0.95 + sE * 0.05; db.h = db.h * 0.95 + hE * 0.05
+              da.kick = act(kE, db.k, da.kick); da.snare = act(sE, db.s, da.snare); da.hat = act(hE, db.h, da.hat)
+              da.centroid = da.centroid * 0.85 + (asum > 1e-6 ? wsum / asum : 0) * 0.15
+              da.flat = da.flat * 0.85 + (cnt ? Math.min(1, Math.exp(gsum / cnt) / (asum / cnt)) : 0) * 0.15
+              da.crest = da.crest * 0.85 + (asum > 1e-6 ? Math.min(1, peak / (asum / Math.max(1, cnt)) / 40) : 0) * 0.15
+              // Live chord — short-window chroma → best major/minor triad (root + third + fifth energy).
+              const cc = chordChromaRef.current
+              let ctot = 0; for (let p = 0; p < 12; p++) { cc[p] = cc[p] * 0.8 + fc[p] * 0.2; ctot += cc[p] }
+              if (ctot > 1e-6) {
+                let bestS = -1, bestR = 0, bestMin = false
+                for (let r = 0; r < 12; r++) {
+                  const maj = cc[r] + cc[(r + 4) % 12] + cc[(r + 7) % 12]
+                  const min = cc[r] + cc[(r + 3) % 12] + cc[(r + 7) % 12]
+                  if (maj > bestS) { bestS = maj; bestR = r; bestMin = false }
+                  if (min > bestS) { bestS = min; bestR = r; bestMin = true }
+                }
+                da.chord = bestS / ctot > 0.42 ? NOTE_NAMES[bestR] + (bestMin ? 'm' : '') : ''
+              } else da.chord = ''
+            }
           }
           if (bass > bassAvgRef.current * 1.35 && bass > 0.12 && now - lastBeatRef.current > 250) {
             // Onset sharpness — track the typical kick strength so the drum punch auto-gains
@@ -2136,17 +2210,6 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
             const sc = classifySonic({ bpm: Math.round(bpmEmaRef.current), energy: Math.min(1, e / 0.3), bass: bassRatioRef.current, bright: brightRatioRef.current, density: densityEmaRef.current, beaty }, genrePriorRef.current)
             sonicRef.current = sc; (window as unknown as { __lbSonic?: unknown }).__lbSonic = sc   // background — no UI, for testing/tuning
-            // Detector-only extras: the notes it's hearing (top of the accumulated chroma → validates the
-            // key read), beat strength, tonal balance, input level, and the live objects in frame.
-            if (detectorRef.current) {
-              const ch = chromaRef.current; let mx = 0; for (let p = 0; p < 12; p++) if (ch[p] > mx) mx = ch[p]
-              const notes = mx > 1e-6
-                ? Array.from({ length: 12 }, (_, p) => ({ p, v: ch[p] })).filter(x => x.v > mx * 0.5).sort((x, y) => y.v - x.v).slice(0, 5).map(x => NOTE_NAMES[x.p])
-                : []
-              const counts = boxesRef.current.reduce((m, b) => (b.label && (m[b.label] = (m[b.label] || 0) + 1), m), {} as Record<string, number>)
-              const objs = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label, n]) => ({ label, n }))
-              setDetStats({ level, beaty, bass: bassRatioRef.current, bright: brightRatioRef.current, notes, objs })
-            }
             // Roll the family into a ~15s vote (10 reads × 1.5s) and take the plurality winner; conf =
             // share of the window that agrees. votedFamily is what Auto actually acts on.
             const votes = familyVotesRef.current
@@ -2422,21 +2485,40 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               <span>♩ <strong>{bpm > 0 ? bpm : '—'}</strong> BPM</span>
               <span style={{ textTransform: 'capitalize', color: energyBand === 'hot' ? '#f87171' : energyBand === 'mid' ? '#fbbf24' : '#34d399', fontWeight: 700 }}>{running ? energyBand : '—'}</span>
               <span style={{ opacity: 0.85 }}>beat {detStats ? (detStats.beaty > 0.6 ? 'strong' : detStats.beaty > 0.3 ? 'some' : 'sparse') : '—'}</span>
+              {detStats?.chord && <span style={{ opacity: 0.9 }}>chord <strong>{detStats.chord}</strong></span>}
             </div>
             {detStats && (
-              <div style={{ marginTop: 5, marginLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {([['input', detStats.level * 2.2, '#34d399'], ['bass', detStats.bass, '#a78bfa'], ['treble', detStats.bright, '#60a5fa']] as [string, number, string][]).map(([lbl, v, c]) => (
-                  <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10, opacity: 0.85 }}>
-                    <span style={{ width: 36 }}>{lbl}</span>
-                    <span style={{ display: 'inline-block', width: 88, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.15)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.round(Math.min(1, Math.max(0, v)) * 100)}%`, background: c, borderRadius: 3 }} /></span>
+              <div style={{ marginTop: 5, marginLeft: 18, display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 12, rowGap: 3 }}>
+                {([['input', detStats.level * 2.2, '#34d399'], ['kick', detStats.kick, '#fb7185'], ['bass', detStats.bass, '#a78bfa'], ['snare', detStats.snare, '#fbbf24'], ['treble', detStats.bright, '#60a5fa'], ['hats', detStats.hat, '#22d3ee']] as [string, number, string][]).map(([lbl, v, c]) => (
+                  <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, opacity: 0.85 }}>
+                    <span style={{ width: 33 }}>{lbl}</span>
+                    <span style={{ display: 'inline-block', flex: 1, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.15)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.round(Math.min(1, Math.max(0, v)) * 100)}%`, background: c, borderRadius: 3 }} /></span>
                   </div>
                 ))}
+              </div>
+            )}
+            {detStats && (
+              <div style={{ fontSize: 10.5, marginTop: 5, marginLeft: 18, opacity: 0.82, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <span>tone <strong>{detStats.centroid < 1200 ? 'dark' : detStats.centroid < 3000 ? 'warm' : 'bright'}</strong> · {Math.round(detStats.centroid)}Hz</span>
+                <span>texture <strong>{detStats.flat < 0.18 ? 'tonal' : detStats.flat < 0.42 ? 'mixed' : 'noisy'}</strong></span>
+                <span>dynamics <strong>{detStats.crest > 0.55 ? 'punchy' : detStats.crest > 0.3 ? 'medium' : 'even'}</strong></span>
               </div>
             )}
 
             {/* SEEING */}
             <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Seeing</div>
             <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Crosshair size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> {modelState === 'ready' ? (!hasBg ? 'add a video background' : detStats && detStats.objs.length > 0 ? <span>{detStats.objs.map(o => `${o.n > 1 ? o.n + ' ' : ''}${o.label}${o.n > 1 ? 's' : ''}`).join(' · ')}</span> : 'nothing in frame') : modelState === 'loading' ? 'loading detector…' : modelState === 'error' ? 'detector failed to load' : 'starting…'}</div>
+            {detStats && hasBg && (
+              <div style={{ fontSize: 10.5, marginTop: 4, marginLeft: 18, opacity: 0.82, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>motion
+                  <span style={{ display: 'inline-block', width: 60, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.15)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.round(Math.min(1, Math.max(0, detStats.motion)) * 100)}%`, background: '#93c5ff', borderRadius: 3 }} /></span>
+                </span>
+                {detStats.luma >= 0 && <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>scene
+                  <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: detStats.hue < 0 ? `hsl(0,0%,${Math.round(detStats.luma * 100)}%)` : `hsl(${Math.round(detStats.hue)},60%,${Math.round(25 + detStats.luma * 50)}%)`, border: '1px solid rgba(255,255,255,0.3)' }} />
+                  <strong>{detStats.luma < 0.33 ? 'dark' : detStats.luma < 0.66 ? 'mid' : 'bright'}</strong>
+                </span>}
+              </div>
+            )}
 
             {/* SHOWING */}
             <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Showing</div>
