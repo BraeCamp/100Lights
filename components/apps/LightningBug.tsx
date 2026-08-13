@@ -835,9 +835,11 @@ function fillRR(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, 
 
 // Auto background selection: which categories fit the current energy.
 function autoCategories(band: Energy): BgCategory[] {
-  if (band === 'hot') return ['Neon', 'Night', 'City', 'Streets', 'Light']
-  if (band === 'calm') return ['Cozy', 'Nature', 'Beach', 'Film', 'Light']
-  return ['Abstract', 'Streets', 'Aerial', 'City', 'Light']
+  // Favor artsy/expressive footage (Abstract, Light, Portrait) over candid crowds. 'Streets' (people
+  // walking) is deliberately dropped from Auto — Brae wants fewer walking-people shots.
+  if (band === 'hot') return ['Neon', 'Night', 'Portrait', 'City', 'Light']
+  if (band === 'calm') return ['Cozy', 'Nature', 'Portrait', 'Beach', 'Film', 'Light']
+  return ['Abstract', 'Portrait', 'Aerial', 'Light', 'City']
 }
 
 function drawLive(cv: HTMLCanvasElement, freq: Uint8Array, wave: Uint8Array, o: LiveOpts) {
@@ -1146,13 +1148,31 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     ({ id: r.id, category: r.category as BgCategory, title: r.title, kind: 'video', preview: r.poster, src: r.mp4, tint: 'linear-gradient(135deg,#1e1b4b,#0b1020)', brightness: r.brightness, speed: r.speed })
   const [catalogPool, setCatalogPool] = useState<BgClip[]>([])
   const catalogPoolRef = useRef<BgClip[]>([]); catalogPoolRef.current = catalogPool
-  useEffect(() => {
-    // Pull a fresh random batch from the catalogue (respect a single-brightness pick for dark-room safety).
-    const bp = brightnessSet.length === 1 ? `&brightness=${brightnessSet[0]}` : ''
-    fetch(`/api/pexels-bg?order=random&limit=400${bp}`).then(r => (r.ok ? r.json() : null))
-      .then(d => { if (d?.results) setCatalogPool(d.results.map(pexToClip)) }).catch(() => {})
+  // Load the shuffle pool from the ~15k catalogue. Two goals from Brae: (1) WIDER variety — draw a fresh
+  // random batch and re-roll it periodically so a session sees far more than one fixed sample; (2) lean
+  // ARTSY — blend in a chunk of the tagged Portrait/artsy/model clips, and drop 'Streets' (candid
+  // people-walking footage) from the auto pool entirely.
+  const ARTSY_QUERIES = ['portrait', 'artsy', 'model', 'cinematic', 'aesthetic']
+  const loadPool = useCallback(() => {
+    const bset = brightnessSetRef.current
+    const bp = bset.length === 1 ? `&brightness=${bset[0]}` : ''
+    const aq = ARTSY_QUERIES[Math.floor(Math.random() * ARTSY_QUERIES.length)]
+    Promise.all([
+      fetch(`/api/pexels-bg?order=random&limit=340${bp}`).then(r => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(`/api/pexels-bg?q=${aq}&order=random&limit=150${bp}`).then(r => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([rand, artsy]) => {
+      const rows = [...(artsy?.results ?? []), ...(rand?.results ?? [])]
+      const seen = new Set<string>(); const clips: BgClip[] = []
+      for (const r of rows) { if (seen.has(r.id) || r.category === 'Streets') continue; seen.add(r.id); clips.push(pexToClip(r)) }
+      if (clips.length) setCatalogPool(clips.sort(() => Math.random() - 0.5))
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brightnessSet])
+  }, [])
+  useEffect(() => {
+    loadPool()
+    const id = setInterval(loadPool, 75000)   // re-roll the pool every ~75s → the whole 15k rotates through over a session
+    return () => clearInterval(id)
+  }, [brightnessSet, loadPool])
   // Search the tagged Pexels catalog (streams from Pexels' CDN; nothing downloaded).
   const [pexQuery, setPexQuery] = useState('')
   const [pexResults, setPexResults] = useState<{ id: string; title: string; mp4: string; poster: string; category: string; brightness: Brightness; author: string }[]>([])

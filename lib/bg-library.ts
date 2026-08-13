@@ -45,12 +45,12 @@ export const clipSpeed = (c: BgClip): Speed => c.speed ?? MOTION_MAP[c.id] ?? 's
 export const SPEED_LABEL: Record<Speed, string> = { slow: 'Slow', standard: 'Standard', fast: 'Fast' }
 
 // Artistic themes first: the library leans music-video by default.
-export const BG_CATEGORIES = ['Abstract', 'Light', 'Neon', 'Film', 'Night', 'Streets', 'Cozy', 'Nature', 'Patterns', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
+export const BG_CATEGORIES = ['Abstract', 'Light', 'Neon', 'Film', 'Night', 'Portrait', 'Streets', 'Cozy', 'Nature', 'Patterns', 'Aerial', 'Beach', 'Mountains', 'Animals', 'City', 'Ambient'] as const
 export type BgCategory = typeof BG_CATEGORIES[number]
 
 // Default energy per category when a clip doesn't override it.
 const CATEGORY_ENERGY: Record<BgCategory, Energy> = {
-  Abstract: 'mid', Light: 'calm', Neon: 'hot', Film: 'mid',
+  Abstract: 'mid', Light: 'calm', Neon: 'hot', Film: 'mid', Portrait: 'mid',
   Patterns: 'mid', Streets: 'mid', Night: 'hot', Cozy: 'calm', Nature: 'calm',
   Aerial: 'mid', Beach: 'calm', Mountains: 'calm', Animals: 'calm', City: 'hot', Ambient: 'calm',
 }
