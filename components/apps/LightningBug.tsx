@@ -2334,12 +2334,15 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 const fa = bandFastRef.current, sl = bandSlowRef.current
                 fa[b] = fa[b] * 0.45 + val * 0.55; sl[b] = sl[b] * 0.93 + val * 0.07
                 if (sl[b] < 1) return
-                if ((fa[b] - sl[b]) / sl[b] > k && now - bandCdRef.current[b] > cd && now - lastEditRef.current > 220) {
+                // Effects PUNCTUATE, they don't saturate: pro music videos change something ~every 3-5s,
+                // not every beat. Big global cooldown (~1.8s) + long per-band cooldowns + strong-spike-only
+                // thresholds keep effects to an accent every few seconds.
+                if ((fa[b] - sl[b]) / sl[b] > k && now - bandCdRef.current[b] > cd && now - lastEditRef.current > 1800) {
                   bandCdRef.current[b] = now
                   if (Math.random() < songEditRef.current.intensity) { const list = BAND_EDITS[b]; execEditCmd(list[Math.floor(Math.random() * list.length)], getBgVideo(), now) }
                 }
               }
-              spike('bass', low, 0.55, 260); spike('mid', mid, 0.8, 300); spike('high', high, 1.0, 240)
+              spike('bass', low, 0.75, 2200); spike('mid', mid, 1.05, 2600); spike('high', high, 1.3, 2400)
             }
             // Freeze-stutter resume + strobe pulse.
             if (freezeHitUntilRef.current && now > freezeHitUntilRef.current) { (bgFilterRef.current?.querySelector('video') as HTMLVideoElement | null)?.play().catch(() => {}); freezeHitUntilRef.current = 0 }
@@ -2533,7 +2536,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               if (barSyncRef.current) {
                 const ge = genreEditFor(votedFamilyRef.current?.family)
                 const e = sig[0]
-                const paceBars = Math.max(1, Math.round((e > 0.55 ? 2 : e > 0.32 ? 4 : 8) * ge.holdMul))   // genre paces the cuts (metal fast, lofi/orchestral hold)
+                // Shot length by section, per the research (~3.5s chorus, ~5-6s verse): chorus/drop 2 bars,
+                // verse 3, intro/breakdown 6 — then the genre's holdMul stretches/tightens it.
+                const paceBars = Math.max(1, Math.round((e > 0.55 ? 2 : e > 0.32 ? 3 : 6) * ge.holdMul))
                 if (bigUp && ge.montage) { montageBeatsRef.current = bpb + 2; lastMontageBeatRef.current = nIdx - 1 }   // drop montage only for genres that suit it
                 if (boundary || pendingBarSwitchRef.current || barsSinceCutRef.current >= paceBars) {
                   pendingBarSwitchRef.current = false; sectionCutRef.current = boundary; barsSinceCutRef.current = 0; requestSwitch()
@@ -2566,7 +2571,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             // gets an intensity, so it stays selective (not every song, not every hit). Also reset the
             // look budget (so the new song gets a fresh look, then holds it) + the key detector.
             if (!nowIdle) {
-              songEditRef.current = { on: Math.random() < 0.45, intensity: 0.4 + Math.random() * 0.45 }
+              songEditRef.current = { on: Math.random() < 0.45, intensity: 0.3 + Math.random() * 0.3 }
               songLookCountRef.current = 0; chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []
               contentClassRef.current = Math.random() < 0.4 ? 'anim' : 'live'   // pick a class for the song; applyAuto refines by genre
               // Re-anchor the bar clock + sections to the new song's start ("backfill from the beginning").
