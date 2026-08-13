@@ -69,3 +69,6 @@ fastlane/report.xml
 fastlane/README.md
 **/*.p8
 corr-fixture/
+
+# Local CLAP embedding venv (large, rebuildable)
+.venv-clap/

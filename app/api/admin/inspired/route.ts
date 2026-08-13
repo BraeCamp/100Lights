@@ -1,11 +1,12 @@
 // "Find music inspired by ___" for the radio admin. Picks the best available method:
-//   • audio-embeddings — if the catalogue is embedded (scripts/embed-jamendo.mjs) AND Replicate has
-//     credit: embed the prompt (ImageBind text→same space as audio) and return the nearest tracks.
-//   • ai-search — otherwise: Claude maps the prompt to Jamendo tags/name, then we search the API.
+//   • audio-embeddings — if the catalogue is embedded (npm run embed:jamendo, local CLAP): Claude
+//     turns the prompt into vibe tags, we pick the best-matching EMBEDDED track as a seed, and return
+//     its nearest-by-sound neighbours. Query-by-example → nothing heavy runs on the server.
+//   • ai-search — otherwise: Claude maps the prompt to Jamendo tags/name, then we search the API and
+//     re-rank by vibe. Commercial-safe (no NonCommercial) either way.
 import { isAdmin } from '@/lib/admin-auth'
 import { jamendoSearch } from '@/lib/jamendo'
-import { embedText } from '@/lib/audio-embed'
-import { embeddingCount, nearest } from '@/lib/track-embeddings'
+import { embeddingCount, seedByTags, nearest } from '@/lib/track-embeddings'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -40,13 +41,16 @@ export async function POST(req: Request) {
   try { prompt = String((await req.json())?.prompt || '').trim() } catch { /* bad json */ }
   if (!prompt) return Response.json({ error: 'Missing prompt' }, { status: 400 })
 
-  // 1) True audio similarity, if the catalogue is embedded and Replicate has credit.
+  // 1) True audio similarity (query-by-example) — if the catalogue is embedded. Claude interprets the
+  //    prompt → vibe tags → we pick the best-matching embedded track as a seed → return its nearest
+  //    neighbours by sound. All embedded tracks are commercial-safe, so every neighbour is too.
   if (await embeddingCount() > 0) {
-    const { vector } = await embedText(prompt)
-    if (vector) {
-      const rows = await nearest(vector, 40)
+    const spec = await interpret(prompt)
+    const seed = await seedByTags(spec.tags.split('+').filter(Boolean))
+    if (seed) {
+      const rows = await nearest(seed.embedding, 40, seed.id)
       const tracks: OutTrack[] = rows.map(r => ({ id: r.id, title: r.title, artist: r.artist, audio: r.audio, score: Math.round(r.score * 100) / 100 }))
-      return Response.json({ method: 'audio-embeddings', tracks, note: `Nearest ${tracks.length} tracks by sound.` })
+      return Response.json({ method: 'audio-embeddings', tracks, interpretation: { ...spec, note: `Sounds like “${seed.title}” — ${spec.note}`.trim() } })
     }
   }
 

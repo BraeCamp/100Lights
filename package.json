@@ -31,6 +31,7 @@
     "bg:tag": "node scripts/tag-bg-clips.mjs",
     "store:upload": "bundle exec fastlane ios metadata",
     "bg:pexels": "node scripts/seed-pexels-bg.mjs",
+    "clap:setup": "python3 -m venv .venv-clap && ./.venv-clap/bin/pip install -q torch transformers librosa soundfile",
     "embed:jamendo": "node scripts/embed-jamendo.mjs"
   },
   "dependencies": {

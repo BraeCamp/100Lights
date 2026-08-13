@@ -1,80 +1,110 @@
 #!/usr/bin/env node
-// Embed Jamendo tracks into pgvector (track_embeddings) so "inspired by ___" can do true audio
-// similarity. Fetches tracks by tag, sends each track's audio URL to ImageBind on Replicate, stores
-// the 1024-d vector. Needs JAMENDO_CLIENT_ID + REPLICATE_API_TOKEN (with billing — predictions 402
-// without credit). Heavy + costs per track; run it in batches.
+// Embed Jamendo tracks into pgvector (track_embeddings) so "inspired by ___" can match by ACTUAL
+// SOUND — using a LOCAL CLAP model (scripts/clap-embed.py), no paid Replicate/ImageBind, no per-track
+// cost. Bakes the paid step out: pay once in compute, local forever.
 //
-//   node scripts/embed-jamendo.mjs                 # a few tag sweeps
-//   node scripts/embed-jamendo.mjs --tags lofi+chillhop --limit 100
+// Only commercial-safe (non-NonCommercial) tracks are embedded, so every neighbour returned to the
+// admin is usable on a monetized broadcast. Stores each track's genre/mood tags too, so the live
+// route can pick a seed by vibe and then return its nearest-by-sound neighbours (query-by-example —
+// nothing runs in production).
+//
+//   npm run embed:jamendo                          # sweep the built-in tag pool
+//   node scripts/embed-jamendo.mjs --tags darkpop+synthpop+melancholic --limit 150
+//   node scripts/embed-jamendo.mjs --target 3000   # keep sweeping until ~3000 tracks embedded
 import { neon } from '@neondatabase/serverless'
-import { readFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createInterface } from 'node:readline'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const env = n => (process.env[n] || (readFileSync(join(ROOT, '.env.local'), 'utf8').match(new RegExp(`^\\s*${n}\\s*=\\s*(.+)\\s*$`, 'm'))?.[1] || '')).trim().replace(/^["']|["']$/g, '')
-const JAMENDO = env('JAMENDO_CLIENT_ID'), REPLICATE = env('REPLICATE_API_TOKEN'), DB = env('DATABASE_URL')
-if (!JAMENDO || !REPLICATE || !DB) { console.error('✗ Need JAMENDO_CLIENT_ID + REPLICATE_API_TOKEN + DATABASE_URL in .env.local'); process.exit(1) }
+const JAMENDO = env('JAMENDO_CLIENT_ID'), DB = env('DATABASE_URL')
+if (!JAMENDO || !DB) { console.error('✗ Need JAMENDO_CLIENT_ID + DATABASE_URL in .env.local'); process.exit(1) }
+const PY = join(ROOT, '.venv-clap', 'bin', 'python')
+if (!existsSync(PY)) { console.error(`✗ CLAP venv missing (${PY}). Create it:\n  python3 -m venv .venv-clap && ./.venv-clap/bin/pip install torch transformers librosa soundfile`); process.exit(1) }
 const sql = neon(DB)
-const IMAGEBIND = '0383f62e173dc821ec52663ed22a076d9c970549c209666ac3db181618b7a304'
+const DIM = 512   // CLAP (laion/clap-htsat-unfused)
 
-const POOL = ['lofi+chillhop+instrumental', 'ambient+drone+meditation', 'medieval+folk+acoustic', 'dark+ambient+cinematic',
-  'electronic+downtempo', 'jazz+soul', 'classical+piano', 'synthwave+retrowave', 'rock+indie', 'hiphop+beats']
+// Broad pool so the vector store is a diverse universe to draw neighbours from.
+const POOL = [
+  'lofi+chillhop+instrumental', 'ambient+drone+meditation', 'medieval+folk+acoustic', 'dark+ambient+cinematic',
+  'electronic+downtempo', 'jazz+soul', 'classical+piano', 'synthwave+retrowave', 'rock+indie', 'hiphop+beats',
+  'darkpop+synthpop+melancholic', 'bedroompop+dreampop+moody', 'rnb+soul+sensual', 'house+techno+dance',
+  'metal+heavy+guitar', 'folk+singer+songwriter', 'orchestral+epic+soundtrack', 'funk+groove+disco',
+  'trap+beats+808', 'chillout+relax+study',
+]
 
 async function ensure() {
   await sql`CREATE EXTENSION IF NOT EXISTS vector`
+  // If a table already exists with a different embedding dimension, drop it (it's a cache we rebuild).
+  const dim = await sql`SELECT a.atttypmod AS d FROM pg_attribute a
+    JOIN pg_class c ON c.oid = a.attrelid WHERE c.relname = 'track_embeddings' AND a.attname = 'embedding'`
+    .then(r => r[0]?.d).catch(() => null)
+  if (dim && dim !== DIM) { console.log(`↻ existing store is ${dim}-d, rebuilding as ${DIM}-d`); await sql`DROP TABLE IF EXISTS track_embeddings` }
   await sql`CREATE TABLE IF NOT EXISTS track_embeddings (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', artist TEXT NOT NULL DEFAULT '',
-    audio TEXT NOT NULL, tags TEXT[] NOT NULL DEFAULT '{}', source TEXT NOT NULL DEFAULT 'jamendo', embedding vector(1024), added_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
+    audio TEXT NOT NULL, tags TEXT[] NOT NULL DEFAULT '{}', source TEXT NOT NULL DEFAULT 'jamendo',
+    license TEXT NOT NULL DEFAULT '', embedding vector(${sql.unsafe(String(DIM))}), added_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
   await sql`CREATE INDEX IF NOT EXISTS track_embeddings_vec_idx ON track_embeddings USING hnsw (embedding vector_cosine_ops)`
 }
+
+const isCommercial = ccurl => !/\/by-nc/i.test(ccurl || '')   // exclude NonCommercial
 
 async function jamendo(tags, limit) {
   const ft = tags.split('+').map(t => encodeURIComponent(t.trim())).filter(Boolean).join('+')
   for (let i = 0; i < 4; i++) {
-    const r = await fetch(`https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO}&format=json&limit=${limit}&fuzzytags=${ft}&order=popularity_total&audioformat=mp32&include=licenses&groupby=artist_id`, { cache: 'no-store' })
-    if (r.ok) { const d = await r.json(); const rows = (d.results || []).filter(t => t.audio); if (rows.length) return rows }
+    const r = await fetch(`https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO}&format=json&limit=${limit}&fuzzytags=${ft}&order=popularity_total&audioformat=mp32&include=licenses+musicinfo&groupby=artist_id`, { cache: 'no-store' })
+    if (r.ok) { const d = await r.json(); const rows = (d.results || []).filter(t => t.audio && isCommercial(t.license_ccurl)); if (rows.length) return rows }
   }
   return []
 }
 
-// Returns { vec } | { rate:true } (402 = no Replicate credit)
-async function embed(url) {
-  const res = await fetch('https://api.replicate.com/v1/predictions', {
-    method: 'POST', headers: { Authorization: `Bearer ${REPLICATE}`, 'Content-Type': 'application/json', Prefer: 'wait=60' },
-    body: JSON.stringify({ version: IMAGEBIND, input: { modality: 'audio', input: url } }),
-  })
-  if (res.status === 402) return { rate: true }
-  if (!res.ok) return {}
-  let p = await res.json()
-  for (let i = 0; i < 20 && (p.status === 'starting' || p.status === 'processing'); i++) {
-    await new Promise(r => setTimeout(r, 2500))
-    p = await (await fetch(p.urls.get, { headers: { Authorization: `Bearer ${REPLICATE}` } })).json()
-  }
-  return p.status === 'succeeded' && Array.isArray(p.output) ? { vec: p.output } : {}
-}
+// --- CLAP embedder child process: write {id,url} lines, read {id,vec} lines in order ---
+const py = spawn(PY, [join(ROOT, 'scripts', 'clap-embed.py')], { stdio: ['pipe', 'pipe', 'inherit'] })
+const rl = createInterface({ input: py.stdout })
+const queue = []
+let ready
+const readyP = new Promise(res => { ready = res })
+rl.on('line', line => {
+  let m; try { m = JSON.parse(line) } catch { return }
+  if (m.ready) return ready()
+  const cb = queue.shift(); if (cb) cb(m)
+})
+py.on('exit', c => { if (c) console.error(`\nCLAP process exited (${c})`) })
+const embed = url => new Promise(res => { queue.push(res); py.stdin.write(JSON.stringify({ url }) + '\n') })
 
 const args = process.argv.slice(2)
 const has = f => args.includes(f)
 const argV = (f, d) => (has(f) ? args[args.indexOf(f) + 1] : d)
+const target = Number(argV('--target', '0'))
+
+console.log('loading CLAP model…')
 await ensure()
+await readyP
+console.log('CLAP ready. embedding commercial-safe tracks…\n')
+
 const queries = has('--tags') ? [argV('--tags')] : POOL
-const perTag = Number(argV('--limit', has('--tags') ? '100' : '30'))
-let total = 0
-for (const tags of queries) {
+const perTag = Number(argV('--limit', has('--tags') ? '150' : '60'))
+let added = 0, skipped = 0, failed = 0
+outer: for (const tags of queries) {
   const tracks = await jamendo(tags, perTag)
   for (const t of tracks) {
     const id = 'jam-' + t.id
     const [{ n }] = await sql`SELECT COUNT(*)::int n FROM track_embeddings WHERE id = ${id}`
-    if (n) continue                                 // already embedded
-    const { vec, rate } = await embed(t.audio)
-    if (rate) { console.error('\n⏳ Replicate 402 (no credit). Add billing, then re-run.'); process.exit(1) }
-    if (!vec) continue
-    await sql`INSERT INTO track_embeddings (id, title, artist, audio, tags, source, embedding)
-      VALUES (${id}, ${t.name}, ${t.artist_name}, ${t.audio}, ${tags.split('+')}, 'jamendo', ${'[' + vec.join(',') + ']'}::vector)
+    if (n) { skipped++; continue }
+    const { vec, err } = await embed(t.audio)
+    if (!vec) { failed++; if (err) process.stderr.write(`\n  ✗ ${t.name}: ${err}`); continue }
+    const mi = t.musicinfo?.tags || {}
+    const tt = [...(mi.genres || []), ...(mi.vartags || []), ...(mi.instruments || [])].map(x => String(x).toLowerCase())
+    await sql`INSERT INTO track_embeddings (id, title, artist, audio, tags, source, license, embedding)
+      VALUES (${id}, ${t.name}, ${t.artist_name}, ${t.audio}, ${tt}, 'jamendo', ${t.license_ccurl || ''}, ${'[' + vec.join(',') + ']'})
       ON CONFLICT (id) DO NOTHING`
-    total++; process.stdout.write(`\r  ${tags.slice(0, 18).padEnd(18)} · embedded ${total}   `)
+    added++; process.stdout.write(`\r  ${tags.slice(0, 22).padEnd(22)} · +${added} embedded  (${skipped} skip, ${failed} fail)   `)
+    if (target && added + skipped >= target) break outer
   }
 }
+py.stdin.end()
 const [{ n }] = await sql`SELECT COUNT(*)::int n FROM track_embeddings WHERE embedding IS NOT NULL`
-console.log(`\nEmbedded ${total} new. Vector store now ${n} tracks.`)
+console.log(`\n\nDone. +${added} new (${skipped} already there, ${failed} failed). Vector store now ${n} tracks.`)
 process.exit(0)
