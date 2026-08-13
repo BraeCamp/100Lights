@@ -39,6 +39,23 @@ export default function RadioAdmin() {
     } catch { setResults([]) } finally { setSLoading(false) }
   }
 
+  // ---- "Inspired by…" ----
+  const [prompt, setPrompt] = useState('')
+  const [iRes, setIRes] = useState<JTrack[]>([])
+  const [iLoading, setILoading] = useState(false)
+  const [iMethod, setIMethod] = useState<string | null>(null)
+  const [iNote, setINote] = useState<string | null>(null)
+  const [iSearched, setISearched] = useState(false)
+  const findInspired = async () => {
+    if (!prompt.trim()) return
+    setILoading(true); setISearched(true); setIMethod(null); setINote(null)
+    try {
+      const r = await fetch('/api/admin/inspired', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: prompt.trim() }) })
+      const d = await r.json()
+      setIRes(d.tracks || []); setIMethod(d.method || null); setINote(d.interpretation?.note || d.note || null)
+    } catch { setIRes([]) } finally { setILoading(false) }
+  }
+
   const row = (title: string, sub: string, audio: string, right?: React.ReactNode) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: '1px solid var(--border)' }}>
       <div style={{ flex: '1 1 200px', minWidth: 0 }}>
@@ -88,6 +105,27 @@ export default function RadioAdmin() {
           </div>
         ))}
       </div>
+
+      {/* Inspired by… */}
+      <h2 style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-secondary)', margin: '0 0 6px' }}>Inspired by…</h2>
+      <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+        Describe a vibe, artist, or song. Claude maps it to the catalogue now; once the library is embedded
+        (<code>npm run embed:jamendo</code>) and Replicate has credit, it matches by <strong>actual sound</strong>.
+      </p>
+      <form onSubmit={e => { e.preventDefault(); findInspired() }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+        <input value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="e.g. dreamy dark synthpop like Mr. Kitty · tense dungeon exploration · warm cozy jazz" style={{ ...inp, flex: '1 1 320px', minWidth: 220 }} />
+        <button type="submit" disabled={iLoading || !prompt.trim()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 9, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#0e0d12', opacity: iLoading || !prompt.trim() ? 0.5 : 1 }}><Search size={14} /> {iLoading ? 'Thinking…' : 'Find'}</button>
+      </form>
+      {iSearched && !iLoading && (
+        <>
+          {iMethod && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 6px' }}>{iMethod === 'audio-embeddings' ? '🔊 matched by sound (embeddings)' : '🤖 AI-interpreted catalogue search'}{iNote ? ` · ${iNote}` : ''}</p>}
+          {iRes.length ? (
+            <div style={{ maxHeight: 520, overflowY: 'auto', paddingRight: 4, marginBottom: 28 }}>
+              {iRes.map(t => row(t.title, `${t.artist}${typeof (t as JTrack & { score?: number }).score === 'number' ? ` · match ${Math.round(((t as JTrack & { score?: number }).score || 0) * 100)}%` : ''}`, t.audio, t.shareurl ? <a href={t.shareurl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)', flexShrink: 0 }}><ExternalLink size={15} /></a> : null))}
+            </div>
+          ) : <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 28px' }}>Nothing came back — try describing the vibe differently.</p>}
+        </>
+      )}
 
       {/* Jamendo search */}
       <h2 style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-secondary)', margin: '0 0 10px' }}>Search Jamendo</h2>
