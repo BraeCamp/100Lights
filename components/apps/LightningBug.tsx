@@ -384,15 +384,17 @@ const BAND_EDITS: Record<'bass' | 'mid' | 'high', string[]> = {
 // Quick background-SWITCH transitions (masks the clip swap). All fast (100–280ms) and varied so the
 // look stays snappy; picked at random, and only on ~55% of switches (the rest are clean hard cuts).
 // o0/t0/f0 = the "from" opacity / transform / filter the new clip animates OUT of (to opacity 1, none).
-const SWITCH_TRANSITIONS: { id: string; dur: number; o0: string; t0: string; f0: string; flash?: boolean }[] = [
-  { id: 'dip',      dur: 150, o0: '0',    t0: 'none',              f0: 'none' },              // quick fade through black
-  { id: 'flash',    dur: 120, o0: '0',    t0: 'none',              f0: 'none', flash: true }, // white camera-flash cut
-  { id: 'punch-in', dur: 200, o0: '0',    t0: 'scale(1.18)',       f0: 'none' },              // zoom-punch inward
-  { id: 'pull-out', dur: 220, o0: '0',    t0: 'scale(0.84)',       f0: 'none' },              // pop out from small
-  { id: 'slide-l',  dur: 200, o0: '0',    t0: 'translateX(7%)',    f0: 'none' },              // quick slide from right
-  { id: 'slide-up', dur: 200, o0: '0',    t0: 'translateY(7%)',    f0: 'none' },              // quick slide up
-  { id: 'whip',     dur: 160, o0: '0.15', t0: 'translateX(14%)',   f0: 'blur(7px)' },         // whip-pan with motion blur
-  { id: 'spin',     dur: 220, o0: '0',    t0: 'scale(1.12) rotate(3deg)', f0: 'none' },       // slight rotate-in
+// tier 0 = gentle (fine for calm/bright songs) · 1 = medium · 2 = energetic (lots of motion — only hot songs).
+const SWITCH_TRANSITIONS: { id: string; dur: number; o0: string; t0: string; f0: string; flash?: boolean; tier: number }[] = [
+  { id: 'dip',      dur: 150, o0: '0',    t0: 'none',              f0: 'none', tier: 0 },              // quick fade through black
+  { id: 'soft',     dur: 260, o0: '0.1',  t0: 'none',              f0: 'none', tier: 0 },              // slow gentle dissolve
+  { id: 'punch-in', dur: 200, o0: '0',    t0: 'scale(1.10)',       f0: 'none', tier: 1 },              // subtle zoom-punch inward
+  { id: 'pull-out', dur: 220, o0: '0',    t0: 'scale(0.90)',       f0: 'none', tier: 1 },              // subtle pop out from small
+  { id: 'flash',    dur: 120, o0: '0',    t0: 'none',              f0: 'none', flash: true, tier: 1 }, // white camera-flash cut
+  { id: 'slide-l',  dur: 200, o0: '0',    t0: 'translateX(7%)',    f0: 'none', tier: 2 },              // slide from the right
+  { id: 'slide-up', dur: 200, o0: '0',    t0: 'translateY(7%)',    f0: 'none', tier: 2 },              // slide up
+  { id: 'whip',     dur: 160, o0: '0.15', t0: 'translateX(14%)',   f0: 'blur(7px)', tier: 2 },         // whip-pan with motion blur
+  { id: 'spin',     dur: 220, o0: '0',    t0: 'scale(1.12) rotate(3deg)', f0: 'none', tier: 2 },       // rotate-in
 ]
 
 // Quick tag filters for the catalog search — the most common, useful tags across the ~15k clips.
@@ -1083,6 +1085,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     kick: number; snare: number; hat: number; centroid: number; flat: number; crest: number; chord: string
     motion: number; luma: number; hue: number
     gridLocked: boolean; gridBpm: number; bar: number; beatInBar: number; bpb: number; section: string; sectionIdx: number
+    intensity: number
   } | null>(null)
   const detAudioRef = useRef({ kick: 0, snare: 0, hat: 0, centroid: 0, flat: 0, crest: 0, chord: '' })  // smoothed test-mode audio reads
   const detVisRef = useRef({ motion: 0, luma: -1, hue: -1 })                                             // smoothed test-mode vision reads
@@ -1278,6 +1281,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [punchAmt, setPunchAmt] = useState(1)              // drum-punch intensity
   const switchChanceRef = useRef(0.35); switchChanceRef.current = switchChance
   const punchAmtRef = useRef(1); punchAmtRef.current = punchAmt
+  const songIntensityRef = useRef(0)   // 0..1.2 overall song intensity, VERY slow EMA → scales the drum punch + transition energy without misreads
   const prevFreqRef = useRef<Uint8Array | null>(null)      // for spectral flux
   const densityEmaRef = useRef(0)                          // busyness (0 sparse … 1 busy)
   const bassRatioRef = useRef(0)                           // low-band share of the spectrum
@@ -1676,9 +1680,14 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       const r = requestAnimationFrame(() => { if (bgTransRef.current) bgTransRef.current.style.opacity = '1' })
       return () => cancelAnimationFrame(r)
     }
-    // Active: ~45% clean cut (no transition), else a quick, randomly-picked transition.
+    // Active: ~45% clean cut (no transition), else a QUICK transition whose energy fits the song. Calmer
+    // (and brighter, treble-heavy) songs stay gentle — no big slide/whip; hotter songs unlock the motion.
     if (Math.random() < 0.45) { reset(); return }
-    const tr = SWITCH_TRANSITIONS[Math.floor(Math.random() * SWITCH_TRANSITIONS.length)]
+    const intensity = songIntensityRef.current
+    let maxTier = intensity > 0.75 ? 2 : intensity > 0.4 ? 1 : 0
+    if (brightRatioRef.current > 0.5 && maxTier > 0) maxTier -= 1   // bright/airy songs → one notch gentler
+    const pool = SWITCH_TRANSITIONS.filter(t => t.tier <= maxTier)
+    const tr = pool[Math.floor(Math.random() * pool.length)]
     el.style.transition = 'none'
     el.style.opacity = tr.o0; el.style.transform = tr.t0; el.style.filter = tr.f0
     void el.offsetHeight
@@ -1848,7 +1857,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
       const gridLocked = beatPeriodRef.current > 0 && beatAnchorRef.current > 0 && gridBpmRef.current > 0
       setDetStats({ level: Math.min(1, energyEmaRef.current * 3), beaty, bass: bassRatioRef.current, bright: brightRatioRef.current, notes, objs, ...detAudioRef.current, ...detVisRef.current,
-        gridLocked, gridBpm: Math.round(gridBpmRef.current), bar: barCountRef.current, beatInBar: beatInBarRef.current, bpb: beatsPerBarRef.current, section: sectionRef.current, sectionIdx: sectionIdxRef.current })
+        gridLocked, gridBpm: Math.round(gridBpmRef.current), bar: barCountRef.current, beatInBar: beatInBarRef.current, bpb: beatsPerBarRef.current, section: sectionRef.current, sectionIdx: sectionIdxRef.current,
+        intensity: songIntensityRef.current })
     }, 400)
     return () => clearInterval(id)
   }, [detector])
@@ -2076,7 +2086,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     bpmEmaRef.current = 0; beatIvBufRef.current = []; setBpm(0)
     bassAvgRef.current = 0; energyEmaRef.current = 0; punchEnvRef.current = 0
     energyMinRef.current = 1; energyMaxRef.current = 0   // recalibrate dynamic range to the new song
-    prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3
+    prevFreqRef.current = null; densityEmaRef.current = 0; onsetEmaRef.current = 0.3; songIntensityRef.current = 0
     lastBeatRef.current = 0; prevBeatRef.current = 0
     chromaRef.current.fill(0); keyRef.current = null; keyVotesRef.current = []; binPcRef.current = null; binWRef.current = null; songLookCountRef.current = 0
     beatAnchorRef.current = 0; beatPeriodRef.current = 0; gridBpmRef.current = 0; bpmConfRef.current = 0; barCountRef.current = 0; beatInBarRef.current = 0
@@ -2492,6 +2502,13 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           const band: Energy = score > (cur === 'hot' ? 0.50 : 0.60) ? 'hot' : score > (cur === 'calm' ? 0.35 : 0.28) ? 'mid' : 'calm'
           energyBandRef.current = band
           if (now - lastEnergyUiRef.current > 300) { lastEnergyUiRef.current = now; setEnergyBand(band) }
+          // SONG INTENSITY (0..1.2) — loudness + busyness + drum strength, GATED by whether there's actually
+          // a beat, so a loud-but-drumless drone reads ~0% (calm) while beat-driven music scales up. Mapped so
+          // calm≈0% and a full mix≈120%. VERY slow EMA (~3s) so it drifts over the song and never misreads.
+          const beatPresence = Math.min(1, beatIvBufRef.current.length / 5)
+          const rawInt = (0.35 * Math.min(1, e * 3) + 0.30 * densityEmaRef.current + 0.35 * Math.min(1, onsetEmaRef.current * 1.3)) * (0.3 + 0.7 * beatPresence)
+          const tgtInt = Math.max(0, Math.min(1.2, ((rawInt - 0.10) / 0.6) * 1.2))
+          songIntensityRef.current += (tgtInt - songIntensityRef.current) * 0.006
           // On-device "sounds like" read (free, no API) — updated ~every 1.5s.
           if (now - lastSonicUiRef.current > 1500) {
             lastSonicUiRef.current = now
@@ -2514,7 +2531,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           if (eq.on && bgFilterRef.current) {
             // Onset sharpness auto-gain: normalize the punch by the song's typical kick so drums
             // are consistently visible whatever the track's dynamics.
-            const p = Math.min(1.5, (punchEnvRef.current / Math.max(0.12, onsetEmaRef.current)) * 0.55) * punchAmtRef.current
+            // Drum punch scaled by SONG INTENSITY: 0% on calm passages → 120% at full intensity, drifting
+            // gradually so a quiet moment in a loud song (or vice-versa) doesn't misfire the thump.
+            const p = Math.min(1.5, (punchEnvRef.current / Math.max(0.12, onsetEmaRef.current)) * 0.55) * punchAmtRef.current * songIntensityRef.current
             const dim = darkRoomRef.current ? 0.45 : 1   // dark room: dampen the brightness pulses
             const bl = eq.blur * (1 - level * 0.4) * (1 - Math.min(1, p) * 0.5)
             const br = eq.brightness * (0.7 + (level * 0.55 + p * 0.55) * dim)
@@ -2794,6 +2813,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 <span>tone <strong>{detStats.centroid < 1200 ? 'dark' : detStats.centroid < 3000 ? 'warm' : 'bright'}</strong> · {Math.round(detStats.centroid)}Hz</span>
                 <span>texture <strong>{detStats.flat < 0.18 ? 'tonal' : detStats.flat < 0.42 ? 'mixed' : 'noisy'}</strong></span>
                 <span>dynamics <strong>{detStats.crest > 0.55 ? 'punchy' : detStats.crest > 0.3 ? 'medium' : 'even'}</strong></span>
+                <span>intensity <strong>{Math.round(detStats.intensity * 100)}%</strong></span>
               </div>
             )}
 
