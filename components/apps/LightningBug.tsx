@@ -342,11 +342,14 @@ const ENERGY_LOOK: Record<'calm' | 'mid' | 'hot', { modes: string[]; looks: stri
 // Region-TARGETED effects driven by on-device vision (lib/vision): they change only the thing the
 // program detects — the moving subject, or a labelled person/car/animal — not the whole frame.
 // 'motion' edits use frame-diff (free, instant); 'object' edits use COCO-SSD (loads a small model).
-const EDITS: { id: string; name: string; kind: 'off' | 'motion' | 'object'; desc: string }[] = [
+const EDITS: { id: string; name: string; kind: 'off' | 'motion' | 'object' | 'visual'; desc: string }[] = [
   { id: 'none', name: 'Off', kind: 'off', desc: '' },
   { id: 'spotlight', name: 'Motion spotlight', kind: 'motion', desc: 'Glow whatever is moving; dim the rest.' },
+  { id: 'trails', name: 'Motion trails', kind: 'motion', desc: 'The moving subject leaves a fading echo; the still background stays clean.' },
   { id: 'freeze', name: 'Motion freeze', kind: 'motion', desc: 'Trail, ramp to a freeze on the beat, then highlight the mover.' },
+  { id: 'kaleido', name: 'Kaleidoscope', kind: 'visual', desc: 'Mirror the frame into 4-fold symmetry.' },
   { id: 'track', name: 'Detect & tag', kind: 'object', desc: 'Box + label people, cars, animals as they move.' },
+  { id: 'ramp', name: 'Slow-mo entrance', kind: 'object', desc: 'When a person/car enters, ramp the video to slow-mo, then back — a cinematic reveal.' },
   { id: 'invert', name: 'Invert subject', kind: 'object', desc: 'Invert the colours of just the main detected subject.' },
   { id: 'isolate', name: 'Colour-isolate', kind: 'object', desc: 'Keep the subject in colour; drain the rest to grey.' },
 ]
@@ -358,6 +361,21 @@ function coverMap(W: number, H: number, vw: number, vh: number) {
 }
 const boxToStage = (b: Box, m: { ox: number; oy: number; dw: number; dh: number }) =>
   ({ x: m.ox + b.x * m.dw, y: m.oy + b.y * m.dh, w: b.w * m.dw, h: b.h * m.dh })
+
+// Kaleidoscope — mirror the top-left quadrant into all four for 4-fold symmetry.
+function drawKaleido(ctx: CanvasRenderingContext2D, W: number, H: number, video: HTMLVideoElement) {
+  ctx.clearRect(0, 0, W, H)
+  const vw = video.videoWidth || 16, vh = video.videoHeight || 9, m = coverMap(W, H, vw, vh)
+  const hw = W / 2, hh = H / 2
+  const quad = (fx: boolean, fy: boolean) => {
+    ctx.save()
+    ctx.translate(fx ? W : 0, fy ? H : 0); ctx.scale(fx ? -1 : 1, fy ? -1 : 1)
+    ctx.beginPath(); ctx.rect(0, 0, hw, hh); ctx.clip()
+    try { ctx.drawImage(video, m.ox, m.oy, m.dw, m.dh) } catch {}
+    ctx.restore()
+  }
+  quad(false, false); quad(true, false); quad(false, true); quad(true, true)
+}
 
 // Paint the continuous edits (freeze is handled in the loop — it manages canvas persistence + playback).
 function drawEditFx(ctx: CanvasRenderingContext2D, W: number, H: number, edit: string, video: HTMLVideoElement, box: Box | null, boxes: Box[]) {
@@ -989,6 +1007,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [modelState, setModelState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const freezeRef = useRef<{ t0: number; frozen: boolean; box: Box | null } | null>(null)
   const freezeArmedRef = useRef(false)                         // Trigger sets this; the next beat fires the freeze
+  const rampRef = useRef<{ t0: number } | null>(null)          // slow-mo-entrance state
+  const prevCountRef = useRef(0)                               // detected-subject count last frame (entrance = count up)
+  const rampCooldownRef = useRef(0)
   const bassAvgRef = useRef(0)                              // running bass energy, for onset detection
   const lastBeatRef = useRef(0)                            // debounce beats
   const prevBeatRef = useRef(0)                            // for the inter-beat interval → BPM
@@ -1422,6 +1443,53 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         return
       }
 
+      if (edit === 'kaleido') { drawKaleido(ctx, w, h, video); return }
+
+      if (edit === 'trails') {
+        // fade the existing trail toward transparent, then stamp the current moving region → an echo
+        ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(0, 0, w, h); ctx.globalCompositeOperation = 'source-over'
+        const b0 = detector.detect(video); boxRef.current = lerpBox(boxRef.current, b0, 0.4)
+        if (b0) {
+          const b = boxToStage(b0, m)
+          ctx.save(); ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip()
+          try { ctx.drawImage(video, m.ox, m.oy, m.dw, m.dh) } catch {}
+          ctx.restore()
+        }
+        return
+      }
+
+      if (edit === 'ramp') {
+        if (model && t - lastDetect > 170) {
+          lastDetect = t
+          detectObjects(model, video).then(bs => {
+            if (!alive) return
+            boxesRef.current = bs; boxRef.current = lerpBox(boxRef.current, bs[0] ?? null, 0.4)
+            if (bs.length > prevCountRef.current && !rampRef.current && t - rampCooldownRef.current > 3500) { rampRef.current = { t0: performance.now() }; rampCooldownRef.current = t }
+            prevCountRef.current = bs.length
+          }).catch(() => {})
+        }
+        const r = rampRef.current, nowP = performance.now()
+        if (r && nowP - r.t0 < 1600) { video.playbackRate = 0.3 } else { if (r) rampRef.current = null; video.playbackRate = 1 }
+        // draw: faint boxes always; during the ramp, spotlight the newcomer + a "slow-mo" cue
+        ctx.clearRect(0, 0, w, h)
+        if (rampRef.current && boxRef.current) {
+          const b = boxToStage(boxRef.current, m), cx = b.x + b.w / 2, cy = b.y + b.h / 2
+          const rx = Math.max(50, b.w * 0.8), ry = Math.max(50, b.h * 0.8)
+          ctx.fillStyle = 'rgba(4,4,10,0.5)'; ctx.fillRect(0, 0, w, h)
+          const g = ctx.createRadialGradient(cx, cy, Math.min(rx, ry) * 0.35, cx, cy, Math.max(rx, ry))
+          g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)')
+          ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = g
+          ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 7); ctx.fill(); ctx.globalCompositeOperation = 'source-over'
+          ctx.strokeStyle = 'rgba(147,197,255,0.9)'; ctx.lineWidth = 2.5; ctx.shadowColor = '#93c5ff'; ctx.shadowBlur = 20
+          ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 7); ctx.stroke(); ctx.shadowBlur = 0
+          ctx.fillStyle = '#93c5ff'; ctx.font = '800 12px system-ui, sans-serif'; ctx.fillText('◉ slow-mo', 12, h - 14)
+        } else {
+          ctx.strokeStyle = 'rgba(147,197,255,0.4)'; ctx.lineWidth = 1.5
+          for (const bx of boxesRef.current) { const b = boxToStage(bx, m); ctx.strokeRect(b.x, b.y, b.w, b.h) }
+        }
+        return
+      }
+
       if (kind === 'motion') boxRef.current = lerpBox(boxRef.current, detector.detect(video), 0.3)
       else if (kind === 'object' && model && t - lastDetect > 170) {
         lastDetect = t
@@ -1430,7 +1498,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       drawEditFx(ctx, w, h, edit, video, boxRef.current, boxesRef.current)
     }
     raf = requestAnimationFrame(loop)
-    return () => { alive = false; cancelAnimationFrame(raf); clearFx() }
+    return () => {
+      alive = false; cancelAnimationFrame(raf); clearFx()
+      rampRef.current = null; freezeRef.current = null; prevCountRef.current = 0
+      const v = getVideo(); if (v) { v.playbackRate = 1; if (v.paused) v.play().catch(() => {}) }   // undo any slow-mo/freeze
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edit])
 
