@@ -40,6 +40,11 @@ const isPublicRoute = createRouteMatcher([
   '/assistant',
   '/api/community',
   '/api/community/(.*)',
+  // Broadcast: the streamer boxes + worker agents + the public Always-On page hit these with NO
+  // Clerk session, so they must be public. Each still enforces its own gate downstream (playlist/
+  // audio/live/stations are genuinely public; agent/sync + provision check BROADCAST_AGENT_TOKEN /
+  // CRON_SECRET). Admin broadcast controls live under /api/admin/broadcast/* and stay protected.
+  '/api/broadcast/(.*)',
   // Crawler files. Also excluded from the matcher below, so middleware never
   // runs on them — listed here too so they stay public if that changes.
   '/sitemap.xml',
