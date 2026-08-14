@@ -1,0 +1,21 @@
+# Run one or more stations 24/7. Each service = one stream. `restart: always` + the worker's own
+# ffmpeg/browser respawn keep it up. Copy .env.example → .env per station, or set env inline below.
+services:
+  cinematic:
+    build: .
+    restart: always
+    env_file: .env            # BASE_URL / STATION / STREAM_KEY / quality
+    shm_size: 1gb             # Chromium needs shared memory headroom
+    # environment:            # …or override per-service instead of .env:
+    #   STATION: cinematic
+    #   STREAM_KEY: ${CINEMATIC_KEY}
+
+  # Duplicate for a second station (its own YouTube stream key):
+  # study-lofi:
+  #   build: .
+  #   restart: always
+  #   shm_size: 1gb
+  #   environment:
+  #     BASE_URL: https://100lights.com
+  #     STATION: study-lofi
+  #     STREAM_KEY: ${STUDY_KEY}

@@ -1,0 +1,12 @@
+{
+  "name": "lightning-bug-broadcast-streamer",
+  "private": true,
+  "type": "module",
+  "description": "Headless 24/7 streamer: loads a Lightning Bug broadcast page and pushes it to RTMP (YouTube/Twitch).",
+  "scripts": {
+    "start": "./entrypoint.sh"
+  },
+  "dependencies": {
+    "playwright": "1.47.2"
+  }
+}
