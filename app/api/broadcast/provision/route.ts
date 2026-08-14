@@ -1,6 +1,7 @@
-// Fleet reconcile — ensure enough worker machines exist for the currently-live channels. Meant to be
-// hit on a schedule (Vercel Cron, every minute) AND right after a start/stop. Gated by admin OR the
-// agent token (so a cron can call it headlessly). In 'manual' mode it's a harmless no-op report.
+// Fleet reconcile — ensure enough worker machines exist for the currently-live channels. Fired right
+// after a start/stop (see the dashboard route). For scheduled self-healing, hit this from an EXTERNAL
+// cron (Vercel Hobby only allows daily crons; a per-minute Vercel cron fails the deploy). Gated by
+// admin OR the agent token OR CRON_SECRET. In 'manual' mode it's a harmless no-op report.
 import { isAdmin } from '@/lib/admin-auth'
 import { reconcileFleet } from '@/lib/broadcast-provision'
 
