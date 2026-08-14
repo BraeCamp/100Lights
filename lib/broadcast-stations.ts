@@ -97,3 +97,29 @@ export async function deleteStation(slug: string): Promise<void> {
   await ensure()
   await sql`DELETE FROM broadcast_stations WHERE slug = ${slug}`
 }
+
+const codeSort = (slug: string) => { const i = STATIONS.findIndex(s => s.slug === slug); return i < 0 ? 999 : i }
+async function writeDefault(s: Station) {
+  await sql`
+    INSERT INTO broadcast_stations (slug, config, enabled, sort, updated_at)
+    VALUES (${s.slug}, ${JSON.stringify(stripSlug(s))}, TRUE, ${codeSort(s.slug)}, NOW())
+    ON CONFLICT (slug) DO UPDATE SET config = EXCLUDED.config, enabled = TRUE, sort = EXCLUDED.sort, updated_at = NOW()`
+}
+
+/** Reset the WHOLE store to the code-defined stations (lib/stations): drop everything, re-insert the
+ *  defaults. Discards all panel edits + any custom/test stations. Runs its own writes, so it works
+ *  even on a warm process (unlike the empty-table auto-seed, which only fires on a cold start). */
+export async function resetToDefaults(): Promise<void> {
+  await ensure()
+  await sql`DELETE FROM broadcast_stations`
+  for (const s of STATIONS) await writeDefault(s)
+}
+
+/** Reset ONE station to its code default (only if it exists in lib/stations). */
+export async function resetStation(slug: string): Promise<boolean> {
+  await ensure()
+  const s = STATIONS.find(x => x.slug === slug)
+  if (!s) return false
+  await writeDefault(s)
+  return true
+}

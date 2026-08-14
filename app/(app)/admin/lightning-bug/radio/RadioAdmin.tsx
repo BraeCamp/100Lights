@@ -5,7 +5,7 @@ import {
   type Station, type BroadcastTrack, type StationScene,
 } from '@/lib/stations'
 import { BG_CATEGORIES } from '@/lib/bg-library'
-import { Radio, Search, ExternalLink, ChevronDown, Save, Trash2, Plus, Play, Copy, Check, ListMusic, ArrowUp, ArrowDown, X } from 'lucide-react'
+import { Radio, Search, ExternalLink, ChevronDown, Save, Trash2, Plus, Play, Copy, Check, ListMusic, ArrowUp, ArrowDown, X, RotateCcw } from 'lucide-react'
 
 type StationRow = Station & { enabled: boolean; sort: number; updatedAt?: string; __new?: boolean }
 interface JTrack { id: string; title: string; artist: string; audio: string; license: string; album?: string; duration?: number; shareurl?: string }
@@ -59,6 +59,18 @@ export default function RadioAdmin() {
     if (!s.__new) await fetch('/api/admin/broadcast/stations', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: s.slug, enabled }) })
   }
   const addStation = () => { const s = blankStation(); setStations(prev => [...prev, s]); setOpen(s.slug); setSavedMsg(null) }
+  const codeSlugs = useMemo(() => new Set(STATIONS.map(s => s.slug)), [])
+  const resetAll = async () => {
+    if (!window.confirm('Reset ALL stations to the built-in defaults?\n\nThis discards every edit in the panel and any custom/test stations, restoring the original lineup. (Files in public/broadcast/ are untouched.)')) return
+    setSavedMsg('Resetting…')
+    try { const r = await fetch('/api/admin/broadcast/stations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'reset-all' }) }); const d = await r.json(); if (Array.isArray(d.stations)) setStations(d.stations); setPl({}); setOpen(null); setSavedMsg('Reset to defaults — live now.') } catch (e) { setSavedMsg(String(e)) }
+  }
+  const resetOne = async (s: StationRow) => {
+    if (!window.confirm(`Reset “${s.title}” to its built-in default? Discards this station's edits.`)) return
+    const r = await fetch('/api/admin/broadcast/stations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'reset', slug: s.slug }) })
+    const d = await r.json(); if (d.error) { setSavedMsg(d.error); return }
+    if (Array.isArray(d.stations)) setStations(d.stations); setPl(p => { const n = { ...p }; delete n[s.slug]; return n }); setSavedMsg(`Reset “${s.title}” to default — live now.`); if (open === s.slug) preview(s.slug)
+  }
 
   // add a track to the currently-open station (used by the search results below)
   const addTrackToOpen = (t: BroadcastTrack) => {
@@ -164,7 +176,10 @@ export default function RadioAdmin() {
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 0 10px' }}>
         <h2 style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-secondary)', margin: 0 }}>Stations</h2>
-        <button type="button" onClick={addStation} style={btn('var(--accent)', '#0e0d12')}><Plus size={15} /> New station</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" onClick={resetAll} title="Restore every station to the built-in defaults (discards panel edits)" style={btn('transparent', 'var(--text-secondary)')}><RotateCcw size={15} /> Reset to defaults</button>
+          <button type="button" onClick={addStation} style={btn('var(--accent)', '#0e0d12')}><Plus size={15} /> New station</button>
+        </div>
       </div>
       {savedMsg && <p style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', margin: '0 0 10px' }}>{savedMsg}</p>}
 
@@ -279,6 +294,7 @@ export default function RadioAdmin() {
                     <button type="button" onClick={() => save(s)} disabled={saving === s.slug} style={btn('var(--accent)', '#0e0d12')}><Save size={15} /> {saving === s.slug ? 'Saving…' : 'Save'}</button>
                     {!s.__new && <a href={url(s.slug)} target="_blank" rel="noreferrer" style={{ ...btn('transparent', 'var(--text-secondary)'), textDecoration: 'none' }}><Play size={15} /> Open</a>}
                     {!s.__new && <button type="button" onClick={() => copyUrl(s.slug)} style={btn('transparent', 'var(--text-secondary)')}>{copied === s.slug ? <><Check size={15} /> Copied</> : <><Copy size={15} /> OBS URL</>}</button>}
+                    {!s.__new && codeSlugs.has(s.slug) && <button type="button" onClick={() => resetOne(s)} title="Restore this station to its built-in default" style={btn('transparent', 'var(--text-secondary)')}><RotateCcw size={15} /> Reset</button>}
                     <button type="button" onClick={() => remove(s)} style={{ ...btn('transparent', '#f87171'), marginLeft: 'auto' }}><Trash2 size={15} /> Delete</button>
                   </div>
                 </div>

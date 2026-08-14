@@ -4,7 +4,7 @@
 //   PATCH  { slug, enabled }    → toggle enabled without a full save
 //   DELETE ?slug=<slug>         → remove a station
 import { isAdmin } from '@/lib/admin-auth'
-import { listStationRows, upsertStation, setStationEnabled, deleteStation, type StationRow } from '@/lib/broadcast-stations'
+import { listStationRows, upsertStation, setStationEnabled, deleteStation, resetToDefaults, resetStation, type StationRow } from '@/lib/broadcast-stations'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -12,6 +12,16 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   if (!await isAdmin()) return Response.json({ error: 'Unauthorized' }, { status: 401 })
   return Response.json({ stations: await listStationRows() })
+}
+
+// Reset to the code-defined defaults (lib/stations). { action:'reset-all' } wipes + reseeds every
+// station; { action:'reset', slug } restores one. Use this to move a warm/edited store back to defaults.
+export async function POST(req: Request) {
+  if (!await isAdmin()) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  const { action, slug } = await req.json() as { action?: string; slug?: string }
+  if (action === 'reset-all') { await resetToDefaults(); return Response.json({ ok: true, stations: await listStationRows() }) }
+  if (action === 'reset' && slug) { const ok = await resetStation(slug); return Response.json({ ok, error: ok ? undefined : 'No code default for that slug', stations: await listStationRows() }) }
+  return Response.json({ error: 'Unknown action' }, { status: 400 })
 }
 
 export async function PUT(req: Request) {
