@@ -168,8 +168,11 @@ function LightningBugApp() {
     const bg = q.get('bg')
     if (bg && clipById(bg)) { setInitialBg(bg); setLive(true) }
     if (q.get('scene')) setLive(true)   // a shared scene link opens straight into live mode
-    const st = q.get('station')
-    if (st && q.get('broadcast')) { setBroadcastStation(st); setLive(true) }   // 24/7 radio-with-visuals mode
+    // 24/7 radio-with-visuals mode. Accept either ?station=<slug>&broadcast=1 or ?broadcast=<slug>
+    // (the streamer's BROADCAST_ID path uses the latter).
+    const st = q.get('station'); const bc = q.get('broadcast')
+    const bcSlug = st || (bc && bc !== '1' && bc !== 'true' ? bc : null)
+    if (bc && bcSlug) { setBroadcastStation(bcSlug); setLive(true) }
     const be = q.get('broadcastEdit')
     if (be) { setBroadcastEdit(be); setLive(true) }   // full-interface broadcast editor (saves to the station)
   }, [])
