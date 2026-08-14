@@ -19,6 +19,7 @@ export interface AutoEditOptions {
   shuffle?: boolean            // shuffle the clip order (default true)
   varyInPoints?: boolean       // start each cut at a varied point in its source clip (default true)
   colors?: string[]
+  look?: string                // a lib/video-effects id to grade every cut with (e.g. 'blockbuster')
   seed?: number                // deterministic RNG (tests); omit for Math.random
 }
 
@@ -112,6 +113,7 @@ export function autoEditTimeline(input: AutoEditInput): { items: TimelineItem[];
       trackId: input.trackId,
       contentType: 'video',
       url: clip.url,
+      ...(o.look ? { look: o.look } : {}),
       ...(i > 0 && transition !== 'none' ? { transitionIn: transition as TransitionType, transitionDuration } : {}),
     })
   }

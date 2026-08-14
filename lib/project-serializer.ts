@@ -74,6 +74,7 @@ export interface SerializedClip {
   // Audio & color
   eq?: { low: number; mid: number; high: number }
   grade?: { brightness: number; contrast: number; saturation: number }
+  look?: string
   lutId?: string
   // DAW-mix link
   dawMixLinked?: boolean
@@ -232,6 +233,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       mvResolution:     item.mvResolution,
       eq:               item.eq,
       grade:            item.grade,
+      look:             item.look,
       lutId:            item.lutId,
       dawMixLinked:     item.dawMixLinked,
       dawMixStamp:      item.dawMixStamp,
@@ -335,6 +337,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     mvResolution:     clip.mvResolution,
     eq:               clip.eq,
     grade:            clip.grade,
+    look:             clip.look,
     lutId:            clip.lutId,
     dawMixLinked:     clip.dawMixLinked,
     dawMixStamp:      clip.dawMixStamp,

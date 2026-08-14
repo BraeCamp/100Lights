@@ -151,6 +151,9 @@ export interface TimelineItem {
   // Per-clip color grade — composes ON TOP of the project-wide adjustments,
   // so one shot can be matched against its neighbours (100 = neutral).
   grade?: { brightness: number; contrast: number; saturation: number }
+  // Named effect/look — a CSS-filter grade from lib/video-effects (film, noir, vibrant, …). Composes
+  // on top of `grade`; applied by the compositor (buildClipGradeFilter), so preview + export match.
+  look?: string
   // LUT reference (id of a MediaItem with contentType === 'lut')
   lutId?: string
   // Live DAW-mix link: this clip carries the project's bounced DAW arrangement

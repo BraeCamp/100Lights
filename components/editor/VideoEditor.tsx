@@ -77,6 +77,7 @@ import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/ty
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType, TempoSeg } from '@/lib/editor-types'
 import { projectBeatLines, clipBeatLines, nearestSorted } from '@/lib/video-beats'
 import { autoEditTimeline, type AutoEditOptions } from '@/lib/video-auto-edit'
+import { VIDEO_EFFECTS, effectsByCategory, getEffect } from '@/lib/video-effects'
 import BeatMapEditor from './BeatMapEditor'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { MEDIA_ACCEPT, detectMediaKind, validateMediaFile } from '@/lib/media-import'
@@ -1350,6 +1351,12 @@ export default function VideoEditor({
       // Beat-synced auto-edit: cut the pool footage to the audio bed. Returns { cuts }. The AI drives
       // the whole flow — importFromUrl footage → import audio → autoEdit → export.
       autoEdit: (options?: AutoEditOptions) => runAutoEdit(options),
+      // Effects: apply a named look (see listEffects) to a clip, or to ALL video clips by default.
+      listEffects: () => VIDEO_EFFECTS.map(e => ({ id: e.id, name: e.name, category: e.category })),
+      setEffect: (effectId: string | null, o: { clipId?: string; all?: boolean } = {}) => {
+        const ids = o.clipId ? [o.clipId] : timelineItemsRef.current.filter(i => i.contentType === 'video').map(i => i.id)
+        return applyEffect(effectId, ids)
+      },
       openExport: () => setShowExport(true),
       // Direct headless render — same path the Export modal uses (exportTimelineFidelity), building the
       // input from live editor state. Returns the finished video as a base64 data URL so a driver can
@@ -2992,6 +2999,19 @@ export default function VideoEditor({
   // Clear the auto-edit note after a moment.
   useEffect(() => { if (!autoEditNote) return; const t = setTimeout(() => setAutoEditNote(null), 4000); return () => clearTimeout(t) }, [autoEditNote])
 
+  // Effects — apply a named look (lib/video-effects) to clips. buildClipGradeFilter renders it in BOTH
+  // the preview and the export, so what you see is what renders. Applies to the given clip ids.
+  const [fxOpen, setFxOpen] = useState(false)
+  const [fxScopeAll, setFxScopeAll] = useState(false)
+  const applyEffect = useCallback((effectId: string | null, ids: string[]) => {
+    if (!ids.length) { setAutoEditNote('Select a clip (or add video) to apply an effect.'); return 0 }
+    const set = new Set(ids)
+    setTimelineItems(prev => prev.map(i => set.has(i.id) ? { ...i, look: effectId || undefined } : i))
+    const nm = getEffect(effectId)?.name
+    setAutoEditNote(effectId ? `Applied “${nm}” to ${ids.length} clip${ids.length > 1 ? 's' : ''}.` : `Cleared effect on ${ids.length} clip${ids.length > 1 ? 's' : ''}.`)
+    return ids.length
+  }, [setTimelineItems])
+
   // Temporarily unused: the Music-Visual toolbar button was removed pending a
   // re-wire into the new media-panel flow. Keep the function for that follow-up.
   function addMusicVizClip() {
@@ -3641,6 +3661,52 @@ export default function VideoEditor({
           >
             <Wand2 size={12} /> Auto-edit
           </button>
+        )}
+
+        {/* Effects — apply a named look to the selected clip (or all clips) */}
+        {activePage === 'edit' && (
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setFxOpen(o => !o)}
+              data-help-id="effects"
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
+              title="Apply a look / effect to the selected clip (or all clips)"
+              style={{ color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+            >
+              <SwatchBook size={12} /> Effects
+            </button>
+            {fxOpen && (
+              <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50, width: 264, maxHeight: 380, overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: 10, boxShadow: '0 12px 32px rgba(0,0,0,0.4)' }}>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 9 }}>
+                  {([['Selected', false], ['All clips', true]] as const).map(([lbl, all]) => (
+                    <button key={lbl} onClick={() => setFxScopeAll(all)} style={{ flex: 1, padding: '5px 8px', borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${fxScopeAll === all ? 'var(--accent)' : 'var(--border)'}`, background: fxScopeAll === all ? 'var(--accent)' : 'transparent', color: fxScopeAll === all ? '#0e0d12' : 'var(--text-secondary)' }}>{lbl}</button>
+                  ))}
+                </div>
+                {(() => {
+                  const ids = fxScopeAll
+                    ? timelineItems.filter(i => i.contentType === 'video').map(i => i.id)
+                    : (selectedIds.size ? [...selectedIds] : (selectedId ? [selectedId] : []))
+                  const activeLook = !fxScopeAll && selectedId ? timelineItems.find(i => i.id === selectedId)?.look : undefined
+                  return (
+                    <>
+                      <button onClick={() => applyEffect(null, ids)} style={{ width: '100%', textAlign: 'left', padding: '6px 9px', marginBottom: 7, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: `1px solid ${!activeLook ? 'var(--accent)' : 'var(--border)'}`, background: 'transparent', color: 'var(--text-secondary)' }}>None (clear)</button>
+                      {effectsByCategory().map(({ category, effects }) => (
+                        <div key={category} style={{ marginBottom: 9 }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', margin: '2px 0 5px' }}>{category}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                            {effects.map(e => (
+                              <button key={e.id} onClick={() => applyEffect(e.id, ids)} title={e.css}
+                                style={{ padding: '5px 9px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${activeLook === e.id ? 'var(--accent)' : 'var(--border)'}`, background: activeLook === e.id ? 'var(--accent)' : 'var(--bg-surface)', color: activeLook === e.id ? '#0e0d12' : 'var(--text-secondary)' }}>{e.name}</button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )
+                })()}
+              </div>
+            )}
+          </div>
         )}
         {autoEditNote && (
           <div style={{ position: 'fixed', left: '50%', bottom: 24, transform: 'translateX(-50%)', zIndex: 60, background: 'var(--bg-card)', border: '1px solid var(--accent)', color: 'var(--text-primary)', padding: '8px 16px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, boxShadow: '0 6px 24px rgba(0,0,0,0.3)' }}>{autoEditNote}</div>

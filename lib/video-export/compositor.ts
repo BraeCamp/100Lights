@@ -20,6 +20,7 @@
  */
 
 import type { CaptionStyle, TimelineItem, Track, TransitionType, VideoAdjustments } from '@/lib/editor-types'
+import { effectCss } from '@/lib/video-effects'
 import { DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
 import { captionWords } from '@/lib/captions'
@@ -362,12 +363,16 @@ function drawVideoClip(
 
 /** Per-clip grade — CSS filter chain composed AFTER the global grade (parity with the preview). */
 export function buildClipGradeFilter(clip: TimelineItem): string {
-  const g = clip.grade
-  if (!g) return ''
   const parts: string[] = []
-  if (g.brightness !== 100) parts.push(`brightness(${g.brightness / 100})`)
-  if (g.contrast !== 100)   parts.push(`contrast(${g.contrast / 100})`)
-  if (g.saturation !== 100) parts.push(`saturate(${g.saturation / 100})`)
+  const g = clip.grade
+  if (g) {
+    if (g.brightness !== 100) parts.push(`brightness(${g.brightness / 100})`)
+    if (g.contrast !== 100)   parts.push(`contrast(${g.contrast / 100})`)
+    if (g.saturation !== 100) parts.push(`saturate(${g.saturation / 100})`)
+  }
+  // Named effect/look (lib/video-effects) — a CSS filter chain, on top of the manual grade.
+  const look = effectCss(clip.look)
+  if (look) parts.push(look)
   return parts.join(' ')
 }
 
