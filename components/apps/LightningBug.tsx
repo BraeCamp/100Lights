@@ -3058,7 +3058,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
 .mv-tab.is-active{background:var(--accent);color:#0e0d12;border-color:transparent}
 .mv-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .mv-tabcollapse{display:none;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--border);border-radius:999px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer;flex:0 0 auto}
-@container (min-width:760px){.mv-split{flex-direction:row;align-items:flex-start;gap:20px}.mv-stage{flex:1 1 60%;min-width:0;padding-bottom:4px}.mv-panels{flex:1 1 40%;min-width:280px;max-height:calc(100dvh - 16px);overflow:auto;padding-right:4px}}
+@container (min-width:760px){.mv-split{flex-direction:row;align-items:flex-start;gap:16px}.mv-panels{order:0;flex:0 0 312px;width:312px;min-width:312px;max-height:calc(100dvh - 16px);overflow:auto;padding:16px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px}.mv-stage{order:1;flex:1 1 auto;min-width:0;padding-bottom:4px}}
 @container (max-width:759px){.mv-tabcollapse{display:inline-flex}}`}</style>
       <LookSvgDefs />
       <div className="mv-split">
