@@ -2298,6 +2298,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
   const broadcastIdxRef = useRef(0)
   const [nowPlaying, setNowPlaying] = useState<BroadcastTrack | null>(null)
   const [broadcastMsg, setBroadcastMsg] = useState<string | null>(null)
+  // In-app Radio: every station, playable live right here (not just the headless broadcast box). Picking
+  // one loads its look + playlist and plays it through the analyser; you can then edit the look live as
+  // it plays. `radioSlug` = the station currently on air in this view.
+  const [stations, setStations] = useState<{ slug: string; title: string; tagline: string }[]>([])
+  const [radioSlug, setRadioSlug] = useState<string | null>(broadcast ?? null)
+  const stationsLoadedRef = useRef(false)
   // Passive song identification (AudD, Shazam-like) — records a short clip off the audio and
   // recognizes it. Gives the "now playing" name + ground-truth (Spotify) tempo/energy to sanity-
   // check the DSP. recDest is a silent tap on the audio graph we record from.
@@ -2966,6 +2972,36 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
     setAutoShuffle(true); setIdleTransition(true); setBgKind('library')
   }, [])
 
+  // Load the station list once (for the in-app Radio section). Cheap: slug/title/tagline only.
+  useEffect(() => {
+    if (stationsLoadedRef.current) return
+    stationsLoadedRef.current = true
+    ;(async () => {
+      try { const r = await fetch('/api/broadcast/stations'); if (r.ok) { const d = await r.json() as { stations?: typeof stations }; setStations(d.stations ?? []) } } catch { /* offline — Radio section just stays empty */ }
+    })()
+  }, [])
+
+  // Play a station live IN THIS VIEW (the in-app Radio, not the headless broadcast box): load its look
+  // + playlist and start it through the analyser. Editable live afterward — tweak the look as it plays.
+  const playStation = useCallback(async (slug: string) => {
+    setBroadcastMsg(null)
+    try {
+      const r = await fetch(`/api/broadcast/playlist?station=${encodeURIComponent(slug)}`)
+      if (!r.ok) { setBroadcastMsg('Unknown station.'); return }
+      const data = await r.json() as { station?: { scene?: StationScene; fullScene?: Record<string, unknown>; shuffle?: boolean }; tracks?: BroadcastTrack[] }
+      if (data.station?.fullScene) { loadScene({ id: 'bc', name: 'broadcast', ...(data.station.fullScene as object) } as Scene); setAutoShuffle(true); setIdleTransition(true); setBgKind('library'); setAuto(false) }
+      else if (data.station?.scene) applyStationScene(data.station.scene)
+      let tracks = data.tracks ?? []
+      if (data.station?.shuffle ?? true) tracks = [...tracks].sort(() => Math.random() - 0.5)
+      broadcastTracksRef.current = tracks
+      broadcastIdxRef.current = 0
+      setRadioSlug(slug)
+      nextClipRef.current()
+      if (tracks.length) void start('broadcast'); else setBroadcastMsg('No tracks yet for this station.')
+    } catch { setBroadcastMsg('Couldn’t load this station.') }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyStationScene])
+
   // Broadcast / radio mode (?station=<slug>&broadcast=1): load the station's scene + playlist and
   // auto-start. If autoplay is blocked (normal browser), we show a tap-to-start overlay; a headless
   // broadcast box launches Chrome with --autoplay-policy=no-user-gesture-required so it just plays.
@@ -3236,6 +3272,30 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
           <span style={{ display: 'block', fontSize: 11.5, fontWeight: 600, opacity: 0.85 }}>{auto ? 'Reading the music and deciding it all for you' + (running ? ` · ${energyBand}` : '') : 'One tap — just play music and it looks great'}</span>
         </span>
       </button>
+
+      {/* RADIO — every station, playable live right here. Pick one to play it through the app; then
+          edit the look live with the console below as it plays. This is the in-app radio (no headless
+          box, no YouTube needed) — the lowest-load way to run a station (visuals render on-device). */}
+      {stations.length > 0 && (
+        <section style={{ margin: '0 0 14px' }}>
+          <div style={CGRP}>Radio</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {stations.map(s => {
+              const on = radioSlug === s.slug && running
+              return (
+                <button key={s.slug} type="button" onClick={() => playStation(s.slug)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left', padding: '9px 11px', borderRadius: 10, cursor: 'pointer', border: on ? '1px solid var(--accent)' : '1px solid var(--border)', background: on ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                  <span style={{ display: 'grid', placeItems: 'center', width: 26, height: 26, borderRadius: 8, flexShrink: 0, background: on ? 'var(--accent)' : 'rgba(255,255,255,0.06)', color: on ? '#0e0d12' : 'var(--text-secondary)' }}>{on ? <Activity size={14} /> : <Radio size={14} />}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 13, fontWeight: 750, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title}</span>
+                    <span style={{ display: 'block', fontSize: 11, color: on ? 'var(--accent)' : 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{on ? (nowPlaying?.title ? `♪ ${nowPlaying.title}${nowPlaying.artist ? ` — ${nowPlaying.artist}` : ''}` : 'On air — live') : s.tagline}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {/* CONSOLE — grouped controls, always visible (studio-console layout). Auto drives them when on;
           you can override any. Deep options (style, colour map, video looks, backgrounds, timing,
