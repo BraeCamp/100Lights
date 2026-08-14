@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
-import { Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers, SwatchBook, FolderOpen, Clapperboard } from 'lucide-react'
+import { Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers, SwatchBook, FolderOpen, Clapperboard, Wand2 } from 'lucide-react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
 import VideoPlayer from '@/components/editor/VideoPlayer'
@@ -76,6 +76,7 @@ import {
 import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/types'
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType, TempoSeg } from '@/lib/editor-types'
 import { projectBeatLines, clipBeatLines, nearestSorted } from '@/lib/video-beats'
+import { autoEditTimeline, type AutoEditOptions } from '@/lib/video-auto-edit'
 import BeatMapEditor from './BeatMapEditor'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { MEDIA_ACCEPT, detectMediaKind, validateMediaFile } from '@/lib/media-import'
@@ -1346,6 +1347,9 @@ export default function VideoEditor({
         }])
         return id
       },
+      // Beat-synced auto-edit: cut the pool footage to the audio bed. Returns { cuts }. The AI drives
+      // the whole flow — importFromUrl footage → import audio → autoEdit → export.
+      autoEdit: (options?: AutoEditOptions) => runAutoEdit(options),
       openExport: () => setShowExport(true),
       // Direct headless render — same path the Export modal uses (exportTimelineFidelity), building the
       // input from live editor state. Returns the finished video as a base64 data URL so a driver can
@@ -2956,6 +2960,35 @@ export default function VideoEditor({
     handleSeek(at)
   }
 
+  // Auto-edit — build a beat-synced montage from the video clips in the media pool over the audio bed.
+  // Cuts land on musical bars when the audio carries a beat map (else a steady cadence). Powers both the
+  // toolbar button and window.__video.autoEdit (the AI/agent surface). No-op + note if there's nothing
+  // to work with. Undoable (goes through the history-tracked setTimelineItems).
+  const [autoEditNote, setAutoEditNote] = useState<string | null>(null)
+  const runAutoEdit = useCallback((options?: AutoEditOptions) => {
+    const items = timelineItemsRef.current
+    const trks = tracksRef.current
+    const trackId = (trks.find(t => t.type === 'media' || t.type === 'video')?.id) ?? 'v1'
+    const audioIds = new Set(trks.filter(t => t.type === 'audio').map(t => t.id))
+    const endOf = (i: TimelineItem) => i.startTime + (i.outPoint - i.inPoint) / (i.speed && i.speed > 0 ? i.speed : 1)
+    const audioItems = items.filter(i => audioIds.has(i.trackId))
+    const songEnd = (audioItems.length ? audioItems : items).reduce((m, i) => Math.max(m, endOf(i)), 0)
+    let pool = mediaItemsRef.current.filter(m => m.contentType === 'video' && m.url).map(m => ({ url: m.url as string, duration: m.duration, label: m.name }))
+    if (!pool.length) pool = items.filter(i => i.trackId === trackId && i.url && i.contentType === 'video').map(i => ({ url: i.url as string, duration: undefined, label: i.label }))
+    if (!pool.length) { setAutoEditNote('Add some video clips first — try the Stock tab.'); return { cuts: 0 } }
+    if (songEnd <= 0.2) { setAutoEditNote('Add an audio track to edit to.'); return { cuts: 0 } }
+    const { beats, bars } = projectBeatLines(items)
+    const keepItems = items.filter(i => i.trackId !== trackId)
+    const res = autoEditTimeline({ keepItems, pool, trackId, songEnd, bars, beats, startAt: 0, options })
+    setTimelineItems(res.items)
+    setSelectedId(null)
+    setAutoEditNote(`Auto-edit: ${res.cuts} cuts ${bars.length ? 'synced to the beat.' : 'at a steady cadence — add a beat map for beat-sync.'}`)
+    return res
+  }, [setTimelineItems])
+
+  // Clear the auto-edit note after a moment.
+  useEffect(() => { if (!autoEditNote) return; const t = setTimeout(() => setAutoEditNote(null), 4000); return () => clearTimeout(t) }, [autoEditNote])
+
   // Temporarily unused: the Music-Visual toolbar button was removed pending a
   // re-wire into the new media-panel flow. Keep the function for that follow-up.
   function addMusicVizClip() {
@@ -3592,6 +3625,22 @@ export default function VideoEditor({
           >
             <Type size={12} /> Title
           </button>
+        )}
+
+        {/* Auto-edit — beat-synced montage from the media pool over the audio bed */}
+        {activePage === 'edit' && (
+          <button
+            onClick={() => runAutoEdit()}
+            data-help-id="auto-edit"
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
+            title="Auto-edit: cut the video clips to the beat of the audio"
+            style={{ color: '#0e0d12', background: 'var(--accent)', border: '1px solid var(--accent)', fontWeight: 700 }}
+          >
+            <Wand2 size={12} /> Auto-edit
+          </button>
+        )}
+        {autoEditNote && (
+          <div style={{ position: 'fixed', left: '50%', bottom: 24, transform: 'translateX(-50%)', zIndex: 60, background: 'var(--bg-card)', border: '1px solid var(--accent)', color: 'var(--text-primary)', padding: '8px 16px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, boxShadow: '0 6px 24px rgba(0,0,0,0.3)' }}>{autoEditNote}</div>
         )}
 
         {/* Tool selector — only relevant on Edit page */}
