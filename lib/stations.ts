@@ -48,6 +48,11 @@ export interface Station {
   jamendo?: { tags: string; order?: string; limit?: number }
   shuffle?: boolean
   showNowPlaying?: boolean
+  /** Where this station pushes to. `rtmpUrl` = the ingest (default YouTube's live2; can be a Twitch
+   *  URL etc.); `channel` = a human label for which account/channel it belongs to (grouping only).
+   *  The secret stream KEY never lives here — it stays on the worker (STREAM_KEY / KEY_<SLUG>). */
+  rtmpUrl?: string
+  channel?: string
   /** Full Lightning Bug scene authored in the real UI (the "broadcast project"). A superset of
    *  `scene` — when present, the broadcast applies ALL of it (loadScene), so you're not limited to
    *  the admin panel's subset. Kept loose (it's the app's internal Scene shape) since it round-trips

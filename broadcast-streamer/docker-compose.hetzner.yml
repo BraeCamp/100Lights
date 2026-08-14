@@ -1,0 +1,23 @@
+# Hetzner baseline: one box, several channels, dashboard-controlled. The agent registers with the
+# control plane and streams whatever /admin/lightning-bug (Broadcasts) assigns it — up to CAPACITY.
+# Because it's browserless, one mid Hetzner box runs many 720p channels and bandwidth is included.
+#
+#   cp .env.hetzner.example .env   # set AGENT_TOKEN + KEYS
+#   docker compose -f docker-compose.hetzner.yml up -d --build
+#   docker compose -f docker-compose.hetzner.yml logs -f
+# Scale: raise CAPACITY, or run this on a 2nd box with a different WORKER_ID (the control plane spreads
+# channels across them). Set the SAME token as the app's BROADCAST_AGENT_TOKEN.
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    restart: always
+    environment:
+      AGENT: "1"
+      RENDERER: ffmpeg
+      CONTROL_URL: ${CONTROL_URL:-https://100lights.com}
+      AGENT_TOKEN: ${AGENT_TOKEN}
+      WORKER_ID: ${WORKER_ID:-hetzner-1}
+      CAPACITY: ${CAPACITY:-6}
+      KEYS: ${KEYS}          # {"cinematic":"key1","study-lofi":"key2", …} — one YouTube key per channel

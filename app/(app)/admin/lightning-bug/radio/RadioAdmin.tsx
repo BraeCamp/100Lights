@@ -225,6 +225,8 @@ export default function RadioAdmin() {
                     <div><span style={lbl}>Title</span><input value={s.title} onChange={e => patch(s.slug, { title: e.target.value })} style={{ ...inp, width: '100%' }} /></div>
                     <div><span style={lbl}>Tagline</span><input value={s.tagline} onChange={e => patch(s.slug, { tagline: e.target.value })} style={{ ...inp, width: '100%' }} /></div>
                     <div><span style={lbl}>Slug {s.__new ? '' : '(fixed)'}</span><input value={s.slug} disabled={!s.__new} onChange={e => patch(s.slug, { slug: e.target.value })} placeholder="my-station" style={{ ...inp, width: '100%', opacity: s.__new ? 1 : 0.6 }} /></div>
+                    <div><span style={lbl}>Channel (label)</span><input value={s.channel || ''} onChange={e => patch(s.slug, { channel: e.target.value })} placeholder="e.g. Main Radio · Channel A" style={{ ...inp, width: '100%' }} /></div>
+                    <div><span style={lbl}>RTMP URL</span><input value={s.rtmpUrl || ''} onChange={e => patch(s.slug, { rtmpUrl: e.target.value })} placeholder="rtmp://a.rtmp.youtube.com/live2 (default)" style={{ ...inp, width: '100%' }} /></div>
                   </div>
 
                   {/* look */}

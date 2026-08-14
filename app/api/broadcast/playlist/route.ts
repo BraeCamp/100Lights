@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
   tracks = tracks.map(t => (t.genre ? t : { ...t, genre: def }))
 
   return Response.json({
-    station: { slug: station.slug, title: station.title, tagline: station.tagline, scene: station.scene, fullScene: station.fullScene, shuffle: station.shuffle ?? true, showNowPlaying: station.showNowPlaying ?? true },
+    station: { slug: station.slug, title: station.title, tagline: station.tagline, scene: station.scene, fullScene: station.fullScene, rtmpUrl: station.rtmpUrl, channel: station.channel, shuffle: station.shuffle ?? true, showNowPlaying: station.showNowPlaying ?? true },
     source,
     tracks,
   })

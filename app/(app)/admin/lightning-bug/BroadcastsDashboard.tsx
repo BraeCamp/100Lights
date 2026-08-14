@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Radio, Play, Square, Cpu, Circle, RefreshCw, AlertTriangle } from 'lucide-react'
 
 type Status = 'starting' | 'live' | 'error' | 'offline'
-interface RuntimeRow { slug: string; title: string; enabled: boolean; desiredLive: boolean; status: Status; workerId: string | null; fps: number | null; error: string | null; lastHeartbeat: string | null; stale: boolean }
+interface RuntimeRow { slug: string; title: string; channel: string | null; enabled: boolean; desiredLive: boolean; status: Status; workerId: string | null; fps: number | null; error: string | null; lastHeartbeat: string | null; stale: boolean }
 interface AgentRow { workerId: string; lastSeen: string; capacity: number; running: number; stale: boolean }
 
 const STATUS_COLOR: Record<Status, string> = { live: '#34d399', starting: '#fbbf24', error: '#f87171', offline: '#6b7280' }
@@ -82,7 +82,7 @@ export default function BroadcastsDashboard() {
           <div key={r.slug} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '11px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)', opacity: r.enabled ? 1 : 0.5 }}>
             <Circle size={11} fill={STATUS_COLOR[r.status]} stroke="none" style={{ flexShrink: 0 }} />
             <div style={{ minWidth: 160, flex: '1 1 220px' }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{r.title} {!r.enabled && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· disabled</span>}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>{r.title} {r.channel && <span style={{ fontSize: 10.5, fontWeight: 700, marginLeft: 4, padding: '1px 7px', borderRadius: 999, border: '1px solid var(--border)', color: 'var(--text-muted)' }}>{r.channel}</span>} {!r.enabled && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· disabled</span>}</div>
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
                 <code>{r.slug}</code> · <span style={{ color: STATUS_COLOR[r.status], fontWeight: 700, textTransform: 'capitalize' }}>{r.status}</span>
                 {r.status === 'live' && r.fps != null && ` · ${Math.round(r.fps)} fps`}

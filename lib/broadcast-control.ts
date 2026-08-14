@@ -16,7 +16,7 @@ import { sql } from '@/lib/db'
 export type StreamStatus = 'starting' | 'live' | 'error' | 'offline'
 export interface AgentReport { slug: string; status: StreamStatus; fps?: number; error?: string }
 export interface RuntimeRow {
-  slug: string; title: string; enabled: boolean; desiredLive: boolean
+  slug: string; title: string; channel: string | null; enabled: boolean; desiredLive: boolean
   status: StreamStatus; workerId: string | null; fps: number | null; error: string | null
   lastHeartbeat: string | null; stale: boolean   // stale = a status row older than the liveness window
 }
@@ -87,14 +87,14 @@ export async function agentSync(workerId: string, capacity: number, reports: Age
 export async function listRuntime(): Promise<RuntimeRow[]> {
   await ensure()
   const rows = await sql`
-    SELECT s.slug, s.config->>'title' AS title, s.enabled, s.desired_live,
+    SELECT s.slug, s.config->>'title' AS title, s.config->>'channel' AS channel, s.enabled, s.desired_live,
            st.status, st.worker_id, st.fps, st.error, st.updated_at,
            (st.updated_at IS NULL OR st.updated_at < NOW() - (${FRESH_SECS} || ' seconds')::interval) AS stale
     FROM broadcast_stations s
     LEFT JOIN broadcast_status st ON st.slug = s.slug
     ORDER BY s.sort, s.slug`
   return rows.map(r => ({
-    slug: String(r.slug), title: String(r.title ?? r.slug), enabled: r.enabled !== false, desiredLive: r.desired_live === true,
+    slug: String(r.slug), title: String(r.title ?? r.slug), channel: r.channel ? String(r.channel) : null, enabled: r.enabled !== false, desiredLive: r.desired_live === true,
     status: (r.stale ? 'offline' : (r.status as StreamStatus)) ?? 'offline',
     workerId: r.stale ? null : (r.worker_id ? String(r.worker_id) : null),
     fps: r.stale || r.fps == null ? null : Number(r.fps),

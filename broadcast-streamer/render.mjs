@@ -21,7 +21,7 @@ const STATION = env.STATION || 'cinematic'
 const SLUG = env.BROADCAST_ID || STATION
 const W = parseInt(env.WIDTH || '1280', 10), H = parseInt(env.HEIGHT || '720', 10), FPS = parseInt(env.FPS || '30', 10)
 const VBITRATE = env.VBITRATE || '2500k', ABITRATE = env.ABITRATE || '128k'
-const RTMP_URL = (env.RTMP_URL || 'rtmp://a.rtmp.youtube.com/live2').replace(/\/$/, '')
+const RTMP_URL_ENV = env.RTMP_URL ? env.RTMP_URL.replace(/\/$/, '') : ''   // explicit env override (wins)
 const STREAM_KEY = env.STREAM_KEY || ''
 const OUT = env.OUT || ''
 const VIZ = (env.VIZ || 'cqt').toLowerCase()
@@ -56,7 +56,9 @@ async function fetchPlaylist() {
   const d = await r.json()
   const tracks = (d.tracks || []).map(t => String(t.url)).filter(Boolean)
   const paletteId = d.station?.fullScene?.colorCfg?.paletteId || d.station?.scene?.paletteId || 'mono'
-  return { tracks, paletteId, title: d.station?.title || SLUG }
+  // Where to push: explicit env override → the station's own rtmpUrl → YouTube default.
+  const rtmpUrl = (RTMP_URL_ENV || d.station?.rtmpUrl || 'rtmp://a.rtmp.youtube.com/live2').replace(/\/$/, '')
+  return { tracks, paletteId, title: d.station?.title || SLUG, rtmpUrl, channel: d.station?.channel || '' }
 }
 
 // concat demuxer playlist (absolute URLs; remote is fine with the protocol whitelist).
@@ -67,8 +69,8 @@ async function writeConcat(tracks) {
   return file
 }
 
-function runFfmpeg(concatFile, paletteId) {
-  const dest = STREAM_KEY ? `${RTMP_URL}/${STREAM_KEY}` : OUT
+function runFfmpeg(concatFile, paletteId, rtmpUrl) {
+  const dest = STREAM_KEY ? `${rtmpUrl}/${STREAM_KEY}` : OUT
   const out = STREAM_KEY
     ? ['-f', 'flv', dest]
     : ['-f', 'mp4', '-movflags', '+faststart', dest]
@@ -85,7 +87,7 @@ function runFfmpeg(concatFile, paletteId) {
     ...(OUT && !STREAM_KEY && env.TEST_SECONDS ? ['-t', env.TEST_SECONDS] : []),
     ...out,
   ]
-  log(`ffmpeg → ${STREAM_KEY ? RTMP_URL + '/***' : dest} (viz=${VIZ}, ${W}x${H}@${FPS})`)
+  log(`ffmpeg → ${STREAM_KEY ? rtmpUrl + '/***' : dest} (viz=${VIZ}, ${W}x${H}@${FPS})`)
   return spawn('ffmpeg', args, { stdio: ['ignore', 'inherit', 'inherit'] })
 }
 function dbl(r) { const m = /^(\d+)(k|M)?$/.exec(r); return m ? `${+m[1] * 2}${m[2] || ''}` : r }
@@ -94,13 +96,13 @@ let shuttingDown = false, child = null
 for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => { shuttingDown = true; try { child?.kill('SIGTERM') } catch {}; process.exit(0) })
 
 async function main() {
-  const { tracks, paletteId, title } = await fetchPlaylist()
+  const { tracks, paletteId, title, rtmpUrl, channel } = await fetchPlaylist()
   if (!tracks.length) { log(`no tracks for "${SLUG}" — add audio or Jamendo tags in the radio admin`); process.exit(1) }
-  log(`"${title}" — ${tracks.length} tracks, palette ${paletteId}`)
+  log(`"${title}" — ${tracks.length} tracks, palette ${paletteId}${channel ? ` · channel: ${channel}` : ''}`)
   const concat = await writeConcat(tracks)
   // Reliability (Phase B): if ffmpeg drops (network blip, RTMP disconnect), relaunch after a short wait.
   for (;;) {
-    child = runFfmpeg(concat, paletteId)
+    child = runFfmpeg(concat, paletteId, rtmpUrl)
     const code = await new Promise(res => child.on('exit', res))
     if (shuttingDown || (OUT && !STREAM_KEY)) break   // one-shot for local file tests
     log(`ffmpeg exited (${code}) — restarting in 3s`)
