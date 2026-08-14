@@ -33,6 +33,12 @@ export interface StationScene {
   editRate?: number        // cut/edit RATE multiplier, 0.5 (slow) … 2 (fast); default 1
   autoSpeed?: boolean       // let it ramp clip playback speed to the music (default on)
   beatColor?: boolean      // cycle palette colours on each beat (default off)
+  /** Server-streamer load mode (broadcast-streamer/render.mjs), lightest last:
+   *  'reactive' (default) = audio-reactive visualiser, ~0.7 core/~2.6 Mbps;
+   *  'loop' = slow gradient drift streamed with -c:v copy, ~0.05 core/~0.5 Mbps;
+   *  'still' = near-static palette card at a few fps, ~audio-only cost (~15 radios per 1 TB box).
+   *  Only affects the 24/7 server stream — the in-browser Lightning Bug view is always fully live. */
+  renderer?: 'reactive' | 'loop' | 'still'
 }
 
 export interface Station {
@@ -98,7 +104,7 @@ export const STATIONS: Station[] = [
     // dreamy haze grade over light/ambient/nature footage, and a single unhurried wave that breathes
     // with the music. No beat-cuts, no speed ramps, no colour flashing — energy-match off so it stays
     // even and peaceful for hours.
-    scene: { style: 'wave', paletteId: 'aurora', videoMode: 'living', videoLook: 'dream', videoSet: ['Light', 'Ambient', 'Nature', 'Aerial'], brightnessSet: ['mid', 'dark'], speedSet: ['slow'], matchEnergy: false, reactive: true, autoEdit: false, editRate: 0.5, autoSpeed: false, beatColor: false },
+    scene: { style: 'wave', paletteId: 'aurora', videoMode: 'living', videoLook: 'dream', videoSet: ['Light', 'Ambient', 'Nature', 'Aerial'], brightnessSet: ['mid', 'dark'], speedSet: ['slow'], matchEnergy: false, reactive: true, autoEdit: false, editRate: 0.5, autoSpeed: false, beatColor: false, renderer: 'still' },
     // ~186 curated calm classical/orchestral tracks from TWO CC-attributed artists — Kevin MacLeod
     // (CC BY 3.0) + Scott Buckley (CC BY 4.0) — every URL HEAD-verified (see lib/broadcast-playlists).
     // Static so it plays reliably right now; the `jamendo` tags below LAYER ON TOP (merged + deduped by
