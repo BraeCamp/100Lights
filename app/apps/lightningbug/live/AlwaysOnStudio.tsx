@@ -1,6 +1,7 @@
 'use client'
 // Always-On Studio — user surface of the offline-live platform (bright product design). Real: live
 // status + owner start/stop. The job catalog + plans show where it's headed (multi-tenant is next).
+import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Radio, Play, Square, Clapperboard, Sparkles, Scissors, Users, Bell, Cloud, Infinity as Inf, SlidersHorizontal } from 'lucide-react'
 
@@ -53,7 +54,7 @@ export default function AlwaysOnStudio() {
         <h1 style={{ fontSize: 'clamp(34px,6vw,54px)', fontWeight: 850, letterSpacing: '-.03em', lineHeight: 1.04, margin: '20px 0 0', backgroundImage: 'linear-gradient(90deg, var(--text-primary), var(--accent))', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Your channel, live 24/7.<br />Your computer, off.</h1>
         <p style={{ fontSize: 18, color: 'var(--text-secondary)', margin: '20px auto 0', maxWidth: 520, lineHeight: 1.5 }}>Design it once, hand it to the cloud, and it runs around the clock. No OBS, no machine left humming.</p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 28, flexWrap: 'wrap' }}>
-          <a href="/admin/lightning-bug?tab=radio" style={{ padding: '13px 26px', borderRadius: 12, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 15, fontWeight: 850, textDecoration: 'none', boxShadow: '0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent)' }}>Start a channel — free</a>
+          <Link href="/admin/lightning-bug?tab=radio" style={{ padding: '13px 26px', borderRadius: 12, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 15, fontWeight: 850, textDecoration: 'none', boxShadow: '0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent)' }}>Start a channel — free</Link>
           {liveOnes[0] && <a href={`${origin}/apps/lightningbug?station=${liveOnes[0].slug}&broadcast=1`} target="_blank" rel="noreferrer" style={{ padding: '13px 22px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 15, fontWeight: 700, textDecoration: 'none' }}>▷ See it live</a>}
         </div>
         {note && <p style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', marginTop: 14 }}>{note}</p>}

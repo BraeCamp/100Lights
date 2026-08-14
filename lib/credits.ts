@@ -166,6 +166,8 @@ export async function meterAI(
   userId: string, credits: number, reason: string, opts?: { freeSeconds?: number },
 ): Promise<{ ok: boolean; balance: number; usedFree?: boolean }> {
   if (opts?.freeSeconds && opts.freeSeconds > 0) {
+    // Not a React hook — `useFreeTranscribe` is a DB helper; the use* name just trips the linter's heuristic.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     const free = await useFreeTranscribe(userId, opts.freeSeconds)
     if (free.ok) { const c = await getCredits(userId); return { ok: true, balance: c.balance, usedFree: true } }
     // Free allowance exhausted → fall through and bill credits.

@@ -1,4 +1,5 @@
 'use client'
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { STATIONS } from '@/lib/stations'
 import { Radio, Copy, Check, Play, ListMusic } from 'lucide-react'
@@ -74,7 +75,7 @@ export default function BroadcastLauncher() {
       </div>
 
       <p style={{ fontSize: 12.5, margin: '20px 0 0', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <a href="/admin/lightning-bug/radio" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Radio admin →</a>
+        <Link href="/admin/lightning-bug/radio" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Radio admin →</Link>
         <a href="/admin/lightning-bug" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Background library admin →</a>
       </p>
       <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0 0' }}>Radio admin: create/edit stations (look, audio source, playlist) live — no redeploy. Background admin: curate Pexels. (Owner + admin code.)</p>

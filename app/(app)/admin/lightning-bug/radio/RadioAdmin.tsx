@@ -1,4 +1,5 @@
 'use client'
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import {
   STATIONS, STATION_STYLES, STATION_PALETTES, STATION_LOOKS, STATION_MODES, STATION_BRIGHTNESS, STATION_SPEEDS,
@@ -198,7 +199,7 @@ export default function RadioAdmin() {
   return (
     <div>
       <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 20px', maxWidth: 720 }}>
-        Create + edit broadcast stations — visual look, audio source, and playlist. Changes save to the database and take effect on the live stream with no redeploy. Open a station to add tracks (Jamendo search or paste a link). <a href="/apps/lightningbug/broadcast" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Broadcast launcher →</a>
+        Create + edit broadcast stations — visual look, audio source, and playlist. Changes save to the database and take effect on the live stream with no redeploy. Open a station to add tracks (Jamendo search or paste a link). <Link href="/apps/lightningbug/broadcast" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Broadcast launcher →</Link>
       </p>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 0 10px' }}>

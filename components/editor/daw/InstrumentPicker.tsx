@@ -913,11 +913,13 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
   const { project, dispatch, engine } = useDaw()
   const isMobile = useIsMobile()
 
+  // NB: derive-then-guard, but call every hook FIRST. A track can vanish while this panel is open
+  // (delete a track), so `track`/`instrument` may be undefined — but bailing before the useCallbacks
+  // below would change the hook count between renders and crash ("rendered fewer hooks than expected").
+  // So the hooks run unconditionally and the early-return lives just above the JSX.
   const track = project.tracks.find(t => t.id === trackId)
-  if (!track) return null
-
-  const instrument = track.instrument
-  const instrType  = instrument.type
+  const instrument = track?.instrument
+  const instrType  = instrument?.type
 
   const setType = useCallback((next: InstrumentType) => {
     let newInstr: TrackInstrument
@@ -931,39 +933,41 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
   }, [dispatch, trackId])
 
   const setFm = useCallback((changes: Partial<FmInstrumentParams>) => {
-    if (instrType !== 'fm') return
+    if (!instrument || instrType !== 'fm') return
     const params = instrument.params as FmInstrumentParams
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'fm', params: { ...params, ...changes } } })
-  }, [dispatch, trackId, instrType, instrument.params])
+  }, [dispatch, trackId, instrType, instrument?.params])
 
   const setPoly = useCallback((changes: Partial<PolyInstrumentParams>) => {
-    if (instrType !== 'poly') return
+    if (!instrument || instrType !== 'poly') return
     const params = instrument.params as PolyInstrumentParams
     // A hand-edit (any change that isn't loading a preset) drops the preset tag
     // so the sound reads as "custom" again.
     const next = { ...params, ...changes }
     if (!('preset' in changes)) delete next.preset
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'poly', params: next } })
-  }, [dispatch, trackId, instrType, instrument.params])
+  }, [dispatch, trackId, instrType, instrument?.params])
 
   const setDrum = useCallback((changes: Partial<DrumInstrumentParams>) => {
-    const prev = instrType === 'drum' ? instrument.params as DrumInstrumentParams : { pack: 'synth' as const }
+    const prev = (instrType === 'drum' && instrument) ? instrument.params as DrumInstrumentParams : { pack: 'synth' as const }
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'drum', params: { ...prev, ...changes } } })
-  }, [dispatch, trackId, instrType, instrument.params])
+  }, [dispatch, trackId, instrType, instrument?.params])
 
   const setFm4op = useCallback((changes: Partial<Fm4OpInstrumentParams>) => {
-    if (instrType !== 'fm4op') return
+    if (!instrument || instrType !== 'fm4op') return
     const params = instrument.params as Fm4OpInstrumentParams
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'fm4op', params: { ...params, ...changes } } })
-  }, [dispatch, trackId, instrType, instrument.params])
+  }, [dispatch, trackId, instrType, instrument?.params])
 
   const setWavetable = useCallback((changes: Partial<WavetableInstrumentParams>) => {
-    if (instrType !== 'wavetable') return
+    if (!instrument || instrType !== 'wavetable') return
     const params = instrument.params as WavetableInstrumentParams
     const next = { ...params, ...changes }
     if (!('preset' in changes)) delete next.preset
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'wavetable', params: next } })
-  }, [dispatch, trackId, instrType, instrument.params])
+  }, [dispatch, trackId, instrType, instrument?.params])
+
+  if (!track || !instrument) return null
 
   return (
     <div style={{
