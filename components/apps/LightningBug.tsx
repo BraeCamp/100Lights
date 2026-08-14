@@ -3702,9 +3702,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
       </TabSection>)}
       </>)}
       {err && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 8 }}>{err}</p>}
-      <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.55 }}>
-        <strong style={{ color: 'var(--text-secondary)' }}>Party setup:</strong> tap fullscreen and drag this window onto your TV or projector — it keeps running while its window stays visible, so you can use other apps beside it. The mic is the reliable way to visualize the room: point your device at the speaker. Grabbing another app’s audio directly (Spotify, Apple Music) isn’t possible on iPhone and is limited on Android — a phone can’t silently tap another app’s sound — so the mic stays the go-to; on a computer you can also capture a browser tab’s sound.
-      </p>
+      <details style={{ marginTop: 12 }}>
+        <summary style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', cursor: 'pointer', listStyle: 'none' }}>Party setup &amp; tips ▸</summary>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.55 }}>
+          Tap fullscreen and drag this window onto your TV or projector — it keeps running while its window stays visible, so you can use other apps beside it. The mic is the reliable way to visualize the room: point your device at the speaker. Grabbing another app’s audio directly (Spotify, Apple Music) isn’t possible on iPhone and is limited on Android — a phone can’t silently tap another app’s sound — so the mic stays the go-to; on a computer you can also capture a browser tab’s sound.
+        </p>
+      </details>
         </div>{/* /mv-panels */}
       </div>{/* /mv-split */}
     </div>
