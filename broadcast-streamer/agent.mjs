@@ -40,11 +40,14 @@ const keyFor = (slug) => {
 /** slug → { proc, startedAt, status, error } */
 const children = new Map()
 
+// RENDERER=ffmpeg → the browserless renderer (render.mjs, no Chromium — light, runs anywhere ffmpeg
+// does). Anything else → the full browser streamer (stream.mjs, needs the Linux capture container).
+const SCRIPT = (env.RENDERER || '').toLowerCase() === 'ffmpeg' ? 'render.mjs' : 'stream.mjs'
 function startChild(slug) {
   const key = keyFor(slug)
   if (!key) { children.set(slug, { proc: null, startedAt: Date.now(), status: 'error', error: 'no stream key on this worker' }); log('no key for', slug); return }
-  log('starting', slug)
-  const proc = spawn('node', ['stream.mjs'], { stdio: ['ignore', 'inherit', 'inherit'], env: { ...env, STATION: slug, BROADCAST_ID: '', STREAM_KEY: key, BASE_URL } })
+  log('starting', slug, `(${SCRIPT})`)
+  const proc = spawn('node', [SCRIPT], { stdio: ['ignore', 'inherit', 'inherit'], env: { ...env, STATION: slug, BROADCAST_ID: '', STREAM_KEY: key, BASE_URL } })
   const rec = { proc, startedAt: Date.now(), status: 'starting', error: null }
   proc.on('exit', code => { if (children.get(slug) === rec) { rec.status = 'error'; rec.error = `exited (${code})`; rec.proc = null } })
   children.set(slug, rec)

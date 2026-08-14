@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev
-COPY stream.mjs agent.mjs entrypoint.sh ./
+COPY stream.mjs render.mjs agent.mjs entrypoint.sh ./
 RUN chmod +x entrypoint.sh \
     && mkdir -p /home/pwuser/.config/pulse /tmp/.X11-unix \
     && chown -R pwuser:pwuser /app /home/pwuser \

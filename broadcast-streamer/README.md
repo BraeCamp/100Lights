@@ -10,7 +10,29 @@ it streams forever, restarting itself on any hiccup.
 > which is what this container is. Everything about *what* streams (stations, look, playlist) still
 > lives in the app + the `/admin/lightning-bug/radio` panel — this just renders and pushes it.
 
-## Run it for free
+## Fastest path — browserless, no Docker (recommended to start)
+
+There are two renderers. The **browserless** one (`render.mjs`) makes the visuals with **ffmpeg alone**
+— no Chromium, no Docker, no display. It's light enough for a free micro box (or a Pi, or your Mac),
+and it's the quickest way to actually go live:
+
+```bash
+# on any machine with node + ffmpeg (macOS: brew install ffmpeg node)
+cd broadcast-streamer
+STREAM_KEY=your-youtube-stream-key ./golive.sh          # streams "cinematic" 24/7
+STREAM_KEY=xxx STATION=study-lofi ./golive.sh           # a different station
+```
+
+That's the whole thing — it pulls the station's playlist + palette from 100lights.com, loops the audio,
+renders a reactive visual, and pushes to YouTube. Leave it running (a free VM, or `nohup`/pm2 on any
+box) and it's a 24/7 channel. Trade-off vs the browser renderer: it does the audio-reactive visual
+(constant-Q bars / spectrum / waves via `VIZ=`), not the full Lightning Bug video-background looks —
+but it costs a fraction and runs almost anywhere.
+
+The **browser** renderer (`stream.mjs`, the Docker container below) reproduces the exact Lightning Bug
+page — every look — but is heavier and needs the Linux capture stack.
+
+## Run the browser renderer for free
 
 The container is light (720p30 by default). Any always-on Linux box with Docker works. Free options:
 
