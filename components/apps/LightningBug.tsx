@@ -1325,6 +1325,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
   const [delayMs, setDelayMs] = useState(0)
   const [err, setErr] = useState<string | null>(null)
   const [fs, setFs] = useState(false)
+  const [railOpen, setRailOpen] = useState(true)   // left control rail — collapse it to give the stage the full window
   // Customization — colour config (palette OR a plane off the colour map) + how it maps.
   const [colorCfg, setColorCfg] = useState<LiveColor>({ paletteId: 'aurora', plane: null, mode: 'spectrum' })
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e6))
@@ -3038,7 +3039,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
 @keyframes mv-grid{from{background-position:0 0}to{background-position:0 40px}} .mv-grid{animation:mv-grid 1.1s linear infinite}
 @keyframes mv-flicker{0%,100%{opacity:.05}18%{opacity:.14}36%{opacity:.02}52%{opacity:.16}68%{opacity:.05}84%{opacity:.11}} .mv-flicker{animation:mv-flicker .3s steps(2) infinite}
 @media (prefers-reduced-motion: reduce){.mv-grid,.mv-flicker,.mv-grain,.mv-ambient{animation:none}}
-.mv-live{container-type:inline-size}
+.mv-live{container-name:mvlive;container-type:inline-size}
 .mv-split{display:flex;flex-direction:column}
 .mv-stage{position:sticky;top:0;z-index:3;background:var(--bg-base);padding-bottom:12px}
 .mv-panels{display:flex;flex-direction:column;container-type:inline-size}
@@ -3059,11 +3060,22 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
 .mv-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .mv-tabcollapse{display:none;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--border);border-radius:999px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer;flex:0 0 auto}
 @container (min-width:760px){.mv-split{flex-direction:row;align-items:flex-start;gap:16px}.mv-panels{order:0;flex:0 0 312px;width:312px;min-width:312px;max-height:calc(100dvh - 16px);overflow:auto;padding:16px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px}.mv-stage{order:1;flex:1 1 auto;min-width:0;padding-bottom:4px}}
-@container (max-width:759px){.mv-tabcollapse{display:inline-flex}}`}</style>
+@container (max-width:759px){.mv-tabcollapse{display:inline-flex}}
+/* Collapsible rail — desktop only (on narrow screens the rail already stacks under the stage). */
+.mv-railhide,.mv-railshow{display:none}
+@container mvlive (min-width:760px){
+  .mv-railhide{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:0 0 12px;margin:-2px 0 0}
+  .mv-railhide:hover{color:var(--text-primary)}
+  .mv-railclosed .mv-panels{display:none}
+  .mv-railshow{position:absolute;top:12px;left:12px;z-index:6;align-items:center;gap:6px;padding:8px 13px;border-radius:10px;border:1px solid rgba(255,255,255,.16);background:rgba(0,0,0,.5);color:#fff;font-size:12.5px;font-weight:800;cursor:pointer;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+  .mv-railclosed .mv-railshow{display:inline-flex}
+}`}</style>
       <LookSvgDefs />
-      <div className="mv-split">
+      <div className={`mv-split${railOpen ? '' : ' mv-railclosed'}`}>
         <div className="mv-stage">
       <div ref={wrapRef} {...dropProps} style={{ position: 'relative', width: '100%', aspectRatio: (fs || broadcast) ? undefined : '16 / 9', height: (fs || broadcast) ? '100dvh' : undefined, borderRadius: (fs || broadcast) ? 0 : 14, overflow: 'hidden', background: '#08070d', border: (fs || broadcast) ? 'none' : '1px solid var(--border)', outline: isOver ? '3px dashed var(--accent)' : 'none', outlineOffset: -3 }}>
+        {/* Collapsed-rail affordance: a floating "Controls" button over the stage to bring the rail back. */}
+        {!railOpen && !broadcast && <button type="button" className="mv-railshow" onClick={() => setRailOpen(true)} aria-label="Show controls"><SlidersHorizontal size={16} /> Controls</button>}
         {isOver && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 5, display: 'grid', placeItems: 'center', background: 'rgba(6,5,10,0.6)', color: '#fff', fontSize: 15, fontWeight: 800, pointerEvents: 'none' }}>Drop audio to visualize · video or image for the background</div>
         )}
@@ -3212,6 +3224,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
         </div>{/* /mv-stage */}
 
         <div className="mv-panels">
+      {/* Collapse the rail → the stage takes the full window (desktop only; the button is hidden when the rail already stacks under the stage on narrow screens). */}
+      <button type="button" className="mv-railhide" onClick={() => setRailOpen(false)} aria-label="Collapse controls"><ChevronLeft size={15} /> Hide controls</button>
       {/* AUTO — the one-tap button. Casual users press this and just play music. */}
       <button type="button" onClick={toggleAuto}
         style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '14px 16px', marginBottom: 12, borderRadius: 14, cursor: 'pointer', textAlign: 'left', border: auto ? 'none' : '1px solid var(--border)', background: auto ? 'var(--accent)' : 'var(--bg-card)', color: auto ? '#0e0d12' : 'var(--text-primary)' }}>
