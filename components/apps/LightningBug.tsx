@@ -34,6 +34,22 @@ import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
 const FONTS = ['system-ui', 'Georgia, serif', 'ui-monospace, monospace', 'Impact, sans-serif']
 
+// ── Console-rail helpers (the grouped "studio console" control layout) ────────────────────────────
+const CGRP: React.CSSProperties = { fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.11em', color: 'var(--text-muted)', margin: '0 0 9px' }
+function cSlider(label: string, value: number, min: number, max: number, step: number, onChange: (n: number) => void, hint?: string) {
+  return (
+    <label style={{ display: 'block', marginBottom: 11 }}>
+      <span style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 5 }}><span>{label}</span>{hint ? <span style={{ color: 'var(--text-muted)' }}>{hint}</span> : null}</span>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(+e.target.value)} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+    </label>
+  )
+}
+function cToggle(label: string, on: boolean, onClick: () => void) {
+  return (
+    <button key={label} type="button" onClick={onClick} style={{ padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'transparent' : 'var(--border)'}`, background: on ? 'rgba(52,211,153,0.18)' : 'transparent', color: on ? '#34d399' : 'var(--text-muted)' }}>{on ? '● ' : '○ '}{label}</button>
+  )
+}
+
 // ── Detector overlay (diagnostic panel) ──────────────────────────────────────────────────────────
 // Split OUT of the main component on purpose: it polls the live-read refs ~2.5×/s, and if that setState
 // lived in the parent it would re-render the whole (~3.6k-line) visualizer every 400ms while the panel
@@ -3201,22 +3217,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
           ? <button type="button" onClick={stop} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}><Square size={15} /> Stop</button>
           : <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Not listening</span>}
         <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{source === 'file' ? 'Playing your track' : source === 'device' ? 'Capturing device audio' : source === 'mic' ? 'Listening to the room' : ''}</span>
-        {AUDD_ENABLED && (
-        <button type="button" onClick={() => { setIdentify(v => !v); if (identify) setRecognized(null) }} title="Passively recognize the song that's playing (AudD) and show its name"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: identify ? 'var(--accent)' : 'transparent', color: identify ? '#0e0d12' : 'var(--text-secondary)' }}>
-          <Radio size={14} /> Song ID{identify ? ' · on' : ''}
-        </button>
-        )}
-        {/* Detector — diagnostic: box detected people/cars/animals + show the live genre/tone read. */}
-        <button type="button" onClick={() => setDetector(v => !v)} title="Diagnostic: box people / cars / animals it detects, and show the live genre &amp; tone read"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: detector ? 'var(--accent)' : 'transparent', color: detector ? '#0e0d12' : 'var(--text-secondary)' }}>
-          <Scan size={14} /> Detector{detector ? ' · on' : ''}
-        </button>
-        {/* Beat sync (beta) — bar-aligned cuts, section-aware + motion-aligned switching. Prove it here, then it rides in Auto. */}
-        <button type="button" onClick={() => { setBarSync(v => { const nv = !v; if (nv) { setReactive(true); setAutoShuffle(true); setBgKind('library') } return nv }) }} title="Sync cuts to bar starts (downbeats), change the look at verse/chorus boundaries, and align each clip's motion peak to the beat"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: barSync ? 'var(--accent)' : 'transparent', color: barSync ? '#0e0d12' : 'var(--text-secondary)' }}>
-          <Gauge size={14} /> Beat sync{barSync ? ' · on' : ''}
-        </button>
+        {/* Song ID / Detector / Beat sync now live in the console's Detector group (left rail). */}
         <button type="button" onClick={() => { stop(); onExit() }} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}>Exit live</button>
       </div>
       )}
@@ -3236,41 +3237,60 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
         </span>
       </button>
 
-      {/* AUTO view — the edit-rate, a toggle per automated thing (turn any off and use the manual controls
-          below), the filters to pick from, and the full manual controls tucked into a collapsible. */}
-      {auto && (
-        <div style={{ margin: '0 0 14px', display: 'grid', gap: 13 }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 5 }}>
-              <span>Edit / cut rate</span><span style={{ color: 'var(--text-muted)' }}>{editRate < 0.8 ? 'relaxed' : editRate > 1.4 ? 'fast' : 'normal'}</span>
-            </div>
-            <input type="range" min={0.5} max={2} step={0.1} value={editRate} onChange={e => setEditRate(+e.target.value)} style={{ width: '100%' }} />
-          </div>
+      {/* CONSOLE — grouped controls, always visible (studio-console layout). Auto drives them when on;
+          you can override any. Deep options (style, colour map, video looks, backgrounds, timing,
+          scenes) collapse under "Advanced" below. */}
+      <div style={{ display: 'grid', gap: 16, margin: '0 0 14px' }}>
+        <section>
+          <div style={CGRP}>Look</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {([['Backgrounds', autoShuffle, setAutoShuffle], ['Effects', autoEdit, setAutoEdit], ['Speed', autoSpeed, setAutoSpeed], ['Match energy', matchEnergy, setMatchEnergy], ['Colour on beat', beatColor, setBeatColor]] as [string, boolean, (v: (b: boolean) => boolean) => void][]).map(([label, on, set]) => (
-              <button key={label} type="button" onClick={() => set(v => !v)} title={on ? `Auto is handling ${label.toLowerCase()} — click to turn off and set it yourself below` : `Manual — set ${label.toLowerCase()} in the controls below`}
-                style={{ padding: '5px 11px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: on ? 'rgba(52,211,153,0.16)' : 'transparent', color: on ? '#34d399' : 'var(--text-muted)' }}>
-                {on ? '● ' : '○ '}{label}
-              </button>
+            {GENRE_LOOKS.map(l => (
+              <button key={l.id} type="button" onClick={() => applyLook(l)} title={l.desc}
+                style={{ padding: '6px 11px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: activeLook?.id === l.id ? 'var(--accent)' : 'var(--bg-card)', color: activeLook?.id === l.id ? '#0e0d12' : 'var(--text-secondary)' }}>{l.name}</button>
             ))}
           </div>
-          <div>
-            <div style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', marginBottom: 6 }}>Filter</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {GENRE_LOOKS.map(l => (
-                <button key={l.id} type="button" onClick={() => applyLook(l)} title={l.desc}
-                  style={{ padding: '6px 11px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: activeLook?.id === l.id ? 'var(--accent)' : 'var(--bg-card)', color: activeLook?.id === l.id ? '#0e0d12' : 'var(--text-secondary)' }}>{l.name}</button>
-              ))}
-            </div>
+        </section>
+        <section>
+          <div style={CGRP}>Reactivity</div>
+          {cSlider('Cut rate', editRate, 0.5, 2, 0.1, setEditRate, editRate < 0.8 ? 'relaxed' : editRate > 1.4 ? 'fast' : 'normal')}
+          {cSlider('Punch', punchAmt, 0, 2, 0.1, setPunchAmt)}
+          {cSlider('Sensitivity', gain, 0.5, 2.5, 0.1, setGain)}
+          {cSlider('Smoothing', smoothing, 0, 0.95, 0.05, setSmoothing)}
+        </section>
+        <section>
+          <div style={CGRP}>Filters</div>
+          {cSlider('Brightness', brightness, 0.4, 1.6, 0.05, setBrightness)}
+          {cSlider('Saturate', saturate, 0, 2, 0.05, setSaturate)}
+          {cSlider('Blur', blur, 0, 12, 0.5, setBlur)}
+        </section>
+        <section>
+          <div style={CGRP}>Toggles</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {cToggle('Effects', autoEdit, () => setAutoEdit(v => !v))}
+            {cToggle('Speed', autoSpeed, () => setAutoSpeed(v => !v))}
+            {cToggle('Beat colour', beatColor, () => setBeatColor(v => !v))}
+            {cToggle('Match energy', matchEnergy, () => setMatchEnergy(v => !v))}
+            {cToggle('Backgrounds', autoShuffle, () => setAutoShuffle(v => !v))}
+            {cToggle('Mirror', mirror, () => setMirror(v => !v))}
+            {cToggle('Glow', glow, () => setGlow(v => !v))}
+            {cToggle('Trail', trail, () => setTrail(v => !v))}
           </div>
-          <button type="button" onClick={() => setManualOpen(o => !o)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
-            <SlidersHorizontal size={13} /> Manual controls {manualOpen ? '▾' : '▸'}
-          </button>
-        </div>
-      )}
+        </section>
+        <section>
+          <div style={CGRP}>Detector</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {cToggle('On', detector, () => setDetector(v => !v))}
+            {cToggle('Beat sync', barSync, () => setBarSync(v => { const nv = !v; if (nv) { setReactive(true); setAutoShuffle(true); setBgKind('library') } return nv }))}
+            {AUDD_ENABLED ? cToggle('Song ID', identify, () => { setIdentify(v => !v); if (identify) setRecognized(null) }) : null}
+          </div>
+        </section>
+        <button type="button" onClick={() => setManualOpen(o => !o)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
+          <SlidersHorizontal size={13} /> Advanced {manualOpen ? '▾' : '▸'}
+        </button>
+      </div>
 
-      {(!auto || manualOpen) && (<>
+      {(manualOpen || broadcastEdit) && (<>
       {/* Scenes — save your whole setup (look + filters + reactivity + video set), reload, set a
           default that opens with the app, rename, and share via a link. */}
       <div style={{ margin: '0 0 12px' }}>
