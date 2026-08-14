@@ -43,11 +43,14 @@ const children = new Map()
 // RENDERER=ffmpeg → the browserless renderer (render.mjs, no Chromium — light, runs anywhere ffmpeg
 // does). Anything else → the full browser streamer (stream.mjs, needs the Linux capture container).
 const SCRIPT = (env.RENDERER || '').toLowerCase() === 'ffmpeg' ? 'render.mjs' : 'stream.mjs'
-function startChild(slug) {
-  const key = keyFor(slug)
-  if (!key) { children.set(slug, { proc: null, startedAt: Date.now(), status: 'error', error: 'no stream key on this worker' }); log('no key for', slug); return }
+// Key comes from the control plane (station config) first, else a local KEYS/KEY_<SLUG> env fallback.
+function startChild(slug, keyFromControl, rtmpFromControl) {
+  const key = keyFromControl || keyFor(slug)
+  if (!key) { children.set(slug, { proc: null, startedAt: Date.now(), status: 'error', error: 'no stream key set (add it in the radio admin, or KEYS on this worker)' }); log('no key for', slug); return }
   log('starting', slug, `(${SCRIPT})`)
-  const proc = spawn('node', [SCRIPT], { stdio: ['ignore', 'inherit', 'inherit'], env: { ...env, STATION: slug, BROADCAST_ID: '', STREAM_KEY: key, BASE_URL } })
+  const childEnv = { ...env, STATION: slug, BROADCAST_ID: '', STREAM_KEY: key, BASE_URL }
+  if (rtmpFromControl) childEnv.RTMP_URL = rtmpFromControl
+  const proc = spawn('node', [SCRIPT], { stdio: ['ignore', 'inherit', 'inherit'], env: childEnv })
   const rec = { proc, startedAt: Date.now(), status: 'starting', error: null }
   proc.on('exit', code => { if (children.get(slug) === rec) { rec.status = 'error'; rec.error = `exited (${code})`; rec.proc = null } })
   children.set(slug, rec)
@@ -78,11 +81,13 @@ async function tick() {
     const d = await r.json(); assignments = Array.isArray(d.assignments) ? d.assignments : []
   } catch (e) { log('sync failed', String(e)); return }
 
-  const want = new Set(assignments)
+  // assignments are { slug, streamKey, rtmpUrl } (with a bare-string fallback for older control planes)
+  const norm = assignments.map(a => typeof a === 'string' ? { slug: a, streamKey: '', rtmpUrl: '' } : a)
+  const want = new Set(norm.map(a => a.slug))
   // start newly-assigned (that aren't already running healthily)
-  for (const slug of want) {
-    const rec = children.get(slug)
-    if (!rec || (rec.status === 'error' && Date.now() - rec.startedAt > 15000)) { if (rec) stopChild(slug); startChild(slug) }
+  for (const a of norm) {
+    const rec = children.get(a.slug)
+    if (!rec || (rec.status === 'error' && Date.now() - rec.startedAt > 15000)) { if (rec) stopChild(a.slug); startChild(a.slug, a.streamKey, a.rtmpUrl) }
   }
   // stop anything no longer assigned
   for (const slug of [...children.keys()]) if (!want.has(slug)) stopChild(slug)

@@ -15,6 +15,7 @@ import { sql } from '@/lib/db'
 
 export type StreamStatus = 'starting' | 'live' | 'error' | 'offline'
 export interface AgentReport { slug: string; status: StreamStatus; fps?: number; error?: string }
+export interface Assignment { slug: string; streamKey: string; rtmpUrl: string }
 export interface RuntimeRow {
   slug: string; title: string; channel: string | null; enabled: boolean; desiredLive: boolean
   status: StreamStatus; workerId: string | null; fps: number | null; error: string | null
@@ -57,7 +58,7 @@ export async function setDesiredLive(slug: string, live: boolean): Promise<void>
 /** A worker agent checks in: record its heartbeat + the status of what it's running, then return the
  *  set of slugs THIS worker should be running (sticky: keep what it already owns, take free ones up to
  *  capacity). This one call is the whole agent↔control-plane protocol. */
-export async function agentSync(workerId: string, capacity: number, reports: AgentReport[]): Promise<{ assignments: string[] }> {
+export async function agentSync(workerId: string, capacity: number, reports: AgentReport[]): Promise<{ assignments: Assignment[] }> {
   await ensure()
   await sql`
     INSERT INTO broadcast_agents (worker_id, capacity, last_seen) VALUES (${workerId}, ${capacity}, NOW())
@@ -80,7 +81,13 @@ export async function agentSync(workerId: string, capacity: number, reports: Age
   const keep = desired.filter(s => ownedByMe.has(s))
   const free = desired.filter(s => !ownedByMe.has(s) && !ownedByOther.has(s))
   const take = free.slice(0, Math.max(0, capacity - keep.length))
-  return { assignments: [...keep, ...take] }
+  const slugs = [...keep, ...take]
+  if (!slugs.length) return { assignments: [] }
+  // Hand the worker each channel's stream key + ingest URL so it needs no local key config. (This
+  // endpoint is token-gated; the key never leaves via a public route.)
+  const cfgs = await sql`SELECT slug, config->>'streamKey' AS key, config->>'rtmpUrl' AS rtmp FROM broadcast_stations WHERE slug = ANY(${slugs})`
+  const byId = new Map(cfgs.map(c => [String(c.slug), { key: c.key ? String(c.key) : '', rtmp: c.rtmp ? String(c.rtmp) : '' }]))
+  return { assignments: slugs.map(s => ({ slug: s, streamKey: byId.get(s)?.key || '', rtmpUrl: byId.get(s)?.rtmp || '' })) }
 }
 
 /** Dashboard: every broadcast with its desired + reported runtime state. */

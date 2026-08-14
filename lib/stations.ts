@@ -49,10 +49,13 @@ export interface Station {
   shuffle?: boolean
   showNowPlaying?: boolean
   /** Where this station pushes to. `rtmpUrl` = the ingest (default YouTube's live2; can be a Twitch
-   *  URL etc.); `channel` = a human label for which account/channel it belongs to (grouping only).
-   *  The secret stream KEY never lives here — it stays on the worker (STREAM_KEY / KEY_<SLUG>). */
+   *  URL etc.); `channel` = the account/channel it belongs to (used to FOLDER stations by account in
+   *  the admin). `streamKey` = the platform stream key. ⚠️ SENSITIVE: it's stored in the config so you
+   *  can paste it in the admin, but it's NEVER returned by any PUBLIC route (playlist/stations/live) —
+   *  only the Clerk-gated admin GET and the token-gated agent sync see it. */
   rtmpUrl?: string
   channel?: string
+  streamKey?: string
   /** Full Lightning Bug scene authored in the real UI (the "broadcast project"). A superset of
    *  `scene` — when present, the broadcast applies ALL of it (loadScene), so you're not limited to
    *  the admin panel's subset. Kept loose (it's the app's internal Scene shape) since it round-trips

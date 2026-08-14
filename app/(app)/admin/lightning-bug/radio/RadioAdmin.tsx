@@ -146,6 +146,12 @@ export default function RadioAdmin() {
     } catch { setIRes([]) } finally { setILoading(false) }
   }
   const openStation = useMemo(() => stations.find(s => s.slug === open), [stations, open])
+  // Group stations into folders by their account (channel label); "No account" sinks to the bottom.
+  const accountGroups = useMemo(() => {
+    const m = new Map<string, StationRow[]>()
+    for (const s of stations) { const a = (s.channel || '').trim() || 'No account'; const g = m.get(a) ?? []; g.push(s); m.set(a, g) }
+    return [...m.entries()].sort((a, b) => a[0] === 'No account' ? 1 : b[0] === 'No account' ? -1 : a[0].localeCompare(b[0]))
+  }, [stations])
 
   // ── small UI helpers ─────────────────────────────────────────────────────────
   const Select = ({ value, opts, onChange }: { value: string; opts: readonly string[]; onChange: (v: string) => void }) => {
@@ -165,20 +171,28 @@ export default function RadioAdmin() {
   )
   const btn = (bg: string, fg: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 9, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: bg === 'transparent' ? '1px solid var(--border)' : 'none', background: bg, color: fg })
 
-  // Two rows: title/meta + actions on top, then a FULL-WIDTH player so the scrubber is usable
-  // (drag to seek anywhere in the track). preload="metadata" loads the duration for the seek bar.
-  const trackRow = (title: string, sub: string, audio: string, right?: React.ReactNode) => (
-    <div style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>
+  // Collapsed by default (fast — no <audio> metadata fetches on render). Click the title to expand a
+  // row; only THEN does the player mount + load. Each row needs a stable key.
+  const [openRows, setOpenRows] = useState<Set<string>>(() => new Set())
+  const toggleRow = (k: string) => setOpenRows(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n })
+  const trackRow = (rowKey: string, title: string, sub: string, audio: string, right?: React.ReactNode) => {
+    const on = openRows.has(rowKey)
+    return (
+      <div style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button type="button" onClick={() => toggleRow(rowKey)} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ color: 'var(--text-muted)', fontSize: 11, transform: on ? 'rotate(90deg)' : 'none', transition: 'transform .12s', flexShrink: 0 }}>▶</span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</span>
+              <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</span>
+            </span>
+          </button>
+          {right}
         </div>
-        {right}
+        {on && <audio controls preload="metadata" autoPlay src={audio} style={{ height: 34, width: '100%', marginTop: 5 }} />}
       </div>
-      <audio controls preload="metadata" src={audio} style={{ height: 34, width: '100%', marginTop: 5 }} />
-    </div>
-  )
+    )
+  }
   const addBtn = (t: BroadcastTrack) => open ? <button type="button" onClick={() => addTrackToOpen(t)} title={`Add to ${openStation?.title}`} style={{ ...btn('var(--accent)', '#0e0d12'), padding: '6px 10px', flexShrink: 0 }}><Plus size={13} /> Add</button> : null
 
   return (
@@ -196,8 +210,16 @@ export default function RadioAdmin() {
       </div>
       {savedMsg && <p style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', margin: '0 0 10px' }}>{savedMsg}</p>}
 
-      <div style={{ display: 'grid', gap: 10, marginBottom: 34 }}>
-        {stations.map(s => {
+      <div style={{ display: 'grid', gap: 26, marginBottom: 34 }}>
+        {accountGroups.map(([account, list]) => (
+        <div key={account}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 8px' }}>
+            <ListMusic size={14} style={{ color: account === 'No account' ? 'var(--text-muted)' : 'var(--accent)' }} />
+            <span style={{ fontSize: 12.5, fontWeight: 800, letterSpacing: '0.02em', color: account === 'No account' ? 'var(--text-muted)' : 'var(--text-primary)' }}>{account}</span>
+            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>· {list.length} station{list.length === 1 ? '' : 's'}</span>
+          </div>
+          <div style={{ display: 'grid', gap: 10 }}>
+        {list.map(s => {
           const isOpen = open === s.slug
           const scene = s.scene || {}
           const p = pl[s.slug]
@@ -227,6 +249,7 @@ export default function RadioAdmin() {
                     <div><span style={lbl}>Slug {s.__new ? '' : '(fixed)'}</span><input value={s.slug} disabled={!s.__new} onChange={e => patch(s.slug, { slug: e.target.value })} placeholder="my-station" style={{ ...inp, width: '100%', opacity: s.__new ? 1 : 0.6 }} /></div>
                     <div><span style={lbl}>Channel (label)</span><input value={s.channel || ''} onChange={e => patch(s.slug, { channel: e.target.value })} placeholder="e.g. Main Radio · Channel A" style={{ ...inp, width: '100%' }} /></div>
                     <div><span style={lbl}>RTMP URL</span><input value={s.rtmpUrl || ''} onChange={e => patch(s.slug, { rtmpUrl: e.target.value })} placeholder="rtmp://a.rtmp.youtube.com/live2 (default)" style={{ ...inp, width: '100%' }} /></div>
+                    <div><span style={lbl}>Stream key <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 500, color: 'var(--text-muted)' }}>· secret</span></span><input type="password" value={s.streamKey || ''} onChange={e => patch(s.slug, { streamKey: e.target.value })} placeholder="paste this channel's key" autoComplete="off" style={{ ...inp, width: '100%' }} /></div>
                   </div>
 
                   {/* look */}
@@ -314,7 +337,7 @@ export default function RadioAdmin() {
                         </div>
                         {msg && <p style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--accent)', margin: '0 0 6px' }}>{msg}</p>}
                         {searched && !sLoading && (results.length
-                          ? <div style={{ maxHeight: 300, overflowY: 'auto', paddingRight: 4 }}>{results.map(t => trackRow(t.title, [t.artist, t.album, dur(t.duration), ccName(t.license)].filter(Boolean).join(' · '), t.audio, <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>{addBtn(jToTrack(t))}{t.shareurl && <a href={t.shareurl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)' }}><ExternalLink size={15} /></a>}</div>))}</div>
+                          ? <div style={{ maxHeight: 300, overflowY: 'auto', paddingRight: 4 }}>{results.map(t => trackRow(`s-${t.id}`, t.title, [t.artist, t.album, dur(t.duration), ccName(t.license)].filter(Boolean).join(' · '), t.audio, <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>{addBtn(jToTrack(t))}{t.shareurl && <a href={t.shareurl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)' }}><ExternalLink size={15} /></a>}</div>))}</div>
                           : <p style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>No results — try different words or “by tag”.</p>)}
                       </div>
 
@@ -327,6 +350,7 @@ export default function RadioAdmin() {
                             ? <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '2px 0 0' }}>Empty — add tracks below, set Jamendo tags, or drop files in public/broadcast/{s.slug}/.</p>
                             : <div style={{ maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>
                                 {p.tracks.map((t, i) => trackRow(
+                                  `p-${s.slug}-${i}`,
                                   `${i + 1}. ${t.title}`,
                                   [t.artist, t.genre, ccName(t.license)].filter(Boolean).join(' · '),
                                   t.url,
@@ -367,6 +391,9 @@ export default function RadioAdmin() {
             </div>
           )
         })}
+          </div>
+        </div>
+        ))}
       </div>
 
       {/* Discover by vibe (inspired-by). Per-song search + paste-link live inside each open station. */}
@@ -382,7 +409,7 @@ export default function RadioAdmin() {
       {iSearched && !iLoading && (
         <>
           {iMethod && <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 6px' }}>{iMethod === 'audio-embeddings' ? '🔊 matched by sound' : '🤖 AI-interpreted search'}{iNote ? ` · ${iNote}` : ''}</p>}
-          {iRes.length ? <div style={{ maxHeight: 460, overflowY: 'auto', paddingRight: 4, marginBottom: 24 }}>{iRes.map(t => trackRow(t.title, t.artist, t.audio, <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>{addBtn(jToTrack(t))}{t.shareurl && <a href={t.shareurl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)' }}><ExternalLink size={15} /></a>}</div>))}</div>
+          {iRes.length ? <div style={{ maxHeight: 460, overflowY: 'auto', paddingRight: 4, marginBottom: 24 }}>{iRes.map(t => trackRow(`i-${t.id}`, t.title, t.artist, t.audio, <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>{addBtn(jToTrack(t))}{t.shareurl && <a href={t.shareurl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)' }}><ExternalLink size={15} /></a>}</div>))}</div>
             : <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 24px' }}>Nothing came back — try describing the vibe differently.</p>}
         </>
       )}
