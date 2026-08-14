@@ -77,7 +77,7 @@ import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/ty
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType, TempoSeg } from '@/lib/editor-types'
 import { projectBeatLines, clipBeatLines, nearestSorted } from '@/lib/video-beats'
 import { autoEditTimeline, type AutoEditOptions } from '@/lib/video-auto-edit'
-import { VIDEO_EFFECTS, effectsByCategory, getEffect } from '@/lib/video-effects'
+import { VIDEO_EFFECTS, effectsByCategory, getEffect, activeEffectCss } from '@/lib/video-effects'
 import BeatMapEditor from './BeatMapEditor'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { MEDIA_ACCEPT, detectMediaKind, validateMediaFile } from '@/lib/media-import'
@@ -983,6 +983,7 @@ export default function VideoEditor({
       const hit = timelineItems.find(i =>
         i.trackId === track.id &&
         i.enabled !== false &&
+        i.contentType !== 'effect' &&   // effect items are frame filters, not visual layers
         currentTime >= i.startTime &&
         currentTime < i.startTime + (i.outPoint - i.inPoint)
       )
@@ -1357,6 +1358,8 @@ export default function VideoEditor({
         const ids = o.clipId ? [o.clipId] : timelineItemsRef.current.filter(i => i.contentType === 'video').map(i => i.id)
         return applyEffect(effectId, ids)
       },
+      // Add an effect ITEM (contentType 'effect') on a track — the third item type. Returns its id.
+      addEffectItem: (lookId?: string) => addEffectItem(lookId),
       openExport: () => setShowExport(true),
       // Direct headless render — same path the Export modal uses (exportTimelineFidelity), building the
       // input from live editor state. Returns the finished video as a base64 data URL so a driver can
@@ -1577,6 +1580,7 @@ export default function VideoEditor({
       const hit = timelineItems.find(i =>
         i.trackId === track.id &&
         i.enabled !== false &&
+        i.contentType !== 'effect' &&   // effect items are frame filters, not visual layers
         currentTime >= i.startTime &&
         currentTime < i.startTime + (i.outPoint - i.inPoint)
       )
@@ -3012,6 +3016,23 @@ export default function VideoEditor({
     return ids.length
   }, [setTimelineItems])
 
+  // Add an EFFECT ITEM — a timeline item (contentType 'effect') that grades the frame for its span. This
+  // is the third item type (with video + audio), and it lives on the same unified track as everything
+  // else. Restyle it by selecting it and picking a look in the Effects popover; drag/trim to place it.
+  const addEffectItem = useCallback((lookId?: string) => {
+    const trackId = (tracksRef.current.find(t => t.type === 'media' || t.type === 'video')?.id) ?? 'v1'
+    const look = lookId ?? VIDEO_EFFECTS[0].id
+    const newItem: TimelineItem = {
+      id: crypto.randomUUID(), label: getEffect(look)?.name ?? 'Effect',
+      startTime: currentTimeRef.current, inPoint: 0, outPoint: 3, captions: [],
+      color: '#a855f7', trackId, contentType: 'effect', look,
+    }
+    setTimelineItems(prev => [...prev, newItem])
+    setSelectedId(newItem.id)
+    setAutoEditNote(`Added “${getEffect(look)?.name}” effect item — drag to place; restyle in Effects.`)
+    return newItem.id
+  }, [setTimelineItems])
+
   // Temporarily unused: the Music-Visual toolbar button was removed pending a
   // re-wire into the new media-panel flow. Keep the function for that follow-up.
   function addMusicVizClip() {
@@ -3689,6 +3710,7 @@ export default function VideoEditor({
                   const activeLook = !fxScopeAll && selectedId ? timelineItems.find(i => i.id === selectedId)?.look : undefined
                   return (
                     <>
+                      <button onClick={() => { addEffectItem(activeLook || undefined); setFxOpen(false) }} style={{ width: '100%', textAlign: 'left', padding: '7px 9px', marginBottom: 7, borderRadius: 8, fontSize: 12, fontWeight: 750, cursor: 'pointer', border: '1px solid var(--accent)', background: 'color-mix(in srgb, var(--accent) 12%, transparent)', color: 'var(--accent)' }}>＋ Add as a timeline effect (spans the playhead)</button>
                       <button onClick={() => applyEffect(null, ids)} style={{ width: '100%', textAlign: 'left', padding: '6px 9px', marginBottom: 7, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: `1px solid ${!activeLook ? 'var(--accent)' : 'var(--border)'}`, background: 'transparent', color: 'var(--text-secondary)' }}>None (clear)</button>
                       {effectsByCategory().map(({ category, effects }) => (
                         <div key={category} style={{ marginBottom: 9 }}>
@@ -4211,7 +4233,7 @@ export default function VideoEditor({
                       underLayers={underLayers}
                       musicViz={activeMusicViz}
                       captionStyle={captionStyle}
-                      clipGradeFilter={viewerClip ? buildClipGradeFilter(viewerClip) : ''}
+                      clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
                       lutData={activeLut}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
@@ -4295,7 +4317,7 @@ export default function VideoEditor({
                       underLayers={underLayers}
                       musicViz={activeMusicViz}
                       captionStyle={captionStyle}
-                      clipGradeFilter={viewerClip ? buildClipGradeFilter(viewerClip) : ''}
+                      clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
                       lutData={activeLut}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}

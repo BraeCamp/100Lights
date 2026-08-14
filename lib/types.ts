@@ -1,4 +1,4 @@
-export type ContentType = 'video' | 'audio' | 'title' | 'lut' | 'musicviz'
+export type ContentType = 'video' | 'audio' | 'title' | 'lut' | 'musicviz' | 'effect'
 export type OutputType = 'article' | 'blog_post' | 'show_notes' | 'clips' | 'transcript' | 'summary' | 'youtube_desc' | 'social_caption' | 'email_newsletter' | 'key_quotes'
 
 export interface ChapterMarker {

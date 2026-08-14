@@ -20,7 +20,7 @@
  */
 
 import type { CaptionStyle, TimelineItem, Track, TransitionType, VideoAdjustments } from '@/lib/editor-types'
-import { effectCss } from '@/lib/video-effects'
+import { effectCss, activeEffectCss } from '@/lib/video-effects'
 import { DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
 import { captionWords } from '@/lib/captions'
@@ -75,6 +75,7 @@ export function pickViewerClip(items: TimelineItem[], tracks: Track[], t: number
     const hit = items.find(i =>
       i.trackId === track.id &&
       i.enabled !== false &&
+      i.contentType !== 'effect' &&   // effect items are frame filters, not visual layers
       t >= i.startTime &&
       i.startTime + (i.outPoint - i.inPoint) > t,
     )
@@ -98,6 +99,7 @@ export function pickVisibleClips(items: TimelineItem[], tracks: Track[], t: numb
     const hit = items.find(it =>
       it.trackId === track.id &&
       it.enabled !== false &&
+      it.contentType !== 'effect' &&   // effect items are frame filters, not visual layers
       t >= it.startTime &&
       it.startTime + (it.outPoint - it.inPoint) > t,
     )
@@ -349,6 +351,9 @@ function drawVideoClip(
   let filter = buildFilter(adjustments)
   const clipGrade = buildClipGradeFilter(clip)
   if (clipGrade) filter = filter === 'none' ? clipGrade : `${filter} ${clipGrade}`
+  // Timeline EFFECT items active at t grade the whole frame for their span.
+  const fxLook = activeEffectCss(state.items, t)
+  if (fxLook) filter = filter === 'none' ? fxLook : `${filter} ${fxLook}`
   if (clip.motionBlurEnabled) {
     const speed = clip.speed ?? 1
     const px = Math.min(6, Math.max(0, Math.abs(speed - 1) * 2.5))

@@ -61,6 +61,23 @@ export function effectCss(id?: string | null): string {
   return getEffect(id)?.css ?? ''
 }
 
+/** Combined CSS for every EFFECT ITEM (contentType 'effect') active at time t — a timeline effect that
+ *  grades the frame for its span. Structural param so this stays free of the editor types. */
+export function activeEffectCss(
+  items: ReadonlyArray<{ contentType?: string; startTime: number; inPoint: number; outPoint: number; look?: string }>,
+  t: number,
+): string {
+  let out = ''
+  for (const i of items) {
+    if (i.contentType !== 'effect' || !i.look) continue
+    if (t >= i.startTime && t < i.startTime + (i.outPoint - i.inPoint)) {
+      const c = effectCss(i.look)
+      if (c) out = out ? `${out} ${c}` : c
+    }
+  }
+  return out
+}
+
 /** Effects grouped by category, for a picker UI. */
 export function effectsByCategory(): { category: VideoEffect['category']; effects: VideoEffect[] }[] {
   const cats: VideoEffect['category'][] = ['Cinematic', 'Color', 'Mood', 'Stylize']
