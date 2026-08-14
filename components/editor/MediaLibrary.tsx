@@ -1,11 +1,23 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
-import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, AlertTriangle, Library, Music2, Link2, RotateCw, ArrowUpRight, ChevronDown } from 'lucide-react'
+import { Film, Mic, FolderOpen, Layers, CloudUpload, CheckCircle2, AlertCircle, AlertTriangle, Library, Music2, Link2, RotateCw, ArrowUpRight, ChevronDown, Search, Clapperboard, Loader2 } from 'lucide-react'
 import type { MediaItem } from '@/lib/editor-types'
 import { MEDIA_ACCEPT, validateMediaFile } from '@/lib/media-import'
 import type { ContextMenuItem } from './ContextMenu'
 import type { LibraryMediaItem } from '@/app/api/media/library/route'
+
+// A stock clip from the tagged Pexels catalog (/api/pexels-bg). Link-only: `mp4` is the Pexels CDN
+// URL — we never download or store it (same as Lightning Bug), so it costs no storage/bandwidth.
+export interface StockClip {
+  id: string
+  title: string
+  mp4: string
+  poster: string
+  category?: string
+  author?: string
+  tags?: string[]
+}
 
 interface Props {
   items: MediaItem[]
@@ -32,6 +44,8 @@ interface Props {
   linkedSources?: Array<{ id: string; name: string; syncing?: boolean }>
   onOpenSource?: (id: string) => void
   onResyncSource?: (id: string) => void
+  /** Add a Pexels stock clip (link-only) to the project + timeline. Enables the "Stock" tab. */
+  onAddStock?: (clip: StockClip) => void
 }
 
 function formatDur(s?: number) {
@@ -90,12 +104,17 @@ function MenuRow({ icon, label, sub, onClick }: { icon: React.ReactNode; label: 
 export default function MediaLibrary({
   items, selectedId, onSelect, onImport, onAddToTimeline, onRemove, onContextMenu, onAddFromLibrary,
   onBounceDawMix, onLinkProject, onSendProject, bounceStatus = 'idle',
-  linkedSources = [], onOpenSource, onResyncSource, onRetryUpload,
+  linkedSources = [], onOpenSource, onResyncSource, onRetryUpload, onAddStock,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [importError, setImportError] = useState('')
   const [dragOver, setDragOver] = useState(false)
-  const [tab, setTab] = useState<'local' | 'library'>('local')
+  const [tab, setTab] = useState<'local' | 'library' | 'stock'>('local')
+  // Stock (Pexels) browser state.
+  const [stockQ, setStockQ] = useState('')
+  const [stockResults, setStockResults] = useState<StockClip[]>([])
+  const [stockLoading, setStockLoading] = useState(false)
+  const [stockAdded, setStockAdded] = useState<Set<string>>(new Set())
   const [showAudioMenu, setShowAudioMenu] = useState(false)
   const [audioMenuPos, setAudioMenuPos] = useState<{ top: number; left: number } | null>(null)
   const audioBtnRef = useRef<HTMLButtonElement>(null)
@@ -160,6 +179,24 @@ export default function MediaLibrary({
       .then((data: LibraryMediaItem[]) => setLibraryItems(data))
       .catch(() => {})
   }, [items, tab])
+
+  // Stock (Pexels) search — debounced. Reuses the same catalog + API as Lightning Bug. An empty query
+  // returns a random batch so the tab is never blank.
+  useEffect(() => {
+    if (tab !== 'stock') return
+    let cancelled = false
+    setStockLoading(true)
+    const t = setTimeout(async () => {
+      try {
+        const q = stockQ.trim()
+        const r = await fetch(`/api/pexels-bg?order=random&limit=48${q ? `&q=${encodeURIComponent(q)}` : ''}`)
+        const d = r.ok ? await r.json() as { results?: StockClip[] } : { results: [] }
+        if (!cancelled) setStockResults(d.results ?? [])
+      } catch { if (!cancelled) setStockResults([]) }
+      finally { if (!cancelled) setStockLoading(false) }
+    }, stockQ ? 350 : 0)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [tab, stockQ])
 
   const localItemIds = new Set(items.map(m => m.id))
 
@@ -272,6 +309,15 @@ export default function MediaLibrary({
         >
           My Library
         </button>
+        {onAddStock && (
+          <button
+            className="flex-1 py-1.5 text-xs font-medium"
+            style={{ color: tab === 'stock' ? 'var(--text-primary)' : 'var(--text-muted)', borderBottom: `2px solid ${tab === 'stock' ? 'var(--accent)' : 'transparent'}` }}
+            onClick={() => setTab('stock')}
+          >
+            Stock
+          </button>
+        )}
       </div>
 
       {/* Linked projects — the audio projects synced in, so they're findable +
@@ -466,6 +512,61 @@ export default function MediaLibrary({
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Stock (Pexels) browser — search the tagged catalog, click to drop a link-only clip onto the
+          timeline. Same source as Lightning Bug; streams from Pexels' CDN, so it uses no storage. */}
+      {tab === 'stock' && (
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="p-1.5 shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+              <Search size={12} color="var(--text-muted)" />
+              <input
+                value={stockQ}
+                onChange={e => setStockQ(e.target.value)}
+                placeholder="Search stock video — nature, city, abstract…"
+                className="flex-1 bg-transparent text-xs outline-none"
+                style={{ color: 'var(--text-primary)' }}
+              />
+              {stockLoading && <Loader2 size={12} color="var(--text-muted)" className="animate-spin" />}
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-1.5">
+            {!stockLoading && stockResults.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-3 py-10 px-4 text-center">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'var(--border)' }}>
+                  <Clapperboard size={18} color="var(--text-muted)" />
+                </div>
+                <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>No clips found. Try another search.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-1.5">
+                {stockResults.map(clip => {
+                  const added = stockAdded.has(clip.id)
+                  return (
+                    <button
+                      key={clip.id}
+                      onClick={() => { onAddStock?.(clip); setStockAdded(prev => new Set(prev).add(clip.id)) }}
+                      className="text-left rounded overflow-hidden group relative"
+                      style={{ border: `1px solid ${added ? 'var(--accent)' : 'var(--border)'}`, background: 'var(--bg-surface)' }}
+                      title={`${clip.title}${clip.author ? ` · ${clip.author}` : ''} — click to add to timeline`}
+                    >
+                      <div className="relative w-full" style={{ aspectRatio: '16 / 9', background: 'var(--border)' }}>
+                        {clip.poster && <img src={clip.poster} alt="" className="w-full h-full object-cover" loading="lazy" />}
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'rgba(0,0,0,0.35)' }}>
+                          <span className="text-xs px-2 py-1 rounded" style={{ background: 'var(--accent)', color: '#0e0d12', fontWeight: 700 }}>{added ? 'Added ✓' : '+ Add'}</span>
+                        </div>
+                        {added && <span className="absolute top-1 right-1"><CheckCircle2 size={14} color="var(--accent)" /></span>}
+                      </div>
+                      <div className="px-1.5 py-1 truncate text-xs" style={{ color: 'var(--text-secondary)' }}>{clip.title}</div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            <p className="text-center mt-3 mb-1 text-xs" style={{ color: 'var(--text-muted)' }}>Video via Pexels — free to use. Streams from Pexels' CDN.</p>
+          </div>
         </div>
       )}
 

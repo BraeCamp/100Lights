@@ -9,7 +9,7 @@ import { useUser } from '@clerk/nextjs'
 import VideoPlayer from '@/components/editor/VideoPlayer'
 import AudioWaveform from '@/components/editor/AudioWaveform'
 import Timeline from '@/components/editor/Timeline'
-import MediaLibrary from '@/components/editor/MediaLibrary'
+import MediaLibrary, { type StockClip } from '@/components/editor/MediaLibrary'
 import ContextMenu from '@/components/editor/ContextMenu'
 import { LogoMark } from '@/components/Logo'
 import { useResizable, ResizeHandle } from '@/components/editor/daw/useResizable'
@@ -2926,6 +2926,16 @@ export default function VideoEditor({
     handleSeek(newItem.startTime)
   }
 
+  // Add a Pexels stock clip (link-only): the clip's `url` is the Pexels CDN URL — no download, no
+  // upload, no storage (mirrors Lightning Bug). Duration is probed from the URL by addMediaToTimeline.
+  function handleAddStock(clip: StockClip) {
+    const id = 'pexels-' + clip.id
+    const media: MediaItem = { id, name: clip.title || 'Stock clip', contentType: 'video', url: clip.mp4, thumbnail: clip.poster || undefined }
+    if (!mediaItems.some(m => m.id === id)) setMediaItems(prev => [...prev, media])
+    setSelectedMediaId(id)
+    void addMediaToTimeline(media)
+  }
+
   // Insert a text/title clip at the playhead (the title system was fully built —
   // model, Inspector editor, renderer — but had no way to create one).
   function addTitleClip() {
@@ -3915,6 +3925,7 @@ export default function VideoEditor({
                   onContextMenu={openCtx}
                   onAddFromLibrary={handleAddFromLibrary}
                   onRetryUpload={handleRetryUpload}
+                  onAddStock={handleAddStock}
                 />
               </div>
             </div>
