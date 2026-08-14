@@ -30,6 +30,7 @@ export default function RadioAdmin() {
   const [saving, setSaving] = useState<string | null>(null)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  const [credCopied, setCredCopied] = useState<string | null>(null)
   const load = () => fetch('/api/admin/broadcast/stations').then(r => r.json()).then(d => { if (Array.isArray(d.stations)) setStations(d.stations) }).catch(() => {})
   useEffect(() => { load() }, [])
 
@@ -44,7 +45,7 @@ export default function RadioAdmin() {
     try {
       const r = await fetch('/api/admin/broadcast/stations', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ station: { ...s, slug, __new: undefined } }) })
       const d = await r.json()
-      if (d.error) { setSavedMsg(d.error) } else { setSavedMsg(`Saved “${s.title}” — live now.`); if (Array.isArray(d.stations)) setStations(d.stations); setOpen(slug) }
+      if (d.error) { setSavedMsg(d.error) } else { setSavedMsg(`Saved “${s.title}” — live now.`); if (Array.isArray(d.stations)) setStations(d.stations); setOpen(slug); preview(slug) }   // re-resolve so the playlist + credits reflect the save
     } catch (e) { setSavedMsg(String(e)) } finally { setSaving(null) }
   }
   const remove = async (s: StationRow) => {
@@ -66,7 +67,18 @@ export default function RadioAdmin() {
     patchTracks(open, [...(s.tracks || []), t])
     setSavedMsg(`Added “${t.title}” to ${s.title} — press Save to publish.`)
   }
-  const jToTrack = (t: JTrack): BroadcastTrack => ({ title: t.title, artist: t.artist, url: t.audio, license: t.license, attribution: `${t.title} — ${t.artist} · Jamendo` })
+  // Build a stored track from a Jamendo search hit, carrying a READABLE license + full attribution +
+  // its Jamendo page — so the auto-generated credits (which read each track's `attribution`) stay
+  // correct when you add/replace tracks. `license` is normalized to e.g. "CC BY-NC-SA 3.0" so the CC
+  // detection in the credits block works (a raw CC url has no "CC" in it).
+  const jToTrack = (t: JTrack): BroadcastTrack => {
+    const lic = ccName(t.license)
+    const cc = lic.startsWith('CC ')
+    const attribution = cc
+      ? `“${t.title}” by ${t.artist} (${lic}) — via Jamendo${t.shareurl ? ` · ${t.shareurl}` : ''}`
+      : `“${t.title}” — ${t.artist} · Jamendo`
+    return { title: t.title, artist: t.artist, url: t.audio, license: lic, attribution }
+  }
 
   const url = (slug: string) => `${origin}/apps/lightningbug?station=${slug}&broadcast=1`
   const copyUrl = async (slug: string) => { try { await navigator.clipboard.writeText(url(slug)); setCopied(slug); setTimeout(() => setCopied(c => c === slug ? null : c), 1500) } catch {} }
@@ -81,16 +93,19 @@ export default function RadioAdmin() {
 
   // ── Jamendo search + inspired-by (find tracks to add) ────────────────────────
   const [q, setQ] = useState(''); const [tagMode, setTagMode] = useState(false)
+  const [order, setOrder] = useState('popularity_total'); const [commercialOnly, setCommercialOnly] = useState(false)
   const [results, setResults] = useState<JTrack[]>([]); const [sLoading, setSLoading] = useState(false); const [searched, setSearched] = useState(false); const [msg, setMsg] = useState<string | null>(null)
   const search = async () => {
     if (!q.trim()) return
     setSLoading(true); setSearched(true); setMsg(null)
     try {
-      const param = tagMode ? `tags=${encodeURIComponent(q.trim().replace(/\s+/g, '+'))}` : `q=${encodeURIComponent(q.trim())}`
-      const r = await fetch(`/api/admin/jamendo?${param}`); const d = await r.json()
+      const parts = [tagMode ? `tags=${encodeURIComponent(q.trim().replace(/\s+/g, '+'))}` : `q=${encodeURIComponent(q.trim())}`, `order=${order}`]
+      if (commercialOnly) parts.push('commercialOnly=1')
+      const r = await fetch(`/api/admin/jamendo?${parts.join('&')}`); const d = await r.json()
       if (d.error) { setMsg(d.message || d.error); setResults([]) } else setResults(d.tracks || [])
     } catch { setResults([]) } finally { setSLoading(false) }
   }
+  const ORDERS: [string, string][] = [['popularity_total', 'Popular (all-time)'], ['popularity_month', 'Popular (month)'], ['relevance', 'Relevance'], ['downloads_total', 'Most downloaded'], ['listens_total', 'Most listened'], ['releasedate_desc', 'Newest']]
   const [prompt, setPrompt] = useState(''); const [iRes, setIRes] = useState<JTrack[]>([]); const [iLoading, setILoading] = useState(false); const [iMethod, setIMethod] = useState<string | null>(null); const [iNote, setINote] = useState<string | null>(null); const [iSearched, setISearched] = useState(false)
   const findInspired = async () => {
     if (!prompt.trim()) return
@@ -120,14 +135,18 @@ export default function RadioAdmin() {
   )
   const btn = (bg: string, fg: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 9, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: bg === 'transparent' ? '1px solid var(--border)' : 'none', background: bg, color: fg })
 
+  // Two rows: title/meta + actions on top, then a FULL-WIDTH player so the scrubber is usable
+  // (drag to seek anywhere in the track). preload="metadata" loads the duration for the seek bar.
   const trackRow = (title: string, sub: string, audio: string, right?: React.ReactNode) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: '1px solid var(--border)' }}>
-      <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>
+    <div style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>
+        </div>
+        {right}
       </div>
-      <audio controls preload="none" src={audio} style={{ height: 30, flex: '1 1 200px', maxWidth: 300 }} />
-      {right}
+      <audio controls preload="metadata" src={audio} style={{ height: 34, width: '100%', marginTop: 5 }} />
     </div>
   )
   const addBtn = (t: BroadcastTrack) => open ? <button type="button" onClick={() => addTrackToOpen(t)} title={`Add to ${openStation?.title}`} style={{ ...btn('var(--accent)', '#0e0d12'), padding: '6px 10px', flexShrink: 0 }}><Plus size={13} /> Add</button> : null
@@ -230,10 +249,22 @@ export default function RadioAdmin() {
                             : <div style={{ maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>
                                 {p.tracks.map((t, i) => trackRow(
                                   `${i + 1}. ${t.title}`,
-                                  [t.artist, t.genre, t.license?.replace('http://creativecommons.org/licenses/', 'CC ').replace(/\/$/, '')].filter(Boolean).join(' · '),
+                                  [t.artist, t.genre, ccName(t.license)].filter(Boolean).join(' · '),
                                   t.url,
                                 ))}
                               </div>}
+                          {/* Credits — generated LIVE from this playlist, so add/remove/replace here updates them too. */}
+                          {p.tracks.length > 0 && (
+                            <div style={{ marginTop: 10, borderTop: '1px dashed var(--border)', paddingTop: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Credits (auto from this playlist)</span>
+                                <button type="button" onClick={() => { navigator.clipboard.writeText(creditBlock(s.title, p.tracks)).then(() => { setCredCopied(s.slug); setTimeout(() => setCredCopied(c => c === s.slug ? null : c), 1500) }).catch(() => {}) }} style={{ ...btn('transparent', 'var(--text-secondary)'), padding: '4px 10px' }}>{credCopied === s.slug ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy for description</>}</button>
+                              </div>
+                              <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, maxHeight: 140, overflowY: 'auto', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px' }}>
+                                {creditLines(p.tracks).map((l, i) => <div key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>• {l}</div>)}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -277,14 +308,16 @@ export default function RadioAdmin() {
       {/* Jamendo search */}
       <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 6px', fontWeight: 700 }}>Search Jamendo</p>
       <form onSubmit={e => { e.preventDefault(); search() }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder={tagMode ? 'tags (e.g. ambient cinematic drone)' : 'song or artist name'} style={{ ...inp, flex: '1 1 260px', minWidth: 200 }} />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder={tagMode ? 'tags (e.g. ambient cinematic drone)' : 'song or artist name'} style={{ ...inp, flex: '1 1 240px', minWidth: 180 }} />
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, color: 'var(--text-secondary)' }}><input type="checkbox" checked={tagMode} onChange={e => setTagMode(e.target.checked)} /> by tag</label>
+        <label style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>sort <select value={order} onChange={e => setOrder(e.target.value)} style={{ ...inp, padding: '7px 8px' }}>{ORDERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, color: 'var(--text-secondary)' }} title="Exclude NonCommercial (CC BY-NC*) — safest for a monetized 24/7 stream"><input type="checkbox" checked={commercialOnly} onChange={e => setCommercialOnly(e.target.checked)} /> commercial-safe</label>
         <button type="submit" disabled={sLoading || !q.trim()} style={{ ...btn('var(--accent)', '#0e0d12'), opacity: sLoading || !q.trim() ? 0.5 : 1 }}><Search size={14} /> {sLoading ? 'Searching…' : 'Search'}</button>
         {msg && <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent)' }}>{msg}</span>}
       </form>
       {searched && !sLoading && (
-        results.length ? <div style={{ maxHeight: 520, overflowY: 'auto', paddingRight: 4 }}>{results.map(t => trackRow(t.title, `${t.artist}${t.album ? ` · ${t.album}` : ''}${t.duration ? ` · ${dur(t.duration)}` : ''}`, t.audio, <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>{addBtn(jToTrack(t))}{t.shareurl && <a href={t.shareurl} target="_blank" rel="noreferrer" title="Open on Jamendo" style={{ color: 'var(--text-muted)' }}><ExternalLink size={15} /></a>}</div>))}</div>
-          : <p style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No results — try different words, or toggle “by tag”.</p>
+        results.length ? <div style={{ maxHeight: 620, overflowY: 'auto', paddingRight: 4 }}>{results.map(t => trackRow(t.title, [t.artist, t.album, dur(t.duration), ccName(t.license)].filter(Boolean).join(' · '), t.audio, <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>{addBtn(jToTrack(t))}{t.shareurl && <a href={t.shareurl} target="_blank" rel="noreferrer" title="Open on Jamendo" style={{ color: 'var(--text-muted)' }}><ExternalLink size={15} /></a>}</div>))}</div>
+          : <p style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No results — try different words, adjust the sort, or toggle “by tag”.</p>
       )}
     </main>
   )
@@ -294,4 +327,29 @@ const iconBtn: React.CSSProperties = { display: 'grid', placeItems: 'center', wi
 function move<T>(arr: T[], i: number, dir: number): T[] {
   const j = i + dir; if (j < 0 || j >= arr.length) return arr
   const next = [...arr];[next[i], next[j]] = [next[j], next[i]]; return next
+}
+
+// Normalize a Jamendo/CC license (a raw creativecommons URL, or already-readable text) to a short
+// human label like "CC BY-NC-SA 3.0" — used in the track sub-line AND stored so credits read right.
+function ccName(license: string | undefined): string {
+  const s = license || ''
+  const m = s.match(/creativecommons\.org\/licenses\/([a-z-]+)\/([0-9.]+)/i)
+  if (m) return `CC ${m[1].toUpperCase()} ${m[2]}`
+  if (/^cc\b/i.test(s)) return s
+  return s || 'Jamendo'
+}
+
+// The deduped credit lines for a set of tracks (same rule the broadcast launcher's "Copy credits" uses).
+function creditLines(tracks: { title: string; artist?: string; attribution?: string }[]): string[] {
+  return [...new Set(tracks.map(t => t.attribution || `${t.title}${t.artist ? ` — ${t.artist}` : ''}`))]
+}
+function creditBlock(title: string, tracks: { title: string; artist?: string; attribution?: string; license?: string }[]): string {
+  const anyCC = tracks.some(t => (t.license || '').toUpperCase().includes('CC'))
+  return [
+    `♪ Music in this stream — ${title}:`,
+    ...creditLines(tracks).map(l => `• ${l}`),
+    '',
+    anyCC ? 'Some tracks under Creative Commons — see each line for the specific licence: https://creativecommons.org/licenses/' : '',
+    'Visuals: Lightning Bug (100lights.com).',
+  ].filter(Boolean).join('\n')
 }

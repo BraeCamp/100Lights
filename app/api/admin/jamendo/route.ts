@@ -15,6 +15,7 @@ export async function GET(req: Request) {
     tags: p.get('tags') || undefined,
     order: p.get('order') || undefined,
     limit: p.get('limit') ? Number(p.get('limit')) : 60,
+    commercialOnly: p.get('commercialOnly') === '1',   // exclude NonCommercial (CC BY-NC*) for monetized broadcast
   })
   return Response.json({ licensed: jamendoLicensed(), tracks })
 }
