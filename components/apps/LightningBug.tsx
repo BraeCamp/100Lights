@@ -377,6 +377,7 @@ const EDIT_CMDS: Record<string, string> = {
   mirror: 'Flip horizontally for a beat',
   invert: 'Colour invert flash',
   blink: 'Black-frame blink (cut to black on the hit)',
+  speed: 'Ramp the clip speed to match the music (fast/slow-mo)',
 }
 // Which band's spike fires which command. Repeat an id to weight it. bass = weighty/structural,
 // mid = punchy accents, high = fast/glitchy shine.
@@ -386,8 +387,8 @@ const BAND_EDITS: Record<'bass' | 'mid' | 'high', string[]> = {
   // flash/freeze) don't disturb the footage and fire freely.
   // No 'cut' here — the bar clock owns cutting (on downbeats); the auto-editor only adds effects, so cuts
   // stay bar-synced instead of getting extra off-beat ones.
-  bass: ['zoom', 'shake', 'blink', 'zoom', 'crop'],
-  mid: ['flash', 'freeze', 'mirror', 'skip', 'crop', 'spin'],
+  bass: ['zoom', 'shake', 'blink', 'speed', 'crop'],
+  mid: ['flash', 'freeze', 'mirror', 'skip', 'crop', 'speed'],
   high: ['rgb', 'strobe', 'huespin', 'invert', 'spin'],
 }
 // On PEOPLE-oriented clips (Portrait / models / dancers), favor flattering, motion-following moves —
@@ -1090,7 +1091,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const cutEveryRef = useRef(8); cutEveryRef.current = cutEvery
   const beatCutCountRef = useRef(0)
   // Auto-editor — spike-triggered edits per EQ band (see EDIT_CMDS / BAND_EDITS).
-  const [autoEdit, setAutoEdit] = useState(false)
+  const [autoEdit, setAutoEdit] = useState(true)   // default ON (Auto is default)
   const autoEditRef = useRef(false); autoEditRef.current = autoEdit
   const bandFastRef = useRef({ bass: 0, mid: 0, high: 0 })
   const bandSlowRef = useRef({ bass: 0, mid: 0, high: 0 })
@@ -1124,6 +1125,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const mirrorUntilRef = useRef(0); const mirrorSignRef = useRef(1)   // brief horizontal flip
   const invertUntilRef = useRef(0)             // brief colour invert
   const blackUntilRef = useRef(0)              // brief black-frame blink
+  const speedUntilRef = useRef(0)              // 'speed' edit: ramp the video's playback speed to match the music, until this time
+  const speedRateRef = useRef(1)               // target playback rate while a speed edit is active
   // Key/scale detection — chroma profile → Krumhansl key + major/minor.
   const chromaRef = useRef(new Float32Array(12))
   const frameChromaRef = useRef(new Float32Array(12))
@@ -1249,7 +1252,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [videoMode, setVideoMode] = useState('none')       // dramatic full-frame transform (anime, ink, glitch…)
   const [videoLook, setVideoLook] = useState('none')       // subtle grade layered under the mode
   const lookFilterRef = useRef('')                          // mode+look svg/css prefix, kept for the per-frame EQ update
-  const [autoShuffle, setAutoShuffle] = useState(false)     // play a clip, then move to the next one
+  const [autoShuffle, setAutoShuffle] = useState(true)     // play a clip, then move to the next one
   const [videoSet, setVideoSet] = useState<BgCategory[]>([])   // categories the shuffle draws from ([] = all)
   const videoSetRef = useRef<BgCategory[]>([]); videoSetRef.current = videoSet
   const [brightnessSet, setBrightnessSet] = useState<Brightness[]>([])   // brightness filter ([] = all); e.g. ['dark'] for a dark room
@@ -1343,7 +1346,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const bgVideoRef = useRef<HTMLVideoElement | null>(null)  // the visible bg video (to replay while we wait)
   const [preloadSrcs, setPreloadSrcs] = useState<string[]>([])
   // Energy-reactive selection: read the song's energy off the analyser and match backgrounds.
-  const [matchEnergy, setMatchEnergy] = useState(false)
+  const [matchEnergy, setMatchEnergy] = useState(true)
   const [energyBand, setEnergyBand] = useState<Energy>('mid')   // for the UI readout
   const matchEnergyRef = useRef(false); matchEnergyRef.current = matchEnergy
   const energyEmaRef = useRef(0)                             // smoothed loudness
@@ -1380,8 +1383,13 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const onsetEmaRef = useRef(0.3)                          // typical kick strength → auto-gains the drum punch
   // AUTO mode: one tap → fully automatic. Enables the whole reactive stack and adapts the
   // style/mode/backgrounds to the detected energy. Casual users just play music.
-  const [auto, setAuto] = useState(false)
+  const [auto, setAuto] = useState(true)   // Auto is the DEFAULT mode (Brae); Manual shows the full controls
   const autoRef = useRef(false); autoRef.current = auto
+  const [editRate, setEditRate] = useState(1)   // user's edit/cut RATE multiplier (0.5 slow … 2 fast)
+  const editRateRef = useRef(1); editRateRef.current = editRate
+  const [autoSpeed, setAutoSpeed] = useState(true)   // let Auto ramp clip playback speed to the music
+  const autoSpeedRef = useRef(true); autoSpeedRef.current = autoSpeed
+  const [manualOpen, setManualOpen] = useState(false)   // in Auto: the full manual controls live in a collapsible that starts collapsed
   // Auto rides the pro-sync engine too (bar-aligned cuts, section-aware switching, motion→beat). Proven
   // in the Beat-sync test toggle first; enabling it here makes Auto build videos like a real editor.
   barSyncRef.current = barSync || auto
@@ -1647,6 +1655,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       case 'mirror': mirrorUntilRef.current = now + 200; mirrorSignRef.current = -1; break
       case 'invert': invertUntilRef.current = now + 130; break
       case 'blink': blackUntilRef.current = now + 90; break
+      // Speed edit: ramp the clip's playback speed to MATCH the music — fast on hot sections, slow-mo on
+      // calm ones — held ~1.4s then eased back. (Applied/eased in the audio loop so it works in plain Auto.)
+      case 'speed': if (autoSpeedRef.current) { speedUntilRef.current = now + 1400; speedRateRef.current = energyBandRef.current === 'hot' ? 1.5 + Math.random() * 0.4 : energyBandRef.current === 'calm' ? 0.45 + Math.random() * 0.2 : 1.15 + Math.random() * 0.25 } break
     }
     lastEditRef.current = now
   }, [requestSwitch])
@@ -2056,6 +2067,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       return !a
     })
   }, [applyAuto])
+  // Auto is the DEFAULT mode → wire its background pipeline once on mount so it works out of the box.
+  useEffect(() => {
+    if (autoRef.current) { setBgKind('library'); autoApplyRef.current?.(); nextClipRef.current?.() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Colour presets — new key 'lightningbug-colorpresets'; one-time fall back to the old
   // 'musicvideo-colorpresets' so nothing saved before the rename is lost.
@@ -2379,7 +2395,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               // ADAPTS to how busy/fast the song is: a busy, intense track earns more frequent accents, a
               // calm one stays sparse. busy 0..1 shrinks the global + per-band cooldowns.
               const busy = Math.min(1, songIntensityRef.current * 0.6 + densityEmaRef.current * 0.5)
-              const globalCd = 3600 - busy * 1500          // ~3.6s calm … ~2.1s busy (effects stay an accent, not busy)
+              const globalCd = (3600 - busy * 1500) / editRateRef.current   // busyness + the user's edit-rate set the accent cadence
               const cdMul = 1.5 - busy * 0.7               // per-band cooldown scale (1.5 calm … 0.8 busy)
               const editMap = curClipPeopleRef.current ? PEOPLE_BAND_EDITS : BAND_EDITS   // focus flattering moves on people clips
               const spike = (b: 'bass' | 'mid' | 'high', val: number, k: number, cd: number) => {
@@ -2605,8 +2621,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                 const ge = genreEditFor(votedFamilyRef.current?.family)
                 const e = sig[0]
                 // Shot length by section, per the research (~3.5s chorus, ~5-6s verse): chorus/drop 2 bars,
-                // verse 3, intro/breakdown 6 — then the genre's holdMul stretches/tightens it.
-                const paceBars = Math.max(1, Math.round((e > 0.55 ? 2 : e > 0.32 ? 3 : 6) * ge.holdMul))
+                // verse 3, intro/breakdown 6 — then the genre's holdMul and the user's edit-RATE adjust it
+                // (higher rate → fewer bars per cut → faster cutting).
+                const paceBars = Math.max(1, Math.round((e > 0.55 ? 2 : e > 0.32 ? 3 : 6) * ge.holdMul / editRateRef.current))
                 if (bigUp && ge.montage) { montageBeatsRef.current = bpb + 2; lastMontageBeatRef.current = idxNow }   // drop montage only for genres that suit it
                 if (boundary || pendingBarSwitchRef.current || barsSinceCutRef.current >= paceBars) {
                   pendingBarSwitchRef.current = false; sectionCutRef.current = boundary; barsSinceCutRef.current = 0; requestSwitch()
@@ -2741,6 +2758,14 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const tiltZoom = spinEnvRef.current > 0.01 ? Math.cos(tiltRad) + Math.sin(Math.abs(tiltRad)) * 1.8 : 1
             const baseS = (1 + Math.min(1, p) * 0.035 + zoomAdd) * cS * tiltZoom
             bgFilterRef.current.style.transform = `scale(${(baseS * mir).toFixed(3)}, ${baseS.toFixed(3)}) rotate(${rot.toFixed(1)}deg) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(${cX.toFixed(1)}%, ${cY.toFixed(1)}%)`
+          }
+          // SPEED edit: ease the bg video's playback rate toward the music-matched target, then back to 1×.
+          // (Skips paused videos so it doesn't fight the freeze edit.)
+          const spVid = bgFilterRef.current?.querySelector('video') as HTMLVideoElement | null
+          if (spVid && !spVid.paused) {
+            const target = now < speedUntilRef.current ? speedRateRef.current : 1
+            const nr = spVid.playbackRate + (target - spVid.playbackRate) * 0.12
+            if (Math.abs(nr - spVid.playbackRate) > 0.004) { try { spVid.playbackRate = Math.max(0.25, Math.min(3, nr)) } catch { /* not settable */ } }
           }
         }
         rafRef.current = requestAnimationFrame(draw)
@@ -3104,6 +3129,41 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         </span>
       </button>
 
+      {/* AUTO view — the edit-rate, a toggle per automated thing (turn any off and use the manual controls
+          below), the filters to pick from, and the full manual controls tucked into a collapsible. */}
+      {auto && (
+        <div style={{ margin: '0 0 14px', display: 'grid', gap: 13 }}>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 5 }}>
+              <span>Edit / cut rate</span><span style={{ color: 'var(--text-muted)' }}>{editRate < 0.8 ? 'relaxed' : editRate > 1.4 ? 'fast' : 'normal'}</span>
+            </div>
+            <input type="range" min={0.5} max={2} step={0.1} value={editRate} onChange={e => setEditRate(+e.target.value)} style={{ width: '100%' }} />
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {([['Backgrounds', autoShuffle, setAutoShuffle], ['Effects', autoEdit, setAutoEdit], ['Speed', autoSpeed, setAutoSpeed], ['Match energy', matchEnergy, setMatchEnergy], ['Colour on beat', beatColor, setBeatColor]] as [string, boolean, (v: (b: boolean) => boolean) => void][]).map(([label, on, set]) => (
+              <button key={label} type="button" onClick={() => set(v => !v)} title={on ? `Auto is handling ${label.toLowerCase()} — click to turn off and set it yourself below` : `Manual — set ${label.toLowerCase()} in the controls below`}
+                style={{ padding: '5px 11px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: on ? 'rgba(52,211,153,0.16)' : 'transparent', color: on ? '#34d399' : 'var(--text-muted)' }}>
+                {on ? '● ' : '○ '}{label}
+              </button>
+            ))}
+          </div>
+          <div>
+            <div style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', marginBottom: 6 }}>Filter</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {GENRE_LOOKS.map(l => (
+                <button key={l.id} type="button" onClick={() => applyLook(l)} title={l.desc}
+                  style={{ padding: '6px 11px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: activeLook?.id === l.id ? 'var(--accent)' : 'var(--bg-card)', color: activeLook?.id === l.id ? '#0e0d12' : 'var(--text-secondary)' }}>{l.name}</button>
+              ))}
+            </div>
+          </div>
+          <button type="button" onClick={() => setManualOpen(o => !o)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start', padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>
+            <SlidersHorizontal size={13} /> Manual controls {manualOpen ? '▾' : '▸'}
+          </button>
+        </div>
+      )}
+
+      {(!auto || manualOpen) && (<>
       {/* Scenes — save your whole setup (look + filters + reactivity + video set), reload, set a
           default that opens with the app, rename, and share via a link. */}
       <div style={{ margin: '0 0 12px' }}>
@@ -3538,6 +3598,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
         <input type="range" min={0} max={600} step={10} value={delayMs} onChange={e => setDelayMs(parseInt(e.target.value, 10))} style={{ width: '100%', maxWidth: 320 }} />
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '8px 0 0' }}>Nudge the visuals later to match sound that reaches the room a beat behind — e.g. streaming to a TV or Bluetooth speaker.</p>
       </TabSection>)}
+      </>)}
       {err && <p style={{ color: '#f87171', fontSize: 13.5, marginTop: 8 }}>{err}</p>}
       <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.55 }}>
         <strong style={{ color: 'var(--text-secondary)' }}>Party setup:</strong> tap fullscreen and drag this window onto your TV or projector — it keeps running while its window stays visible, so you can use other apps beside it. The mic is the reliable way to visualize the room: point your device at the speaker. Grabbing another app’s audio directly (Spotify, Apple Music) isn’t possible on iPhone and is limited on Android — a phone can’t silently tap another app’s sound — so the mic stays the go-to; on a computer you can also capture a browser tab’s sound.
