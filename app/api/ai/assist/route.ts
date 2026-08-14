@@ -11,7 +11,10 @@ export const maxDuration = 90
 // until CREDITS_ENABLED). Returns the assistant's reply + the actions for the client to run against the
 // module (window.__video / __daw …). Needs ANTHROPIC_API_KEY. See lib/ai-assist.
 export async function POST(req: Request) {
-  const { userId } = await auth()
+  const { userId: clerkId } = await auth()
+  // DEV_OPEN test user (dev builds only) — lets headless tools exercise the assistant. Inert in prod.
+  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production' ? req.headers.get('x-test-user') : null
+  const userId = clerkId ?? (testUser ? `test-${testUser}` : null)
   if (!userId) return Response.json({ error: 'Sign in to use the AI assistant.' }, { status: 401 })
   if (!process.env.ANTHROPIC_API_KEY) return Response.json({ error: 'The AI assistant is not configured (ANTHROPIC_API_KEY).' }, { status: 501 })
 

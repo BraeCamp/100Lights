@@ -53,6 +53,23 @@ const TOOLS = [
     },
   },
   {
+    name: 'apply_effect',
+    description: "Grade the video clips with a named look/effect. Ids include: film, noir, warm, cool, blockbuster, neon-noir(neonnoir), bleach, giallo, lean, spotlight, dream, vibrant, punch, muted, golden(golden), icy, dusk, crimson, moody, faded, washed, vintage, bright, mono(B&W), sepia, infrared, negative, thermal, grain, vignette, scanlines, glitch, vhs. Use 'none' to clear.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        effect: { type: 'string', description: 'effect id, or "none" to clear' },
+        scope: { type: 'string', enum: ['all', 'selected'], description: 'all clips (default) or just the selected one' },
+      },
+      required: ['effect'],
+    },
+  },
+  {
+    name: 'multicam',
+    description: 'Auto-switch the spotlight between camera tracks (needs video on 2+ tracks). mode: "speaker" cuts to whoever is talking (analyzes mouth movement + audio), "loudest" to the loudest track, "roundrobin" rotates evenly.',
+    input_schema: { type: 'object', properties: { mode: { type: 'string', enum: ['speaker', 'loudest', 'roundrobin'] } } },
+  },
+  {
     name: 'rename_project',
     description: 'Rename the current project.',
     input_schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
