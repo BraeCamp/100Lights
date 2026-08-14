@@ -87,6 +87,22 @@ export const STATIONS: Station[] = [
     showNowPlaying: true,
   },
   {
+    slug: 'calm-orchestral',
+    title: 'Calm Orchestral — Peaceful Classical Radio',
+    tagline: 'Gentle strings and piano — soft, slow, royalty-free.',
+    // The calm counterpart to `cinematic`: soft aurora palette, a slow painterly "living" drift with a
+    // dreamy haze grade over light/ambient/nature footage, and a single unhurried wave that breathes
+    // with the music. No beat-cuts, no speed ramps, no colour flashing — energy-match off so it stays
+    // even and peaceful for hours.
+    scene: { style: 'wave', paletteId: 'aurora', videoMode: 'living', videoLook: 'dream', videoSet: ['Light', 'Ambient', 'Nature', 'Aerial'], brightnessSet: ['mid', 'dark'], speedSet: ['slow'], matchEnergy: false, reactive: true, autoEdit: false, editRate: 0.5, autoSpeed: false, beatColor: false },
+    // Curated calm classical/orchestral — gentle strings, piano and lute. All Kevin MacLeod (CC BY 3.0),
+    // each URL HEAD-verified; streams through the broadcast audio proxy (incompetech is allow-listed).
+    // Static (not Jamendo) so it plays reliably; swap/add tracks in the radio admin any time.
+    tracks: ['Gymnopedie No 1', 'String Impromptu Number 1', 'Ascending the Vale', 'Meditation Impromptu 03', 'Meditation Impromptu 01', 'At Rest', 'Anguish', 'Reawakening', 'Dreamy Flashback', 'Heartbreaking', 'Piano Between', 'Water Lily', 'Willow and the Light', 'Winter Reflections', 'Deliberate Thought', 'Sad Trio', 'Suonatore di Liuto', 'Divertissement', 'Peace of Mind', 'Ossuary 5 - Rest', 'Comfortable Mystery 2'].map(km),
+    shuffle: true,
+    showNowPlaying: true,
+  },
+  {
     slug: 'dnd-tavern',
     title: 'D&D Tavern — Ambience Radio',
     tagline: 'Warm firelit tavern: lute, hearth, and low murmur.',
