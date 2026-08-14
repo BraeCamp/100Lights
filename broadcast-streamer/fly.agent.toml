@@ -1,0 +1,22 @@
+# Fly config for the CONTROL-PLANE AGENT — one Fly machine that streams whatever the Broadcasts
+# dashboard assigns it. Keys come from the radio admin (not here). Deploy:
+#   fly launch --no-deploy --copy-config --config fly.agent.toml --name my-agent
+#   fly secrets set AGENT_TOKEN=<same value as the app's BROADCAST_AGENT_TOKEN> --config fly.agent.toml
+#   fly deploy --config fly.agent.toml
+#   fly logs   --config fly.agent.toml
+# Runs 1 channel by default (fits shared-cpu-1x). For more, raise CAPACITY + the vm size, or (for many)
+# use the Hetzner setup — Fly's metered bandwidth makes it pricey past a few channels.
+app = "lightning-bug-agent"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.agent"
+
+[env]
+  CONTROL_URL = "https://100lights.com"
+  WORKER_ID = "fly-1"
+  CAPACITY = "1"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
