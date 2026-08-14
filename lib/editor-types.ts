@@ -186,6 +186,31 @@ export interface TimelineItem {
   crop?: { l: number; t: number; r: number; b: number }
   /** Per-clip tempo map (audio clips) — BPM sections that create snap points. */
   beatMap?: TempoSeg[]
+  /** Per-clip SCENE analysis (video clips) — an offline, non-real-time pass that samples
+   *  the video across a time grid and records where the subject is, how bright the scene
+   *  is, and how much is moving at each point. Raw material for later auto-reframe /
+   *  cut-on-scene-change / follow-focus. Produced by lib/video-scenes analyzeVideoScenes(). */
+  sceneTrack?: SceneTrack
+}
+
+// ── Scene analysis (offline video vision) ──────────────────────────────────────
+// Pure data (no DOM) so this file stays light; lib/video-scenes.ts produces these by
+// driving lib/vision.ts (MotionDetector + COCO-SSD) over seeked frames.
+export interface SceneBox { x: number; y: number; w: number; h: number }   // normalized 0..1 of the frame
+export interface SceneSample {
+  t: number                              // source-time seconds of this frame
+  motion: number                         // 0..1 how much changed since the previous sample (scene-change / movement)
+  box: SceneBox | null                   // region of interest: largest detected object, else the motion box
+  luma: number                           // 0..1 average brightness
+  hue: number                            // 0..360 dominant hue, or -1 if roughly grey
+  brightness: 'dark' | 'mid' | 'bright'  // bucketed luma (matches Lightning Bug's dark/mid/bright tags)
+  objs: { label: string; n: number }[]   // COCO subject counts at this frame (empty if objects were skipped)
+}
+export interface SceneTrack {
+  step: number            // seconds between samples
+  duration: number        // analyzed source span (seconds)
+  objects: boolean        // whether COCO object detection ran (false = motion/scene only, faster)
+  samples: SceneSample[]
 }
 
 export interface Track {

@@ -12,7 +12,7 @@ import { MEDIA_ACCEPT, VIDEO_EXTS, AUDIO_EXTS, detectMediaKind } from './media-i
 import { loadFolder, verifyWritePermission, writeToFolder } from './local-folder'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
-import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle, TempoSeg } from '@/lib/editor-types'
+import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle, TempoSeg, SceneTrack } from '@/lib/editor-types'
 
 export const CF_VERSION = 1
 export const CF_EXT     = '.cfproj'
@@ -90,6 +90,7 @@ export interface SerializedClip {
   followFocusClipId?: string
   crop?: { l: number; t: number; r: number; b: number }
   beatMap?: TempoSeg[]
+  sceneTrack?: SceneTrack
 }
 
 export interface SerializedOutput {
@@ -245,6 +246,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       followFocusClipId: item.followFocusClipId,
       crop:             item.crop,
       beatMap:          item.beatMap,
+      sceneTrack:       item.sceneTrack,
     })),
     adjustments: snap.adjustments,
     aspect: snap.aspect,
@@ -347,6 +349,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     followFocusClipId: clip.followFocusClipId,
     crop:             clip.crop,
     beatMap:          clip.beatMap,
+    sceneTrack:       clip.sceneTrack,
     // url is intentionally absent — media is offline until re-linked
   }))
 
