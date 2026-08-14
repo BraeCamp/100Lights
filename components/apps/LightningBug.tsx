@@ -1252,6 +1252,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [videoMode, setVideoMode] = useState('none')       // dramatic full-frame transform (anime, ink, glitch…)
   const [videoLook, setVideoLook] = useState('none')       // subtle grade layered under the mode
   const lookFilterRef = useRef('')                          // mode+look svg/css prefix, kept for the per-frame EQ update
+  const lastFilterStrRef = useRef('')                       // last filter/transform strings → skip redundant style writes (GPU perf)
+  const lastTransformStrRef = useRef('')
   const [autoShuffle, setAutoShuffle] = useState(true)     // play a clip, then move to the next one
   const [videoSet, setVideoSet] = useState<BgCategory[]>([])   // categories the shuffle draws from ([] = all)
   const videoSetRef = useRef<BgCategory[]>([]); videoSetRef.current = videoSet
@@ -2371,20 +2373,25 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           // average right now (fast attack, slow release), so kicks/drums pop the filters.
           const punch = Math.max(0, (bass - bassAvgRef.current) * 4)
           punchEnvRef.current = Math.max(Math.min(1, punch), punchEnvRef.current * 0.85)
-          // Density / busyness — spectral flux (how much the spectrum is changing). Busy songs
-          // (lots of notes/percussion) read high; drones read low.
+          // ONE pass over the spectrum computes: density flux (how much it's changing), the low/mid/high
+          // band split, AND the total loudness (reused below) — instead of three separate full-bin loops.
           const prevF = prevFreqRef.current
-          if (prevF && prevF.length === f.freq.length) {
-            let flux = 0; for (let i = 0; i < f.freq.length; i++) { const d = f.freq[i] - prevF[i]; if (d > 0) flux += d }
-            densityEmaRef.current = densityEmaRef.current * 0.9 + Math.min(1, (flux / (f.freq.length * 255)) * 12) * 0.1
-          }
-          if (!prevF || prevF.length !== f.freq.length) prevFreqRef.current = new Uint8Array(f.freq.length)
-          prevFreqRef.current!.set(f.freq)
-          if (now - lastDensityUiRef.current > 400) { lastDensityUiRef.current = now; setDensity(densityEmaRef.current) }
-          // Spectral balance (bass vs bright) for the on-device "sounds like" read.
-          { let low = 0, mid = 0, high = 0
-            for (let i = 0; i < f.freq.length; i++) { const v = f.freq[i]; if (i < 24) low += v; else if (i < 160) mid += v; else high += v }
+          const havePrev = !!(prevF && prevF.length === f.freq.length)
+          let frameLoudSum = 0
+          { let low = 0, mid = 0, high = 0, flux = 0
+            for (let i = 0; i < f.freq.length; i++) {
+              const v = f.freq[i]
+              if (havePrev) { const d = v - prevF![i]; if (d > 0) flux += d }
+              if (i < 24) low += v; else if (i < 160) mid += v; else high += v
+            }
+            if (havePrev) densityEmaRef.current = densityEmaRef.current * 0.9 + Math.min(1, (flux / (f.freq.length * 255)) * 12) * 0.1
+            if (!havePrev) prevFreqRef.current = new Uint8Array(f.freq.length)
+            prevFreqRef.current!.set(f.freq)
+            // Round to 0.1 — density only drives a 3-bucket label, so React bails on same value → no
+            // needless full re-render of the (huge) component every 400ms.
+            if (now - lastDensityUiRef.current > 400) { lastDensityUiRef.current = now; setDensity(Math.round(densityEmaRef.current * 10) / 10) }
             const spTot = low + mid + high || 1
+            frameLoudSum = spTot   // = total loudness; reused below (no extra pass)
             bassRatioRef.current = bassRatioRef.current * 0.9 + (low / spTot) * 0.1
             brightRatioRef.current = brightRatioRef.current * 0.9 + (high / spTot) * 0.1
             // AUTO-EDITOR: fire a band-appropriate edit on a spike in each band. Relative rise over a
@@ -2642,9 +2649,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
               beatFlashDivRef.current.style.opacity = (beatFlashRef.current * (darkRoomRef.current ? 0.12 : 0.32)).toFixed(3)
             } else if (beatFlashDivRef.current.style.opacity !== '0') beatFlashDivRef.current.style.opacity = '0'
           }
-          // Overall loudness off the spectrum — drives both the EQ filter pulse and the
-          // rolling "song energy" that picks energy-matched backgrounds.
-          let s = 0; for (let i = 0; i < f.freq.length; i++) s += f.freq[i]
+          // Overall loudness off the spectrum — drives both the EQ filter pulse and the rolling "song
+          // energy" that picks energy-matched backgrounds. (Reuses the sum from the single spectrum pass.)
+          const s = frameLoudSum
           const level = Math.min(1, (s / (f.freq.length * 255)) * optsRef.current.gain)
           // Idle / music detection (gain-independent): note when real audio was last heard; if
           // it's been quiet for a couple seconds, we're between songs → transition mode.
@@ -2747,7 +2754,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const rgbOn = now < rgbUntilRef.current
             const hu2 = hu + hueSpinRef.current * 200
             const invertOn = now < invertUntilRef.current, blackOn = now < blackUntilRef.current
-            bgFilterRef.current.style.filter = `${rgbOn ? 'url(#mv-chroma) ' : ''}${lookFilterRef.current} blur(${bl.toFixed(1)}px) brightness(${(blackOn ? 0 : br).toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu2)}deg)${invertOn ? ' invert(1)' : ''}`.trim()
+            // Only include blur when it's actually visible — blur() is one of the most GPU-expensive filters,
+            // and dropping it entirely (vs blur(0)) lets the compositor take the fast path.
+            const blurStr = bl > 0.2 ? ` blur(${bl.toFixed(1)}px)` : ''
+            const filterStr = `${rgbOn ? 'url(#mv-chroma) ' : ''}${lookFilterRef.current}${blurStr} brightness(${(blackOn ? 0 : br).toFixed(2)}) saturate(${sa.toFixed(2)}) hue-rotate(${Math.round(hu2)}deg)${invertOn ? ' invert(1)' : ''}`.trim()
+            if (filterStr !== lastFilterStrRef.current) { lastFilterStrRef.current = filterStr; bgFilterRef.current.style.filter = filterStr }   // skip redundant style write
             // Crop-reframe jump (auto-editor 'crop'): while active, zoom into the rolled random region.
             const cropOn = now < cropUntilRef.current
             const cS = cropOn ? cropScaleRef.current : 1, cX = cropOn ? cropXRef.current : 0, cY = cropOn ? cropYRef.current : 0
@@ -2757,7 +2768,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
             const tiltRad = rot * Math.PI / 180
             const tiltZoom = spinEnvRef.current > 0.01 ? Math.cos(tiltRad) + Math.sin(Math.abs(tiltRad)) * 1.8 : 1
             const baseS = (1 + Math.min(1, p) * 0.035 + zoomAdd) * cS * tiltZoom
-            bgFilterRef.current.style.transform = `scale(${(baseS * mir).toFixed(3)}, ${baseS.toFixed(3)}) rotate(${rot.toFixed(1)}deg) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(${cX.toFixed(1)}%, ${cY.toFixed(1)}%)`
+            const transformStr = `scale(${(baseS * mir).toFixed(3)}, ${baseS.toFixed(3)}) rotate(${rot.toFixed(1)}deg) translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(${cX.toFixed(1)}%, ${cY.toFixed(1)}%)`
+            if (transformStr !== lastTransformStrRef.current) { lastTransformStrRef.current = transformStr; bgFilterRef.current.style.transform = transformStr }
           }
           // SPEED edit: ease the bg video's playback rate toward the music-matched target, then back to 1×.
           // (Skips paused videos so it doesn't fight the freeze edit.)
