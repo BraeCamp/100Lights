@@ -118,6 +118,18 @@ export default function RadioAdmin() {
     } catch { setResults([]) } finally { setSLoading(false) }
   }
   const ORDERS: [string, string][] = [['popularity_total', 'Popular (all-time)'], ['popularity_month', 'Popular (month)'], ['relevance', 'Relevance'], ['downloads_total', 'Most downloaded'], ['listens_total', 'Most listened'], ['releasedate_desc', 'Newest']]
+  // Manual add-by-link: paste a jamendo.com/track/<id>/… URL (or a bare id) → resolve + add to the open station.
+  const [pasteUrl, setPasteUrl] = useState(''); const [pasting, setPasting] = useState(false)
+  const addByLink = async () => {
+    if (!pasteUrl.trim()) return
+    if (!open) { setMsg('Open a station first.'); return }
+    setPasting(true); setMsg(null)
+    try {
+      const r = await fetch(`/api/admin/jamendo?id=${encodeURIComponent(pasteUrl.trim())}${commercialOnly ? '&commercialOnly=1' : ''}`); const d = await r.json()
+      if (d.error) { setMsg(d.message || d.error); return }
+      const t = (d.tracks || [])[0]; if (t) { addTrackToOpen(jToTrack(t)); setPasteUrl('') } else setMsg('No track found for that link.')
+    } catch { setMsg('Could not resolve that link.') } finally { setPasting(false) }
+  }
   const [prompt, setPrompt] = useState(''); const [iRes, setIRes] = useState<JTrack[]>([]); const [iLoading, setILoading] = useState(false); const [iMethod, setIMethod] = useState<string | null>(null); const [iNote, setINote] = useState<string | null>(null); const [iSearched, setISearched] = useState(false)
   const findInspired = async () => {
     if (!prompt.trim()) return
@@ -271,9 +283,31 @@ export default function RadioAdmin() {
                           <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div><div style={{ fontSize: 10.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.artist || ''}{t.license ? ` · ${t.license}` : ''}</div></div>
                           <button type="button" onClick={() => patchTracks(s.slug, move(s.tracks!, i, -1))} disabled={i === 0} style={{ ...iconBtn, opacity: i === 0 ? 0.3 : 1 }}><ArrowUp size={14} /></button>
                           <button type="button" onClick={() => patchTracks(s.slug, move(s.tracks!, i, 1))} disabled={i === (s.tracks!.length - 1)} style={{ ...iconBtn, opacity: i === (s.tracks!.length - 1) ? 0.3 : 1 }}><ArrowDown size={14} /></button>
-                          <button type="button" onClick={() => patchTracks(s.slug, s.tracks!.filter((_, j) => j !== i))} style={iconBtn}><X size={14} /></button>
+                          <button type="button" onClick={() => patchTracks(s.slug, s.tracks!.filter((_, j) => j !== i))} title="Remove this song" style={iconBtn}><X size={14} /></button>
                         </div>
                       ))}
+
+                      {/* Add songs — Jamendo search + paste-a-link, both add to THIS station's fixed list */}
+                      <div style={{ marginTop: 8, borderTop: '1px dashed var(--border)', paddingTop: 8 }}>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)' }}>Add songs</span>
+                        <form onSubmit={e => { e.preventDefault(); search() }} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '6px 0' }}>
+                          <input value={q} onChange={e => setQ(e.target.value)} placeholder={tagMode ? 'tags (ambient, lofi…)' : 'search Jamendo — song or artist'} style={{ ...inp, flex: '1 1 190px', minWidth: 150, padding: '7px 10px' }} />
+                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }}><input type="checkbox" checked={tagMode} onChange={e => setTagMode(e.target.checked)} /> by tag</label>
+                          <select value={order} onChange={e => setOrder(e.target.value)} style={{ ...inp, padding: '7px 8px' }}>{ORDERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: 'var(--text-secondary)' }} title="Exclude NonCommercial (CC BY-NC*)"><input type="checkbox" checked={commercialOnly} onChange={e => setCommercialOnly(e.target.checked)} /> commercial-safe</label>
+                          <button type="submit" disabled={sLoading || !q.trim()} style={{ ...btn('var(--accent)', '#0e0d12'), padding: '7px 12px', opacity: sLoading || !q.trim() ? 0.5 : 1 }}><Search size={13} /> {sLoading ? '…' : 'Search'}</button>
+                        </form>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>or paste a Jamendo link</span>
+                          <input value={pasteUrl} onChange={e => setPasteUrl(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addByLink() } }} placeholder="https://www.jamendo.com/track/1886512/…" style={{ ...inp, flex: '1 1 210px', minWidth: 170, padding: '7px 10px' }} />
+                          <button type="button" onClick={addByLink} disabled={pasting || !pasteUrl.trim()} style={{ ...btn('transparent', 'var(--text-secondary)'), padding: '7px 12px', opacity: pasting || !pasteUrl.trim() ? 0.5 : 1 }}><Plus size={13} /> {pasting ? 'Adding…' : 'Add link'}</button>
+                        </div>
+                        {msg && <p style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--accent)', margin: '0 0 6px' }}>{msg}</p>}
+                        {searched && !sLoading && (results.length
+                          ? <div style={{ maxHeight: 300, overflowY: 'auto', paddingRight: 4 }}>{results.map(t => trackRow(t.title, [t.artist, t.album, dur(t.duration), ccName(t.license)].filter(Boolean).join(' · '), t.audio, <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>{addBtn(jToTrack(t))}{t.shareurl && <a href={t.shareurl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-muted)' }}><ExternalLink size={15} /></a>}</div>))}</div>
+                          : <p style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>No results — try different words or “by tag”.</p>)}
+                      </div>
+
                       {p === 'loading' && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>Resolving…</p>}
                       {p && p !== 'loading' && (
                         <div style={{ marginTop: 6 }}>
@@ -324,8 +358,9 @@ export default function RadioAdmin() {
         })}
       </div>
 
-      {/* Add tracks — Jamendo + inspired-by. Results add to whichever station is open. */}
-      <h2 style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-secondary)', margin: '0 0 4px' }}>Find tracks {open ? <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}>· “Add” → {openStation?.title}</span> : <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>· open a station above to add</span>}</h2>
+      {/* Discover by vibe (inspired-by). Per-song search + paste-link live inside each open station. */}
+      <h2 style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-secondary)', margin: '0 0 4px' }}>Discover by vibe {open ? <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}>· “Add” → {openStation?.title}</span> : <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>· open a station to add</span>}</h2>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 8px' }}>To add/remove specific songs, open a station and use its <strong>Add songs</strong> search (or paste a Jamendo link) — each song has a ✕ to delete it.</p>
 
       {/* Inspired by… */}
       <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '8px 0 6px', fontWeight: 700 }}>Inspired by…</p>
@@ -341,20 +376,6 @@ export default function RadioAdmin() {
         </>
       )}
 
-      {/* Jamendo search */}
-      <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 6px', fontWeight: 700 }}>Search Jamendo</p>
-      <form onSubmit={e => { e.preventDefault(); search() }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder={tagMode ? 'tags (e.g. ambient cinematic drone)' : 'song or artist name'} style={{ ...inp, flex: '1 1 240px', minWidth: 180 }} />
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, color: 'var(--text-secondary)' }}><input type="checkbox" checked={tagMode} onChange={e => setTagMode(e.target.checked)} /> by tag</label>
-        <label style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>sort <select value={order} onChange={e => setOrder(e.target.value)} style={{ ...inp, padding: '7px 8px' }}>{ORDERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, color: 'var(--text-secondary)' }} title="Exclude NonCommercial (CC BY-NC*) — safest for a monetized 24/7 stream"><input type="checkbox" checked={commercialOnly} onChange={e => setCommercialOnly(e.target.checked)} /> commercial-safe</label>
-        <button type="submit" disabled={sLoading || !q.trim()} style={{ ...btn('var(--accent)', '#0e0d12'), opacity: sLoading || !q.trim() ? 0.5 : 1 }}><Search size={14} /> {sLoading ? 'Searching…' : 'Search'}</button>
-        {msg && <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent)' }}>{msg}</span>}
-      </form>
-      {searched && !sLoading && (
-        results.length ? <div style={{ maxHeight: 620, overflowY: 'auto', paddingRight: 4 }}>{results.map(t => trackRow(t.title, [t.artist, t.album, dur(t.duration), ccName(t.license)].filter(Boolean).join(' · '), t.audio, <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>{addBtn(jToTrack(t))}{t.shareurl && <a href={t.shareurl} target="_blank" rel="noreferrer" title="Open on Jamendo" style={{ color: 'var(--text-muted)' }}><ExternalLink size={15} /></a>}</div>))}</div>
-          : <p style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No results — try different words, adjust the sort, or toggle “by tag”.</p>
-      )}
     </main>
   )
 }
