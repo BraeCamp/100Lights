@@ -26,6 +26,13 @@ export interface StationScene {
   speedSet?: ('fast' | 'standard' | 'slow')[]     // e.g. ['slow'] for calm motion
   matchEnergy?: boolean
   reactive?: boolean
+  // Auto-editing (how busy the visuals get) — the same knobs as the app's Auto panel. Leave a field
+  // unset to keep the app default. For a calm radio (study/ambient) turn autoEdit off + editRate low;
+  // for a hype station (edm/cinematic) turn them up.
+  autoEdit?: boolean       // the auto-editor: beat-driven cuts + effects (default on)
+  editRate?: number        // cut/edit RATE multiplier, 0.5 (slow) … 2 (fast); default 1
+  autoSpeed?: boolean       // let it ramp clip playback speed to the music (default on)
+  beatColor?: boolean      // cycle palette colours on each beat (default off)
 }
 
 export interface Station {

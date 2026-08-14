@@ -9,6 +9,7 @@ import { STATIONS, type Station } from '@/lib/stations'
 export interface StationRow extends Station {
   enabled: boolean
   sort: number
+  edited?: boolean       // true = customized in the panel (Save); such rows STOP following code edits
   updatedAt?: string
 }
 
@@ -21,18 +22,22 @@ async function ensure() {
       config     JSONB NOT NULL,        -- { title, tagline, scene, tracks?, jamendo?, shuffle?, showNowPlaying? }
       enabled    BOOLEAN NOT NULL DEFAULT TRUE,
       sort       INT NOT NULL DEFAULT 0,
+      edited     BOOLEAN NOT NULL DEFAULT FALSE,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`
-  // Seed from the code-defined stations whenever the table is empty (first run, or after it was
-  // cleared) so the panel always opens with at least the current code lineup.
-  const [{ n }] = await sql`SELECT COUNT(*)::int AS n FROM broadcast_stations` as { n: number }[]
-  if (n === 0) {
-    for (let i = 0; i < STATIONS.length; i++) {
-      const s = STATIONS[i]
-      await sql`INSERT INTO broadcast_stations (slug, config, enabled, sort)
-                VALUES (${s.slug}, ${JSON.stringify(stripSlug(s))}, TRUE, ${i})
-                ON CONFLICT (slug) DO NOTHING`
-    }
+  await sql`ALTER TABLE broadcast_stations ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE`
+  // Sync from the code-defined stations on every cold start so code edits to lib/stations PROPAGATE:
+  //   • a station not in the DB yet  → inserted
+  //   • a station the panel hasn't customized (edited=false) → its CONFIG is refreshed from code
+  //     (enabled + sort are preserved — those are operational choices, not code content)
+  //   • a station Saved in the panel (edited=true) → left alone; your customization wins
+  // So: newest lib/stations always shows up for un-customized stations; "Reset" re-follows code.
+  for (let i = 0; i < STATIONS.length; i++) {
+    const s = STATIONS[i]
+    await sql`INSERT INTO broadcast_stations (slug, config, enabled, sort, edited)
+              VALUES (${s.slug}, ${JSON.stringify(stripSlug(s))}, TRUE, ${i}, FALSE)
+              ON CONFLICT (slug) DO UPDATE SET config = EXCLUDED.config, updated_at = NOW()
+              WHERE broadcast_stations.edited = FALSE`
   }
   ready = true
 }
@@ -45,7 +50,7 @@ function stripSlug(s: Station): Omit<Station, 'slug'> {
 
 function toRow(r: Record<string, unknown>): StationRow {
   const cfg = (typeof r.config === 'string' ? JSON.parse(r.config) : r.config) as Omit<Station, 'slug'>
-  return { slug: String(r.slug), ...cfg, enabled: r.enabled !== false, sort: Number(r.sort ?? 0), updatedAt: r.updated_at ? String(r.updated_at) : undefined }
+  return { slug: String(r.slug), ...cfg, enabled: r.enabled !== false, sort: Number(r.sort ?? 0), edited: r.edited === true, updatedAt: r.updated_at ? String(r.updated_at) : undefined }
 }
 
 /** All stations (admin view — includes disabled), ordered. Falls back to code STATIONS on DB error. */
@@ -82,10 +87,11 @@ export async function upsertStation(row: StationRow): Promise<void> {
   const slug = row.slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')
   if (!slug) throw new Error('invalid slug')
   const { enabled, sort } = row
+  // A panel Save marks the row `edited` so the code-sync stops overwriting it (your version wins).
   await sql`
-    INSERT INTO broadcast_stations (slug, config, enabled, sort, updated_at)
-    VALUES (${slug}, ${JSON.stringify(stripSlug({ ...row, slug }))}, ${enabled}, ${sort}, NOW())
-    ON CONFLICT (slug) DO UPDATE SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, sort = EXCLUDED.sort, updated_at = NOW()`
+    INSERT INTO broadcast_stations (slug, config, enabled, sort, edited, updated_at)
+    VALUES (${slug}, ${JSON.stringify(stripSlug({ ...row, slug }))}, ${enabled}, ${sort}, TRUE, NOW())
+    ON CONFLICT (slug) DO UPDATE SET config = EXCLUDED.config, enabled = EXCLUDED.enabled, sort = EXCLUDED.sort, edited = TRUE, updated_at = NOW()`
 }
 
 export async function setStationEnabled(slug: string, enabled: boolean): Promise<void> {
@@ -100,10 +106,11 @@ export async function deleteStation(slug: string): Promise<void> {
 
 const codeSort = (slug: string) => { const i = STATIONS.findIndex(s => s.slug === slug); return i < 0 ? 999 : i }
 async function writeDefault(s: Station) {
+  // Reset restores code config AND clears `edited`, so the station follows code edits again.
   await sql`
-    INSERT INTO broadcast_stations (slug, config, enabled, sort, updated_at)
-    VALUES (${s.slug}, ${JSON.stringify(stripSlug(s))}, TRUE, ${codeSort(s.slug)}, NOW())
-    ON CONFLICT (slug) DO UPDATE SET config = EXCLUDED.config, enabled = TRUE, sort = EXCLUDED.sort, updated_at = NOW()`
+    INSERT INTO broadcast_stations (slug, config, enabled, sort, edited, updated_at)
+    VALUES (${s.slug}, ${JSON.stringify(stripSlug(s))}, TRUE, ${codeSort(s.slug)}, FALSE, NOW())
+    ON CONFLICT (slug) DO UPDATE SET config = EXCLUDED.config, enabled = TRUE, sort = EXCLUDED.sort, edited = FALSE, updated_at = NOW()`
 }
 
 /** Reset the WHOLE store to the code-defined stations (lib/stations): drop everything, re-insert the

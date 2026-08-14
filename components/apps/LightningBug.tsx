@@ -1384,7 +1384,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   }, [])
   useEffect(() => {
     loadPool()
-    const id = setInterval(loadPool, 75000)   // re-roll the pool every ~75s → the whole 15k rotates through over a session
+    const id = setInterval(loadPool, 150000)   // re-roll the pool every ~150s → the whole 15k rotates through over a session (slower churn = steadier broadcast)
     return () => clearInterval(id)
   }, [brightnessSet, loadPool])
   // Search the tagged Pexels catalog (streams from Pexels' CDN; nothing downloaded).
@@ -2932,6 +2932,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     if (sc.speedSet) setSpeedSet(sc.speedSet)
     if (sc.matchEnergy != null) setMatchEnergy(sc.matchEnergy)
     setReactive(sc.reactive ?? true)
+    // Auto-editing knobs (unset → keep default): how busy the cuts/effects/speed/colour get.
+    if (sc.autoEdit != null) setAutoEdit(sc.autoEdit)
+    if (sc.editRate != null) setEditRate(sc.editRate)
+    if (sc.autoSpeed != null) setAutoSpeed(sc.autoSpeed)
+    if (sc.beatColor != null) setBeatColor(sc.beatColor)
     setAutoShuffle(true); setIdleTransition(true); setBgKind('library')
   }, [])
 

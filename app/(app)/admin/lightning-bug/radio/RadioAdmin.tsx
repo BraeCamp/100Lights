@@ -7,7 +7,7 @@ import {
 import { BG_CATEGORIES } from '@/lib/bg-library'
 import { Radio, Search, ExternalLink, ChevronDown, Save, Trash2, Plus, Play, Copy, Check, ListMusic, ArrowUp, ArrowDown, X, RotateCcw } from 'lucide-react'
 
-type StationRow = Station & { enabled: boolean; sort: number; updatedAt?: string; __new?: boolean }
+type StationRow = Station & { enabled: boolean; sort: number; edited?: boolean; updatedAt?: string; __new?: boolean }
 interface JTrack { id: string; title: string; artist: string; audio: string; license: string; album?: string; duration?: number; shareurl?: string }
 
 const dur = (s?: number) => (s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : '')
@@ -193,7 +193,11 @@ export default function RadioAdmin() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <button type="button" onClick={() => { const nowOpen = !isOpen; setOpen(nowOpen ? s.slug : null); if (nowOpen && !s.__new && !pl[s.slug]) preview(s.slug) }} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>{s.title || '(untitled)'} {!s.enabled && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· disabled</span>}</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>{s.title || '(untitled)'} {!s.enabled && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· disabled</span>}
+                      {!s.__new && (s.edited
+                        ? <span title="Customized in this panel — it no longer follows edits to lib/stations" style={{ fontSize: 10, fontWeight: 800, marginLeft: 6, padding: '1px 6px', borderRadius: 999, background: 'var(--accent)', color: '#0e0d12' }}>customized</span>
+                        : codeSlugs.has(s.slug) ? <span title="Follows lib/stations — code edits show up automatically" style={{ fontSize: 10, fontWeight: 700, marginLeft: 6, padding: '1px 6px', borderRadius: 999, border: '1px solid var(--border)', color: 'var(--text-muted)' }}>follows code</span> : null)}
+                    </div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{s.tagline || 'no tagline'} · <code>{s.slug || 'set a slug'}</code></div>
                   </div>
                   <ChevronDown size={18} style={{ color: 'var(--text-muted)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform .15s', flexShrink: 0 }} />
@@ -230,6 +234,22 @@ export default function RadioAdmin() {
                         <Toggle on={scene.reactive !== false} onClick={() => patchScene(s.slug, { reactive: !(scene.reactive !== false) })}>reactive</Toggle>
                       </div>
                     </div>
+                  </div>
+
+                  {/* auto editing — how busy the cuts/effects get (calm radio → off/low; hype → on/high) */}
+                  <div>
+                    <span style={lbl}>Auto editing</span>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+                      <Toggle on={scene.autoEdit !== false} onClick={() => patchScene(s.slug, { autoEdit: !(scene.autoEdit !== false) })}>effects &amp; cuts</Toggle>
+                      <Toggle on={scene.autoSpeed !== false} onClick={() => patchScene(s.slug, { autoSpeed: !(scene.autoSpeed !== false) })}>speed to music</Toggle>
+                      <Toggle on={!!scene.beatColor} onClick={() => patchScene(s.slug, { beatColor: !scene.beatColor })}>colour on beat</Toggle>
+                    </div>
+                    <label style={{ fontSize: 11.5, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8, maxWidth: 340 }}>
+                      cut rate <span style={{ color: 'var(--text-muted)' }}>slower</span>
+                      <input type="range" min={0.5} max={2} step={0.1} value={scene.editRate ?? 1} onChange={e => patchScene(s.slug, { editRate: +e.target.value })} style={{ flex: 1 }} />
+                      <span style={{ color: 'var(--text-muted)' }}>faster</span>
+                      <strong style={{ minWidth: 30, textAlign: 'right' }}>{(scene.editRate ?? 1).toFixed(1)}×</strong>
+                    </label>
                   </div>
 
                   {/* audio source */}
