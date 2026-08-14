@@ -4,7 +4,7 @@
 //   PATCH  { slug, enabled }    → toggle enabled without a full save
 //   DELETE ?slug=<slug>         → remove a station
 import { isAdmin } from '@/lib/admin-auth'
-import { listStationRows, upsertStation, setStationEnabled, deleteStation, resetToDefaults, resetStation, type StationRow } from '@/lib/broadcast-stations'
+import { listStationRows, upsertStation, setStationEnabled, deleteStation, resetToDefaults, resetStation, saveStationFullScene, type StationRow } from '@/lib/broadcast-stations'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -18,9 +18,11 @@ export async function GET() {
 // station; { action:'reset', slug } restores one. Use this to move a warm/edited store back to defaults.
 export async function POST(req: Request) {
   if (!await isAdmin()) return Response.json({ error: 'Unauthorized' }, { status: 401 })
-  const { action, slug } = await req.json() as { action?: string; slug?: string }
+  const { action, slug, fullScene } = await req.json() as { action?: string; slug?: string; fullScene?: Record<string, unknown> | null }
   if (action === 'reset-all') { await resetToDefaults(); return Response.json({ ok: true, stations: await listStationRows() }) }
   if (action === 'reset' && slug) { const ok = await resetStation(slug); return Response.json({ ok, error: ok ? undefined : 'No code default for that slug', stations: await listStationRows() }) }
+  // Save the full Lightning Bug scene authored via ?broadcastEdit=<slug> (fullScene: null clears it).
+  if (action === 'save-scene' && slug) { const ok = await saveStationFullScene(slug, fullScene ?? null); return Response.json({ ok, error: ok ? undefined : 'No such station' }) }
   return Response.json({ error: 'Unknown action' }, { status: 400 })
 }
 

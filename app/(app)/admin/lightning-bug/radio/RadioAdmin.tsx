@@ -5,9 +5,9 @@ import {
   type Station, type BroadcastTrack, type StationScene,
 } from '@/lib/stations'
 import { BG_CATEGORIES } from '@/lib/bg-library'
-import { Radio, Search, ExternalLink, ChevronDown, Save, Trash2, Plus, Play, Copy, Check, ListMusic, ArrowUp, ArrowDown, X, RotateCcw } from 'lucide-react'
+import { Radio, Search, ExternalLink, ChevronDown, Save, Trash2, Plus, Play, Copy, Check, ListMusic, ArrowUp, ArrowDown, X, RotateCcw, Sparkles } from 'lucide-react'
 
-type StationRow = Station & { enabled: boolean; sort: number; edited?: boolean; updatedAt?: string; __new?: boolean }
+type StationRow = Station & { enabled: boolean; sort: number; edited?: boolean; fullScene?: Record<string, unknown>; updatedAt?: string; __new?: boolean }
 interface JTrack { id: string; title: string; artist: string; audio: string; license: string; album?: string; duration?: number; shareurl?: string }
 
 const dur = (s?: number) => (s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : '')
@@ -64,6 +64,12 @@ export default function RadioAdmin() {
     if (!window.confirm('Reset ALL stations to the built-in defaults?\n\nThis discards every edit in the panel and any custom/test stations, restoring the original lineup. (Files in public/broadcast/ are untouched.)')) return
     setSavedMsg('Resetting…')
     try { const r = await fetch('/api/admin/broadcast/stations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'reset-all' }) }); const d = await r.json(); if (Array.isArray(d.stations)) setStations(d.stations); setPl({}); setOpen(null); setSavedMsg('Reset to defaults — live now.') } catch (e) { setSavedMsg(String(e)) }
+  }
+  const clearFullScene = async (s: StationRow) => {
+    if (!window.confirm(`Clear the authored full look for “${s.title}”? The stream will fall back to the panel's Look settings.`)) return
+    const r = await fetch('/api/admin/broadcast/stations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'save-scene', slug: s.slug, fullScene: null }) })
+    const d = await r.json(); if (d.error) { setSavedMsg(d.error); return }
+    setStations(prev => prev.map(x => x.slug === s.slug ? { ...x, fullScene: undefined } : x)); setSavedMsg(`Cleared full look for “${s.title}”.`)
   }
   const resetOne = async (s: StationRow) => {
     if (!window.confirm(`Reset “${s.title}” to its built-in default? Discards this station's edits.`)) return
@@ -229,6 +235,13 @@ export default function RadioAdmin() {
                   {/* look */}
                   <div>
                     <span style={lbl}>Look</span>
+                    {s.fullScene && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '7px 10px', marginBottom: 8, borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--bg-base)' }}>
+                        <Sparkles size={13} style={{ color: 'var(--accent)' }} />
+                        <span style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>A <strong>full look</strong> is authored — it overrides these controls on the stream. Re-author it with <strong>Author full look</strong> below, or</span>
+                        <button type="button" onClick={() => clearFullScene(s)} style={{ ...btn('transparent', 'var(--text-secondary)'), padding: '4px 10px' }}>clear it</button>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
                       <label style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>Style <Select value={scene.style || 'none'} opts={STATION_STYLES} onChange={v => patchScene(s.slug, { style: v })} /></label>
                       <label style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>Palette <Select value={scene.paletteId || 'aurora'} opts={STATION_PALETTES} onChange={v => patchScene(s.slug, { paletteId: v })} /></label>
@@ -346,6 +359,7 @@ export default function RadioAdmin() {
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
                     <button type="button" onClick={() => save(s)} disabled={saving === s.slug} style={btn('var(--accent)', '#0e0d12')}><Save size={15} /> {saving === s.slug ? 'Saving…' : 'Save'}</button>
+                    {!s.__new && <a href={`${origin}/apps/lightningbug?broadcastEdit=${encodeURIComponent(s.slug)}`} target="_blank" rel="noreferrer" title="Open the full Lightning Bug editor for this broadcast (all settings), then Save to broadcast" style={{ ...btn('transparent', 'var(--text-secondary)'), textDecoration: 'none' }}><Sparkles size={15} /> Author full look{s.fullScene ? ' ✓' : ''}</a>}
                     {!s.__new && <a href={url(s.slug)} target="_blank" rel="noreferrer" style={{ ...btn('transparent', 'var(--text-secondary)'), textDecoration: 'none' }}><Play size={15} /> Open</a>}
                     {!s.__new && <button type="button" onClick={() => copyUrl(s.slug)} style={btn('transparent', 'var(--text-secondary)')}>{copied === s.slug ? <><Check size={15} /> Copied</> : <><Copy size={15} /> OBS URL</>}</button>}
                     {!s.__new && codeSlugs.has(s.slug) && <button type="button" onClick={() => resetOne(s)} title="Restore this station to its built-in default" style={btn('transparent', 'var(--text-secondary)')}><RotateCcw size={15} /> Reset</button>}

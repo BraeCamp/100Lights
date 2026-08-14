@@ -162,6 +162,7 @@ function LightningBugApp() {
   const [live, setLive] = useState(false)   // party mode: visualize live audio from the device
   const [initialBg, setInitialBg] = useState<string | null>(null)   // deep-link: /apps/lightningbug?bg=<clipId>
   const [broadcastStation, setBroadcastStation] = useState<string | null>(null)   // ?station=<slug>&broadcast=1
+  const [broadcastEdit, setBroadcastEdit] = useState<string | null>(null)   // ?broadcastEdit=<slug> — author a broadcast's full look
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
     const bg = q.get('bg')
@@ -169,6 +170,8 @@ function LightningBugApp() {
     if (q.get('scene')) setLive(true)   // a shared scene link opens straight into live mode
     const st = q.get('station')
     if (st && q.get('broadcast')) { setBroadcastStation(st); setLive(true) }   // 24/7 radio-with-visuals mode
+    const be = q.get('broadcastEdit')
+    if (be) { setBroadcastEdit(be); setLive(true) }   // full-interface broadcast editor (saves to the station)
   }, [])
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -304,7 +307,7 @@ function LightningBugApp() {
       </header>
 
       {live ? (
-        <LiveVisualizer onExit={() => setLive(false)} initialBg={initialBg} />
+        <LiveVisualizer onExit={() => setLive(false)} initialBg={initialBg} broadcastEdit={broadcastEdit} />
       ) : (
         <>
           <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: '#000', border: '1px solid var(--border)' }}>
@@ -640,6 +643,7 @@ interface Scene {
   beatColor: boolean; punchAmt: number
   reactive: boolean; matchVisuals: boolean; matchEnergy: boolean; autoShuffle: boolean
   videoSet: BgCategory[]; brightnessSet?: Brightness[]; speedSet?: Speed[]; idleTransition?: boolean; switchChance: number
+  autoEdit?: boolean; editRate?: number; autoSpeed?: boolean   // auto-editing behaviour (cuts/effects/speed)
   bgCat: BgCategory; bgKind: string; bgClipId: string | null
   isDefault?: boolean   // auto-loads when Lightning Bug opens
 }
@@ -1177,7 +1181,7 @@ function ColorPlane({ onChange }: { onChange: (p: Plane) => void }) {
   )
 }
 
-function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; initialBg?: string | null; broadcast?: string | null }) {
+function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExit: () => void; initialBg?: string | null; broadcast?: string | null; broadcastEdit?: string | null }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [running, setRunning] = useState(false)
@@ -2216,11 +2220,12 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       blur, brightness, saturate, hueRot,
       beatColor, punchAmt,
       reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, speedSet, idleTransition, switchChance,
+      autoEdit, editRate, autoSpeed,
       bgCat, bgKind, bgClipId: bgClip?.id ?? null,
     }
     setScenes(prev => persistScenes([...prev.filter(s => s.name !== name), scene].slice(-24)))
     if (isSignedIn) fetch('/api/scenes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(scene) }).catch(() => { /* stays local */ })
-  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, speedSet, idleTransition, switchChance, bgCat, bgKind, bgClip, isSignedIn])
+  }, [style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, speedSet, idleTransition, switchChance, autoEdit, editRate, autoSpeed, bgCat, bgKind, bgClip, isSignedIn])
   const loadScene = useCallback((s: Scene) => {
     setAuto(false)   // a saved scene is your own setup — hand control back to you
     setStyle(s.style); setColorCfg(s.colorCfg); setSeed(s.seed); setVideoMode(s.videoMode); setVideoLook(s.videoLook)
@@ -2228,6 +2233,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     setBlur(s.blur); setBrightness(s.brightness); setSaturate(s.saturate); setHueRot(s.hueRot)
     setBeatColor(s.beatColor); setPunchAmt(s.punchAmt)
     setReactive(s.reactive); setMatchVisuals(s.matchVisuals); setMatchEnergy(s.matchEnergy); setAutoShuffle(s.autoShuffle); setVideoSet(s.videoSet ?? []); setBrightnessSet(s.brightnessSet ?? []); setSpeedSet(s.speedSet ?? []); setIdleTransition(s.idleTransition ?? true); setSwitchChance(s.switchChance)
+    if (s.autoEdit != null) setAutoEdit(s.autoEdit); if (s.editRate != null) setEditRate(s.editRate); if (s.autoSpeed != null) setAutoSpeed(s.autoSpeed)
     setBgCat(s.bgCat)
     if (s.bgKind === 'library' && s.bgClipId) { const c = clipById(s.bgClipId); if (c) { setBgClip(c); setBgKind('library') } }
     else if (s.bgKind && s.bgKind !== 'media') { setBgKind(s.bgKind); setBgClip(null) }
@@ -2951,8 +2957,11 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       try {
         const r = await fetch(`/api/broadcast/playlist?station=${encodeURIComponent(broadcast)}`)
         if (!r.ok) { setBroadcastMsg('Unknown station.'); return }
-        const data = await r.json() as { station?: { scene?: StationScene; shuffle?: boolean }; tracks?: BroadcastTrack[] }
+        const data = await r.json() as { station?: { scene?: StationScene; fullScene?: Record<string, unknown>; shuffle?: boolean }; tracks?: BroadcastTrack[] }
         if (data.station?.scene) applyStationScene(data.station.scene)
+        // A full authored scene (broadcast project) overrides the subset with EVERY setting, then we
+        // re-force the broadcast essentials so backgrounds still rotate.
+        if (data.station?.fullScene) { loadScene({ id: 'bc', name: 'broadcast', ...(data.station.fullScene as object) } as Scene); setAutoShuffle(true); setIdleTransition(true); setBgKind('library'); setAuto(false) }
         let tracks = data.tracks ?? []
         if (data.station?.shuffle) tracks = [...tracks].sort(() => Math.random() - 0.5)
         broadcastTracksRef.current = tracks
@@ -2963,6 +2972,43 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [broadcast])
+
+  // Broadcast EDITOR (?broadcastEdit=<slug>): the full live UI, seeded with the broadcast's current
+  // look so you tweak everything and Save it back to the station (which the 24/7 stream then renders).
+  const [bcSaveMsg, setBcSaveMsg] = useState('')
+  const bcEditLoadedRef = useRef(false)
+  useEffect(() => {
+    if (!broadcastEdit || bcEditLoadedRef.current) return
+    bcEditLoadedRef.current = true
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/broadcast/playlist?station=${encodeURIComponent(broadcastEdit)}`)
+        if (!r.ok) return
+        const d = await r.json() as { station?: { scene?: StationScene; fullScene?: Record<string, unknown> } }
+        if (d.station?.fullScene) loadScene({ id: 'bc', name: 'broadcast', ...(d.station.fullScene as object) } as Scene)
+        else if (d.station?.scene) applyStationScene(d.station.scene)
+      } catch { /* start from defaults */ }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [broadcastEdit])
+  const saveToBroadcast = useCallback(async () => {
+    if (!broadcastEdit) return
+    const scene: Scene = {
+      id: 'bc', name: 'broadcast',
+      style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing,
+      blur, brightness, saturate, hueRot, beatColor, punchAmt,
+      reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, speedSet, idleTransition, switchChance,
+      autoEdit, editRate, autoSpeed,
+      bgCat, bgKind, bgClipId: bgClip?.id ?? null,
+    }
+    setBcSaveMsg('Saving…')
+    try {
+      const r = await fetch('/api/admin/broadcast/stations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'save-scene', slug: broadcastEdit, fullScene: { ...scene, id: undefined, name: undefined } }) })
+      const d = await r.json()
+      setBcSaveMsg(d.ok ? '✓ Saved to broadcast — the 24/7 stream will use it.' : (d.error || 'Save failed — sign in as the admin.'))
+    } catch { setBcSaveMsg('Save failed.') }
+    setTimeout(() => setBcSaveMsg(''), 5000)
+  }, [broadcastEdit, style, colorCfg, seed, videoMode, videoLook, mirror, glow, trail, gain, smoothing, blur, brightness, saturate, hueRot, beatColor, punchAmt, reactive, matchVisuals, matchEnergy, autoShuffle, videoSet, brightnessSet, speedSet, idleTransition, switchChance, autoEdit, editRate, autoSpeed, bgCat, bgKind, bgClip])
 
   // Tap-to-start fallback: a user gesture resumes the audio context + playback.
   const resumeBroadcast = useCallback(() => {
@@ -3211,6 +3257,15 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       {/* Scenes — save your whole setup (look + filters + reactivity + video set), reload, set a
           default that opens with the app, rename, and share via a link. */}
       <div style={{ margin: '0 0 12px' }}>
+        {broadcastEdit && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 12px', marginBottom: 10, borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--bg-card)' }}>
+            <Radio size={16} style={{ color: 'var(--accent)' }} />
+            <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>Editing broadcast <strong style={{ color: 'var(--text-primary)' }}>{broadcastEdit}</strong> — tweak anything, then</span>
+            <button type="button" onClick={saveToBroadcast} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 15px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#0e0d12' }}><Save size={14} /> Save to broadcast</button>
+            {bcSaveMsg && <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>{bcSaveMsg}</span>}
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', flexBasis: '100%' }}>Saves the whole look (every setting here) to the station; the 24/7 stream renders it. Play a track to preview reactivity.</span>
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button type="button" onClick={saveScene} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}><Save size={13} /> Save scene</button>
           {scenes.map(s => (

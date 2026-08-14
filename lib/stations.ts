@@ -48,6 +48,11 @@ export interface Station {
   jamendo?: { tags: string; order?: string; limit?: number }
   shuffle?: boolean
   showNowPlaying?: boolean
+  /** Full Lightning Bug scene authored in the real UI (the "broadcast project"). A superset of
+   *  `scene` — when present, the broadcast applies ALL of it (loadScene), so you're not limited to
+   *  the admin panel's subset. Kept loose (it's the app's internal Scene shape) since it round-trips
+   *  through the app, not this file. Authored via /apps/lightningbug?broadcastEdit=<slug>. */
+  fullScene?: Record<string, unknown>
 }
 
 // Kevin MacLeod (incompetech.com) — CC BY 3.0. We control the playlist, so the credit is stored

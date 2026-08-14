@@ -99,6 +99,19 @@ export async function setStationEnabled(slug: string, enabled: boolean): Promise
   await sql`UPDATE broadcast_stations SET enabled = ${enabled}, updated_at = NOW() WHERE slug = ${slug}`
 }
 
+/** Save (or clear) a station's full Lightning Bug scene — authored in the real UI (broadcastEdit).
+ *  Merges into the existing config so audio/flags are untouched; marks the row edited (a
+ *  customization) so the code-sync won't overwrite it. Returns false if the station doesn't exist. */
+export async function saveStationFullScene(slug: string, fullScene: Record<string, unknown> | null): Promise<boolean> {
+  await ensure()
+  const rows = await sql`SELECT config FROM broadcast_stations WHERE slug = ${slug}`
+  if (!rows.length) return false
+  const cfg = (typeof rows[0].config === 'string' ? JSON.parse(rows[0].config) : rows[0].config) as Record<string, unknown>
+  if (fullScene) cfg.fullScene = fullScene; else delete cfg.fullScene
+  await sql`UPDATE broadcast_stations SET config = ${JSON.stringify(cfg)}, edited = TRUE, updated_at = NOW() WHERE slug = ${slug}`
+  return true
+}
+
 export async function deleteStation(slug: string): Promise<void> {
   await ensure()
   await sql`DELETE FROM broadcast_stations WHERE slug = ${slug}`
