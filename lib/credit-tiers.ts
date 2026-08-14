@@ -26,7 +26,18 @@ export const CREDIT_COSTS = {
   visionPage: 500,         // per sheet-music image/PDF page (Claude vision)
   generateClip: 2000,      // per AI music generation
   stems: 1500,             // per stem-separation
+  aiAssist: 200,           // MINIMUM balance to start an AI-assistant turn (actual spend is usage-based,
+                           // computed from real tokens by aiCreditsForTokens — see lib/credits)
 } as const
+
+// AI-assistant billing is USAGE-based (not flat): credits = real Anthropic token cost × margin, at the
+// same ~5000 credits/$ the plans use. Sonnet list ≈ $3/M input, $15/M output → 15 credits per 1k input,
+// 75 per 1k output; MARGIN adds our take. Tunable without touching the routes.
+export const AI_CREDIT_MARGIN = 1.6
+export function aiCreditsForTokens(inputTokens: number, outputTokens: number): number {
+  const raw = (inputTokens / 1000) * 15 + (outputTokens / 1000) * 75
+  return Math.max(1, Math.ceil(raw * AI_CREDIT_MARGIN))
+}
 
 // One-time credit top-ups. Priced ≤ the subscription rate so a plan is always the better deal.
 export const CREDIT_TOPUPS = [
