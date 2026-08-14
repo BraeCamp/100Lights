@@ -3,12 +3,19 @@ import { useEffect, useState } from 'react'
 import { STATIONS } from '@/lib/stations'
 import { Radio, Copy, Check, Play, ListMusic } from 'lucide-react'
 
+type LauncherStation = { slug: string; title: string; tagline: string }
+
 // Launcher for the 24/7 broadcast stations: preview each, and copy the OBS Browser-Source URL.
 export default function BroadcastLauncher() {
   const [origin, setOrigin] = useState('https://100lights.com')
   const [copied, setCopied] = useState<string | null>(null)
   const [credits, setCredits] = useState<string | null>(null)
+  // Enabled stations come from the DB (edited in the radio admin); the code list is the fallback.
+  const [stations, setStations] = useState<LauncherStation[]>(() => STATIONS.map(s => ({ slug: s.slug, title: s.title, tagline: s.tagline })))
   useEffect(() => { setOrigin(window.location.origin) }, [])
+  useEffect(() => {
+    fetch('/api/broadcast/stations').then(r => r.json()).then(d => { if (Array.isArray(d.stations) && d.stations.length) setStations(d.stations) }).catch(() => {})
+  }, [])
 
   const url = (slug: string) => `${origin}/apps/lightningbug?station=${slug}&broadcast=1`
   const copy = async (slug: string) => {
@@ -47,7 +54,7 @@ export default function BroadcastLauncher() {
       </p>
 
       <div style={{ display: 'grid', gap: 12 }}>
-        {STATIONS.map(s => (
+        {stations.map(s => (
           <div key={s.slug} style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', padding: '16px 18px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
             <span style={{ display: 'grid', placeItems: 'center', width: 44, height: 44, borderRadius: 12, flexShrink: 0, background: 'var(--accent)', color: '#0e0d12' }}><Radio size={22} /></span>
             <div style={{ minWidth: 180, flex: '1 1 260px' }}>
@@ -70,11 +77,11 @@ export default function BroadcastLauncher() {
         <a href="/admin/lightning-bug/radio" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Radio admin →</a>
         <a href="/admin/lightning-bug" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Background library admin →</a>
       </p>
-      <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0 0' }}>Radio admin: listen to each station's playlist + search Jamendo. Background admin: curate Pexels. (Owner + admin code.)</p>
+      <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '4px 0 0' }}>Radio admin: create/edit stations (look, audio source, playlist) live — no redeploy. Background admin: curate Pexels. (Owner + admin code.)</p>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.6 }}>
-        Add stations by editing <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>lib/stations.ts</code>.
-        Drop licensed audio into <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>public/broadcast/&lt;slug&gt;/</code>,
-        or set <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>JAMENDO_CLIENT_ID</code> to pull tracks by tag.
+        Edit stations in the <a href="/admin/lightning-bug/radio" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>radio admin</a>.
+        For the most reliable 24/7 audio, drop licensed files into <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>public/broadcast/&lt;slug&gt;/</code>;
+        otherwise set a Jamendo tag on the station (needs <code style={{ padding: '1px 5px', borderRadius: 5, background: 'var(--bg-card)', fontSize: 11.5 }}>JAMENDO_CLIENT_ID</code>).
       </p>
     </main>
   )

@@ -114,3 +114,15 @@ export const STATIONS: Station[] = [
 
 export const getStation = (slug?: string | null): Station | undefined =>
   slug ? STATIONS.find(s => s.slug === slug) : undefined
+
+// ── Scene option ids (for the admin control panel's dropdowns) ─────────────────
+// These MIRROR the ids in components/apps/LightningBug.tsx (PALETTES / VIDEO_LOOKS /
+// VIDEO_MODES / the style union) — kept here so the React-free admin can offer them
+// without importing the whole visualizer. The panel also tolerates an unknown saved
+// id (shows it as an extra option), so a new app id never silently drops a station's value.
+export const STATION_STYLES = ['none', 'bars', 'area', 'rings', 'dots', 'radial', 'wave'] as const
+export const STATION_PALETTES = ['aurora', 'sunset', 'ocean', 'neon', 'fire', 'ice', 'candy', 'mono'] as const
+export const STATION_LOOKS = ['none', 'vignette', 'film', 'dream', 'noir', 'warm', 'cool', 'blockbuster', 'neonnoir', 'bleach', 'giallo', 'lean', 'spotlight', 'halo'] as const
+export const STATION_MODES = ['none', 'anime', 'comic', 'ink', 'oil', 'cartoon', 'neonedge', 'thermal', 'infrared', 'vhs', 'glitch', 'living', 'super8', 'chroma', 'datamosh', 'fisheye'] as const
+export const STATION_BRIGHTNESS = ['bright', 'mid', 'dark'] as const
+export const STATION_SPEEDS = ['fast', 'standard', 'slow'] as const

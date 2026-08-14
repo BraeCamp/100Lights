@@ -6,7 +6,8 @@
 import { NextRequest } from 'next/server'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { getStation, type BroadcastTrack, type Station } from '@/lib/stations'
+import { type BroadcastTrack, type Station } from '@/lib/stations'
+import { getStationDb } from '@/lib/broadcast-stations'
 import { jamendoSearch, jamendoLicensed } from '@/lib/jamendo'
 import { tagsToFamily, type Family } from '@/lib/genre-map'
 
@@ -42,7 +43,7 @@ async function jamendoTracks(tags: string, order = 'popularity_total', fallbackG
 
 export async function GET(req: NextRequest) {
   const slug = req.nextUrl.searchParams.get('station')
-  const station = getStation(slug)
+  const station = await getStationDb(slug)   // DB-backed (editable in the radio admin), falls back to code
   if (!station) return Response.json({ error: 'Unknown station' }, { status: 404 })
 
   const def = stationGenre(station)
