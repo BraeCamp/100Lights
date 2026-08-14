@@ -7,18 +7,22 @@
 // vignette, ink, oil, glitch…) need the compositor's overlay layer and land in a later pass — these are
 // the pure color grades, which carry most of the look and are export-safe today.
 
+// Overlay layers drawn ON TOP of the graded frame (canvas in export, CSS in preview).
+export type OverlayId = 'grain' | 'vignette' | 'scanlines' | 'glitch' | 'vhs'
+
 export interface VideoEffect {
   id: string
   name: string
   css: string                 // a CSS filter chain (brightness/contrast/saturate/sepia/hue-rotate/…)
-  category: 'Cinematic' | 'Color' | 'Mood' | 'Stylize'
+  category: 'Cinematic' | 'Color' | 'Mood' | 'Stylize' | 'Overlay'
+  overlays?: OverlayId[]       // drawn on top of the grade (grain/vignette/scanlines/glitch/vhs)
 }
 
 export const VIDEO_EFFECTS: VideoEffect[] = [
   // ── Cinematic (ported from Lightning Bug) ─────────────────────────────────
-  { id: 'film',        name: 'Film',        category: 'Cinematic', css: 'contrast(1.05) saturate(1.05) sepia(0.12)' },
-  { id: 'dream',       name: 'Dream',       category: 'Cinematic', css: 'brightness(1.05) saturate(1.1)' },
-  { id: 'noir',        name: 'Noir',        category: 'Cinematic', css: 'grayscale(1) contrast(1.32) brightness(1.02)' },
+  { id: 'film',        name: 'Film',        category: 'Cinematic', css: 'contrast(1.05) saturate(1.05) sepia(0.12)', overlays: ['grain', 'vignette'] },
+  { id: 'dream',       name: 'Dream',       category: 'Cinematic', css: 'brightness(1.05) saturate(1.1)', overlays: ['vignette'] },
+  { id: 'noir',        name: 'Noir',        category: 'Cinematic', css: 'grayscale(1) contrast(1.32) brightness(1.02)', overlays: ['vignette', 'grain'] },
   { id: 'warm',        name: 'Warm',        category: 'Cinematic', css: 'sepia(0.25) saturate(1.3) contrast(1.05) brightness(1.03)' },
   { id: 'cool',        name: 'Cool',        category: 'Cinematic', css: 'saturate(1.15) hue-rotate(-12deg) brightness(1.02)' },
   { id: 'blockbuster', name: 'Blockbuster', category: 'Cinematic', css: 'contrast(1.1) saturate(1.12) brightness(1.02)' },
@@ -50,6 +54,13 @@ export const VIDEO_EFFECTS: VideoEffect[] = [
   { id: 'infrared',    name: 'Infrared',    category: 'Stylize', css: 'hue-rotate(90deg) saturate(2) contrast(1.1)' },
   { id: 'negative',    name: 'Negative',    category: 'Stylize', css: 'invert(1)' },
   { id: 'thermal',     name: 'Thermal',     category: 'Stylize', css: 'hue-rotate(150deg) saturate(2.4) contrast(1.2) brightness(1.05)' },
+
+  // ── Overlay (drawn on top of the frame) ─────────────────────────────────────
+  { id: 'grain',       name: 'Film grain',  category: 'Overlay', css: '', overlays: ['grain'] },
+  { id: 'vignette',    name: 'Vignette',    category: 'Overlay', css: '', overlays: ['vignette'] },
+  { id: 'scanlines',   name: 'Scanlines',   category: 'Overlay', css: '', overlays: ['scanlines'] },
+  { id: 'glitch',      name: 'Glitch',      category: 'Overlay', css: 'saturate(1.15)', overlays: ['glitch'] },
+  { id: 'vhs',         name: 'VHS',         category: 'Overlay', css: 'saturate(1.2) contrast(1.05)', overlays: ['scanlines', 'grain'] },
 ]
 
 const BY_ID = new Map(VIDEO_EFFECTS.map(e => [e.id, e]))
@@ -78,8 +89,29 @@ export function activeEffectCss(
   return out
 }
 
+/** Overlay layers for an effect id (empty when none). */
+export function effectOverlays(id?: string | null): OverlayId[] {
+  return getEffect(id)?.overlays ?? []
+}
+
+/** The union of overlay ids active at time t — from effect ITEMS plus the visible clips' looks the
+ *  caller passes in (structural param). Deduped. */
+export function activeOverlays(
+  items: ReadonlyArray<{ contentType?: string; startTime: number; inPoint: number; outPoint: number; look?: string }>,
+  t: number,
+  extraLookIds: (string | undefined)[] = [],
+): OverlayId[] {
+  const set = new Set<OverlayId>()
+  for (const id of extraLookIds) for (const o of effectOverlays(id)) set.add(o)
+  for (const i of items) {
+    if (i.contentType !== 'effect' || !i.look) continue
+    if (t >= i.startTime && t < i.startTime + (i.outPoint - i.inPoint)) for (const o of effectOverlays(i.look)) set.add(o)
+  }
+  return [...set]
+}
+
 /** Effects grouped by category, for a picker UI. */
 export function effectsByCategory(): { category: VideoEffect['category']; effects: VideoEffect[] }[] {
-  const cats: VideoEffect['category'][] = ['Cinematic', 'Color', 'Mood', 'Stylize']
+  const cats: VideoEffect['category'][] = ['Cinematic', 'Color', 'Mood', 'Stylize', 'Overlay']
   return cats.map(category => ({ category, effects: VIDEO_EFFECTS.filter(e => e.category === category) }))
 }

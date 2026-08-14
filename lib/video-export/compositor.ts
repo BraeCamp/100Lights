@@ -20,8 +20,46 @@
  */
 
 import type { CaptionStyle, TimelineItem, Track, TransitionType, VideoAdjustments } from '@/lib/editor-types'
-import { effectCss, activeEffectCss } from '@/lib/video-effects'
+import { effectCss, activeEffectCss, activeOverlays, type OverlayId } from '@/lib/video-effects'
 import { activeSpotlight } from '@/lib/video-multicam'
+
+// ── Overlay layer (grain / vignette / scanlines / glitch) — drawn on top of the graded frame ──────
+let _noiseTile: HTMLCanvasElement | null = null
+function noiseTile(): HTMLCanvasElement | null {
+  if (_noiseTile) return _noiseTile
+  if (typeof document === 'undefined') return null
+  const N = 128, c = document.createElement('canvas'); c.width = N; c.height = N
+  const cx = c.getContext('2d'); if (!cx) return null
+  const img = cx.createImageData(N, N)
+  for (let i = 0; i < img.data.length; i += 4) { const v = (Math.random() * 255) | 0; img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = 255 }
+  cx.putImageData(img, 0, 0); _noiseTile = c; return c
+}
+
+function drawOverlays(ctx: CanvasRenderingContext2D, W: number, H: number, overlays: OverlayId[], t: number): void {
+  if (!overlays.length) return
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none'
+  for (const ov of overlays) {
+    if (ov === 'vignette') {
+      const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.34, W / 2, H / 2, Math.max(W, H) * 0.72)
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.55)')
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+    } else if (ov === 'scanlines') {
+      ctx.globalAlpha = 0.16; ctx.fillStyle = '#000'
+      for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1)
+      ctx.globalAlpha = 1
+    } else if (ov === 'grain' || ov === 'vhs') {
+      const tile = noiseTile()
+      if (tile) {
+        const pat = ctx.createPattern(tile, 'repeat')
+        if (pat) { ctx.globalCompositeOperation = 'overlay'; ctx.globalAlpha = 0.10; ctx.fillStyle = pat; const ox = (Math.random() * tile.width) | 0, oy = (Math.random() * tile.height) | 0; ctx.save(); ctx.translate(-ox, -oy); ctx.fillRect(ox, oy, W + tile.width, H + tile.height); ctx.restore(); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1 }
+      }
+    } else if (ov === 'glitch') {
+      const seed = Math.sin(t * 12.9898) * 43758.5453; const fire = (seed - Math.floor(seed)) > 0.55
+      if (fire) { for (let k = 0; k < 3; k++) { const sy = (Math.random() * H) | 0, sh = (2 + Math.random() * 9) | 0, dx = ((Math.random() * 22) - 11) | 0; try { ctx.globalAlpha = 0.85; ctx.drawImage(ctx.canvas, 0, sy, W, sh, dx, sy, W, sh) } catch { /* tainted */ } } ctx.globalAlpha = 1 }
+    }
+  }
+  ctx.restore()
+}
 import { DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
 import { captionWords } from '@/lib/captions'
@@ -275,6 +313,9 @@ export function drawFrame(
       }
     }
   }
+
+  // Effect overlays (grain / vignette / scanlines / glitch) — from the visible clips' looks + effect items.
+  drawOverlays(ctx, W, H, activeOverlays(state.items, t, stack.map(c => c.look)), t)
 
   // Vignette overlay (separate radial gradient in the preview, above the video).
   const vignette = adjustments.vignette ?? 0

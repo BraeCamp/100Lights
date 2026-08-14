@@ -105,6 +105,8 @@ interface Props {
   captionStyle?: CaptionStyle
   /** Per-clip grade of the active clip, as a CSS filter chain appended after the global grade. */
   clipGradeFilter?: string
+  /** Effect overlays active at the playhead (grain/vignette/scanlines) — drawn over the frame. */
+  overlays?: import('@/lib/video-effects').OverlayId[]
   /** Parsed LUT of the active clip — rendered via a WebGL overlay canvas. */
   lutData?: LutData | null
   showVUMeter?: boolean
@@ -238,6 +240,7 @@ export default function VideoPlayer({
   musicViz = [],
   captionStyle = DEFAULT_CAPTION_STYLE,
   clipGradeFilter = '',
+  overlays = [],
   lutData = null,
   showVUMeter = false,
   onSeekRequest,
@@ -954,6 +957,14 @@ export default function VideoPlayer({
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >
+          {/* Effect overlays (grain / vignette / scanlines) — over the video, matching the export */}
+          {overlays.length > 0 && (
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 3 }}>
+              {overlays.includes('vignette') && <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.55) 100%)' }} />}
+              {overlays.includes('scanlines') && <div style={{ position: 'absolute', inset: 0, background: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0 1px, transparent 1px 3px)' }} />}
+              {(overlays.includes('grain') || overlays.includes('vhs')) && <div style={{ position: 'absolute', inset: 0, opacity: 0.12, mixBlendMode: 'overlay', backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")", backgroundSize: '150px 150px' }} />}
+            </div>
+          )}
           {/* Under-layers — lower-track clips composited beneath the active clip */}
           {underLayers.map(layer => layer.kind === 'video' ? (
             <video

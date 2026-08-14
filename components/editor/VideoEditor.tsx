@@ -77,7 +77,7 @@ import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/ty
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType, TempoSeg } from '@/lib/editor-types'
 import { projectBeatLines, clipBeatLines, nearestSorted } from '@/lib/video-beats'
 import { autoEditTimeline, type AutoEditOptions } from '@/lib/video-auto-edit'
-import { VIDEO_EFFECTS, effectsByCategory, getEffect, activeEffectCss } from '@/lib/video-effects'
+import { VIDEO_EFFECTS, effectsByCategory, getEffect, activeEffectCss, activeOverlays } from '@/lib/video-effects'
 import { buildMulticam, activeSpotlight } from '@/lib/video-multicam'
 import { analyzeSpeaker, speakerActivityAt, type SpeakerTrack } from '@/lib/speaker-detect'
 import BeatMapEditor from './BeatMapEditor'
@@ -4395,6 +4395,7 @@ export default function VideoEditor({
                       musicViz={activeMusicViz}
                       captionStyle={captionStyle}
                       clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
+                      overlays={activeOverlays(timelineItems, currentTime, viewerClip ? [viewerClip.look] : [])}
                       lutData={activeLut}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
@@ -4479,6 +4480,7 @@ export default function VideoEditor({
                       musicViz={activeMusicViz}
                       captionStyle={captionStyle}
                       clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
+                      overlays={activeOverlays(timelineItems, currentTime, viewerClip ? [viewerClip.look] : [])}
                       lutData={activeLut}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
