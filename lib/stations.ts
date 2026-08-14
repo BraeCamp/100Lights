@@ -63,6 +63,10 @@ export interface Station {
   fullScene?: Record<string, unknown>
 }
 
+// Large auto-curated playlists live in their own module (keeps this file readable). The only edge back
+// to here is the BroadcastTrack TYPE, which is erased at compile time — so there's no runtime cycle.
+import { CALM_ORCHESTRAL } from './broadcast-playlists'
+
 // Kevin MacLeod (incompetech.com) — CC BY 3.0. We control the playlist, so the credit is stored
 // per track (no recognition/AudD needed — that's only for unknown audio). Streams through the
 // broadcast audio proxy (incompetech is allow-listed). Put the full credit in the video description.
@@ -95,10 +99,13 @@ export const STATIONS: Station[] = [
     // with the music. No beat-cuts, no speed ramps, no colour flashing — energy-match off so it stays
     // even and peaceful for hours.
     scene: { style: 'wave', paletteId: 'aurora', videoMode: 'living', videoLook: 'dream', videoSet: ['Light', 'Ambient', 'Nature', 'Aerial'], brightnessSet: ['mid', 'dark'], speedSet: ['slow'], matchEnergy: false, reactive: true, autoEdit: false, editRate: 0.5, autoSpeed: false, beatColor: false },
-    // Curated calm classical/orchestral — gentle strings, piano and lute. All Kevin MacLeod (CC BY 3.0),
-    // each URL HEAD-verified; streams through the broadcast audio proxy (incompetech is allow-listed).
-    // Static (not Jamendo) so it plays reliably; swap/add tracks in the radio admin any time.
-    tracks: ['Gymnopedie No 1', 'String Impromptu Number 1', 'Ascending the Vale', 'Meditation Impromptu 03', 'Meditation Impromptu 01', 'At Rest', 'Anguish', 'Reawakening', 'Dreamy Flashback', 'Heartbreaking', 'Piano Between', 'Water Lily', 'Willow and the Light', 'Winter Reflections', 'Deliberate Thought', 'Sad Trio', 'Suonatore di Liuto', 'Divertissement', 'Peace of Mind', 'Ossuary 5 - Rest', 'Comfortable Mystery 2'].map(km),
+    // ~186 curated calm classical/orchestral tracks from TWO CC-attributed artists — Kevin MacLeod
+    // (CC BY 3.0) + Scott Buckley (CC BY 4.0) — every URL HEAD-verified (see lib/broadcast-playlists).
+    // Static so it plays reliably right now; the `jamendo` tags below LAYER ON TOP (merged + deduped by
+    // the playlist route) so the pool auto-grows past 200 with fresh variety whenever Jamendo's API is
+    // reachable. Swap/add tracks in the radio admin any time.
+    tracks: CALM_ORCHESTRAL,
+    jamendo: { tags: 'classical+relaxing', order: 'popularity_total', limit: 80 },
     shuffle: true,
     showNowPlaying: true,
   },

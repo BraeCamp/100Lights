@@ -48,11 +48,17 @@ export async function GET(req: NextRequest) {
 
   const def = stationGenre(station)
   let tracks = await localTracks(station.slug)
-  let source: 'local' | 'static' | 'jamendo' | 'none' = tracks.length ? 'local' : 'none'
-  if (!tracks.length && station.tracks?.length) { tracks = station.tracks; source = 'static' }
-  if (!tracks.length && station.jamendo) {
-    tracks = await jamendoTracks(station.jamendo.tags, station.jamendo.order, def)
-    if (tracks.length) source = 'jamendo'
+  let source: 'local' | 'static' | 'jamendo' | 'static+jamendo' | 'none' = tracks.length ? 'local' : 'none'
+  // No local files → build from the station's static list AND its Jamendo tags, MERGED. Static plays
+  // reliably; Jamendo layers fresh variety on top when its API is reachable (and simply contributes
+  // nothing when it's down). Deduped by URL + title|artist so re-runs don't stack the same track.
+  if (!tracks.length) {
+    const staticTracks = station.tracks ?? []
+    const jamendo = station.jamendo ? await jamendoTracks(station.jamendo.tags, station.jamendo.order, def) : []
+    const seen = new Set<string>()
+    const key = (t: BroadcastTrack) => (t.url || '').toLowerCase() + '|' + `${t.title}|${t.artist ?? ''}`.toLowerCase()
+    tracks = [...staticTracks, ...jamendo].filter(t => { const k = key(t); if (seen.has(k)) return false; seen.add(k); return true })
+    source = staticTracks.length && jamendo.length ? 'static+jamendo' : staticTracks.length ? 'static' : jamendo.length ? 'jamendo' : 'none'
   }
   // Ensure every track has a genre (local/static have no tags) → the client uses it as the prior.
   tracks = tracks.map(t => (t.genre ? t : { ...t, genre: def }))

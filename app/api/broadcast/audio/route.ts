@@ -12,6 +12,7 @@ const ALLOW_HOSTS = [
   'cdn.pixabay.com', 'pixabay.com',
   'files.freemusicarchive.org', 'freemusicarchive.org',
   'incompetech.com', 'dl.dropboxusercontent.com', 'archive.org', 'ia800000.us.archive.org',
+  'scottbuckley.com.au',
 ]
 const allowed = (h: string) => ALLOW_HOSTS.some(a => h === a || h.endsWith('.' + a) || h === a.replace(/^www\./, ''))
 
