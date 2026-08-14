@@ -11,7 +11,10 @@
  *
  * If the bucket allowlist changes in Cloudflare, mirror it here.
  */
-const R2_CORS_ORIGINS = new Set(['https://100lights.com', 'http://localhost:3000'])
+// NB: the dev server runs on :3001 too — keep both localhost ports here AND in the bucket's CORS
+// allowlist (Cloudflare dashboard), or direct-to-R2 media reads/uploads fail CORS on :3001 and fall
+// back to the (4 MB-capped) proxy.
+const R2_CORS_ORIGINS = new Set(['https://100lights.com', 'http://localhost:3000', 'http://localhost:3001'])
 
 export function r2CorsEligible(): boolean {
   return typeof window !== 'undefined' && R2_CORS_ORIGINS.has(window.location.origin)

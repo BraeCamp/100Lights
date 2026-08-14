@@ -11,9 +11,18 @@ export interface LibraryMediaItem {
   createdAt: string
 }
 
+// DEV_OPEN test user (dev builds only; mirrors presign-upload/signed-url) — lets headless test tools
+// act as a fixed user via the x-test-user header. Double-gated on NODE_ENV, so it's inert in production.
+function devUserId(req: Request, clerkId: string | null): string | null {
+  if (clerkId) return clerkId
+  const t = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production' ? req.headers.get('x-test-user') : null
+  return t ? `test-${t}` : null
+}
+
 // GET /api/media/library — list all media for the current user
-export async function GET() {
-  const { userId } = await auth()
+export async function GET(req: Request) {
+  const { userId: clerkId } = await auth()
+  const userId = devUserId(req, clerkId)
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
@@ -40,7 +49,8 @@ export async function GET() {
 
 // POST /api/media/library — register an uploaded media item
 export async function POST(req: Request) {
-  const { userId } = await auth()
+  const { userId: clerkId } = await auth()
+  const userId = devUserId(req, clerkId)
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   let body: { id: string; name: string; contentType: string; duration?: number; r2Key: string; thumbnail?: string }

@@ -24,7 +24,10 @@ async function ensureUploadLog() {
 const EXT_OK = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.mp3', '.wav', '.flac', '.aac', '.m4a', '.ogg', '.opus'])
 
 export async function POST(req: Request) {
-  const { userId } = await auth()
+  const { userId: clerkId } = await auth()
+  // DEV_OPEN test user (dev builds only) — headless tools upload via the x-test-user header. Inert in prod.
+  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production' ? req.headers.get('x-test-user') : null
+  const userId = clerkId ?? (testUser ? `test-${testUser}` : null)
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const mediaId = (req.headers.get('x-media-id') || '').trim()
