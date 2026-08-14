@@ -13,6 +13,7 @@ export class MotionDetector {
   private prev: Uint8ClampedArray | null = null
   private c: HTMLCanvasElement
   private ctx: CanvasRenderingContext2D
+  threshold = 55   // per-pixel luma-delta to count as motion; lower it on DARK clips (less contrast)
   constructor(private sw = 128, private sh = 72) {
     this.c = document.createElement('canvas')
     this.c.width = sw; this.c.height = sh
@@ -34,7 +35,7 @@ export class MotionDetector {
       const i = (y * this.sw + x) * 4
       const dl = Math.abs((d[i] + d[i + 1] + d[i + 2]) - (prev[i] + prev[i + 1] + prev[i + 2]))
       sum += dl
-      if (dl > 55) {
+      if (dl > this.threshold) {
         if (x < minx) minx = x; if (x > maxx) maxx = x
         if (y < miny) miny = y; if (y > maxy) maxy = y
         cx += x; cy += y; count++

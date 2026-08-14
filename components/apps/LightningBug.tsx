@@ -328,9 +328,9 @@ const GENRE_LOOK: Record<string, { modes: string[]; looks: string[]; palettes: s
   'Ambient': { modes: ['living', 'ink', 'none'], looks: ['dream', 'cool'], palettes: ['ice', 'aurora', 'ocean'] },
   'Lofi / Chill': { modes: ['none', 'living', 'oil', 'super8'], looks: ['warm', 'dream', 'film'], palettes: ['sunset', 'candy', 'aurora'] },
   'Hip-hop': { modes: ['vhs', 'cartoon', 'glitch'], looks: ['noir', 'film', 'blockbuster', 'lean', 'spotlight'], palettes: ['fire', 'neon', 'mono'] },
-  'Electronic': { modes: ['neonedge', 'glitch', 'infrared', 'datamosh', 'fisheye'], looks: ['neonnoir', 'synthgrid', 'halo', 'dream', 'cool'], palettes: ['neon', 'aurora', 'candy'] },
+  'Electronic': { modes: ['neonedge', 'glitch', 'infrared', 'datamosh', 'fisheye'], looks: ['neonnoir', 'halo', 'dream', 'cool'], palettes: ['neon', 'aurora', 'candy'] },
   'Rock / Band': { modes: ['comic', 'vhs', 'anime', 'datamosh'], looks: ['noir', 'film', 'bleach'], palettes: ['fire', 'mono', 'sunset'] },
-  'Pop': { modes: ['cartoon', 'anime', 'comic', 'chroma', 'fisheye'], looks: ['warm', 'dream', 'blockbuster', 'giallo', 'neonnoir', 'synthgrid', 'halo'], palettes: ['candy', 'sunset', 'neon'] },
+  'Pop': { modes: ['cartoon', 'anime', 'comic', 'chroma', 'fisheye'], looks: ['warm', 'dream', 'blockbuster', 'giallo', 'neonnoir', 'halo'], palettes: ['candy', 'sunset', 'neon'] },
   'Orchestral': { modes: ['ink', 'oil', 'none'], looks: ['noir', 'film', 'dream', 'blockbuster', 'spotlight'], palettes: ['ice', 'ocean', 'mono'] },
 }
 const ENERGY_LOOK: Record<'calm' | 'mid' | 'hot', { modes: string[]; looks: string[]; palettes: string[] }> = {
@@ -420,6 +420,10 @@ const SWITCH_TRANSITIONS: { id: string; dur: number; o0: string; t0: string; f0:
 // looks messy, so a song mostly stays on ONE class (Brae) — animation suits electronic especially.
 const ANIMATED_CATS = new Set<string>(['Abstract', 'Patterns', 'Neon', 'Light'])
 const isAnimClip = (cat: string) => ANIMATED_CATS.has(cat)
+// Categories that can actually contain SUBJECTS (people / cars / animals). On everything else (nature,
+// abstract, aerial, light shows…) running COCO object detection is wasted CPU + false-positive clutter —
+// motion-only is the right, lighter read there.
+const SUBJECT_CATS = new Set<string>(['City', 'Streets', 'Portrait', 'Cozy', 'Film', 'Animals'])
 
 // GENRE → EDITING style. Universal, intensity-scaled behavior is the baseline; this just NUDGES it per
 // genre. holdMul scales the cut pacing (metal fast, lofi/orchestral hold long); tierCap limits transition
@@ -586,7 +590,6 @@ const VIDEO_LOOKS: VideoLook[] = [
   { id: 'bleach', name: 'Bleach', css: 'saturate(0.42) contrast(1.4) brightness(1.05)', overlays: ['grain', 'vignette'] },   // desaturated grit (grunge/rock)
   { id: 'giallo', name: 'Giallo', css: 'saturate(1.65) contrast(1.16) hue-rotate(-6deg) brightness(1.02)', overlays: ['vignette'] },  // lurid technicolor reds
   { id: 'lean', name: 'Lean', css: 'sepia(0.5) hue-rotate(215deg) saturate(1.5) contrast(1.05)', overlays: ['scanlines', 'grain'] },  // purple phonk wash
-  { id: 'synthgrid', name: 'Synth grid', css: 'saturate(1.3) contrast(1.1) brightness(1.02)', overlays: ['grid'] },        // neon perspective grid (synthwave)
   { id: 'spotlight', name: 'Spotlight', css: 'contrast(1.32) brightness(0.97) saturate(1.05)', overlays: ['spotlight'] },  // chiaroscuro performance-in-void
   { id: 'halo', name: 'Halo', svg: 'mv-halo' },  // region-based: neon-glow only the bright shapes on screen
 ]
@@ -1668,10 +1671,14 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   }, [idleTransition, running])
 
   const curClipPeopleRef = useRef(false)   // the current clip reads as people-oriented (Portrait / model / dancer) → focus people effects
+  const curClipSubjectsRef = useRef(true)  // clip's category can contain SUBJECTS (people/cars/animals) → worth running object detection
+  const curClipDarkRef = useRef(false)     // dark clip → motion detection needs more sensitivity
   const curClipBlockRef = useRef<Set<string>>(new Set())   // effect ids DISABLED on the current clip (from the admin curation)
   useEffect(() => {
     bgClipIdRef.current = bgClip?.id ?? null
     curClipPeopleRef.current = !!bgClip && (bgClip.category === 'Portrait' || PEOPLE_RE.test(bgClip.title || ''))
+    curClipSubjectsRef.current = !!bgClip && SUBJECT_CATS.has(bgClip.category)
+    curClipDarkRef.current = !!bgClip && bgClip.brightness === 'dark'
     curClipBlockRef.current = new Set(bgClip?.blockEdits ?? [])
   }, [bgClip])
   // Seed / refresh the lookahead whenever shuffle is active and the clip changes; clear it off.
@@ -1826,6 +1833,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       raf = requestAnimationFrame(loop)
       const video = getVideo(), fx = fxCanvasRef.current, wrap = wrapRef.current
       if (!video || !fx || !wrap || video.readyState < 2 || !video.videoWidth) { return }
+      motion.threshold = curClipDarkRef.current ? 32 : 55   // dark clips: lower the motion threshold (less contrast to work with)
       const w = wrap.clientWidth, h = wrap.clientHeight
       if (fx.width !== w || fx.height !== h) { fx.width = w; fx.height = h }
       const ctx = fx.getContext('2d'); if (!ctx) return
@@ -1929,7 +1937,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       if (kind === 'motion') boxRef.current = lerpBox(boxRef.current, motion.detect(video), 0.3)
       else if (kind === 'object' && model && t - lastDetect > 170) {
         lastDetect = t
-        detectObjects(model, video).then(bs => { if (alive) { boxesRef.current = bs; boxRef.current = lerpBox(boxRef.current, bs[0] ?? null, 0.4) } }).catch(() => {})
+        // Tag-adaptive: only run object detection where SUBJECTS can exist (city/streets/portrait/…).
+        // On nature/abstract/etc. it's wasted CPU + false boxes — fall back to a light motion read instead.
+        if (curClipSubjectsRef.current) detectObjects(model, video).then(bs => { if (alive) { boxesRef.current = bs; boxRef.current = lerpBox(boxRef.current, bs[0] ?? null, 0.4) } }).catch(() => {})
+        else { boxesRef.current = []; boxRef.current = lerpBox(boxRef.current, motion.detect(video), 0.3) }
       }
       drawEditFx(ctx, w, h, activeEdit, video, boxRef.current, boxesRef.current)
     }
@@ -2032,13 +2043,15 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
       if (!a) {
         // Turning Auto ON: set the reactive stack + baselines ONCE — you can tweak any of it after.
         // Drum punch + colour-on-beat default OFF (Brae) — turn them on manually if wanted.
-        setReactive(true); setMatchEnergy(true); setBeatColor(false); setAutoShuffle(true)
+        // Auto-edit rides with Auto (Brae): the bar-synced cuts + spike effects come on together.
+        setReactive(true); setMatchEnergy(true); setBeatColor(false); setAutoShuffle(true); setAutoEdit(true)
         setSwitchChance(0.4); setPunchAmt(0)
         lastAutoVibeRef.current = ''; lastAutoChangeRef.current = 0
         userPaletteRef.current = false   // fresh Auto session picks palettes by genre; a palette you pick after persists
         applyAuto()
         nextClipRef.current()   // pick an initial background so there's something to play/switch
-
+      } else {
+        setAutoEdit(false)   // Auto off → auto-edit off (they're linked)
       }
       return !a
     })
