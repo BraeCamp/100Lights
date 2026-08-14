@@ -182,14 +182,9 @@ export default function RadioAdmin() {
   const addBtn = (t: BroadcastTrack) => open ? <button type="button" onClick={() => addTrackToOpen(t)} title={`Add to ${openStation?.title}`} style={{ ...btn('var(--accent)', '#0e0d12'), padding: '6px 10px', flexShrink: 0 }}><Plus size={13} /> Add</button> : null
 
   return (
-    <main style={{ maxWidth: 1000, margin: '0 auto', padding: '24px 18px 60px' }}>
-      <h1 style={{ fontSize: 24, fontWeight: 850, color: 'var(--text-primary)', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 8 }}><Radio size={22} /> Lightning Bug — Radio control panel</h1>
-      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 8px', maxWidth: 720 }}>
-        Create + edit broadcast stations — visual look, audio source, and playlist. Changes save to the database and take effect on the live stream with no redeploy. Search Jamendo below to add tracks to whichever station is open.
-      </p>
-      <p style={{ fontSize: 12.5, margin: '0 0 20px', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <a href="/admin/lightning-bug" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>← Background library</a>
-        <a href="/apps/lightningbug/broadcast" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Broadcast launcher →</a>
+    <div>
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 20px', maxWidth: 720 }}>
+        Create + edit broadcast stations — visual look, audio source, and playlist. Changes save to the database and take effect on the live stream with no redeploy. Open a station to add tracks (Jamendo search or paste a link). <a href="/apps/lightningbug/broadcast" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Broadcast launcher →</a>
       </p>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 0 10px' }}>
@@ -390,7 +385,7 @@ export default function RadioAdmin() {
         </>
       )}
 
-    </main>
+    </div>
   )
 }
 

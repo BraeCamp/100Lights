@@ -24,4 +24,5 @@ pactl set-default-sink broadcast
 pactl set-default-source broadcast.monitor
 echo "[entrypoint] audio sink 'broadcast' ready (ffmpeg reads broadcast.monitor)"
 
-exec node stream.mjs
+# AGENT=1 → control-plane mode (dashboard-driven start/stop, status reporting). Else single-station.
+if [ "${AGENT:-}" = "1" ]; then exec node agent.mjs; else exec node stream.mjs; fi

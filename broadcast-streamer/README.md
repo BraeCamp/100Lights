@@ -73,10 +73,26 @@ docker run -d --restart always --shm-size=1g \
 - Turn on YouTube's **auto-reconnect / resume** and consider `docker update --restart always` so it
   survives reboots.
 
-## What's NOT here yet (next phase)
-Editing a broadcast as a **full Lightning Bug project** (all settings, saved server-side per
-`BROADCAST_ID`) rather than the admin panel's subset. The worker already supports `BROADCAST_ID=` for
-when that lands — it'll load `?broadcast=<id>` instead of `?station=<slug>&broadcast=1`.
+## Agent mode — control it from the dashboard (recommended for scale)
+
+Instead of hard-coding one `STATION`, run the box as a **control-plane agent**: it registers with
+100Lights and streams whatever the **Broadcasts dashboard** (`/admin/lightning-bug`) assigns it —
+remote Start/Stop, live status, no redeploy.
+
+1. In the app env set `BROADCAST_AGENT_TOKEN=<a long secret>`.
+2. On the box, set `AGENT=1`, `CONTROL_URL=https://100lights.com`, `AGENT_TOKEN=<same secret>`,
+   a stable `WORKER_ID`, and a stream key per broadcast it may run (`KEY_CINEMATIC=…`, or
+   `KEYS={"cinematic":"…"}`). `docker compose up -d`.
+3. In the dashboard, press **Go live** on a broadcast → the agent picks it up within ~10s.
+
+**Scale:** one container = one stream (each has its own display + audio sink). Run several agent
+containers (unique `WORKER_ID`) — the control plane spreads live broadcasts across them and keeps
+exactly one worker on each. Keys stay on the workers; the app/DB never sees them.
+
+## Full-interface broadcasts
+A broadcast's whole look is authored in the real Lightning Bug UI (`?broadcastEdit=<slug>` from the
+admin) and saved server-side; the streamer renders it automatically (via `?station=` or
+`?broadcast=<id>`). Nothing to configure here.
 
 ## Note on testing
 The browser-automation half was validated against the live broadcast page; the ffmpeg **x11grab +

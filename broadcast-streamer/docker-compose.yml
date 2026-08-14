@@ -19,3 +19,16 @@ services:
   #     BASE_URL: https://100lights.com
   #     STATION: study-lofi
   #     STREAM_KEY: ${STUDY_KEY}
+
+  # ── AGENT MODE (control-plane) — one idle worker, streams whatever the dashboard assigns it.
+  # Run several of these (unique WORKER_ID) to scale; start/stop from /admin/lightning-bug (Broadcasts).
+  # agent:
+  #   build: .
+  #   restart: always
+  #   shm_size: 1gb
+  #   environment:
+  #     AGENT: "1"
+  #     CONTROL_URL: https://100lights.com
+  #     AGENT_TOKEN: ${AGENT_TOKEN}
+  #     WORKER_ID: oracle-free-1
+  #     KEYS: ${KEYS}          # {"cinematic":"key1","study-lofi":"key2"}

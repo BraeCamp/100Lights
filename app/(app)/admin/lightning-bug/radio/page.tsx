@@ -1,9 +1,6 @@
-import type { Metadata } from 'next'
-import RadioAdmin from './RadioAdmin'
+import { redirect } from 'next/navigation'
 
-// Gated by app/(app)/admin/layout.tsx (account owner + ADMIN_CODE cookie).
-export const metadata: Metadata = { title: 'Lightning Bug — Radio', robots: { index: false, follow: false } }
-
-export default function LightningBugRadioAdminPage() {
-  return <RadioAdmin />
+// The radio/station editor is now a tab in the consolidated admin.
+export default function RadioRedirect() {
+  redirect('/admin/lightning-bug?tab=radio')
 }
