@@ -6,7 +6,7 @@
 // spectrum, and more, with colour/font controls. Reuses lib/song-video (the falling-notes engine,
 // via o.media = the <video> so it follows the video's clock) + the transcription pipeline.
 // v1 = live preview + controls; video EXPORT is the next pass. Non-AI editing is free/unlimited.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
 import { Loader2, Play, Square, Mic, Radio, Maximize2, X, ChevronLeft, Save, Upload, Download, DownloadCloud, Check, Shuffle, SkipForward, Activity, Sparkles, Star, Pencil, Link2, Moon, Sun, Circle, Turtle, Rabbit, Gauge, Coffee, Palette, Film, SlidersHorizontal, Menu, Search, Scan, Crosshair, type LucideIcon } from 'lucide-react'
 import { analyzeBufferAsync, type FeatureFrame } from '@/lib/voice-backfill'
@@ -33,6 +33,109 @@ import { saveAssets, removeAssets, localUrl, hasAsset, downloadToDevice } from '
 
 type Controller = { play: () => void; pause: () => void; destroy: () => void; update: (p: Record<string, unknown>) => void; resize: () => void }
 const FONTS = ['system-ui', 'Georgia, serif', 'ui-monospace, monospace', 'Impact, sans-serif']
+
+// ── Detector overlay (diagnostic panel) ──────────────────────────────────────────────────────────
+// Split OUT of the main component on purpose: it polls the live-read refs ~2.5×/s, and if that setState
+// lived in the parent it would re-render the whole (~3.6k-line) visualizer every 400ms while the panel
+// is open. As its own memoized component it owns that state, so only this small subtree repaints; the
+// parent stays still. `read` is a stable parent callback that snapshots the refs into plain values.
+type DetStats = {
+  level: number; beaty: number; bass: number; bright: number; notes: string[]; objs: { label: string; n: number }[]
+  kick: number; snare: number; hat: number; centroid: number; flat: number; crest: number; chord: string
+  motion: number; luma: number; hue: number
+  gridLocked: boolean; gridBpm: number; bar: number; beatInBar: number; bpb: number; section: string; sectionIdx: number
+  intensity: number
+}
+type DetRead = { sonic: { family: string; profile: string; confidence: number } | null; key: KeyResult | null; stats: DetStats | null }
+
+const DetectorOverlay = memo(function DetectorOverlay({ read, running, bpm, energyBand, modelState, hasBg, barSync, lookName, modeName, paletteName }: {
+  read: () => DetRead
+  running: boolean; bpm: number; energyBand: Energy
+  modelState: 'idle' | 'loading' | 'ready' | 'error'; hasBg: boolean; barSync: boolean
+  lookName: string; modeName: string | null; paletteName: string
+}) {
+  const [view, setView] = useState<DetRead>(() => read())
+  useEffect(() => {
+    const id = setInterval(() => setView(read()), 400)
+    return () => clearInterval(id)
+  }, [read])
+  const sonicView = view.sonic, keyView = view.key, detStats = view.stats
+  return (
+    <div style={{ position: 'absolute', left: 12, top: 12, width: 258, maxWidth: '82%', padding: '11px 13px', borderRadius: 12, background: 'rgba(0,0,0,0.66)', color: '#fff', pointerEvents: 'none', backdropFilter: 'blur(4px)', fontVariantNumeric: 'tabular-nums' }}>
+      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', opacity: 0.65, marginBottom: 7, display: 'flex', alignItems: 'center', gap: 6 }}><Scan size={12} /> Detector {running ? <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 800, color: '#34d399' }}>● LIVE</span> : null}</div>
+
+      {/* HEARING */}
+      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, marginBottom: 3 }}>Hearing</div>
+      <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Activity size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> Genre: {sonicView ? <><strong>{sonicView.family}</strong> · {Math.round(sonicView.confidence * 100)}%</> : running ? 'listening…' : 'play audio'}</div>
+      <div style={{ fontSize: 12.5, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}><Palette size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> Key: {keyView ? <><strong>{keyView.name}</strong> · {moodFrom(keyView.mode, energyBand)} · {Math.round(keyView.conf * 100)}%</> : running ? 'no clear key (percussive)' : '—'}</div>
+      {detStats && detStats.notes.length > 0 && <div style={{ fontSize: 11, opacity: 0.8, marginTop: 3, marginLeft: 18, display: 'flex', alignItems: 'center', gap: 5 }}>Notes: {detStats.notes.map(n => <span key={n} style={{ padding: '1px 5px', borderRadius: 5, background: 'rgba(147,197,255,0.22)', fontWeight: 700 }}>{n}</span>)}</div>}
+      <div style={{ fontSize: 11.5, marginTop: 5, marginLeft: 18, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span>♩ <strong>{bpm > 0 ? bpm : '—'}</strong> BPM</span>
+        <span style={{ textTransform: 'capitalize', color: energyBand === 'hot' ? '#f87171' : energyBand === 'mid' ? '#fbbf24' : '#34d399', fontWeight: 700 }}>{running ? energyBand : '—'}</span>
+        <span style={{ opacity: 0.85 }}>beat {detStats ? (detStats.beaty > 0.6 ? 'strong' : detStats.beaty > 0.3 ? 'some' : 'sparse') : '—'}</span>
+        {detStats?.chord && <span style={{ opacity: 0.9 }}>chord <strong>{detStats.chord}</strong></span>}
+      </div>
+      {detStats && (
+        <div style={{ marginTop: 5, marginLeft: 18, display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 12, rowGap: 3 }}>
+          {([['input', detStats.level * 2.2, '#34d399'], ['kick', detStats.kick, '#fb7185'], ['bass', detStats.bass, '#a78bfa'], ['snare', detStats.snare, '#fbbf24'], ['treble', detStats.bright, '#60a5fa'], ['hats', detStats.hat, '#22d3ee']] as [string, number, string][]).map(([lbl, v, c]) => (
+            <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, opacity: 0.85 }}>
+              <span style={{ width: 33 }}>{lbl}</span>
+              <span style={{ display: 'inline-block', flex: 1, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.15)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.round(Math.min(1, Math.max(0, v)) * 100)}%`, background: c, borderRadius: 3 }} /></span>
+            </div>
+          ))}
+        </div>
+      )}
+      {detStats && (
+        <div style={{ fontSize: 10.5, marginTop: 5, marginLeft: 18, opacity: 0.82, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <span>tone <strong>{detStats.centroid < 1200 ? 'dark' : detStats.centroid < 3000 ? 'warm' : 'bright'}</strong> · {Math.round(detStats.centroid)}Hz</span>
+          <span>texture <strong>{detStats.flat < 0.18 ? 'tonal' : detStats.flat < 0.42 ? 'mixed' : 'noisy'}</strong></span>
+          <span>dynamics <strong>{detStats.crest > 0.55 ? 'punchy' : detStats.crest > 0.3 ? 'medium' : 'even'}</strong></span>
+          <span>intensity <strong>{Math.round(detStats.intensity * 100)}%</strong></span>
+        </div>
+      )}
+
+      {/* TIMING — the musical grid (bars / downbeats) + section, and whether Beat-sync is acting on it */}
+      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Timing {barSync ? <span style={{ color: '#34d399' }}>· sync on</span> : null}</div>
+      {detStats?.gridLocked ? (
+        <>
+          <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Gauge size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> bar <strong>{detStats.bar}</strong> · {detStats.bpb}/4 · {detStats.gridBpm} BPM
+            <span style={{ display: 'flex', gap: 4, alignItems: 'center', marginLeft: 2 }}>
+              {Array.from({ length: detStats.bpb }).map((_, i) => {
+                const on = i === detStats.beatInBar, down = i === 0
+                return <span key={i} style={{ width: on ? 9 : 6, height: on ? 9 : 6, borderRadius: 999, transition: 'all .08s', background: down ? (on ? '#f87171' : 'rgba(248,113,113,0.45)') : (on ? '#fff' : 'rgba(255,255,255,0.25)') }} />
+              })}
+            </span>
+          </div>
+          <div style={{ fontSize: 11.5, marginTop: 4, marginLeft: 18, opacity: 0.85 }}>section <strong style={{ textTransform: 'capitalize' }}>{detStats.section}</strong>{detStats.sectionIdx > 0 ? ` · change #${detStats.sectionIdx}` : ''}</div>
+        </>
+      ) : (
+        <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6, opacity: 0.8 }}><Gauge size={12} style={{ opacity: 0.8 }} /> {running ? 'listening for the beat…' : '—'}</div>
+      )}
+
+      {/* SEEING */}
+      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Seeing</div>
+      <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Crosshair size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> {modelState === 'ready' ? (!hasBg ? 'add a video background' : detStats && detStats.objs.length > 0 ? <span>{detStats.objs.map(o => `${o.n > 1 ? o.n + ' ' : ''}${o.label}${o.n > 1 ? 's' : ''}`).join(' · ')}</span> : 'nothing in frame') : modelState === 'loading' ? 'loading detector…' : modelState === 'error' ? 'detector failed to load' : 'starting…'}</div>
+      {detStats && hasBg && (
+        <div style={{ fontSize: 10.5, marginTop: 4, marginLeft: 18, opacity: 0.82, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>motion
+            <span style={{ display: 'inline-block', width: 60, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.15)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.round(Math.min(1, Math.max(0, detStats.motion)) * 100)}%`, background: '#93c5ff', borderRadius: 3 }} /></span>
+          </span>
+          {detStats.luma >= 0 && <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>scene
+            <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: detStats.hue < 0 ? `hsl(0,0%,${Math.round(detStats.luma * 100)}%)` : `hsl(${Math.round(detStats.hue)},60%,${Math.round(25 + detStats.luma * 50)}%)`, border: '1px solid rgba(255,255,255,0.3)' }} />
+            <strong>{detStats.luma < 0.33 ? 'dark' : detStats.luma < 0.66 ? 'mid' : 'bright'}</strong>
+          </span>}
+        </div>
+      )}
+
+      {/* SHOWING */}
+      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Showing</div>
+      <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Sparkles size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> {lookName}{modeName ? ` + ${modeName}` : ''} · {paletteName}</div>
+
+      <div style={{ fontSize: 9.5, opacity: 0.5, marginTop: 7, lineHeight: 1.4 }}>All on-device. Genre is a rough sound-based guess — it nudges Auto’s grade &amp; palette, so a wrong read is why visuals can miss the tone.</div>
+    </div>
+  )
+})
 
 export default function LightningBug() {
   return (
@@ -1135,7 +1238,6 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const ampLutRef = useRef<Float32Array | null>(null)   // byte-dB → linear amplitude lookup
   const lastKeyMsRef = useRef(0)
   const keyVotesRef = useRef<KeyResult[]>([])        // recent key estimates → plurality vote for stability
-  const [keyView, setKeyView] = useState<KeyResult | null>(null)   // for the Detector readout
   // EDITS — region-targeted effects from on-device vision (lib/vision). See EDITS registry above.
   const [edit, setEdit] = useState('none')
   const editRef = useRef('none'); editRef.current = edit
@@ -1148,16 +1250,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
   const [barSync, setBarSync] = useState(false)
   const barSyncRef = useRef(false); barSyncRef.current = barSync
   const sectionCutRef = useRef(false)          // the pending switch is a section boundary → pick a contrasting clip
-  const [sonicView, setSonicView] = useState<{ family: string; profile: string; confidence: number } | null>(null)
   // Extra live diagnostics for the Detector ("test mode") panel. These are heavier / noisier reads that
-  // we only want to compute while diagnosing, so they're all gated on detectorRef and published ~2.5×/s.
-  const [detStats, setDetStats] = useState<{
-    level: number; beaty: number; bass: number; bright: number; notes: string[]; objs: { label: string; n: number }[]
-    kick: number; snare: number; hat: number; centroid: number; flat: number; crest: number; chord: string
-    motion: number; luma: number; hue: number
-    gridLocked: boolean; gridBpm: number; bar: number; beatInBar: number; bpb: number; section: string; sectionIdx: number
-    intensity: number
-  } | null>(null)
+  // we only want to compute while diagnosing — snapshotted from the refs below by readDetector (see the
+  // DetectorOverlay child, which owns the ~2.5×/s state so it doesn't re-render this whole component).
   const detAudioRef = useRef({ kick: 0, snare: 0, hat: 0, centroid: 0, flat: 0, crest: 0, chord: '' })  // smoothed test-mode audio reads
   const detVisRef = useRef({ motion: 0, luma: -1, hue: -1 })                                             // smoothed test-mode vision reads
   const drumBaseRef = useRef({ k: 0, s: 0, h: 0 })                                                       // per-band slow baselines (kick/snare/hat onset)
@@ -1966,28 +2061,28 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edit, detector])
 
-  // Detector readout — surface the on-device reads (normally silent) so you can watch what it hears/sees.
-  // Publishes every 400ms from the refs the loops write, so meters stay lively without per-frame setState.
-  useEffect(() => {
-    if (!detector) { setSonicView(null); setDetStats(null); return }
-    const id = setInterval(() => {
-      // Show the STABLE voted family (30s history) + its agreement %, with the live profile — no flip-flopping.
-      const sv = sonicRef.current, voted = votedFamilyRef.current
-      setSonicView(sv ? { family: voted ? voted.family : sv.family, profile: sv.profile, confidence: voted ? voted.conf : sv.confidence } : null)
-      const ch = chromaRef.current; let mx = 0; for (let p = 0; p < 12; p++) if (ch[p] > mx) mx = ch[p]
-      const notes = mx > 1e-6
-        ? Array.from({ length: 12 }, (_, p) => ({ p, v: ch[p] })).filter(x => x.v > mx * 0.5).sort((x, y) => y.v - x.v).slice(0, 5).map(x => NOTE_NAMES[x.p])
-        : []
-      const counts = boxesRef.current.reduce((mm, b) => (b.label && (mm[b.label] = (mm[b.label] || 0) + 1), mm), {} as Record<string, number>)
-      const objs = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label, n]) => ({ label, n }))
-      const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
-      const gridLocked = beatPeriodRef.current > 0 && beatAnchorRef.current > 0 && gridBpmRef.current > 0
-      setDetStats({ level: Math.min(1, energyEmaRef.current * 3), beaty, bass: bassRatioRef.current, bright: brightRatioRef.current, notes, objs, ...detAudioRef.current, ...detVisRef.current,
+  // Detector readout — snapshot the on-device reads (normally silent) into plain values so the
+  // DetectorOverlay child can poll them ~2.5×/s WITHOUT re-rendering this whole component. Stable
+  // identity (only closes over refs) so the child's poll interval never re-subscribes.
+  const readDetector = useCallback((): DetRead => {
+    // Show the STABLE voted family (30s history) + its agreement %, with the live profile — no flip-flopping.
+    const sv = sonicRef.current, voted = votedFamilyRef.current
+    const sonic = sv ? { family: voted ? voted.family : sv.family, profile: sv.profile, confidence: voted ? voted.conf : sv.confidence } : null
+    const ch = chromaRef.current; let mx = 0; for (let p = 0; p < 12; p++) if (ch[p] > mx) mx = ch[p]
+    const notes = mx > 1e-6
+      ? Array.from({ length: 12 }, (_, p) => ({ p, v: ch[p] })).filter(x => x.v > mx * 0.5).sort((x, y) => y.v - x.v).slice(0, 5).map(x => NOTE_NAMES[x.p])
+      : []
+    const counts = boxesRef.current.reduce((mm, b) => (b.label && (mm[b.label] = (mm[b.label] || 0) + 1), mm), {} as Record<string, number>)
+    const objs = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label, n]) => ({ label, n }))
+    const beaty = Math.min(1, (beatIvBufRef.current.length / 6) * 0.6 + Math.min(1, onsetEmaRef.current * 1.2) * 0.4)
+    const gridLocked = beatPeriodRef.current > 0 && beatAnchorRef.current > 0 && gridBpmRef.current > 0
+    return {
+      sonic, key: keyRef.current,
+      stats: { level: Math.min(1, energyEmaRef.current * 3), beaty, bass: bassRatioRef.current, bright: brightRatioRef.current, notes, objs, ...detAudioRef.current, ...detVisRef.current,
         gridLocked, gridBpm: Math.round(gridBpmRef.current), bar: barCountRef.current, beatInBar: beatInBarRef.current, bpb: beatsPerBarRef.current, section: sectionRef.current, sectionIdx: sectionIdxRef.current,
-        intensity: songIntensityRef.current })
-    }, 400)
-    return () => clearInterval(id)
-  }, [detector])
+        intensity: songIntensityRef.current },
+    }
+  }, [])
 
   // Genre "Looks" — apply a whole scene, with a random genre-appropriate background.
   const [activeLook, setActiveLook] = useState<GenreLook | null>(null)
@@ -2462,8 +2557,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
                   const tally = tonal.reduce((m, vv) => (m[vv.name] = (m[vv.name] || 0) + 1, m), {} as Record<string, number>)
                   const winName = Object.entries(tally).sort((x, y) => y[1] - x[1])[0][0]
                   const rep = [...tonal].reverse().find(vv => vv.name === winName) ?? kr
-                  keyRef.current = rep; if (detectorRef.current) setKeyView(rep)
-                } else if (detectorRef.current && tonal.length === 0) { keyRef.current = null; setKeyView(null) }
+                  keyRef.current = rep   // the DetectorOverlay polls keyRef for its Key readout
+                } else if (detectorRef.current && tonal.length === 0) { keyRef.current = null }
               }
             }
             // ── TEST-MODE detectors — heavier / noisier reads, only computed while the Detector is on ──
@@ -3011,81 +3106,13 @@ function LiveVisualizer({ onExit, initialBg, broadcast }: { onExit: () => void; 
           </button>
         )}
         {/* The on-device "sounds like" read runs in the background (window.__lbSonic) — no chip. */}
-        {/* Detector readout — what the program thinks it's seeing (objects) + hearing (genre/tone). */}
+        {/* Detector readout — what the program thinks it's seeing (objects) + hearing (genre/tone).
+            Split into its own memoized child so its ~2.5×/s poll doesn't re-render the whole app. */}
         {detector && (
-          <div style={{ position: 'absolute', left: 12, top: 12, width: 258, maxWidth: '82%', padding: '11px 13px', borderRadius: 12, background: 'rgba(0,0,0,0.66)', color: '#fff', pointerEvents: 'none', backdropFilter: 'blur(4px)', fontVariantNumeric: 'tabular-nums' }}>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', opacity: 0.65, marginBottom: 7, display: 'flex', alignItems: 'center', gap: 6 }}><Scan size={12} /> Detector {running ? <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 800, color: '#34d399' }}>● LIVE</span> : null}</div>
-
-            {/* HEARING */}
-            <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, marginBottom: 3 }}>Hearing</div>
-            <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Activity size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> Genre: {sonicView ? <><strong>{sonicView.family}</strong> · {Math.round(sonicView.confidence * 100)}%</> : running ? 'listening…' : 'play audio'}</div>
-            <div style={{ fontSize: 12.5, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}><Palette size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> Key: {keyView ? <><strong>{keyView.name}</strong> · {moodFrom(keyView.mode, energyBandRef.current)} · {Math.round(keyView.conf * 100)}%</> : running ? 'no clear key (percussive)' : '—'}</div>
-            {detStats && detStats.notes.length > 0 && <div style={{ fontSize: 11, opacity: 0.8, marginTop: 3, marginLeft: 18, display: 'flex', alignItems: 'center', gap: 5 }}>Notes: {detStats.notes.map(n => <span key={n} style={{ padding: '1px 5px', borderRadius: 5, background: 'rgba(147,197,255,0.22)', fontWeight: 700 }}>{n}</span>)}</div>}
-            <div style={{ fontSize: 11.5, marginTop: 5, marginLeft: 18, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span>♩ <strong>{bpm > 0 ? bpm : '—'}</strong> BPM</span>
-              <span style={{ textTransform: 'capitalize', color: energyBand === 'hot' ? '#f87171' : energyBand === 'mid' ? '#fbbf24' : '#34d399', fontWeight: 700 }}>{running ? energyBand : '—'}</span>
-              <span style={{ opacity: 0.85 }}>beat {detStats ? (detStats.beaty > 0.6 ? 'strong' : detStats.beaty > 0.3 ? 'some' : 'sparse') : '—'}</span>
-              {detStats?.chord && <span style={{ opacity: 0.9 }}>chord <strong>{detStats.chord}</strong></span>}
-            </div>
-            {detStats && (
-              <div style={{ marginTop: 5, marginLeft: 18, display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 12, rowGap: 3 }}>
-                {([['input', detStats.level * 2.2, '#34d399'], ['kick', detStats.kick, '#fb7185'], ['bass', detStats.bass, '#a78bfa'], ['snare', detStats.snare, '#fbbf24'], ['treble', detStats.bright, '#60a5fa'], ['hats', detStats.hat, '#22d3ee']] as [string, number, string][]).map(([lbl, v, c]) => (
-                  <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, opacity: 0.85 }}>
-                    <span style={{ width: 33 }}>{lbl}</span>
-                    <span style={{ display: 'inline-block', flex: 1, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.15)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.round(Math.min(1, Math.max(0, v)) * 100)}%`, background: c, borderRadius: 3 }} /></span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {detStats && (
-              <div style={{ fontSize: 10.5, marginTop: 5, marginLeft: 18, opacity: 0.82, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                <span>tone <strong>{detStats.centroid < 1200 ? 'dark' : detStats.centroid < 3000 ? 'warm' : 'bright'}</strong> · {Math.round(detStats.centroid)}Hz</span>
-                <span>texture <strong>{detStats.flat < 0.18 ? 'tonal' : detStats.flat < 0.42 ? 'mixed' : 'noisy'}</strong></span>
-                <span>dynamics <strong>{detStats.crest > 0.55 ? 'punchy' : detStats.crest > 0.3 ? 'medium' : 'even'}</strong></span>
-                <span>intensity <strong>{Math.round(detStats.intensity * 100)}%</strong></span>
-              </div>
-            )}
-
-            {/* TIMING — the musical grid (bars / downbeats) + section, and whether Beat-sync is acting on it */}
-            <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Timing {barSync ? <span style={{ color: '#34d399' }}>· sync on</span> : null}</div>
-            {detStats?.gridLocked ? (
-              <>
-                <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Gauge size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> bar <strong>{detStats.bar}</strong> · {detStats.bpb}/4 · {detStats.gridBpm} BPM
-                  <span style={{ display: 'flex', gap: 4, alignItems: 'center', marginLeft: 2 }}>
-                    {Array.from({ length: detStats.bpb }).map((_, i) => {
-                      const on = i === detStats.beatInBar, down = i === 0
-                      return <span key={i} style={{ width: on ? 9 : 6, height: on ? 9 : 6, borderRadius: 999, transition: 'all .08s', background: down ? (on ? '#f87171' : 'rgba(248,113,113,0.45)') : (on ? '#fff' : 'rgba(255,255,255,0.25)') }} />
-                    })}
-                  </span>
-                </div>
-                <div style={{ fontSize: 11.5, marginTop: 4, marginLeft: 18, opacity: 0.85 }}>section <strong style={{ textTransform: 'capitalize' }}>{detStats.section}</strong>{detStats.sectionIdx > 0 ? ` · change #${detStats.sectionIdx}` : ''}</div>
-              </>
-            ) : (
-              <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6, opacity: 0.8 }}><Gauge size={12} style={{ opacity: 0.8 }} /> {running ? 'listening for the beat…' : '—'}</div>
-            )}
-
-            {/* SEEING */}
-            <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Seeing</div>
-            <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Crosshair size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> {modelState === 'ready' ? (!hasBg ? 'add a video background' : detStats && detStats.objs.length > 0 ? <span>{detStats.objs.map(o => `${o.n > 1 ? o.n + ' ' : ''}${o.label}${o.n > 1 ? 's' : ''}`).join(' · ')}</span> : 'nothing in frame') : modelState === 'loading' ? 'loading detector…' : modelState === 'error' ? 'detector failed to load' : 'starting…'}</div>
-            {detStats && hasBg && (
-              <div style={{ fontSize: 10.5, marginTop: 4, marginLeft: 18, opacity: 0.82, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>motion
-                  <span style={{ display: 'inline-block', width: 60, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.15)', overflow: 'hidden' }}><span style={{ display: 'block', height: '100%', width: `${Math.round(Math.min(1, Math.max(0, detStats.motion)) * 100)}%`, background: '#93c5ff', borderRadius: 3 }} /></span>
-                </span>
-                {detStats.luma >= 0 && <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>scene
-                  <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 3, background: detStats.hue < 0 ? `hsl(0,0%,${Math.round(detStats.luma * 100)}%)` : `hsl(${Math.round(detStats.hue)},60%,${Math.round(25 + detStats.luma * 50)}%)`, border: '1px solid rgba(255,255,255,0.3)' }} />
-                  <strong>{detStats.luma < 0.33 ? 'dark' : detStats.luma < 0.66 ? 'mid' : 'bright'}</strong>
-                </span>}
-              </div>
-            )}
-
-            {/* SHOWING */}
-            <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.45, margin: '8px 0 3px' }}>Showing</div>
-            <div style={{ fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}><Sparkles size={12} style={{ opacity: 0.8, flexShrink: 0 }} /> {activeVideoLook.name}{videoMode !== 'none' ? ` + ${activeVideoMode.name}` : ''} · {PALETTES.find(p => p.id === colorCfg.paletteId)?.name ?? 'custom'}</div>
-
-            <div style={{ fontSize: 9.5, opacity: 0.5, marginTop: 7, lineHeight: 1.4 }}>All on-device. Genre is a rough sound-based guess — it nudges Auto’s grade &amp; palette, so a wrong read is why visuals can miss the tone.</div>
-          </div>
+          <DetectorOverlay read={readDetector} running={running} bpm={bpm} energyBand={energyBand}
+            modelState={modelState} hasBg={hasBg} barSync={barSync}
+            lookName={activeVideoLook.name} modeName={videoMode !== 'none' ? activeVideoMode.name : null}
+            paletteName={PALETTES.find(p => p.id === colorCfg.paletteId)?.name ?? 'custom'} />
         )}
         {/* Song ID — the recognized track (+ a BPM accuracy check vs the DSP) */}
         {identify && !broadcast && recognized && (
