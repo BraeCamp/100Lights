@@ -29,6 +29,7 @@
     "bg:videos": "node scripts/gen-bg-videos.mjs",
     "bg:fetch": "node scripts/fetch-bg-clips.mjs",
     "bg:publish": "node scripts/publish-bg-clips.mjs",
+    "radio:bake": "node scripts/bake-radio-r2.mjs",
     "bg:tag": "node scripts/tag-bg-clips.mjs",
     "store:upload": "bundle exec fastlane ios metadata",
     "bg:pexels": "node scripts/seed-pexels-bg.mjs",

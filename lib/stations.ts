@@ -12,6 +12,10 @@ export interface BroadcastTrack {
   license?: string        // e.g. "CC BY 3.0", "Jamendo commercial", "Pixabay Content License"
   attribution?: string    // shown in the now-playing overlay; also put this in the video description
   genre?: string          // resolved genre family (lib/genre-map) → feeds the visual classifier prior
+  /** Set when `url` is a CORS-enabled public mirror (Cloudflare R2) → the client fetches it DIRECTLY
+   *  (no /api/broadcast/audio proxy), so it's zero egress to us. Added by the playlist route from the
+   *  radio_audio_mirror table (lib/radio-mirror). Unmirrored remote tracks stay proxied (direct unset). */
+  direct?: boolean
 }
 
 // Visual look for a station — a light subset of the full scene; everything else stays at defaults.

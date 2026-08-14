@@ -10,6 +10,7 @@ import { type BroadcastTrack, type Station } from '@/lib/stations'
 import { getStationDb } from '@/lib/broadcast-stations'
 import { jamendoSearch, jamendoLicensed } from '@/lib/jamendo'
 import { tagsToFamily, type Family } from '@/lib/genre-map'
+import { getMirrorMap } from '@/lib/radio-mirror'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -60,6 +61,12 @@ export async function GET(req: NextRequest) {
     tracks = [...staticTracks, ...jamendo].filter(t => { const k = key(t); if (seen.has(k)) return false; seen.add(k); return true })
     source = staticTracks.length && jamendo.length ? 'static+jamendo' : staticTracks.length ? 'static' : jamendo.length ? 'jamendo' : 'none'
   }
+  // Swap in Cloudflare R2 mirror URLs where we've baked them (scripts/bake-radio-r2). The client then
+  // fetches straight from R2's CDN (CORS-enabled, zero egress to us) instead of the metered proxy, and
+  // the 24/7 streamer pulls from R2 too. Unbaked tracks keep their source URL (still proxied client-side).
+  const mirror = await getMirrorMap(tracks.map(t => t.url))
+  if (mirror.size) tracks = tracks.map(t => { const m = mirror.get(t.url); return m ? { ...t, url: m, direct: true } : t })
+
   // Ensure every track has a genre (local/static have no tags) → the client uses it as the prior.
   tracks = tracks.map(t => (t.genre ? t : { ...t, genre: def }))
 

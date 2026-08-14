@@ -2419,7 +2419,9 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
         audioElRef.current = el
         const node = ctx.createMediaElementSource(el)
         node.connect(an); node.connect(ctx.destination); node.connect(recDest)
-        const proxied = (u: string) => u.startsWith('http') ? `/api/broadcast/audio?src=${encodeURIComponent(u)}` : u
+        // `direct` tracks are CORS-enabled public mirrors (R2) — fetch them straight (zero egress to us).
+        // Same-origin URLs play as-is; other remote URLs go through the proxy so Web Audio can read them.
+        const proxied = (t: BroadcastTrack) => t.direct || !t.url.startsWith('http') ? t.url : `/api/broadcast/audio?src=${encodeURIComponent(t.url)}`
         const playAt = async (i: number) => {
           const list = broadcastTracksRef.current
           if (!list.length) return
@@ -2432,7 +2434,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
           genrePriorRef.current = (t.genre as Family | undefined) ?? null
           familyVotesRef.current = []; votedFamilyRef.current = null
           setNowPlaying(t)
-          el.src = proxied(t.url)
+          el.src = proxied(t)
           try { await el.play() }
           catch (e) {
             if ((e as DOMException)?.name === 'NotAllowedError') { setBroadcastMsg('Tap anywhere to start the broadcast'); return }   // autoplay blocked — wait for a gesture, don't skip
