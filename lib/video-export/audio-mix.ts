@@ -17,6 +17,7 @@
 import type { TimelineItem, Track } from '@/lib/editor-types'
 import { instantSpeed } from './speed'
 import { wsola } from '@/lib/wsola'
+import { buildVocalClarityChain } from '@/lib/vocal-clarity'
 
 export interface MixClip {
   url?:         string
@@ -29,6 +30,7 @@ export interface MixClip {
   fadeIn?:      number
   fadeOut?:     number
   eq?:          { low: number; mid: number; high: number }
+  vocalClarity?: number
   speed?:       number
   speedPoints?: Array<{ t: number; speed: number }>
 }
@@ -148,14 +150,24 @@ export async function renderTimelineAudio(
       }
     }
 
+    // Per-clip processing chain: source → [vocal clarity] → [EQ] → gain → dest. Built as a series of
+    // [input,output] segments so any number can be chained.
+    let head: AudioNode | null = null, tail: AudioNode | null = null
+    const append = (input: AudioNode, output: AudioNode) => {
+      if (!head) { head = input; tail = output } else { tail!.connect(input); tail = output }
+    }
+    // Vocal clarity (high-pass + presence + de-ess + compression) — before the tone EQ.
+    if (c.vocalClarity && c.vocalClarity > 0) {
+      const vc = buildVocalClarityChain(offline, c.vocalClarity)
+      append(vc.input, vc.output)
+    }
     // Per-clip EQ (matches the live shared-graph shelves).
-    const chainIn: AudioNode[] = []
     if (c.eq && (c.eq.low || c.eq.mid || c.eq.high)) {
       const low  = offline.createBiquadFilter(); low.type  = 'lowshelf';  low.frequency.value  = 200;  low.gain.value  = c.eq.low
       const mid  = offline.createBiquadFilter(); mid.type  = 'peaking';   mid.frequency.value  = 1000; mid.Q.value = 1; mid.gain.value = c.eq.mid
       const high = offline.createBiquadFilter(); high.type = 'highshelf'; high.frequency.value = 6000; high.gain.value = c.eq.high
       low.connect(mid).connect(high)
-      chainIn.push(low, high)
+      append(low, high)
     }
 
     // Volume + fade envelope.
@@ -170,9 +182,9 @@ export async function renderTimelineAudio(
       g.gain.linearRampToValueAtTime(0.0001, start + dur)
     }
 
-    if (chainIn.length) {
-      src.connect(chainIn[0])
-      chainIn[1].connect(g)
+    if (head) {
+      src.connect(head)
+      tail!.connect(g)
     } else {
       src.connect(g)
     }
@@ -212,6 +224,7 @@ export function toMixClip(item: TimelineItem): MixClip {
     fadeIn: item.fadeIn,
     fadeOut: item.fadeOut,
     eq: item.eq,
+    vocalClarity: item.vocalClarity,
     speed: item.speed,
     speedPoints: item.speedPoints,
   }

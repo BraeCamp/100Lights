@@ -444,6 +444,27 @@ function FairlightPage({
                 })}
               </div>
 
+              {/* Vocal clarity — presence EQ + de-ess + gentle compression */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Vocal clarity</span>
+                  <button
+                    onClick={() => onClipChange(eqItem.id, { vocalClarity: (eqItem.vocalClarity ?? 0) > 0 ? 0 : 0.8 })}
+                    style={{ padding: '5px 14px', borderRadius: 999, fontSize: 11.5, fontWeight: 800, cursor: 'pointer', border: 'none', background: (eqItem.vocalClarity ?? 0) > 0 ? 'var(--accent)' : 'var(--bg-card)', color: (eqItem.vocalClarity ?? 0) > 0 ? '#0e0d12' : 'var(--text-secondary)' }}
+                  >{(eqItem.vocalClarity ?? 0) > 0 ? 'On' : 'Off'}</button>
+                </div>
+                {(eqItem.vocalClarity ?? 0) > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)', minWidth: 52, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>Strength</span>
+                    <input type="range" min={0.2} max={1} step={0.1} value={eqItem.vocalClarity ?? 0.8}
+                      onChange={e => onClipChange(eqItem.id, { vocalClarity: parseFloat(e.target.value) })}
+                      style={{ flex: 1, accentColor: 'var(--accent)', cursor: 'pointer' }} />
+                    <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums', minWidth: 34, textAlign: 'right' }}>{Math.round((eqItem.vocalClarity ?? 0.8) * 100)}%</span>
+                  </div>
+                )}
+                <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '10px 0 0', lineHeight: 1.5 }}>High-pass + presence + de-ess + gentle compression — makes a voice clearer and more upfront.</p>
+              </div>
+
               {/* Divider */}
               <div style={{ height: 1, background: 'var(--border)', marginBottom: 16 }} />
 
@@ -1366,6 +1387,8 @@ export default function VideoEditor({
       speakerMulticam: () => runSpeakerMulticam(),
       // Offline speaker/mouth-motion analysis of a video URL → { times, activity }.
       analyzeSpeaker: (url: string, opts?: Parameters<typeof analyzeSpeaker>[1]) => analyzeSpeaker(url, opts),
+      // Vocal clarity on an audio item (0..1; 0 = off) — presence EQ + de-ess + compression.
+      setVocalClarity: (clipId: string, amount = 0.8) => { setTimelineItems(prev => prev.map(i => i.id === clipId ? { ...i, vocalClarity: amount } : i)); return true },
       // Manual spotlight: pin a camera track at the playhead.
       setSpotlight: (cameraTrackId: string, dur?: number) => addSpotlightItem(cameraTrackId, dur),
       openExport: () => setShowExport(true),

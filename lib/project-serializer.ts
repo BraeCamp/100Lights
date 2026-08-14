@@ -73,6 +73,7 @@ export interface SerializedClip {
   mvResolution?: number
   // Audio & color
   eq?: { low: number; mid: number; high: number }
+  vocalClarity?: number
   grade?: { brightness: number; contrast: number; saturation: number }
   look?: string
   spotlightTrackId?: string
@@ -233,6 +234,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       mvMatchTheme:     item.mvMatchTheme,
       mvResolution:     item.mvResolution,
       eq:               item.eq,
+      vocalClarity:     item.vocalClarity,
       grade:            item.grade,
       look:             item.look,
       spotlightTrackId: item.spotlightTrackId,
@@ -338,6 +340,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     mvMatchTheme:     clip.mvMatchTheme,
     mvResolution:     clip.mvResolution,
     eq:               clip.eq,
+    vocalClarity:     clip.vocalClarity,
     grade:            clip.grade,
     look:             clip.look,
     spotlightTrackId: clip.spotlightTrackId,

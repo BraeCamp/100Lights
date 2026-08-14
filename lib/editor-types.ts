@@ -148,6 +148,9 @@ export interface TimelineItem {
   mvResolution?: number             // render short-side px (quality), default = project frame height
   // Per-clip audio EQ (gain in dB: -12 to +12, 0 = flat)
   eq?: { low: number; mid: number; high: number }
+  // Vocal-clarity DSP amount (0..1) on an audio item — high-pass + presence + de-ess + compression
+  // (lib/vocal-clarity). Applied in the export mix (+ live). Absent/0 = off.
+  vocalClarity?: number
   // Per-clip color grade — composes ON TOP of the project-wide adjustments,
   // so one shot can be matched against its neighbours (100 = neutral).
   grade?: { brightness: number; contrast: number; saturation: number }
