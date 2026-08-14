@@ -1,0 +1,24 @@
+# Fly.io config for ONE browserless radio channel. It's a background worker (no web server), so there's
+# no [http_service] — Fly just keeps the process running and restarts it if it exits.
+#
+# Deploy (from broadcast-streamer/):
+#   fly launch --no-deploy --copy-config --name my-radio   # pick a unique name; creates the app
+#   fly secrets set STREAM_KEY=xxxx-xxxx-xxxx-xxxx          # your YouTube key (never in the repo)
+#   fly deploy                                              # builds Dockerfile.render, streams 24/7
+#   fly logs                                                # watch ffmpeg frame=… lines
+# Change the station: set STATION below (or `fly secrets set STATION=study-lofi`) and redeploy.
+# A second channel = a second app (its own name + STREAM_KEY).
+
+app = "lightning-bug-radio"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.render"
+
+[env]
+  STATION = "cinematic"
+  BASE_URL = "https://100lights.com"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

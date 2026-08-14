@@ -1,0 +1,11 @@
+# Minimal image for the BROWSERLESS renderer (render.mjs) — just Node + ffmpeg, no Chromium, no npm
+# packages. Tiny + cheap, ideal for Fly.io / any container host. (The full browser streamer uses the
+# other Dockerfile.)
+FROM node:20-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY render.mjs golive.sh ./
+ENV STATION=cinematic BASE_URL=https://100lights.com
+# STREAM_KEY comes from a secret at runtime (fly secrets set STREAM_KEY=…).
+CMD ["node", "render.mjs"]
