@@ -2971,7 +2971,10 @@ export default function VideoEditor({
     const trackId = (trks.find(t => t.type === 'media' || t.type === 'video')?.id) ?? 'v1'
     const audioIds = new Set(trks.filter(t => t.type === 'audio').map(t => t.id))
     const endOf = (i: TimelineItem) => i.startTime + (i.outPoint - i.inPoint) / (i.speed && i.speed > 0 ? i.speed : 1)
-    const audioItems = items.filter(i => audioIds.has(i.trackId))
+    // The bed = audio-content items (robust to which track they sit on). When there's a bed, the montage
+    // spans the SONG and each clip is TRIMMED to its cut — "shortening" long footage to fit the music.
+    // With no audio, fall back to the footage's own extent.
+    const audioItems = items.filter(i => i.contentType === 'audio' || audioIds.has(i.trackId))
     const songEnd = (audioItems.length ? audioItems : items).reduce((m, i) => Math.max(m, endOf(i)), 0)
     let pool = mediaItemsRef.current.filter(m => m.contentType === 'video' && m.url).map(m => ({ url: m.url as string, duration: m.duration, label: m.name }))
     if (!pool.length) pool = items.filter(i => i.trackId === trackId && i.url && i.contentType === 'video').map(i => ({ url: i.url as string, duration: undefined, label: i.label }))
@@ -2982,7 +2985,7 @@ export default function VideoEditor({
     const res = autoEditTimeline({ keepItems, pool, trackId, songEnd, bars, beats, startAt: 0, options })
     setTimelineItems(res.items)
     setSelectedId(null)
-    setAutoEditNote(`Auto-edit: ${res.cuts} cuts ${bars.length ? 'synced to the beat.' : 'at a steady cadence — add a beat map for beat-sync.'}`)
+    setAutoEditNote(`Auto-edit: ${res.cuts} cuts over ${Math.round(songEnd)}s ${bars.length ? 'synced to the beat.' : '(steady cadence — add a beat map for beat-sync).'}`)
     return res
   }, [setTimelineItems])
 
