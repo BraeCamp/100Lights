@@ -79,6 +79,7 @@ import { projectBeatLines, clipBeatLines, nearestSorted } from '@/lib/video-beat
 import { autoEditTimeline, type AutoEditOptions } from '@/lib/video-auto-edit'
 import { VIDEO_EFFECTS, effectsByCategory, getEffect, activeEffectCss } from '@/lib/video-effects'
 import { buildMulticam, activeSpotlight } from '@/lib/video-multicam'
+import { analyzeSpeaker, speakerActivityAt, type SpeakerTrack } from '@/lib/speaker-detect'
 import BeatMapEditor from './BeatMapEditor'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { MEDIA_ACCEPT, detectMediaKind, validateMediaFile } from '@/lib/media-import'
@@ -1361,6 +1362,10 @@ export default function VideoEditor({
       addEffectItem: (lookId?: string) => addEffectItem(lookId),
       // Multicam: auto-switch the spotlight across camera tracks ('audio' = cut to the loudest).
       multicam: (mode: 'roundrobin' | 'audio' = 'audio') => runMulticam(mode),
+      // Speaker-driven multicam: analyze mouth movement + audio → cut to who's talking. Async.
+      speakerMulticam: () => runSpeakerMulticam(),
+      // Offline speaker/mouth-motion analysis of a video URL → { times, activity }.
+      analyzeSpeaker: (url: string, opts?: Parameters<typeof analyzeSpeaker>[1]) => analyzeSpeaker(url, opts),
       // Manual spotlight: pin a camera track at the playhead.
       setSpotlight: (cameraTrackId: string, dur?: number) => addSpotlightItem(cameraTrackId, dur),
       openExport: () => setShowExport(true),
@@ -3072,6 +3077,49 @@ export default function VideoEditor({
     setAutoEditNote(`Multicam: ${res.switches} switches across ${camIds.length} cameras${mode === 'audio' ? ' (cut to the loudest)' : ''}.`)
     return res
   }, [ensureSpotlightLane, trackEnergyAt, setTimelineItems])
+  // Speaker-driven multicam: analyze each camera for mouth movement (offline), combine with audio
+  // loudness, and cut to whoever's talking. Async (seeks each clip); falls back to audio on failure.
+  const [speakerBusy, setSpeakerBusy] = useState(false)
+  const runSpeakerMulticam = useCallback(async () => {
+    const items = timelineItemsRef.current
+    const camIds = tracksRef.current.filter(t => items.some(i => i.trackId === t.id && i.contentType === 'video')).map(t => t.id)
+    if (camIds.length < 2) { setAutoEditNote('Multicam needs video on 2+ tracks (one camera per track).'); return { switches: 0 } }
+    setSpeakerBusy(true)
+    setAutoEditNote('Analyzing who’s speaking…')
+    try {
+      const analyses = new Map<string, { track: SpeakerTrack; item: TimelineItem }>()
+      let done = 0
+      for (const cam of camIds) {
+        const vidItem = items.find(i => i.trackId === cam && i.contentType === 'video' && i.url)
+        if (!vidItem?.url) continue
+        const track = await analyzeSpeaker(vidItem.url, { from: vidItem.inPoint, to: vidItem.outPoint, step: 0.4 })
+        analyses.set(cam, { track, item: vidItem })
+        done++; setAutoEditNote(`Analyzing speakers… ${done}/${camIds.length}`)
+      }
+      // Combined speaker score: mouth-region motion (primary) + audio loudness (secondary).
+      const speakerScoreAt = (trackId: string, t: number) => {
+        const a = analyses.get(trackId)
+        let visual = 0
+        if (a) { const src = a.item.inPoint + (t - a.item.startTime) * (a.item.speed && a.item.speed > 0 ? a.item.speed : 1); visual = speakerActivityAt(a.track, src) }
+        return visual * 1.0 + trackEnergyAt(trackId, t) * 0.5
+      }
+      const laneId = ensureSpotlightLane()
+      const endOf = (i: TimelineItem) => i.startTime + (i.outPoint - i.inPoint) / (i.speed && i.speed > 0 ? i.speed : 1)
+      const audioItems = items.filter(i => i.contentType === 'audio')
+      const songEnd = (audioItems.length ? audioItems : items.filter(i => i.contentType === 'video')).reduce((m, i) => Math.max(m, endOf(i)), 0)
+      const { beats, bars } = projectBeatLines(items)
+      const res = buildMulticam({ cameraTrackIds: camIds, laneId, songEnd, bars, beats, energyAt: speakerScoreAt, options: { mode: 'audio' } })
+      setTimelineItems(prev => [...prev.filter(i => i.contentType !== 'spotlight'), ...res.items])
+      const anyFace = [...analyses.values()].some(a => a.track.times.length)
+      setAutoEditNote(`Multicam: ${res.switches} switches — cut to the speaker${anyFace ? ' (mouth + audio)' : ' (audio only — no motion read)'}.`)
+      return res
+    } catch {
+      setAutoEditNote('Speaker analysis failed — using “Cut to loudest” instead.')
+      return runMulticam('audio')
+    } finally { setSpeakerBusy(false) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ensureSpotlightLane, trackEnergyAt, setTimelineItems])
+
   // Manual spotlight: pin a camera at the playhead for `dur` seconds.
   const addSpotlightItem = useCallback((cameraTrackId: string, dur = 3) => {
     const laneId = ensureSpotlightLane()
@@ -3802,9 +3850,10 @@ export default function VideoEditor({
                 ) : (
                   <>
                     <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', margin: '0 0 6px' }}>Auto-switch ({cameraTrackIds.length} cameras)</div>
+                    <button onClick={() => { runSpeakerMulticam() }} disabled={speakerBusy} style={{ width: '100%', padding: '8px', borderRadius: 8, marginBottom: 6, fontSize: 12, fontWeight: 800, cursor: speakerBusy ? 'default' : 'pointer', border: 'none', background: 'var(--accent)', color: '#0e0d12', opacity: speakerBusy ? 0.6 : 1 }}>{speakerBusy ? 'Analyzing…' : 'Cut to the speaker'}</button>
                     <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                      <button onClick={() => { runMulticam('audio'); setFxOpenMc(false) }} style={{ flex: 1, padding: '7px 8px', borderRadius: 8, fontSize: 11.5, fontWeight: 750, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#0e0d12' }}>Cut to loudest</button>
-                      <button onClick={() => { runMulticam('roundrobin'); setFxOpenMc(false) }} style={{ flex: 1, padding: '7px 8px', borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>Round-robin</button>
+                      <button onClick={() => { runMulticam('audio'); setFxOpenMc(false) }} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>Cut to loudest</button>
+                      <button onClick={() => { runMulticam('roundrobin'); setFxOpenMc(false) }} style={{ flex: 1, padding: '6px 8px', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>Round-robin</button>
                     </div>
                     <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', margin: '0 0 6px' }}>Manual (at playhead)</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
