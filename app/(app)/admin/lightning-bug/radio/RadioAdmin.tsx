@@ -157,7 +157,7 @@ export default function RadioAdmin() {
           return (
             <div key={s.slug || '__new'} style={{ borderRadius: 12, border: `1px solid ${isOpen ? 'var(--accent)' : 'var(--border)'}`, background: 'var(--bg-card)', padding: '12px 16px', opacity: s.enabled ? 1 : 0.6 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <button type="button" onClick={() => setOpen(isOpen ? null : s.slug)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
+                <button type="button" onClick={() => { const nowOpen = !isOpen; setOpen(nowOpen ? s.slug : null); if (nowOpen && !s.__new && !pl[s.slug]) preview(s.slug) }} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>{s.title || '(untitled)'} {!s.enabled && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· disabled</span>}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{s.tagline || 'no tagline'} · <code>{s.slug || 'set a slug'}</code></div>
@@ -210,7 +210,7 @@ export default function RadioAdmin() {
                     <div style={{ borderTop: '1px solid var(--border)', paddingTop: 6 }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)' }}>Fixed playlist ({s.tracks?.length || 0}) — plays before Jamendo</span>
-                        <button type="button" onClick={() => preview(s.slug)} style={{ ...btn('transparent', 'var(--text-secondary)'), padding: '5px 10px' }}><ListMusic size={13} /> Preview resolved</button>
+                        <button type="button" onClick={() => preview(s.slug)} style={{ ...btn('transparent', 'var(--text-secondary)'), padding: '5px 10px' }}><ListMusic size={13} /> Refresh playlist</button>
                       </div>
                       {(s.tracks || []).map((t, i) => (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: '1px solid var(--border)' }}>
@@ -220,8 +220,22 @@ export default function RadioAdmin() {
                           <button type="button" onClick={() => patchTracks(s.slug, s.tracks!.filter((_, j) => j !== i))} style={iconBtn}><X size={14} /></button>
                         </div>
                       ))}
-                      {p && p !== 'loading' && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>Resolves to {p.tracks.length} tracks · source: {p.source}</p>}
                       {p === 'loading' && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0' }}>Resolving…</p>}
+                      {p && p !== 'loading' && (
+                        <div style={{ marginTop: 6 }}>
+                          <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', margin: '0 0 2px' }}>Now on air: {p.tracks.length} track{p.tracks.length === 1 ? '' : 's'} · source: <strong>{p.source}</strong>{s.shuffle !== false ? ' · shuffled' : ' · in order'}</p>
+                          {p.source === 'local' && <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '0 0 4px' }}>Files in public/broadcast/{s.slug}/ (these override the fixed list + Jamendo).</p>}
+                          {p.tracks.length === 0
+                            ? <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '2px 0 0' }}>Empty — add tracks below, set Jamendo tags, or drop files in public/broadcast/{s.slug}/.</p>
+                            : <div style={{ maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>
+                                {p.tracks.map((t, i) => trackRow(
+                                  `${i + 1}. ${t.title}`,
+                                  [t.artist, t.genre, t.license?.replace('http://creativecommons.org/licenses/', 'CC ').replace(/\/$/, '')].filter(Boolean).join(' · '),
+                                  t.url,
+                                ))}
+                              </div>}
+                        </div>
+                      )}
                     </div>
                   </div>
 
