@@ -312,6 +312,43 @@ export const TUTORIALS: Tutorial[] = [
       { text: 'Browse presets with an instant middle-C preview before you commit, then play it live from the pads, your computer keyboard, or a MIDI controller.' },
     ],
   },
+  {
+    slug: 'ai-video',
+    tier: 'beginner',
+    title: 'Make a Video with the AI',
+    description: 'Describe the video you want in the 100Lights video editor and the AI assistant builds it — pulling stock footage, cutting to the beat, and grading the look.',
+    tagline: 'Describe it; the AI edits it.',
+    steps: [
+      { text: 'Open the AI assistant from the video toolbar.', helpId: 'ai-assistant' },
+      { text: 'Type what you want — e.g. “make a calm ocean music video with a film look.” It adds footage, edits to the beat, and grades it for you.' },
+      { text: 'Refine by asking for changes — “cut faster,” “try a noir look,” “cut to whoever’s talking.” It uses your AI credits per request.' },
+    ],
+  },
+  {
+    slug: 'auto-edit',
+    tier: 'intermediate',
+    title: 'Auto-Edit to the Beat',
+    description: 'Drop footage and a track into the video editor, then let auto-edit cut a beat-synced montage in one click — trimming long clips to fit the song.',
+    tagline: 'Footage + a song → a finished cut.',
+    steps: [
+      { text: 'Add footage — use the Stock tab in the media panel to search free clips, or import your own.' },
+      { text: 'Add your song on an audio track. The edit matches its length.' },
+      { text: 'Click Auto-edit — it cuts the footage to the beat, shortening long clips to each cut.', helpId: 'auto-edit' },
+      { text: 'Give it a look with Effects — a cinematic grade like Film or Blockbuster, applied to every clip.', helpId: 'effects' },
+    ],
+  },
+  {
+    slug: 'multicam',
+    tier: 'full',
+    title: 'Multicam: Cut Between Cameras',
+    description: 'Put each camera on its own track and let the spotlight cut between them — automatically to whoever is talking, using mouth-movement + audio.',
+    tagline: 'Switch cameras on the beat, or on the speaker.',
+    steps: [
+      { text: 'Put each camera angle on its own video track, stacked and playing at the same time.' },
+      { text: 'Open Multicam and pick how to switch: round-robin, cut to the loudest, or Cut to the speaker (it detects who’s talking).', helpId: 'multicam' },
+      { text: 'Fine-tune by hand — pin any camera at the playhead, then drag the spotlight bars on the timeline.' },
+    ],
+  },
 ]
 
 export function getTutorial(slug: string): Tutorial | undefined {

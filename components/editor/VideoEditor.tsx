@@ -1340,8 +1340,15 @@ export default function VideoEditor({
       return new File([b], name || url.split('/').pop() || 'media', { type: mime })
     }
     w.__video = {
-      getState: () => ({ name: localProjectName, captions: captionsRef.current, captionStyle,
-        media: mediaItems.map(m => ({ id: m.id, name: m.name, contentType: m.contentType, duration: m.duration })), timelineItems: timelineItems.length }),
+      // Reads from REFS (not the render closure) so it's always current — no stale reads for tests/agents.
+      getState: () => ({
+        name: localProjectName, captions: captionsRef.current, captionStyle,
+        media: mediaItemsRef.current.map(m => ({ id: m.id, name: m.name, contentType: m.contentType, duration: m.duration, uploadStatus: m.uploadStatus })),
+        tracks: tracksRef.current.map(t => ({ id: t.id, type: t.type, label: t.label })),
+        // Full timeline (each item's kind + track + look) so tests can assert precisely, plus a count.
+        items: timelineItemsRef.current.map(i => ({ id: i.id, contentType: i.contentType, trackId: i.trackId, startTime: i.startTime, dur: +(i.outPoint - i.inPoint).toFixed(2), look: i.look, spotlightTrackId: i.spotlightTrackId })),
+        timelineItems: timelineItemsRef.current.length,
+      }),
       setName: (n: string) => setLocalProjectName(n),
       importFile: (f: File) => handleFileImport(f),
       importFromUrl: async (url: string, name?: string, type?: string) => handleFileImport(await fetchToFile(url, name, type)),
