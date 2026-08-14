@@ -154,6 +154,9 @@ export interface TimelineItem {
   // Named effect/look — a CSS-filter grade from lib/video-effects (film, noir, vibrant, …). Composes
   // on top of `grade`; applied by the compositor (buildClipGradeFilter), so preview + export match.
   look?: string
+  // Multicam SPOTLIGHT item (contentType 'spotlight'): for its span, only this camera/track is shown
+  // full-frame. The target track it selects (its own trackId is just the lane it sits on). See lib/video-multicam.
+  spotlightTrackId?: string
   // LUT reference (id of a MediaItem with contentType === 'lut')
   lutId?: string
   // Live DAW-mix link: this clip carries the project's bounced DAW arrangement

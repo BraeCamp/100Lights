@@ -21,6 +21,7 @@
 
 import type { CaptionStyle, TimelineItem, Track, TransitionType, VideoAdjustments } from '@/lib/editor-types'
 import { effectCss, activeEffectCss } from '@/lib/video-effects'
+import { activeSpotlight } from '@/lib/video-multicam'
 import { DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import type { Caption } from '@/lib/types'
 import { captionWords } from '@/lib/captions'
@@ -67,20 +68,20 @@ export function buildFilter(adj?: VideoAdjustments): string {
 }
 
 // ── Ported from VideoEditor.viewerClip ────────────────────────────────────────
+// effect + spotlight items are directives, not visual layers.
+const isVisualLayer = (i: TimelineItem) => i.contentType !== 'effect' && i.contentType !== 'spotlight'
+
 export function pickViewerClip(items: TimelineItem[], tracks: Track[], t: number): TimelineItem | null {
   const isMedia = (tr: Track) => tr.type === 'media' || tr.type === 'video' || tr.type === 'audio'
   const hasSolo = tracks.some(tr => isMedia(tr) && tr.solo)
   const mediaTracks = tracks.filter(tr => isMedia(tr) && !tr.muted && (!hasSolo || tr.solo))
-  for (const track of mediaTracks) {
-    const hit = items.find(i =>
-      i.trackId === track.id &&
-      i.enabled !== false &&
-      i.contentType !== 'effect' &&   // effect items are frame filters, not visual layers
-      t >= i.startTime &&
-      i.startTime + (i.outPoint - i.inPoint) > t,
-    )
-    if (hit) return hit
-  }
+  const findOn = (trackId: string) => items.find(i =>
+    i.trackId === trackId && i.enabled !== false && isVisualLayer(i) &&
+    t >= i.startTime && i.startTime + (i.outPoint - i.inPoint) > t)
+  // Multicam: while a spotlight is active, the selected camera is the viewer clip.
+  const spot = activeSpotlight(items, t)
+  if (spot) { const h = findOn(spot); if (h) return h }
+  for (const track of mediaTracks) { const h = findOn(track.id); if (h) return h }
   return null
 }
 
@@ -93,17 +94,21 @@ export function pickVisibleClips(items: TimelineItem[], tracks: Track[], t: numb
   const isMedia = (tr: Track) => tr.type === 'media' || tr.type === 'video' || tr.type === 'audio'
   const hasSolo = tracks.some(tr => isMedia(tr) && tr.solo)
   const mediaTracks = tracks.filter(tr => isMedia(tr) && !tr.muted && (!hasSolo || tr.solo))
+  const spot = activeSpotlight(items, t)
   const stack: TimelineItem[] = []
   for (let i = mediaTracks.length - 1; i >= 0; i--) {   // bottom first
     const track = mediaTracks[i]
     const hit = items.find(it =>
       it.trackId === track.id &&
       it.enabled !== false &&
-      it.contentType !== 'effect' &&   // effect items are frame filters, not visual layers
+      isVisualLayer(it) &&
       t >= it.startTime &&
       it.startTime + (it.outPoint - it.inPoint) > t,
     )
-    if (hit) stack.push(hit)
+    if (!hit) continue
+    // Multicam: only the spotlighted camera's VIDEO shows; title/musicviz overlays still layer on top.
+    if (spot && hit.trackId !== spot && hit.contentType !== 'title' && hit.contentType !== 'musicviz') continue
+    stack.push(hit)
   }
   return stack
 }

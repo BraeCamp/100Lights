@@ -78,6 +78,7 @@ import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType, 
 import { projectBeatLines, clipBeatLines, nearestSorted } from '@/lib/video-beats'
 import { autoEditTimeline, type AutoEditOptions } from '@/lib/video-auto-edit'
 import { VIDEO_EFFECTS, effectsByCategory, getEffect, activeEffectCss } from '@/lib/video-effects'
+import { buildMulticam, activeSpotlight } from '@/lib/video-multicam'
 import BeatMapEditor from './BeatMapEditor'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { MEDIA_ACCEPT, detectMediaKind, validateMediaFile } from '@/lib/media-import'
@@ -979,16 +980,14 @@ export default function VideoEditor({
       !t.muted &&
       (!hasSolo || t.solo)
     )
-    for (const track of mediaTracks) {
-      const hit = timelineItems.find(i =>
-        i.trackId === track.id &&
-        i.enabled !== false &&
-        i.contentType !== 'effect' &&   // effect items are frame filters, not visual layers
-        currentTime >= i.startTime &&
-        currentTime < i.startTime + (i.outPoint - i.inPoint)
-      )
-      if (hit) return hit
-    }
+    const findOn = (trackId: string) => timelineItems.find(i =>
+      i.trackId === trackId && i.enabled !== false &&
+      i.contentType !== 'effect' && i.contentType !== 'spotlight' &&   // directives, not visual layers
+      currentTime >= i.startTime && currentTime < i.startTime + (i.outPoint - i.inPoint))
+    // Multicam: while a spotlight is active, the selected camera is what the preview shows.
+    const spot = activeSpotlight(timelineItems, currentTime)
+    if (spot) { const h = findOn(spot); if (h) return h }
+    for (const track of mediaTracks) { const h = findOn(track.id); if (h) return h }
     return null
   }, [timelineItems, tracks, currentTime])
 
@@ -1360,6 +1359,10 @@ export default function VideoEditor({
       },
       // Add an effect ITEM (contentType 'effect') on a track — the third item type. Returns its id.
       addEffectItem: (lookId?: string) => addEffectItem(lookId),
+      // Multicam: auto-switch the spotlight across camera tracks ('audio' = cut to the loudest).
+      multicam: (mode: 'roundrobin' | 'audio' = 'audio') => runMulticam(mode),
+      // Manual spotlight: pin a camera track at the playhead.
+      setSpotlight: (cameraTrackId: string, dur?: number) => addSpotlightItem(cameraTrackId, dur),
       openExport: () => setShowExport(true),
       // Direct headless render — same path the Export modal uses (exportTimelineFidelity), building the
       // input from live editor state. Returns the finished video as a base64 data URL so a driver can
@@ -3033,6 +3036,55 @@ export default function VideoEditor({
     return newItem.id
   }, [setTimelineItems])
 
+  // ── Multicam spotlight ─────────────────────────────────────────────────────
+  const [fxOpenMc, setFxOpenMc] = useState(false)
+  // Camera tracks = tracks that carry video. Multicam switches the spotlight between them.
+  const cameraTrackIds = useMemo(() => tracks.filter(t => timelineItems.some(i => i.trackId === t.id && i.contentType === 'video')).map(t => t.id), [tracks, timelineItems])
+  // Per-track audio energy at t (0..1) from the item's waveform peaks — drives "cut to the loudest".
+  const trackEnergyAt = useCallback((trackId: string, t: number) => {
+    const it = timelineItemsRef.current.find(i => i.trackId === trackId && (i.contentType === 'audio' || i.contentType === 'video') && t >= i.startTime && t < i.startTime + (i.outPoint - i.inPoint))
+    if (!it || !it.url) return 0
+    const peaks = mediaItemsRef.current.find(m => m.url === it.url)?.peaks
+    if (!peaks || !peaks.length) return 0
+    const span = (it.outPoint - it.inPoint) || 1
+    const frac = Math.max(0, Math.min(0.999, (t - it.startTime) / span))
+    return peaks[Math.floor(frac * peaks.length)] ?? 0
+  }, [])
+  // Ensure a lane for spotlight items exists; returns its id.
+  const ensureSpotlightLane = useCallback((): string => {
+    const existing = tracksRef.current.find(t => timelineItemsRef.current.some(i => i.trackId === t.id && i.contentType === 'spotlight'))
+    if (existing) return existing.id
+    const id = 'spotlight-lane'
+    if (!tracksRef.current.some(t => t.id === id)) setTracks(prev => [...prev, { id, label: 'Spotlight', type: 'media', height: TRACK_HEIGHT }])
+    return id
+  }, [])
+  const runMulticam = useCallback((mode: 'roundrobin' | 'audio') => {
+    const items = timelineItemsRef.current
+    const camIds = tracksRef.current.filter(t => items.some(i => i.trackId === t.id && i.contentType === 'video')).map(t => t.id)
+    if (camIds.length < 2) { setAutoEditNote('Multicam needs video on 2+ tracks (put each camera on its own track).'); return { switches: 0 } }
+    const laneId = ensureSpotlightLane()
+    const endOf = (i: TimelineItem) => i.startTime + (i.outPoint - i.inPoint) / (i.speed && i.speed > 0 ? i.speed : 1)
+    const audioItems = items.filter(i => i.contentType === 'audio')
+    const songEnd = (audioItems.length ? audioItems : items.filter(i => i.contentType === 'video')).reduce((m, i) => Math.max(m, endOf(i)), 0)
+    const { beats, bars } = projectBeatLines(items)
+    const res = buildMulticam({ cameraTrackIds: camIds, laneId, songEnd, bars, beats, energyAt: mode === 'audio' ? trackEnergyAt : undefined, options: { mode } })
+    setTimelineItems(prev => [...prev.filter(i => i.contentType !== 'spotlight'), ...res.items])
+    setAutoEditNote(`Multicam: ${res.switches} switches across ${camIds.length} cameras${mode === 'audio' ? ' (cut to the loudest)' : ''}.`)
+    return res
+  }, [ensureSpotlightLane, trackEnergyAt, setTimelineItems])
+  // Manual spotlight: pin a camera at the playhead for `dur` seconds.
+  const addSpotlightItem = useCallback((cameraTrackId: string, dur = 3) => {
+    const laneId = ensureSpotlightLane()
+    const camIdx = cameraTrackIds.indexOf(cameraTrackId)
+    const newItem: TimelineItem = {
+      id: crypto.randomUUID(), label: `Cam ${camIdx + 1}`, startTime: currentTimeRef.current, inPoint: 0, outPoint: dur,
+      captions: [], color: '#f59e0b', trackId: laneId, contentType: 'spotlight', spotlightTrackId: cameraTrackId,
+    }
+    setTimelineItems(prev => [...prev, newItem]); setSelectedId(newItem.id)
+    setAutoEditNote(`Spotlight → Cam ${camIdx + 1} at the playhead (drag/trim to place).`)
+    return newItem.id
+  }, [ensureSpotlightLane, cameraTrackIds, setTimelineItems])
+
   // Temporarily unused: the Music-Visual toolbar button was removed pending a
   // re-wire into the new media-panel flow. Keep the function for that follow-up.
   function addMusicVizClip() {
@@ -3726,6 +3778,43 @@ export default function VideoEditor({
                     </>
                   )
                 })()}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Multicam — switch the spotlight between camera tracks */}
+        {activePage === 'edit' && (
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setFxOpenMc(o => !o)}
+              data-help-id="multicam"
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
+              title="Multicam: switch the spotlight between camera tracks"
+              style={{ color: 'var(--text-secondary)', background: 'var(--bg-card)', border: '1px solid var(--border)' }}
+            >
+              <Layers size={12} /> Multicam
+            </button>
+            {fxOpenMc && (
+              <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50, width: 250, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: 10, boxShadow: '0 12px 32px rgba(0,0,0,0.4)' }}>
+                {cameraTrackIds.length < 2 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>Put each camera on its own track (video on 2+ tracks), then switch the spotlight between them here.</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', margin: '0 0 6px' }}>Auto-switch ({cameraTrackIds.length} cameras)</div>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                      <button onClick={() => { runMulticam('audio'); setFxOpenMc(false) }} style={{ flex: 1, padding: '7px 8px', borderRadius: 8, fontSize: 11.5, fontWeight: 750, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#0e0d12' }}>Cut to loudest</button>
+                      <button onClick={() => { runMulticam('roundrobin'); setFxOpenMc(false) }} style={{ flex: 1, padding: '7px 8px', borderRadius: 8, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>Round-robin</button>
+                    </div>
+                    <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', margin: '0 0 6px' }}>Manual (at playhead)</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      {cameraTrackIds.map((tid, idx) => (
+                        <button key={tid} onClick={() => addSpotlightItem(tid)} style={{ padding: '5px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-secondary)' }}>Cam {idx + 1}</button>
+                      ))}
+                    </div>
+                    <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '9px 0 0', lineHeight: 1.5 }}>“Cut to loudest” follows whoever’s audio is loudest. Speaker (mouth-movement) detection is the next pass.</p>
+                  </>
+                )}
               </div>
             )}
           </div>

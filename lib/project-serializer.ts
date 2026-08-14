@@ -75,6 +75,7 @@ export interface SerializedClip {
   eq?: { low: number; mid: number; high: number }
   grade?: { brightness: number; contrast: number; saturation: number }
   look?: string
+  spotlightTrackId?: string
   lutId?: string
   // DAW-mix link
   dawMixLinked?: boolean
@@ -234,6 +235,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       eq:               item.eq,
       grade:            item.grade,
       look:             item.look,
+      spotlightTrackId: item.spotlightTrackId,
       lutId:            item.lutId,
       dawMixLinked:     item.dawMixLinked,
       dawMixStamp:      item.dawMixStamp,
@@ -338,6 +340,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     eq:               clip.eq,
     grade:            clip.grade,
     look:             clip.look,
+    spotlightTrackId: clip.spotlightTrackId,
     lutId:            clip.lutId,
     dawMixLinked:     clip.dawMixLinked,
     dawMixStamp:      clip.dawMixStamp,
