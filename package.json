@@ -59,6 +59,7 @@
     "@liveblocks/client": "^3.22.0",
     "@liveblocks/node": "^3.22.0",
     "@liveblocks/react": "^3.22.0",
+    "@mediapipe/tasks-vision": "^1.0.1",
     "@neondatabase/serverless": "^1.1.0",
     "@sentry/nextjs": "^10.57.0",
     "@stripe/stripe-js": "^9.8.0",
