@@ -25,7 +25,7 @@ interface CloudSummary {
   folderId: string | null
 }
 
-interface FolderRec { id: string; name: string }
+interface FolderRec { id: string; name: string; parentId: string | null }
 
 interface LocalFileHandle {
   name: string
@@ -88,10 +88,10 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
   }, [isSignedIn])
   useEffect(() => { loadFolders() }, [loadFolders, reloadKey])
 
-  async function createFolder() {
-    const name = window.prompt('Folder name:')?.trim()
+  async function createFolder(parentId: string | null = activeFolder) {
+    const name = window.prompt(parentId ? 'New subfolder name:' : 'New folder name:')?.trim()
     if (!name) return
-    const r = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    const r = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, parentId }) })
     if (r.ok) loadFolders()
   }
   async function deleteFolder(id: string) {
@@ -319,42 +319,61 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
 
       {/* Folder filter — All + each folder + New. Drag a project onto a folder to
           file it; right-click a folder to rename/delete. */}
-      {isSignedIn && (
-        <div className="flex flex-wrap items-center gap-2 mb-4">
+      {/* Folders are nestable: click a folder to open it (drill in), the breadcrumb walks back up.
+          Only the current level's subfolders show. Drag a project onto any folder to file it. */}
+      {isSignedIn && (() => {
+        const byId = new Map(folders.map(f => [f.id, f]))
+        const path: FolderRec[] = []
+        { let cur = activeFolder; const seen = new Set<string>(); while (cur && byId.has(cur) && !seen.has(cur)) { seen.add(cur); const f = byId.get(cur)!; path.unshift(f); cur = f.parentId } }
+        const children = folders.filter(f => (f.parentId ?? null) === activeFolder)
+        const hasKids = (id: string) => folders.some(f => f.parentId === id)
+        const crumbBtn = (label: string, target: string | null, active: boolean) => (
           <button
-            onClick={() => setActiveFolder(null)}
-            onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder('all') }}
+            onClick={() => setActiveFolder(target)}
+            onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder(target ?? 'all') }}
             onDragLeave={() => setDropFolder(null)}
-            onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, null); setDropFolder(null); setDragId(null) }}
+            onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, target); setDropFolder(null); setDragId(null) }}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
-            style={{ border: `1px solid ${dropFolder === 'all' ? 'var(--accent)' : 'var(--border)'}`, background: activeFolder === null ? 'var(--accent-subtle)' : 'var(--bg-card)', color: activeFolder === null ? 'var(--accent-light)' : 'var(--text-secondary)' }}
-          >All</button>
-          {folders.map(f => {
-            const on = activeFolder === f.id
-            const n = folderCount(f.id)
-            const over = dropFolder === f.id
-            return (
-              <button
-                key={f.id}
-                onClick={() => setActiveFolder(f.id)}
-                onContextMenu={(e) => { e.preventDefault(); setFolderCtx({ id: f.id, name: f.name, x: e.clientX, y: e.clientY }) }}
-                onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder(f.id) }}
-                onDragLeave={() => setDropFolder(null)}
-                onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, f.id); setDropFolder(null); setDragId(null) }}
-                title="Click to filter · drag a project here to file it · right-click to rename/delete"
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
-                style={{ border: `1px solid ${over ? 'var(--accent)' : 'var(--border)'}`, background: on ? 'var(--accent-subtle)' : 'var(--bg-card)', color: on ? 'var(--accent-light)' : 'var(--text-secondary)' }}
-              >
-                <Folder size={12} /> {f.name}
-                {n > 0 && <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{n}</span>}
-              </button>
-            )
-          })}
-          <button onClick={createFolder} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg" style={{ border: '1px dashed var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
-            <FolderPlus size={12} /> New folder
-          </button>
-        </div>
-      )}
+            style={{ border: `1px solid ${dropFolder === (target ?? 'all') ? 'var(--accent)' : 'var(--border)'}`, background: active ? 'var(--accent-subtle)' : 'var(--bg-card)', color: active ? 'var(--accent-light)' : 'var(--text-secondary)' }}
+          >{target && <Folder size={12} />} {label}</button>
+        )
+        return (
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            {crumbBtn('All', null, activeFolder === null)}
+            {path.map((f, i) => (
+              <span key={f.id} className="flex items-center gap-2">
+                <span style={{ color: 'var(--text-muted)' }}>/</span>
+                {crumbBtn(f.name, f.id, i === path.length - 1)}
+              </span>
+            ))}
+            {children.length > 0 && <span style={{ color: 'var(--text-muted)' }}>·</span>}
+            {children.map(f => {
+              const n = folderCount(f.id)
+              const over = dropFolder === f.id
+              return (
+                <button
+                  key={f.id}
+                  onClick={() => setActiveFolder(f.id)}
+                  onContextMenu={(e) => { e.preventDefault(); setFolderCtx({ id: f.id, name: f.name, x: e.clientX, y: e.clientY }) }}
+                  onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder(f.id) }}
+                  onDragLeave={() => setDropFolder(null)}
+                  onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, f.id); setDropFolder(null); setDragId(null) }}
+                  title="Click to open · drag a project here to file it · right-click for options"
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
+                  style={{ border: `1px solid ${over ? 'var(--accent)' : 'var(--border)'}`, background: 'var(--bg-card)', color: 'var(--text-secondary)' }}
+                >
+                  <Folder size={12} /> {f.name}
+                  {n > 0 && <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{n}</span>}
+                  {hasKids(f.id) && <span style={{ color: 'var(--text-muted)' }}>›</span>}
+                </button>
+              )
+            })}
+            <button onClick={() => createFolder()} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg" style={{ border: '1px dashed var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              <FolderPlus size={12} /> {activeFolder ? 'New subfolder' : 'New folder'}
+            </button>
+          </div>
+        )
+      })()}
 
       {rows.length === 0 ? (
         <EmptyState isSignedIn={isSignedIn} hasFolder={!!folder} onConnect={connectFolder} />
@@ -473,6 +492,9 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
         >
           <button onClick={() => { const { id, name } = folderCtx; setFolderCtx(null); renameFolder(id, name) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
             <Pencil size={14} /> Rename
+          </button>
+          <button onClick={() => { const id = folderCtx.id; setFolderCtx(null); createFolder(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
+            <FolderPlus size={14} /> New subfolder…
           </button>
           <button onClick={() => { const id = folderCtx.id; setFolderCtx(null); deleteFolder(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: '#ef4444' }}>
             <Trash2 size={14} /> Delete
