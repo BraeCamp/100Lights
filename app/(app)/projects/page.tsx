@@ -317,68 +317,73 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
         </div>
       )}
 
-      {/* Folder filter — All + each folder + New. Drag a project onto a folder to
-          file it; right-click a folder to rename/delete. */}
-      {/* Folders are nestable: click a folder to open it (drill in), the breadcrumb walks back up.
-          Only the current level's subfolders show. Drag a project onto any folder to file it. */}
+      {/* Breadcrumb (navigation only) + New folder. The folders themselves render as rows in the
+          list below — like a file browser — not as tabs. Drag a project onto a crumb to file it. */}
       {isSignedIn && (() => {
         const byId = new Map(folders.map(f => [f.id, f]))
         const path: FolderRec[] = []
         { let cur = activeFolder; const seen = new Set<string>(); while (cur && byId.has(cur) && !seen.has(cur)) { seen.add(cur); const f = byId.get(cur)!; path.unshift(f); cur = f.parentId } }
-        const children = folders.filter(f => (f.parentId ?? null) === activeFolder)
-        const hasKids = (id: string) => folders.some(f => f.parentId === id)
-        const crumbBtn = (label: string, target: string | null, active: boolean) => (
+        const crumb = (label: string, target: string | null, active: boolean) => (
           <button
             onClick={() => setActiveFolder(target)}
             onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder(target ?? 'all') }}
             onDragLeave={() => setDropFolder(null)}
             onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, target); setDropFolder(null); setDragId(null) }}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
-            style={{ border: `1px solid ${dropFolder === (target ?? 'all') ? 'var(--accent)' : 'var(--border)'}`, background: active ? 'var(--accent-subtle)' : 'var(--bg-card)', color: active ? 'var(--accent-light)' : 'var(--text-secondary)' }}
-          >{target && <Folder size={12} />} {label}</button>
+            className="px-1.5 py-0.5 rounded text-sm"
+            style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: active ? 500 : 400, background: dropFolder === (target ?? 'all') ? 'var(--accent-subtle)' : 'transparent' }}
+          >{label}</button>
         )
         return (
-          <div className="flex flex-wrap items-center gap-2 mb-4">
-            {crumbBtn('All', null, activeFolder === null)}
+          <div className="flex items-center gap-1 mb-4 flex-wrap">
+            {crumb('All projects', null, activeFolder === null)}
             {path.map((f, i) => (
-              <span key={f.id} className="flex items-center gap-2">
-                <span style={{ color: 'var(--text-muted)' }}>/</span>
-                {crumbBtn(f.name, f.id, i === path.length - 1)}
+              <span key={f.id} className="flex items-center gap-1">
+                <span style={{ color: 'var(--text-muted)' }}>›</span>
+                {crumb(f.name, f.id, i === path.length - 1)}
               </span>
             ))}
-            {children.length > 0 && <span style={{ color: 'var(--text-muted)' }}>·</span>}
-            {children.map(f => {
-              const n = folderCount(f.id)
-              const over = dropFolder === f.id
-              return (
-                <button
-                  key={f.id}
-                  onClick={() => setActiveFolder(f.id)}
-                  onContextMenu={(e) => { e.preventDefault(); setFolderCtx({ id: f.id, name: f.name, x: e.clientX, y: e.clientY }) }}
-                  onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder(f.id) }}
-                  onDragLeave={() => setDropFolder(null)}
-                  onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, f.id); setDropFolder(null); setDragId(null) }}
-                  title="Click to open · drag a project here to file it · right-click for options"
-                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
-                  style={{ border: `1px solid ${over ? 'var(--accent)' : 'var(--border)'}`, background: 'var(--bg-card)', color: 'var(--text-secondary)' }}
-                >
-                  <Folder size={12} /> {f.name}
-                  {n > 0 && <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{n}</span>}
-                  {hasKids(f.id) && <span style={{ color: 'var(--text-muted)' }}>›</span>}
-                </button>
-              )
-            })}
-            <button onClick={() => createFolder()} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg" style={{ border: '1px dashed var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <button onClick={() => createFolder()} className="ml-auto flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg" style={{ border: '1px dashed var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
               <FolderPlus size={12} /> {activeFolder ? 'New subfolder' : 'New folder'}
             </button>
           </div>
         )
       })()}
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && !(isSignedIn && folders.some(f => (f.parentId ?? null) === activeFolder)) ? (
         <EmptyState isSignedIn={isSignedIn} hasFolder={!!folder} onConnect={connectFolder} />
       ) : (
         <div className="flex flex-col gap-2">
+          {/* Folders live IN the list (like a file browser): click to open, drag a project onto one
+              to file it, right-click for rename / subfolder / delete. */}
+          {isSignedIn && folders.filter(f => (f.parentId ?? null) === activeFolder).map(f => {
+            const n = folderCount(f.id)
+            const over = dropFolder === f.id
+            const kids = folders.some(x => x.parentId === f.id)
+            return (
+              <div
+                key={`folder:${f.id}`}
+                onClick={() => setActiveFolder(f.id)}
+                onContextMenu={(e) => { e.preventDefault(); setFolderCtx({ id: f.id, name: f.name, x: e.clientX, y: e.clientY }) }}
+                onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder(f.id) }}
+                onDragLeave={() => setDropFolder(null)}
+                onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, f.id); setDropFolder(null); setDragId(null) }}
+                className="group flex items-center gap-4 p-4 rounded-xl border transition-all cursor-pointer"
+                style={{ background: over ? 'var(--accent-subtle)' : 'var(--bg-card)', borderColor: over ? 'var(--accent)' : 'var(--border)' }}
+              >
+                <div className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--border)' }}>
+                  <Folder size={18} color="var(--accent-light)" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{f.name}</div>
+                  <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{n} project{n !== 1 ? 's' : ''}{kids ? ' · has subfolders' : ''}</div>
+                </div>
+                <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>Folder</span>
+                <button onClick={(e) => { e.stopPropagation(); setFolderCtx({ id: f.id, name: f.name, x: e.clientX, y: e.clientY }) }} className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg" style={{ color: 'var(--text-muted)' }} title="Rename / subfolder / delete">
+                  <Pencil size={14} />
+                </button>
+              </div>
+            )
+          })}
           {rows.map(row => row.source === 'cloud' ? (
             <div
               key={row.key}
