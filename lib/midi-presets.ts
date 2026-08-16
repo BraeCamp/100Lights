@@ -8,6 +8,7 @@
  */
 
 import type { PresetSound } from './daw-types'
+import { PRESET_VARIANTS } from './preset-variants'
 
 const STORAGE_KEY = '100lights-midi-presets-v1'
 
@@ -104,6 +105,10 @@ const BUILT_IN: Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'>[] = [
   { name: 'Electric Bass (AI)',   folder: 'Electric Bass (AI) – All Notes',   loNote: 38, hiNote: 45, category: 'synth-bass',  group: 'Bass'   },
   { name: 'Fretless Bass (AI)',   folder: 'Fretless Bass (AI) – All Notes',   loNote: 40, hiNote: 44, category: 'synth-bass',  group: 'Bass'   },
   { name: 'Synth Bass (AI)',      folder: 'Synth Bass (AI) – All Notes',      loNote: 38, hiNote: 50, category: 'synth-bass',  group: 'Bass'   },
+  // +103 shaped variants reusing the folders above (distinct name + sound.fx);
+  // APPEND ONLY — see lib/preset-variants.ts. Identity is folder+name, so these
+  // resolve samples by folder while carrying their own tone shaping.
+  ...PRESET_VARIANTS,
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

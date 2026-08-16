@@ -29,6 +29,7 @@ import ContentQueuePanel from './ContentQueuePanel'
 import AppsPanel from './AppsPanel'
 import UsagePanel from './UsagePanel'
 import FormatsPanel from './FormatsPanel'
+import ShortsExportPanel from './ShortsExportPanel'
 import AppTargetsPanel from './AppTargetsPanel'
 import AppCorrectionsPanel from './AppCorrectionsPanel'
 import TestRecipesPanel from './TestRecipesPanel'
@@ -819,6 +820,19 @@ export default async function AdminPage() {
                 description="The social formats we're testing — each format's focus (its hook + what it's made with), the hook archetypes, how each is actually performing (completion, subs/1k), and the per-post corrections (what worked, what to fix). Source of truth: lib/content-formats.ts + the content_perf corpus."
               />
               <FormatsPanel />
+            </>
+          ),
+        },
+        {
+          id: 'shorts-export',
+          label: 'Shorts Export',
+          content: (
+            <>
+              <PanelIntro
+                title="Shorts → Export"
+                description="Admin-only export pass. Bundles every short in your Shorts › Tests folder into a zip — each as an mp4 plus a ready-to-post caption (.txt) with hooks + hashtags. The videos are the already-rendered clips from scripts/build-shorts.mjs; edit the words in scripts/shorts-config.json and rebuild to change them."
+              />
+              <ShortsExportPanel />
             </>
           ),
         },

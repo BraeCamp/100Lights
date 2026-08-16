@@ -200,6 +200,11 @@ export interface TimelineItem {
    *  is, and how much is moving at each point. Raw material for later auto-reframe /
    *  cut-on-scene-change / follow-focus. Produced by lib/video-scenes analyzeVideoScenes(). */
   sceneTrack?: SceneTrack
+  /** Beat/drop "hype" punches — local-second times (since clip start) where the clip gets a short
+   *  decaying zoom bump. `hypeBeats` = small punch on the beat; `hypeDrops` = bigger punch on a drop.
+   *  Written by the Auto-Edit hype pass; applied by computeClipTransform (preview + export). */
+  hypeBeats?: number[]
+  hypeDrops?: number[]
 }
 
 // ── Scene analysis (offline video vision) ──────────────────────────────────────

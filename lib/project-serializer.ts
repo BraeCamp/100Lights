@@ -94,6 +94,8 @@ export interface SerializedClip {
   crop?: { l: number; t: number; r: number; b: number }
   beatMap?: TempoSeg[]
   sceneTrack?: SceneTrack
+  hypeBeats?: number[]
+  hypeDrops?: number[]
 }
 
 export interface SerializedOutput {
@@ -253,6 +255,8 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       crop:             item.crop,
       beatMap:          item.beatMap,
       sceneTrack:       item.sceneTrack,
+      hypeBeats:        item.hypeBeats,
+      hypeDrops:        item.hypeDrops,
     })),
     adjustments: snap.adjustments,
     aspect: snap.aspect,
@@ -359,6 +363,8 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     crop:             clip.crop,
     beatMap:          clip.beatMap,
     sceneTrack:       clip.sceneTrack,
+    hypeBeats:        clip.hypeBeats,
+    hypeDrops:        clip.hypeDrops,
     // url is intentionally absent — media is offline until re-linked
   }))
 

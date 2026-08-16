@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { neon } from '@neondatabase/serverless'
+import { EXTRA_RECIPES } from './recipes-extra.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 if (!process.env.DATABASE_URL) {
@@ -102,6 +103,8 @@ const RECIPES = [
     spec: bassSpec('Recipe: Pachelbel bass', 2, [50, 45, 47, 42, 43, 38, 43, 45]),
     source: 'J. Pachelbel, Canon in D (c.1680), PD — continuo bass ostinato',
   },
+  // +103 theory-derived progression/bass recipes across 27 genres; see scripts/recipes-extra.mjs
+  ...EXTRA_RECIPES,
 ]
 
 async function ensure() {

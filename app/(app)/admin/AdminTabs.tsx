@@ -34,7 +34,7 @@ const ICONS: Record<string, LucideIcon> = {
   catalog: Library, 'sound-library': Music, 'midi-presets': Piano,
   'sample-packs': Package, 'beat-corrections': Drum,
   apps: LayoutGrid, inventory: AppWindow, targets: Target, corrections: MessageSquare,
-  usage: BarChart3, formats: LayoutGrid,
+  usage: BarChart3, formats: LayoutGrid, 'shorts-export': Film,
 }
 function iconFor(tabId: string, subId: string): LucideIcon {
   if (ICONS[subId]) return ICONS[subId]

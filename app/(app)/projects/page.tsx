@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil } from 'lucide-react'
+import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil, Check } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { openProjectsFromFile, readProjectFile } from '@/lib/project-serializer'
 import { openMediaInStudio } from '@/lib/media-handoff'
@@ -25,7 +25,7 @@ interface CloudSummary {
   folderId: string | null
 }
 
-interface FolderRec { id: string; name: string }
+interface FolderRec { id: string; name: string; parentId: string | null }
 
 interface LocalFileHandle {
   name: string
@@ -88,10 +88,10 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
   }, [isSignedIn])
   useEffect(() => { loadFolders() }, [loadFolders, reloadKey])
 
-  async function createFolder() {
-    const name = window.prompt('Folder name:')?.trim()
+  async function createFolder(parentId: string | null = activeFolder) {
+    const name = window.prompt(parentId ? 'New subfolder name:' : 'New folder name:')?.trim()
     if (!name) return
-    const r = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    const r = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, parentId }) })
     if (r.ok) loadFolders()
   }
   async function deleteFolder(id: string) {
@@ -104,6 +104,47 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
   function moveToFolder(projectId: string, folderId: string | null) {
     setCloud(prev => prev.map(p => p.id === projectId ? { ...p, folderId } : p))
     fetch(`/api/projects/${projectId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folderId }) }).catch(() => {})
+  }
+
+  // ── Multi-select (bulk move / star / delete). Checkbox toggles; shift-click selects a range. ──
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [anchor, setAnchor] = useState<string | null>(null)
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false)
+  const clearSel = useCallback(() => { setSelected(new Set()); setAnchor(null) }, [])
+  // Toggle one id; with shift, select the contiguous range from the anchor in `order`.
+  function selectRow(id: string, order: string[], shift: boolean) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (shift && anchor && order.includes(anchor) && order.includes(id)) {
+        const a = order.indexOf(anchor), b = order.indexOf(id)
+        for (let i = Math.min(a, b); i <= Math.max(a, b); i++) next.add(order[i])
+      } else {
+        next.has(id) ? next.delete(id) : next.add(id)
+        setAnchor(id)
+      }
+      return next
+    })
+  }
+  async function bulkDelete() {
+    const ids = [...selected]
+    if (!ids.length) return
+    if (!window.confirm(`Move ${ids.length} project${ids.length > 1 ? 's' : ''} to trash? They can be restored for 1 month.`)) return
+    setCloud(prev => prev.filter(p => !selected.has(p.id)))
+    clearSel()
+    await Promise.allSettled(ids.map(id => fetch(`/api/projects/${id}`, { method: 'DELETE' })))
+  }
+  function bulkMove(folderId: string | null) {
+    const ids = [...selected]
+    setBulkMoveOpen(false)
+    setCloud(prev => prev.map(p => selected.has(p.id) ? { ...p, folderId } : p))
+    clearSel()
+    void Promise.allSettled(ids.map(id => fetch(`/api/projects/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folderId }) })))
+  }
+  function bulkStar(star: boolean) {
+    // PATCH with an empty body TOGGLES starred — so only flip the ones not already in the target state.
+    const flip = cloud.filter(p => selected.has(p.id) && !!p.starred !== star)
+    setCloud(prev => prev.map(p => selected.has(p.id) ? { ...p, starred: star } : p))
+    void Promise.allSettled(flip.map(p => fetch(`/api/projects/${p.id}`, { method: 'PATCH' })))
   }
 
   // ── Cloud ──
@@ -212,9 +253,9 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
 
   // Close the right-click menu on any click, scroll, or Escape
   useEffect(() => {
-    if (!ctxMenu && !folderCtx) return
-    const close = () => { setCtxMenu(null); setFolderCtx(null) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setCtxMenu(null); setFolderCtx(null) } }
+    if (!ctxMenu && !folderCtx && !bulkMoveOpen) return
+    const close = () => { setCtxMenu(null); setFolderCtx(null); setBulkMoveOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setCtxMenu(null); setFolderCtx(null); setBulkMoveOpen(false); clearSel() } }
     window.addEventListener('click', close)
     window.addEventListener('scroll', close, true)
     window.addEventListener('keydown', onKey)
@@ -223,7 +264,10 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
       window.removeEventListener('scroll', close, true)
       window.removeEventListener('keydown', onKey)
     }
-  }, [ctxMenu, folderCtx])
+  }, [ctxMenu, folderCtx, bulkMoveOpen, clearSel])
+
+  // Clear the multi-select when switching folders (selection is scoped to the current view).
+  useEffect(() => { setSelected(new Set()); setAnchor(null) }, [activeFolder])
 
   const loading = cloudLoading || localLoading
 
@@ -247,6 +291,9 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
       if (aStar !== bStar) return bStar - aStar
       return b.ts - a.ts
     })
+
+  // Ordered cloud ids (visible order) for shift-range selection.
+  const orderedCloudIds = rows.filter(r => r.source === 'cloud').map(r => r.id)
 
   if (loading) {
     return (
@@ -317,49 +364,102 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
         </div>
       )}
 
-      {/* Folder filter — All + each folder + New. Drag a project onto a folder to
-          file it; right-click a folder to rename/delete. */}
-      {isSignedIn && (
-        <div className="flex flex-wrap items-center gap-2 mb-4">
+      {/* Breadcrumb (navigation only) + New folder. The folders themselves render as rows in the
+          list below — like a file browser — not as tabs. Drag a project onto a crumb to file it. */}
+      {isSignedIn && (() => {
+        const byId = new Map(folders.map(f => [f.id, f]))
+        const path: FolderRec[] = []
+        { let cur = activeFolder; const seen = new Set<string>(); while (cur && byId.has(cur) && !seen.has(cur)) { seen.add(cur); const f = byId.get(cur)!; path.unshift(f); cur = f.parentId } }
+        const crumb = (label: string, target: string | null, active: boolean) => (
           <button
-            onClick={() => setActiveFolder(null)}
-            onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder('all') }}
+            onClick={() => setActiveFolder(target)}
+            onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder(target ?? 'all') }}
             onDragLeave={() => setDropFolder(null)}
-            onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, null); setDropFolder(null); setDragId(null) }}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
-            style={{ border: `1px solid ${dropFolder === 'all' ? 'var(--accent)' : 'var(--border)'}`, background: activeFolder === null ? 'var(--accent-subtle)' : 'var(--bg-card)', color: activeFolder === null ? 'var(--accent-light)' : 'var(--text-secondary)' }}
-          >All</button>
-          {folders.map(f => {
-            const on = activeFolder === f.id
+            onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, target); setDropFolder(null); setDragId(null) }}
+            className="px-1.5 py-0.5 rounded text-sm"
+            style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: active ? 500 : 400, background: dropFolder === (target ?? 'all') ? 'var(--accent-subtle)' : 'transparent' }}
+          >{label}</button>
+        )
+        return (
+          <div className="flex items-center gap-1 mb-4 flex-wrap">
+            {crumb('All projects', null, activeFolder === null)}
+            {path.map((f, i) => (
+              <span key={f.id} className="flex items-center gap-1">
+                <span style={{ color: 'var(--text-muted)' }}>›</span>
+                {crumb(f.name, f.id, i === path.length - 1)}
+              </span>
+            ))}
+            <button onClick={() => createFolder()} className="ml-auto flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg" style={{ border: '1px dashed var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              <FolderPlus size={12} /> {activeFolder ? 'New subfolder' : 'New folder'}
+            </button>
+          </div>
+        )
+      })()}
+
+      {/* ── Multi-select action bar (appears when 1+ projects are selected) ── */}
+      {selected.size > 0 && (
+        <div className="sticky top-2 z-20 flex items-center gap-2 p-2.5 mb-2 rounded-xl border shadow-sm" style={{ background: 'var(--accent-subtle)', borderColor: 'var(--accent)' }}>
+          <span className="text-sm font-semibold px-1.5" style={{ color: 'var(--text-primary)' }}>{selected.size} selected</span>
+          {orderedCloudIds.length > selected.size && (
+            <button onClick={() => { setSelected(new Set(orderedCloudIds)); setAnchor(null) }} className="text-xs px-2 py-1 rounded-md" style={{ color: 'var(--accent)' }}>Select all ({orderedCloudIds.length})</button>
+          )}
+          <div className="flex-1" />
+          <div className="relative">
+            <button onClick={() => setBulkMoveOpen(o => !o)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+              <Folder size={14} /> Move to…
+            </button>
+            {bulkMoveOpen && (
+              <div className="absolute right-0 mt-1 py-1 rounded-lg border shadow-lg z-30 max-h-64 overflow-auto" style={{ background: 'var(--bg-card)', borderColor: 'var(--border)', minWidth: 190 }}>
+                <button onClick={() => bulkMove(null)} className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-left hover:opacity-80" style={{ color: 'var(--text-secondary)' }}>All projects (no folder)</button>
+                {folders.map(f => (
+                  <button key={f.id} onClick={() => bulkMove(f.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-left hover:opacity-80" style={{ color: 'var(--text-primary)' }}>
+                    <Folder size={13} color="var(--accent-light)" /> {f.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button onClick={() => bulkStar(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium" style={{ background: 'var(--bg-card)', color: '#f59e0b' }} title="Star selected"><Star size={14} /> Star</button>
+          <button onClick={bulkDelete} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium" style={{ background: 'var(--bg-card)', color: '#ef4444' }} title="Move selected to trash"><Trash2 size={14} /> Delete</button>
+          <button onClick={clearSel} className="p-1.5 rounded-lg" style={{ color: 'var(--text-muted)' }} title="Clear selection"><X size={16} /></button>
+        </div>
+      )}
+
+      {rows.length === 0 && !(isSignedIn && folders.some(f => (f.parentId ?? null) === activeFolder)) ? (
+        <EmptyState isSignedIn={isSignedIn} hasFolder={!!folder} onConnect={connectFolder} />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {/* Folders live IN the list (like a file browser): click to open, drag a project onto one
+              to file it, right-click for rename / subfolder / delete. */}
+          {isSignedIn && folders.filter(f => (f.parentId ?? null) === activeFolder).map(f => {
             const n = folderCount(f.id)
             const over = dropFolder === f.id
+            const kids = folders.some(x => x.parentId === f.id)
             return (
-              <button
-                key={f.id}
+              <div
+                key={`folder:${f.id}`}
                 onClick={() => setActiveFolder(f.id)}
                 onContextMenu={(e) => { e.preventDefault(); setFolderCtx({ id: f.id, name: f.name, x: e.clientX, y: e.clientY }) }}
                 onDragOver={(e) => { if (!dragId) return; e.preventDefault(); setDropFolder(f.id) }}
                 onDragLeave={() => setDropFolder(null)}
                 onDrop={(e) => { if (!dragId) return; e.preventDefault(); moveToFolder(dragId, f.id); setDropFolder(null); setDragId(null) }}
-                title="Click to filter · drag a project here to file it · right-click to rename/delete"
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg"
-                style={{ border: `1px solid ${over ? 'var(--accent)' : 'var(--border)'}`, background: on ? 'var(--accent-subtle)' : 'var(--bg-card)', color: on ? 'var(--accent-light)' : 'var(--text-secondary)' }}
+                className="group flex items-center gap-4 p-4 rounded-xl border transition-all cursor-pointer"
+                style={{ background: over ? 'var(--accent-subtle)' : 'var(--bg-card)', borderColor: over ? 'var(--accent)' : 'var(--border)' }}
               >
-                <Folder size={12} /> {f.name}
-                {n > 0 && <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{n}</span>}
-              </button>
+                <div className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--border)' }}>
+                  <Folder size={18} color="var(--accent-light)" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{f.name}</div>
+                  <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{n} project{n !== 1 ? 's' : ''}{kids ? ' · has subfolders' : ''}</div>
+                </div>
+                <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>Folder</span>
+                <button onClick={(e) => { e.stopPropagation(); setFolderCtx({ id: f.id, name: f.name, x: e.clientX, y: e.clientY }) }} className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg" style={{ color: 'var(--text-muted)' }} title="Rename / subfolder / delete">
+                  <Pencil size={14} />
+                </button>
+              </div>
             )
           })}
-          <button onClick={createFolder} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg" style={{ border: '1px dashed var(--border-light)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
-            <FolderPlus size={12} /> New folder
-          </button>
-        </div>
-      )}
-
-      {rows.length === 0 ? (
-        <EmptyState isSignedIn={isSignedIn} hasFolder={!!folder} onConnect={connectFolder} />
-      ) : (
-        <div className="flex flex-col gap-2">
           {rows.map(row => row.source === 'cloud' ? (
             <div
               key={row.key}
@@ -367,9 +467,19 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
               onDragStart={(e) => { setDragId(row.id); e.dataTransfer.effectAllowed = 'move' }}
               onDragEnd={() => { setDragId(null); setDropFolder(null) }}
               className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
-              style={{ background: 'var(--bg-card)', borderColor: row.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)', opacity: dragId === row.id ? 0.5 : 1, cursor: 'default' }}
+              style={{ background: selected.has(row.id) ? 'var(--accent-subtle)' : 'var(--bg-card)', borderColor: selected.has(row.id) ? 'var(--accent)' : row.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)', opacity: dragId === row.id ? 0.5 : 1, cursor: 'default' }}
               onContextMenu={(e) => { e.preventDefault(); setFolderMenu(false); setCtxMenu({ id: row.id, starred: row.starred, x: e.clientX, y: e.clientY, href: cloudHref(row), folderId: row.folderId }) }}
             >
+              {/* Select checkbox — shows on hover, or always while a selection is active. Shift-click = range. */}
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); selectRow(row.id, orderedCloudIds, e.shiftKey) }}
+                className={`shrink-0 w-5 h-5 rounded-md border flex items-center justify-center transition-opacity ${selected.size > 0 ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                style={{ borderColor: selected.has(row.id) ? 'var(--accent)' : 'var(--border)', background: selected.has(row.id) ? 'var(--accent)' : 'transparent' }}
+                title="Select (shift-click for range)"
+                aria-pressed={selected.has(row.id)}
+              >
+                {selected.has(row.id) && <Check size={13} color="#fff" />}
+              </button>
               {/* Hard navigation (plain <a>): a full load reliably hits the
                   canonical server route, avoiding client-router quirks with the
                   @-prefixed path. Opening a project reloads the editor anyway. */}
@@ -473,6 +583,9 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
         >
           <button onClick={() => { const { id, name } = folderCtx; setFolderCtx(null); renameFolder(id, name) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
             <Pencil size={14} /> Rename
+          </button>
+          <button onClick={() => { const id = folderCtx.id; setFolderCtx(null); createFolder(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
+            <FolderPlus size={14} /> New subfolder…
           </button>
           <button onClick={() => { const id = folderCtx.id; setFolderCtx(null); deleteFolder(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: '#ef4444' }}>
             <Trash2 size={14} /> Delete

@@ -13,6 +13,8 @@ import { tmpdir, homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
+import { MELODIES, RANDOM_KEYS } from './pd-melodies.mjs'
+import { ORIGINALS } from './claude-originals.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT_DIR = join(homedir(), 'Desktop', '100lights-ai-renders')
@@ -155,15 +157,33 @@ function render(cf, label, tmp) {
   const cfPath = join(tmp, `${safe(label)}.cfproj`)
   writeFileSync(cfPath, JSON.stringify(cf))
   writeFileSync(join(OUT_DIR, `${safe(label)}.cfproj`), JSON.stringify(cf))
+  if (has('no-audio')) { console.log(`  ✓ ${join(OUT_DIR, safe(label) + '.cfproj')} (cfproj only — --no-audio)`); return }
   console.log(`▸ rendering "${label}"…`)
   execFileSync('node', ['scripts/hear-ai.mjs', `--project=${cfPath}`, `--out=${join(OUT_DIR, safe(label) + '.mp3')}`], { cwd: ROOT, stdio: 'inherit' })
   console.log(`  ✓ ${join(OUT_DIR, safe(label) + '.mp3')} (+ .cfproj)`)
 }
 
-const songs = has('all') ? ['ode', 'greensleeves'] : [flag('song', 'ode')]
-for (const s of songs) {
+// Pool = the original two + the public-domain melody library. Default is now RANDOM (fixes the old
+// "always Ode to Joy" default). --song=<slug> picks one; --count=N picks N distinct random; --all = all.
+const POOL = { ...SONGS, ...MELODIES, ...ORIGINALS }
+const norm = (o) => ({ padPreset: STRINGS, padOct: 3, pickup: 0, drums: false, repeats: 2, ...o })
+let picks
+if (has('all')) picks = Object.keys(POOL)
+else if (flag('song', null)) picks = [flag('song')]
+else {
+  // Random default draws only from the APPLICABLE set (no kids/holiday tunes). --song=<slug> still
+  // reaches any melody in the library, and --all does the whole thing.
+  const n = Math.max(1, Number(flag('count', '1')))
+  const bag = [...RANDOM_KEYS]
+  picks = []
+  for (let i = 0; i < n && bag.length; i++) picks.push(bag.splice(Math.floor(Math.random() * bag.length), 1)[0])
+}
+console.log(`▸ ${picks.length} song(s) from a ${Object.keys(POOL).length}-melody library: ${picks.join(', ')}`)
+for (const s of picks) {
+  const song = POOL[s]
+  if (!song) { console.error(`unknown song "${s}" — options: ${Object.keys(POOL).join(', ')}`); continue }
   const tmp = mkdtempSync(join(tmpdir(), 'accompany-'))
-  try { render(build(SONGS[s]), `${SONGS[s].title} (accompaniment)`, tmp) }
+  try { render(build(norm(song)), `${song.title} (accompaniment)`, tmp) }
   finally { rmSync(tmp, { recursive: true, force: true }) }
 }
 console.log('\n✓ done')

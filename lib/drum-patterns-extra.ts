@@ -1,0 +1,62 @@
+// 50 additional beat patterns for the step sequencer — same DrumPattern shape as lib/drum-presets.ts
+// (16-step grid, steps 0–15; lanes: kick snare closedHat openHat clap rim crash tomHi tomMid tomLo).
+// Wired in by spreading into DRUM_PATTERNS. Genre placements are musically deliberate, not random.
+import type { DrumPattern } from './drum-presets'
+export const EXTRA_PATTERNS: DrumPattern[] = [
+  // ── House / techno family ──────────────────────────────────────────────
+  { id: 'deephouse',   name: 'Deep House',      desc: 'Warm four-floor, offbeat open hats', bars: 1, hits: { kick: [0,4,8,12], closedHat: [2,6,10,14], openHat: [6,14], clap: [4,12] } },
+  { id: 'techhouse',   name: 'Tech House',      desc: 'Tight, rolling, rim accents', bars: 1, hits: { kick: [0,4,8,12], closedHat: [0,2,4,6,8,10,12,14], rim: [7,15], clap: [4,12] } },
+  { id: 'technodrive', name: 'Techno (Driving)', desc: 'Driving four-floor, hats on the &', bars: 1, hits: { kick: [0,4,8,12], closedHat: [2,6,10,14], openHat: [14], clap: [4,12] } },
+  { id: 'minimal',     name: 'Minimal Techno',  desc: 'Sparse and hypnotic', bars: 1, hits: { kick: [0,4,8,12], closedHat: [2,10], rim: [7] } },
+  { id: 'trance',      name: 'Trance',          desc: 'Uplifting four-floor + open hats', bars: 1, hits: { kick: [0,4,8,12], openHat: [2,6,10,14], clap: [4,12], closedHat: [0,4,8,12] } },
+  { id: 'proghouse',   name: 'Progressive House', desc: 'Steady groove, clap backbeat', bars: 1, hits: { kick: [0,4,8,12], closedHat: [2,6,10,14], clap: [4,12] } },
+  { id: 'bighouse',    name: 'Big Room',        desc: 'Festival kick + snare build feel', bars: 1, hits: { kick: [0,4,8,12], snare: [4,12], crash: [0], openHat: [2,6,10,14] } },
+  { id: 'afrohouse',   name: 'Afro House',      desc: 'Four-floor with conga toms', bars: 1, hits: { kick: [0,4,8,12], closedHat: [2,6,10,14], tomHi: [3,11], tomLo: [7,15] } },
+  { id: 'garage2',     name: 'UK Garage',       desc: 'Skippy syncopated shuffle', bars: 1, hits: { kick: [0,10], snare: [4,12], closedHat: [2,6,9,14], openHat: [7] } },
+  { id: 'twostep',     name: '2-Step',          desc: 'Broken kick, snappy snare', bars: 1, hits: { kick: [0,6,10], snare: [4,12], closedHat: [2,6,10,14] } },
+  { id: 'speedgarage', name: 'Speed Garage',    desc: 'Bouncy sub-driven four-floor', bars: 1, hits: { kick: [0,4,7,8,12], clap: [4,12], closedHat: [2,6,10,14] } },
+  // ── Bass music ─────────────────────────────────────────────────────────
+  { id: 'dnb',         name: 'Drum & Bass',     desc: 'Fast two-step break', bars: 1, hits: { kick: [0,10], snare: [4,12], closedHat: [2,6,10,14] } },
+  { id: 'liquiddnb',   name: 'Liquid DnB',      desc: 'Smooth rolling break', bars: 1, hits: { kick: [0,10], snare: [4,12], closedHat: [0,2,4,6,8,10,12,14], openHat: [14] } },
+  { id: 'jungle',      name: 'Jungle',          desc: 'Chopped amen feel', bars: 1, hits: { kick: [0,6,10], snare: [4,7,12], closedHat: [2,10,14], rim: [15] } },
+  { id: 'dubstep',     name: 'Dubstep',         desc: 'Half-time, snare on the 3', bars: 1, hits: { kick: [0,11], snare: [8], closedHat: [2,6,10,14] } },
+  { id: 'futurebass',  name: 'Future Bass',     desc: 'Half-time with hat detail', bars: 1, hits: { kick: [0,10], snare: [8], closedHat: [0,2,4,6,10,12,14], openHat: [6] } },
+  { id: 'hardstyle',   name: 'Hardstyle',       desc: 'Hard four-floor, reverse-clap feel', bars: 1, hits: { kick: [0,4,8,12], clap: [4,12], crash: [0] } },
+  { id: 'gabber',      name: 'Gabber',          desc: 'Distorted rolling kick', bars: 1, hits: { kick: [0,2,4,6,8,10,12,14], crash: [0] } },
+  // ── Phonk / trap / drill ───────────────────────────────────────────────
+  { id: 'phonk',       name: 'Phonk',           desc: 'Cowbell-driven Memphis feel', bars: 1, hits: { kick: [0,3,10], snare: [8], closedHat: [0,2,4,6,8,10,12,14], rim: [6,14] } },
+  { id: 'driftphonk',  name: 'Drift Phonk',     desc: 'Aggressive syncopated kick', bars: 1, hits: { kick: [0,3,6,10,13], snare: [8], closedHat: [0,2,4,6,8,10,12,14] } },
+  { id: 'trap2',       name: 'Trap (Modern)',   desc: 'Booming kick, snappy clap', bars: 1, hits: { kick: [0,6,10,13], clap: [8], closedHat: [0,2,4,6,8,10,11,12,14] } },
+  { id: 'trapdark',    name: 'Dark Trap',       desc: 'Sparse, heavy, 808-led', bars: 1, hits: { kick: [0,7], snare: [8], closedHat: [0,4,6,8,12,14,15] } },
+  { id: 'drill2',      name: 'Drill',           desc: 'Sliding kick + triplet hats', bars: 1, hits: { kick: [0,3,7,10], snare: [8], closedHat: [0,3,6,8,11,14], rim: [12] } },
+  { id: 'ukdrill',     name: 'UK Drill',        desc: 'Skippy dark drill groove', bars: 1, hits: { kick: [0,6,7,10], snare: [8], closedHat: [0,2,4,6,10,12,14] } },
+  { id: 'hyperpop',    name: 'Hyperpop',        desc: 'Glitchy, bright, clap-heavy', bars: 1, hits: { kick: [0,4,8,12], clap: [4,12], closedHat: [0,1,2,4,6,8,10,12,13,14] } },
+  // ── Afro / Latin / Caribbean ───────────────────────────────────────────
+  { id: 'amapiano',    name: 'Amapiano',        desc: 'Log-drum bounce, shaker hats', bars: 1, hits: { kick: [0,10], rim: [4,12], closedHat: [2,6,10,14], tomLo: [6,14], clap: [12] } },
+  { id: 'afrobeats',   name: 'Afrobeats',       desc: 'Syncopated kick + rim clave', bars: 1, hits: { kick: [0,6,11], rim: [4,10,12], closedHat: [2,6,10,14], clap: [4,12] } },
+  { id: 'dancehall',   name: 'Dancehall',       desc: 'Classic riddim bounce', bars: 1, hits: { kick: [0,6,8], snare: [4,12], closedHat: [2,6,10,14] } },
+  { id: 'dembow2',     name: 'Dembow',          desc: 'Boom-ch-boom-chick riddim', bars: 1, hits: { kick: [0,3,8,11], snare: [4,7,12,15], closedHat: [2,6,10,14] } },
+  { id: 'reggaeton2',  name: 'Reggaeton (Pop)', desc: 'Modern pop reggaeton', bars: 1, hits: { kick: [0,8], snare: [3,6,11,14], clap: [3,11], closedHat: [0,2,4,6,8,10,12,14] } },
+  { id: 'salsa',       name: 'Salsa (Clave)',   desc: '2-3 son clave with kick', bars: 1, hits: { kick: [0,8], rim: [0,3,6,10,12], closedHat: [2,6,10,14] } },
+  { id: 'samba',       name: 'Samba',           desc: 'Surdo + syncopated snare', bars: 1, hits: { kick: [0,4,8,12], snare: [2,6,10,14], rim: [3,7,11,15], closedHat: [0,2,4,6,8,10,12,14] } },
+  { id: 'bossanova',   name: 'Bossa Nova',      desc: 'Soft rim clave, brushy feel', bars: 1, hits: { kick: [0,8], rim: [0,3,6,10,12], closedHat: [2,6,10,14] } },
+  { id: 'cumbia',      name: 'Cumbia',          desc: 'Steady kick, offbeat rim', bars: 1, hits: { kick: [0,4,8,12], rim: [2,6,10,14], closedHat: [0,4,8,12] } },
+  { id: 'reggae',      name: 'Reggae One-Drop', desc: 'Kick + snare drop on the 3', bars: 1, hits: { kick: [8], snare: [8], closedHat: [0,2,4,6,8,10,12,14] } },
+  { id: 'steppers',    name: 'Reggae Steppers', desc: 'Four-to-the-floor roots', bars: 1, hits: { kick: [0,4,8,12], snare: [8], closedHat: [2,6,10,14] } },
+  { id: 'ska',         name: 'Ska',             desc: 'Upstroke offbeat feel', bars: 1, hits: { kick: [0,8], snare: [4,12], closedHat: [2,6,10,14], rim: [2,6,10,14] } },
+  { id: 'bailefunk',   name: 'Baile Funk',      desc: 'Tamborzão bounce', bars: 1, hits: { kick: [0,3,6,10], rim: [4,7,12,15], closedHat: [2,6,10,14] } },
+  // ── Groove / soul / pop / rock ─────────────────────────────────────────
+  { id: 'motown',      name: 'Motown',          desc: 'Backbeat + tambourine 8ths', bars: 1, hits: { kick: [0,8], snare: [4,12], closedHat: [0,2,4,6,8,10,12,14], clap: [4,12] } },
+  { id: 'newjack',     name: 'New Jack Swing',  desc: 'Swung syncopated kicks', bars: 1, hits: { kick: [0,3,6,10], snare: [4,12], closedHat: [0,3,4,7,8,11,12,15] } },
+  { id: 'neosoul',     name: 'Neo-Soul',        desc: 'Laid-back with ghost snare', bars: 1, hits: { kick: [0,7,10], snare: [4,12], rim: [6,14], closedHat: [0,3,4,7,8,11,12,15] } },
+  { id: 'rnb',         name: 'R&B (Slow Jam)',  desc: 'Half-time smooth groove', bars: 1, hits: { kick: [0,6], snare: [8], closedHat: [0,2,4,6,8,10,12,14] } },
+  { id: 'gospel',      name: 'Gospel',          desc: 'Driving backbeat, hat 8ths', bars: 1, hits: { kick: [0,6,8], snare: [4,12], closedHat: [0,2,4,6,8,10,12,14], clap: [4,12] } },
+  { id: 'popballad',   name: 'Pop Ballad',      desc: 'Simple, spacious backbeat', bars: 1, hits: { kick: [0,8], snare: [8], closedHat: [0,4,8,12] } },
+  { id: 'indie',       name: 'Indie',           desc: 'Driving eighths + tambourine', bars: 1, hits: { kick: [0,8], snare: [4,12], closedHat: [0,2,4,6,8,10,12,14], rim: [2,6,10,14] } },
+  { id: 'punk',        name: 'Punk',            desc: 'Fast straight backbeat', bars: 1, hits: { kick: [0,4,8,12], snare: [4,12], closedHat: [0,2,4,6,8,10,12,14], crash: [0] } },
+  { id: 'metal',       name: 'Metal (Double Kick)', desc: 'Blast-ish double kick', bars: 1, hits: { kick: [0,2,4,6,8,10,12,14], snare: [4,12], crash: [0], closedHat: [0,4,8,12] } },
+  { id: 'blues',       name: 'Blues Shuffle',   desc: 'Triplet shuffle feel', bars: 1, hits: { kick: [0,8], snare: [4,12], closedHat: [0,3,4,7,8,11,12,15] } },
+  { id: 'jazzswing',   name: 'Jazz Swing',      desc: 'Ride swing + feathered kick', bars: 1, hits: { kick: [0,8], closedHat: [0,3,4,7,8,11,12,15], rim: [4,12] } },
+  { id: 'footwork',    name: 'Footwork',        desc: 'Syncopated 160bpm bounce', bars: 1, hits: { kick: [0,3,5,8,11], clap: [4,12], closedHat: [2,6,10,14] } },
+  { id: 'jerseyclub',  name: 'Jersey Club',     desc: 'Triplet 5-kick bounce', bars: 1, hits: { kick: [0,3,6,8,10], clap: [4,12], closedHat: [2,6,10,14] } },
+]

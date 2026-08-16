@@ -8,6 +8,7 @@
 // lane → GM pitch (the piano-roll drum grid mirrors it).
 
 import type { TrackInstrument, DrumPadSettings, MidiNote } from './daw-types'
+import { EXTRA_PATTERNS } from './drum-patterns-extra'
 
 export interface DrumLane {
   key: string
@@ -168,6 +169,8 @@ export const DRUM_PATTERNS: DrumPattern[] = [
     hits: { kick: [0, 4, 8, 12], clap: [4, 12], openHat: [2, 6, 10, 14] } },
   { id: 'drill',   name: 'Drill',             desc: 'Dark, triplet-leaning hats', bars: 1,
     hits: { kick: [0, 7, 10], snare: [8], closedHat: [0, 3, 6, 8, 11, 14] } },
+  // +51 genre patterns (deep house → jersey club); see lib/drum-patterns-extra.ts
+  ...EXTRA_PATTERNS,
 ]
 
 /** Smart-Drums groove: density (0=sparse…1=busy) × intensity (0=soft…1=loud)

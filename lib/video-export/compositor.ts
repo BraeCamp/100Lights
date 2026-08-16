@@ -156,6 +156,25 @@ interface ClipTransform {
   cropZoom: number; cropX: number; cropY: number; fadeOpacity: number
 }
 
+// Beat/drop "hype" punch: a decaying zoom bump at each hype beat (small) or drop (big). Returns the
+// zoom MULTIPLIER bump (0 = none) — caller does cropZoom *= (1 + bump). `local` = seconds since the
+// clip start; `beats`/`drops` are local-second punch times (assigned per clip by the hype pass).
+export function hypePulseZoom(local: number, beats?: number[], drops?: number[]): number {
+  let m = 0
+  if (beats) for (const tb of beats) { const dt = local - tb; if (dt >= 0 && dt < 0.5) { const v = 0.06 * Math.exp(-9 * dt); if (v > m) m = v } }
+  if (drops) for (const td of drops) { const dt = local - td; if (dt >= 0 && dt < 0.9) { const v = 0.15 * Math.exp(-6 * dt); if (v > m) m = v } }
+  return m
+}
+
+// White-flash alpha (0..~0.32) that pops on each drop and decays fast (~0.16s). Drawn additively over
+// the frame on drops, paired with the punch-zoom. `local` = seconds since clip start.
+export function hypeFlashAlpha(local: number, drops?: number[]): number {
+  if (!drops) return 0
+  let a = 0
+  for (const td of drops) { const dt = local - td; if (dt >= 0 && dt < 0.16) { const v = 0.32 * (1 - dt / 0.16); if (v > a) a = v } }
+  return a
+}
+
 // ── Ported from VideoEditor.clipTransform (fade envelope + Ken Burns) ──────────
 export function computeClipTransform(clip: TimelineItem, t: number, items?: TimelineItem[]): ClipTransform {
   const clipDur = clip.outPoint - clip.inPoint
@@ -184,6 +203,10 @@ export function computeClipTransform(clip: TimelineItem, t: number, items?: Time
   if (clip.followFocusClipId && items) {
     const fp = followPan(clip, items, t)
     if (fp) { cropX = fp.cropX; cropY = fp.cropY }
+  }
+  // Beat/drop hype punch — a short decaying zoom bump on each beat/drop.
+  if (clip.hypeBeats?.length || clip.hypeDrops?.length) {
+    cropZoom *= 1 + hypePulseZoom(local, clip.hypeBeats, clip.hypeDrops)
   }
   return {
     opacity: clip.opacity ?? 100,
@@ -312,6 +335,16 @@ export function drawFrame(
           break
       }
     }
+  }
+
+  // Hype flash — a quick additive white pop on drops (paired with the punch-zoom), from the visible
+  // clips' hypeDrops. Drawn over the video, under the vignette/captions.
+  let flash = 0
+  for (const clip of stack) { if (clip.hypeDrops?.length) { const a = hypeFlashAlpha(t - clip.startTime, clip.hypeDrops); if (a > flash) flash = a } }
+  if (flash > 0) {
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = 'none'
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = `rgba(255,255,255,${flash})`; ctx.fillRect(0, 0, W, H)
+    ctx.restore()
   }
 
   // Effect overlays (grain / vignette / scanlines / glitch) — from the visible clips' looks + effect items.

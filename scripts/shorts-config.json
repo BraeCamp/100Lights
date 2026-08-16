@@ -1,0 +1,242 @@
+{
+  "_readme": "Every on-screen word + post caption for each short lives here. Edit the text, then run:  node scripts/build-shorts.mjs <id...|all>  to re-render + update it in place in the Shorts › Tests folder. `song`/`start`/`seconds`/`accent`/`dropBurst`/`loop` are also editable.",
+  "folder": {
+    "name": "Tests",
+    "parent": "Shorts"
+  },
+  "songs": {
+    "edm": "EDM EL__full-mix.mp3",
+    "house": "Hybrid House__full-mix.mp3",
+    "lofi": "Dusk (lofi master).mp3",
+    "synthwave": "ai-synthwave-5011-1786226222457.mp3",
+    "orchestral": "Orchestral EL__full-mix.mp3",
+    "filtered_house": "ai-filtered-house-43770-1786843840300.mp3"
+  },
+  "shorts": [
+    {
+      "id": "radial-visualizer",
+      "title": "Radial Visualizer",
+      "renderer": "format",
+      "format": "radial",
+      "song": "house",
+      "start": 8,
+      "seconds": 18,
+      "accent": "#a78bfa",
+      "dropBurst": true,
+      "hook": [
+        "wait for the",
+        "drop 🔊"
+      ],
+      "caption": "wait for the drop 🔊 — made with AI in 100Lights\n\n#edm #dropmix #aimusic #musicproducer #beatmaker"
+    },
+    {
+      "id": "kinetic-text",
+      "title": "Kinetic Text Hook",
+      "renderer": "text",
+      "song": "edm",
+      "start": 0,
+      "seconds": 15,
+      "accent": "#38bdf8",
+      "lines": [
+        {
+          "text": "i let an AI",
+          "at": 0.8
+        },
+        {
+          "text": "make this beat.",
+          "at": 1.5
+        },
+        {
+          "text": "it took",
+          "at": 4.3
+        },
+        {
+          "text": "12 seconds. 🔊",
+          "at": 5,
+          "accent": true
+        }
+      ],
+      "caption": "i let an AI make this beat. it took 12 seconds 🤖\n\n#aimusic #musicproducer #beatmaker #edm #fyp"
+    },
+    {
+      "id": "falling-notes",
+      "title": "Falling Notes",
+      "renderer": "format",
+      "format": "falling-notes",
+      "cfproj": "filtered_house",
+      "song": "filtered_house",
+      "start": 0,
+      "seconds": 18,
+      "accent": "#34d399",
+      "hook": [
+        "watch it",
+        "get played 🎹"
+      ],
+      "loop": true,
+      "loops": 2,
+      "caption": "watch every note get played 🎹 — made in 100Lights\n\n#housemusic #pianocover #aimusic #producer #satisfying"
+    },
+    {
+      "id": "stem-builder",
+      "title": "Stem Builder",
+      "renderer": "format",
+      "format": "stems",
+      "cfproj": "filtered_house",
+      "song": "filtered_house",
+      "start": 0,
+      "seconds": 18,
+      "accent": "#f59e0b",
+      "hook": [
+        "the layers",
+        "stack up 🎚️"
+      ],
+      "loop": true,
+      "loops": 2,
+      "caption": "the layers stack up 🎚️ — built in 100Lights\n\n#housemusic #musicproducer #aimusic #beatmaker #studio"
+    },
+    {
+      "id": "bouncing-ball",
+      "title": "Bouncing Ball",
+      "renderer": "bounce",
+      "song": "filtered_house",
+      "start": 24,
+      "seconds": 18,
+      "accent": "#22d3ee",
+      "loop": true,
+      "loops": 2,
+      "caption": "every bounce is a note 🎵 satisfying? — made in 100Lights\n\n#satisfying #housemusic #aimusic #producer #oddlysatisfying"
+    },
+    {
+      "id": "fake-imessage",
+      "title": "Fake iMessage",
+      "renderer": "imessage",
+      "song": "house",
+      "start": 8,
+      "seconds": 14,
+      "accent": "#3b82f6",
+      "chatTitle": "producer friend 💬",
+      "messages": [
+        {
+          "text": "yo send me that beat",
+          "at": 0.6
+        },
+        {
+          "me": true,
+          "text": "which one",
+          "at": 2.2
+        },
+        {
+          "text": "the fire one from ur story",
+          "at": 3.6
+        },
+        {
+          "me": true,
+          "text": "ngl an AI made it 😭",
+          "at": 6
+        },
+        {
+          "text": "in how long",
+          "at": 8
+        },
+        {
+          "me": true,
+          "text": "12 seconds",
+          "at": 9.6
+        },
+        {
+          "text": "delete this app 💀",
+          "at": 11.4
+        }
+      ],
+      "caption": "my producer friend when I sent him an AI beat 💀\n\n#aimusic #producerlife #beatmaker #comedy #fyp"
+    },
+    {
+      "id": "vinyl-spin",
+      "title": "Vinyl Spin",
+      "renderer": "vinyl",
+      "song": "lofi",
+      "start": 10,
+      "seconds": 16,
+      "accent": "#f472b6",
+      "label": "Dusk",
+      "caption2": "NOW SPINNING",
+      "caption": "lofi to disappear to 🌙 — Dusk, made in 100Lights\n\n#lofi #lofihiphop #studybeats #chillbeats #lofimusic"
+    },
+    {
+      "id": "tier-list",
+      "title": "Tier List",
+      "renderer": "tier",
+      "song": "synthwave",
+      "start": 8,
+      "seconds": 15,
+      "accent": "#a78bfa",
+      "heading": "ranking AI genres 🎧",
+      "note": "each chip's `song` plays as a snippet when it lands (audio montage, aligned to `at`); edit tier/at/song to re-rank",
+      "tiers": [
+        {
+          "k": "S",
+          "c": "#ef4444"
+        },
+        {
+          "k": "A",
+          "c": "#f59e0b"
+        },
+        {
+          "k": "B",
+          "c": "#eab308"
+        },
+        {
+          "k": "C",
+          "c": "#22c55e"
+        }
+      ],
+      "chips": [
+        {
+          "label": "EDM",
+          "song": "edm",
+          "tier": 0,
+          "at": 1.2
+        },
+        {
+          "label": "Synthwave",
+          "song": "synthwave",
+          "tier": 0,
+          "at": 3.4
+        },
+        {
+          "label": "House",
+          "song": "house",
+          "tier": 1,
+          "at": 5.6
+        },
+        {
+          "label": "Lofi",
+          "song": "lofi",
+          "tier": 1,
+          "at": 7.8
+        },
+        {
+          "label": "Orchestral",
+          "song": "orchestral",
+          "tier": 2,
+          "at": 10
+        }
+      ],
+      "caption": "ranking my AI-made genres 🎧 agree? — made in 100Lights\n\n#tierlist #aimusic #musicproducer #edm #ranking"
+    },
+    {
+      "id": "vinyl-video",
+      "title": "Vinyl (Video)",
+      "renderer": "video-bg",
+      "footage": "vinyl-footage-marchenkov.mp4",
+      "credit": "footage: D. Marchenkov / Pexels",
+      "song": "lofi",
+      "start": 10,
+      "seconds": 16,
+      "accent": "#f472b6",
+      "label": "Dusk",
+      "caption2": "NOW SPINNING",
+      "caption": "lofi to disappear to 🌙 — Dusk, made in 100Lights\n\n#lofi #lofihiphop #studybeats #vinyl #chillbeats"
+    }
+  ]
+}

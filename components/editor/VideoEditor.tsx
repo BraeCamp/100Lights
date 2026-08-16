@@ -78,6 +78,11 @@ import type { Caption, Clip, Output, ContentType, ChapterMarker } from '@/lib/ty
 import type { TimelineItem, MediaItem, VideoAdjustments, Track, TransitionType, TempoSeg } from '@/lib/editor-types'
 import { projectBeatLines, clipBeatLines, nearestSorted } from '@/lib/video-beats'
 import { autoEditTimeline, type AutoEditOptions } from '@/lib/video-auto-edit'
+import AutoEditPanel from '@/components/editor/AutoEditPanel'
+import { analyzeVideoScenes } from '@/lib/video-scenes'
+import { planReframe } from '@/lib/video-auto-reframe'
+import { detectSilenceGaps } from '@/lib/video-silence'
+import { estimateTempo } from '@/lib/beat-analyzer'
 import { VIDEO_EFFECTS, effectsByCategory, getEffect, activeEffectCss, activeOverlays } from '@/lib/video-effects'
 import { buildMulticam, activeSpotlight } from '@/lib/video-multicam'
 import { analyzeSpeaker, speakerActivityAt, type SpeakerTrack } from '@/lib/speaker-detect'
@@ -85,7 +90,7 @@ import BeatMapEditor from './BeatMapEditor'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { MEDIA_ACCEPT, detectMediaKind, validateMediaFile } from '@/lib/media-import'
 import { interpSpeedRamp } from '@/lib/video-export/speed'
-import { pickVisibleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss } from '@/lib/video-export/compositor'
+import { pickVisibleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss, hypePulseZoom } from '@/lib/video-export/compositor'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_MUSIC_VIZ_FORMAT } from '@/lib/music-viz'
 import type { ActiveClipTransition, UnderLayer } from '@/components/editor/VideoPlayer'
@@ -534,14 +539,14 @@ export default function VideoEditor({
     const w = readWorkspace('video', {
       activePage: 'edit' as EditorPage,
       videoSidebarOpen: true,
-      videoLeftTab: 'media' as 'media' | null,
+      videoLeftTab: 'media' as 'media' | 'auto' | null,
       viewportTab: 'video' as 'video' | 'audio',
     })
     const pages: EditorPage[] = ['edit', 'color', 'audio', 'deliver']
     return {
       activePage: pages.includes(w.activePage) ? w.activePage : 'edit',
       videoSidebarOpen: typeof w.videoSidebarOpen === 'boolean' ? w.videoSidebarOpen : true,
-      videoLeftTab: (w.videoLeftTab === 'media' || w.videoLeftTab === null) ? w.videoLeftTab : 'media',
+      videoLeftTab: (w.videoLeftTab === 'media' || w.videoLeftTab === 'auto' || w.videoLeftTab === null) ? w.videoLeftTab : 'media',
       viewportTab: (w.viewportTab === 'video' || w.viewportTab === 'audio') ? w.viewportTab : 'video',
     }
   }, [])
@@ -701,7 +706,7 @@ export default function VideoEditor({
   // Panel sizes
   const [rightW, setRightW]   = useState(224)
   // Left media panel — icon-rail + openable panel, mirroring the audio editor.
-  const [videoLeftTab, setVideoLeftTab] = useState<'media' | null>(wsInit.videoLeftTab)
+  const [videoLeftTab, setVideoLeftTab] = useState<'media' | 'auto' | null>(wsInit.videoLeftTab)
   const [videoSidebarOpen, setVideoSidebarOpen] = useState(wsInit.videoSidebarOpen)
   const videoLeftPanel = useResizable({ key: 'video-left-panel', initial: 220, min: 180, max: 520, axis: 'x' })
   const [tlHeight, setTlHeight] = useState(() =>
@@ -1175,6 +1180,10 @@ export default function VideoEditor({
       const fp = followPan(clip, timelineItems, currentTime)
       if (fp) { cropX = fp.cropX; cropY = fp.cropY }
     }
+    // Beat/drop hype punch — same shared helper the export uses.
+    if (clip.hypeBeats?.length || clip.hypeDrops?.length) {
+      cropZoom *= 1 + hypePulseZoom(clipLocalTime, clip.hypeBeats, clip.hypeDrops)
+    }
 
     return {
       opacity: clip.opacity ?? 100,
@@ -1188,6 +1197,7 @@ export default function VideoEditor({
   }, [viewerClip?.id, viewerClip?.opacity, viewerClip?.flipH, viewerClip?.flipV, // eslint-disable-line
       viewerClip?.cropZoom, viewerClip?.cropX, viewerClip?.cropY, viewerClip?.fitMode, viewerClip?.crop,
       viewerClip?.fadeIn, viewerClip?.fadeOut, viewerClip?.kenBurns,
+      viewerClip?.hypeBeats, viewerClip?.hypeDrops,
       viewerClip?.followFocusClipId, timelineItems, currentTime]) // eslint-disable-line
 
   // Transition-in of the active clip: the clip that occupied the SAME TRACK
@@ -1393,6 +1403,13 @@ export default function VideoEditor({
       multicam: (mode: 'roundrobin' | 'audio' = 'audio') => runMulticam(mode),
       // Speaker-driven multicam: analyze mouth movement + audio → cut to who's talking. Async.
       speakerMulticam: () => runSpeakerMulticam(),
+      // ── Auto-Edit suite (also in the editor's Auto-Edit panel) — the agent surface so a driver
+      // (Claude) can auto-produce content end to end. ──────────────────────────────────────────────
+      autoReframe: () => runAutoReframe(),                 // selected clip → subject-tracked 9:16
+      hype: () => runHypePass(),                           // punch-zoom on beats + drops
+      clearHype: () => clearHype(),                        // remove the hype punches
+      jumpCut: () => runJumpCut(),                         // ripple out silent gaps (raw footage)
+      autoPolish: () => runAutoPolish(),                   // one-click reframe + hype
       // Offline speaker/mouth-motion analysis of a video URL → { times, activity }.
       analyzeSpeaker: (url: string, opts?: Parameters<typeof analyzeSpeaker>[1]) => analyzeSpeaker(url, opts),
       // Vocal clarity on an audio item (0..1; 0 = off) — presence EQ + de-ess + compression.
@@ -3039,8 +3056,156 @@ export default function VideoEditor({
     return res
   }, [setTimelineItems])
 
-  // Clear the auto-edit note after a moment.
-  useEffect(() => { if (!autoEditNote) return; const t = setTimeout(() => setAutoEditNote(null), 4000); return () => clearTimeout(t) }, [autoEditNote])
+  // ── Auto-reframe — analyze the selected video clip's subject (offline vision) and make it track,
+  // cropping 16:9 → 9:16. Applies via the existing follow-focus path (cover fit + zoom headroom +
+  // self-follow focus keyframes), so preview and export pan identically. See lib/video-auto-reframe.
+  const [autoBusy, setAutoBusy] = useState<string | null>(null)
+  const runAutoReframe = useCallback(async () => {
+    const items = timelineItemsRef.current
+    const sel = items.find(i => i.id === selectedId && i.contentType === 'video' && i.url)
+    const clip = sel ?? items.find(i => i.contentType === 'video' && i.url)
+    if (!clip?.url) { setAutoEditNote('Select a video clip to auto-reframe.'); return }
+    setAutoBusy('reframe'); setAutoEditNote('Analyzing the subject…')
+    try {
+      const scene = await analyzeVideoScenes(clip.url, {
+        from: clip.inPoint, to: clip.outPoint, objects: true,
+        onProgress: f => setAutoEditNote(`Analyzing the subject… ${Math.round(f * 100)}%`),
+      })
+      const plan = planReframe(scene, clip.inPoint, clip.speed && clip.speed > 0 ? clip.speed : 1)
+      if (!plan.samples) { setAutoEditNote('Couldn’t find a subject to track — try Trim/crop manually.'); return }
+      setTimelineItems(prev => prev.map(i => i.id === clip.id ? {
+        ...i, fitMode: plan.fitMode, cropZoom: plan.cropZoom,
+        focusKeyframes: plan.focusKeyframes, focusX: plan.focusX, focusY: plan.focusY,
+        followFocusClipId: clip.id, sceneTrack: scene,
+      } : i))
+      setSelectedId(clip.id)
+      setAutoEditNote(`Auto-reframed “${clip.label}” — tracking the subject (${plan.samples} points, ${plan.cropZoom}% zoom).`)
+    } catch (e) {
+      setAutoEditNote(`Auto-reframe failed: ${e instanceof Error ? e.message : 'analysis error'}`)
+    } finally { setAutoBusy(null) }
+  }, [setTimelineItems, selectedId])
+
+  // ── Hype pass — add a decaying zoom "punch" on every beat (small) and drop (big), so a flat
+  // montage feels professionally cut. Beats from the project beat map (fallback: a 120bpm grid);
+  // drops = beats where the audio energy jumps. Punches are stored per clip as local-second times
+  // and applied by computeClipTransform → identical in preview + export. Undoable.
+  const runHypePass = useCallback(async () => {
+    const items = timelineItemsRef.current
+    const endOf = (i: TimelineItem) => i.startTime + (i.outPoint - i.inPoint) / (i.speed && i.speed > 0 ? i.speed : 1)
+    const vids = items.filter(i => i.contentType === 'video' && i.url)
+    if (!vids.length) { setAutoEditNote('Add a video clip to add hype punches.'); return }
+    const { beats } = projectBeatLines(items)
+    const audioItems = items.filter(i => i.contentType === 'audio' && i.url)
+    const energyAt = (t: number) => {
+      const it = audioItems.find(i => t >= i.startTime && t < endOf(i))
+      if (!it?.url) return 0
+      const peaks = mediaItemsRef.current.find(m => m.url === it.url)?.peaks
+      if (!peaks?.length) return 0
+      const frac = Math.max(0, Math.min(0.999, (t - it.startTime) / ((endOf(it) - it.startTime) || 1)))
+      return peaks[Math.floor(frac * peaks.length)] ?? 0
+    }
+    const spanEnd = vids.reduce((m, i) => Math.max(m, endOf(i)), 0)
+    let grid = beats.filter(b => b < spanEnd)
+    let synced: string = 'the beat map'
+    if (grid.length < 4) {
+      // No beat map — auto-detect the tempo from the audio (falls back to 120bpm).
+      let bpm = 120, firstOnset = 0
+      const au = audioItems[0]
+      if (au?.url) {
+        try {
+          const ab = await fetch(au.url).then(r => r.arrayBuffer())
+          const buf = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(ab)
+          const est = estimateTempo(buf)
+          if (est.bpm && est.bpm >= 60 && est.bpm <= 200) { bpm = Math.round(est.bpm); firstOnset = est.firstOnset; synced = `~${bpm}bpm (auto-detected)` }
+          else synced = '120bpm (no tempo found)'
+        } catch { synced = '120bpm (no tempo found)' }
+      } else synced = '120bpm (no audio)'
+      grid = []
+      const beatSec = 60 / bpm
+      for (let t = firstOnset; t < spanEnd; t += beatSec) grid.push(+t.toFixed(3))
+    }
+    const drops = new Set<number>()
+    let lastDrop = -9
+    for (let i = 4; i < grid.length; i++) {
+      const e = energyAt(grid[i]); let avg = 0; for (let k = 1; k <= 4; k++) avg += energyAt(grid[i - k]); avg /= 4
+      if (e > 0.5 && e > avg * 1.3 && grid[i] - lastDrop > 2) { drops.add(grid[i]); lastDrop = grid[i] }
+    }
+    let punches = 0, dropCount = 0
+    const next = items.map(clip => {
+      if (clip.contentType !== 'video' || !clip.url) return clip
+      const cEnd = endOf(clip), hb: number[] = [], hd: number[] = []
+      for (const b of grid) if (b >= clip.startTime && b < cEnd) { const loc = +(b - clip.startTime).toFixed(3); if (drops.has(b)) hd.push(loc); else hb.push(loc) }
+      punches += hb.length; dropCount += hd.length
+      return { ...clip, hypeBeats: hb, hypeDrops: hd }
+    })
+    setTimelineItems(next)
+    setAutoEditNote(`Hype pass: ${punches} beat punches + ${dropCount} drop hits — synced to ${synced}.`)
+  }, [setTimelineItems])
+
+  // Clear the hype punches from every clip.
+  const clearHype = useCallback(() => {
+    setTimelineItems(prev => prev.map(i => (i.hypeBeats || i.hypeDrops) ? { ...i, hypeBeats: undefined, hypeDrops: undefined } : i))
+    setAutoEditNote('Cleared hype punches.')
+  }, [setTimelineItems])
+
+  // ── Silence jump-cut — decode the selected video clip's audio, find silent gaps (RMS), and
+  // ripple them out: the clip is split into speech-only segments placed contiguously, and later clips
+  // on the same track shift earlier by the removed time. Works on raw talking footage (no transcript
+  // needed — unlike the caption-based Trim silence). Undoable.
+  const runJumpCut = useCallback(async () => {
+    const items = timelineItemsRef.current
+    const endOf = (i: TimelineItem) => i.startTime + (i.outPoint - i.inPoint) / (i.speed && i.speed > 0 ? i.speed : 1)
+    const sel = items.find(i => i.id === selectedId && i.contentType === 'video' && i.url)
+    const clip = sel ?? items.find(i => i.contentType === 'video' && i.url)
+    if (!clip?.url) { setAutoEditNote('Select a video clip to jump-cut.'); return }
+    setAutoBusy('jumpcut'); setAutoEditNote('Finding silent gaps…')
+    try {
+      const { gaps } = await detectSilenceGaps(clip.url, { from: clip.inPoint, to: clip.outPoint, minSilence: 0.35, pad: 0.08 })
+      if (!gaps.length) { setAutoEditNote('No silent gaps found — the clip is already tight.'); return }
+      const speed = clip.speed && clip.speed > 0 ? clip.speed : 1
+      // speech segments = the source spans between the (clamped) silent gaps
+      const segs: [number, number][] = []
+      let cur = clip.inPoint
+      for (const g of gaps) {
+        const s = Math.max(cur, clip.inPoint), e = Math.min(g.start, clip.outPoint)
+        if (e > s) segs.push([s, e])
+        cur = Math.max(cur, Math.min(g.end, clip.outPoint))
+      }
+      if (cur < clip.outPoint) segs.push([cur, clip.outPoint])
+      if (!segs.length) { setAutoEditNote('That clip is almost entirely silent — nothing to keep.'); return }
+      const removed = gaps.reduce((a, g) => a + (Math.min(g.end, clip.outPoint) - Math.max(g.start, clip.inPoint)), 0) / speed
+      let tl = clip.startTime
+      const newClips: TimelineItem[] = segs.map(([s, e]) => {
+        const seg = { ...clip, id: crypto.randomUUID(), startTime: +tl.toFixed(3), inPoint: +s.toFixed(3), outPoint: +e.toFixed(3) }
+        tl += (e - s) / speed
+        return seg
+      })
+      const clipEndTL = endOf(clip)
+      const next = items.flatMap(i => {
+        if (i.id === clip.id) return newClips
+        if (i.trackId === clip.trackId && i.startTime >= clipEndTL - 1e-3) return [{ ...i, startTime: +Math.max(0, i.startTime - removed).toFixed(3) }]
+        return [i]
+      })
+      setTimelineItems(next)
+      setSelectedId(newClips[0]?.id ?? null)
+      setAutoEditNote(`Jump-cut: removed ${gaps.length} silent gap${gaps.length > 1 ? 's' : ''} (${removed.toFixed(1)}s) → ${segs.length} segment${segs.length > 1 ? 's' : ''}.`)
+    } catch (e) {
+      setAutoEditNote(`Jump-cut failed: ${e instanceof Error ? e.message : 'audio decode error'}`)
+    } finally { setAutoBusy(null) }
+  }, [setTimelineItems, selectedId])
+
+  // One-click "make it a short": subject-track reframe to vertical, then punch-zoom on the beats/drops.
+  const runAutoPolish = useCallback(async () => {
+    setAutoBusy('polish'); setAutoEditNote('Auto-polishing — reframing + adding punches…')
+    try {
+      await runAutoReframe()
+      await runHypePass()
+      setAutoEditNote('Auto-polished — reframed to vertical + beat/drop punches added.')
+    } finally { setAutoBusy(null) }
+  }, [runAutoReframe, runHypePass])
+
+  // Clear the auto-edit note after a moment (skip while an analysis is running).
+  useEffect(() => { if (!autoEditNote || autoBusy) return; const t = setTimeout(() => setAutoEditNote(null), 4000); return () => clearTimeout(t) }, [autoEditNote, autoBusy])
 
   // Effects — apply a named look (lib/video-effects) to clips. buildClipGradeFilter renders it in BOTH
   // the preview and the export, so what you see is what renders. Applies to the given clip ids.
@@ -4210,9 +4375,10 @@ export default function VideoEditor({
                 >
                   <FolderOpen size={15} />
                 </a>
-                {/* Media library toggle */}
+                {/* Media library + Auto-Edit toggles */}
                 {([
                   { tab: 'media' as const, Icon: Clapperboard, label: 'Media library', help: 'media-library' },
+                  { tab: 'auto' as const, Icon: Wand2, label: 'Auto-Edit', help: 'auto-edit' },
                 ]).map(({ tab, Icon, label, help }) => {
                   const isActive = videoSidebarOpen && videoLeftTab === tab
                   return (
@@ -4263,6 +4429,21 @@ export default function VideoEditor({
                 position: 'relative',
               }}>
                 {videoSidebarOpen && <ResizeHandle axis="x" edge="right" onPointerDown={videoLeftPanel.handleProps.onPointerDown} />}
+                {videoLeftTab === 'auto' ? (
+                  <AutoEditPanel
+                    busy={autoBusy}
+                    note={autoEditNote}
+                    onReframe={() => { void runAutoReframe() }}
+                    onBeatMontage={() => { runAutoEdit() }}
+                    onMulticam={() => { runMulticam('audio') }}
+                    onSpeakerMulticam={() => { void runSpeakerMulticam() }}
+                    onTrimSilence={() => { void handleSilenceTrim() }}
+                    onHype={() => { void runHypePass() }}
+                    onClearHype={() => { clearHype() }}
+                    onJumpCut={() => { void runJumpCut() }}
+                    onAutoPolish={() => { void runAutoPolish() }}
+                  />
+                ) : (
                 <MediaLibrary
                   items={mediaItems} selectedId={selectedMediaId}
                   onSelect={setSelectedMediaId}
@@ -4286,6 +4467,7 @@ export default function VideoEditor({
                   onRetryUpload={handleRetryUpload}
                   onAddStock={handleAddStock}
                 />
+                )}
               </div>
             </div>
 
