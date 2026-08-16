@@ -42,6 +42,17 @@ export interface ActiveClipTransition {
   prevFitMode?: 'contain' | 'cover'
 }
 
+/** A separate audio-track clip played alongside the visuals (kept in coarse sync with the playhead). */
+export type AudioLayer = {
+  id: string
+  src: string
+  startTime: number
+  inPoint: number
+  outPoint: number
+  speed?: number
+  gain?: number
+}
+
 /** A layer stacked UNDER the active clip (multi-track compositing). Bottom → top. */
 export type UnderLayer =
   | {
@@ -102,6 +113,9 @@ interface Props {
   projectAspect?: ProjectAspect
   transition?: ActiveClipTransition
   underLayers?: UnderLayer[]
+  /** Separate audio-track clips to play (mixed with the active clip's own audio). Lets a video project
+   *  keep its music as an EDITABLE audio clip instead of baked into the video. Synced to the playhead. */
+  audioLayers?: AudioLayer[]
   captionStyle?: CaptionStyle
   /** Per-clip grade of the active clip, as a CSS filter chain appended after the global grade. */
   clipGradeFilter?: string
@@ -237,6 +251,7 @@ export default function VideoPlayer({
   projectAspect = '16:9',
   transition,
   underLayers = [],
+  audioLayers = [],
   musicViz = [],
   captionStyle = DEFAULT_CAPTION_STYLE,
   clipGradeFilter = '',
@@ -616,6 +631,32 @@ export default function VideoPlayer({
     }
   }, [underLayers, currentTime, isPlaying, playbackRate])
 
+  // ── Audio-track layers ────────────────────────────────────────────────────
+  // Play separate audio clips (a project's music kept EDITABLE, not baked into the video), each on its
+  // own <audio> element kept in coarse sync with the timeline clock — same approach as the video layers.
+  const audioPoolRef = useRef<Map<string, HTMLAudioElement>>(new Map())
+  useEffect(() => {
+    for (const a of audioLayers) {
+      const el = audioPoolRef.current.get(a.id)
+      if (!el) continue
+      const speed = a.speed && a.speed > 0 ? a.speed : 1
+      const end = a.startTime + (a.outPoint - a.inPoint) / speed
+      const inRange = currentTime >= a.startTime - 0.02 && currentTime < end
+      el.volume = Math.max(0, Math.min(1, a.gain ?? 1))
+      const rate = Math.max(0.0625, Math.min(16, speed * playbackRate))
+      if (Math.abs(el.playbackRate - rate) > 0.01) el.playbackRate = rate
+      if (inRange) {
+        const target = a.inPoint + (currentTime - a.startTime) * speed
+        if (Math.abs(el.currentTime - target) > 0.35) { try { el.currentTime = target } catch { /* not seekable yet */ } }
+        if (isPlaying && el.paused) el.play().catch(() => {})
+        if (!isPlaying && !el.paused) el.pause()
+      } else if (!el.paused) el.pause()
+    }
+  }, [audioLayers, currentTime, isPlaying, playbackRate])
+
+  // Pause every audio-layer element on unmount.
+  useEffect(() => () => { for (const el of audioPoolRef.current.values()) { try { el.pause() } catch { /* gone */ } } }, [])
+
   // ── Karaoke clock ─────────────────────────────────────────────────────────
   // Word highlighting needs finer time than React's ~4 Hz currentTime updates;
   // an RAF reads the element clock and re-renders at 20 Hz only while karaoke
@@ -957,6 +998,16 @@ export default function VideoPlayer({
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >
+          {/* Audio-track layers — hidden <audio> elements, synced to the playhead (see effect above). */}
+          {audioLayers.map(a => (
+            <audio
+              key={a.id}
+              ref={el => { if (el) audioPoolRef.current.set(a.id, el); else audioPoolRef.current.delete(a.id) }}
+              src={a.src}
+              preload="auto"
+              style={{ display: 'none' }}
+            />
+          ))}
           {/* Effect overlays (grain / vignette / scanlines) — over the video, matching the export */}
           {overlays.length > 0 && (
             <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 3 }}>

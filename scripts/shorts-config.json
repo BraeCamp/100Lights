@@ -30,6 +30,22 @@
       "caption": "wait for the drop 🔊 — made with AI in 100Lights\n\n#edm #dropmix #aimusic #musicproducer #beatmaker"
     },
     {
+      "id": "eq-visualizer",
+      "title": "EQ Bars Visualizer",
+      "renderer": "format",
+      "format": "eq-bars",
+      "song": "edm",
+      "seconds": 18,
+      "autoStart": true,
+      "accent": "#38bdf8",
+      "dropBurst": true,
+      "hook": [
+        "the spectrum",
+        "goes crazy 🎛️"
+      ],
+      "caption": "watch the spectrum go crazy 🎛️ — made with AI in 100Lights\n\n#edm #visualizer #aimusic #producer #beatmaker"
+    },
+    {
       "id": "kinetic-text",
       "title": "Kinetic Text Hook",
       "renderer": "text",

@@ -1,7 +1,13 @@
 // Config-driven shorts builder. Single source of truth = scripts/shorts-config.json.
 // Edit the words there, then:  node scripts/build-shorts.mjs <id ...|all>
-// Renders each short, muxes its song, uploads to R2, and UPSERTS the project (by title) in the
-// Shorts › Tests folder. Reuses the fixed renderers (vinyl v2, bounce v2) + drop bursts.
+//
+// ★★ EDITABLE_CONTENT RULE (Brae, non-negotiable) ★★
+// EVERY short is saved EDITABLE — NEVER bake audio into the video. Each project = a SILENT visual on a
+// video track + the song as SEPARATE, editable audio clip(s) on an audio track (the music must stay
+// fixable). The TIER LIST uses one audio clip PER GENRE (separate files, so each can be swapped/edited).
+// Preview plays the audio via the editor's audio-layers; export mixes them (lib/video-export/audio-mix).
+// If you ever change the save path, keep audio and visual SEPARATE. See the save section below + memory
+// feedback-content-save-structure / project-100lights-video-audio-tracks.
 import { chromium } from 'playwright'
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -262,39 +268,70 @@ async function buildOne(browser, folderId, sc) {
       const bd = bounceGrid(seconds, tempo); videoPath = await recordCanvas(browser, bounce(bd.onsets, bd.xs, accent, seconds), seconds, tmp)
     } else throw new Error(`unknown renderer ${sc.renderer}`)
     if (!videoPath) throw new Error('no video')
-    // Audio source: tier-list with per-chip songs → genre montage; else the song trimmed at `start`.
+
+    // ── EDITABLE OUTPUT (see EDITABLE_CONTENT at top) — NEVER bake audio into the video. The project is
+    // saved as a SILENT visual on a video track + the song as SEPARATE, editable audio clip(s) on an
+    // audio track. Tier list gets one audio clip PER GENRE (separate files). Preview plays them via the
+    // editor's audio-layers; export mixes them (lib/video-export/audio-mix). ──────────────────────────
     const useMontage = sc.renderer === 'tier' && Array.isArray(sc.chips) && sc.chips.some(c => c.song)
-    let muxed = join(tmp, 'out.mp4')
-    if (useMontage) {
-      const montage = buildMontage(sc.chips, seconds, tmp)
-      execFileSync('ffmpeg', ['-y', '-i', videoPath, '-i', montage, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-shortest', muxed], { stdio: 'ignore' })
-    } else {
-      execFileSync('ffmpeg', ['-y', '-i', videoPath, '-ss', String(start), '-t', String(seconds), '-i', srcMp3, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264', '-c:a', 'aac', '-pix_fmt', 'yuv420p', '-shortest', muxed], { stdio: 'ignore' })
-    }
-    // Loop the bar-aligned clip a few times (seamless audio; longer watch time).
-    if (loops > 1) {
-      const looped = join(tmp, 'looped.mp4')
-      execFileSync('ffmpeg', ['-y', '-stream_loop', String(loops - 1), '-i', muxed, '-c', 'copy', looped], { stdio: 'ignore' })
-      muxed = looped
-    }
     const finalDur = +(seconds * loops).toFixed(2)
+
+    // 1) Silent visual (the recording is already audio-less; re-encode clean, loop if this is a loop short).
+    let visual = join(tmp, 'visual.mp4')
+    execFileSync('ffmpeg', ['-y', '-i', videoPath, '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', visual], { stdio: 'ignore' })
+    if (loops > 1) { const lp = join(tmp, 'visual-loop.mp4'); execFileSync('ffmpeg', ['-y', '-stream_loop', String(loops - 1), '-i', visual, '-c', 'copy', lp], { stdio: 'ignore' }); visual = lp }
+
+    // 2) Audio clip specs {file, startTime, dur, label}: tier → one snippet per genre; else the song
+    //    segment (placed `loops` times for loop shorts, all referencing one uploaded file).
+    const audioSpecs = []
+    if (useMontage) {
+      const segs = sc.chips.map((ch, i) => ({ song: ch.song, label: ch.label, from: i === 0 ? 0 : ch.at, to: i < sc.chips.length - 1 ? sc.chips[i + 1].at : seconds }))
+      segs.forEach((s, i) => {
+        const dur = +(s.to - s.from).toFixed(3); if (dur <= 0.05 || !s.song) return
+        const f = join(tmp, `aud${i}.mp3`)
+        execFileSync('ffmpeg', ['-y', '-ss', '8', '-t', String(dur), '-i', songFile(s.song), '-c:a', 'libmp3lame', '-q:a', '3', f], { stdio: 'ignore' })
+        audioSpecs.push({ file: f, startTime: +s.from.toFixed(3), dur, label: s.label })
+      })
+    } else {
+      const f = join(tmp, 'audio.mp3')
+      execFileSync('ffmpeg', ['-y', '-ss', String(start), '-t', String(seconds), '-i', srcMp3, '-c:a', 'libmp3lame', '-q:a', '3', f], { stdio: 'ignore' })
+      for (let k = 0; k < loops; k++) audioSpecs.push({ file: f, startTime: +(k * seconds).toFixed(3), dur: seconds, label: sc.song })
+    }
+
+    // 3) Upload the visual + each unique audio file; register them in the media library.
     const vidId = randomUUID(), vidKey = `${USER}/${vidId}.mp4`
-    await put(vidKey, readFileSync(muxed), 'video/mp4')
-    await sql`INSERT INTO user_media (id, user_id, name, content_type, duration, r2_key, thumbnail, created_at) VALUES (${vidId}, ${USER}, ${sc.title}, 'video/mp4', ${finalDur}, ${vidKey}, NULL, NOW()) ON CONFLICT (id) DO NOTHING`
-    const media = [{ id: vidId, name: sc.title, r2Key: vidKey, duration: finalDur, contentType: 'video' }]
-    const clip = { id: randomUUID(), color: accent, label: sc.title, inPoint: 0, outPoint: finalDur, startTime: 0, trackId: 'v1', mediaRefId: vidId, contentType: 'video', captions: [] }
-    const tracks = [{ id: 'v1', label: 'Video', type: 'media', height: 64 }]
+    await put(vidKey, readFileSync(visual), 'video/mp4')
+    await sql`INSERT INTO user_media (id, user_id, name, content_type, duration, r2_key, thumbnail, created_at) VALUES (${vidId}, ${USER}, ${sc.title + ' (visual)'}, 'video/mp4', ${finalDur}, ${vidKey}, NULL, NOW()) ON CONFLICT (id) DO NOTHING`
+    const media = [{ id: vidId, name: `${sc.title} (visual)`, r2Key: vidKey, duration: finalDur, contentType: 'video' }]
+    const fileMedia = new Map()
+    for (const a of audioSpecs) {
+      if (fileMedia.has(a.file)) continue
+      const aid = randomUUID(), akey = `${USER}/${aid}.mp3`, aname = `${sc.title} — ${a.label}`
+      await put(akey, readFileSync(a.file), 'audio/mpeg')
+      await sql`INSERT INTO user_media (id, user_id, name, content_type, duration, r2_key, thumbnail, created_at) VALUES (${aid}, ${USER}, ${aname}, 'audio/mpeg', ${a.dur}, ${akey}, NULL, NOW()) ON CONFLICT (id) DO NOTHING`
+      fileMedia.set(a.file, aid)
+      media.push({ id: aid, name: aname, r2Key: akey, duration: a.dur, contentType: 'audio' })
+    }
+
+    // 4) Editable project: a Video track (silent visual) + an Audio track (the song clip(s)).
+    const tracks = [
+      { id: 'v1', label: 'Video', type: 'media', height: 64 },
+      { id: 'a1', label: 'Audio', type: 'audio', height: 56, volume: 1 },
+    ]
+    const clips = [{ id: randomUUID(), color: accent, label: sc.title, inPoint: 0, outPoint: finalDur, startTime: 0, trackId: 'v1', mediaRefId: vidId, contentType: 'video', captions: [] }]
+    for (const a of audioSpecs) clips.push({ id: randomUUID(), color: '#34d399', label: a.label, inPoint: 0, outPoint: a.dur, startTime: a.startTime, trackId: 'a1', mediaRefId: fileMedia.get(a.file), contentType: 'audio', captions: [] })
+
     const existing = await sql`SELECT id, data FROM projects WHERE user_id=${USER} AND deleted_at IS NULL AND folder_id=${folderId} AND data->>'name'=${sc.title} ORDER BY saved_at DESC LIMIT 1`
     if (existing.length) {
-      const d = existing[0].data; d.media = media; d.clips = [clip]; d.tracks = tracks; d.postCaption = sc.caption || ''; d.savedAt = new Date().toISOString()
+      const d = existing[0].data; d.media = media; d.clips = clips; d.tracks = tracks; d.postCaption = sc.caption || ''; d.savedAt = new Date().toISOString()
       await sql`UPDATE projects SET data=${JSON.stringify(d)}::jsonb, saved_at=NOW() WHERE id=${existing[0].id}`
-      console.log('✓ updated')
+      console.log(`✓ updated (editable: 1 video + ${audioSpecs.length} audio)`)
     } else {
       const projId = randomUUID()
-      const data = { _type: '100lights-project', version: 1, id: projId, name: sc.title, userId: USER, aspect: '9:16', audioMode: 'music', modules: ['video'], media, tracks, clips: [clip], outputs: [], captions: [], chapters: [], beatGrid: null, zoomLevel: 1, adjustments: {}, postCaption: sc.caption || '', savedAt: new Date().toISOString() }
+      const data = { _type: '100lights-project', version: 1, id: projId, name: sc.title, userId: USER, aspect: '9:16', audioMode: 'music', modules: ['video'], media, tracks, clips, outputs: [], captions: [], chapters: [], beatGrid: null, zoomLevel: 1, adjustments: {}, postCaption: sc.caption || '', savedAt: new Date().toISOString() }
       const slug = sc.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) + '-' + projId.slice(0, 6)
       await sql`INSERT INTO projects (id, user_id, name, slug, owner_username, saved_at, data, folder_id) VALUES (${projId}, ${USER}, ${sc.title}, ${slug}, 'braedancampbell', NOW(), ${JSON.stringify(data)}::jsonb, ${folderId})`
-      console.log('✓ created')
+      console.log(`✓ created (editable: 1 video + ${audioSpecs.length} audio)`)
     }
   } catch (e) { console.log(`✗ ${e.message}`) }
   finally { rmSync(tmp, { recursive: true, force: true }) }
@@ -324,9 +361,10 @@ if (argv.includes('--variants')) {
   const want = ids.length && ids[0] !== 'all' ? new Set(ids) : null
   const targets = CFG.shorts.filter(s => !want || want.has(s.id))
   if (!targets.length) { console.error('no matching shorts. ids:', CFG.shorts.map(s => s.id).join(', ')); process.exit(1) }
-  const folderId = await ensureFolder()
+  const folderName = flag('folder', CFG.folder.name)          // --folder=<name> to build into a custom folder
+  const folderId = await ensureFolder(folderName)
   const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
   for (const sc of targets) await buildOne(browser, folderId, sc)
   await browser.close()
-  console.log(`\nDone — ${targets.length} short(s) built/updated in "${CFG.folder.parent} › ${CFG.folder.name}"${AUTO ? ' (auto best-section)' : ''}.`)
+  console.log(`\nDone — ${targets.length} short(s) built/updated in "${CFG.folder.parent} › ${folderName}"${AUTO ? ' (auto best-section)' : ''}.`)
 }

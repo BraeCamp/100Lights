@@ -1233,6 +1233,16 @@ export default function VideoEditor({
 
   // Layers under the active clip — every lower track's clip at the playhead,
   // bottom → top, transformed for this instant. Titles pass through as text.
+  // Separate audio-track clips → playable audio layers (music kept editable, not baked into the video).
+  // A muted/soloed-out track contributes silence; a disabled clip is skipped.
+  const audioLayers = useMemo(() => {
+    const hasSolo = tracks.some(t => t.type === 'audio' && t.solo)
+    const muted = new Set(tracks.filter(t => t.type === 'audio' && (t.muted || (hasSolo && !t.solo))).map(t => t.id))
+    return timelineItems
+      .filter(i => i.contentType === 'audio' && i.url && i.enabled !== false)
+      .map(i => ({ id: i.id, src: i.url as string, startTime: i.startTime, inPoint: i.inPoint, outPoint: i.outPoint, speed: i.speed, gain: muted.has(i.trackId) ? 0 : 1 }))
+  }, [timelineItems, tracks])
+
   const underLayers = useMemo((): UnderLayer[] => {
     const stack = pickVisibleClips(timelineItems, tracks, currentTime)
     if (stack.length <= 1) return []
@@ -4632,6 +4642,7 @@ export default function VideoEditor({
                       projectAspect={projectAspect}
                       transition={viewerTransition}
                       underLayers={underLayers}
+                      audioLayers={audioLayers}
                       musicViz={activeMusicViz}
                       captionStyle={captionStyle}
                       clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
@@ -4717,6 +4728,7 @@ export default function VideoEditor({
                       projectAspect={projectAspect}
                       transition={viewerTransition}
                       underLayers={underLayers}
+                      audioLayers={audioLayers}
                       musicViz={activeMusicViz}
                       captionStyle={captionStyle}
                       clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
