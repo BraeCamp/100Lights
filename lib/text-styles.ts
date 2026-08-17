@@ -57,7 +57,7 @@ export interface TextStyle {
 // ── Title animation ─────────────────────────────────────────────────────────
 // Punchy, professional in/out reveals for title clips — the kind you'd otherwise bake into the video.
 // Shared by preview (CSS transform) and export (canvas transform) so they match exactly.
-export type TitleAnimation = 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom' | 'kinetic' | 'blur' | 'bounce' | 'typewriter' | 'word-pop' | 'word-highlight' | 'wipe' | 'shake'
+export type TitleAnimation = 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom' | 'kinetic' | 'blur' | 'bounce' | 'typewriter' | 'word-pop' | 'word-highlight' | 'wipe' | 'shake' | 'impact'
 export const TITLE_ANIMATIONS: { value: TitleAnimation; label: string }[] = [
   { value: 'none',           label: 'None' },
   { value: 'kinetic',        label: 'Kinetic (baked look)' },
@@ -69,6 +69,7 @@ export const TITLE_ANIMATIONS: { value: TitleAnimation; label: string }[] = [
   { value: 'slide-up',       label: 'Slide up' },
   { value: 'drop',           label: 'Drop' },
   { value: 'pop',            label: 'Pop' },
+  { value: 'impact',         label: 'Impact (slam)' },
   { value: 'bounce',         label: 'Bounce' },
   { value: 'shake',          label: 'Shake in' },
   { value: 'zoom',           label: 'Zoom' },
@@ -137,6 +138,8 @@ export function titleAnim(anim: TitleAnimation | undefined, p: number, durSec: n
     case 'bounce':     return { ...flat, opacity: Math.min(1, tIn * 2) * Math.min(1, tOut * 1.4), dy: sc((1 - easeOutBounce(tIn)) * 1.1, 0) }
     case 'pop':        return { ...flat, opacity: Math.min(1, tIn * 2) * Math.min(1, tOut * 1.6), scale: sc(0.6 + 0.4 * easeOutBack(tIn), 1) }
     case 'zoom':       return { ...flat, opacity: fadeInOut, scale: sc(0.2 + 0.8 * eIn, 1) }
+    // Slams in oversized and settles to size — punchy title-card hit.
+    case 'impact':     return { ...flat, opacity: Math.min(1, tIn * 5) * Math.min(1, tOut * 1.4), scale: sc(1.6 - 0.6 * eIn, 1) }
     case 'blur':       return { ...flat, opacity: fadeInOut, scale: sc(0.9 + 0.1 * eIn, 1), blur: sc((1 - eIn) * 0.28, 0) }
     case 'typewriter': return { ...flat, opacity: Math.min(1, tIn * 4) * Math.min(1, tOut * 1.4), reveal: Math.min(1, tIn) }
     // Mask reveal — the text is uncovered left→right by a moving edge.

@@ -615,6 +615,14 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
     return
   }
 
+  // Gradient text fill (vertical across the block) — else the solid color.
+  let paint: string | CanvasGradient = color
+  if (clip.titleGradient) {
+    const gr = ctx.createLinearGradient(0, cy - blockH / 2, 0, cy + blockH / 2)
+    gr.addColorStop(0, clip.titleGradient.from); gr.addColorStop(1, clip.titleGradient.to)
+    paint = gr
+  }
+
   // Highlight box behind the text (per line), if requested.
   if (bg !== 'transparent') {
     ctx.fillStyle = bg
@@ -639,11 +647,11 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
     // Glow (draw the fill twice with a colored shadow), then the soft drop shadow.
     if (clip.titleGlow) {
       ctx.shadowColor = clip.titleGlow; ctx.shadowBlur = fontSize * 0.5; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0
-      ctx.fillStyle = color; ctx.fillText(ln, W / 2, ly); ctx.fillText(ln, W / 2, ly)
+      ctx.fillStyle = paint; ctx.fillText(ln, W / 2, ly); ctx.fillText(ln, W / 2, ly)
     }
     if ((clip.titleShadow ?? bg === 'transparent')) { ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = fontSize * 0.1; ctx.shadowOffsetY = fontSize * 0.04 }
     else { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0 }
-    ctx.fillStyle = color
+    ctx.fillStyle = paint
     ctx.fillText(ln, W / 2, ly)
   })
   ctx.restore()

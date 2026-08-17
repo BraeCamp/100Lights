@@ -147,6 +147,7 @@ export interface TimelineItem {
   titleActiveColor?: string    // highlight color for the active word (word-highlight animation)
   titleActiveBox?: boolean     // draw a solid rounded box (in titleActiveColor) behind the active word (Hormozi caption look)
   titlePulseBpm?: number       // beat-synced scale pulse at this BPM (0/absent = off); see lib/text-styles beatPulse
+  titleGradient?: { from: string; to: string }   // vertical gradient text fill (absent = solid titleColor)
   // ── Rich text styling (see lib/text-styles) — the font library + effects ──
   titleFont?: string           // FONT_LIBRARY id (default 'system')
   titleWeight?: number         // 400–900 (default 700)

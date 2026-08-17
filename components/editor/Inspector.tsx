@@ -1068,6 +1068,22 @@ export default function Inspector({
                       onChange={v => patchClip({ titleOffsetY: v || undefined })} />
                     <Slider label="Beat Pulse" value={selectedItem.titlePulseBpm ?? 0} min={0} max={200} step={1} unit=" bpm"
                       onChange={v => patchClip({ titlePulseBpm: v || undefined })} />
+                    {/* Gradient text fill */}
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => patchClip({ titleGradient: selectedItem.titleGradient ? undefined : { from: selectedItem.titleColor ?? '#ffffff', to: '#a78bfa' } })}
+                        className="px-2.5 py-1 rounded text-xs shrink-0"
+                        style={{ background: selectedItem.titleGradient ? 'var(--accent)' : 'var(--bg-card)', color: selectedItem.titleGradient ? '#0e0d12' : 'var(--text-secondary)', border: `1px solid ${selectedItem.titleGradient ? 'var(--accent)' : 'var(--border)'}`, fontWeight: 600 }}>Gradient</button>
+                      {selectedItem.titleGradient && (
+                        <div className="flex gap-1.5 flex-1">
+                          <input type="color" value={selectedItem.titleGradient.from} title="From"
+                            onChange={e => patchClip({ titleGradient: { from: e.target.value, to: selectedItem.titleGradient!.to } })}
+                            className="flex-1 h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                          <input type="color" value={selectedItem.titleGradient.to} title="To"
+                            onChange={e => patchClip({ titleGradient: { from: selectedItem.titleGradient!.from, to: e.target.value } })}
+                            className="flex-1 h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                        </div>
+                      )}
+                    </div>
                     {/* Font + weight */}
                     <div className="flex gap-2 mt-2">
                       <div className="flex-1">

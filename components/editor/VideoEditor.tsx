@@ -1328,7 +1328,7 @@ export default function VideoEditor({
         durSec: d,
         animAmount: clip.titleAnimAmount, textOpacity: clip.titleOpacity, offsetY: clip.titleOffsetY,
         activeColor: clip.titleActiveColor, activeBox: clip.titleActiveBox,
-        pulse: beatPulse(currentTime, clip.titlePulseBpm),
+        pulse: beatPulse(currentTime, clip.titlePulseBpm), gradient: clip.titleGradient,
         font: clip.titleFont, weight: clip.titleWeight, letterSpacing: clip.titleLetterSpacing,
         uppercase: clip.titleUppercase, shadow: clip.titleShadow, glow: clip.titleGlow,
         outline: clip.titleOutline, outlineColor: clip.titleOutlineColor,

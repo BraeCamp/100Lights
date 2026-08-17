@@ -127,6 +127,7 @@ export interface TitleSpec {
   activeColor?: string
   activeBox?: boolean
   pulse?: number           // beat-pulse value 0..1 at the current time (computed by the caller)
+  gradient?: { from: string; to: string }
   font?: string
   weight?: number
   letterSpacing?: number
@@ -188,10 +189,13 @@ function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key) {
     }}>
       {wordStates ? renderTitleWords(wordStates, { fpx, color: tc.color, activeColor: tc.activeColor || '#fde047', activeBox: !!tc.activeBox, weight: tc.weight ?? 700, fontFamily: fontStack(tc.font), letterSpacing: tc.letterSpacing ?? -0.01 }) : (
         <span style={{
-          display: 'inline-block', fontSize: fpx, color: tc.color, fontFamily: fontStack(tc.font),
-          background: tc.bg !== 'transparent' ? tc.bg : undefined,
-          padding: tc.bg !== 'transparent' ? `${fpx * 0.14}px ${fpx * 0.28}px` : undefined,
-          borderRadius: tc.bg !== 'transparent' ? fpx * 0.14 : undefined,
+          display: 'inline-block', fontSize: fpx, fontFamily: fontStack(tc.font),
+          ...(tc.gradient
+            ? { background: `linear-gradient(180deg, ${tc.gradient.from}, ${tc.gradient.to})`, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent', WebkitTextFillColor: 'transparent' }
+            : { color: tc.color,
+                background: tc.bg !== 'transparent' ? tc.bg : undefined,
+                padding: tc.bg !== 'transparent' ? `${fpx * 0.14}px ${fpx * 0.28}px` : undefined,
+                borderRadius: tc.bg !== 'transparent' ? fpx * 0.14 : undefined }),
           fontWeight: tc.weight ?? 700, letterSpacing: `${tc.letterSpacing ?? -0.01}em`,
           textTransform: tc.uppercase ? 'uppercase' : undefined, lineHeight: 1.18, whiteSpace: 'pre-line',
           clipPath: a.wipe < 0.999 ? `inset(0 ${((1 - a.wipe) * 100).toFixed(1)}% 0 0)` : undefined,
