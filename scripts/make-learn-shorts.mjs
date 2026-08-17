@@ -49,19 +49,66 @@ function synthProgression(chords, chordDur, repeats = 2, sr = 44100) {
   return bytes
 }
 
+// ── CLI ──
+const argv = process.argv.slice(2)
+const flag = (n, d) => { const a = argv.find(x => x.startsWith(`--${n}=`)); return a ? a.split('=').slice(1).join('=') : d }
+const FOLDER = flag('folder', 'Learn')
+const MODE = argv.includes('--quizzes') ? 'quizzes' : argv.includes('--facts') ? 'facts' : 'all'
+
 // ── Content ──
 const CHORD_DUR = 1.1
+// Famous progressions across genres (root-position-ish voicings w/ bass root). answer = roman numerals.
 const QUIZZES = [
   { id: 'quiz-4chords', title: 'Chord Quiz — The 4 Chords', accent: '#a78bfa', repeats: 2,
-    chords: [[48, 60, 64, 67], [43, 55, 59, 62], [45, 57, 60, 64], [41, 53, 57, 60]],  // C  G  Am  F
-    answer: 'I – V – vi – IV', tag: 'the "4 chords"',
+    chords: [[48, 60, 64, 67], [43, 55, 59, 62], [45, 57, 60, 64], [41, 53, 57, 60]],  // C G Am F
+    answer: 'I – V – vi – IV', tag: 'the "4 chords" of pop',
     songs: 'Let It Be · Don’t Stop Believin’ · With or Without You · Someone Like You',
-    caption: 'Can you name this progression? 🎹 The 4 chords behind a thousand hits (I–V–vi–IV).\n\n#musictheory #chords #learnmusic #100lights #musicquiz' },
-  { id: 'quiz-251', title: 'Chord Quiz — ii–V–I', accent: '#34d399', repeats: 2,
-    chords: [[50, 62, 65, 69], [43, 55, 59, 65], [48, 60, 64, 67, 71]],  // Dm7  G7  Cmaj7
+    caption: 'Name this progression 🎹 — the 4 chords behind a thousand hits (I–V–vi–IV).\n\n#musictheory #chords #learnmusic #musicquiz #100lights' },
+  { id: 'quiz-251', title: 'Chord Quiz — ii–V–I (Jazz)', accent: '#34d399', repeats: 2,
+    chords: [[50, 62, 65, 69], [43, 55, 59, 65], [48, 60, 64, 67, 71]],  // Dm7 G7 Cmaj7
     answer: 'ii – V – I', tag: 'jazz’s home base',
     songs: 'Autumn Leaves · Fly Me to the Moon · nearly every jazz standard',
     caption: 'Guess the progression 🎷 — the ii–V–I that runs all of jazz.\n\n#jazz #musictheory #chords #learnmusic #100lights' },
+  { id: 'quiz-blues', title: 'Chord Quiz — 12-Bar Blues', accent: '#fbbf24', repeats: 2,
+    chords: [[45, 57, 61, 64, 67], [50, 62, 66, 69], [45, 57, 61, 64], [52, 64, 68, 71]],  // A7 D7 A7 E7
+    answer: 'I7 – IV7 – I7 – V7', tag: 'the 12-bar blues',
+    songs: 'Johnny B. Goode · Sweet Home Chicago · Hound Dog',
+    caption: 'Every blues song ever 🎸 — the I7–IV7–V7 twelve-bar.\n\n#blues #guitar #musictheory #learnmusic #100lights' },
+  { id: 'quiz-sadminor', title: 'Chord Quiz — The Sad One', accent: '#f472b6', repeats: 2,
+    chords: [[45, 57, 60, 64], [41, 53, 57, 60], [48, 60, 64, 67], [43, 55, 59, 62]],  // Am F C G
+    answer: 'i – VI – III – VII', tag: 'the minor "sad" loop',
+    songs: 'Save Tonight · Numb · half of EDM',
+    caption: 'Why does this sound so sad? 🥲 The i–VI–III–VII minor loop.\n\n#musictheory #chords #edm #learnmusic #100lights' },
+  { id: 'quiz-doowop', title: 'Chord Quiz — 50s Doo-Wop', accent: '#22d3ee', repeats: 2,
+    chords: [[48, 60, 64, 67], [45, 57, 60, 64], [41, 53, 57, 60], [43, 55, 59, 62]],  // C Am F G
+    answer: 'I – vi – IV – V', tag: 'the doo-wop changes',
+    songs: 'Stand By Me · Earth Angel · Blue Moon',
+    caption: 'Sounds like the 50s? 🎶 The I–vi–IV–V doo-wop changes.\n\n#musictheory #chords #oldies #learnmusic #100lights' },
+  { id: 'quiz-sensitive', title: 'Chord Quiz — vi–IV–I–V', accent: '#f59e0b', repeats: 2,
+    chords: [[45, 57, 60, 64], [41, 53, 57, 60], [48, 60, 64, 67], [43, 55, 59, 62]],  // Am F C G (start on vi)
+    answer: 'vi – IV – I – V', tag: 'the "yearning" rotation',
+    songs: 'Grenade · Poker Face · Zombie',
+    caption: 'The most emotional 4 chords 😭 — vi–IV–I–V.\n\n#musictheory #chords #popmusic #learnmusic #100lights' },
+  { id: 'quiz-andalusian', title: 'Chord Quiz — Andalusian', accent: '#ef4444', repeats: 2,
+    chords: [[45, 57, 60, 64], [43, 55, 59, 62], [41, 53, 57, 60], [40, 52, 56, 59]],  // Am G F E(maj)
+    answer: 'i – VII – VI – V', tag: 'the flamenco / Spanish cadence',
+    songs: 'Hit the Road Jack · Sultans of Swing · Stray Cat Strut',
+    caption: 'That Spanish-guitar sound 🎸 — the Andalusian i–VII–VI–V.\n\n#musictheory #flamenco #guitar #learnmusic #100lights' },
+  { id: 'quiz-canon', title: 'Chord Quiz — Pachelbel’s Canon', accent: '#818cf8', repeats: 2,
+    chords: [[50, 62, 66, 69], [45, 57, 61, 64], [46, 58, 61, 66], [42, 54, 58, 61]],  // D A Bm F#m
+    answer: 'I – V – vi – iii', tag: 'the Canon progression',
+    songs: 'Canon in D · Basket Case · every graduation',
+    caption: 'You’ve heard this at every wedding 💍 — Pachelbel’s Canon.\n\n#musictheory #classical #chords #learnmusic #100lights' },
+  { id: 'quiz-threechord', title: 'Chord Quiz — Three Chords', accent: '#4ade80', repeats: 2,
+    chords: [[40, 52, 56, 59], [45, 57, 61, 64], [47, 59, 63, 66]],  // E A B
+    answer: 'I – IV – V', tag: 'three chords & the truth',
+    songs: 'Twist and Shout · La Bamba · Wild Thing',
+    caption: 'Three chords = a hit 🎸 — I–IV–V.\n\n#musictheory #rocknroll #guitar #learnmusic #100lights' },
+  { id: 'quiz-royalroad', title: 'Chord Quiz — Royal Road', accent: '#38bdf8', repeats: 2,
+    chords: [[41, 53, 57, 60], [43, 55, 59, 62], [40, 52, 55, 59], [45, 57, 60, 64]],  // F G Em Am
+    answer: 'IV – V – iii – vi', tag: 'the J-pop "royal road"',
+    songs: 'Anime openings · J-pop · Bruno Mars',
+    caption: 'The anime-opening sound 🌸 — the IV–V–iii–vi royal road.\n\n#musictheory #jpop #anime #chords #100lights' },
 ]
 const FACTS = [
   { id: 'dyk-amen', title: 'Did You Know — The Amen Break', accent: '#f472b6', song: 'filtered_house', start: 8, seconds: 16,
@@ -106,11 +153,11 @@ async function saveEditable(folderId, { title, accent, seconds, visualPath, audi
   return 'created'
 }
 
-const folderId = await ensureFolder('Learn')
+const folderId = await ensureFolder(FOLDER)
 const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
 
 // ── Chord quizzes ──
-for (const q of QUIZZES) {
+for (const q of (MODE === 'facts' ? [] : QUIZZES)) {
   const tmp = mkdtempSync(join(tmpdir(), 'learn-'))
   try {
     process.stdout.write(`▸ ${q.title}… `)
@@ -134,7 +181,7 @@ for (const q of QUIZZES) {
 }
 
 // ── Did-you-know ──
-for (const f of FACTS) {
+for (const f of (MODE === 'quizzes' ? [] : FACTS)) {
   const tmp = mkdtempSync(join(tmpdir(), 'learn-'))
   try {
     process.stdout.write(`▸ ${f.title}… `)
@@ -151,4 +198,4 @@ for (const f of FACTS) {
 }
 
 await browser.close()
-console.log('\nDone — music-learning shorts in "Shorts › Learn" (editable: separate audio + video + text captions).')
+console.log(`\nDone — music-learning shorts in "Shorts › ${FOLDER}" (editable: separate audio + video + text captions).`)
