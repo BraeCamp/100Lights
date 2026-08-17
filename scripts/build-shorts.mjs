@@ -194,8 +194,14 @@ async function recordCanvas(browser, html, seconds, tmp) {
 async function ensureFolder(childName = CFG.folder.name) {
   await sql`CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
   await sql`ALTER TABLE folders ADD COLUMN IF NOT EXISTS parent_id TEXT`
-  const par = await sql`SELECT id FROM folders WHERE user_id=${USER} AND name=${CFG.folder.parent} ORDER BY created_at DESC LIMIT 1`
-  const parentId = par[0]?.id ?? null
+  // Ensure the parent ("Shorts") exists — create it if it was deleted, so the child never lands at root.
+  let par = await sql`SELECT id FROM folders WHERE user_id=${USER} AND name=${CFG.folder.parent} AND parent_id IS NULL ORDER BY created_at DESC LIMIT 1`
+  if (!par.length) {
+    const pid = randomUUID()
+    await sql`INSERT INTO folders (id, user_id, name, parent_id) VALUES (${pid}, ${USER}, ${CFG.folder.parent}, NULL)`
+    par = [{ id: pid }]
+  }
+  const parentId = par[0].id
   let f = await sql`SELECT id FROM folders WHERE user_id=${USER} AND name=${childName} AND parent_id IS NOT DISTINCT FROM ${parentId} ORDER BY created_at DESC LIMIT 1`
   if (f.length) return f[0].id
   const id = randomUUID()
