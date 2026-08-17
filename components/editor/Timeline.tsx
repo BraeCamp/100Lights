@@ -26,6 +26,7 @@ interface Props {
   onSeek: (t: number) => void
   onSelectItem: (id: string | null) => void
   onMoveItem: (id: string, newStart: number, newTrackId: string, commit: boolean) => void
+  onMoveToNewTrack?: (itemId: string, startTime: number, sourceType: string) => void
   onTrimItem: (id: string, edge: 'in' | 'out', newIn: number, newOut: number, newStart: number, commit: boolean) => void
   onSplitItem: (id: string, atTime: number) => void
   onZoomChange: (z: number) => void
@@ -145,7 +146,7 @@ function WaveformBar({ peaks, color, clipWidth }: { peaks: number[]; color: stri
 export default function Timeline({
   items, captions, tracks, duration, currentTime, isPlaying, selectedId, zoomLevel, height,
   activeTool, snapEnabled, inPoint, outPoint, hasCopied,
-  onSeek, onSelectItem, onMoveItem, onTrimItem, onSplitItem, onZoomChange,
+  onSeek, onSelectItem, onMoveItem, onMoveToNewTrack, onTrimItem, onSplitItem, onZoomChange,
   onDeleteItem, onRippleDelete, onDropMedia, onAddTrack, onSnapToggle, onContextMenu,
   onDuplicateItem, onRenameItem, onToggleEnabled, onChangeColor, onCopyItem, onPasteItem, onDeleteTrack,
   onTrackMuteToggle, onTrackSoloToggle, onTrackVolumeChange, selectedIds, onMultiSelect, mediaItems,
@@ -363,7 +364,7 @@ export default function Timeline({
       : []
 
     // Last computed position — committed to history once on pointerup.
-    let lastMove: { start: number; trackId: string } | null = null
+    let lastMove: { start: number; trackId: string; newTrack?: boolean } | null = null
     let lastTrim: { edge: 'in' | 'out'; newIn: number; newOut: number; newStart: number } | null = null
 
     function onMove(ev: PointerEvent) {
@@ -378,6 +379,7 @@ export default function Timeline({
         const newStart = Math.max(0, rawStart)
 
         let newTrackId = origTrackId
+        let toNewTrack = false
         const el = trackAreaRef.current
         if (el) {
           const hoveredId = trackAtY(ev.clientY, el, tracks)
@@ -387,10 +389,16 @@ export default function Timeline({
             if (hovered && source && !hovered.locked && hovered.type === source.type) {
               newTrackId = hoveredId
             }
+          } else if (onMoveToNewTrack) {
+            // Dropped BELOW the last track → offer to create a new track of the same type.
+            const rect = el.getBoundingClientRect()
+            const y = ev.clientY - rect.top + el.scrollTop - RULER_HEIGHT
+            const total = tracks.reduce((s, t) => s + t.height, 0)
+            if (y >= total) toNewTrack = true
           }
         }
-        lastMove = { start: newStart, trackId: newTrackId }
-        setDragChip({ x: ev.clientX, y: ev.clientY, text: fmtPos(newStart) })
+        lastMove = { start: newStart, trackId: newTrackId, newTrack: toNewTrack }
+        setDragChip({ x: ev.clientX, y: ev.clientY, text: toNewTrack ? '↓ new track' : fmtPos(newStart) })
         onMoveItem(item.id, newStart, newTrackId, false)   // preview only — no history
 
       } else if (type === 'trim-in') {
@@ -435,7 +443,9 @@ export default function Timeline({
       window.removeEventListener('pointerup', onUp)
       // Commit the final position as a single history entry.
       if (lastMove) {
-        onMoveItem(item.id, lastMove.start, lastMove.trackId, true)
+        const src = tracks.find(t => t.id === origTrackId)
+        if (lastMove.newTrack && onMoveToNewTrack && src) onMoveToNewTrack(item.id, lastMove.start, src.type)
+        else onMoveItem(item.id, lastMove.start, lastMove.trackId, true)
       } else if (lastTrim) {
         onTrimItem(item.id, lastTrim.edge, lastTrim.newIn, lastTrim.newOut, lastTrim.newStart, true)
         // Commit ripple shifts for downstream clips

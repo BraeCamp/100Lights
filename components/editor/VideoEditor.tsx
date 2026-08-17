@@ -1239,9 +1239,23 @@ export default function VideoEditor({
     const hasSolo = tracks.some(t => t.type === 'audio' && t.solo)
     const muted = new Set(tracks.filter(t => t.type === 'audio' && (t.muted || (hasSolo && !t.solo))).map(t => t.id))
     return timelineItems
-      .filter(i => i.contentType === 'audio' && i.url && i.enabled !== false)
+      // Skip the clip that's the active monitor clip — the main player already plays its audio, so
+      // playing it again here would double/phase it (the overlap bug when video & audio don't align).
+      .filter(i => i.contentType === 'audio' && i.url && i.enabled !== false && i.id !== viewerClip?.id)
       .map(i => ({ id: i.id, src: i.url as string, startTime: i.startTime, inPoint: i.inPoint, outPoint: i.outPoint, speed: i.speed, gain: muted.has(i.trackId) ? 0 : 1 }))
-  }, [timelineItems, tracks])
+  }, [timelineItems, tracks, viewerClip?.id])
+
+  // Media/video tracks start TALLER on bigger windows (bump default-height tracks once, so clip
+  // thumbnails + waveforms are readable on a large screen). Only touches untouched (default) heights.
+  const trackHeightBumpedRef = useRef(false)
+  useEffect(() => {
+    if (trackHeightBumpedRef.current || !tracks.length || typeof window === 'undefined') return
+    trackHeightBumpedRef.current = true
+    const resp = Math.round(Math.min(96, Math.max(TRACK_HEIGHT, window.innerHeight * 0.09)))
+    if (resp <= TRACK_HEIGHT + 6) return
+    if (tracks.some(t => (t.type === 'media' || t.type === 'video') && t.height === TRACK_HEIGHT))
+      setTracks(prev => prev.map(t => (t.type === 'media' || t.type === 'video') && t.height === TRACK_HEIGHT ? { ...t, height: resp } : t))
+  }, [tracks])
 
   const underLayers = useMemo((): UnderLayer[] => {
     const stack = pickVisibleClips(timelineItems, tracks, currentTime)
@@ -2060,6 +2074,16 @@ export default function VideoEditor({
       timelineItemsRef.current = next
       setTimelineItemsRaw(next)
     }
+  }, [setTimelineItems])
+
+  // Drag a clip below the last track → create a new track of its type and move it there.
+  const handleMoveToNewTrack = useCallback((itemId: string, startTime: number, sourceType: string) => {
+    const type: Track['type'] = sourceType === 'audio' ? 'audio' : sourceType === 'video' ? 'video' : 'media'
+    const newId = `t-${crypto.randomUUID().slice(0, 8)}`
+    const height = type === 'audio' ? AUDIO_TRACK_HEIGHT : TRACK_HEIGHT
+    const n = tracksRef.current.filter(t => t.type === type).length + 1
+    setTracks(prev => [...prev, { id: newId, label: `${type === 'audio' ? 'A' : 'M'}${n}`, type, height }])
+    setTimelineItems(prev => prev.map(i => i.id === itemId ? { ...i, startTime: Math.max(0, startTime), trackId: newId } : i))
   }, [setTimelineItems])
 
   const handleTrimItem = useCallback((id: string, _edge: 'in' | 'out', newIn: number, newOut: number, newStart: number, commit: boolean) => {
@@ -4837,7 +4861,7 @@ export default function VideoEditor({
             inPoint={inPoint} outPoint={outPoint}
             hasCopied={!!clipboardRef.current}
             onSeek={handleSeek} onSelectItem={handleSelectItem}
-            onMoveItem={handleMoveItem} onTrimItem={handleTrimItem}
+            onMoveItem={handleMoveItem} onMoveToNewTrack={handleMoveToNewTrack} onTrimItem={handleTrimItem}
             onSplitItem={handleSplitItem}
             onZoomChange={setZoomLevel}
             onDeleteItem={(id) => { setTimelineItems(p => p.filter(i => i.id !== id)); setSelectedId(null) }}
