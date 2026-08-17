@@ -90,7 +90,7 @@ import BeatMapEditor from './BeatMapEditor'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { MEDIA_ACCEPT, detectMediaKind, validateMediaFile } from '@/lib/media-import'
 import { interpSpeedRamp } from '@/lib/video-export/speed'
-import { pickVisibleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss, hypePulseZoom } from '@/lib/video-export/compositor'
+import { pickVisibleClips, activeTitleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss, hypePulseZoom } from '@/lib/video-export/compositor'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_MUSIC_VIZ_FORMAT } from '@/lib/music-viz'
 import type { ActiveClipTransition, UnderLayer } from '@/components/editor/VideoPlayer'
@@ -1011,6 +1011,7 @@ export default function VideoEditor({
     const findOn = (trackId: string) => timelineItems.find(i =>
       i.trackId === trackId && i.enabled !== false &&
       i.contentType !== 'effect' && i.contentType !== 'spotlight' &&   // directives, not visual layers
+      i.contentType !== 'title' &&                                      // titles are overlays (titleOverlays), never the main clip
       currentTime >= i.startTime && currentTime < i.startTime + (i.outPoint - i.inPoint))
     // Multicam: while a spotlight is active, the selected camera is what the preview shows.
     const spot = activeSpotlight(timelineItems, currentTime)
@@ -1308,6 +1309,29 @@ export default function VideoEditor({
     }
     return layers
   }, [timelineItems, tracks, currentTime, adjustments])
+
+  // Title overlays — EVERY active title clip (multiple can overlap on one track and all must show). Each
+  // carries the full rich styling + animation state; the player renders them on top of the video.
+  const titleOverlays = useMemo(() => (
+    activeTitleClips(timelineItems, tracks, currentTime).map(clip => {
+      const d = clip.outPoint - clip.inPoint
+      return {
+        id: clip.id,
+        text: clip.titleText ?? '',
+        fontSize: clip.titleFontSize ?? 48,
+        color: clip.titleColor ?? '#ffffff',
+        bg: clip.titleBg ?? 'transparent',
+        position: clip.titlePosition ?? 'center',
+        animation: clip.titleAnimation ?? 'none',
+        localProgress: d > 0 ? Math.max(0, Math.min(1, (currentTime - clip.startTime) / d)) : 0,
+        durSec: d,
+        animAmount: clip.titleAnimAmount, textOpacity: clip.titleOpacity, offsetY: clip.titleOffsetY, activeColor: clip.titleActiveColor,
+        font: clip.titleFont, weight: clip.titleWeight, letterSpacing: clip.titleLetterSpacing,
+        uppercase: clip.titleUppercase, shadow: clip.titleShadow, glow: clip.titleGlow,
+        outline: clip.titleOutline, outlineColor: clip.titleOutlineColor,
+      }
+    })
+  ), [timelineItems, tracks, currentTime])
 
   // Draw-focus clips available as follow targets (for the Inspector's "Follow focus dot").
   const focusClips = useMemo(() => {
@@ -4794,20 +4818,7 @@ export default function VideoEditor({
                       loopDuration={viewerLoopDuration}
                       clipInPoint={viewerClip?.inPoint ?? 0}
                       activeRemap={activeRemap}
-                      titleClip={viewerClip?.contentType === 'title' ? {
-                        text: viewerClip.titleText ?? '',
-                        fontSize: viewerClip.titleFontSize ?? 48,
-                        color: viewerClip.titleColor ?? '#ffffff',
-                        bg: viewerClip.titleBg ?? 'transparent',
-                        position: viewerClip.titlePosition ?? 'center',
-                        animation: viewerClip.titleAnimation ?? 'none',
-                        font: viewerClip.titleFont, weight: viewerClip.titleWeight, letterSpacing: viewerClip.titleLetterSpacing,
-                        uppercase: viewerClip.titleUppercase, shadow: viewerClip.titleShadow, glow: viewerClip.titleGlow,
-                        outline: viewerClip.titleOutline, outlineColor: viewerClip.titleOutlineColor,
-                        localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
-                        durSec: viewerClip.outPoint - viewerClip.inPoint,
-                        animAmount: viewerClip.titleAnimAmount, textOpacity: viewerClip.titleOpacity, offsetY: viewerClip.titleOffsetY, activeColor: viewerClip.titleActiveColor,
-                      } : undefined}
+                      titleOverlays={titleOverlays}
                       onSeekRequest={handleSeek}
                       playbackRate={playbackRate}
                       onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}
@@ -4886,20 +4897,7 @@ export default function VideoEditor({
                       loopDuration={viewerLoopDuration}
                       clipInPoint={viewerClip?.inPoint ?? 0}
                       activeRemap={activeRemap}
-                      titleClip={viewerClip?.contentType === 'title' ? {
-                        text: viewerClip.titleText ?? '',
-                        fontSize: viewerClip.titleFontSize ?? 48,
-                        color: viewerClip.titleColor ?? '#ffffff',
-                        bg: viewerClip.titleBg ?? 'transparent',
-                        position: viewerClip.titlePosition ?? 'center',
-                        animation: viewerClip.titleAnimation ?? 'none',
-                        font: viewerClip.titleFont, weight: viewerClip.titleWeight, letterSpacing: viewerClip.titleLetterSpacing,
-                        uppercase: viewerClip.titleUppercase, shadow: viewerClip.titleShadow, glow: viewerClip.titleGlow,
-                        outline: viewerClip.titleOutline, outlineColor: viewerClip.titleOutlineColor,
-                        localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
-                        durSec: viewerClip.outPoint - viewerClip.inPoint,
-                        animAmount: viewerClip.titleAnimAmount, textOpacity: viewerClip.titleOpacity, offsetY: viewerClip.titleOffsetY, activeColor: viewerClip.titleActiveColor,
-                      } : undefined}
+                      titleOverlays={titleOverlays}
                       onSeekRequest={handleSeek}
                       playbackRate={playbackRate}
                       onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}

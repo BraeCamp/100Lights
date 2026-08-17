@@ -7,7 +7,7 @@ import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } fr
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import MusicVizOverlay from './MusicVizOverlay'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
-import { fontStack, textShadowCss, titleAnim, titleFontPx, revealLines, titleWordStates } from '@/lib/text-styles'
+import { fontStack, textShadowCss, titleAnim, titleFontPx, revealLines, titleWordStates, type TitleAnimation } from '@/lib/text-styles'
 import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { instantSpeed, sourceOffsetAt, sourceTimeAt } from '@/lib/video-export/speed'
@@ -109,6 +109,32 @@ interface ClipHint {
   startTime: number
 }
 
+// A title clip's render spec (styling + animation state at the current time). Several can be on screen at
+// once (overlapping title clips), so the player renders a list of these on top of the video.
+export interface TitleSpec {
+  id?: string
+  text: string
+  fontSize: number
+  color: string
+  bg: string
+  position: 'upper' | 'center' | 'lower-third'
+  animation: TitleAnimation
+  localProgress: number
+  durSec: number
+  animAmount?: number
+  textOpacity?: number
+  offsetY?: number
+  activeColor?: string
+  font?: string
+  weight?: number
+  letterSpacing?: number
+  uppercase?: boolean
+  shadow?: boolean
+  glow?: string
+  outline?: number
+  outlineColor?: string
+}
+
 // Per-word title rendering (word-pop / word-highlight) — one flex row per line, each word its own span so
 // it can pop/scale and the active word can recolor. Mirrors the compositor's per-word draw.
 function renderTitleWords(
@@ -129,6 +155,42 @@ function renderTitleWords(
       ))}
     </div>
   ))
+}
+
+// Render one title clip as a positioned overlay (rich styling + animation + word modes). Used for every
+// active title, so overlapping titles all show.
+function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key) {
+  const posStyle: React.CSSProperties =
+    tc.position === 'upper'       ? { top: '10%',   left: 0, right: 0 } :
+    tc.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
+                                    { top: '50%',   left: 0, right: 0, transform: 'translateY(-50%)' }
+  const a = titleAnim(tc.animation, tc.localProgress, tc.durSec, tc.animAmount ?? 1)
+  const fpx = titleFontPx(tc.fontSize, stageHeight)   // frame-relative → matches export
+  const opx = (tc.outline ?? 0) * stageHeight / 1080
+  const shownText = a.reveal < 1 ? revealLines((tc.text ?? '').split('\n'), a.reveal).join('\n') : tc.text
+  const wordStates = titleWordStates(tc.animation, (tc.text ?? '').split('\n'), tc.localProgress, tc.durSec, tc.animAmount ?? 1)
+  return (
+    <div key={key} style={{
+      position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
+      pointerEvents: 'none', opacity: a.opacity * ((tc.textOpacity ?? 100) / 100),
+      transform: `${posStyle.transform ?? ''} translateY(${((a.dy * fpx) + ((tc.offsetY ?? 0) * stageHeight / 1080)).toFixed(1)}px) scale(${a.scale.toFixed(3)})`,
+      filter: a.blur > 0.01 ? `blur(${(a.blur * fpx).toFixed(1)}px)` : undefined,
+      ...posStyle,
+    }}>
+      {wordStates ? renderTitleWords(wordStates, { fpx, color: tc.color, activeColor: tc.activeColor || '#fde047', weight: tc.weight ?? 700, fontFamily: fontStack(tc.font), letterSpacing: tc.letterSpacing ?? -0.01 }) : (
+        <span style={{
+          display: 'inline-block', fontSize: fpx, color: tc.color, fontFamily: fontStack(tc.font),
+          background: tc.bg !== 'transparent' ? tc.bg : undefined,
+          padding: tc.bg !== 'transparent' ? `${fpx * 0.14}px ${fpx * 0.28}px` : undefined,
+          borderRadius: tc.bg !== 'transparent' ? fpx * 0.14 : undefined,
+          fontWeight: tc.weight ?? 700, letterSpacing: `${tc.letterSpacing ?? -0.01}em`,
+          textTransform: tc.uppercase ? 'uppercase' : undefined, lineHeight: 1.18, whiteSpace: 'pre-line',
+          WebkitTextStroke: opx ? `${opx}px ${tc.outlineColor || '#000'}` : undefined,
+          textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, fpx) || undefined,
+        }}>{shownText}</span>
+      )}
+    </div>
+  )
 }
 
 interface Props {
@@ -185,28 +247,8 @@ interface Props {
   // Set only when the ACTIVE clip has freeze/reverse — the element is then scrubbed to sourceTimeAt each
   // frame instead of played, and the RAF clock (not the element) drives the playhead. Null = normal.
   activeRemap?: { reverse?: boolean; freeze?: boolean; inPoint: number; outPoint: number; startTime: number; speed?: number; speedPoints?: Array<{ t: number; speed: number }> } | null
-  titleClip?: {              // populated when contentType === 'title'
-    text: string
-    fontSize: number
-    color: string
-    bg: string
-    position: 'upper' | 'center' | 'lower-third'
-    animation: import('@/lib/text-styles').TitleAnimation
-    localProgress: number    // 0–1 through clip duration (for animations)
-    durSec: number           // clip duration in seconds (animation in/out windows)
-    animAmount?: number      // effect intensity (0–2, default 1)
-    textOpacity?: number     // overall text opacity 0–100 (default 100)
-    offsetY?: number         // vertical nudge (px at 1080 ref)
-    activeColor?: string     // active-word highlight color (word-highlight)
-    font?: string            // rich styling (lib/text-styles)
-    weight?: number
-    letterSpacing?: number
-    uppercase?: boolean
-    shadow?: boolean
-    glow?: string
-    outline?: number
-    outlineColor?: string
-  }
+  /** Every active title clip, rendered as overlays on top of the video — multiple can overlap and all show. */
+  titleOverlays?: TitleSpec[]
   lutCanvas?: OffscreenCanvas | null  // pre-rendered LUT canvas frame (set externally)
   playbackRate?: number
   onPlaybackRateChange?: (rate: number) => void
@@ -329,7 +371,7 @@ export default function VideoPlayer({
   blendMode,
   loopDuration,
   clipInPoint = 0,
-  titleClip,
+  titleOverlays,
   playbackRate = 1,
   onPlaybackRateChange,
   activeFocusClip,
@@ -1296,47 +1338,8 @@ export default function VideoPlayer({
             />
           )}
 
-        {/* Title clip overlay */}
-        {titleClip && contentType === 'title' && (() => {
-          const tc = titleClip
-          const posStyle: React.CSSProperties =
-            tc.position === 'upper'       ? { top: '10%',   left: 0, right: 0 } :
-            tc.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
-                                            { top: '50%',   left: 0, right: 0, transform: 'translateY(-50%)' }
-          const a = titleAnim(tc.animation, tc.localProgress, tc.durSec, tc.animAmount ?? 1)
-          const fpx = titleFontPx(tc.fontSize, stage.height)   // frame-relative → matches export
-          const opx = (tc.outline ?? 0) * stage.height / 1080
-          const shownText = a.reveal < 1 ? revealLines((tc.text ?? '').split('\n'), a.reveal).join('\n') : tc.text
-          const wordStates = titleWordStates(tc.animation, (tc.text ?? '').split('\n'), tc.localProgress, tc.durSec, tc.animAmount ?? 1)
-          return (
-            <div style={{
-              position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
-              pointerEvents: 'none', opacity: a.opacity * ((tc.textOpacity ?? 100) / 100),
-              transform: `${posStyle.transform ?? ''} translateY(${((a.dy * fpx) + ((tc.offsetY ?? 0) * stage.height / 1080)).toFixed(1)}px) scale(${a.scale.toFixed(3)})`,
-              filter: a.blur > 0.01 ? `blur(${(a.blur * fpx).toFixed(1)}px)` : undefined,
-              ...posStyle,
-            }}>
-              {wordStates ? renderTitleWords(wordStates, { fpx, color: tc.color, activeColor: tc.activeColor || '#fde047', weight: tc.weight ?? 700, fontFamily: fontStack(tc.font), letterSpacing: tc.letterSpacing ?? -0.01 }) : (
-              <span style={{
-                display: 'inline-block',
-                fontSize: fpx,
-                color: tc.color,
-                fontFamily: fontStack(tc.font),
-                background: tc.bg !== 'transparent' ? tc.bg : undefined,
-                padding: tc.bg !== 'transparent' ? `${fpx * 0.14}px ${fpx * 0.28}px` : undefined,
-                borderRadius: tc.bg !== 'transparent' ? fpx * 0.14 : undefined,
-                fontWeight: tc.weight ?? 700,
-                letterSpacing: `${tc.letterSpacing ?? -0.01}em`,
-                textTransform: tc.uppercase ? 'uppercase' : undefined,
-                lineHeight: 1.18,
-                whiteSpace: 'pre-line',   // render \n as line breaks
-                WebkitTextStroke: opx ? `${opx}px ${tc.outlineColor || '#000'}` : undefined,
-                textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, fpx) || undefined,
-              }}>{shownText}</span>
-              )}
-            </div>
-          )
-        })()}
+        {/* Title overlays — every active title clip on top of the video (all overlapping ones show) */}
+        {titleOverlays?.map((tc, i) => renderTitleSpec(tc, stage.height, tc.id ?? i))}
 
         {/* Music-visual overlays — canvas visuals over the video, reacting to the
             media analyser (falls back to an idle animation when it's silent). */}

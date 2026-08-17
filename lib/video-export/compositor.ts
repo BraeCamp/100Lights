@@ -125,9 +125,10 @@ export function pickViewerClip(items: TimelineItem[], tracks: Track[], t: number
 }
 
 /**
- * All clips visible at `t`, BOTTOM → TOP. Track order is stacking order:
- * tracks[0] is the top layer (matching pickViewerClip, which returns the
- * tracks[0] hit first). One clip per track — the layer stack.
+ * All non-title clips visible at `t`, BOTTOM → TOP. Track order is stacking order:
+ * tracks[0] is the top layer. One clip per track — the layer stack. Title clips are NOT here: they're
+ * overlays (several can overlap on one track and all must show), so they're collected by activeTitleClips
+ * and drawn on top separately.
  */
 export function pickVisibleClips(items: TimelineItem[], tracks: Track[], t: number): TimelineItem[] {
   const isMedia = (tr: Track) => tr.type === 'media' || tr.type === 'video' || tr.type === 'audio'
@@ -141,15 +142,31 @@ export function pickVisibleClips(items: TimelineItem[], tracks: Track[], t: numb
       it.trackId === track.id &&
       it.enabled !== false &&
       isVisualLayer(it) &&
+      it.contentType !== 'title' &&
       t >= it.startTime &&
       it.startTime + (it.outPoint - it.inPoint) > t,
     )
     if (!hit) continue
-    // Multicam: only the spotlighted camera's VIDEO shows; title/musicviz overlays still layer on top.
-    if (spot && hit.trackId !== spot && hit.contentType !== 'title' && hit.contentType !== 'musicviz') continue
+    // Multicam: only the spotlighted camera's VIDEO shows; musicviz overlays still layer on top.
+    if (spot && hit.trackId !== spot && hit.contentType !== 'musicviz') continue
     stack.push(hit)
   }
   return stack
+}
+
+/**
+ * Every title clip visible at `t`, in draw order (bottom → top = earlier-starting → later-starting), so
+ * MULTIPLE overlapping title clips on one track all render (a stacked kinetic paragraph, or annotations
+ * layered on the same clip). Respects track mute/solo. These are drawn on top of the video stack.
+ */
+export function activeTitleClips(items: TimelineItem[], tracks: Track[], t: number): TimelineItem[] {
+  const isMedia = (tr: Track) => tr.type === 'media' || tr.type === 'video' || tr.type === 'audio'
+  const hasSolo = tracks.some(tr => isMedia(tr) && tr.solo)
+  const ok = new Set(tracks.filter(tr => isMedia(tr) && !tr.muted && (!hasSolo || tr.solo)).map(tr => tr.id))
+  return items
+    .filter(it => it.contentType === 'title' && it.enabled !== false && ok.has(it.trackId)
+      && t >= it.startTime && it.startTime + (it.outPoint - it.inPoint) > t)
+    .sort((a, b) => a.startTime - b.startTime || a.trackId.localeCompare(b.trackId))
 }
 
 interface ClipTransform {
@@ -293,10 +310,6 @@ export function drawFrame(
   if (!stack.length) return
 
   for (const clip of stack) {
-    if (clip.contentType === 'title') {
-      drawTitle(ctx, clip, t, W, H)
-      continue
-    }
     if (clip.contentType === 'musicviz') {
       drawMusicViz(ctx, clip, t, W, H)
       continue
@@ -337,6 +350,9 @@ export function drawFrame(
       }
     }
   }
+
+  // Title overlays — every active title clip, on top of the video stack (all overlapping ones render).
+  for (const clip of activeTitleClips(state.items, state.tracks, t)) drawTitle(ctx, clip, t, W, H)
 
   // Hype flash — a quick additive white pop on drops (paired with the punch-zoom), from the visible
   // clips' hypeDrops. Drawn over the video, under the vignette/captions.
