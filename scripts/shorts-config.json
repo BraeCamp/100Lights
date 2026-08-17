@@ -253,6 +253,158 @@
       "label": "Dusk",
       "caption2": "NOW SPINNING",
       "caption": "lofi to disappear to 🌙 — Dusk, made in 100Lights\n\n#lofi #lofihiphop #studybeats #vinyl #chillbeats"
+    },
+    {
+      "id": "piano-keys",
+      "title": "Piano Keys",
+      "renderer": "format",
+      "format": "piano",
+      "cfproj": "filtered_house",
+      "song": "filtered_house",
+      "start": 0,
+      "seconds": 18,
+      "accent": "#a78bfa",
+      "hook": [
+        "keys light",
+        "as it plays 🎹"
+      ],
+      "loop": true,
+      "loops": 2,
+      "caption": "every note lights the keys 🎹 — made in 100Lights\n\n#pianocover #housemusic #aimusic #producer"
+    },
+    {
+      "id": "flow-format",
+      "title": "Flow",
+      "renderer": "format",
+      "format": "flow",
+      "cfproj": "filtered_house",
+      "song": "filtered_house",
+      "start": 0,
+      "seconds": 18,
+      "accent": "#38bdf8",
+      "hook": [
+        "the melody",
+        "flows 🌊"
+      ],
+      "loop": true,
+      "loops": 2,
+      "caption": "watch the melody flow 🌊 — made in 100Lights\n\n#housemusic #aimusic #visualizer #producer"
+    },
+    {
+      "id": "tunnel-format",
+      "title": "Tunnel",
+      "renderer": "format",
+      "format": "tunnel",
+      "cfproj": "filtered_house",
+      "song": "filtered_house",
+      "start": 0,
+      "seconds": 18,
+      "accent": "#f472b6",
+      "hook": [
+        "into the",
+        "tunnel 🌀"
+      ],
+      "loop": true,
+      "loops": 2,
+      "caption": "fly through the beat 🌀 — made in 100Lights\n\n#edm #housemusic #aimusic #visualizer"
+    },
+    {
+      "id": "lights-format",
+      "title": "100 Lights",
+      "renderer": "format",
+      "format": "lights",
+      "cfproj": "filtered_house",
+      "song": "filtered_house",
+      "start": 0,
+      "seconds": 18,
+      "accent": "#fbbf24",
+      "hook": [
+        "every note",
+        "a light ✨"
+      ],
+      "loop": true,
+      "loops": 2,
+      "caption": "every note is a light ✨ — made in 100Lights\n\n#aimusic #visualizer #housemusic #producer"
+    },
+    {
+      "id": "bars-format",
+      "title": "Bars",
+      "renderer": "format",
+      "format": "bars",
+      "cfproj": "filtered_house",
+      "song": "filtered_house",
+      "start": 0,
+      "seconds": 18,
+      "accent": "#34d399",
+      "hook": [
+        "the bars",
+        "react 📊"
+      ],
+      "loop": true,
+      "loops": 2,
+      "caption": "the bars react to every note 📊 — made in 100Lights\n\n#housemusic #aimusic #visualizer #beatmaker"
+    },
+    {
+      "id": "quiz-reveal",
+      "title": "Quiz Reveal",
+      "renderer": "text",
+      "song": "synthwave",
+      "start": 8,
+      "seconds": 16,
+      "accent": "#f472b6",
+      "lines": [
+        {
+          "text": "guess the",
+          "at": 0.7
+        },
+        {
+          "text": "genre 👀",
+          "at": 1.3,
+          "accent": true
+        },
+        {
+          "text": ". . .",
+          "at": 6.5,
+          "size": 60
+        },
+        {
+          "text": "it's synthwave 🕹️",
+          "at": 11,
+          "accent": true,
+          "size": 56
+        }
+      ],
+      "caption": "guess the genre 👀 — made in 100Lights\n\n#musicquiz #aimusic #synthwave #producer"
+    },
+    {
+      "id": "product-pov",
+      "title": "Product POV",
+      "renderer": "text",
+      "song": "lofi",
+      "start": 10,
+      "seconds": 16,
+      "accent": "#f59e0b",
+      "lines": [
+        {
+          "text": "POV: you type",
+          "at": 0.8
+        },
+        {
+          "text": "a vibe →",
+          "at": 1.5
+        },
+        {
+          "text": "get a full song",
+          "at": 4.2
+        },
+        {
+          "text": "no DAW skills 🎹",
+          "at": 8,
+          "accent": true,
+          "size": 52
+        }
+      ],
+      "caption": "type a vibe, get a song 🎹 — made in 100Lights\n\n#aimusic #musicproducer #beatmaker #lofi"
     }
   ]
 }
