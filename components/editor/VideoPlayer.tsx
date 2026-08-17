@@ -172,7 +172,8 @@ function renderTitleWords(
 
 // Render one title clip as a positioned overlay (rich styling + animation + word modes). Used for every
 // active title, so overlapping titles all show.
-function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key, nowSec?: number) {
+interface TitleDrag { onPointerDown: (e: React.PointerEvent) => void; onPointerMove: (e: React.PointerEvent) => void; onPointerUp: (e: React.PointerEvent) => void }
+function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key, nowSec?: number, drag?: TitleDrag) {
   const posStyle: React.CSSProperties =
     tc.position === 'upper'       ? { top: '10%',   left: 0, right: 0 } :
     tc.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
@@ -187,6 +188,24 @@ function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key, now
   const scaleF = a.scale * (1 + pulseV * 0.14)   // beat-synced pulse on top of the entrance scale
   const shownText = a.reveal < 1 ? revealLines((tc.text ?? '').split('\n'), a.reveal).join('\n') : tc.text
   const wordStates = titleWordStates(tc.animation, (tc.text ?? '').split('\n'), localProgress, tc.durSec, tc.animAmount ?? 1)
+  const content = wordStates
+    ? renderTitleWords(wordStates, { fpx, color: tc.color, activeColor: tc.activeColor || '#fde047', activeBox: !!tc.activeBox, weight: tc.weight ?? 700, fontFamily: fontStack(tc.font), letterSpacing: tc.letterSpacing ?? -0.01 })
+    : (
+      <span style={{
+        display: 'inline-block', fontSize: fpx, fontFamily: fontStack(tc.font),
+        ...(tc.gradient
+          ? { background: `linear-gradient(180deg, ${tc.gradient.from}, ${tc.gradient.to})`, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent', WebkitTextFillColor: 'transparent' }
+          : { color: tc.color,
+              background: tc.bg !== 'transparent' ? tc.bg : undefined,
+              padding: tc.bg !== 'transparent' ? `${fpx * 0.14}px ${fpx * 0.28}px` : undefined,
+              borderRadius: tc.bg !== 'transparent' ? fpx * 0.14 : undefined }),
+        fontWeight: tc.weight ?? 700, letterSpacing: `${tc.letterSpacing ?? -0.01}em`,
+        textTransform: tc.uppercase ? 'uppercase' : undefined, lineHeight: 1.18, whiteSpace: 'pre-line',
+        clipPath: a.wipe < 0.999 ? `inset(0 ${((1 - a.wipe) * 100).toFixed(1)}% 0 0)` : undefined,
+        WebkitTextStroke: opx ? `${opx}px ${tc.outlineColor || '#000'}` : undefined,
+        textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, fpx) || undefined,
+      }}>{shownText}</span>
+    )
   return (
     <div key={key} style={{
       position: 'absolute', zIndex: 10, textAlign: tc.align ?? 'center', padding: '0 6%',
@@ -195,22 +214,13 @@ function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key, now
       transform: `${posStyle.transform ?? ''} translate(${((a.dx * fpx) + ((tc.offsetX ?? 0) * stageHeight / 1080)).toFixed(1)}px, ${((a.dy * fpx) + ((tc.offsetY ?? 0) * stageHeight / 1080)).toFixed(1)}px) scale(${scaleF.toFixed(3)})`,
       filter: a.blur > 0.01 ? `blur(${(a.blur * fpx).toFixed(1)}px)` : undefined,
     }}>
-      {wordStates ? renderTitleWords(wordStates, { fpx, color: tc.color, activeColor: tc.activeColor || '#fde047', activeBox: !!tc.activeBox, weight: tc.weight ?? 700, fontFamily: fontStack(tc.font), letterSpacing: tc.letterSpacing ?? -0.01 }) : (
-        <span style={{
-          display: 'inline-block', fontSize: fpx, fontFamily: fontStack(tc.font),
-          ...(tc.gradient
-            ? { background: `linear-gradient(180deg, ${tc.gradient.from}, ${tc.gradient.to})`, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent', WebkitTextFillColor: 'transparent' }
-            : { color: tc.color,
-                background: tc.bg !== 'transparent' ? tc.bg : undefined,
-                padding: tc.bg !== 'transparent' ? `${fpx * 0.14}px ${fpx * 0.28}px` : undefined,
-                borderRadius: tc.bg !== 'transparent' ? fpx * 0.14 : undefined }),
-          fontWeight: tc.weight ?? 700, letterSpacing: `${tc.letterSpacing ?? -0.01}em`,
-          textTransform: tc.uppercase ? 'uppercase' : undefined, lineHeight: 1.18, whiteSpace: 'pre-line',
-          clipPath: a.wipe < 0.999 ? `inset(0 ${((1 - a.wipe) * 100).toFixed(1)}% 0 0)` : undefined,
-          WebkitTextStroke: opx ? `${opx}px ${tc.outlineColor || '#000'}` : undefined,
-          textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, fpx) || undefined,
-        }}>{shownText}</span>
-      )}
+      {drag ? (
+        // Selected title → draggable to reposition (writes titleOffsetX/Y). Only the text is interactive.
+        <span style={{ display: 'inline-block', pointerEvents: 'auto', cursor: 'move', touchAction: 'none', outline: '1.5px dashed rgba(167,139,250,0.9)', outlineOffset: 6, borderRadius: 4 }}
+          onPointerDown={drag.onPointerDown} onPointerMove={drag.onPointerMove} onPointerUp={drag.onPointerUp}>
+          {content}
+        </span>
+      ) : content}
     </div>
   )
 }
@@ -271,6 +281,9 @@ interface Props {
   activeRemap?: { reverse?: boolean; freeze?: boolean; inPoint: number; outPoint: number; startTime: number; speed?: number; speedPoints?: Array<{ t: number; speed: number }> } | null
   /** Every active title clip, rendered as overlays on top of the video — multiple can overlap and all show. */
   titleOverlays?: TitleSpec[]
+  /** The selected title clip id — its overlay becomes draggable to reposition (writes titleOffsetX/Y). */
+  selectedTitleId?: string | null
+  onTitleMove?: (id: string, offsetX: number, offsetY: number) => void
   lutCanvas?: OffscreenCanvas | null  // pre-rendered LUT canvas frame (set externally)
   playbackRate?: number
   onPlaybackRateChange?: (rate: number) => void
@@ -368,7 +381,7 @@ function formatTimecode(s: number, fps = 30): string {
 
 export default function VideoPlayer({
   src, contentType, captions, currentTime, timeOffset, isPlaying,
-  adjustments, onTimeUpdate, onPlay, onPause, onMediaError, videoRef, clipLabel, activeRemap = null,
+  adjustments, onTimeUpdate, onPlay, onPause, onMediaError, videoRef, clipLabel, activeRemap = null, selectedTitleId = null, onTitleMove,
   preloadSrcs = [], seekHints = {}, showOriginal = false,
   clipTransform = DEFAULT_CLIP_TRANSFORM,
   viewerZoom = 1,
@@ -675,6 +688,7 @@ export default function VideoPlayer({
     | { mode: 'crop'; edge: 'l' | 't' | 'r' | 'b'; startX: number; startY: number; base: { l: number; t: number; r: number; b: number }; zoom: number; rect: DOMRect }
     | null
   >(null)
+  const titleDragRef = useRef<{ id: string; startX: number; startY: number; baseX: number; baseY: number } | null>(null)
   // Active viewport snap guide lines, as frame fractions (0..1) on each axis,
   // shown while the gizmo snaps an element edge/center to a frame edge/center/quarter.
   const [snapGuides, setSnapGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
@@ -1378,8 +1392,24 @@ export default function VideoPlayer({
             />
           )}
 
-        {/* Title overlays — every active title clip on top of the video (all overlapping ones show) */}
-        {titleOverlays?.map((tc, i) => renderTitleSpec(tc, stage.height, tc.id ?? i, isPlaying ? titleT : undefined))}
+        {/* Title overlays — every active title clip on top of the video (all overlapping ones show). The
+            selected one is draggable: pointer-drag writes its titleOffsetX/Y (screen px → 1080-ref px). */}
+        {titleOverlays?.map((tc, i) => {
+          const draggable = !!onTitleMove && !!tc.id && tc.id === selectedTitleId
+          const drag: TitleDrag | undefined = draggable ? {
+            onPointerDown: (e) => {
+              e.stopPropagation(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+              titleDragRef.current = { id: tc.id!, startX: e.clientX, startY: e.clientY, baseX: tc.offsetX ?? 0, baseY: tc.offsetY ?? 0 }
+            },
+            onPointerMove: (e) => {
+              const d = titleDragRef.current; if (!d) return
+              const k = 1080 / Math.max(1, stage.height)   // screen px → 1080-ref px
+              onTitleMove!(d.id, Math.round(d.baseX + (e.clientX - d.startX) * k), Math.round(d.baseY + (e.clientY - d.startY) * k))
+            },
+            onPointerUp: (e) => { if (titleDragRef.current) { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch { /* gone */ } titleDragRef.current = null } },
+          } : undefined
+          return renderTitleSpec(tc, stage.height, tc.id ?? i, isPlaying ? titleT : undefined, drag)
+        })}
 
         {/* Music-visual overlays — canvas visuals over the video, reacting to the
             media analyser (falls back to an idle animation when it's silent). */}

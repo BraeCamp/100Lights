@@ -4824,6 +4824,8 @@ export default function VideoEditor({
                       clipInPoint={viewerClip?.inPoint ?? 0}
                       activeRemap={activeRemap}
                       titleOverlays={titleOverlays}
+                      selectedTitleId={selectedItem?.contentType === 'title' ? selectedItem.id : null}
+                      onTitleMove={(id, x, y) => handleClipChange(id, { titleOffsetX: x || undefined, titleOffsetY: y || undefined })}
                       onSeekRequest={handleSeek}
                       playbackRate={playbackRate}
                       onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}
@@ -4903,6 +4905,8 @@ export default function VideoEditor({
                       clipInPoint={viewerClip?.inPoint ?? 0}
                       activeRemap={activeRemap}
                       titleOverlays={titleOverlays}
+                      selectedTitleId={selectedItem?.contentType === 'title' ? selectedItem.id : null}
+                      onTitleMove={(id, x, y) => handleClipChange(id, { titleOffsetX: x || undefined, titleOffsetY: y || undefined })}
                       onSeekRequest={handleSeek}
                       playbackRate={playbackRate}
                       onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}
