@@ -804,8 +804,9 @@ export default function VideoPlayer({
   // Title animations need finer time than React's ~4 Hz currentTime (short entrances looked like 2–3
   // frames); an RAF reads the element clock and re-renders titles at ~30 Hz while titles are on screen.
   const [titleT, setTitleT] = useState(0)
+  const hasTitles = !!titleOverlays?.length
   useEffect(() => {
-    if (!isPlaying || !titleOverlays?.length) return
+    if (!isPlaying || !hasTitles) return
     let raf = 0
     const tick = () => {
       const el = src ? poolRef.current.get(src) : null
@@ -815,7 +816,7 @@ export default function VideoPlayer({
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [isPlaying, titleOverlays, src])
+  }, [isPlaying, hasTitles, src])
 
   // ── LUT overlay (WebGL) ───────────────────────────────────────────────────
   // Draws the active clip's frames through the GPU LUT into a visible canvas
