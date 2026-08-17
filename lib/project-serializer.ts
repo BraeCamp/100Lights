@@ -73,6 +73,7 @@ export interface SerializedClip {
   titleGlow?: string
   titleOutline?: number
   titleOutlineColor?: string
+  attachedTo?: string
   // Music-visual overlay
   mvFormat?: string
   mvAccent?: string
@@ -246,6 +247,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       titleGlow:        item.titleGlow,
       titleOutline:     item.titleOutline,
       titleOutlineColor: item.titleOutlineColor,
+      attachedTo:       item.attachedTo,
       mvFormat:         item.mvFormat,
       mvAccent:         item.mvAccent,
       mvBg:             item.mvBg,
@@ -362,6 +364,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     titleGlow:        clip.titleGlow,
     titleOutline:     clip.titleOutline,
     titleOutlineColor: clip.titleOutlineColor,
+    attachedTo:       clip.attachedTo,
     mvFormat:         clip.mvFormat,
     mvAccent:         clip.mvAccent,
     mvBg:             clip.mvBg,

@@ -147,6 +147,9 @@ export interface TimelineItem {
   titleGlow?: string           // glow color (hex); absent = none
   titleOutline?: number        // outline width px; 0/absent = none
   titleOutlineColor?: string   // default '#000'
+  /** Attach this clip (usually a title/text overlay) to another clip: it moves + trims WITH its anchor
+   *  and renders directly above it. Holds the anchor clip's id. Cascade-deleted with the anchor. */
+  attachedTo?: string
   // Music-visual overlay (contentType === 'musicviz') — a live audio-reactive
   // visual (waveform / EQ bars / radial spectrum) rendered over the video below,
   // driven by the timeline's audio. See lib/music-viz.ts.

@@ -20,6 +20,7 @@ interface Props {
   onAdjustmentsChange: (a: VideoAdjustments) => void
   onTransitionChange: (id: string, type: TransitionType | undefined, duration: number) => void
   onClipChange: (id: string, patch: Partial<TimelineItem>) => void
+  onToggleAttach?: (id: string) => void
   /** Add a music-visual overlay (waveform / EQ / spectrum) at the playhead. */
   onAddMusicViz?: () => void
   importedFile: File | null
@@ -303,7 +304,7 @@ function ColorWheel({ label, value, min, max, defaultVal, onChange }: {
 }
 
 export default function Inspector({
-  selectedItem, adjustments, outputs, onAdjustmentsChange, onTransitionChange, onClipChange, onAddMusicViz,
+  selectedItem, adjustments, outputs, onAdjustmentsChange, onTransitionChange, onClipChange, onToggleAttach, onAddMusicViz,
   importedFile, transcribeStatus, transcribeProgress = 0, transcribeError, onTranscribe,
   captions, currentTime = 0, onSeek,
   silenceTrimStatus, silenceThreshold, onSilenceThresholdChange, onSilenceTrim,
@@ -1048,6 +1049,12 @@ export default function Inspector({
                           style={{ background: fx.on ? 'var(--accent)' : 'var(--bg-card)', color: fx.on ? '#0e0d12' : 'var(--text-secondary)', border: '1px solid var(--border-light)', fontWeight: fx.on ? 700 : 500 }}>{fx.label}</button>
                       ))}
                     </div>
+                    {onToggleAttach && (
+                      <button onClick={() => onToggleAttach(selectedItem.id)} className="w-full mt-2 px-2.5 py-1.5 rounded text-xs flex items-center justify-center gap-1.5"
+                        style={{ background: selectedItem.attachedTo ? 'var(--accent)' : 'var(--bg-card)', color: selectedItem.attachedTo ? '#0e0d12' : 'var(--text-secondary)', border: '1px solid var(--border-light)', fontWeight: 600 }}>
+                        {selectedItem.attachedTo ? '🔗 Attached — click to detach' : '🔗 Attach to clip below'}
+                      </button>
+                    )}
                   </div>
                 )}
 

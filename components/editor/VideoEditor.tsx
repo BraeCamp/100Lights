@@ -1900,7 +1900,7 @@ export default function VideoEditor({
           if (e.shiftKey) {
             handleRippleDelete(selectedId)
           } else {
-            setTimelineItems(p => p.filter(i => i.id !== selectedId))
+            setTimelineItems(p => p.filter(i => i.id !== selectedId && i.attachedTo !== selectedId))
             setSelectedId(null)
           }
         }
@@ -2064,8 +2064,14 @@ export default function VideoEditor({
 
   // ── Timeline item operations ──────────────────────────────────
   const handleMoveItem = useCallback((id: string, newStart: number, newTrackId: string, commit: boolean) => {
-    const apply = (prev: TimelineItem[]) =>
-      prev.map(i => i.id === id ? { ...i, startTime: Math.max(0, newStart), trackId: newTrackId } : i)
+    const apply = (prev: TimelineItem[]) => {
+      const cur = prev.find(i => i.id === id)
+      const delta = cur ? Math.max(0, newStart) - cur.startTime : 0   // shift attached clips by the same amount
+      return prev.map(i =>
+        i.id === id ? { ...i, startTime: Math.max(0, newStart), trackId: newTrackId }
+        : (delta && i.attachedTo === id) ? { ...i, startTime: Math.max(0, i.startTime + delta) }
+        : i)
+    }
     if (commit) {
       setTimelineItems(apply)
     } else {
@@ -2086,9 +2092,39 @@ export default function VideoEditor({
     setTimelineItems(prev => prev.map(i => i.id === itemId ? { ...i, startTime: Math.max(0, startTime), trackId: newId } : i))
   }, [setTimelineItems])
 
+  // Attach/detach a clip (a text overlay) to the media clip it sits over — it then moves + trims with it.
+  const handleToggleAttach = useCallback((clipId: string) => {
+    setTimelineItems(prev => {
+      const clip = prev.find(i => i.id === clipId); if (!clip) return prev
+      if (clip.attachedTo) return prev.map(i => i.id === clipId ? { ...i, attachedTo: undefined } : i)
+      const mid = clip.startTime + (clip.outPoint - clip.inPoint) / 2
+      const clipIdx = tracksRef.current.findIndex(t => t.id === clip.trackId)
+      // The nearest video/media clip (by track distance) overlapping this clip in time = its anchor.
+      const anchor = prev
+        .filter(i => i.id !== clipId && (i.contentType === 'video' || (!i.contentType && !!i.url)) && i.startTime <= mid && i.startTime + (i.outPoint - i.inPoint) >= mid)
+        .map(i => ({ i, d: Math.abs(tracksRef.current.findIndex(t => t.id === i.trackId) - clipIdx) }))
+        .sort((a, b) => a.d - b.d)[0]?.i
+      if (!anchor) { setAutoEditNote('No clip below to attach to.'); return prev }
+      return prev.map(i => i.id === clipId ? { ...i, attachedTo: anchor.id } : i)
+    })
+  }, [setTimelineItems])
+
   const handleTrimItem = useCallback((id: string, _edge: 'in' | 'out', newIn: number, newOut: number, newStart: number, commit: boolean) => {
-    const apply = (prev: TimelineItem[]) =>
-      prev.map(i => i.id === id ? { ...i, inPoint: newIn, outPoint: newOut, startTime: Math.max(0, newStart) } : i)
+    const apply = (prev: TimelineItem[]) => {
+      const cur = prev.find(i => i.id === id)
+      // Attached clips follow the anchor: shift by the start delta, and clamp their length to the anchor's.
+      const startDelta = cur ? Math.max(0, newStart) - cur.startTime : 0
+      const anchorLen = (newOut - newIn)
+      return prev.map(i => {
+        if (i.id === id) return { ...i, inPoint: newIn, outPoint: newOut, startTime: Math.max(0, newStart) }
+        if (i.attachedTo === id) {
+          const s = Math.max(0, i.startTime + startDelta)
+          const len = Math.min(i.outPoint - i.inPoint, anchorLen)
+          return { ...i, startTime: s, outPoint: i.inPoint + len }
+        }
+        return i
+      })
+    }
     if (commit) {
       setTimelineItems(apply)
     } else {
@@ -4825,6 +4861,7 @@ export default function VideoEditor({
                 onAdjustmentsChange={setAdjustmentsWithHistory}
                 onTransitionChange={handleTransitionChange}
                 onClipChange={handleClipChange}
+                onToggleAttach={handleToggleAttach}
                 onAddMusicViz={addMusicVizClip}
                 importedFile={importedFile}
                 transcribeStatus={transcribeStatus}
@@ -4870,7 +4907,7 @@ export default function VideoEditor({
             onMoveItem={handleMoveItem} onMoveToNewTrack={handleMoveToNewTrack} onTrimItem={handleTrimItem}
             onSplitItem={handleSplitItem}
             onZoomChange={setZoomLevel}
-            onDeleteItem={(id) => { setTimelineItems(p => p.filter(i => i.id !== id)); setSelectedId(null) }}
+            onDeleteItem={(id) => { setTimelineItems(p => p.filter(i => i.id !== id && i.attachedTo !== id)); setSelectedId(null) }}
             onRippleDelete={handleRippleDelete}
             onDropMedia={handleDropMedia}
             onCreateFocusClip={handleCreateFocusClip}
