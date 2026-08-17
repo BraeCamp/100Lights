@@ -51,41 +51,41 @@ prog(t,SEC,AC);requestAnimationFrame(draw);}window.__ready=true;draw();</script>
 const bgCard = (AC, SEC) => HEAD + `const AC=${JSON.stringify(AC)},SEC=${SEC};
 function draw(){const t=(performance.now()-t0)/1000;bg(t,AC);brand();prog(t,SEC,AC);requestAnimationFrame(draw);}window.__ready=true;draw();</script>`
 
-const fakeIMsg = (title, msgs, AC, SEC) => HEAD + `const M=${JSON.stringify(msgs)},AC=${JSON.stringify(AC)},SEC=${SEC},TITLE=${JSON.stringify(title)};
+const fakeIMsg = (title, msgs, AC, SEC, bare) => HEAD + `const M=${JSON.stringify(msgs)},AC=${JSON.stringify(AC)},SEC=${SEC},TITLE=${JSON.stringify(title)},BARE=${bare ? 1 : 0};
 function draw(){const t=(performance.now()-t0)/1000;x.fillStyle='#0a0812';x.fillRect(0,0,W,H);
-x.textAlign='center';x.fillStyle='#ece9fd';x.font='800 30px system-ui,Arial';x.fillText(TITLE,W/2,150);x.strokeStyle=hexa('#ffffff',0.1);x.lineWidth=1;x.beginPath();x.moveTo(60,185);x.lineTo(W-60,185);x.stroke();
+x.textAlign='center';x.fillStyle='#ece9fd';x.font='800 30px system-ui,Arial';if(!BARE)x.fillText(TITLE,W/2,150);x.strokeStyle=hexa('#ffffff',0.1);x.lineWidth=1;x.beginPath();x.moveTo(60,185);x.lineTo(W-60,185);x.stroke();
 let y=290;x.textAlign='left';x.font='600 34px system-ui,Arial';
 for(let i=0;i<M.length;i++){const m=M[i],p=Math.max(0,Math.min(1,(t-m.at)/0.35));if(p<=0){continue;}const tw=Math.min(560,x.measureText(m.text).width+56),bw=tw,bx=m.me?W-60-bw:60,by=y-(1-p)*18;x.globalAlpha=p;
 x.fillStyle=m.me?AC:'#26262e';rr(bx,by,bw,74,22);x.fill();x.fillStyle=m.me?'#0a0812':'#ece9fd';x.fillText(m.text,bx+28,by+48);x.globalAlpha=1;y+=100;}
 prog(t,SEC,AC);requestAnimationFrame(draw);}window.__ready=true;draw();</script>`
 
 // tier list — chips now animate into their assigned TIER ROW (fixes the disconnected list)
-const tierList = (heading, tiers, chips, AC, SEC) => HEAD + `const TI=${JSON.stringify(tiers)},CH=${JSON.stringify(chips)},AC=${JSON.stringify(AC)},SEC=${SEC},HEAD2=${JSON.stringify(heading)};
+const tierList = (heading, tiers, chips, AC, SEC, bare) => HEAD + `const TI=${JSON.stringify(tiers)},CH=${JSON.stringify(chips)},AC=${JSON.stringify(AC)},SEC=${SEC},HEAD2=${JSON.stringify(heading)},BARE=${bare ? 1 : 0};
 const rowH=150,topY=240,rx=210,slots={};
 CH.forEach(ch=>{slots[ch.tier]=(slots[ch.tier]||0);ch._slot=slots[ch.tier]++;});
 function chipXY(ch){const ry=topY+ch.tier*rowH+(rowH-16)/2;const cols=CH.filter(c=>c.tier===ch.tier).length;const areaX=rx+10,areaW=W-rx-55;const cx=areaX+areaW*((ch._slot+0.5)/cols);return{cx,cy:ry};}
-function draw(){const t=(performance.now()-t0)/1000;bg(t,AC);brand();
-x.textAlign='center';x.fillStyle='#fff';x.font='800 44px system-ui,Arial';x.fillText(HEAD2,W/2,185);
+function draw(){const t=(performance.now()-t0)/1000;bg(t,AC);if(!BARE)brand();
+if(!BARE){x.textAlign='center';x.fillStyle='#fff';x.font='800 44px system-ui,Arial';x.fillText(HEAD2,W/2,185);}
 for(let i=0;i<TI.length;i++){const ry=topY+i*rowH;x.fillStyle=hexa(TI[i].c,0.9);rr(60,ry,120,rowH-16,16);x.fill();x.fillStyle='#0a0812';x.font='800 54px system-ui,Arial';x.textAlign='center';x.fillText(TI[i].k,120,ry+(rowH-16)/2+18);x.fillStyle=hexa('#ffffff',0.05);rr(rx-15,ry,W-rx-45,rowH-16,16);x.fill();}
 for(const ch of CH){const p=Math.max(0,Math.min(1,(t-ch.at)/0.55)),e=1-Math.pow(1-p,3);if(p<=0)continue;const d=chipXY(ch),sx=W/2,sy=H-70,cx=sx+(d.cx-sx)*e,cy=sy+(d.cy-sy)*e,w=Math.min(230,x.measureText(ch.label).width+50);x.globalAlpha=Math.min(1,p*1.6);
 const land=Math.max(0,1-(t-(ch.at+0.55))/0.25);x.save();x.translate(cx,cy);x.scale(1+0.12*Math.max(0,land),1+0.12*Math.max(0,land));x.fillStyle=hexa(AC,0.92);rr(-w/2,-30,w,60,14);x.fill();x.fillStyle='#0a0812';x.font='800 30px system-ui,Arial';x.textAlign='center';x.fillText(ch.label,0,11);x.restore();x.globalAlpha=1;}
 prog(t,SEC,AC);requestAnimationFrame(draw);}window.__ready=true;draw();</script>`
 
-const vinyl = (label, caption, AC, SEC) => HEAD + `const AC=${JSON.stringify(AC)},SEC=${SEC},TITLE=${JSON.stringify(label)},CAP=${JSON.stringify(caption)};
-function draw(){const t=(performance.now()-t0)/1000;bg(t,AC);brand();const cx=W/2,cy=H*0.44,R=W*0.36,rot=t*3.4;
+const vinyl = (label, caption, AC, SEC, bare) => HEAD + `const AC=${JSON.stringify(AC)},SEC=${SEC},TITLE=${JSON.stringify(label)},CAP=${JSON.stringify(caption)},BARE=${bare ? 1 : 0};
+function draw(){const t=(performance.now()-t0)/1000;bg(t,AC);if(!BARE)brand();const cx=W/2,cy=H*0.44,R=W*0.36,rot=t*3.4;
 x.save();x.translate(cx,cy);
 x.beginPath();x.arc(0,0,R,0,7);x.fillStyle='#0c0c11';x.fill();
 for(let r=R*0.40;r<R;r+=9){x.beginPath();x.arc(0,0,r,0,7);x.strokeStyle=hexa('#ffffff',0.045);x.lineWidth=1;x.stroke();}
 x.save();x.rotate(rot);
 for(let k=0;k<12;k++){const a=k*Math.PI/6;x.strokeStyle=hexa(AC,k%3===0?0.9:0.35);x.lineWidth=k%3===0?5:3;x.beginPath();x.moveTo(Math.cos(a)*R*0.86,Math.sin(a)*R*0.86);x.lineTo(Math.cos(a)*R*0.97,Math.sin(a)*R*0.97);x.stroke();}
-x.beginPath();x.arc(0,0,R*0.34,0,7);x.fillStyle=AC;x.fill();x.fillStyle='#0a0812';x.font='800 26px system-ui,Arial';x.textAlign='center';x.fillText(TITLE,0,-R*0.14);
+x.beginPath();x.arc(0,0,R*0.34,0,7);x.fillStyle=AC;x.fill();if(!BARE){x.fillStyle='#0a0812';x.font='800 26px system-ui,Arial';x.textAlign='center';x.fillText(TITLE,0,-R*0.14);}
 x.beginPath();x.arc(0,0,7,0,7);x.fillStyle='#0a0812';x.fill();
 x.beginPath();x.arc(R*0.62,0,9,0,7);x.fillStyle='#ffffff';x.shadowColor=hexa(AC,0.9);x.shadowBlur=16;x.fill();x.shadowBlur=0;
 x.restore();
 const gg=x.createLinearGradient(-R,-R,R,R);gg.addColorStop(0,'rgba(255,255,255,0.14)');gg.addColorStop(0.5,'rgba(255,255,255,0)');x.beginPath();x.arc(0,0,R,0,7);x.fillStyle=gg;x.fill();
 x.restore();
 x.beginPath();x.arc(cx,cy,R,0,7);x.strokeStyle=hexa(AC,0.5);x.lineWidth=3;x.stroke();
-x.textAlign='center';x.fillStyle=hexa('#ece9fd',0.85);x.font='600 26px ui-monospace,monospace';x.fillText(CAP,W/2,cy+R+96);
+if(!BARE){x.textAlign='center';x.fillStyle=hexa('#ece9fd',0.85);x.font='600 26px ui-monospace,monospace';x.fillText(CAP,W/2,cy+R+96);}
 prog(t,SEC,AC);requestAnimationFrame(draw);}window.__ready=true;draw();</script>`
 
 const bounce = (onsets, xs, AC, SEC) => HEAD + `const ON=${JSON.stringify(onsets)},XS=${JSON.stringify(xs)},AC=${JSON.stringify(AC)},SEC=${SEC};
@@ -278,16 +278,46 @@ function bakeAudio(audioSpecs, finalDur, tmp) {
   return out
 }
 
-// Editable brand + title/caption title clips for the video-bg short (vinyl-video) — placed in the corners
-// (left-aligned) to match the baked overlay, but now fully editable.
-function vinylVideoClips(sc, accent, dur) {
-  const base = { inPoint: 0, outPoint: dur, startTime: 0, trackId: 't1', contentType: 'title', captions: [], titleAlign: 'left', titleShadow: true }
-  return [
-    { id: randomUUID(), color: '#ece9fd', label: '100LIGHTS', ...base, titleText: '100LIGHTS', titleFontSize: 30, titleColor: '#ffffff', titlePosition: 'upper', titleOffsetY: -72, titleFont: 'anton', titleWeight: 800, titleLetterSpacing: 0.01 },
-    { id: randomUUID(), color: '#ece9fd', label: 'MADE IN 100LIGHTS', ...base, titleText: 'MADE IN 100LIGHTS', titleFontSize: 15, titleColor: '#cbd5e1', titlePosition: 'upper', titleOffsetY: -34, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.06 },
-    { id: randomUUID(), color: accent, label: sc.label || 'Title', ...base, titleText: sc.label || 'Title', titleFontSize: 60, titleColor: accent, titlePosition: 'lower-third', titleOffsetY: 44, titleFont: 'anton', titleWeight: 800 },
-    { id: randomUUID(), color: '#ece9fd', label: sc.caption2 || 'NOW SPINNING', ...base, titleText: sc.caption2 || 'NOW SPINNING', titleFontSize: 22, titleColor: '#e2e8f0', titlePosition: 'lower-third', titleOffsetY: -18, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 },
+// A title clip on the Text track (t1). Shorthand for the editable-overlay clips below.
+const tclip = (dur, o) => ({ id: randomUUID(), color: o.titleColor || '#ece9fd', label: (o.titleText || '').slice(0, 24), inPoint: 0, outPoint: dur, startTime: 0, trackId: 't1', contentType: 'title', captions: [], titleShadow: true, ...o })
+// The editable "100LIGHTS" + "MADE IN 100LIGHTS" brand, top-left (replaces the baked brand()).
+const brandClips = (dur) => [
+  tclip(dur, { titleText: '100LIGHTS', titleFontSize: 30, titleColor: '#ffffff', titlePosition: 'upper', titleAlign: 'left', titleOffsetY: -72, titleFont: 'anton', titleWeight: 800, titleLetterSpacing: 0.01 }),
+  tclip(dur, { titleText: 'MADE IN 100LIGHTS', titleFontSize: 15, titleColor: '#cbd5e1', titlePosition: 'upper', titleAlign: 'left', titleOffsetY: -34, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.06 }),
+]
+
+// Editable overlay clips per renderer (for the non-baked version). The visual is rendered BARE; these
+// replace the baked brand + the title-level text. Integral animated art (record grooves, tier chips, chat
+// bubbles, notes) stays in the visual.
+function editableOverlayClips(sc, accent, dur) {
+  const brand = brandClips(dur)
+  if (sc.renderer === 'video-bg') return [
+    ...brand,
+    tclip(dur, { titleText: sc.label || 'Title', titleFontSize: 60, titleColor: accent, titlePosition: 'lower-third', titleAlign: 'left', titleOffsetY: 44, titleFont: 'anton', titleWeight: 800 }),
+    tclip(dur, { titleText: sc.caption2 || 'NOW SPINNING', titleFontSize: 22, titleColor: '#e2e8f0', titlePosition: 'lower-third', titleAlign: 'left', titleOffsetY: -18, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 }),
   ]
+  if (sc.renderer === 'vinyl') return [
+    ...brand,
+    tclip(dur, { titleText: sc.label || 'Title', titleFontSize: 30, titleColor: '#0a0812', titlePosition: 'center', titleOffsetY: -66, titleFont: 'anton', titleWeight: 800 }),   // on the record disc
+    tclip(dur, { titleText: sc.caption2 || 'NOW SPINNING', titleFontSize: 26, titleColor: '#e2e8f0', titlePosition: 'lower-third', titleOffsetY: 30, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 }),
+  ]
+  if (sc.renderer === 'tier') return [
+    ...brand,
+    tclip(dur, { titleText: sc.heading || 'Tier List', titleFontSize: 44, titleColor: '#ffffff', titlePosition: 'upper', titleOffsetY: 34, titleFont: 'anton', titleWeight: 800 }),
+  ]
+  if (sc.renderer === 'imessage') return [
+    ...brand,
+    tclip(dur, { titleText: sc.chatTitle || 'Messages', titleFontSize: 30, titleColor: '#ece9fd', titlePosition: 'upper', titleOffsetY: 30, titleFont: 'system', titleWeight: 800 }),
+  ]
+  if (sc.renderer === 'format') return [
+    ...brand,
+    ...(Array.isArray(sc.hook) && sc.hook.length ? sc.hook.map((line, i) => tclip(dur, {
+      titleText: line, titleFontSize: i === 1 ? 62 : 52, titleColor: i === 1 ? accent : '#ffffff',
+      titlePosition: 'center', titleOffsetY: Math.round((i - (sc.hook.length - 1) / 2) * 74), titleAnimation: 'kinetic',
+      titleFont: 'anton', titleWeight: 800,
+    })) : []),
+  ]
+  return brand   // any other renderer → just the editable brand
 }
 
 async function buildOne(browser, folderId, sc) {
@@ -317,16 +347,16 @@ async function buildOne(browser, folderId, sc) {
       else songData = { tempo: 120, keyLabel: '', tracks: [{ name: 'Mix', color: accent }], notes: [], loopBeats: Math.round(seconds * 2) }
       const wavPath = join(tmp, 'a.wav'); execFileSync('ffmpeg', ['-y', '-ss', String(start), '-t', String(seconds), '-i', srcMp3, wavPath], { stdio: 'ignore' })
       const hook = (sc.hook || []).map((t, i) => ({ text: t, accent: i === 1 }))
-      const r = await recordFormatVideo(browser, { wavBuf: readFileSync(wavPath), songData, format: sc.format, meta: 'MADE IN 100LIGHTS', hook, seconds, root: ROOT, tmpDir: tmp, accent, dropBurst: !!sc.dropBurst })
+      const r = await recordFormatVideo(browser, { wavBuf: readFileSync(wavPath), songData, format: sc.format, meta: 'MADE IN 100LIGHTS', hook, seconds, root: ROOT, tmpDir: tmp, accent, dropBurst: !!sc.dropBurst, bare: !BAKED })
       videoPath = r.videoPath
     } else if (sc.renderer === 'text') {
       // Editable text: render the background WITHOUT the words (they become title clips). BAKED mode (and
       // the no-lines fallback) bakes the words into the video via textCard.
       videoPath = await recordCanvas(browser, (BAKED || !sc.lines?.length) ? textCard(sc.lines, accent, seconds) : bgCard(accent, seconds), seconds, tmp)
     }
-    else if (sc.renderer === 'imessage') videoPath = await recordCanvas(browser, fakeIMsg(sc.chatTitle, sc.messages, accent, seconds), seconds, tmp)
-    else if (sc.renderer === 'tier') videoPath = await recordCanvas(browser, tierList(sc.heading, sc.tiers, sc.chips, accent, seconds), seconds, tmp)
-    else if (sc.renderer === 'vinyl') videoPath = await recordCanvas(browser, vinyl(sc.label, sc.caption2 || 'NOW SPINNING', accent, seconds), seconds, tmp)
+    else if (sc.renderer === 'imessage') videoPath = await recordCanvas(browser, fakeIMsg(sc.chatTitle, sc.messages, accent, seconds, !BAKED), seconds, tmp)
+    else if (sc.renderer === 'tier') videoPath = await recordCanvas(browser, tierList(sc.heading, sc.tiers, sc.chips, accent, seconds, !BAKED), seconds, tmp)
+    else if (sc.renderer === 'vinyl') videoPath = await recordCanvas(browser, vinyl(sc.label, sc.caption2 || 'NOW SPINNING', accent, seconds, !BAKED), seconds, tmp)
     else if (sc.renderer === 'video-bg') videoPath = await recordCanvas(browser, videoBg(sc, accent, seconds, !BAKED), seconds, tmp)
     else if (sc.renderer === 'bounce') {
       const tempo = JSON.parse(readFileSync(cfprojFile("filtered_house"), "utf8")).dawProject.tempo || 122
@@ -399,10 +429,10 @@ async function buildOne(browser, folderId, sc) {
     clips = [{ id: randomUUID(), color: accent, label: sc.title, inPoint: 0, outPoint: finalDur, startTime: 0, trackId: 'v1', mediaRefId: vidId, contentType: 'video', captions: [] }]
     for (const a of audioSpecs) clips.push({ id: randomUUID(), color: '#34d399', label: a.label, inPoint: 0, outPoint: a.dur, startTime: a.startTime, trackId: 'a1', mediaRefId: fileMedia.get(a.file), contentType: 'audio', captions: [] })
 
-    // Editable, styled TITLE clips on a Text track — kinetic/quiz/POV text, or the brand+title overlay for
-    // video-bg (vinyl). Nothing baked into the video (the visual was rendered bare).
+    // Editable TITLE clips on a Text track — kinetic/quiz/POV get the stacked word text; the other
+    // baked-text shorts get an editable brand + title/caption overlay (their visual was rendered bare).
     const titleClips = (sc.renderer === 'text' && Array.isArray(sc.lines) && sc.lines.length) ? textTitleClips(sc.lines, finalDur, accent)
-      : sc.renderer === 'video-bg' ? vinylVideoClips(sc, accent, finalDur) : []
+      : ['video-bg', 'vinyl', 'tier', 'imessage', 'format'].includes(sc.renderer) ? editableOverlayClips(sc, accent, finalDur) : []
     if (titleClips.length) { tracks.unshift({ id: 't1', label: 'Text', type: 'media', height: 44 }); clips.push(...titleClips) }
     summary = `editable: 1 video + ${audioSpecs.length} audio${titleClips.length ? ` + ${titleClips.length} text` : ''}`
     }
