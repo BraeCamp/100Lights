@@ -145,6 +145,7 @@ export interface TimelineItem {
   titleOffsetY?: number        // vertical nudge from the position anchor (px at 1080 ref; +down). Lets
                                // several title clips stack into one paragraph (e.g. line-by-line kinetic text)
   titleActiveColor?: string    // highlight color for the active word (word-highlight animation)
+  titleActiveBox?: boolean     // draw a solid rounded box (in titleActiveColor) behind the active word (Hormozi caption look)
   // ── Rich text styling (see lib/text-styles) — the font library + effects ──
   titleFont?: string           // FONT_LIBRARY id (default 'system')
   titleWeight?: number         // 400–900 (default 700)

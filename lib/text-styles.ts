@@ -75,6 +75,14 @@ export const TITLE_ANIMATIONS: { value: TitleAnimation; label: string }[] = [
 ]
 export const isWordAnimation = (a: TitleAnimation | undefined): boolean => a === 'word-pop' || a === 'word-highlight'
 
+// Readable text color (near-black or white) for text sitting ON a solid `hex` fill (the active-word box).
+export function readableText(hex: string): string {
+  const h = hex.replace('#', '')
+  const n = h.length === 3 ? h.split('').map(c => c + c).join('') : h
+  const r = parseInt(n.slice(0, 2), 16), g = parseInt(n.slice(2, 4), 16), b = parseInt(n.slice(4, 6), 16)
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#0a0812' : '#ffffff'
+}
+
 const easeOutCubic = (x: number) => 1 - Math.pow(1 - x, 3)
 // easeOutBack — overshoots past 1 then settles, for a springy "pop".
 const easeOutBack = (x: number) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2) }

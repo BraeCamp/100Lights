@@ -1025,9 +1025,15 @@ export default function Inspector({
                       {selectedItem.titleAnimation === 'word-highlight' && (
                         <div className="flex-1">
                           <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Active word</p>
-                          <input type="color" value={selectedItem.titleActiveColor ?? '#fde047'}
-                            onChange={e => patchClip({ titleActiveColor: e.target.value })}
-                            className="w-full h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                          <div className="flex gap-1.5 items-center">
+                            <input type="color" value={selectedItem.titleActiveColor ?? '#fde047'}
+                              onChange={e => patchClip({ titleActiveColor: e.target.value })}
+                              className="flex-1 h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                            <button onClick={() => patchClip({ titleActiveBox: !selectedItem.titleActiveBox })}
+                              title="Solid box behind the active word (Hormozi caption look)"
+                              className="h-7 px-2 rounded text-xs shrink-0"
+                              style={{ background: selectedItem.titleActiveBox ? 'var(--accent)' : 'var(--bg-card)', color: selectedItem.titleActiveBox ? '#0e0d12' : 'var(--text-secondary)', border: `1px solid ${selectedItem.titleActiveBox ? 'var(--accent)' : 'var(--border)'}`, fontWeight: 600 }}>Box</button>
+                          </div>
                         </div>
                       )}
                     </div>

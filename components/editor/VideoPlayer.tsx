@@ -7,7 +7,7 @@ import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } fr
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import MusicVizOverlay from './MusicVizOverlay'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
-import { fontStack, textShadowCss, titleAnim, titleFontPx, revealLines, titleWordStates, type TitleAnimation } from '@/lib/text-styles'
+import { fontStack, textShadowCss, titleAnim, titleFontPx, revealLines, titleWordStates, readableText, type TitleAnimation } from '@/lib/text-styles'
 import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { instantSpeed, sourceOffsetAt, sourceTimeAt } from '@/lib/video-export/speed'
@@ -125,6 +125,7 @@ export interface TitleSpec {
   textOpacity?: number
   offsetY?: number
   activeColor?: string
+  activeBox?: boolean
   font?: string
   weight?: number
   letterSpacing?: number
@@ -139,20 +140,26 @@ export interface TitleSpec {
 // it can pop/scale and the active word can recolor. Mirrors the compositor's per-word draw.
 function renderTitleWords(
   states: import('@/lib/text-styles').TitleWordState[][],
-  o: { fpx: number; color: string; activeColor: string; weight: number; fontFamily: string; letterSpacing: number },
+  o: { fpx: number; color: string; activeColor: string; activeBox: boolean; weight: number; fontFamily: string; letterSpacing: number },
 ) {
   return states.map((words, li) => (
-    <div key={li} style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'baseline', columnGap: o.fpx * 0.26, lineHeight: 1.18 }}>
-      {words.map((w, i) => (
-        <span key={i} style={{
-          display: 'inline-block',
-          opacity: Math.max(0, w.opacity),
-          transform: w.scale !== 1 ? `scale(${w.scale.toFixed(3)})` : undefined,
-          color: w.active ? o.activeColor : o.color,
-          fontWeight: o.weight, fontFamily: o.fontFamily, fontSize: o.fpx, letterSpacing: `${o.letterSpacing}em`,
-          textShadow: `0 ${Math.round(o.fpx * 0.04)}px ${Math.round(o.fpx * 0.08)}px rgba(0,0,0,0.55)`,
-        }}>{w.text}</span>
-      ))}
+    <div key={li} style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'baseline', columnGap: o.fpx * 0.26, rowGap: o.fpx * 0.1, lineHeight: 1.18 }}>
+      {words.map((w, i) => {
+        const boxed = w.active && o.activeBox
+        return (
+          <span key={i} style={{
+            display: 'inline-block',
+            opacity: Math.max(0, w.opacity),
+            transform: w.scale !== 1 ? `scale(${w.scale.toFixed(3)})` : undefined,
+            color: boxed ? readableText(o.activeColor) : (w.active ? o.activeColor : o.color),
+            background: boxed ? o.activeColor : undefined,
+            padding: boxed ? `${o.fpx * 0.06}px ${o.fpx * 0.16}px` : undefined,
+            borderRadius: boxed ? o.fpx * 0.14 : undefined,
+            fontWeight: o.weight, fontFamily: o.fontFamily, fontSize: o.fpx, letterSpacing: `${o.letterSpacing}em`,
+            textShadow: boxed ? undefined : `0 ${Math.round(o.fpx * 0.04)}px ${Math.round(o.fpx * 0.08)}px rgba(0,0,0,0.55)`,
+          }}>{w.text}</span>
+        )
+      })}
     </div>
   ))
 }
@@ -177,7 +184,7 @@ function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key) {
       filter: a.blur > 0.01 ? `blur(${(a.blur * fpx).toFixed(1)}px)` : undefined,
       ...posStyle,
     }}>
-      {wordStates ? renderTitleWords(wordStates, { fpx, color: tc.color, activeColor: tc.activeColor || '#fde047', weight: tc.weight ?? 700, fontFamily: fontStack(tc.font), letterSpacing: tc.letterSpacing ?? -0.01 }) : (
+      {wordStates ? renderTitleWords(wordStates, { fpx, color: tc.color, activeColor: tc.activeColor || '#fde047', activeBox: !!tc.activeBox, weight: tc.weight ?? 700, fontFamily: fontStack(tc.font), letterSpacing: tc.letterSpacing ?? -0.01 }) : (
         <span style={{
           display: 'inline-block', fontSize: fpx, color: tc.color, fontFamily: fontStack(tc.font),
           background: tc.bg !== 'transparent' ? tc.bg : undefined,
@@ -1182,7 +1189,7 @@ export default function VideoPlayer({
                 filter: la.blur > 0.01 ? `blur(${(la.blur * fpx).toFixed(1)}px)` : undefined,
                 ...posStyle,
               }}>
-                {wordStates ? renderTitleWords(wordStates, { fpx, color: layer.color, activeColor: layer.activeColor || '#fde047', weight: layer.weight ?? 700, fontFamily: fontStack(layer.font), letterSpacing: layer.letterSpacing ?? -0.01 }) : (
+                {wordStates ? renderTitleWords(wordStates, { fpx, color: layer.color, activeColor: layer.activeColor || '#fde047', activeBox: false, weight: layer.weight ?? 700, fontFamily: fontStack(layer.font), letterSpacing: layer.letterSpacing ?? -0.01 }) : (
                 <span style={{
                   display: 'inline-block', fontSize: fpx, color: layer.color,
                   fontFamily: fontStack(layer.font),

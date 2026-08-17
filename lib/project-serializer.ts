@@ -71,6 +71,7 @@ export interface SerializedClip {
   titleOpacity?: number
   titleOffsetY?: number
   titleActiveColor?: string
+  titleActiveBox?: boolean
   titleFont?: string
   titleWeight?: number
   titleLetterSpacing?: number
@@ -251,6 +252,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       titleOpacity:     item.titleOpacity,
       titleOffsetY:     item.titleOffsetY,
       titleActiveColor: item.titleActiveColor,
+      titleActiveBox:   item.titleActiveBox,
       titleFont:        item.titleFont,
       titleWeight:      item.titleWeight,
       titleLetterSpacing: item.titleLetterSpacing,
@@ -374,6 +376,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     titleOpacity:     clip.titleOpacity,
     titleOffsetY:     clip.titleOffsetY,
     titleActiveColor: clip.titleActiveColor,
+    titleActiveBox:   clip.titleActiveBox,
     titleFont:        clip.titleFont,
     titleWeight:      clip.titleWeight,
     titleLetterSpacing: clip.titleLetterSpacing,

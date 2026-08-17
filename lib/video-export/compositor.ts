@@ -67,7 +67,7 @@ import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 import { followPan } from '@/lib/focus-utils'
-import { fontStack, titleAnim, titleFontPx, revealLines, titleWordStates } from '@/lib/text-styles'
+import { fontStack, titleAnim, titleFontPx, revealLines, titleWordStates, readableText } from '@/lib/text-styles'
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -572,6 +572,7 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   const wordStates = titleWordStates(anim, lines, local, clipDur, clip.titleAnimAmount ?? 1)
   if (wordStates) {
     const activeColor = clip.titleActiveColor || '#fde047'
+    const box = !!clip.titleActiveBox
     const spaceW = ctx.measureText(' ').width
     ctx.textAlign = 'left'
     wordStates.forEach((words, li) => {
@@ -584,8 +585,17 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
         ctx.save()
         ctx.globalAlpha = Math.max(0, w.opacity * ((clip.titleOpacity ?? 100) / 100))
         if (w.scale !== 1) { ctx.translate(cxw, ly); ctx.scale(w.scale, w.scale); ctx.translate(-cxw, -ly) }
-        ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = fontSize * 0.1; ctx.shadowOffsetY = fontSize * 0.04
-        ctx.fillStyle = w.active ? activeColor : color
+        if (w.active && box) {
+          // Solid rounded box behind the active word (Hormozi look), text in a readable contrast color.
+          ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0
+          const padX = fontSize * 0.18
+          roundRect(ctx, x - padX, ly - lh * 0.44, widths[i] + padX * 2, lh * 0.86, fontSize * 0.14)
+          ctx.fillStyle = activeColor; ctx.fill()
+          ctx.fillStyle = readableText(activeColor)
+        } else {
+          ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = fontSize * 0.1; ctx.shadowOffsetY = fontSize * 0.04
+          ctx.fillStyle = w.active ? activeColor : color
+        }
         ctx.fillText(w.text, x, ly)
         ctx.restore()
         x += widths[i] + spaceW
