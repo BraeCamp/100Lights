@@ -52,28 +52,44 @@ export interface TextStyle {
 // ── Title animation ─────────────────────────────────────────────────────────
 // Punchy, professional in/out reveals for title clips — the kind you'd otherwise bake into the video.
 // Shared by preview (CSS transform) and export (canvas transform) so they match exactly.
-export type TitleAnimation = 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom'
+export type TitleAnimation = 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom' | 'kinetic' | 'blur' | 'bounce' | 'typewriter'
 export const TITLE_ANIMATIONS: { value: TitleAnimation; label: string }[] = [
-  { value: 'none',     label: 'None' },
-  { value: 'fade',     label: 'Fade' },
-  { value: 'rise',     label: 'Rise' },
-  { value: 'slide-up', label: 'Slide up' },
-  { value: 'pop',      label: 'Pop' },
-  { value: 'drop',     label: 'Drop' },
-  { value: 'zoom',     label: 'Zoom' },
+  { value: 'none',       label: 'None' },
+  { value: 'kinetic',    label: 'Kinetic (baked look)' },
+  { value: 'fade',       label: 'Fade' },
+  { value: 'rise',       label: 'Rise' },
+  { value: 'slide-up',   label: 'Slide up' },
+  { value: 'drop',       label: 'Drop' },
+  { value: 'pop',        label: 'Pop' },
+  { value: 'bounce',     label: 'Bounce' },
+  { value: 'zoom',       label: 'Zoom' },
+  { value: 'blur',       label: 'Blur in' },
+  { value: 'typewriter', label: 'Typewriter' },
 ]
 
 const easeOutCubic = (x: number) => 1 - Math.pow(1 - x, 3)
 // easeOutBack — overshoots past 1 then settles, for a springy "pop".
 const easeOutBack = (x: number) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2) }
+// easeOutBounce — decaying bounces as it lands.
+const easeOutBounce = (x: number) => {
+  const n1 = 7.5625, d1 = 2.75
+  if (x < 1 / d1) return n1 * x * x
+  if (x < 2 / d1) { x -= 1.5 / d1; return n1 * x * x + 0.75 }
+  if (x < 2.5 / d1) { x -= 2.25 / d1; return n1 * x * x + 0.9375 }
+  x -= 2.625 / d1; return n1 * x * x + 0.984375
+}
+
+export interface TitleAnimState { opacity: number; dy: number; scale: number; blur: number; reveal: number }
 
 /**
  * Animation state for a title at local progress `p` (0..1) over a clip of `durSec` seconds.
- * `dy` is a vertical offset as a FRACTION of the font size (positive = down); multiply by fontSize.
- * `scale` is a unitless multiplier around the text's own center. Both preview and export apply these.
+ * `dy` = vertical offset as a FRACTION of font size (× fontSize). `scale` = multiplier about the text
+ * center. `blur` = blur radius as a fraction of font size. `reveal` = 0..1 fraction of characters shown
+ * (typewriter). `amount` (default 1) scales the MOTION of every effect — 0 = still, 2 = double. Preview
+ * and export both apply these, so the editor matches the video.
  */
-export function titleAnim(anim: TitleAnimation | undefined, p: number, durSec: number): { opacity: number; dy: number; scale: number } {
-  const flat = { opacity: 1, dy: 0, scale: 1 }
+export function titleAnim(anim: TitleAnimation | undefined, p: number, durSec: number, amount = 1): TitleAnimState {
+  const flat: TitleAnimState = { opacity: 1, dy: 0, scale: 1, blur: 0, reveal: 1 }
   if (!anim || anim === 'none') return flat
   const dur = Math.max(0.001, durSec)
   const inDur = Math.min(0.4, dur * 0.45), outDur = Math.min(0.3, dur * 0.35)
@@ -81,15 +97,32 @@ export function titleAnim(anim: TitleAnimation | undefined, p: number, durSec: n
   const tIn = Math.max(0, Math.min(1, tSec / inDur))                 // 0→1 as it enters
   const tOut = Math.max(0, Math.min(1, (dur - tSec) / outDur))       // 1→0 as it leaves
   const fadeInOut = Math.min(1, tIn * 1.2) * Math.min(1, tOut * 1.4)
+  const eIn = easeOutCubic(tIn)
+  const A = Math.max(0, amount)
+  // Scale a value's distance from its resting point by the intensity `A`.
+  const sc = (base: number, rest: number) => rest + (base - rest) * A
   switch (anim) {
-    case 'fade':     return { opacity: fadeInOut, dy: 0, scale: 1 }
-    case 'slide-up': return { opacity: Math.min(1, tIn * 1.5), dy: (1 - easeOutCubic(tIn)) * 0.5, scale: 1 }
-    case 'rise':     return { opacity: fadeInOut, dy: (1 - easeOutCubic(tIn)) * 0.9, scale: 1 }
-    case 'drop':     return { opacity: fadeInOut, dy: -(1 - easeOutCubic(tIn)) * 0.9, scale: 1 }
-    case 'pop':      return { opacity: Math.min(1, tIn * 2) * Math.min(1, tOut * 1.6), dy: 0, scale: 0.6 + 0.4 * easeOutBack(tIn) }
-    case 'zoom':     return { opacity: fadeInOut, dy: 0, scale: 0.2 + 0.8 * easeOutCubic(tIn) }
-    default:         return flat
+    // Replicates the original baked textCard: fade in + a short upward rise (~0.5× font), then hold.
+    case 'kinetic':    return { ...flat, opacity: Math.min(1, tIn * 1.5), dy: sc((1 - eIn) * 0.5, 0) }
+    case 'fade':       return { ...flat, opacity: fadeInOut }
+    case 'slide-up':   return { ...flat, opacity: Math.min(1, tIn * 1.5), dy: sc((1 - eIn) * 0.5, 0) }
+    case 'rise':       return { ...flat, opacity: fadeInOut, dy: sc((1 - eIn) * 0.9, 0) }
+    case 'drop':       return { ...flat, opacity: fadeInOut, dy: sc(-(1 - eIn) * 0.9, 0) }
+    case 'bounce':     return { ...flat, opacity: Math.min(1, tIn * 2) * Math.min(1, tOut * 1.4), dy: sc((1 - easeOutBounce(tIn)) * 1.1, 0) }
+    case 'pop':        return { ...flat, opacity: Math.min(1, tIn * 2) * Math.min(1, tOut * 1.6), scale: sc(0.6 + 0.4 * easeOutBack(tIn), 1) }
+    case 'zoom':       return { ...flat, opacity: fadeInOut, scale: sc(0.2 + 0.8 * eIn, 1) }
+    case 'blur':       return { ...flat, opacity: fadeInOut, scale: sc(0.9 + 0.1 * eIn, 1), blur: sc((1 - eIn) * 0.28, 0) }
+    case 'typewriter': return { ...flat, opacity: Math.min(1, tIn * 4) * Math.min(1, tOut * 1.4), reveal: Math.min(1, tIn) }
+    default:           return flat
   }
+}
+
+/** Truncate multi-line text to the first `reveal` fraction of its characters (typewriter). */
+export function revealLines(lines: string[], reveal: number): string[] {
+  if (reveal >= 1) return lines
+  const total = lines.reduce((n, l) => n + l.length, 0)
+  let budget = Math.floor(total * Math.max(0, reveal))
+  return lines.map(l => { const take = Math.max(0, Math.min(l.length, budget)); budget -= l.length; return l.slice(0, take) })
 }
 
 // A CSS text-shadow chain that composes the requested effects (shadow + glow + outline).

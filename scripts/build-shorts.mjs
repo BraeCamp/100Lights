@@ -261,7 +261,7 @@ function textTitleClips(lines, seconds, accent) {
       contentType: 'title', captions: [],
       // titleFontSize is a fraction of frame height (1080 ref): 64 ≈ 6% tall, 74 ≈ 6.9% for the punchline.
       titleText: g.texts.join('\n'), titleFontSize: g.hot ? 74 : 64, titleColor: g.hot ? accent : '#ffffff',
-      titlePosition: 'center', titleAnimation: 'rise', titleFont: 'futura', titleWeight: 800,
+      titlePosition: 'center', titleAnimation: 'kinetic', titleFont: 'futura', titleWeight: 800,
       titleLetterSpacing: -0.02, titleShadow: true,
       titleGlow: g.hot ? accent : undefined, titleOutline: g.hot ? 3 : 0, titleOutlineColor: '#0a0812',
     }

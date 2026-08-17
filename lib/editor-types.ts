@@ -135,11 +135,13 @@ export interface TimelineItem {
   }
   // Title clip (contentType === 'title')
   titleText?: string           // supports multiple lines (\n)
-  titleFontSize?: number       // px, default 48
+  titleFontSize?: number       // fraction of frame height (px at 1080 ref); see lib/text-styles titleFontPx
   titleColor?: string          // hex, default '#ffffff'
   titleBg?: string             // hex or 'transparent', default 'transparent'
   titlePosition?: 'upper' | 'center' | 'lower-third'  // default 'center'
-  titleAnimation?: 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom'   // default 'none'; see lib/text-styles titleAnim
+  titleAnimation?: import('@/lib/text-styles').TitleAnimation   // default 'none'; see lib/text-styles titleAnim
+  titleAnimAmount?: number     // animation intensity multiplier (0–2, default 1) — how much the effect moves
+  titleOpacity?: number        // overall text opacity 0–100 (default 100)
   // ── Rich text styling (see lib/text-styles) — the font library + effects ──
   titleFont?: string           // FONT_LIBRARY id (default 'system')
   titleWeight?: number         // 400–900 (default 700)

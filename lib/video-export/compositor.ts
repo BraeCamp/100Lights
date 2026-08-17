@@ -67,7 +67,7 @@ import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 import { followPan } from '@/lib/focus-utils'
-import { fontStack, titleAnim, titleFontPx } from '@/lib/text-styles'
+import { fontStack, titleAnim, titleFontPx, revealLines } from '@/lib/text-styles'
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -514,16 +514,17 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   const weight   = clip.titleWeight ?? 700
   const lh       = fontSize * 1.18
 
-  const a = titleAnim(anim, local, clipDur)
+  const a = titleAnim(anim, local, clipDur, clip.titleAnimAmount ?? 1)
   const slideY = a.dy * fontSize
+  const shown = revealLines(lines, a.reveal)   // typewriter: partial text (layout still uses full lines)
 
   const blockH = lines.length * lh
   const cy = (pos === 'upper' ? H * 0.10 + blockH / 2 : pos === 'lower-third' ? H * 0.86 - blockH / 2 + lh / 2 : H / 2) + slideY
   const y0 = cy - blockH / 2 + lh / 2
 
   ctx.save()
-  ctx.globalAlpha = Math.max(0, a.opacity)
-  ctx.filter = 'none'
+  ctx.globalAlpha = Math.max(0, a.opacity * ((clip.titleOpacity ?? 100) / 100))
+  ctx.filter = a.blur > 0.01 ? `blur(${(a.blur * fontSize).toFixed(1)}px)` : 'none'
   if (a.scale !== 1) { ctx.translate(W / 2, cy); ctx.scale(a.scale, a.scale); ctx.translate(-W / 2, -cy) }
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -533,14 +534,16 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   // Highlight box behind the text (per line), if requested.
   if (bg !== 'transparent') {
     ctx.fillStyle = bg
-    lines.forEach((ln, i) => {
+    shown.forEach((ln, i) => {
+      if (!ln) return
       const m = ctx.measureText(ln), padX = fontSize * 0.28, padY = fontSize * 0.14
       roundRect(ctx, W / 2 - m.width / 2 - padX, y0 + i * lh - lh / 2 + padY * 0.4, m.width + padX * 2, lh - padY * 0.2, fontSize * 0.14)
       ctx.fill()
     })
   }
 
-  lines.forEach((ln, i) => {
+  shown.forEach((ln, i) => {
+    if (!ln) return
     const ly = y0 + i * lh
     // Outline (stroke around the glyphs).
     if (clip.titleOutline && clip.titleOutline > 0) {

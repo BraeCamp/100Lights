@@ -66,7 +66,9 @@ export interface SerializedClip {
   titleColor?: string
   titleBg?: string
   titlePosition?: 'upper' | 'center' | 'lower-third'
-  titleAnimation?: 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom'
+  titleAnimation?: import('@/lib/text-styles').TitleAnimation
+  titleAnimAmount?: number
+  titleOpacity?: number
   titleFont?: string
   titleWeight?: number
   titleLetterSpacing?: number
@@ -243,6 +245,8 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       titleBg:          item.titleBg,
       titlePosition:    item.titlePosition,
       titleAnimation:   item.titleAnimation,
+      titleAnimAmount:  item.titleAnimAmount,
+      titleOpacity:     item.titleOpacity,
       titleFont:        item.titleFont,
       titleWeight:      item.titleWeight,
       titleLetterSpacing: item.titleLetterSpacing,
@@ -362,6 +366,8 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     titleBg:          clip.titleBg,
     titlePosition:    clip.titlePosition,
     titleAnimation:   clip.titleAnimation,
+    titleAnimAmount:  clip.titleAnimAmount,
+    titleOpacity:     clip.titleOpacity,
     titleFont:        clip.titleFont,
     titleWeight:      clip.titleWeight,
     titleLetterSpacing: clip.titleLetterSpacing,

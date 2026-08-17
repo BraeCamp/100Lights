@@ -7,7 +7,7 @@ import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } fr
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import MusicVizOverlay from './MusicVizOverlay'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
-import { fontStack, textShadowCss, titleAnim, titleFontPx } from '@/lib/text-styles'
+import { fontStack, textShadowCss, titleAnim, titleFontPx, revealLines } from '@/lib/text-styles'
 import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { instantSpeed, sourceOffsetAt, sourceTimeAt } from '@/lib/video-export/speed'
@@ -81,6 +81,8 @@ export type UnderLayer =
       animation: import('@/lib/text-styles').TitleAnimation
       localProgress: number
       durSec: number
+      animAmount?: number
+      textOpacity?: number
       // Rich styling (lib/text-styles) — so a title on a lower track looks as good as the top one.
       font?: string
       weight?: number
@@ -168,6 +170,8 @@ interface Props {
     animation: import('@/lib/text-styles').TitleAnimation
     localProgress: number    // 0–1 through clip duration (for animations)
     durSec: number           // clip duration in seconds (animation in/out windows)
+    animAmount?: number      // effect intensity (0–2, default 1)
+    textOpacity?: number     // overall text opacity 0–100 (default 100)
     font?: string            // rich styling (lib/text-styles)
     weight?: number
     letterSpacing?: number
@@ -1093,18 +1097,20 @@ export default function VideoPlayer({
             />
           ) : (() => {
             // Title on a lower track — full rich styling + shared animation, identical to the top title.
-            const la = titleAnim(layer.animation, layer.localProgress, layer.durSec)
+            const la = titleAnim(layer.animation, layer.localProgress, layer.durSec, layer.animAmount ?? 1)
             const posStyle: React.CSSProperties =
               layer.position === 'upper'       ? { top: '10%',   left: 0, right: 0 } :
               layer.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
                                                  { top: '50%',   left: 0, right: 0, transform: 'translateY(-50%)' }
             const fpx = titleFontPx(layer.fontSize, stage.height)   // frame-relative → matches export
             const opx = (layer.outline ?? 0) * stage.height / 1080
+            const shownText = la.reveal < 1 ? revealLines((layer.text ?? '').split('\n'), la.reveal).join('\n') : layer.text
             return (
               <div key={layer.id} style={{
                 position: 'absolute', zIndex: 1, textAlign: 'center', padding: '0 5%', pointerEvents: 'none',
-                opacity: la.opacity,
+                opacity: la.opacity * ((layer.textOpacity ?? 100) / 100),
                 transform: `${posStyle.transform ?? ''} translateY(${(la.dy * fpx).toFixed(1)}px) scale(${la.scale.toFixed(3)})`,
+                filter: la.blur > 0.01 ? `blur(${(la.blur * fpx).toFixed(1)}px)` : undefined,
                 ...posStyle,
               }}>
                 <span style={{
@@ -1119,7 +1125,7 @@ export default function VideoPlayer({
                   lineHeight: 1.18, whiteSpace: 'pre-line',
                   WebkitTextStroke: opx ? `${opx}px ${layer.outlineColor || '#000'}` : undefined,
                   textShadow: textShadowCss({ shadow: layer.shadow ?? (layer.bg === 'transparent'), glow: layer.glow, outline: 0 }, fpx) || undefined,
-                }}>{layer.text}</span>
+                }}>{shownText}</span>
               </div>
             )
           })())}
@@ -1268,14 +1274,16 @@ export default function VideoPlayer({
             tc.position === 'upper'       ? { top: '10%',   left: 0, right: 0 } :
             tc.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
                                             { top: '50%',   left: 0, right: 0, transform: 'translateY(-50%)' }
-          const a = titleAnim(tc.animation, tc.localProgress, tc.durSec)
+          const a = titleAnim(tc.animation, tc.localProgress, tc.durSec, tc.animAmount ?? 1)
           const fpx = titleFontPx(tc.fontSize, stage.height)   // frame-relative → matches export
           const opx = (tc.outline ?? 0) * stage.height / 1080
+          const shownText = a.reveal < 1 ? revealLines((tc.text ?? '').split('\n'), a.reveal).join('\n') : tc.text
           return (
             <div style={{
               position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
-              pointerEvents: 'none', opacity: a.opacity,
+              pointerEvents: 'none', opacity: a.opacity * ((tc.textOpacity ?? 100) / 100),
               transform: `${posStyle.transform ?? ''} translateY(${(a.dy * fpx).toFixed(1)}px) scale(${a.scale.toFixed(3)})`,
+              filter: a.blur > 0.01 ? `blur(${(a.blur * fpx).toFixed(1)}px)` : undefined,
               ...posStyle,
             }}>
               <span style={{
@@ -1293,7 +1301,7 @@ export default function VideoPlayer({
                 whiteSpace: 'pre-line',   // render \n as line breaks
                 WebkitTextStroke: opx ? `${opx}px ${tc.outlineColor || '#000'}` : undefined,
                 textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, fpx) || undefined,
-              }}>{tc.text}</span>
+              }}>{shownText}</span>
             </div>
           )
         })()}

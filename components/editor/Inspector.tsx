@@ -1043,6 +1043,13 @@ export default function Inspector({
                         </select>
                       </div>
                     </div>
+                    {/* Effect amount (how much the animation moves) + text opacity */}
+                    {(selectedItem.titleAnimation ?? 'none') !== 'none' && (
+                      <Slider label="Effect Amount" value={Math.round((selectedItem.titleAnimAmount ?? 1) * 100)} min={0} max={200} step={5} unit="%"
+                        onChange={v => patchClip({ titleAnimAmount: v / 100 })} />
+                    )}
+                    <Slider label="Text Opacity" value={selectedItem.titleOpacity ?? 100} min={0} max={100} step={1} unit="%"
+                      onChange={v => patchClip({ titleOpacity: v })} />
                     {/* Font + weight */}
                     <div className="flex gap-2 mt-2">
                       <div className="flex-1">
