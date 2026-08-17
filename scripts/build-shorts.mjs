@@ -88,9 +88,9 @@ x.beginPath();x.arc(cx,cy,R,0,7);x.strokeStyle=hexa(AC,0.5);x.lineWidth=3;x.stro
 if(!BARE){x.textAlign='center';x.fillStyle=hexa('#ece9fd',0.85);x.font='600 26px ui-monospace,monospace';x.fillText(CAP,W/2,cy+R+96);}
 prog(t,SEC,AC);requestAnimationFrame(draw);}window.__ready=true;draw();</script>`
 
-const bounce = (onsets, xs, AC, SEC) => HEAD + `const ON=${JSON.stringify(onsets)},XS=${JSON.stringify(xs)},AC=${JSON.stringify(AC)},SEC=${SEC};
+const bounce = (onsets, xs, AC, SEC, bare) => HEAD + `const ON=${JSON.stringify(onsets)},XS=${JSON.stringify(xs)},AC=${JSON.stringify(AC)},SEC=${SEC},BARE=${bare ? 1 : 0};
 const floorY=H*0.72,topY=H*0.24;
-function draw(){const t=(performance.now()-t0)/1000;bg(t,AC);brand();
+function draw(){const t=(performance.now()-t0)/1000;bg(t,AC);if(!BARE)brand();
 x.strokeStyle=hexa('#ffffff',0.12);x.lineWidth=2;x.beginPath();x.moveTo(40,floorY);x.lineTo(W-40,floorY);x.stroke();
 let seg=0;while(seg<ON.length-1&&t>=ON[seg+1])seg++;
 for(let i=0;i<ON.length;i++){const fl=Math.max(0,1-(t-ON[i])/0.32);x.fillStyle=hexa(AC,0.14+0.75*Math.max(0,fl));rr(XS[i]-28,floorY-6,56,12,6);x.fill();if(fl>0.05){x.strokeStyle=hexa(AC,0.10*fl);x.lineWidth=2;x.beginPath();x.moveTo(XS[i],floorY);x.lineTo(XS[i],floorY-260*fl);x.stroke();}}
@@ -360,7 +360,7 @@ async function buildOne(browser, folderId, sc) {
     else if (sc.renderer === 'video-bg') videoPath = await recordCanvas(browser, videoBg(sc, accent, seconds, !BAKED), seconds, tmp)
     else if (sc.renderer === 'bounce') {
       const tempo = JSON.parse(readFileSync(cfprojFile("filtered_house"), "utf8")).dawProject.tempo || 122
-      const bd = bounceGrid(seconds, tempo); videoPath = await recordCanvas(browser, bounce(bd.onsets, bd.xs, accent, seconds), seconds, tmp)
+      const bd = bounceGrid(seconds, tempo); videoPath = await recordCanvas(browser, bounce(bd.onsets, bd.xs, accent, seconds, !BAKED), seconds, tmp)
     } else throw new Error(`unknown renderer ${sc.renderer}`)
     if (!videoPath) throw new Error('no video')
 
@@ -432,7 +432,7 @@ async function buildOne(browser, folderId, sc) {
     // Editable TITLE clips on a Text track — kinetic/quiz/POV get the stacked word text; the other
     // baked-text shorts get an editable brand + title/caption overlay (their visual was rendered bare).
     const titleClips = (sc.renderer === 'text' && Array.isArray(sc.lines) && sc.lines.length) ? textTitleClips(sc.lines, finalDur, accent)
-      : ['video-bg', 'vinyl', 'tier', 'imessage', 'format'].includes(sc.renderer) ? editableOverlayClips(sc, accent, finalDur) : []
+      : ['video-bg', 'vinyl', 'tier', 'imessage', 'format', 'bounce'].includes(sc.renderer) ? editableOverlayClips(sc, accent, finalDur) : []
     if (titleClips.length) { tracks.unshift({ id: 't1', label: 'Text', type: 'media', height: 44 }); clips.push(...titleClips) }
     summary = `editable: 1 video + ${audioSpecs.length} audio${titleClips.length ? ` + ${titleClips.length} text` : ''}`
     }
