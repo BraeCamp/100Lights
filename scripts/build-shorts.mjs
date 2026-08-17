@@ -262,6 +262,22 @@ function textTitleClips(lines, seconds, accent) {
   })
 }
 
+// Build a single audio file (finalDur long) from the audio specs — for the BAKED variant that muxes audio
+// into the video. Single source → loop/trim; montage (tier) → concat the snippets in order.
+function bakeAudio(audioSpecs, finalDur, tmp) {
+  const out = join(tmp, 'baked_audio.mp3')
+  const files = [...new Set(audioSpecs.map(a => a.file))]
+  if (files.length <= 1) {
+    execFileSync('ffmpeg', ['-y', '-stream_loop', '-1', '-i', audioSpecs[0].file, '-t', String(finalDur), '-c:a', 'libmp3lame', '-q:a', '3', out], { stdio: 'ignore' })
+  } else {
+    const sorted = [...audioSpecs].sort((a, b) => a.startTime - b.startTime)
+    const listFile = join(tmp, 'aconcat.txt')
+    writeFileSync(listFile, sorted.map(a => `file '${a.file.replace(/'/g, "'\\''")}'`).join('\n'))
+    execFileSync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c:a', 'libmp3lame', '-q:a', '3', out], { stdio: 'ignore' })
+  }
+  return out
+}
+
 async function buildOne(browser, folderId, sc) {
   const tmp = mkdtempSync(join(tmpdir(), 'bs-'))
   try {
@@ -292,9 +308,9 @@ async function buildOne(browser, folderId, sc) {
       const r = await recordFormatVideo(browser, { wavBuf: readFileSync(wavPath), songData, format: sc.format, meta: 'MADE IN 100LIGHTS', hook, seconds, root: ROOT, tmpDir: tmp, accent, dropBurst: !!sc.dropBurst })
       videoPath = r.videoPath
     } else if (sc.renderer === 'text') {
-      // Editable text: render the background WITHOUT the words (they become title clips below). Falls back
-      // to the baked textCard only if a 'text' short somehow has no lines.
-      videoPath = await recordCanvas(browser, sc.lines?.length ? bgCard(accent, seconds) : textCard(sc.lines, accent, seconds), seconds, tmp)
+      // Editable text: render the background WITHOUT the words (they become title clips). BAKED mode (and
+      // the no-lines fallback) bakes the words into the video via textCard.
+      videoPath = await recordCanvas(browser, (BAKED || !sc.lines?.length) ? textCard(sc.lines, accent, seconds) : bgCard(accent, seconds), seconds, tmp)
     }
     else if (sc.renderer === 'imessage') videoPath = await recordCanvas(browser, fakeIMsg(sc.chatTitle, sc.messages, accent, seconds), seconds, tmp)
     else if (sc.renderer === 'tier') videoPath = await recordCanvas(browser, tierList(sc.heading, sc.tiers, sc.chips, accent, seconds), seconds, tmp)
@@ -335,11 +351,24 @@ async function buildOne(browser, folderId, sc) {
       for (let k = 0; k < loops; k++) audioSpecs.push({ file: f, startTime: +(k * seconds).toFixed(3), dur: seconds, label: sc.song })
     }
 
+    let media, tracks, clips, summary
+    if (BAKED) {
+      // BAKED variant: mux the audio into the (text-baked) visual → ONE self-contained video clip.
+      const bakedVideo = join(tmp, 'baked.mp4')
+      execFileSync('ffmpeg', ['-y', '-i', visual, '-i', bakeAudio(audioSpecs, finalDur, tmp), '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', bakedVideo], { stdio: 'ignore' })
+      const vidId = randomUUID(), vidKey = `${USER}/${vidId}.mp4`
+      await put(vidKey, readFileSync(bakedVideo), 'video/mp4')
+      await sql`INSERT INTO user_media (id, user_id, name, content_type, duration, r2_key, thumbnail, created_at) VALUES (${vidId}, ${USER}, ${sc.title}, 'video/mp4', ${finalDur}, ${vidKey}, NULL, NOW()) ON CONFLICT (id) DO NOTHING`
+      media = [{ id: vidId, name: sc.title, r2Key: vidKey, duration: finalDur, contentType: 'video' }]
+      tracks = [{ id: 'v1', label: 'Video', type: 'media', height: 64 }]
+      clips = [{ id: randomUUID(), color: accent, label: sc.title, inPoint: 0, outPoint: finalDur, startTime: 0, trackId: 'v1', mediaRefId: vidId, contentType: 'video', captions: [] }]
+      summary = 'BAKED: 1 muxed video'
+    } else {
     // 3) Upload the visual + each unique audio file; register them in the media library.
     const vidId = randomUUID(), vidKey = `${USER}/${vidId}.mp4`
     await put(vidKey, readFileSync(visual), 'video/mp4')
     await sql`INSERT INTO user_media (id, user_id, name, content_type, duration, r2_key, thumbnail, created_at) VALUES (${vidId}, ${USER}, ${sc.title + ' (visual)'}, 'video/mp4', ${finalDur}, ${vidKey}, NULL, NOW()) ON CONFLICT (id) DO NOTHING`
-    const media = [{ id: vidId, name: `${sc.title} (visual)`, r2Key: vidKey, duration: finalDur, contentType: 'video' }]
+    media = [{ id: vidId, name: `${sc.title} (visual)`, r2Key: vidKey, duration: finalDur, contentType: 'video' }]
     const fileMedia = new Map()
     for (const a of audioSpecs) {
       if (fileMedia.has(a.file)) continue
@@ -351,30 +380,30 @@ async function buildOne(browser, folderId, sc) {
     }
 
     // 4) Editable project: a Video track (silent visual) + an Audio track (the song clip(s)).
-    const tracks = [
+    tracks = [
       { id: 'v1', label: 'Video', type: 'media', height: 64 },
       { id: 'a1', label: 'Audio', type: 'audio', height: 56, volume: 1 },
     ]
-    const clips = [{ id: randomUUID(), color: accent, label: sc.title, inPoint: 0, outPoint: finalDur, startTime: 0, trackId: 'v1', mediaRefId: vidId, contentType: 'video', captions: [] }]
+    clips = [{ id: randomUUID(), color: accent, label: sc.title, inPoint: 0, outPoint: finalDur, startTime: 0, trackId: 'v1', mediaRefId: vidId, contentType: 'video', captions: [] }]
     for (const a of audioSpecs) clips.push({ id: randomUUID(), color: '#34d399', label: a.label, inPoint: 0, outPoint: a.dur, startTime: a.startTime, trackId: 'a1', mediaRefId: fileMedia.get(a.file), contentType: 'audio', captions: [] })
 
     // Editable, styled TITLE clips on a Text track (kinetic/quiz/POV) — nothing baked into the video.
-    // The Text track goes FIRST so it renders ON TOP of the video (upper track = top layer; see
-    // pickVisibleClips). Appending it last would hide the text behind the opaque video.
     const titleClips = (sc.renderer === 'text' && Array.isArray(sc.lines) && sc.lines.length) ? textTitleClips(sc.lines, finalDur, accent) : []
     if (titleClips.length) { tracks.unshift({ id: 't1', label: 'Text', type: 'media', height: 44 }); clips.push(...titleClips) }
+    summary = `editable: 1 video + ${audioSpecs.length} audio${titleClips.length ? ` + ${titleClips.length} text` : ''}`
+    }
 
     const existing = await sql`SELECT id, data FROM projects WHERE user_id=${USER} AND deleted_at IS NULL AND folder_id=${folderId} AND data->>'name'=${sc.title} ORDER BY saved_at DESC LIMIT 1`
     if (existing.length) {
       const d = existing[0].data; d.media = media; d.clips = clips; d.tracks = tracks; d.postCaption = sc.caption || ''; d.savedAt = new Date().toISOString()
       await sql`UPDATE projects SET data=${JSON.stringify(d)}::jsonb, saved_at=NOW() WHERE id=${existing[0].id}`
-      console.log(`✓ updated (editable: 1 video + ${audioSpecs.length} audio${titleClips.length ? ` + ${titleClips.length} text` : ''})`)
+      console.log(`✓ updated (${summary})`)
     } else {
       const projId = randomUUID()
       const data = { _type: '100lights-project', version: 1, id: projId, name: sc.title, userId: USER, aspect: '9:16', audioMode: 'music', modules: ['video'], media, tracks, clips, outputs: [], captions: [], chapters: [], beatGrid: null, zoomLevel: 1, adjustments: {}, postCaption: sc.caption || '', savedAt: new Date().toISOString() }
       const slug = sc.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) + '-' + projId.slice(0, 6)
       await sql`INSERT INTO projects (id, user_id, name, slug, owner_username, saved_at, data, folder_id) VALUES (${projId}, ${USER}, ${sc.title}, ${slug}, 'braedancampbell', NOW(), ${JSON.stringify(data)}::jsonb, ${folderId})`
-      console.log(`✓ created (editable: 1 video + ${audioSpecs.length} audio${titleClips.length ? ` + ${titleClips.length} text` : ''})`)
+      console.log(`✓ created (${summary})`)
     }
   } catch (e) { console.log(`✗ ${e.message}`) }
   finally { rmSync(tmp, { recursive: true, force: true }) }
@@ -384,6 +413,8 @@ const argv = process.argv.slice(2)
 const flag = (name, def) => { const a = argv.find(x => x.startsWith(`--${name}=`)); return a ? a.split('=').slice(1).join('=') : def }
 // eslint-disable-next-line no-var
 var AUTO = argv.includes('--auto')                    // force auto best-section for every targeted short
+// eslint-disable-next-line no-var
+var BAKED = argv.includes('--baked')                  // fully-baked variant: text baked into the video + audio muxed, ONE self-contained clip
 
 // ── Variants mode: node build-shorts.mjs --variants --song=<key> --genre=<g> [--n=3] [--folder=Auto] ──
 if (argv.includes('--variants')) {
@@ -404,10 +435,10 @@ if (argv.includes('--variants')) {
   const want = ids.length && ids[0] !== 'all' ? new Set(ids) : null
   const targets = CFG.shorts.filter(s => !want || want.has(s.id))
   if (!targets.length) { console.error('no matching shorts. ids:', CFG.shorts.map(s => s.id).join(', ')); process.exit(1) }
-  const folderName = flag('folder', CFG.folder.name)          // --folder=<name> to build into a custom folder
+  const folderName = flag('folder', BAKED ? 'Tests (Baked)' : CFG.folder.name)   // --folder=<name>, or default per mode
   const folderId = await ensureFolder(folderName)
   const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
   for (const sc of targets) await buildOne(browser, folderId, sc)
   await browser.close()
-  console.log(`\nDone — ${targets.length} short(s) built/updated in "${CFG.folder.parent} › ${folderName}"${AUTO ? ' (auto best-section)' : ''}.`)
+  console.log(`\nDone — ${targets.length} short(s) ${BAKED ? 'BAKED' : 'built'}/updated in "${CFG.folder.parent} › ${folderName}"${AUTO ? ' (auto best-section)' : ''}.`)
 }
