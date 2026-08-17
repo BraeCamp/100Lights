@@ -4689,6 +4689,9 @@ export default function VideoEditor({
                         bg: viewerClip.titleBg ?? 'transparent',
                         position: viewerClip.titlePosition ?? 'center',
                         animation: viewerClip.titleAnimation ?? 'none',
+                        font: viewerClip.titleFont, weight: viewerClip.titleWeight, letterSpacing: viewerClip.titleLetterSpacing,
+                        uppercase: viewerClip.titleUppercase, shadow: viewerClip.titleShadow, glow: viewerClip.titleGlow,
+                        outline: viewerClip.titleOutline, outlineColor: viewerClip.titleOutlineColor,
                         localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
                       } : undefined}
                       onSeekRequest={handleSeek}
@@ -4775,6 +4778,9 @@ export default function VideoEditor({
                         bg: viewerClip.titleBg ?? 'transparent',
                         position: viewerClip.titlePosition ?? 'center',
                         animation: viewerClip.titleAnimation ?? 'none',
+                        font: viewerClip.titleFont, weight: viewerClip.titleWeight, letterSpacing: viewerClip.titleLetterSpacing,
+                        uppercase: viewerClip.titleUppercase, shadow: viewerClip.titleShadow, glow: viewerClip.titleGlow,
+                        outline: viewerClip.titleOutline, outlineColor: viewerClip.titleOutlineColor,
                         localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
                       } : undefined}
                       onSeekRequest={handleSeek}

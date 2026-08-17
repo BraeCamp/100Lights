@@ -67,6 +67,7 @@ import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 import { followPan } from '@/lib/focus-utils'
+import { fontStack } from '@/lib/text-styles'
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -495,8 +496,10 @@ function drawMusicViz(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: numb
 }
 
 function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number, W: number, H: number) {
-  const text = clip.titleText ?? ''
+  let text = clip.titleText ?? ''
   if (!text) return
+  if (clip.titleUppercase) text = text.toUpperCase()
+  const lines = text.split('\n')
   const clipDur = clip.outPoint - clip.inPoint
   const local = clipDur > 0 ? (t - clip.startTime) / clipDur : 0
   const fontSize = clip.titleFontSize ?? 48
@@ -504,41 +507,55 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   const bg       = clip.titleBg ?? 'transparent'
   const pos      = clip.titlePosition ?? 'center'
   const anim     = clip.titleAnimation ?? 'none'
+  const weight   = clip.titleWeight ?? 700
+  const lh       = fontSize * 1.18
 
-  // Animation opacity + slide, ported from the preview.
   const opacity =
     anim === 'fade'     ? Math.min(1, local * 4) * Math.min(1, (1 - local) * 4) :
     anim === 'slide-up' ? Math.min(1, local * 6) : 1
   const slideY = anim === 'slide-up' ? Math.max(0, (1 - local * 4) * 24) : 0
 
-  let y = pos === 'upper' ? H * 0.10 + fontSize
-        : pos === 'lower-third' ? H * 0.88
-        : H / 2
-  y += slideY
+  const blockH = lines.length * lh
+  const cy = (pos === 'upper' ? H * 0.10 + blockH / 2 : pos === 'lower-third' ? H * 0.86 - blockH / 2 + lh / 2 : H / 2) + slideY
+  const y0 = cy - blockH / 2 + lh / 2
 
   ctx.save()
   ctx.globalAlpha = Math.max(0, opacity)
   ctx.filter = 'none'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.font = `700 ${fontSize}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`
-  try { (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = '-0.01em' } catch { /* older browsers */ }
+  ctx.font = `${weight} ${fontSize}px ${fontStack(clip.titleFont)}`
+  try { (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${clip.titleLetterSpacing ?? -0.01}em` } catch { /* older browsers */ }
 
+  // Highlight box behind the text (per line), if requested.
   if (bg !== 'transparent') {
-    const m = ctx.measureText(text)
-    const padX = 12, padY = 4
-    const boxW = m.width + padX * 2
-    const boxH = fontSize * 1.2 + padY * 2
     ctx.fillStyle = bg
-    roundRect(ctx, W / 2 - boxW / 2, y - boxH / 2, boxW, boxH, 4)
-    ctx.fill()
-  } else {
-    ctx.shadowColor = 'rgba(0,0,0,0.8)'
-    ctx.shadowBlur = 4
-    ctx.shadowOffsetY = 1
+    lines.forEach((ln, i) => {
+      const m = ctx.measureText(ln), padX = fontSize * 0.28, padY = fontSize * 0.14
+      roundRect(ctx, W / 2 - m.width / 2 - padX, y0 + i * lh - lh / 2 + padY * 0.4, m.width + padX * 2, lh - padY * 0.2, fontSize * 0.14)
+      ctx.fill()
+    })
   }
-  ctx.fillStyle = color
-  ctx.fillText(text, W / 2, y)
+
+  lines.forEach((ln, i) => {
+    const ly = y0 + i * lh
+    // Outline (stroke around the glyphs).
+    if (clip.titleOutline && clip.titleOutline > 0) {
+      ctx.lineJoin = 'round'; ctx.miterLimit = 2
+      ctx.strokeStyle = clip.titleOutlineColor || '#000'; ctx.lineWidth = clip.titleOutline * 2
+      ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0
+      ctx.strokeText(ln, W / 2, ly)
+    }
+    // Glow (draw the fill twice with a colored shadow), then the soft drop shadow.
+    if (clip.titleGlow) {
+      ctx.shadowColor = clip.titleGlow; ctx.shadowBlur = fontSize * 0.5; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0
+      ctx.fillStyle = color; ctx.fillText(ln, W / 2, ly); ctx.fillText(ln, W / 2, ly)
+    }
+    if ((clip.titleShadow ?? bg === 'transparent')) { ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = fontSize * 0.1; ctx.shadowOffsetY = fontSize * 0.04 }
+    else { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0 }
+    ctx.fillStyle = color
+    ctx.fillText(ln, W / 2, ly)
+  })
   ctx.restore()
 }
 

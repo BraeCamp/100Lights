@@ -7,6 +7,7 @@ import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } fr
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import MusicVizOverlay from './MusicVizOverlay'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
+import { fontStack, textShadowCss } from '@/lib/text-styles'
 import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { instantSpeed, sourceOffsetAt } from '@/lib/video-export/speed'
@@ -145,6 +146,14 @@ interface Props {
     position: 'upper' | 'center' | 'lower-third'
     animation: 'none' | 'fade' | 'slide-up'
     localProgress: number    // 0–1 through clip duration (for animations)
+    font?: string            // rich styling (lib/text-styles)
+    weight?: number
+    letterSpacing?: number
+    uppercase?: boolean
+    shadow?: boolean
+    glow?: string
+    outline?: number
+    outlineColor?: string
   }
   lutCanvas?: OffscreenCanvas | null  // pre-rendered LUT canvas frame (set externally)
   playbackRate?: number
@@ -1196,13 +1205,17 @@ export default function VideoPlayer({
                 display: 'inline-block',
                 fontSize: tc.fontSize,
                 color: tc.color,
+                fontFamily: fontStack(tc.font),
                 background: tc.bg !== 'transparent' ? tc.bg : undefined,
-                padding: tc.bg !== 'transparent' ? '4px 12px' : undefined,
-                borderRadius: tc.bg !== 'transparent' ? 4 : undefined,
-                fontWeight: 700,
-                letterSpacing: '-0.01em',
-                lineHeight: 1.2,
-                textShadow: tc.bg === 'transparent' ? '0 1px 4px rgba(0,0,0,0.8)' : undefined,
+                padding: tc.bg !== 'transparent' ? `${tc.fontSize * 0.14}px ${tc.fontSize * 0.28}px` : undefined,
+                borderRadius: tc.bg !== 'transparent' ? tc.fontSize * 0.14 : undefined,
+                fontWeight: tc.weight ?? 700,
+                letterSpacing: `${tc.letterSpacing ?? -0.01}em`,
+                textTransform: tc.uppercase ? 'uppercase' : undefined,
+                lineHeight: 1.18,
+                whiteSpace: 'pre-line',   // render \n as line breaks
+                WebkitTextStroke: tc.outline ? `${tc.outline}px ${tc.outlineColor || '#000'}` : undefined,
+                textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, tc.fontSize) || undefined,
               }}>{tc.text}</span>
             </div>
           )

@@ -7,6 +7,7 @@ import { formatDisplayTime } from '@/lib/captions'
 import type { TimelineItem, VideoAdjustments, TransitionType, ClipFlag, CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import { MUSIC_VIZ_FORMATS } from '@/lib/music-viz'
+import { FONT_LIBRARY } from '@/lib/text-styles'
 import type { Caption, Output, ChapterMarker } from '@/lib/types'
 
 type TranscribeStatus = 'idle' | 'transcribing' | 'done' | 'error'
@@ -1014,6 +1015,38 @@ export default function Inspector({
                           <option value="slide-up">Slide Up</option>
                         </select>
                       </div>
+                    </div>
+                    {/* Font + weight */}
+                    <div className="flex gap-2 mt-2">
+                      <div className="flex-1">
+                        <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Font</p>
+                        <select value={selectedItem.titleFont ?? 'system'} onChange={e => patchClip({ titleFont: e.target.value })}
+                          className="w-full px-2 py-1.5 rounded text-xs" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', color: 'var(--text-primary)', outline: 'none' }}>
+                          {FONT_LIBRARY.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                        </select>
+                      </div>
+                      <div style={{ width: 96 }}>
+                        <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Weight</p>
+                        <select value={selectedItem.titleWeight ?? 700} onChange={e => patchClip({ titleWeight: Number(e.target.value) })}
+                          className="w-full px-2 py-1.5 rounded text-xs" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', color: 'var(--text-primary)', outline: 'none' }}>
+                          {[400, 500, 600, 700, 800, 900].map(w => <option key={w} value={w}>{w}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <Slider label="Letter Spacing" value={Math.round((selectedItem.titleLetterSpacing ?? -0.01) * 100)} min={-8} max={40} step={1} unit=""
+                      onChange={v => patchClip({ titleLetterSpacing: v / 100 })} />
+                    {/* Effects */}
+                    <p className="text-xs mb-1 mt-2" style={{ color: 'var(--text-muted)' }}>Effects</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { label: 'Uppercase', on: !!selectedItem.titleUppercase, toggle: () => patchClip({ titleUppercase: !selectedItem.titleUppercase }) },
+                        { label: 'Shadow', on: selectedItem.titleShadow ?? true, toggle: () => patchClip({ titleShadow: !(selectedItem.titleShadow ?? true) }) },
+                        { label: 'Glow', on: !!selectedItem.titleGlow, toggle: () => patchClip({ titleGlow: selectedItem.titleGlow ? undefined : (selectedItem.titleColor ?? '#a78bfa') }) },
+                        { label: 'Outline', on: !!selectedItem.titleOutline, toggle: () => patchClip({ titleOutline: selectedItem.titleOutline ? 0 : 3 }) },
+                      ].map(fx => (
+                        <button key={fx.label} onClick={fx.toggle} className="px-2.5 py-1 rounded text-xs"
+                          style={{ background: fx.on ? 'var(--accent)' : 'var(--bg-card)', color: fx.on ? '#0e0d12' : 'var(--text-secondary)', border: '1px solid var(--border-light)', fontWeight: fx.on ? 700 : 500 }}>{fx.label}</button>
+                      ))}
                     </div>
                   </div>
                 )}

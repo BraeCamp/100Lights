@@ -132,12 +132,21 @@ export interface TimelineItem {
     toY: number
   }
   // Title clip (contentType === 'title')
-  titleText?: string
+  titleText?: string           // supports multiple lines (\n)
   titleFontSize?: number       // px, default 48
   titleColor?: string          // hex, default '#ffffff'
   titleBg?: string             // hex or 'transparent', default 'transparent'
   titlePosition?: 'upper' | 'center' | 'lower-third'  // default 'center'
   titleAnimation?: 'none' | 'fade' | 'slide-up'       // default 'none'
+  // ── Rich text styling (see lib/text-styles) — the font library + effects ──
+  titleFont?: string           // FONT_LIBRARY id (default 'system')
+  titleWeight?: number         // 400–900 (default 700)
+  titleLetterSpacing?: number  // em (default -0.01)
+  titleUppercase?: boolean
+  titleShadow?: boolean        // soft drop shadow (default true)
+  titleGlow?: string           // glow color (hex); absent = none
+  titleOutline?: number        // outline width px; 0/absent = none
+  titleOutlineColor?: string   // default '#000'
   // Music-visual overlay (contentType === 'musicviz') — a live audio-reactive
   // visual (waveform / EQ bars / radial spectrum) rendered over the video below,
   // driven by the timeline's audio. See lib/music-viz.ts.

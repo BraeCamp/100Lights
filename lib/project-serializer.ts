@@ -65,6 +65,14 @@ export interface SerializedClip {
   titleBg?: string
   titlePosition?: 'upper' | 'center' | 'lower-third'
   titleAnimation?: 'none' | 'fade' | 'slide-up'
+  titleFont?: string
+  titleWeight?: number
+  titleLetterSpacing?: number
+  titleUppercase?: boolean
+  titleShadow?: boolean
+  titleGlow?: string
+  titleOutline?: number
+  titleOutlineColor?: string
   // Music-visual overlay
   mvFormat?: string
   mvAccent?: string
@@ -230,6 +238,14 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       titleBg:          item.titleBg,
       titlePosition:    item.titlePosition,
       titleAnimation:   item.titleAnimation,
+      titleFont:        item.titleFont,
+      titleWeight:      item.titleWeight,
+      titleLetterSpacing: item.titleLetterSpacing,
+      titleUppercase:   item.titleUppercase,
+      titleShadow:      item.titleShadow,
+      titleGlow:        item.titleGlow,
+      titleOutline:     item.titleOutline,
+      titleOutlineColor: item.titleOutlineColor,
       mvFormat:         item.mvFormat,
       mvAccent:         item.mvAccent,
       mvBg:             item.mvBg,
@@ -338,6 +354,14 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     titleBg:          clip.titleBg,
     titlePosition:    clip.titlePosition,
     titleAnimation:   clip.titleAnimation,
+    titleFont:        clip.titleFont,
+    titleWeight:      clip.titleWeight,
+    titleLetterSpacing: clip.titleLetterSpacing,
+    titleUppercase:   clip.titleUppercase,
+    titleShadow:      clip.titleShadow,
+    titleGlow:        clip.titleGlow,
+    titleOutline:     clip.titleOutline,
+    titleOutlineColor: clip.titleOutlineColor,
     mvFormat:         clip.mvFormat,
     mvAccent:         clip.mvAccent,
     mvBg:             clip.mvBg,
