@@ -31,6 +31,12 @@ export const FONT_LIBRARY: FontDef[] = [
 
 export const fontStack = (id?: string): string => FONT_LIBRARY.find(f => f.id === id)?.stack ?? FONT_LIBRARY[0].stack
 
+// Title font size is authored against a 1080px-tall reference frame (so a value is a stable FRACTION of
+// height: 54 ≈ 5% of height). Both preview (stage height) and export (canvas H) scale it the same way,
+// so titles are the same size in the editor and the finished video, at any resolution or aspect.
+export const TITLE_REF_H = 1080
+export const titleFontPx = (size: number | undefined, frameHeight: number): number => (size ?? 48) * frameHeight / TITLE_REF_H
+
 // The style bag a title clip can carry (all optional; absent = the plain default).
 export interface TextStyle {
   font?: string            // FONT_LIBRARY id

@@ -7,7 +7,7 @@ import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } fr
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import MusicVizOverlay from './MusicVizOverlay'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
-import { fontStack, textShadowCss, titleAnim } from '@/lib/text-styles'
+import { fontStack, textShadowCss, titleAnim, titleFontPx } from '@/lib/text-styles'
 import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { instantSpeed, sourceOffsetAt, sourceTimeAt } from '@/lib/video-export/speed'
@@ -1098,25 +1098,27 @@ export default function VideoPlayer({
               layer.position === 'upper'       ? { top: '10%',   left: 0, right: 0 } :
               layer.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
                                                  { top: '50%',   left: 0, right: 0, transform: 'translateY(-50%)' }
+            const fpx = titleFontPx(layer.fontSize, stage.height)   // frame-relative → matches export
+            const opx = (layer.outline ?? 0) * stage.height / 1080
             return (
               <div key={layer.id} style={{
                 position: 'absolute', zIndex: 1, textAlign: 'center', padding: '0 5%', pointerEvents: 'none',
                 opacity: la.opacity,
-                transform: `${posStyle.transform ?? ''} translateY(${(la.dy * layer.fontSize).toFixed(1)}px) scale(${la.scale.toFixed(3)})`,
+                transform: `${posStyle.transform ?? ''} translateY(${(la.dy * fpx).toFixed(1)}px) scale(${la.scale.toFixed(3)})`,
                 ...posStyle,
               }}>
                 <span style={{
-                  display: 'inline-block', fontSize: layer.fontSize, color: layer.color,
+                  display: 'inline-block', fontSize: fpx, color: layer.color,
                   fontFamily: fontStack(layer.font),
                   background: layer.bg !== 'transparent' ? layer.bg : undefined,
-                  padding: layer.bg !== 'transparent' ? `${layer.fontSize * 0.14}px ${layer.fontSize * 0.28}px` : undefined,
-                  borderRadius: layer.bg !== 'transparent' ? layer.fontSize * 0.14 : undefined,
+                  padding: layer.bg !== 'transparent' ? `${fpx * 0.14}px ${fpx * 0.28}px` : undefined,
+                  borderRadius: layer.bg !== 'transparent' ? fpx * 0.14 : undefined,
                   fontWeight: layer.weight ?? 700,
                   letterSpacing: `${layer.letterSpacing ?? -0.01}em`,
                   textTransform: layer.uppercase ? 'uppercase' : undefined,
                   lineHeight: 1.18, whiteSpace: 'pre-line',
-                  WebkitTextStroke: layer.outline ? `${layer.outline}px ${layer.outlineColor || '#000'}` : undefined,
-                  textShadow: textShadowCss({ shadow: layer.shadow ?? (layer.bg === 'transparent'), glow: layer.glow, outline: 0 }, layer.fontSize) || undefined,
+                  WebkitTextStroke: opx ? `${opx}px ${layer.outlineColor || '#000'}` : undefined,
+                  textShadow: textShadowCss({ shadow: layer.shadow ?? (layer.bg === 'transparent'), glow: layer.glow, outline: 0 }, fpx) || undefined,
                 }}>{layer.text}</span>
               </div>
             )
@@ -1267,28 +1269,30 @@ export default function VideoPlayer({
             tc.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
                                             { top: '50%',   left: 0, right: 0, transform: 'translateY(-50%)' }
           const a = titleAnim(tc.animation, tc.localProgress, tc.durSec)
+          const fpx = titleFontPx(tc.fontSize, stage.height)   // frame-relative → matches export
+          const opx = (tc.outline ?? 0) * stage.height / 1080
           return (
             <div style={{
               position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
               pointerEvents: 'none', opacity: a.opacity,
-              transform: `${posStyle.transform ?? ''} translateY(${(a.dy * tc.fontSize).toFixed(1)}px) scale(${a.scale.toFixed(3)})`,
+              transform: `${posStyle.transform ?? ''} translateY(${(a.dy * fpx).toFixed(1)}px) scale(${a.scale.toFixed(3)})`,
               ...posStyle,
             }}>
               <span style={{
                 display: 'inline-block',
-                fontSize: tc.fontSize,
+                fontSize: fpx,
                 color: tc.color,
                 fontFamily: fontStack(tc.font),
                 background: tc.bg !== 'transparent' ? tc.bg : undefined,
-                padding: tc.bg !== 'transparent' ? `${tc.fontSize * 0.14}px ${tc.fontSize * 0.28}px` : undefined,
-                borderRadius: tc.bg !== 'transparent' ? tc.fontSize * 0.14 : undefined,
+                padding: tc.bg !== 'transparent' ? `${fpx * 0.14}px ${fpx * 0.28}px` : undefined,
+                borderRadius: tc.bg !== 'transparent' ? fpx * 0.14 : undefined,
                 fontWeight: tc.weight ?? 700,
                 letterSpacing: `${tc.letterSpacing ?? -0.01}em`,
                 textTransform: tc.uppercase ? 'uppercase' : undefined,
                 lineHeight: 1.18,
                 whiteSpace: 'pre-line',   // render \n as line breaks
-                WebkitTextStroke: tc.outline ? `${tc.outline}px ${tc.outlineColor || '#000'}` : undefined,
-                textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, tc.fontSize) || undefined,
+                WebkitTextStroke: opx ? `${opx}px ${tc.outlineColor || '#000'}` : undefined,
+                textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, fpx) || undefined,
               }}>{tc.text}</span>
             </div>
           )

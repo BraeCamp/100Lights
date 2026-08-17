@@ -259,7 +259,8 @@ function textTitleClips(lines, seconds, accent) {
       id: randomUUID(), color: g.hot ? accent : '#e9e6ff', label: g.texts[0].slice(0, 24),
       inPoint: 0, outPoint: +(end - start).toFixed(2), startTime: start, trackId: 't1',
       contentType: 'title', captions: [],
-      titleText: g.texts.join('\n'), titleFontSize: 72, titleColor: g.hot ? accent : '#ffffff',
+      // titleFontSize is a fraction of frame height (1080 ref): 64 ≈ 6% tall, 74 ≈ 6.9% for the punchline.
+      titleText: g.texts.join('\n'), titleFontSize: g.hot ? 74 : 64, titleColor: g.hot ? accent : '#ffffff',
       titlePosition: 'center', titleAnimation: 'rise', titleFont: 'futura', titleWeight: 800,
       titleLetterSpacing: -0.02, titleShadow: true,
       titleGlow: g.hot ? accent : undefined, titleOutline: g.hot ? 3 : 0, titleOutlineColor: '#0a0812',
@@ -364,8 +365,10 @@ async function buildOne(browser, folderId, sc) {
     for (const a of audioSpecs) clips.push({ id: randomUUID(), color: '#34d399', label: a.label, inPoint: 0, outPoint: a.dur, startTime: a.startTime, trackId: 'a1', mediaRefId: fileMedia.get(a.file), contentType: 'audio', captions: [] })
 
     // Editable, styled TITLE clips on a Text track (kinetic/quiz/POV) — nothing baked into the video.
+    // The Text track goes FIRST so it renders ON TOP of the video (upper track = top layer; see
+    // pickVisibleClips). Appending it last would hide the text behind the opaque video.
     const titleClips = (sc.renderer === 'text' && Array.isArray(sc.lines) && sc.lines.length) ? textTitleClips(sc.lines, finalDur, accent) : []
-    if (titleClips.length) { tracks.push({ id: 't1', label: 'Text', type: 'media', height: 44 }); clips.push(...titleClips) }
+    if (titleClips.length) { tracks.unshift({ id: 't1', label: 'Text', type: 'media', height: 44 }); clips.push(...titleClips) }
 
     const existing = await sql`SELECT id, data FROM projects WHERE user_id=${USER} AND deleted_at IS NULL AND folder_id=${folderId} AND data->>'name'=${sc.title} ORDER BY saved_at DESC LIMIT 1`
     if (existing.length) {

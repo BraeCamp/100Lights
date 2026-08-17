@@ -67,7 +67,7 @@ import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 import { followPan } from '@/lib/focus-utils'
-import { fontStack, titleAnim } from '@/lib/text-styles'
+import { fontStack, titleAnim, titleFontPx } from '@/lib/text-styles'
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -506,7 +506,7 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   const lines = text.split('\n')
   const clipDur = clip.outPoint - clip.inPoint
   const local = clipDur > 0 ? (t - clip.startTime) / clipDur : 0
-  const fontSize = clip.titleFontSize ?? 48
+  const fontSize = titleFontPx(clip.titleFontSize, H)   // frame-relative, so preview and export match
   const color    = clip.titleColor ?? '#ffffff'
   const bg       = clip.titleBg ?? 'transparent'
   const pos      = clip.titlePosition ?? 'center'
@@ -545,7 +545,7 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
     // Outline (stroke around the glyphs).
     if (clip.titleOutline && clip.titleOutline > 0) {
       ctx.lineJoin = 'round'; ctx.miterLimit = 2
-      ctx.strokeStyle = clip.titleOutlineColor || '#000'; ctx.lineWidth = clip.titleOutline * 2
+      ctx.strokeStyle = clip.titleOutlineColor || '#000'; ctx.lineWidth = clip.titleOutline * (H / 1080) * 2
       ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0
       ctx.strokeText(ln, W / 2, ly)
     }
