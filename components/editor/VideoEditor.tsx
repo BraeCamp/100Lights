@@ -1236,12 +1236,18 @@ export default function VideoEditor({
   // Separate audio-track clips → playable audio layers (music kept editable, not baked into the video).
   // A muted/soloed-out track contributes silence; a disabled clip is skipped.
   const audioLayers = useMemo(() => {
-    const hasSolo = tracks.some(t => t.type === 'audio' && t.solo)
-    const muted = new Set(tracks.filter(t => t.type === 'audio' && (t.muted || (hasSolo && !t.solo))).map(t => t.id))
+    // EVERY overlapping clip that carries sound must be heard — not just audio-track clips. The main
+    // player only plays the ONE clip it shows (viewerClip); a video clip that isn't on top would
+    // otherwise be silent (its under-layer element is muted, and it was never added here). So layer in
+    // the audio of every audible clip EXCEPT viewerClip (which the main player already plays — adding it
+    // here would double/phase it). Audio-carrying = audio + video clips (a <audio> element plays a video
+    // file's audio track fine); images/titles/effects have none.
+    const soundTracks = (t: typeof tracks[number]) => t.type === 'audio' || t.type === 'media' || t.type === 'video'
+    const hasSolo = tracks.some(t => soundTracks(t) && t.solo)
+    const muted = new Set(tracks.filter(t => soundTracks(t) && (t.muted || (hasSolo && !t.solo))).map(t => t.id))
+    const audible = (ct: string | undefined) => ct === 'audio' || ct === 'video' || ct == null
     return timelineItems
-      // Skip the clip that's the active monitor clip — the main player already plays its audio, so
-      // playing it again here would double/phase it (the overlap bug when video & audio don't align).
-      .filter(i => i.contentType === 'audio' && i.url && i.enabled !== false && i.id !== viewerClip?.id)
+      .filter(i => audible(i.contentType) && i.url && i.enabled !== false && i.id !== viewerClip?.id)
       .map(i => ({ id: i.id, src: i.url as string, startTime: i.startTime, inPoint: i.inPoint, outPoint: i.outPoint, speed: i.speed, gain: muted.has(i.trackId) ? 0 : 1 }))
   }, [timelineItems, tracks, viewerClip?.id])
 
