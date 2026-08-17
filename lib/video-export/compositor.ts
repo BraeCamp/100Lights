@@ -82,7 +82,7 @@ export interface CompositorState {
 
 /** Resolves the playing <video> element for a clip (owned by the capture layer). */
 export interface MediaResolver {
-  get(clip: TimelineItem): HTMLVideoElement | undefined
+  get(clip: TimelineItem): HTMLVideoElement | HTMLImageElement | undefined
 }
 
 // ── Ported verbatim from VideoPlayer.buildFilter (do not "improve" — parity) ──
@@ -385,18 +385,22 @@ function drawVideoClip(
 ): void {
   if (!clip.url) return
   const v = media.get(clip)
-  if (!v || v.videoWidth === 0) return
+  if (!v) return
+  // Works for <video> (videoWidth/Height) and still <img> layers (naturalWidth/Height).
+  const vw = (v as HTMLVideoElement).videoWidth || (v as HTMLImageElement).naturalWidth || (v as HTMLImageElement).width
+  const vh = (v as HTMLVideoElement).videoHeight || (v as HTMLImageElement).naturalHeight || (v as HTMLImageElement).height
+  if (!vw || !vh) return
   const { width: W, height: H, adjustments } = state
 
   const tf = computeClipTransform(clip, t, state.items)
-  const rect = fitRect(v.videoWidth, v.videoHeight, W, H, clip.fitMode ?? 'contain')
+  const rect = fitRect(vw, vh, W, H, clip.fitMode ?? 'contain')
 
   // LUT: route the frame through the GPU applier first; the graded canvas
-  // stands in for the raw element. Skipped silently without WebGL2.
+  // stands in for the raw element. Skipped silently without WebGL2. Images skip LUT.
   let source: CanvasImageSource = v
   const lut = clip.lutId ? state.luts?.get(clip.lutId) : undefined
-  if (lut) {
-    const graded = getLutGL()?.apply(v, lut, v.videoWidth, v.videoHeight)
+  if (lut && (v as HTMLVideoElement).videoWidth) {
+    const graded = getLutGL()?.apply(v as HTMLVideoElement, lut, vw, vh)
     if (graded) source = graded
   }
 

@@ -67,10 +67,11 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
   // One element PER CLIP (not per source) so two clips can show two different
   // frames of the same file simultaneously — overlapping tracks, transitions.
   // The downloaded blob is still shared per source URL.
-  const elByClip = new Map<string, HTMLVideoElement>()
+  const elByClip = new Map<string, HTMLVideoElement | HTMLImageElement>()
 
   // ── 1. Build hidden <video> elements for each video clip ──────────────────
   const videoClips = state.items.filter(i => (i.contentType === 'video' || i.contentType == null) && i.url)
+  const imageClips = state.items.filter(i => i.contentType === 'image' && i.url)
 
   onProgress?.(0.02, 'Preparing media…')
   const localBySrc = new Map<string, string>()
@@ -88,7 +89,16 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
     v.preload = 'auto'
     elByClip.set(clip.id, v)
   }
-  await Promise.all([...elByClip.values()].map(waitReady))
+  await Promise.all([...elByClip.values()].map(el => waitReady(el as HTMLVideoElement)))
+  // Still-image clips (lifted-subject cutouts) — decode once and draw as a frozen frame.
+  for (const clip of imageClips) {
+    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError')
+    let local = localBySrc.get(clip.url!)
+    if (!local) { local = await toLocalURL(clip.url!, revokers); localBySrc.set(clip.url!, local) }
+    const im = new Image(); im.src = local
+    try { await im.decode() } catch { /* broken image draws nothing */ }
+    elByClip.set(clip.id, im)
+  }
 
   // ── 2. Canvas + compositor ─────────────────────────────────────────────────
   const canvas = document.createElement('canvas')
@@ -141,7 +151,7 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
     const want = new Set<string>()
     for (const clip of stack) {
       if (!(clip.contentType === 'video' || clip.contentType == null) || !clip.url) continue
-      const el = elByClip.get(clip.id)
+      const el = elByClip.get(clip.id) as HTMLVideoElement | undefined
       if (!el) continue
       want.add(clip.id)
 
@@ -166,7 +176,7 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
     }
     for (const id of [...playing]) {
       if (!want.has(id)) {
-        elByClip.get(id)?.pause()
+        ;(elByClip.get(id) as HTMLVideoElement | undefined)?.pause()
         playing.delete(id)
       }
     }
@@ -181,7 +191,7 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
   return await new Promise<Blob>((resolve, reject) => {
     const cleanup = () => {
       cancelAnimationFrame(raf)
-      for (const v of elByClip.values()) { try { v.pause() } catch { /* noop */ } }
+      for (const v of elByClip.values()) { try { if (v instanceof HTMLVideoElement) v.pause() } catch { /* noop */ } }
       revokers.forEach(URL.revokeObjectURL)
       audioCtx.close?.().catch(() => {})
     }

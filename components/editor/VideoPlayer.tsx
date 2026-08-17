@@ -81,6 +81,14 @@ export type UnderLayer =
       animation: 'none' | 'fade' | 'slide-up'
       localProgress: number
     }
+  | {
+      kind: 'image'
+      id: string
+      src: string
+      transform: ClipTransform
+      blendMode?: string
+      filter: string
+    }
 
 interface ClipHint {
   inPoint: number
@@ -723,9 +731,9 @@ export default function VideoPlayer({
 
   const allSrcs = useMemo(() => {
     const s = new Set(preloadSrcs)
-    if (src) s.add(src)
+    if (src && contentType !== 'image') s.add(src)   // image clips render via <img>, not the <video> pool
     return Array.from(s)
-  }, [src, preloadSrcs])
+  }, [src, preloadSrcs, contentType])
 
   useLayoutEffect(() => {
     const el = src ? (poolRef.current.get(src) ?? null) : null
@@ -1044,6 +1052,24 @@ export default function VideoPlayer({
                 ...buildClipStyle(layer.transform),
               }}
             />
+          ) : layer.kind === 'image' ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={layer.id}
+              src={layer.src}
+              alt=""
+              crossOrigin={corsAttr}
+              style={{
+                position: 'absolute', inset: 0,
+                width: '100%', height: '100%',
+                objectFit: layer.transform.fitMode ?? 'contain',
+                filter: showOriginal ? 'none' : layer.filter || 'none',
+                pointerEvents: 'none',
+                zIndex: 1,
+                mixBlendMode: layer.blendMode as React.CSSProperties['mixBlendMode'],
+                ...buildClipStyle(layer.transform),
+              }}
+            />
           ) : (
             <div key={layer.id} style={{
               position: 'absolute', zIndex: 1, textAlign: 'center', padding: '0 5%',
@@ -1181,6 +1207,24 @@ export default function VideoPlayer({
               onError={() => { if (s === src) onMediaError?.() }}
             />
           ))}
+
+          {/* Active still-image clip (e.g. a lifted-subject cutout) — the <video> pool can't play a PNG. */}
+          {src && contentType === 'image' && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt=""
+              crossOrigin={corsAttr}
+              style={{
+                position: 'absolute', inset: 0, width: '100%', height: '100%',
+                objectFit: cs.fitMode ?? 'contain',
+                filter: showOriginal ? 'none' : effectiveFilter,
+                opacity: 1, pointerEvents: 'none', zIndex: 2,
+                mixBlendMode: blendMode as React.CSSProperties['mixBlendMode'],
+                ...clipStyle,
+              }}
+            />
+          )}
 
         {/* Title clip overlay */}
         {titleClip && contentType === 'title' && (() => {

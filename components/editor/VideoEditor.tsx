@@ -1280,6 +1280,11 @@ export default function VideoEditor({
       const tf = computeClipTransform(clip, currentTime, timelineItems)
       const gradeFilter = buildClipGradeFilter(clip)
       const globalFilter = buildFilterCss(adjustments)
+      const filter = [globalFilter === 'none' ? '' : globalFilter, gradeFilter].filter(Boolean).join(' ')
+      if (clip.contentType === 'image') {
+        layers.push({ kind: 'image', id: clip.id, src: clip.url, transform: { ...tf, fitMode: clip.fitMode, crop: clip.crop }, blendMode: clip.blendMode, filter })
+        continue
+      }
       layers.push({
         kind: 'video', id: clip.id, src: clip.url,
         startTime: clip.startTime, inPoint: clip.inPoint, outPoint: clip.outPoint,
@@ -1434,6 +1439,8 @@ export default function VideoEditor({
       clearHype: () => clearHype(),                        // remove the hype punches
       jumpCut: () => runJumpCut(),                         // ripple out silent gaps (raw footage)
       autoPolish: () => runAutoPolish(),                   // one-click reframe + hype
+      // Subject lift: segment the subject (photo/video clip) at a point → its own layer above the source.
+      liftSubject: (clipId?: string, point?: { x: number; y: number }) => runLiftSubject(clipId, point),
       // Offline speaker/mouth-motion analysis of a video URL → { times, activity }.
       analyzeSpeaker: (url: string, opts?: Parameters<typeof analyzeSpeaker>[1]) => analyzeSpeaker(url, opts),
       // Vocal clarity on an audio item (0..1; 0 = off) — presence EQ + de-ess + compression.
@@ -2108,6 +2115,45 @@ export default function VideoEditor({
       return prev.map(i => i.id === clipId ? { ...i, attachedTo: anchor.id } : i)
     })
   }, [setTimelineItems])
+
+  // Subject lift (iPhone-sticker) — segment the subject in a photo/video clip and drop it as its OWN
+  // layer on a new track above the source, so text placed between them appears BEHIND the subject.
+  const runLiftSubject = useCallback(async (clipId?: string, point?: { x: number; y: number }) => {
+    const items = timelineItemsRef.current
+    const clip = items.find(i => i.id === (clipId ?? selectedId) && i.url && (i.contentType === 'video' || i.contentType === 'image' || !i.contentType))
+      ?? items.find(i => i.url && (i.contentType === 'video' || i.contentType === 'image'))
+    if (!clip?.url) { setAutoEditNote('Select a photo or video clip to lift a subject from.'); return }
+    setAutoBusy('lift'); setAutoEditNote('Lifting the subject (on-device)…')
+    try {
+      // Load the exact frame under the playhead into an element for segmentation.
+      let el: HTMLImageElement | HTMLVideoElement
+      if (clip.contentType === 'image') {
+        const img = new Image(); img.crossOrigin = 'anonymous'; img.src = clip.url; await img.decode(); el = img
+      } else {
+        const v = document.createElement('video'); v.crossOrigin = 'anonymous'; v.muted = true; v.src = clip.url
+        await new Promise((res, rej) => { v.onloadeddata = () => res(null); v.onerror = () => rej(new Error('load')) })
+        const srcT = (clip.inPoint ?? 0) + Math.max(0, currentTime - clip.startTime)
+        await new Promise(res => { v.onseeked = () => res(null); v.currentTime = Math.min(srcT, (v.duration || srcT) - 0.05) })
+        el = v
+      }
+      const { liftSubject } = await import('@/lib/subject-lift')
+      const r = await liftSubject(el, point)
+      if (!r) { setAutoEditNote('Couldn’t find a subject to lift there — try tapping the subject.'); return }
+      const mediaId = crypto.randomUUID(), dur = clip.outPoint - clip.inPoint
+      setMediaItems(prev => [...prev, { id: mediaId, name: `${clip.label} — subject`, contentType: 'image', url: r.dataUrl, duration: dur }])
+      const trackId = `lift-${crypto.randomUUID().slice(0, 8)}`
+      setTracks(prev => [...prev, { id: trackId, label: 'Subject', type: 'media', height: TRACK_HEIGHT }])  // top of stack → above the source
+      setTimelineItems(prev => [...prev, {
+        id: crypto.randomUUID(), label: 'Subject', contentType: 'image', trackId, url: r.dataUrl,
+        startTime: clip.startTime, inPoint: 0, outPoint: dur, captions: [], color: clip.color ?? '#a78bfa',
+        // Inherit the source's framing so the cutout overlays exactly on top of the subject.
+        fitMode: clip.fitMode, cropZoom: clip.cropZoom, cropX: clip.cropX, cropY: clip.cropY, crop: clip.crop, flipH: clip.flipH, flipV: clip.flipV,
+      }])
+      setAutoEditNote('Subject lifted to its own layer — put a text layer under it to sit behind the subject.')
+    } catch (e) {
+      setAutoEditNote(`Subject lift failed: ${e instanceof Error ? e.message : 'segmentation error'}`)
+    } finally { setAutoBusy(null) }
+  }, [selectedId, currentTime, setTimelineItems])
 
   const handleTrimItem = useCallback((id: string, _edge: 'in' | 'out', newIn: number, newOut: number, newStart: number, commit: boolean) => {
     const apply = (prev: TimelineItem[]) => {
@@ -2847,7 +2893,8 @@ export default function VideoEditor({
 
     // Detect via the shared helper (MIME first, then extension) so containers
     // that arrive with an empty type (.mkv/.mov/.avi…) still file as video.
-    const ct: ContentType = detectMediaKind(file) === 'audio' ? 'audio' : 'video'
+    const mk = detectMediaKind(file)
+    const ct: ContentType = mk === 'audio' ? 'audio' : mk === 'image' ? 'image' : 'video'
     const url = URL.createObjectURL(file)
     const id = crypto.randomUUID()
 
@@ -2861,12 +2908,17 @@ export default function VideoEditor({
     setTranscribeError('')
     setViewportTab(ct === 'audio' ? 'audio' : 'video')
 
+    // Still images have no duration — give them a default and use the image itself as its thumbnail.
+    if (ct === 'image') {
+      setMediaItems(prev => prev.map(m => m.id === id ? { ...m, duration: 5, thumbnail: url } : m))
+    }
+
     // Probe duration (fast for local blob URLs) and update the pool entry.
     // A video whose metadata won't load (duration 0) is one the browser can't
     // decode — flag it so the pool explains the blank preview instead of looking
     // silently broken. Server-side transcription can still work; editing needs
     // an H.264/AAC MP4 (or WebM).
-    readDuration(url, ct).then((dur) => {
+    if (ct !== 'image') readDuration(url, ct).then((dur) => {
       const undecodable = !(dur > 0)   // metadata never loaded → browser can't decode it
       setMediaItems(prev => prev.map(m => m.id === id ? {
         ...m,
@@ -4862,6 +4914,7 @@ export default function VideoEditor({
                 onTransitionChange={handleTransitionChange}
                 onClipChange={handleClipChange}
                 onToggleAttach={handleToggleAttach}
+                onLiftSubject={(id) => runLiftSubject(id)}
                 onAddMusicViz={addMusicVizClip}
                 importedFile={importedFile}
                 transcribeStatus={transcribeStatus}

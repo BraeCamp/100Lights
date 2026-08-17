@@ -102,8 +102,9 @@ export async function exportTimelineFast(opts: FastExportOptions): Promise<Blob>
 
   // ── Elements per video clip (shared blob per source) ───────────────────────
   const revokers: string[] = []
-  const elByClip = new Map<string, HTMLVideoElement>()
+  const elByClip = new Map<string, HTMLVideoElement | HTMLImageElement>()
   const videoClips = state.items.filter(i => (i.contentType === 'video' || i.contentType == null) && i.url)
+  const imageClips = state.items.filter(i => i.contentType === 'image' && i.url)
   onProgress?.(0.02, 'Preparing media…')
   const localBySrc = new Map<string, string>()
   for (const clip of videoClips) {
@@ -120,7 +121,16 @@ export async function exportTimelineFast(opts: FastExportOptions): Promise<Blob>
     v.preload = 'auto'
     elByClip.set(clip.id, v)
   }
-  await Promise.all([...elByClip.values()].map(waitReady))
+  await Promise.all([...elByClip.values()].map(el => waitReady(el as HTMLVideoElement)))
+  // Still-image clips (e.g. lifted-subject cutouts) — decode once, draw like a frozen frame.
+  for (const clip of imageClips) {
+    throwIfAborted()
+    let local = localBySrc.get(clip.url!)
+    if (!local) { local = await toLocalURL(clip.url!, revokers); localBySrc.set(clip.url!, local) }
+    const im = new Image(); im.src = local
+    try { await im.decode() } catch { /* keep going; a broken image just draws nothing */ }
+    elByClip.set(clip.id, im)
+  }
 
   const canvas = document.createElement('canvas')
   canvas.width = state.width
@@ -204,11 +214,11 @@ export async function exportTimelineFast(opts: FastExportOptions): Promise<Blob>
       const stack = pickVisibleClips(state.items, state.tracks, t)
       for (const clip of stack) {
         if (!(clip.contentType === 'video' || clip.contentType == null) || !clip.url) continue
-        const el = elByClip.get(clip.id)
+        const el = elByClip.get(clip.id) as HTMLVideoElement | undefined
         if (el) seeks.push(seekTo(el, sourceTimeFor(clip, t, el, rampCache)))
         const trans = transitionAt(state.items, state.tracks, clip, t)
         if (trans?.prev) {
-          const prevEl = elByClip.get(trans.prev.id)
+          const prevEl = elByClip.get(trans.prev.id) as HTMLVideoElement | undefined
           if (prevEl) {
             const prevEnd = clip.startTime - 0.001
             seeks.push(seekTo(prevEl, sourceTimeFor(trans.prev, prevEnd, prevEl, rampCache)))

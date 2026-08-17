@@ -21,6 +21,7 @@ interface Props {
   onTransitionChange: (id: string, type: TransitionType | undefined, duration: number) => void
   onClipChange: (id: string, patch: Partial<TimelineItem>) => void
   onToggleAttach?: (id: string) => void
+  onLiftSubject?: (id: string) => void
   /** Add a music-visual overlay (waveform / EQ / spectrum) at the playhead. */
   onAddMusicViz?: () => void
   importedFile: File | null
@@ -304,7 +305,7 @@ function ColorWheel({ label, value, min, max, defaultVal, onChange }: {
 }
 
 export default function Inspector({
-  selectedItem, adjustments, outputs, onAdjustmentsChange, onTransitionChange, onClipChange, onToggleAttach, onAddMusicViz,
+  selectedItem, adjustments, outputs, onAdjustmentsChange, onTransitionChange, onClipChange, onToggleAttach, onLiftSubject, onAddMusicViz,
   importedFile, transcribeStatus, transcribeProgress = 0, transcribeError, onTranscribe,
   captions, currentTime = 0, onSeek,
   silenceTrimStatus, silenceThreshold, onSilenceThresholdChange, onSilenceTrim,
@@ -804,6 +805,13 @@ export default function Inspector({
                             className="text-xs text-left" style={{ color: 'var(--accent-light)' }}>Reset edge crop</button>
                         ) : null}
                       </div>
+                    )}
+                    {onLiftSubject && (selectedItem.contentType === 'video' || selectedItem.contentType === 'image') && (
+                      <button onClick={() => onLiftSubject(selectedItem.id)} title="Cut the subject out to its own layer (like iPhone photo stickers) — text on a lower layer then sits behind it"
+                        className="w-full mt-1 px-2.5 py-1.5 rounded text-xs flex items-center justify-center gap-1.5"
+                        style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-light)', fontWeight: 600 }}>
+                        🪄 Lift subject to layer
+                      </button>
                     )}
                     {selectedItem.contentType !== 'title' && selectedItem.contentType !== 'musicviz' && focusClips && focusClips.length > 0 && (
                       <div className="flex flex-col gap-1 mt-1">
