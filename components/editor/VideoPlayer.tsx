@@ -126,6 +126,7 @@ export interface TitleSpec {
   offsetY?: number
   activeColor?: string
   activeBox?: boolean
+  pulse?: number           // beat-pulse value 0..1 at the current time (computed by the caller)
   font?: string
   weight?: number
   letterSpacing?: number
@@ -174,13 +175,14 @@ function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key) {
   const a = titleAnim(tc.animation, tc.localProgress, tc.durSec, tc.animAmount ?? 1)
   const fpx = titleFontPx(tc.fontSize, stageHeight)   // frame-relative → matches export
   const opx = (tc.outline ?? 0) * stageHeight / 1080
+  const scaleF = a.scale * (1 + (tc.pulse ?? 0) * 0.14)   // beat-synced pulse on top of the entrance scale
   const shownText = a.reveal < 1 ? revealLines((tc.text ?? '').split('\n'), a.reveal).join('\n') : tc.text
   const wordStates = titleWordStates(tc.animation, (tc.text ?? '').split('\n'), tc.localProgress, tc.durSec, tc.animAmount ?? 1)
   return (
     <div key={key} style={{
       position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
       pointerEvents: 'none', opacity: a.opacity * ((tc.textOpacity ?? 100) / 100),
-      transform: `${posStyle.transform ?? ''} translateY(${((a.dy * fpx) + ((tc.offsetY ?? 0) * stageHeight / 1080)).toFixed(1)}px) scale(${a.scale.toFixed(3)})`,
+      transform: `${posStyle.transform ?? ''} translate(${(a.dx * fpx).toFixed(1)}px, ${((a.dy * fpx) + ((tc.offsetY ?? 0) * stageHeight / 1080)).toFixed(1)}px) scale(${scaleF.toFixed(3)})`,
       filter: a.blur > 0.01 ? `blur(${(a.blur * fpx).toFixed(1)}px)` : undefined,
       ...posStyle,
     }}>
@@ -192,6 +194,7 @@ function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key) {
           borderRadius: tc.bg !== 'transparent' ? fpx * 0.14 : undefined,
           fontWeight: tc.weight ?? 700, letterSpacing: `${tc.letterSpacing ?? -0.01}em`,
           textTransform: tc.uppercase ? 'uppercase' : undefined, lineHeight: 1.18, whiteSpace: 'pre-line',
+          clipPath: a.wipe < 0.999 ? `inset(0 ${((1 - a.wipe) * 100).toFixed(1)}% 0 0)` : undefined,
           WebkitTextStroke: opx ? `${opx}px ${tc.outlineColor || '#000'}` : undefined,
           textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, fpx) || undefined,
         }}>{shownText}</span>

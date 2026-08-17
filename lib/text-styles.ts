@@ -57,23 +57,33 @@ export interface TextStyle {
 // ── Title animation ─────────────────────────────────────────────────────────
 // Punchy, professional in/out reveals for title clips — the kind you'd otherwise bake into the video.
 // Shared by preview (CSS transform) and export (canvas transform) so they match exactly.
-export type TitleAnimation = 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom' | 'kinetic' | 'blur' | 'bounce' | 'typewriter' | 'word-pop' | 'word-highlight'
+export type TitleAnimation = 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom' | 'kinetic' | 'blur' | 'bounce' | 'typewriter' | 'word-pop' | 'word-highlight' | 'wipe' | 'shake'
 export const TITLE_ANIMATIONS: { value: TitleAnimation; label: string }[] = [
   { value: 'none',           label: 'None' },
   { value: 'kinetic',        label: 'Kinetic (baked look)' },
   { value: 'word-pop',       label: 'Word by word ⭐' },
   { value: 'word-highlight', label: 'Word highlight (karaoke) ⭐' },
+  { value: 'wipe',           label: 'Wipe reveal ⭐' },
   { value: 'fade',           label: 'Fade' },
   { value: 'rise',           label: 'Rise' },
   { value: 'slide-up',       label: 'Slide up' },
   { value: 'drop',           label: 'Drop' },
   { value: 'pop',            label: 'Pop' },
   { value: 'bounce',         label: 'Bounce' },
+  { value: 'shake',          label: 'Shake in' },
   { value: 'zoom',           label: 'Zoom' },
   { value: 'blur',           label: 'Blur in' },
   { value: 'typewriter',     label: 'Typewriter' },
 ]
 export const isWordAnimation = (a: TitleAnimation | undefined): boolean => a === 'word-pop' || a === 'word-highlight'
+
+// A short scale spike on each beat (music-synced pulse). `bpm` 0/absent = off. Anchored to t=0.
+export function beatPulse(t: number, bpm: number | undefined): number {
+  if (!bpm || bpm <= 0) return 0
+  const interval = 60 / bpm
+  const phase = ((t % interval) + interval) % interval
+  return Math.exp(-phase / 0.09)   // spike decaying over ~90ms
+}
 
 // Readable text color (near-black or white) for text sitting ON a solid `hex` fill (the active-word box).
 export function readableText(hex: string): string {
@@ -95,7 +105,7 @@ const easeOutBounce = (x: number) => {
   x -= 2.625 / d1; return n1 * x * x + 0.984375
 }
 
-export interface TitleAnimState { opacity: number; dy: number; scale: number; blur: number; reveal: number }
+export interface TitleAnimState { opacity: number; dy: number; dx: number; scale: number; blur: number; reveal: number; wipe: number }
 
 /**
  * Animation state for a title at local progress `p` (0..1) over a clip of `durSec` seconds.
@@ -105,7 +115,7 @@ export interface TitleAnimState { opacity: number; dy: number; scale: number; bl
  * and export both apply these, so the editor matches the video.
  */
 export function titleAnim(anim: TitleAnimation | undefined, p: number, durSec: number, amount = 1): TitleAnimState {
-  const flat: TitleAnimState = { opacity: 1, dy: 0, scale: 1, blur: 0, reveal: 1 }
+  const flat: TitleAnimState = { opacity: 1, dy: 0, dx: 0, scale: 1, blur: 0, reveal: 1, wipe: 1 }
   if (!anim || anim === 'none') return flat
   const dur = Math.max(0.001, durSec)
   const inDur = Math.min(0.4, dur * 0.45), outDur = Math.min(0.3, dur * 0.35)
@@ -129,6 +139,11 @@ export function titleAnim(anim: TitleAnimation | undefined, p: number, durSec: n
     case 'zoom':       return { ...flat, opacity: fadeInOut, scale: sc(0.2 + 0.8 * eIn, 1) }
     case 'blur':       return { ...flat, opacity: fadeInOut, scale: sc(0.9 + 0.1 * eIn, 1), blur: sc((1 - eIn) * 0.28, 0) }
     case 'typewriter': return { ...flat, opacity: Math.min(1, tIn * 4) * Math.min(1, tOut * 1.4), reveal: Math.min(1, tIn) }
+    // Mask reveal — the text is uncovered left→right by a moving edge.
+    case 'wipe':       return { ...flat, opacity: Math.min(1, tIn * 4) * Math.min(1, tOut * 1.4), wipe: eIn }
+    // Energetic entrance jitter that settles as it lands.
+    case 'shake': {    const decay = Math.max(0, 1 - tIn); const tS = p * dur
+                       return { ...flat, opacity: Math.min(1, tIn * 3) * Math.min(1, tOut * 1.4), dx: Math.sin(tS * 52) * 0.06 * A * decay, dy: Math.sin(tS * 61 + 1) * 0.05 * A * decay } }
     default:           return flat
   }
 }

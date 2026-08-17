@@ -91,6 +91,7 @@ import { r2CorsEligible } from '@/lib/media-cors'
 import { MEDIA_ACCEPT, detectMediaKind, validateMediaFile } from '@/lib/media-import'
 import { interpSpeedRamp } from '@/lib/video-export/speed'
 import { pickVisibleClips, activeTitleClips, computeClipTransform, buildClipGradeFilter, buildFilter as buildFilterCss, hypePulseZoom } from '@/lib/video-export/compositor'
+import { beatPulse } from '@/lib/text-styles'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_MUSIC_VIZ_FORMAT } from '@/lib/music-viz'
 import type { ActiveClipTransition, UnderLayer } from '@/components/editor/VideoPlayer'
@@ -1327,6 +1328,7 @@ export default function VideoEditor({
         durSec: d,
         animAmount: clip.titleAnimAmount, textOpacity: clip.titleOpacity, offsetY: clip.titleOffsetY,
         activeColor: clip.titleActiveColor, activeBox: clip.titleActiveBox,
+        pulse: beatPulse(currentTime, clip.titlePulseBpm),
         font: clip.titleFont, weight: clip.titleWeight, letterSpacing: clip.titleLetterSpacing,
         uppercase: clip.titleUppercase, shadow: clip.titleShadow, glow: clip.titleGlow,
         outline: clip.titleOutline, outlineColor: clip.titleOutlineColor,

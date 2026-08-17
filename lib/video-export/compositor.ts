@@ -67,7 +67,7 @@ import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 import { followPan } from '@/lib/focus-utils'
-import { fontStack, titleAnim, titleFontPx, revealLines, titleWordStates, readableText } from '@/lib/text-styles'
+import { fontStack, titleAnim, titleFontPx, revealLines, titleWordStates, readableText, beatPulse } from '@/lib/text-styles'
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -559,14 +559,24 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   const cy = (pos === 'upper' ? H * 0.10 + blockH / 2 : pos === 'lower-third' ? H * 0.86 - blockH / 2 + lh / 2 : H / 2) + slideY + offY
   const y0 = cy - blockH / 2 + lh / 2
 
+  const scaleF = a.scale * (1 + beatPulse(t, clip.titlePulseBpm) * 0.14)   // beat-synced pulse on top of the entrance scale
   ctx.save()
   ctx.globalAlpha = Math.max(0, a.opacity * ((clip.titleOpacity ?? 100) / 100))
   ctx.filter = a.blur > 0.01 ? `blur(${(a.blur * fontSize).toFixed(1)}px)` : 'none'
-  if (a.scale !== 1) { ctx.translate(W / 2, cy); ctx.scale(a.scale, a.scale); ctx.translate(-W / 2, -cy) }
+  if (a.dx) ctx.translate(a.dx * fontSize, 0)   // shake
+  if (scaleF !== 1) { ctx.translate(W / 2, cy); ctx.scale(scaleF, scaleF); ctx.translate(-W / 2, -cy) }
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.font = `${weight} ${fontSize}px ${fontStack(clip.titleFont)}`
   try { (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${clip.titleLetterSpacing ?? -0.01}em` } catch { /* older browsers */ }
+
+  // Wipe reveal — clip to the left `wipe` fraction of the text block (uncovers left→right).
+  if (a.wipe < 0.999) {
+    const maxW = Math.max(1, ...lines.map(l => ctx.measureText(l).width))
+    ctx.beginPath()
+    ctx.rect(W / 2 - maxW / 2 - fontSize * 0.1, cy - blockH / 2 - fontSize * 0.2, maxW * a.wipe + fontSize * 0.1, blockH + fontSize * 0.4)
+    ctx.clip()
+  }
 
   // Word-by-word / word-highlight: lay out and animate each word individually (the block animation is flat).
   const wordStates = titleWordStates(anim, lines, local, clipDur, clip.titleAnimAmount ?? 1)

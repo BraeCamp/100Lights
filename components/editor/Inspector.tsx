@@ -1066,6 +1066,8 @@ export default function Inspector({
                       onChange={v => patchClip({ titleOpacity: v })} />
                     <Slider label="Nudge Y" value={selectedItem.titleOffsetY ?? 0} min={-400} max={400} step={4} unit=""
                       onChange={v => patchClip({ titleOffsetY: v || undefined })} />
+                    <Slider label="Beat Pulse" value={selectedItem.titlePulseBpm ?? 0} min={0} max={200} step={1} unit=" bpm"
+                      onChange={v => patchClip({ titlePulseBpm: v || undefined })} />
                     {/* Font + weight */}
                     <div className="flex gap-2 mt-2">
                       <div className="flex-1">
