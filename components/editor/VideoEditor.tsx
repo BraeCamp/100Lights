@@ -1318,6 +1318,7 @@ export default function VideoEditor({
       const d = clip.outPoint - clip.inPoint
       return {
         id: clip.id,
+        startTime: clip.startTime, pulseBpm: clip.titlePulseBpm,
         text: clip.titleText ?? '',
         fontSize: clip.titleFontSize ?? 48,
         color: clip.titleColor ?? '#ffffff',

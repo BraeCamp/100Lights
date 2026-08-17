@@ -7,7 +7,7 @@ import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } fr
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import MusicVizOverlay from './MusicVizOverlay'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
-import { fontStack, textShadowCss, titleAnim, titleFontPx, revealLines, titleWordStates, readableText, type TitleAnimation } from '@/lib/text-styles'
+import { fontStack, textShadowCss, titleAnim, titleFontPx, revealLines, titleWordStates, readableText, beatPulse, type TitleAnimation } from '@/lib/text-styles'
 import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { instantSpeed, sourceOffsetAt, sourceTimeAt } from '@/lib/video-export/speed'
@@ -113,6 +113,8 @@ interface ClipHint {
 // once (overlapping title clips), so the player renders a list of these on top of the video.
 export interface TitleSpec {
   id?: string
+  startTime: number        // timeline start (for recomputing progress from a smooth clock during playback)
+  pulseBpm?: number        // beat-pulse BPM (recomputed smoothly during playback)
   text: string
   fontSize: number
   color: string
@@ -168,17 +170,21 @@ function renderTitleWords(
 
 // Render one title clip as a positioned overlay (rich styling + animation + word modes). Used for every
 // active title, so overlapping titles all show.
-function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key) {
+function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key, nowSec?: number) {
   const posStyle: React.CSSProperties =
     tc.position === 'upper'       ? { top: '10%',   left: 0, right: 0 } :
     tc.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
                                     { top: '50%',   left: 0, right: 0, transform: 'translateY(-50%)' }
-  const a = titleAnim(tc.animation, tc.localProgress, tc.durSec, tc.animAmount ?? 1)
+  // During playback, recompute from a smooth RAF clock (nowSec) — the React currentTime that drives
+  // tc.localProgress only updates ~4 Hz, which made short entrances look like 2–3 frames.
+  const localProgress = nowSec != null && tc.durSec > 0 ? Math.max(0, Math.min(1, (nowSec - tc.startTime) / tc.durSec)) : tc.localProgress
+  const pulseV = nowSec != null ? beatPulse(nowSec, tc.pulseBpm) : (tc.pulse ?? 0)
+  const a = titleAnim(tc.animation, localProgress, tc.durSec, tc.animAmount ?? 1)
   const fpx = titleFontPx(tc.fontSize, stageHeight)   // frame-relative → matches export
   const opx = (tc.outline ?? 0) * stageHeight / 1080
-  const scaleF = a.scale * (1 + (tc.pulse ?? 0) * 0.14)   // beat-synced pulse on top of the entrance scale
+  const scaleF = a.scale * (1 + pulseV * 0.14)   // beat-synced pulse on top of the entrance scale
   const shownText = a.reveal < 1 ? revealLines((tc.text ?? '').split('\n'), a.reveal).join('\n') : tc.text
-  const wordStates = titleWordStates(tc.animation, (tc.text ?? '').split('\n'), tc.localProgress, tc.durSec, tc.animAmount ?? 1)
+  const wordStates = titleWordStates(tc.animation, (tc.text ?? '').split('\n'), localProgress, tc.durSec, tc.animAmount ?? 1)
   return (
     <div key={key} style={{
       position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
@@ -792,6 +798,23 @@ export default function VideoPlayer({
     return () => cancelAnimationFrame(raf)
   }, [captionStyle.karaoke, src])
 
+  // ── Title clock ───────────────────────────────────────────────────────────
+  // Title animations need finer time than React's ~4 Hz currentTime (short entrances looked like 2–3
+  // frames); an RAF reads the element clock and re-renders titles at ~30 Hz while titles are on screen.
+  const [titleT, setTitleT] = useState(0)
+  useEffect(() => {
+    if (!isPlaying || !titleOverlays?.length) return
+    let raf = 0
+    const tick = () => {
+      const el = src ? poolRef.current.get(src) : null
+      const t = el ? loopBaseRef.current + el.currentTime + timeOffsetRef.current : currentTimeRef.current
+      setTitleT(prev => Math.abs(prev - t) >= 0.03 ? Math.round(t * 30) / 30 : prev)
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [isPlaying, titleOverlays, src])
+
   // ── LUT overlay (WebGL) ───────────────────────────────────────────────────
   // Draws the active clip's frames through the GPU LUT into a visible canvas
   // covering the raw element. Skipped while frame-blend / optical-flow own the
@@ -1353,7 +1376,7 @@ export default function VideoPlayer({
           )}
 
         {/* Title overlays — every active title clip on top of the video (all overlapping ones show) */}
-        {titleOverlays?.map((tc, i) => renderTitleSpec(tc, stage.height, tc.id ?? i))}
+        {titleOverlays?.map((tc, i) => renderTitleSpec(tc, stage.height, tc.id ?? i, isPlaying ? titleT : undefined))}
 
         {/* Music-visual overlays — canvas visuals over the video, reacting to the
             media analyser (falls back to an idle animation when it's silent). */}
