@@ -126,6 +126,8 @@ export interface TitleSpec {
   animAmount?: number
   textOpacity?: number
   offsetY?: number
+  offsetX?: number
+  align?: 'left' | 'center' | 'right'
   activeColor?: string
   activeBox?: boolean
   pulse?: number           // beat-pulse value 0..1 at the current time (computed by the caller)
@@ -187,10 +189,10 @@ function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key, now
   const wordStates = titleWordStates(tc.animation, (tc.text ?? '').split('\n'), localProgress, tc.durSec, tc.animAmount ?? 1)
   return (
     <div key={key} style={{
-      position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
+      position: 'absolute', zIndex: 10, textAlign: tc.align ?? 'center', padding: '0 6%',
       pointerEvents: 'none', opacity: a.opacity * ((tc.textOpacity ?? 100) / 100),
       ...posStyle,   // MUST come before `transform` — else its translateY(-50%) overrides the composed transform (dropping offsetY → all lines pile up centered)
-      transform: `${posStyle.transform ?? ''} translate(${(a.dx * fpx).toFixed(1)}px, ${((a.dy * fpx) + ((tc.offsetY ?? 0) * stageHeight / 1080)).toFixed(1)}px) scale(${scaleF.toFixed(3)})`,
+      transform: `${posStyle.transform ?? ''} translate(${((a.dx * fpx) + ((tc.offsetX ?? 0) * stageHeight / 1080)).toFixed(1)}px, ${((a.dy * fpx) + ((tc.offsetY ?? 0) * stageHeight / 1080)).toFixed(1)}px) scale(${scaleF.toFixed(3)})`,
       filter: a.blur > 0.01 ? `blur(${(a.blur * fpx).toFixed(1)}px)` : undefined,
     }}>
       {wordStates ? renderTitleWords(wordStates, { fpx, color: tc.color, activeColor: tc.activeColor || '#fde047', activeBox: !!tc.activeBox, weight: tc.weight ?? 700, fontFamily: fontStack(tc.font), letterSpacing: tc.letterSpacing ?? -0.01 }) : (

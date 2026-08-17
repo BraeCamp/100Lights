@@ -560,12 +560,17 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   const y0 = cy - blockH / 2 + lh / 2
 
   const scaleF = a.scale * (1 + beatPulse(t, clip.titlePulseBpm) * 0.14)   // beat-synced pulse on top of the entrance scale
+  const align = clip.titleAlign ?? 'center'
+  const offX = (clip.titleOffsetX ?? 0) * (H / 1080)
+  const ax = align === 'left' ? W * 0.06 : align === 'right' ? W * 0.94 : W / 2   // horizontal anchor
+  // Left edge of a line's box given its measured width, per alignment.
+  const boxLeft = (w: number) => align === 'left' ? ax : align === 'right' ? ax - w : ax - w / 2
   ctx.save()
   ctx.globalAlpha = Math.max(0, a.opacity * ((clip.titleOpacity ?? 100) / 100))
   ctx.filter = a.blur > 0.01 ? `blur(${(a.blur * fontSize).toFixed(1)}px)` : 'none'
-  if (a.dx) ctx.translate(a.dx * fontSize, 0)   // shake
-  if (scaleF !== 1) { ctx.translate(W / 2, cy); ctx.scale(scaleF, scaleF); ctx.translate(-W / 2, -cy) }
-  ctx.textAlign = 'center'
+  if (a.dx || offX) ctx.translate(a.dx * fontSize + offX, 0)   // shake + horizontal nudge
+  if (scaleF !== 1) { ctx.translate(ax, cy); ctx.scale(scaleF, scaleF); ctx.translate(-ax, -cy) }
+  ctx.textAlign = align
   ctx.textBaseline = 'middle'
   ctx.font = `${weight} ${fontSize}px ${fontStack(clip.titleFont)}`
   try { (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${clip.titleLetterSpacing ?? -0.01}em` } catch { /* older browsers */ }
@@ -574,7 +579,7 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   if (a.wipe < 0.999) {
     const maxW = Math.max(1, ...lines.map(l => ctx.measureText(l).width))
     ctx.beginPath()
-    ctx.rect(W / 2 - maxW / 2 - fontSize * 0.1, cy - blockH / 2 - fontSize * 0.2, maxW * a.wipe + fontSize * 0.1, blockH + fontSize * 0.4)
+    ctx.rect(boxLeft(maxW) - fontSize * 0.1, cy - blockH / 2 - fontSize * 0.2, maxW * a.wipe + fontSize * 0.1, blockH + fontSize * 0.4)
     ctx.clip()
   }
 
@@ -629,7 +634,7 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
     shown.forEach((ln, i) => {
       if (!ln) return
       const m = ctx.measureText(ln), padX = fontSize * 0.28, padY = fontSize * 0.14
-      roundRect(ctx, W / 2 - m.width / 2 - padX, y0 + i * lh - lh / 2 + padY * 0.4, m.width + padX * 2, lh - padY * 0.2, fontSize * 0.14)
+      roundRect(ctx, boxLeft(m.width) - padX, y0 + i * lh - lh / 2 + padY * 0.4, m.width + padX * 2, lh - padY * 0.2, fontSize * 0.14)
       ctx.fill()
     })
   }
@@ -642,17 +647,17 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
       ctx.lineJoin = 'round'; ctx.miterLimit = 2
       ctx.strokeStyle = clip.titleOutlineColor || '#000'; ctx.lineWidth = clip.titleOutline * (H / 1080) * 2
       ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0
-      ctx.strokeText(ln, W / 2, ly)
+      ctx.strokeText(ln, ax, ly)
     }
     // Glow (draw the fill twice with a colored shadow), then the soft drop shadow.
     if (clip.titleGlow) {
       ctx.shadowColor = clip.titleGlow; ctx.shadowBlur = fontSize * 0.5; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0
-      ctx.fillStyle = paint; ctx.fillText(ln, W / 2, ly); ctx.fillText(ln, W / 2, ly)
+      ctx.fillStyle = paint; ctx.fillText(ln, ax, ly); ctx.fillText(ln, ax, ly)
     }
     if ((clip.titleShadow ?? bg === 'transparent')) { ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = fontSize * 0.1; ctx.shadowOffsetY = fontSize * 0.04 }
     else { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0 }
     ctx.fillStyle = paint
-    ctx.fillText(ln, W / 2, ly)
+    ctx.fillText(ln, ax, ly)
   })
   ctx.restore()
 }

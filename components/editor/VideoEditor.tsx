@@ -1328,6 +1328,7 @@ export default function VideoEditor({
         localProgress: d > 0 ? Math.max(0, Math.min(1, (currentTime - clip.startTime) / d)) : 0,
         durSec: d,
         animAmount: clip.titleAnimAmount, textOpacity: clip.titleOpacity, offsetY: clip.titleOffsetY,
+        offsetX: clip.titleOffsetX, align: clip.titleAlign,
         activeColor: clip.titleActiveColor, activeBox: clip.titleActiveBox,
         pulse: beatPulse(currentTime, clip.titlePulseBpm), gradient: clip.titleGradient,
         font: clip.titleFont, weight: clip.titleWeight, letterSpacing: clip.titleLetterSpacing,

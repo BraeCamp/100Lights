@@ -144,6 +144,8 @@ export interface TimelineItem {
   titleOpacity?: number        // overall text opacity 0–100 (default 100)
   titleOffsetY?: number        // vertical nudge from the position anchor (px at 1080 ref; +down). Lets
                                // several title clips stack into one paragraph (e.g. line-by-line kinetic text)
+  titleOffsetX?: number        // horizontal nudge (px at 1080 ref; +right)
+  titleAlign?: 'left' | 'center' | 'right'   // horizontal anchor/alignment (default center)
   titleActiveColor?: string    // highlight color for the active word (word-highlight animation)
   titleActiveBox?: boolean     // draw a solid rounded box (in titleActiveColor) behind the active word (Hormozi caption look)
   titlePulseBpm?: number       // beat-synced scale pulse at this BPM (0/absent = off); see lib/text-styles beatPulse

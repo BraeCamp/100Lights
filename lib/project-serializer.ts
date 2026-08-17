@@ -70,6 +70,8 @@ export interface SerializedClip {
   titleAnimAmount?: number
   titleOpacity?: number
   titleOffsetY?: number
+  titleOffsetX?: number
+  titleAlign?: 'left' | 'center' | 'right'
   titleActiveColor?: string
   titleActiveBox?: boolean
   titlePulseBpm?: number
@@ -253,6 +255,8 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       titleAnimAmount:  item.titleAnimAmount,
       titleOpacity:     item.titleOpacity,
       titleOffsetY:     item.titleOffsetY,
+      titleOffsetX:     item.titleOffsetX,
+      titleAlign:       item.titleAlign,
       titleActiveColor: item.titleActiveColor,
       titleActiveBox:   item.titleActiveBox,
       titlePulseBpm:    item.titlePulseBpm,
@@ -379,6 +383,8 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     titleAnimAmount:  clip.titleAnimAmount,
     titleOpacity:     clip.titleOpacity,
     titleOffsetY:     clip.titleOffsetY,
+    titleOffsetX:     clip.titleOffsetX,
+    titleAlign:       clip.titleAlign,
     titleActiveColor: clip.titleActiveColor,
     titleActiveBox:   clip.titleActiveBox,
     titlePulseBpm:    clip.titlePulseBpm,

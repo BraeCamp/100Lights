@@ -153,13 +153,13 @@ function buildMontage(chips, seconds, tmp) {
 
 // Real footage (Pexels/local mp4) as the background + 100LIGHTS chrome overlay, in one pass.
 // Footage is inlined as a data: URL so the file:// page plays it without a CORS-blocked fetch.
-function videoBg(sc, AC, SEC) {
+function videoBg(sc, AC, SEC, bare) {
   const footageDataUrl = `data:video/mp4;base64,${readFileSync(`${D}/${sc.footage}`).toString('base64')}`
   return `<style>*{margin:0}html,body{height:100%;background:#000;overflow:hidden}#v,#c{position:absolute;inset:0;width:100vw;height:100vh}#v{object-fit:cover}</style>
 <video id=v muted playsinline></video><canvas id=c></canvas>
 <script>
 const W=${W},H=${H},c=document.getElementById('c');c.width=W;c.height=H;const x=c.getContext('2d');
-const AC=${JSON.stringify(AC)},SEC=${SEC},LABEL=${JSON.stringify(sc.label || '')},CAP=${JSON.stringify(sc.caption2 || 'NOW SPINNING')},CRED=${JSON.stringify(sc.credit || '')};
+const AC=${JSON.stringify(AC)},SEC=${SEC},LABEL=${JSON.stringify(sc.label || '')},CAP=${JSON.stringify(sc.caption2 || 'NOW SPINNING')},CRED=${JSON.stringify(sc.credit || '')},BARE=${bare ? 1 : 0};
 const hexa=(h,a)=>{const n=parseInt(h.slice(1),16);return 'rgba('+(n>>16&255)+','+(n>>8&255)+','+(n&255)+','+a+')';};
 const rr=(X,Y,w,h,r)=>{x.beginPath();x.moveTo(X+r,Y);x.arcTo(X+w,Y,X+w,Y+h,r);x.arcTo(X+w,Y+h,X,Y+h,r);x.arcTo(X,Y+h,X,Y,r);x.arcTo(X,Y,X+w,Y,r);x.closePath();};
 const v=document.getElementById('v'); v.src=${JSON.stringify(footageDataUrl)}; let t0=0;
@@ -167,10 +167,10 @@ function draw(){const t=t0?(performance.now()-t0)/1000:0;x.clearRect(0,0,W,H);
 let g=x.createLinearGradient(0,0,0,220);g.addColorStop(0,'rgba(0,0,0,0.55)');g.addColorStop(1,'rgba(0,0,0,0)');x.fillStyle=g;x.fillRect(0,0,W,220);
 g=x.createLinearGradient(0,H-360,0,H);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,0.75)');x.fillStyle=g;x.fillRect(0,H-360,W,360);
 g=x.createRadialGradient(W/2,H*0.42,0,W/2,H*0.42,W);g.addColorStop(0,hexa(AC,0.05));g.addColorStop(1,'rgba(0,0,0,0)');x.fillStyle=g;x.fillRect(0,0,W,H);
-x.textAlign='left';x.fillStyle='#fff';x.font='800 30px system-ui,Arial';x.fillText('100LIGHTS',48,84);
+if(!BARE){x.textAlign='left';x.fillStyle='#fff';x.font='800 30px system-ui,Arial';x.fillText('100LIGHTS',48,84);
 x.font='600 14px ui-monospace,monospace';x.fillStyle=hexa('#ffffff',0.7);x.fillText('MADE IN 100LIGHTS',48,110);
 x.fillStyle=hexa('#ffffff',0.82);x.font='600 24px ui-monospace,monospace';x.fillText(CAP,48,H-150);
-x.fillStyle=AC;x.font='800 64px system-ui,Arial';x.fillText(LABEL,48,H-92);
+x.fillStyle=AC;x.font='800 64px system-ui,Arial';x.fillText(LABEL,48,H-92);}
 x.fillStyle=AC;rr(48,H-232,64,6,3);x.fill();
 if(CRED){x.textAlign='right';x.fillStyle=hexa('#ffffff',0.5);x.font='500 15px system-ui,Arial';x.fillText(CRED,W-40,H-40);}
 x.textAlign='left';x.fillStyle=hexa('#ffffff',0.18);rr(48,H-64,W-96,4,2);x.fill();
@@ -278,6 +278,18 @@ function bakeAudio(audioSpecs, finalDur, tmp) {
   return out
 }
 
+// Editable brand + title/caption title clips for the video-bg short (vinyl-video) — placed in the corners
+// (left-aligned) to match the baked overlay, but now fully editable.
+function vinylVideoClips(sc, accent, dur) {
+  const base = { inPoint: 0, outPoint: dur, startTime: 0, trackId: 't1', contentType: 'title', captions: [], titleAlign: 'left', titleShadow: true }
+  return [
+    { id: randomUUID(), color: '#ece9fd', label: '100LIGHTS', ...base, titleText: '100LIGHTS', titleFontSize: 30, titleColor: '#ffffff', titlePosition: 'upper', titleOffsetY: -72, titleFont: 'anton', titleWeight: 800, titleLetterSpacing: 0.01 },
+    { id: randomUUID(), color: '#ece9fd', label: 'MADE IN 100LIGHTS', ...base, titleText: 'MADE IN 100LIGHTS', titleFontSize: 15, titleColor: '#cbd5e1', titlePosition: 'upper', titleOffsetY: -46, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.06 },
+    { id: randomUUID(), color: accent, label: sc.label || 'Title', ...base, titleText: sc.label || 'Title', titleFontSize: 60, titleColor: accent, titlePosition: 'lower-third', titleOffsetY: 44, titleFont: 'anton', titleWeight: 800 },
+    { id: randomUUID(), color: '#ece9fd', label: sc.caption2 || 'NOW SPINNING', ...base, titleText: sc.caption2 || 'NOW SPINNING', titleFontSize: 22, titleColor: '#e2e8f0', titlePosition: 'lower-third', titleOffsetY: -18, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 },
+  ]
+}
+
 async function buildOne(browser, folderId, sc) {
   const tmp = mkdtempSync(join(tmpdir(), 'bs-'))
   try {
@@ -315,7 +327,7 @@ async function buildOne(browser, folderId, sc) {
     else if (sc.renderer === 'imessage') videoPath = await recordCanvas(browser, fakeIMsg(sc.chatTitle, sc.messages, accent, seconds), seconds, tmp)
     else if (sc.renderer === 'tier') videoPath = await recordCanvas(browser, tierList(sc.heading, sc.tiers, sc.chips, accent, seconds), seconds, tmp)
     else if (sc.renderer === 'vinyl') videoPath = await recordCanvas(browser, vinyl(sc.label, sc.caption2 || 'NOW SPINNING', accent, seconds), seconds, tmp)
-    else if (sc.renderer === 'video-bg') videoPath = await recordCanvas(browser, videoBg(sc, accent, seconds), seconds, tmp)
+    else if (sc.renderer === 'video-bg') videoPath = await recordCanvas(browser, videoBg(sc, accent, seconds, !BAKED), seconds, tmp)
     else if (sc.renderer === 'bounce') {
       const tempo = JSON.parse(readFileSync(cfprojFile("filtered_house"), "utf8")).dawProject.tempo || 122
       const bd = bounceGrid(seconds, tempo); videoPath = await recordCanvas(browser, bounce(bd.onsets, bd.xs, accent, seconds), seconds, tmp)
@@ -387,8 +399,10 @@ async function buildOne(browser, folderId, sc) {
     clips = [{ id: randomUUID(), color: accent, label: sc.title, inPoint: 0, outPoint: finalDur, startTime: 0, trackId: 'v1', mediaRefId: vidId, contentType: 'video', captions: [] }]
     for (const a of audioSpecs) clips.push({ id: randomUUID(), color: '#34d399', label: a.label, inPoint: 0, outPoint: a.dur, startTime: a.startTime, trackId: 'a1', mediaRefId: fileMedia.get(a.file), contentType: 'audio', captions: [] })
 
-    // Editable, styled TITLE clips on a Text track (kinetic/quiz/POV) — nothing baked into the video.
-    const titleClips = (sc.renderer === 'text' && Array.isArray(sc.lines) && sc.lines.length) ? textTitleClips(sc.lines, finalDur, accent) : []
+    // Editable, styled TITLE clips on a Text track — kinetic/quiz/POV text, or the brand+title overlay for
+    // video-bg (vinyl). Nothing baked into the video (the visual was rendered bare).
+    const titleClips = (sc.renderer === 'text' && Array.isArray(sc.lines) && sc.lines.length) ? textTitleClips(sc.lines, finalDur, accent)
+      : sc.renderer === 'video-bg' ? vinylVideoClips(sc, accent, finalDur) : []
     if (titleClips.length) { tracks.unshift({ id: 't1', label: 'Text', type: 'media', height: 44 }); clips.push(...titleClips) }
     summary = `editable: 1 video + ${audioSpecs.length} audio${titleClips.length ? ` + ${titleClips.length} text` : ''}`
     }

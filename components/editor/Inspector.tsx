@@ -1066,6 +1066,21 @@ export default function Inspector({
                       onChange={v => patchClip({ titleOpacity: v })} />
                     <Slider label="Nudge Y" value={selectedItem.titleOffsetY ?? 0} min={-400} max={400} step={4} unit=""
                       onChange={v => patchClip({ titleOffsetY: v || undefined })} />
+                    <Slider label="Nudge X" value={selectedItem.titleOffsetX ?? 0} min={-500} max={500} step={4} unit=""
+                      onChange={v => patchClip({ titleOffsetX: v || undefined })} />
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Align</span>
+                      <div className="flex gap-1">
+                        {(['left', 'center', 'right'] as const).map(al => {
+                          const on = (selectedItem.titleAlign ?? 'center') === al
+                          return (
+                            <button key={al} onClick={() => patchClip({ titleAlign: al === 'center' ? undefined : al })}
+                              className="px-2 py-1 rounded text-xs capitalize"
+                              style={{ background: on ? 'var(--accent-subtle)' : 'var(--bg-card)', border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`, color: on ? 'var(--accent-light)' : 'var(--text-secondary)' }}>{al}</button>
+                          )
+                        })}
+                      </div>
+                    </div>
                     <Slider label="Beat Pulse" value={selectedItem.titlePulseBpm ?? 0} min={0} max={200} step={1} unit=" bpm"
                       onChange={v => patchClip({ titlePulseBpm: v || undefined })} />
                     {/* Gradient text fill */}
