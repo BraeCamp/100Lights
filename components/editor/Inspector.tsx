@@ -1050,6 +1050,8 @@ export default function Inspector({
                     )}
                     <Slider label="Text Opacity" value={selectedItem.titleOpacity ?? 100} min={0} max={100} step={1} unit="%"
                       onChange={v => patchClip({ titleOpacity: v })} />
+                    <Slider label="Nudge Y" value={selectedItem.titleOffsetY ?? 0} min={-400} max={400} step={4} unit=""
+                      onChange={v => patchClip({ titleOffsetY: v || undefined })} />
                     {/* Font + weight */}
                     <div className="flex gap-2 mt-2">
                       <div className="flex-1">

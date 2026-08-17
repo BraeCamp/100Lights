@@ -240,30 +240,24 @@ function variantsFor(songKey, genre, n) {
   return templates.slice(0, Math.max(1, n)).map((t, i) => ({ id: `auto-${genre}-${i}`, ...base, ...t }))
 }
 
-// Turn config `lines` ({ text, at, accent? }) into editable, styled, animated TITLE clips — one clip per
-// "phrase" (consecutive lines with small gaps are grouped and joined with \n). Nothing baked: each clip
-// is retimable/restylable in the studio, and looks baked-quality (big Futura, glow/outline on the accent
-// phrase, "rise" reveal). The visual behind them is the plain bgCard.
+// Turn config `lines` ({ text, at, accent? }) into editable TITLE clips that REPLICATE the original baked
+// look: ONE clip per line, each appearing at its own time (stagger) and holding to the end, stacked into a
+// centered paragraph via titleOffsetY, the accent line coloured. Clean styling — a subtle drop shadow, NO
+// glow/outline (that read as gaudy) — bold system font at ~4% height. Every line is separately editable.
 function textTitleClips(lines, seconds, accent) {
-  const groups = []
-  for (const ln of lines) {
-    const g = groups[groups.length - 1]
-    if (g && ln.at - g.lastAt <= 1.8) { g.texts.push(ln.text); g.hot = g.hot || !!ln.accent; g.lastAt = ln.at }
-    else groups.push({ at: ln.at, lastAt: ln.at, texts: [ln.text], hot: !!ln.accent })
-  }
-  return groups.map((g, i) => {
-    const next = groups[i + 1]
-    const start = Math.max(0, +(g.at - 0.15).toFixed(2))
-    const end = next ? Math.max(start + 0.6, +(next.at - 0.1).toFixed(2)) : seconds
+  const n = lines.length
+  const SIZE = 44                        // ~4% of frame height (1080 ref), matching the baked textCard
+  const STEP = Math.round(SIZE * 1.28)   // line spacing (px at 1080 ref)
+  return lines.map((ln, i) => {
+    const start = Math.max(0, +((ln.at ?? 0) - 0.15).toFixed(2))
     return {
-      id: randomUUID(), color: g.hot ? accent : '#e9e6ff', label: g.texts[0].slice(0, 24),
-      inPoint: 0, outPoint: +(end - start).toFixed(2), startTime: start, trackId: 't1',
+      id: randomUUID(), color: ln.accent ? accent : '#e9e6ff', label: (ln.text || '').slice(0, 24),
+      inPoint: 0, outPoint: +(seconds - start).toFixed(2), startTime: start, trackId: 't1',
       contentType: 'title', captions: [],
-      // titleFontSize is a fraction of frame height (1080 ref): 64 ≈ 6% tall, 74 ≈ 6.9% for the punchline.
-      titleText: g.texts.join('\n'), titleFontSize: g.hot ? 74 : 64, titleColor: g.hot ? accent : '#ffffff',
-      titlePosition: 'center', titleAnimation: 'kinetic', titleFont: 'futura', titleWeight: 800,
-      titleLetterSpacing: -0.02, titleShadow: true,
-      titleGlow: g.hot ? accent : undefined, titleOutline: g.hot ? 3 : 0, titleOutlineColor: '#0a0812',
+      titleText: ln.text, titleFontSize: SIZE, titleColor: ln.accent ? accent : '#ffffff',
+      titlePosition: 'center', titleOffsetY: Math.round((i - (n - 1) / 2) * STEP),
+      titleAnimation: 'kinetic', titleFont: 'system', titleWeight: 800, titleLetterSpacing: -0.01,
+      titleShadow: true,   // clean: subtle drop shadow only, no glow/outline
     }
   })
 }

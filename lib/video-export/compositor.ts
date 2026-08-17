@@ -519,7 +519,8 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   const shown = revealLines(lines, a.reveal)   // typewriter: partial text (layout still uses full lines)
 
   const blockH = lines.length * lh
-  const cy = (pos === 'upper' ? H * 0.10 + blockH / 2 : pos === 'lower-third' ? H * 0.86 - blockH / 2 + lh / 2 : H / 2) + slideY
+  const offY = (clip.titleOffsetY ?? 0) * (H / 1080)   // frame-relative vertical nudge (stacking)
+  const cy = (pos === 'upper' ? H * 0.10 + blockH / 2 : pos === 'lower-third' ? H * 0.86 - blockH / 2 + lh / 2 : H / 2) + slideY + offY
   const y0 = cy - blockH / 2 + lh / 2
 
   ctx.save()

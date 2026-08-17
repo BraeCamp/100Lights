@@ -83,6 +83,7 @@ export type UnderLayer =
       durSec: number
       animAmount?: number
       textOpacity?: number
+      offsetY?: number
       // Rich styling (lib/text-styles) — so a title on a lower track looks as good as the top one.
       font?: string
       weight?: number
@@ -172,6 +173,7 @@ interface Props {
     durSec: number           // clip duration in seconds (animation in/out windows)
     animAmount?: number      // effect intensity (0–2, default 1)
     textOpacity?: number     // overall text opacity 0–100 (default 100)
+    offsetY?: number         // vertical nudge (px at 1080 ref)
     font?: string            // rich styling (lib/text-styles)
     weight?: number
     letterSpacing?: number
@@ -1109,7 +1111,7 @@ export default function VideoPlayer({
               <div key={layer.id} style={{
                 position: 'absolute', zIndex: 1, textAlign: 'center', padding: '0 5%', pointerEvents: 'none',
                 opacity: la.opacity * ((layer.textOpacity ?? 100) / 100),
-                transform: `${posStyle.transform ?? ''} translateY(${(la.dy * fpx).toFixed(1)}px) scale(${la.scale.toFixed(3)})`,
+                transform: `${posStyle.transform ?? ''} translateY(${((la.dy * fpx) + ((layer.offsetY ?? 0) * stage.height / 1080)).toFixed(1)}px) scale(${la.scale.toFixed(3)})`,
                 filter: la.blur > 0.01 ? `blur(${(la.blur * fpx).toFixed(1)}px)` : undefined,
                 ...posStyle,
               }}>
@@ -1282,7 +1284,7 @@ export default function VideoPlayer({
             <div style={{
               position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
               pointerEvents: 'none', opacity: a.opacity * ((tc.textOpacity ?? 100) / 100),
-              transform: `${posStyle.transform ?? ''} translateY(${(a.dy * fpx).toFixed(1)}px) scale(${a.scale.toFixed(3)})`,
+              transform: `${posStyle.transform ?? ''} translateY(${((a.dy * fpx) + ((tc.offsetY ?? 0) * stage.height / 1080)).toFixed(1)}px) scale(${a.scale.toFixed(3)})`,
               filter: a.blur > 0.01 ? `blur(${(a.blur * fpx).toFixed(1)}px)` : undefined,
               ...posStyle,
             }}>

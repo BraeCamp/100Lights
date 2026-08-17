@@ -142,6 +142,8 @@ export interface TimelineItem {
   titleAnimation?: import('@/lib/text-styles').TitleAnimation   // default 'none'; see lib/text-styles titleAnim
   titleAnimAmount?: number     // animation intensity multiplier (0–2, default 1) — how much the effect moves
   titleOpacity?: number        // overall text opacity 0–100 (default 100)
+  titleOffsetY?: number        // vertical nudge from the position anchor (px at 1080 ref; +down). Lets
+                               // several title clips stack into one paragraph (e.g. line-by-line kinetic text)
   // ── Rich text styling (see lib/text-styles) — the font library + effects ──
   titleFont?: string           // FONT_LIBRARY id (default 'system')
   titleWeight?: number         // 400–900 (default 700)
