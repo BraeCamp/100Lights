@@ -284,7 +284,7 @@ function vinylVideoClips(sc, accent, dur) {
   const base = { inPoint: 0, outPoint: dur, startTime: 0, trackId: 't1', contentType: 'title', captions: [], titleAlign: 'left', titleShadow: true }
   return [
     { id: randomUUID(), color: '#ece9fd', label: '100LIGHTS', ...base, titleText: '100LIGHTS', titleFontSize: 30, titleColor: '#ffffff', titlePosition: 'upper', titleOffsetY: -72, titleFont: 'anton', titleWeight: 800, titleLetterSpacing: 0.01 },
-    { id: randomUUID(), color: '#ece9fd', label: 'MADE IN 100LIGHTS', ...base, titleText: 'MADE IN 100LIGHTS', titleFontSize: 15, titleColor: '#cbd5e1', titlePosition: 'upper', titleOffsetY: -46, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.06 },
+    { id: randomUUID(), color: '#ece9fd', label: 'MADE IN 100LIGHTS', ...base, titleText: 'MADE IN 100LIGHTS', titleFontSize: 15, titleColor: '#cbd5e1', titlePosition: 'upper', titleOffsetY: -34, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.06 },
     { id: randomUUID(), color: accent, label: sc.label || 'Title', ...base, titleText: sc.label || 'Title', titleFontSize: 60, titleColor: accent, titlePosition: 'lower-third', titleOffsetY: 44, titleFont: 'anton', titleWeight: 800 },
     { id: randomUUID(), color: '#ece9fd', label: sc.caption2 || 'NOW SPINNING', ...base, titleText: sc.caption2 || 'NOW SPINNING', titleFontSize: 22, titleColor: '#e2e8f0', titlePosition: 'lower-third', titleOffsetY: -18, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 },
   ]
