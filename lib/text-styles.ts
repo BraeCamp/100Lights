@@ -43,6 +43,49 @@ export interface TextStyle {
   outlineColor?: string    // default black
 }
 
+// ── Title animation ─────────────────────────────────────────────────────────
+// Punchy, professional in/out reveals for title clips — the kind you'd otherwise bake into the video.
+// Shared by preview (CSS transform) and export (canvas transform) so they match exactly.
+export type TitleAnimation = 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom'
+export const TITLE_ANIMATIONS: { value: TitleAnimation; label: string }[] = [
+  { value: 'none',     label: 'None' },
+  { value: 'fade',     label: 'Fade' },
+  { value: 'rise',     label: 'Rise' },
+  { value: 'slide-up', label: 'Slide up' },
+  { value: 'pop',      label: 'Pop' },
+  { value: 'drop',     label: 'Drop' },
+  { value: 'zoom',     label: 'Zoom' },
+]
+
+const easeOutCubic = (x: number) => 1 - Math.pow(1 - x, 3)
+// easeOutBack — overshoots past 1 then settles, for a springy "pop".
+const easeOutBack = (x: number) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2) }
+
+/**
+ * Animation state for a title at local progress `p` (0..1) over a clip of `durSec` seconds.
+ * `dy` is a vertical offset as a FRACTION of the font size (positive = down); multiply by fontSize.
+ * `scale` is a unitless multiplier around the text's own center. Both preview and export apply these.
+ */
+export function titleAnim(anim: TitleAnimation | undefined, p: number, durSec: number): { opacity: number; dy: number; scale: number } {
+  const flat = { opacity: 1, dy: 0, scale: 1 }
+  if (!anim || anim === 'none') return flat
+  const dur = Math.max(0.001, durSec)
+  const inDur = Math.min(0.4, dur * 0.45), outDur = Math.min(0.3, dur * 0.35)
+  const tSec = p * dur
+  const tIn = Math.max(0, Math.min(1, tSec / inDur))                 // 0→1 as it enters
+  const tOut = Math.max(0, Math.min(1, (dur - tSec) / outDur))       // 1→0 as it leaves
+  const fadeInOut = Math.min(1, tIn * 1.2) * Math.min(1, tOut * 1.4)
+  switch (anim) {
+    case 'fade':     return { opacity: fadeInOut, dy: 0, scale: 1 }
+    case 'slide-up': return { opacity: Math.min(1, tIn * 1.5), dy: (1 - easeOutCubic(tIn)) * 0.5, scale: 1 }
+    case 'rise':     return { opacity: fadeInOut, dy: (1 - easeOutCubic(tIn)) * 0.9, scale: 1 }
+    case 'drop':     return { opacity: fadeInOut, dy: -(1 - easeOutCubic(tIn)) * 0.9, scale: 1 }
+    case 'pop':      return { opacity: Math.min(1, tIn * 2) * Math.min(1, tOut * 1.6), dy: 0, scale: 0.6 + 0.4 * easeOutBack(tIn) }
+    case 'zoom':     return { opacity: fadeInOut, dy: 0, scale: 0.2 + 0.8 * easeOutCubic(tIn) }
+    default:         return flat
+  }
+}
+
 // A CSS text-shadow chain that composes the requested effects (shadow + glow + outline).
 export function textShadowCss(s: TextStyle | undefined, fontSize: number): string {
   const parts: string[] = []

@@ -46,6 +46,11 @@ const sz=L.map(l=>l.size||(l.accent?66:50)),lh=sz.map(s=>s*1.3),bk=lh.reduce((a,
 for(let i=0;i<L.length;i++){const l=L[i],p=Math.max(0,Math.min(1,(t-l.at)/0.5));x.globalAlpha=p;x.font=(l.accent?'800 ':'700 ')+sz[i]+'px system-ui,Arial';x.fillStyle=l.accent?AC:'#fff';x.fillText(l.text,W/2,yy+sz[i]*0.82-(1-p)*26);yy+=lh[i];x.globalAlpha=1;}
 prog(t,SEC,AC);requestAnimationFrame(draw);}window.__ready=true;draw();</script>`
 
+// Background-only card (animated gradient + branding + progress bar, NO baked text). The words are added
+// separately as editable TITLE clips (see textTitleClips) so kinetic/quiz/POV text stays fully editable.
+const bgCard = (AC, SEC) => HEAD + `const AC=${JSON.stringify(AC)},SEC=${SEC};
+function draw(){const t=(performance.now()-t0)/1000;bg(t,AC);brand();prog(t,SEC,AC);requestAnimationFrame(draw);}window.__ready=true;draw();</script>`
+
 const fakeIMsg = (title, msgs, AC, SEC) => HEAD + `const M=${JSON.stringify(msgs)},AC=${JSON.stringify(AC)},SEC=${SEC},TITLE=${JSON.stringify(title)};
 function draw(){const t=(performance.now()-t0)/1000;x.fillStyle='#0a0812';x.fillRect(0,0,W,H);
 x.textAlign='center';x.fillStyle='#ece9fd';x.font='800 30px system-ui,Arial';x.fillText(TITLE,W/2,150);x.strokeStyle=hexa('#ffffff',0.1);x.lineWidth=1;x.beginPath();x.moveTo(60,185);x.lineTo(W-60,185);x.stroke();
@@ -235,6 +240,33 @@ function variantsFor(songKey, genre, n) {
   return templates.slice(0, Math.max(1, n)).map((t, i) => ({ id: `auto-${genre}-${i}`, ...base, ...t }))
 }
 
+// Turn config `lines` ({ text, at, accent? }) into editable, styled, animated TITLE clips — one clip per
+// "phrase" (consecutive lines with small gaps are grouped and joined with \n). Nothing baked: each clip
+// is retimable/restylable in the studio, and looks baked-quality (big Futura, glow/outline on the accent
+// phrase, "rise" reveal). The visual behind them is the plain bgCard.
+function textTitleClips(lines, seconds, accent) {
+  const groups = []
+  for (const ln of lines) {
+    const g = groups[groups.length - 1]
+    if (g && ln.at - g.lastAt <= 1.8) { g.texts.push(ln.text); g.hot = g.hot || !!ln.accent; g.lastAt = ln.at }
+    else groups.push({ at: ln.at, lastAt: ln.at, texts: [ln.text], hot: !!ln.accent })
+  }
+  return groups.map((g, i) => {
+    const next = groups[i + 1]
+    const start = Math.max(0, +(g.at - 0.15).toFixed(2))
+    const end = next ? Math.max(start + 0.6, +(next.at - 0.1).toFixed(2)) : seconds
+    return {
+      id: randomUUID(), color: g.hot ? accent : '#e9e6ff', label: g.texts[0].slice(0, 24),
+      inPoint: 0, outPoint: +(end - start).toFixed(2), startTime: start, trackId: 't1',
+      contentType: 'title', captions: [],
+      titleText: g.texts.join('\n'), titleFontSize: 72, titleColor: g.hot ? accent : '#ffffff',
+      titlePosition: 'center', titleAnimation: 'rise', titleFont: 'futura', titleWeight: 800,
+      titleLetterSpacing: -0.02, titleShadow: true,
+      titleGlow: g.hot ? accent : undefined, titleOutline: g.hot ? 3 : 0, titleOutlineColor: '#0a0812',
+    }
+  })
+}
+
 async function buildOne(browser, folderId, sc) {
   const tmp = mkdtempSync(join(tmpdir(), 'bs-'))
   try {
@@ -264,7 +296,11 @@ async function buildOne(browser, folderId, sc) {
       const hook = (sc.hook || []).map((t, i) => ({ text: t, accent: i === 1 }))
       const r = await recordFormatVideo(browser, { wavBuf: readFileSync(wavPath), songData, format: sc.format, meta: 'MADE IN 100LIGHTS', hook, seconds, root: ROOT, tmpDir: tmp, accent, dropBurst: !!sc.dropBurst })
       videoPath = r.videoPath
-    } else if (sc.renderer === 'text') videoPath = await recordCanvas(browser, textCard(sc.lines, accent, seconds), seconds, tmp)
+    } else if (sc.renderer === 'text') {
+      // Editable text: render the background WITHOUT the words (they become title clips below). Falls back
+      // to the baked textCard only if a 'text' short somehow has no lines.
+      videoPath = await recordCanvas(browser, sc.lines?.length ? bgCard(accent, seconds) : textCard(sc.lines, accent, seconds), seconds, tmp)
+    }
     else if (sc.renderer === 'imessage') videoPath = await recordCanvas(browser, fakeIMsg(sc.chatTitle, sc.messages, accent, seconds), seconds, tmp)
     else if (sc.renderer === 'tier') videoPath = await recordCanvas(browser, tierList(sc.heading, sc.tiers, sc.chips, accent, seconds), seconds, tmp)
     else if (sc.renderer === 'vinyl') videoPath = await recordCanvas(browser, vinyl(sc.label, sc.caption2 || 'NOW SPINNING', accent, seconds), seconds, tmp)
@@ -327,17 +363,21 @@ async function buildOne(browser, folderId, sc) {
     const clips = [{ id: randomUUID(), color: accent, label: sc.title, inPoint: 0, outPoint: finalDur, startTime: 0, trackId: 'v1', mediaRefId: vidId, contentType: 'video', captions: [] }]
     for (const a of audioSpecs) clips.push({ id: randomUUID(), color: '#34d399', label: a.label, inPoint: 0, outPoint: a.dur, startTime: a.startTime, trackId: 'a1', mediaRefId: fileMedia.get(a.file), contentType: 'audio', captions: [] })
 
+    // Editable, styled TITLE clips on a Text track (kinetic/quiz/POV) — nothing baked into the video.
+    const titleClips = (sc.renderer === 'text' && Array.isArray(sc.lines) && sc.lines.length) ? textTitleClips(sc.lines, finalDur, accent) : []
+    if (titleClips.length) { tracks.push({ id: 't1', label: 'Text', type: 'media', height: 44 }); clips.push(...titleClips) }
+
     const existing = await sql`SELECT id, data FROM projects WHERE user_id=${USER} AND deleted_at IS NULL AND folder_id=${folderId} AND data->>'name'=${sc.title} ORDER BY saved_at DESC LIMIT 1`
     if (existing.length) {
       const d = existing[0].data; d.media = media; d.clips = clips; d.tracks = tracks; d.postCaption = sc.caption || ''; d.savedAt = new Date().toISOString()
       await sql`UPDATE projects SET data=${JSON.stringify(d)}::jsonb, saved_at=NOW() WHERE id=${existing[0].id}`
-      console.log(`✓ updated (editable: 1 video + ${audioSpecs.length} audio)`)
+      console.log(`✓ updated (editable: 1 video + ${audioSpecs.length} audio${titleClips.length ? ` + ${titleClips.length} text` : ''})`)
     } else {
       const projId = randomUUID()
       const data = { _type: '100lights-project', version: 1, id: projId, name: sc.title, userId: USER, aspect: '9:16', audioMode: 'music', modules: ['video'], media, tracks, clips, outputs: [], captions: [], chapters: [], beatGrid: null, zoomLevel: 1, adjustments: {}, postCaption: sc.caption || '', savedAt: new Date().toISOString() }
       const slug = sc.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) + '-' + projId.slice(0, 6)
       await sql`INSERT INTO projects (id, user_id, name, slug, owner_username, saved_at, data, folder_id) VALUES (${projId}, ${USER}, ${sc.title}, ${slug}, 'braedancampbell', NOW(), ${JSON.stringify(data)}::jsonb, ${folderId})`
-      console.log(`✓ created (editable: 1 video + ${audioSpecs.length} audio)`)
+      console.log(`✓ created (editable: 1 video + ${audioSpecs.length} audio${titleClips.length ? ` + ${titleClips.length} text` : ''})`)
     }
   } catch (e) { console.log(`✗ ${e.message}`) }
   finally { rmSync(tmp, { recursive: true, force: true }) }

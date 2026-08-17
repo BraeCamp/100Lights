@@ -7,7 +7,7 @@ import { formatDisplayTime } from '@/lib/captions'
 import type { TimelineItem, VideoAdjustments, TransitionType, ClipFlag, CaptionStyle } from '@/lib/editor-types'
 import { DEFAULT_ADJUSTMENTS, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import { MUSIC_VIZ_FORMATS } from '@/lib/music-viz'
-import { FONT_LIBRARY } from '@/lib/text-styles'
+import { FONT_LIBRARY, TITLE_ANIMATIONS } from '@/lib/text-styles'
 import type { Caption, Output, ChapterMarker } from '@/lib/types'
 
 type TranscribeStatus = 'idle' | 'transcribing' | 'done' | 'error'
@@ -879,6 +879,26 @@ export default function Inspector({
                   </div>
                 </div>
 
+                {/* MOTION — freeze / reverse (video clips) */}
+                {selectedItem.contentType !== 'audio' && selectedItem.contentType !== 'title' && selectedItem.contentType !== 'musicviz' && (
+                  <div>
+                    <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>MOTION</p>
+                    <div className="flex gap-1 flex-wrap">
+                      {([
+                        { label: '❄️ Freeze', key: 'freeze' as const,  on: !!selectedItem.freeze,  title: 'Hold a single frame for the whole clip' },
+                        { label: '◀ Reverse', key: 'reverse' as const, on: !!selectedItem.reverse, title: 'Play the clip backward' },
+                      ]).map(b => (
+                        <button key={b.key} title={b.title}
+                          onClick={() => patchClip({ [b.key]: b.on ? undefined : true })}
+                          className="px-2.5 py-1 rounded text-xs"
+                          style={{ background: b.on ? 'var(--accent-subtle)' : 'var(--bg-card)', border: `1px solid ${b.on ? 'var(--accent)' : 'var(--border)'}`, color: b.on ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
+                          {b.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* MOTION BLUR */}
                 <div>
                   <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -1019,9 +1039,7 @@ export default function Inspector({
                         <select value={selectedItem.titleAnimation ?? 'none'} onChange={e => patchClip({ titleAnimation: e.target.value as any })}
                           className="w-full px-2 py-1.5 rounded text-xs"
                           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', color: 'var(--text-primary)', outline: 'none' }}>
-                          <option value="none">None</option>
-                          <option value="fade">Fade</option>
-                          <option value="slide-up">Slide Up</option>
+                          {TITLE_ANIMATIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
                         </select>
                       </div>
                     </div>

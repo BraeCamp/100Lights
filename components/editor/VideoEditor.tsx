@@ -1279,6 +1279,11 @@ export default function VideoEditor({
           position: clip.titlePosition ?? 'center',
           animation: clip.titleAnimation ?? 'none',
           localProgress: d > 0 ? Math.max(0, Math.min(1, (currentTime - clip.startTime) / d)) : 0,
+          durSec: d,
+          // Rich styling so a title on a lower track renders as richly as the top one.
+          font: clip.titleFont, weight: clip.titleWeight, letterSpacing: clip.titleLetterSpacing,
+          uppercase: clip.titleUppercase, shadow: clip.titleShadow, glow: clip.titleGlow,
+          outline: clip.titleOutline, outlineColor: clip.titleOutlineColor,
         })
         continue
       }
@@ -1636,6 +1641,15 @@ export default function VideoEditor({
 
   const effectiveUrl: string | null = viewerClip?.url ?? null
   const effectiveContentType: ContentType | null = viewerClip?.contentType ?? null
+  // When the active clip is frozen/reversed, its element is scrubbed (not played) and the RAF clock drives
+  // the playhead. Null otherwise, so normal playback is completely untouched.
+  const activeRemap = useMemo(() => (
+    viewerClip && (viewerClip.freeze || viewerClip.reverse) && (viewerClip.contentType === 'video' || viewerClip.contentType === 'image' || !viewerClip.contentType)
+      ? { reverse: viewerClip.reverse, freeze: viewerClip.freeze, inPoint: viewerClip.inPoint, outPoint: viewerClip.outPoint, startTime: viewerClip.startTime, speed: viewerClip.speed, speedPoints: viewerClip.speedPoints }
+      : null
+  ), [viewerClip])
+  // The element drives the playhead only for a normally-playing active video (not frozen/reversed).
+  const elementDrivesClock = !!effectiveUrl && !activeRemap
   const effectiveCaptions = localCaptions
 
   // When a clip is extended past its source duration, pass loopDuration so
@@ -1763,6 +1777,8 @@ export default function VideoEditor({
   const rafLastEmitRef = useRef(0)
   const effectiveUrlRef = useRef(effectiveUrl)
   useEffect(() => { effectiveUrlRef.current = effectiveUrl }, [effectiveUrl])
+  const elementDrivesClockRef = useRef(elementDrivesClock)
+  useEffect(() => { elementDrivesClockRef.current = elementDrivesClock }, [elementDrivesClock])
 
   useEffect(() => {
     const cancel = () => {
@@ -1772,7 +1788,7 @@ export default function VideoEditor({
       // `currentTime` (memos) is left up to a frame behind the smooth ref.
       setCurrentTime(currentTimeRef.current)
     }
-    if (!isPlaying || effectiveUrl) { cancel(); return }
+    if (!isPlaying || elementDrivesClock) { cancel(); return }
     rafLastEmitRef.current = 0
 
     // No active video — tick the clock ourselves. currentTimeRef advances every
@@ -1781,7 +1797,7 @@ export default function VideoEditor({
     function tick(ts: number) {
       if (rafPrevRef.current !== null) {
         const dt = (ts - rafPrevRef.current) / 1000
-        const cap = effectiveUrlRef.current ? Infinity : duration
+        const cap = duration
         const next = currentTimeRef.current + dt
         // Stop at end of last clip
         if (next < cap) {
@@ -1793,14 +1809,14 @@ export default function VideoEditor({
         }
       }
       rafPrevRef.current = ts
-      // Stop if a video took over
-      if (!effectiveUrlRef.current) {
+      // Stop if a normally-playing video took over the clock (frozen/reversed clips keep RAF running).
+      if (!elementDrivesClockRef.current) {
         rafRef.current = requestAnimationFrame(tick)
       }
     }
     rafRef.current = requestAnimationFrame(tick)
     return cancel
-  }, [isPlaying, effectiveUrl, duration]) // eslint-disable-line
+  }, [isPlaying, elementDrivesClock, duration]) // eslint-disable-line
 
   // Pre-play hints: tell VideoPlayer where + when each upcoming clip starts so it
   // can begin the hidden decoder running before the transition point.
@@ -4776,6 +4792,7 @@ export default function VideoEditor({
                       blendMode={viewerClip?.blendMode}
                       loopDuration={viewerLoopDuration}
                       clipInPoint={viewerClip?.inPoint ?? 0}
+                      activeRemap={activeRemap}
                       titleClip={viewerClip?.contentType === 'title' ? {
                         text: viewerClip.titleText ?? '',
                         fontSize: viewerClip.titleFontSize ?? 48,
@@ -4787,6 +4804,7 @@ export default function VideoEditor({
                         uppercase: viewerClip.titleUppercase, shadow: viewerClip.titleShadow, glow: viewerClip.titleGlow,
                         outline: viewerClip.titleOutline, outlineColor: viewerClip.titleOutlineColor,
                         localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
+                        durSec: viewerClip.outPoint - viewerClip.inPoint,
                       } : undefined}
                       onSeekRequest={handleSeek}
                       playbackRate={playbackRate}
@@ -4865,6 +4883,7 @@ export default function VideoEditor({
                       blendMode={viewerClip?.blendMode}
                       loopDuration={viewerLoopDuration}
                       clipInPoint={viewerClip?.inPoint ?? 0}
+                      activeRemap={activeRemap}
                       titleClip={viewerClip?.contentType === 'title' ? {
                         text: viewerClip.titleText ?? '',
                         fontSize: viewerClip.titleFontSize ?? 48,
@@ -4876,6 +4895,7 @@ export default function VideoEditor({
                         uppercase: viewerClip.titleUppercase, shadow: viewerClip.titleShadow, glow: viewerClip.titleGlow,
                         outline: viewerClip.titleOutline, outlineColor: viewerClip.titleOutlineColor,
                         localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
+                        durSec: viewerClip.outPoint - viewerClip.inPoint,
                       } : undefined}
                       onSeekRequest={handleSeek}
                       playbackRate={playbackRate}

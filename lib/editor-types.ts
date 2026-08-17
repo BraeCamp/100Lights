@@ -106,6 +106,8 @@ export interface TimelineItem {
   transitionDuration?: number
   enabled?: boolean    // false = clip is muted/skipped in playback
   speed?: number       // playback rate multiplier (default 1)
+  reverse?: boolean    // play the clip's video backward (visual only; see lib/video-export/speed sourceTimeAt)
+  freeze?: boolean     // hold a single frame (the inPoint) for the clip's whole duration
   // Clip visual properties
   opacity?: number     // 0–100, default 100
   flipH?: boolean
@@ -137,7 +139,7 @@ export interface TimelineItem {
   titleColor?: string          // hex, default '#ffffff'
   titleBg?: string             // hex or 'transparent', default 'transparent'
   titlePosition?: 'upper' | 'center' | 'lower-third'  // default 'center'
-  titleAnimation?: 'none' | 'fade' | 'slide-up'       // default 'none'
+  titleAnimation?: 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom'   // default 'none'; see lib/text-styles titleAnim
   // ── Rich text styling (see lib/text-styles) — the font library + effects ──
   titleFont?: string           // FONT_LIBRARY id (default 'system')
   titleWeight?: number         // 400–900 (default 700)

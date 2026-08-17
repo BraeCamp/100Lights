@@ -7,10 +7,10 @@ import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } fr
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import MusicVizOverlay from './MusicVizOverlay'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
-import { fontStack, textShadowCss } from '@/lib/text-styles'
+import { fontStack, textShadowCss, titleAnim } from '@/lib/text-styles'
 import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
-import { instantSpeed, sourceOffsetAt } from '@/lib/video-export/speed'
+import { instantSpeed, sourceOffsetAt, sourceTimeAt } from '@/lib/video-export/speed'
 import { getLutGL } from '@/lib/video-export/lut-gl'
 import type { LutData } from '@/lib/lut-parser'
 
@@ -78,8 +78,18 @@ export type UnderLayer =
       color: string
       bg: string
       position: 'upper' | 'center' | 'lower-third'
-      animation: 'none' | 'fade' | 'slide-up'
+      animation: import('@/lib/text-styles').TitleAnimation
       localProgress: number
+      durSec: number
+      // Rich styling (lib/text-styles) — so a title on a lower track looks as good as the top one.
+      font?: string
+      weight?: number
+      letterSpacing?: number
+      uppercase?: boolean
+      shadow?: boolean
+      glow?: string
+      outline?: number
+      outlineColor?: string
     }
   | {
       kind: 'image'
@@ -146,14 +156,18 @@ interface Props {
   blendMode?: string         // CSS mix-blend-mode
   loopDuration?: number      // when set, clip loops; each cycle plays clipInPoint→(clipInPoint+loopDuration)
   clipInPoint?: number       // inPoint of the active clip (used for loop reset position)
+  // Set only when the ACTIVE clip has freeze/reverse — the element is then scrubbed to sourceTimeAt each
+  // frame instead of played, and the RAF clock (not the element) drives the playhead. Null = normal.
+  activeRemap?: { reverse?: boolean; freeze?: boolean; inPoint: number; outPoint: number; startTime: number; speed?: number; speedPoints?: Array<{ t: number; speed: number }> } | null
   titleClip?: {              // populated when contentType === 'title'
     text: string
     fontSize: number
     color: string
     bg: string
     position: 'upper' | 'center' | 'lower-third'
-    animation: 'none' | 'fade' | 'slide-up'
+    animation: import('@/lib/text-styles').TitleAnimation
     localProgress: number    // 0–1 through clip duration (for animations)
+    durSec: number           // clip duration in seconds (animation in/out windows)
     font?: string            // rich styling (lib/text-styles)
     weight?: number
     letterSpacing?: number
@@ -260,7 +274,7 @@ function formatTimecode(s: number, fps = 30): string {
 
 export default function VideoPlayer({
   src, contentType, captions, currentTime, timeOffset, isPlaying,
-  adjustments, onTimeUpdate, onPlay, onPause, onMediaError, videoRef, clipLabel,
+  adjustments, onTimeUpdate, onPlay, onPause, onMediaError, videoRef, clipLabel, activeRemap = null,
   preloadSrcs = [], seekHints = {}, showOriginal = false,
   clipTransform = DEFAULT_CLIP_TRANSFORM,
   viewerZoom = 1,
@@ -775,22 +789,29 @@ export default function VideoPlayer({
   useEffect(() => {
     const video = src ? poolRef.current.get(src) : null
     if (!video) return
+    // Freeze/reverse: scrub the element to the exact source time each tick (it never plays forward).
+    if (activeRemap) {
+      const st = sourceTimeAt(activeRemap, currentTime - activeRemap.startTime)
+      if (Math.abs(video.currentTime - st) > 0.05) { try { video.currentTime = st } catch { /* seek race */ } }
+      return
+    }
     const elapsed  = Math.max(0, currentTime - timeOffset - clipInPoint)
     const srcTime  = loopDuration ? clipInPoint + (elapsed % loopDuration) : Math.max(0, currentTime - timeOffset)
     loopBaseRef.current = loopDuration ? Math.floor(elapsed / loopDuration) * loopDuration : 0
     if (Math.abs(video.currentTime - srcTime) > 0.5) video.currentTime = srcTime
-  }, [currentTime, timeOffset, src]) // eslint-disable-line
+  }, [currentTime, timeOffset, src, activeRemap]) // eslint-disable-line
 
   useEffect(() => {
     for (const [s, el] of poolRef.current) {
-      if (s === src) {
+      // A frozen/reversed active clip stays paused — the seek effect scrubs it instead of playing.
+      if (s === src && !activeRemap) {
         if (isPlaying) el.play().catch(() => {})
         else           el.pause()
       } else {
         el.pause()
       }
     }
-  }, [src, isPlaying]) // eslint-disable-line
+  }, [src, isPlaying, activeRemap]) // eslint-disable-line
 
   useEffect(() => {
     if (!isPlaying) return
@@ -1070,26 +1091,36 @@ export default function VideoPlayer({
                 ...buildClipStyle(layer.transform),
               }}
             />
-          ) : (
-            <div key={layer.id} style={{
-              position: 'absolute', zIndex: 1, textAlign: 'center', padding: '0 5%',
-              pointerEvents: 'none',
-              opacity: layer.animation === 'fade' ? Math.min(1, layer.localProgress * 4) * Math.min(1, (1 - layer.localProgress) * 4)
-                : layer.animation === 'slide-up' ? Math.min(1, layer.localProgress * 6) : 1,
-              ...(layer.position === 'upper' ? { top: '10%', left: 0, right: 0 }
-                : layer.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 }
-                : { top: '50%', left: 0, right: 0, transform: 'translateY(-50%)' }),
-            }}>
-              <span style={{
-                display: 'inline-block', fontSize: layer.fontSize, color: layer.color,
-                background: layer.bg !== 'transparent' ? layer.bg : undefined,
-                padding: layer.bg !== 'transparent' ? '4px 12px' : undefined,
-                borderRadius: layer.bg !== 'transparent' ? 4 : undefined,
-                fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.2,
-                textShadow: layer.bg === 'transparent' ? '0 1px 4px rgba(0,0,0,0.8)' : undefined,
-              }}>{layer.text}</span>
-            </div>
-          ))}
+          ) : (() => {
+            // Title on a lower track — full rich styling + shared animation, identical to the top title.
+            const la = titleAnim(layer.animation, layer.localProgress, layer.durSec)
+            const posStyle: React.CSSProperties =
+              layer.position === 'upper'       ? { top: '10%',   left: 0, right: 0 } :
+              layer.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
+                                                 { top: '50%',   left: 0, right: 0, transform: 'translateY(-50%)' }
+            return (
+              <div key={layer.id} style={{
+                position: 'absolute', zIndex: 1, textAlign: 'center', padding: '0 5%', pointerEvents: 'none',
+                opacity: la.opacity,
+                transform: `${posStyle.transform ?? ''} translateY(${(la.dy * layer.fontSize).toFixed(1)}px) scale(${la.scale.toFixed(3)})`,
+                ...posStyle,
+              }}>
+                <span style={{
+                  display: 'inline-block', fontSize: layer.fontSize, color: layer.color,
+                  fontFamily: fontStack(layer.font),
+                  background: layer.bg !== 'transparent' ? layer.bg : undefined,
+                  padding: layer.bg !== 'transparent' ? `${layer.fontSize * 0.14}px ${layer.fontSize * 0.28}px` : undefined,
+                  borderRadius: layer.bg !== 'transparent' ? layer.fontSize * 0.14 : undefined,
+                  fontWeight: layer.weight ?? 700,
+                  letterSpacing: `${layer.letterSpacing ?? -0.01}em`,
+                  textTransform: layer.uppercase ? 'uppercase' : undefined,
+                  lineHeight: 1.18, whiteSpace: 'pre-line',
+                  WebkitTextStroke: layer.outline ? `${layer.outline}px ${layer.outlineColor || '#000'}` : undefined,
+                  textShadow: textShadowCss({ shadow: layer.shadow ?? (layer.bg === 'transparent'), glow: layer.glow, outline: 0 }, layer.fontSize) || undefined,
+                }}>{layer.text}</span>
+              </div>
+            )
+          })())}
 
           {/* Transition-in: the outgoing clip's frozen last frame in its own
               element (works even when both clips share one source file) */}
@@ -1186,7 +1217,9 @@ export default function VideoPlayer({
               playsInline
               style={poolStyle(s)}
               onTimeUpdate={e => {
-                if (s !== src) return
+                // A frozen/reversed active clip must NOT drive the clock — RAF does (else the playhead
+                // would stall on freeze or run backward on reverse).
+                if (s !== src || activeRemap) return
                 onTimeUpdate(loopBaseRef.current + e.currentTarget.currentTime + timeOffset)
               }}
               onPlay={() => { if (s === src) onPlay() }}
@@ -1233,16 +1266,12 @@ export default function VideoPlayer({
             tc.position === 'upper'       ? { top: '10%',   left: 0, right: 0 } :
             tc.position === 'lower-third' ? { bottom: '12%', left: 0, right: 0 } :
                                             { top: '50%',   left: 0, right: 0, transform: 'translateY(-50%)' }
-          const opacity =
-            tc.animation === 'fade'     ? Math.min(1, tc.localProgress * 4) * Math.min(1, (1 - tc.localProgress) * 4) :
-            tc.animation === 'slide-up' ? Math.min(1, tc.localProgress * 6) : 1
-          const translateY =
-            tc.animation === 'slide-up' ? `${Math.max(0, (1 - tc.localProgress * 4) * 24)}px` : '0px'
+          const a = titleAnim(tc.animation, tc.localProgress, tc.durSec)
           return (
             <div style={{
               position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
-              pointerEvents: 'none', opacity,
-              transform: `${posStyle.transform ?? ''} translateY(${translateY})`,
+              pointerEvents: 'none', opacity: a.opacity,
+              transform: `${posStyle.transform ?? ''} translateY(${(a.dy * tc.fontSize).toFixed(1)}px) scale(${a.scale.toFixed(3)})`,
               ...posStyle,
             }}>
               <span style={{

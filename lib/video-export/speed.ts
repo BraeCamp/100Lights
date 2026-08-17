@@ -11,6 +11,8 @@ export interface SpeedClipLike {
   outPoint: number
   speed?: number
   speedPoints?: Array<{ t: number; speed: number }>
+  reverse?: boolean   // play the clip's source backward (outPoint → inPoint)
+  freeze?: boolean    // hold a single frame (the inPoint) for the whole clip
 }
 
 /** Smooth-step interpolation across the velocity keyframes (t = 0–1). */
@@ -75,4 +77,16 @@ export function sourceOffsetAt(clip: SpeedClipLike, local: number, cache?: Map<s
   const i = Math.min(INTEGRAL_STEPS - 1, Math.floor(pos))
   const frac = pos - i
   return table[i] + (table[i + 1] - table[i]) * frac
+}
+
+/**
+ * The SOURCE-media time to show at `local` timeline-seconds into the clip — the single place that folds
+ * in speed/ramp, plus the freeze (hold inPoint) and reverse (play outPoint→inPoint) effects. Preview and
+ * export both seek to this, so all effects stay in sync. Reverse/freeze are visual (they don't reverse audio).
+ */
+export function sourceTimeAt(clip: SpeedClipLike, local: number, cache?: Map<string, Float64Array>, cacheKey?: string): number {
+  if (clip.freeze) return clip.inPoint
+  const dur = clip.outPoint - clip.inPoint
+  const off = Math.min(sourceOffsetAt(clip, local, cache, cacheKey), Math.max(0, dur))
+  return clip.reverse ? clip.outPoint - off : clip.inPoint + off
 }

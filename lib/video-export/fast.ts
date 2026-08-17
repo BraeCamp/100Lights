@@ -18,7 +18,7 @@
 
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer'
 import { drawFrame, pickVisibleClips, transitionAt, type CompositorState, type MediaResolver } from './compositor'
-import { sourceOffsetAt } from './speed'
+import { sourceTimeAt } from './speed'
 import type { TimelineItem } from '@/lib/editor-types'
 
 export interface FastExportOptions {
@@ -73,7 +73,7 @@ function seekTo(v: HTMLVideoElement, t: number): Promise<void> {
 /** Source time a clip's element should show at timeline time `t` (loop-aware). */
 function sourceTimeFor(clip: TimelineItem, t: number, el: HTMLVideoElement, rampCache: Map<string, Float64Array>): number {
   const local = Math.max(0, t - clip.startTime)
-  let expected = Math.max(0, clip.inPoint + sourceOffsetAt(clip, local, rampCache, clip.id))
+  let expected = Math.max(0, sourceTimeAt(clip, local, rampCache, clip.id))
   const srcDur = el.duration
   if (isFinite(srcDur) && srcDur > 0 && expected > srcDur - 0.01) {
     const cycle = srcDur - clip.inPoint

@@ -42,6 +42,8 @@ export interface SerializedClip {
   transitionDuration?: number
   contentType?: ContentType
   speed?: number
+  reverse?: boolean
+  freeze?: boolean
   opacity?: number
   flipH?: boolean
   flipV?: boolean
@@ -64,7 +66,7 @@ export interface SerializedClip {
   titleColor?: string
   titleBg?: string
   titlePosition?: 'upper' | 'center' | 'lower-third'
-  titleAnimation?: 'none' | 'fade' | 'slide-up'
+  titleAnimation?: 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom'
   titleFont?: string
   titleWeight?: number
   titleLetterSpacing?: number
@@ -218,6 +220,8 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       transitionDuration: item.transitionDuration,
       contentType:      item.contentType,
       speed:            item.speed,
+      reverse:          item.reverse,
+      freeze:           item.freeze,
       opacity:          item.opacity,
       flipH:            item.flipH,
       flipV:            item.flipV,
@@ -335,6 +339,8 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     transitionDuration: clip.transitionDuration,
     contentType:      clip.contentType,
     speed:            clip.speed,
+    reverse:          clip.reverse,
+    freeze:           clip.freeze,
     opacity:          clip.opacity,
     flipH:            clip.flipH,
     flipV:            clip.flipV,

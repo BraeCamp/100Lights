@@ -67,7 +67,7 @@ import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 import { followPan } from '@/lib/focus-utils'
-import { fontStack } from '@/lib/text-styles'
+import { fontStack, titleAnim } from '@/lib/text-styles'
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -514,18 +514,17 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   const weight   = clip.titleWeight ?? 700
   const lh       = fontSize * 1.18
 
-  const opacity =
-    anim === 'fade'     ? Math.min(1, local * 4) * Math.min(1, (1 - local) * 4) :
-    anim === 'slide-up' ? Math.min(1, local * 6) : 1
-  const slideY = anim === 'slide-up' ? Math.max(0, (1 - local * 4) * 24) : 0
+  const a = titleAnim(anim, local, clipDur)
+  const slideY = a.dy * fontSize
 
   const blockH = lines.length * lh
   const cy = (pos === 'upper' ? H * 0.10 + blockH / 2 : pos === 'lower-third' ? H * 0.86 - blockH / 2 + lh / 2 : H / 2) + slideY
   const y0 = cy - blockH / 2 + lh / 2
 
   ctx.save()
-  ctx.globalAlpha = Math.max(0, opacity)
+  ctx.globalAlpha = Math.max(0, a.opacity)
   ctx.filter = 'none'
+  if (a.scale !== 1) { ctx.translate(W / 2, cy); ctx.scale(a.scale, a.scale); ctx.translate(-W / 2, -cy) }
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.font = `${weight} ${fontSize}px ${fontStack(clip.titleFont)}`

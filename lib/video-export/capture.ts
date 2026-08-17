@@ -13,7 +13,7 @@
  */
 
 import { drawFrame, pickVisibleClips, type CompositorState, type MediaResolver } from './compositor'
-import { instantSpeed, sourceOffsetAt } from './speed'
+import { instantSpeed, sourceTimeAt } from './speed'
 
 export interface CaptureOptions {
   state:              CompositorState
@@ -159,20 +159,28 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
       const rate = clampRate(instantSpeed(clip, local))
       if (Math.abs(el.playbackRate - rate) > 0.01) el.playbackRate = rate
 
-      let expected = Math.max(0, clip.inPoint + sourceOffsetAt(clip, local, rampCache, clip.id))
+      let expected = Math.max(0, sourceTimeAt(clip, local, rampCache, clip.id))
       const srcDur = el.duration
       if (isFinite(srcDur) && srcDur > 0 && expected > srcDur - 0.01) {
         const cycle = srcDur - clip.inPoint
         expected = cycle > 0.05 ? clip.inPoint + ((expected - clip.inPoint) % cycle) : srcDur - 0.01
       }
 
-      if (!playing.has(clip.id)) {
+      // Freeze/reverse are driven by seeking every frame (a forward-playing element can't do either),
+      // so those clips stay paused and get scrubbed to the exact source time.
+      if (clip.freeze || clip.reverse) {
         try { el.currentTime = expected } catch { /* seek race */ }
+        if (!el.paused) el.pause()
         playing.add(clip.id)
-      } else if (Math.abs(el.currentTime - expected) > 0.3) {
-        try { el.currentTime = expected } catch { /* seek race */ }
+      } else {
+        if (!playing.has(clip.id)) {
+          try { el.currentTime = expected } catch { /* seek race */ }
+          playing.add(clip.id)
+        } else if (Math.abs(el.currentTime - expected) > 0.3) {
+          try { el.currentTime = expected } catch { /* seek race */ }
+        }
+        if (el.paused) el.play().catch(() => {})   // also restarts after a loop's 'ended'
       }
-      if (el.paused) el.play().catch(() => {})   // also restarts after a loop's 'ended'
     }
     for (const id of [...playing]) {
       if (!want.has(id)) {
