@@ -246,17 +246,18 @@ function variantsFor(songKey, genre, n) {
 // glow/outline (that read as gaudy) — bold system font at ~4% height. Every line is separately editable.
 function textTitleClips(lines, seconds, accent) {
   const n = lines.length
-  const SIZE = 44                        // ~4% of frame height (1080 ref), matching the baked textCard
-  const STEP = Math.round(SIZE * 1.28)   // line spacing (px at 1080 ref)
+  // Baked textCard sizes (system-ui): regular 50px, accent 66px on a 1440-tall canvas → × 0.75 (1080 ref).
+  const STEP = 50                        // line spacing (px at 1080 ref)
+  const y0 = -(n - 1) / 2 * STEP         // top line's offset so the paragraph is centered
   return lines.map((ln, i) => {
     const start = Math.max(0, +((ln.at ?? 0) - 0.15).toFixed(2))
     return {
       id: randomUUID(), color: ln.accent ? accent : '#e9e6ff', label: (ln.text || '').slice(0, 24),
       inPoint: 0, outPoint: +(seconds - start).toFixed(2), startTime: start, trackId: 't1',
       contentType: 'title', captions: [],
-      titleText: ln.text, titleFontSize: SIZE, titleColor: ln.accent ? accent : '#ffffff',
-      titlePosition: 'center', titleOffsetY: Math.round((i - (n - 1) / 2) * STEP),
-      titleAnimation: 'kinetic', titleFont: 'anton', titleWeight: 800, titleLetterSpacing: -0.01,
+      titleText: ln.text, titleFontSize: ln.accent ? 50 : 38, titleColor: ln.accent ? accent : '#ffffff',
+      titlePosition: 'center', titleOffsetY: Math.round(y0 + i * STEP),
+      titleAnimation: 'kinetic', titleFont: 'system', titleWeight: 800, titleLetterSpacing: 0,
       titleShadow: true,   // clean: subtle drop shadow only, no glow/outline
     }
   })
@@ -280,41 +281,43 @@ function bakeAudio(audioSpecs, finalDur, tmp) {
 
 // A title clip on the Text track (t1). Shorthand for the editable-overlay clips below.
 const tclip = (dur, o) => ({ id: randomUUID(), color: o.titleColor || '#ece9fd', label: (o.titleText || '').slice(0, 24), inPoint: 0, outPoint: dur, startTime: 0, trackId: 't1', contentType: 'title', captions: [], titleShadow: true, ...o })
-// The editable "100LIGHTS" + "MADE IN 100LIGHTS" brand, top-left (replaces the baked brand()).
+// The editable "100LIGHTS" + "MADE IN 100LIGHTS" brand, top-left (replaces the baked brand()). Sizes are
+// frame-relative (px at 1080 ref) = baked-px × 0.75 (the baked canvas is 1440 tall), fonts/colors/spacing
+// matched to the baked brand() so the editable version looks the same.
 const brandClips = (dur) => [
-  tclip(dur, { titleText: '100LIGHTS', titleFontSize: 30, titleColor: '#ffffff', titlePosition: 'upper', titleAlign: 'left', titleOffsetY: -72, titleFont: 'anton', titleWeight: 800, titleLetterSpacing: 0.01 }),
-  tclip(dur, { titleText: 'MADE IN 100LIGHTS', titleFontSize: 15, titleColor: '#cbd5e1', titlePosition: 'upper', titleAlign: 'left', titleOffsetY: -34, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.06 }),
+  tclip(dur, { titleText: '100LIGHTS', titleFontSize: 22, titleColor: '#ffffff', titlePosition: 'upper', titleAlign: 'left', titleOffsetY: -66, titleFont: 'system', titleWeight: 800, titleLetterSpacing: 0 }),
+  tclip(dur, { titleText: 'MADE IN 100LIGHTS', titleFontSize: 11, titleColor: '#c9c9d4', titlePosition: 'upper', titleAlign: 'left', titleOffsetY: -38, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 }),
 ]
 
 // Editable overlay clips per renderer (for the non-baked version). The visual is rendered BARE; these
-// replace the baked brand + the title-level text. Integral animated art (record grooves, tier chips, chat
-// bubbles, notes) stays in the visual.
+// replace the baked brand + the title-level text, matched to the baked font/size/color/spacing. Integral
+// animated art (record grooves, tier chips, chat bubbles, notes) stays in the visual.
 function editableOverlayClips(sc, accent, dur) {
   const brand = brandClips(dur)
   if (sc.renderer === 'video-bg') return [
     ...brand,
-    tclip(dur, { titleText: sc.label || 'Title', titleFontSize: 60, titleColor: accent, titlePosition: 'lower-third', titleAlign: 'left', titleOffsetY: 44, titleFont: 'anton', titleWeight: 800 }),
-    tclip(dur, { titleText: sc.caption2 || 'NOW SPINNING', titleFontSize: 22, titleColor: '#e2e8f0', titlePosition: 'lower-third', titleAlign: 'left', titleOffsetY: -18, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 }),
+    tclip(dur, { titleText: sc.label || 'Title', titleFontSize: 48, titleColor: accent, titlePosition: 'lower-third', titleAlign: 'left', titleOffsetY: 64, titleFont: 'system', titleWeight: 800, titleLetterSpacing: -0.01 }),
+    tclip(dur, { titleText: sc.caption2 || 'NOW SPINNING', titleFontSize: 18, titleColor: '#d8dce8', titlePosition: 'lower-third', titleAlign: 'left', titleOffsetY: 28, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 }),
   ]
   if (sc.renderer === 'vinyl') return [
     ...brand,
-    tclip(dur, { titleText: sc.label || 'Title', titleFontSize: 30, titleColor: '#0a0812', titlePosition: 'center', titleOffsetY: -66, titleFont: 'anton', titleWeight: 800 }),   // on the record disc
-    tclip(dur, { titleText: sc.caption2 || 'NOW SPINNING', titleFontSize: 26, titleColor: '#e2e8f0', titlePosition: 'lower-third', titleOffsetY: 30, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 }),
+    tclip(dur, { titleText: sc.label || 'Title', titleFontSize: 20, titleColor: '#0a0812', titlePosition: 'center', titleOffsetY: -66, titleFont: 'system', titleWeight: 800, titleLetterSpacing: 0 }),   // on the record disc
+    tclip(dur, { titleText: sc.caption2 || 'NOW SPINNING', titleFontSize: 20, titleColor: '#d0d0dc', titlePosition: 'center', titleOffsetY: 226, titleFont: 'mono', titleWeight: 600, titleLetterSpacing: 0.02 }),
   ]
   if (sc.renderer === 'tier') return [
     ...brand,
-    tclip(dur, { titleText: sc.heading || 'Tier List', titleFontSize: 44, titleColor: '#ffffff', titlePosition: 'upper', titleOffsetY: 34, titleFont: 'anton', titleWeight: 800 }),
+    tclip(dur, { titleText: sc.heading || 'Tier List', titleFontSize: 33, titleColor: '#ffffff', titlePosition: 'upper', titleOffsetY: 30, titleFont: 'system', titleWeight: 800, titleLetterSpacing: 0 }),
   ]
   if (sc.renderer === 'imessage') return [
     ...brand,
-    tclip(dur, { titleText: sc.chatTitle || 'Messages', titleFontSize: 30, titleColor: '#ece9fd', titlePosition: 'upper', titleOffsetY: 30, titleFont: 'system', titleWeight: 800 }),
+    tclip(dur, { titleText: sc.chatTitle || 'Messages', titleFontSize: 22, titleColor: '#ece9fd', titlePosition: 'upper', titleOffsetY: 8, titleFont: 'system', titleWeight: 800, titleLetterSpacing: 0 }),
   ]
   if (sc.renderer === 'format') return [
     ...brand,
     ...(Array.isArray(sc.hook) && sc.hook.length ? sc.hook.map((line, i) => tclip(dur, {
-      titleText: line, titleFontSize: i === 1 ? 62 : 52, titleColor: i === 1 ? accent : '#ffffff',
-      titlePosition: 'center', titleOffsetY: Math.round((i - (sc.hook.length - 1) / 2) * 74), titleAnimation: 'kinetic',
-      titleFont: 'anton', titleWeight: 800,
+      titleText: line, titleFontSize: i === 1 ? 50 : 40, titleColor: i === 1 ? accent : '#ffffff',
+      titlePosition: 'center', titleOffsetY: Math.round((i - (sc.hook.length - 1) / 2) * 58), titleAnimation: 'kinetic',
+      titleFont: 'system', titleWeight: 800, titleLetterSpacing: -0.01,
     })) : []),
   ]
   return brand   // any other renderer → just the editable brand
