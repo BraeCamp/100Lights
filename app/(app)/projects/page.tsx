@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil, Check } from 'lucide-react'
+import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil, Check, ExternalLink } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { openProjectsFromFile, readProjectFile } from '@/lib/project-serializer'
 import { openMediaInStudio } from '@/lib/media-handoff'
@@ -464,7 +464,13 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
             <div
               key={row.key}
               draggable
-              onDragStart={(e) => { setDragId(row.id); e.dataTransfer.effectAllowed = 'move' }}
+              onDragStart={(e) => {
+                setDragId(row.id)
+                e.dataTransfer.effectAllowed = 'copyMove'
+                // Also carry the project URL so dragging the row onto the browser tab bar (or another
+                // window) opens it in a new tab — the internal folder-drop still uses dragId, not this.
+                try { const url = new URL(cloudHref(row), window.location.origin).href; e.dataTransfer.setData('text/uri-list', url); e.dataTransfer.setData('text/plain', url) } catch { /* origin unavailable */ }
+              }}
               onDragEnd={() => { setDragId(null); setDropFolder(null) }}
               className="group flex items-center gap-4 p-4 rounded-xl border transition-all"
               style={{ background: selected.has(row.id) ? 'var(--accent-subtle)' : 'var(--bg-card)', borderColor: selected.has(row.id) ? 'var(--accent)' : row.starred ? 'rgba(139,92,246,0.4)' : 'var(--border)', opacity: dragId === row.id ? 0.5 : 1, cursor: 'default' }}
@@ -539,6 +545,9 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
         >
           <a href={ctxMenu.href} className="flex items-center gap-2.5 px-3.5 py-2 text-sm no-underline" style={{ color: 'var(--text-primary)' }}>
             <FolderOpen size={14} /> Open
+          </a>
+          <a href={ctxMenu.href} target="_blank" rel="noopener noreferrer" onClick={() => setCtxMenu(null)} className="flex items-center gap-2.5 px-3.5 py-2 text-sm no-underline" style={{ color: 'var(--text-primary)' }}>
+            <ExternalLink size={14} /> Open in new tab
           </a>
           <button onClick={() => { toggleStar(ctxMenu.id); setCtxMenu(null) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
             <Star size={14} fill={ctxMenu.starred ? '#f59e0b' : 'none'} color={ctxMenu.starred ? '#f59e0b' : 'currentColor'} />
