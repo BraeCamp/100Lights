@@ -1280,7 +1280,7 @@ export default function VideoEditor({
           animation: clip.titleAnimation ?? 'none',
           localProgress: d > 0 ? Math.max(0, Math.min(1, (currentTime - clip.startTime) / d)) : 0,
           durSec: d,
-          animAmount: clip.titleAnimAmount, textOpacity: clip.titleOpacity, offsetY: clip.titleOffsetY,
+          animAmount: clip.titleAnimAmount, textOpacity: clip.titleOpacity, offsetY: clip.titleOffsetY, activeColor: clip.titleActiveColor,
           // Rich styling so a title on a lower track renders as richly as the top one.
           font: clip.titleFont, weight: clip.titleWeight, letterSpacing: clip.titleLetterSpacing,
           uppercase: clip.titleUppercase, shadow: clip.titleShadow, glow: clip.titleGlow,
@@ -4806,7 +4806,7 @@ export default function VideoEditor({
                         outline: viewerClip.titleOutline, outlineColor: viewerClip.titleOutlineColor,
                         localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
                         durSec: viewerClip.outPoint - viewerClip.inPoint,
-                        animAmount: viewerClip.titleAnimAmount, textOpacity: viewerClip.titleOpacity, offsetY: viewerClip.titleOffsetY,
+                        animAmount: viewerClip.titleAnimAmount, textOpacity: viewerClip.titleOpacity, offsetY: viewerClip.titleOffsetY, activeColor: viewerClip.titleActiveColor,
                       } : undefined}
                       onSeekRequest={handleSeek}
                       playbackRate={playbackRate}
@@ -4898,7 +4898,7 @@ export default function VideoEditor({
                         outline: viewerClip.titleOutline, outlineColor: viewerClip.titleOutlineColor,
                         localProgress: (() => { const d = viewerClip.outPoint - viewerClip.inPoint; return d > 0 ? Math.max(0, Math.min(1, (currentTime - viewerClip.startTime) / d)) : 0 })(),
                         durSec: viewerClip.outPoint - viewerClip.inPoint,
-                        animAmount: viewerClip.titleAnimAmount, textOpacity: viewerClip.titleOpacity, offsetY: viewerClip.titleOffsetY,
+                        animAmount: viewerClip.titleAnimAmount, textOpacity: viewerClip.titleOpacity, offsetY: viewerClip.titleOffsetY, activeColor: viewerClip.titleActiveColor,
                       } : undefined}
                       onSeekRequest={handleSeek}
                       playbackRate={playbackRate}

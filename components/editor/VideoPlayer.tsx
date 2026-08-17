@@ -7,7 +7,7 @@ import type { CaptionStyle, ProjectAspect, TransitionType, VideoAdjustments } fr
 import { aspectRatioOf, DEFAULT_CAPTION_STYLE } from '@/lib/editor-types'
 import MusicVizOverlay from './MusicVizOverlay'
 import { interpolateFocusKF, buildFocusSVGPath, type FocusKeyframe } from '@/lib/focus-utils'
-import { fontStack, textShadowCss, titleAnim, titleFontPx, revealLines } from '@/lib/text-styles'
+import { fontStack, textShadowCss, titleAnim, titleFontPx, revealLines, titleWordStates } from '@/lib/text-styles'
 import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { instantSpeed, sourceOffsetAt, sourceTimeAt } from '@/lib/video-export/speed'
@@ -84,6 +84,7 @@ export type UnderLayer =
       animAmount?: number
       textOpacity?: number
       offsetY?: number
+      activeColor?: string
       // Rich styling (lib/text-styles) — so a title on a lower track looks as good as the top one.
       font?: string
       weight?: number
@@ -106,6 +107,28 @@ export type UnderLayer =
 interface ClipHint {
   inPoint: number
   startTime: number
+}
+
+// Per-word title rendering (word-pop / word-highlight) — one flex row per line, each word its own span so
+// it can pop/scale and the active word can recolor. Mirrors the compositor's per-word draw.
+function renderTitleWords(
+  states: import('@/lib/text-styles').TitleWordState[][],
+  o: { fpx: number; color: string; activeColor: string; weight: number; fontFamily: string; letterSpacing: number },
+) {
+  return states.map((words, li) => (
+    <div key={li} style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'baseline', columnGap: o.fpx * 0.26, lineHeight: 1.18 }}>
+      {words.map((w, i) => (
+        <span key={i} style={{
+          display: 'inline-block',
+          opacity: Math.max(0, w.opacity),
+          transform: w.scale !== 1 ? `scale(${w.scale.toFixed(3)})` : undefined,
+          color: w.active ? o.activeColor : o.color,
+          fontWeight: o.weight, fontFamily: o.fontFamily, fontSize: o.fpx, letterSpacing: `${o.letterSpacing}em`,
+          textShadow: `0 ${Math.round(o.fpx * 0.04)}px ${Math.round(o.fpx * 0.08)}px rgba(0,0,0,0.55)`,
+        }}>{w.text}</span>
+      ))}
+    </div>
+  ))
 }
 
 interface Props {
@@ -174,6 +197,7 @@ interface Props {
     animAmount?: number      // effect intensity (0–2, default 1)
     textOpacity?: number     // overall text opacity 0–100 (default 100)
     offsetY?: number         // vertical nudge (px at 1080 ref)
+    activeColor?: string     // active-word highlight color (word-highlight)
     font?: string            // rich styling (lib/text-styles)
     weight?: number
     letterSpacing?: number
@@ -1107,6 +1131,7 @@ export default function VideoPlayer({
             const fpx = titleFontPx(layer.fontSize, stage.height)   // frame-relative → matches export
             const opx = (layer.outline ?? 0) * stage.height / 1080
             const shownText = la.reveal < 1 ? revealLines((layer.text ?? '').split('\n'), la.reveal).join('\n') : layer.text
+            const wordStates = titleWordStates(layer.animation, (layer.text ?? '').split('\n'), layer.localProgress, layer.durSec, layer.animAmount ?? 1)
             return (
               <div key={layer.id} style={{
                 position: 'absolute', zIndex: 1, textAlign: 'center', padding: '0 5%', pointerEvents: 'none',
@@ -1115,6 +1140,7 @@ export default function VideoPlayer({
                 filter: la.blur > 0.01 ? `blur(${(la.blur * fpx).toFixed(1)}px)` : undefined,
                 ...posStyle,
               }}>
+                {wordStates ? renderTitleWords(wordStates, { fpx, color: layer.color, activeColor: layer.activeColor || '#fde047', weight: layer.weight ?? 700, fontFamily: fontStack(layer.font), letterSpacing: layer.letterSpacing ?? -0.01 }) : (
                 <span style={{
                   display: 'inline-block', fontSize: fpx, color: layer.color,
                   fontFamily: fontStack(layer.font),
@@ -1128,6 +1154,7 @@ export default function VideoPlayer({
                   WebkitTextStroke: opx ? `${opx}px ${layer.outlineColor || '#000'}` : undefined,
                   textShadow: textShadowCss({ shadow: layer.shadow ?? (layer.bg === 'transparent'), glow: layer.glow, outline: 0 }, fpx) || undefined,
                 }}>{shownText}</span>
+                )}
               </div>
             )
           })())}
@@ -1280,6 +1307,7 @@ export default function VideoPlayer({
           const fpx = titleFontPx(tc.fontSize, stage.height)   // frame-relative → matches export
           const opx = (tc.outline ?? 0) * stage.height / 1080
           const shownText = a.reveal < 1 ? revealLines((tc.text ?? '').split('\n'), a.reveal).join('\n') : tc.text
+          const wordStates = titleWordStates(tc.animation, (tc.text ?? '').split('\n'), tc.localProgress, tc.durSec, tc.animAmount ?? 1)
           return (
             <div style={{
               position: 'absolute', zIndex: 10, textAlign: 'center', padding: '0 5%',
@@ -1288,6 +1316,7 @@ export default function VideoPlayer({
               filter: a.blur > 0.01 ? `blur(${(a.blur * fpx).toFixed(1)}px)` : undefined,
               ...posStyle,
             }}>
+              {wordStates ? renderTitleWords(wordStates, { fpx, color: tc.color, activeColor: tc.activeColor || '#fde047', weight: tc.weight ?? 700, fontFamily: fontStack(tc.font), letterSpacing: tc.letterSpacing ?? -0.01 }) : (
               <span style={{
                 display: 'inline-block',
                 fontSize: fpx,
@@ -1304,6 +1333,7 @@ export default function VideoPlayer({
                 WebkitTextStroke: opx ? `${opx}px ${tc.outlineColor || '#000'}` : undefined,
                 textShadow: textShadowCss({ shadow: tc.shadow ?? (tc.bg === 'transparent'), glow: tc.glow, outline: 0 }, fpx) || undefined,
               }}>{shownText}</span>
+              )}
             </div>
           )
         })()}

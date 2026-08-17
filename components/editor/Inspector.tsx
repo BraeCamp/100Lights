@@ -1022,6 +1022,14 @@ export default function Inspector({
                           onChange={e => patchClip({ titleBg: e.target.value })}
                           className="w-full h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
                       </div>
+                      {selectedItem.titleAnimation === 'word-highlight' && (
+                        <div className="flex-1">
+                          <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Active word</p>
+                          <input type="color" value={selectedItem.titleActiveColor ?? '#fde047'}
+                            onChange={e => patchClip({ titleActiveColor: e.target.value })}
+                            className="w-full h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
+                        </div>
+                      )}
                     </div>
                     <div className="flex gap-2">
                       <div className="flex-1">

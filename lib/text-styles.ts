@@ -52,20 +52,23 @@ export interface TextStyle {
 // ── Title animation ─────────────────────────────────────────────────────────
 // Punchy, professional in/out reveals for title clips — the kind you'd otherwise bake into the video.
 // Shared by preview (CSS transform) and export (canvas transform) so they match exactly.
-export type TitleAnimation = 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom' | 'kinetic' | 'blur' | 'bounce' | 'typewriter'
+export type TitleAnimation = 'none' | 'fade' | 'slide-up' | 'rise' | 'pop' | 'drop' | 'zoom' | 'kinetic' | 'blur' | 'bounce' | 'typewriter' | 'word-pop' | 'word-highlight'
 export const TITLE_ANIMATIONS: { value: TitleAnimation; label: string }[] = [
-  { value: 'none',       label: 'None' },
-  { value: 'kinetic',    label: 'Kinetic (baked look)' },
-  { value: 'fade',       label: 'Fade' },
-  { value: 'rise',       label: 'Rise' },
-  { value: 'slide-up',   label: 'Slide up' },
-  { value: 'drop',       label: 'Drop' },
-  { value: 'pop',        label: 'Pop' },
-  { value: 'bounce',     label: 'Bounce' },
-  { value: 'zoom',       label: 'Zoom' },
-  { value: 'blur',       label: 'Blur in' },
-  { value: 'typewriter', label: 'Typewriter' },
+  { value: 'none',           label: 'None' },
+  { value: 'kinetic',        label: 'Kinetic (baked look)' },
+  { value: 'word-pop',       label: 'Word by word ⭐' },
+  { value: 'word-highlight', label: 'Word highlight (karaoke) ⭐' },
+  { value: 'fade',           label: 'Fade' },
+  { value: 'rise',           label: 'Rise' },
+  { value: 'slide-up',       label: 'Slide up' },
+  { value: 'drop',           label: 'Drop' },
+  { value: 'pop',            label: 'Pop' },
+  { value: 'bounce',         label: 'Bounce' },
+  { value: 'zoom',           label: 'Zoom' },
+  { value: 'blur',           label: 'Blur in' },
+  { value: 'typewriter',     label: 'Typewriter' },
 ]
+export const isWordAnimation = (a: TitleAnimation | undefined): boolean => a === 'word-pop' || a === 'word-highlight'
 
 const easeOutCubic = (x: number) => 1 - Math.pow(1 - x, 3)
 // easeOutBack — overshoots past 1 then settles, for a springy "pop".
@@ -115,6 +118,45 @@ export function titleAnim(anim: TitleAnimation | undefined, p: number, durSec: n
     case 'typewriter': return { ...flat, opacity: Math.min(1, tIn * 4) * Math.min(1, tOut * 1.4), reveal: Math.min(1, tIn) }
     default:           return flat
   }
+}
+
+// ── Word-by-word animation ──────────────────────────────────────────────────
+// The dominant social-caption technique (2026): words reveal/pop one at a time ('word-pop'), or all show
+// with the "spoken" word highlighted in an accent colour + slight scale, cycling through ('word-highlight').
+export interface TitleWordState { text: string; opacity: number; scale: number; active: boolean }
+
+/**
+ * Per-word render state for the word animations, grouped by line (words split on spaces; explicit \n keeps
+ * line breaks). Returns null for non-word animations so the renderer uses the normal line path. Timing is
+ * distributed evenly across the clip (no speech track needed), held long enough to read (the 2026 guidance
+ * of ~2–4 words visible, each ~0.6–0.9s). `amount` scales the pop/highlight intensity.
+ */
+export function titleWordStates(anim: TitleAnimation | undefined, textLines: string[], p: number, durSec: number, amount = 1): TitleWordState[][] | null {
+  if (!isWordAnimation(anim)) return null
+  const A = Math.max(0, amount)
+  const perLine = textLines.map(l => l.split(/\s+/).filter(w => w.length))
+  const N = perLine.reduce((n, ws) => n + ws.length, 0) || 1
+  const dur = Math.max(0.001, durSec)
+  const tSec = p * dur
+  const outFade = Math.min(1, (dur - tSec) / 0.25 * 1.4)
+  let gi = 0
+  return perLine.map(ws => ws.map(word => {
+    const i = gi++
+    if (anim === 'word-pop') {
+      // Reveal words in reading order over the first ~60% of the clip; each pops in with a spring.
+      const stagger = Math.min(0.16, (dur * 0.6) / N)
+      const prog = Math.max(0, Math.min(1, (tSec - i * stagger) / 0.28))
+      const opacity = Math.max(0, Math.min(1, prog * 2.2) * Math.max(0, outFade))
+      const scale = 1 + ((0.5 + 0.5 * easeOutBack(prog)) - 1) * A
+      return { text: word, opacity, scale, active: false }
+    }
+    // word-highlight: all words in, the active (cycling) word brightened + slightly scaled.
+    const inProg = Math.min(1, tSec / 0.3)
+    const activeIdx = Math.min(N - 1, Math.floor(Math.max(0, Math.min(1, tSec / (dur * 0.92))) * N))
+    const active = i === activeIdx
+    const opacity = Math.max(0, Math.min(1, inProg) * Math.max(0, outFade)) * (active ? 1 : 0.62)
+    return { text: word, opacity, scale: active ? 1 + 0.12 * A : 1, active }
+  }))
 }
 
 /** Truncate multi-line text to the first `reveal` fraction of its characters (typewriter). */

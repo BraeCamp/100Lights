@@ -67,7 +67,7 @@ import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 import { followPan } from '@/lib/focus-utils'
-import { fontStack, titleAnim, titleFontPx, revealLines } from '@/lib/text-styles'
+import { fontStack, titleAnim, titleFontPx, revealLines, titleWordStates } from '@/lib/text-styles'
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -531,6 +531,33 @@ function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number,
   ctx.textBaseline = 'middle'
   ctx.font = `${weight} ${fontSize}px ${fontStack(clip.titleFont)}`
   try { (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${clip.titleLetterSpacing ?? -0.01}em` } catch { /* older browsers */ }
+
+  // Word-by-word / word-highlight: lay out and animate each word individually (the block animation is flat).
+  const wordStates = titleWordStates(anim, lines, local, clipDur, clip.titleAnimAmount ?? 1)
+  if (wordStates) {
+    const activeColor = clip.titleActiveColor || '#fde047'
+    const spaceW = ctx.measureText(' ').width
+    ctx.textAlign = 'left'
+    wordStates.forEach((words, li) => {
+      const ly = y0 + li * lh
+      const widths = words.map(w => ctx.measureText(w.text).width)
+      const totalW = widths.reduce((s, w) => s + w, 0) + spaceW * Math.max(0, words.length - 1)
+      let x = W / 2 - totalW / 2
+      words.forEach((w, i) => {
+        const cxw = x + widths[i] / 2
+        ctx.save()
+        ctx.globalAlpha = Math.max(0, w.opacity * ((clip.titleOpacity ?? 100) / 100))
+        if (w.scale !== 1) { ctx.translate(cxw, ly); ctx.scale(w.scale, w.scale); ctx.translate(-cxw, -ly) }
+        ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = fontSize * 0.1; ctx.shadowOffsetY = fontSize * 0.04
+        ctx.fillStyle = w.active ? activeColor : color
+        ctx.fillText(w.text, x, ly)
+        ctx.restore()
+        x += widths[i] + spaceW
+      })
+    })
+    ctx.restore()
+    return
+  }
 
   // Highlight box behind the text (per line), if requested.
   if (bg !== 'transparent') {
