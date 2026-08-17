@@ -1,0 +1,11 @@
+Self-hosted display fonts used for title/caption text in the video editor.
+All are licensed under the SIL Open Font License 1.1 (OFL) — free for commercial use,
+including bundling and embedding in exported video.
+
+  anton.woff2         Anton         © Vernon Adams / Google Fonts   (OFL-1.1)
+  bebasneue.woff2     Bebas Neue    © Ryoichi Tsunekawa, Dharma Type (OFL-1.1)
+  archivoblack.woff2  Archivo Black © Omnibus-Type                  (OFL-1.1)
+  poppins-800.woff2   Poppins 800   © Indian Type Foundry / Jonny Pinhorn (OFL-1.1)
+
+Files are latin-subset woff2 pulled from Google Fonts (fonts.gstatic.com).
+Full license text: https://openfontlicense.org  •  Sources: https://fonts.google.com

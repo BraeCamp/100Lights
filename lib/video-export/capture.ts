@@ -12,7 +12,7 @@
  * lib/video-export/audio-mix and played through a MediaStreamAudioDestination.
  */
 
-import { drawFrame, pickVisibleClips, type CompositorState, type MediaResolver } from './compositor'
+import { drawFrame, pickVisibleClips, ensureTitleFonts, type CompositorState, type MediaResolver } from './compositor'
 import { instantSpeed, sourceTimeAt } from './speed'
 
 export interface CaptureOptions {
@@ -99,6 +99,8 @@ export async function captureTimeline(opts: CaptureOptions): Promise<Blob> {
     try { await im.decode() } catch { /* broken image draws nothing */ }
     elByClip.set(clip.id, im)
   }
+
+  await ensureTitleFonts(state.items)   // self-hosted display faces must be loaded before the canvas draws
 
   // ── 2. Canvas + compositor ─────────────────────────────────────────────────
   const canvas = document.createElement('canvas')

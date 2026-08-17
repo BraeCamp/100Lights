@@ -6,6 +6,11 @@
 export interface FontDef { id: string; name: string; stack: string; category: 'sans' | 'serif' | 'mono' | 'display' | 'hand' }
 
 export const FONT_LIBRARY: FontDef[] = [
+  // Self-hosted display faces (public/fonts, OFL) — the bold/condensed styles social captions actually use.
+  { id: 'anton',       name: 'Anton ⭐',      stack: '"Anton", Impact, "Arial Narrow Bold", sans-serif',                   category: 'display' },
+  { id: 'bebas',       name: 'Bebas Neue ⭐', stack: '"Bebas Neue", "Oswald", Impact, sans-serif',                         category: 'display' },
+  { id: 'archivo',     name: 'Archivo Black ⭐', stack: '"Archivo Black", "Arial Black", Gadget, sans-serif',              category: 'display' },
+  { id: 'poppins',     name: 'Poppins ⭐',    stack: '"Poppins", "Futura", "Century Gothic", sans-serif',                  category: 'sans' },
   { id: 'system',      name: 'System',       stack: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',            category: 'sans' },
   { id: 'helvetica',   name: 'Helvetica',    stack: '"Helvetica Neue", Helvetica, Arial, sans-serif',                     category: 'sans' },
   { id: 'futura',      name: 'Futura',       stack: 'Futura, "Century Gothic", "Trebuchet MS", sans-serif',               category: 'sans' },

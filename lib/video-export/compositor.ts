@@ -499,6 +499,26 @@ function drawMusicViz(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: numb
   ctx.restore()
 }
 
+// Preload the (self-hosted) fonts any title clip uses, so the export canvas draws the real glyphs instead
+// of a fallback. Best-effort: never throws, times out at 2.5s. The preview loads them via CSS already.
+export async function ensureTitleFonts(items: TimelineItem[]): Promise<void> {
+  if (typeof document === 'undefined' || !('fonts' in document)) return
+  const fams = new Set<string>()
+  for (const it of items) {
+    if (it.contentType !== 'title' || !it.titleFont) continue
+    const first = fontStack(it.titleFont).split(',')[0].trim().replace(/^["']|["']$/g, '')
+    if (first) fams.add(first)
+  }
+  if (!fams.size) return
+  const fonts = (document as Document & { fonts: { load(f: string): Promise<unknown>; ready: Promise<unknown> } }).fonts
+  try {
+    await Promise.race([
+      Promise.all([...fams].map(f => fonts.load(`800 64px "${f}"`).catch(() => {}))),
+      new Promise(r => setTimeout(r, 2500)),
+    ])
+  } catch { /* fall back to system faces */ }
+}
+
 function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number, W: number, H: number) {
   let text = clip.titleText ?? ''
   if (!text) return

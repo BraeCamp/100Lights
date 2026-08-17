@@ -256,7 +256,7 @@ function textTitleClips(lines, seconds, accent) {
       contentType: 'title', captions: [],
       titleText: ln.text, titleFontSize: SIZE, titleColor: ln.accent ? accent : '#ffffff',
       titlePosition: 'center', titleOffsetY: Math.round((i - (n - 1) / 2) * STEP),
-      titleAnimation: 'kinetic', titleFont: 'system', titleWeight: 800, titleLetterSpacing: -0.01,
+      titleAnimation: 'kinetic', titleFont: 'anton', titleWeight: 800, titleLetterSpacing: -0.01,
       titleShadow: true,   // clean: subtle drop shadow only, no glow/outline
     }
   })

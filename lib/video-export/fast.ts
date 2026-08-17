@@ -17,7 +17,7 @@
  */
 
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer'
-import { drawFrame, pickVisibleClips, transitionAt, type CompositorState, type MediaResolver } from './compositor'
+import { drawFrame, pickVisibleClips, transitionAt, ensureTitleFonts, type CompositorState, type MediaResolver } from './compositor'
 import { sourceTimeAt } from './speed'
 import type { TimelineItem } from '@/lib/editor-types'
 
@@ -131,6 +131,8 @@ export async function exportTimelineFast(opts: FastExportOptions): Promise<Blob>
     try { await im.decode() } catch { /* keep going; a broken image just draws nothing */ }
     elByClip.set(clip.id, im)
   }
+
+  await ensureTitleFonts(state.items)   // self-hosted display faces must be loaded before the canvas draws
 
   const canvas = document.createElement('canvas')
   canvas.width = state.width
