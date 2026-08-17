@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil, Check, ExternalLink } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
@@ -25,7 +25,26 @@ interface CloudSummary {
   folderId: string | null
 }
 
-interface FolderRec { id: string; name: string; parentId: string | null }
+interface FolderRec { id: string; name: string; parentId: string | null; banner: string | null; logo: string | null }
+
+// Downscale a picked image to a data URL small enough to store on the folder row. Banners go to JPEG
+// (opaque, wide); logos stay PNG so transparency is preserved.
+function fileToDataUrl(file: File, maxW: number, maxH: number, mime: 'image/jpeg' | 'image/png', quality = 0.85): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width, maxH / img.height)
+      const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale))
+      const c = document.createElement('canvas'); c.width = w; c.height = h
+      c.getContext('2d')!.drawImage(img, 0, 0, w, h)
+      URL.revokeObjectURL(url)
+      try { resolve(c.toDataURL(mime, quality)) } catch (e) { reject(e) }
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that image.')) }
+    img.src = url
+  })
+}
 
 interface LocalFileHandle {
   name: string
@@ -62,7 +81,13 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
 
   const [opening, setOpening]   = useState<string | null>(null)
   const [ctxMenu, setCtxMenu]   = useState<{ id: string; starred: boolean; x: number; y: number; href: string; folderId: string | null } | null>(null)
-  const [confirmDel, setConfirmDel] = useState<{ kind: 'cloud'; id: string; name: string } | { kind: 'local'; name: string } | null>(null)
+  const [confirmDel, setConfirmDel] = useState<
+    | { kind: 'cloud'; id: string; name: string }
+    | { kind: 'local'; name: string }
+    | { kind: 'folder'; id: string; name: string }
+    | { kind: 'bulk'; ids: string[] }
+    | null
+  >(null)
 
   // ── Search / sort ──
   const [search, setSearch] = useState('')
@@ -76,12 +101,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
   const [folderMenu, setFolderMenu] = useState<boolean>(false)   // "Move to folder" submenu open in ctx menu
   const [folderCtx, setFolderCtx] = useState<{ id: string; name: string; x: number; y: number } | null>(null)
   const folderCount = useCallback((id: string) => cloud.filter(p => p.folderId === id).length, [cloud])
-  async function renameFolder(id: string, current: string) {
-    const n = window.prompt('Rename folder:', current)?.trim().slice(0, 60)
-    if (!n || n === current) return
-    setFolders(prev => prev.map(f => f.id === id ? { ...f, name: n } : f))
-    await fetch('/api/folders', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name: n }) }).catch(() => {})
-  }
+  const [editFolder, setEditFolder] = useState<FolderRec | null>(null)   // folder open in the edit modal
   const loadFolders = useCallback(() => {
     if (!isSignedIn) return
     fetch('/api/folders').then(r => (r.ok ? r.json() : [])).then((d: FolderRec[]) => setFolders(Array.isArray(d) ? d : [])).catch(() => {})
@@ -94,8 +114,12 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
     const r = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, parentId }) })
     if (r.ok) loadFolders()
   }
+  // Confirmation flows through the in-app ConfirmDialog (see performDelete) — no native window.confirm,
+  // so it works the same in the browser, desktop (Electron) and mobile shells.
+  function requestDeleteFolder(id: string, name: string) {
+    setConfirmDel({ kind: 'folder', id, name })
+  }
   async function deleteFolder(id: string) {
-    if (!window.confirm('Delete this folder? Projects inside it stay, just unfiled.')) return
     await fetch(`/api/folders?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
     if (activeFolder === id) setActiveFolder(null)
     setCloud(prev => prev.map(p => p.folderId === id ? { ...p, folderId: null } : p))
@@ -125,13 +149,10 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
       return next
     })
   }
-  async function bulkDelete() {
+  function bulkDelete() {
     const ids = [...selected]
     if (!ids.length) return
-    if (!window.confirm(`Move ${ids.length} project${ids.length > 1 ? 's' : ''} to trash? They can be restored for 1 month.`)) return
-    setCloud(prev => prev.filter(p => !selected.has(p.id)))
-    clearSel()
-    await Promise.allSettled(ids.map(id => fetch(`/api/projects/${id}`, { method: 'DELETE' })))
+    setConfirmDel({ kind: 'bulk', ids })
   }
   function bulkMove(folderId: string | null) {
     const ids = [...selected]
@@ -229,7 +250,14 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
     const target = confirmDel
     if (!target) return
     setConfirmDel(null)
-    if (target.kind === 'cloud') {
+    if (target.kind === 'folder') {
+      await deleteFolder(target.id)
+    } else if (target.kind === 'bulk') {
+      const ids = target.ids
+      setCloud(prev => prev.filter(p => !ids.includes(p.id)))
+      clearSel()
+      await Promise.allSettled(ids.map(id => fetch(`/api/projects/${id}`, { method: 'DELETE' })))
+    } else if (target.kind === 'cloud') {
       setCloud(prev => prev.filter(p => p.id !== target.id))
       await fetch(`/api/projects/${target.id}`, { method: 'DELETE' }).catch(() => loadCloud())
     } else {
@@ -274,10 +302,11 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
   // ── Merge + sort (starred cloud first, then newest across both) ──
   const q = search.trim().toLowerCase()
   const rows: Row[] = [
-    // When a folder is selected, show only its cloud projects (local files aren't
-    // folder-able). "All" shows everything.
+    // A project lives INSIDE its folder, not also at the root: the root view (activeFolder null) shows
+    // only unfiled projects, and a folder shows only its own. Exception: an active search is global, so
+    // a filed project is still findable from anywhere. Local files aren't folder-able → root only.
     ...cloud
-      .filter(p => activeFolder === null || p.folderId === activeFolder)
+      .filter(p => q ? true : (p.folderId ?? null) === activeFolder)
       .map((p): Row => ({ source: 'cloud', key: `c:${p.id}`, ts: Date.parse(p.savedAt) || 0, name: p.name, id: p.id, starred: p.starred, clips: p.clips, media: p.media, thumbnail: p.thumbnail, slug: p.slug, username: p.username, folderId: p.folderId })),
     ...(activeFolder === null ? local.map((f): Row => ({ source: 'local', key: `l:${f.name}`, ts: f.modifiedAt ?? 0, name: f.name.replace(/\.(cfproj|zip)$/i, ''), file: f })) : []),
   ]
@@ -396,6 +425,13 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
         )
       })()}
 
+      {/* ── Folder header banner (only inside a folder that has a custom banner/logo) ── */}
+      {isSignedIn && activeFolder && (() => {
+        const f = folders.find(x => x.id === activeFolder)
+        if (!f || (!f.banner && !f.logo)) return null
+        return <FolderHeader folder={f} onEdit={() => setEditFolder(f)} />
+      })()}
+
       {/* ── Multi-select action bar (appears when 1+ projects are selected) ── */}
       {selected.size > 0 && (
         <div className="sticky top-2 z-20 flex items-center gap-2 p-2.5 mb-2 rounded-xl border shadow-sm" style={{ background: 'var(--accent-subtle)', borderColor: 'var(--accent)' }}>
@@ -431,7 +467,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
         <div className="flex flex-col gap-2">
           {/* Folders live IN the list (like a file browser): click to open, drag a project onto one
               to file it, right-click for rename / subfolder / delete. */}
-          {isSignedIn && folders.filter(f => (f.parentId ?? null) === activeFolder).map(f => {
+          {isSignedIn && folders.filter(f => (q ? f.name.toLowerCase().includes(q) : (f.parentId ?? null) === activeFolder)).map(f => {
             const n = folderCount(f.id)
             const over = dropFolder === f.id
             const kids = folders.some(x => x.parentId === f.id)
@@ -446,15 +482,13 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
                 className="group flex items-center gap-4 p-4 rounded-xl border transition-all cursor-pointer"
                 style={{ background: over ? 'var(--accent-subtle)' : 'var(--bg-card)', borderColor: over ? 'var(--accent)' : 'var(--border)' }}
               >
-                <div className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--border)' }}>
-                  <Folder size={18} color="var(--accent-light)" />
-                </div>
+                <FolderThumb folder={f} />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{f.name}</div>
                   <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{n} project{n !== 1 ? 's' : ''}{kids ? ' · has subfolders' : ''}</div>
                 </div>
                 <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>Folder</span>
-                <button onClick={(e) => { e.stopPropagation(); setFolderCtx({ id: f.id, name: f.name, x: e.clientX, y: e.clientY }) }} className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg" style={{ color: 'var(--text-muted)' }} title="Rename / subfolder / delete">
+                <button onClick={(e) => { e.stopPropagation(); setEditFolder(f) }} className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg" style={{ color: 'var(--text-muted)' }} title="Edit folder (name, banner, logo)">
                   <Pencil size={14} />
                 </button>
               </div>
@@ -590,27 +624,49 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <button onClick={() => { const { id, name } = folderCtx; setFolderCtx(null); renameFolder(id, name) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
-            <Pencil size={14} /> Rename
+          <button onClick={() => { const f = folders.find(x => x.id === folderCtx.id); setFolderCtx(null); if (f) setEditFolder(f) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
+            <Pencil size={14} /> Edit…
           </button>
           <button onClick={() => { const id = folderCtx.id; setFolderCtx(null); createFolder(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: 'var(--text-primary)' }}>
             <FolderPlus size={14} /> New subfolder…
           </button>
-          <button onClick={() => { const id = folderCtx.id; setFolderCtx(null); deleteFolder(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: '#ef4444' }}>
+          <button onClick={() => { const { id, name } = folderCtx; setFolderCtx(null); requestDeleteFolder(id, name) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: '#ef4444' }}>
             <Trash2 size={14} /> Delete
           </button>
         </div>
       )}
 
+      {editFolder && (
+        <FolderEditModal
+          folder={editFolder}
+          onClose={() => setEditFolder(null)}
+          onSaved={(u) => { setFolders(prev => prev.map(f => f.id === u.id ? { ...f, ...u } : f)); setEditFolder(null) }}
+          onDelete={() => { const f = editFolder; setEditFolder(null); requestDeleteFolder(f.id, f.name) }}
+        />
+      )}
+
       <ConfirmDialog
         open={!!confirmDel}
-        title={confirmDel?.kind === 'local' ? 'Delete this file?' : 'Move to trash?'}
+        title={
+          confirmDel?.kind === 'local'  ? 'Delete this file?'
+          : confirmDel?.kind === 'folder' ? 'Delete this folder?'
+          : confirmDel?.kind === 'bulk'   ? `Move ${confirmDel.ids.length} project${confirmDel.ids.length > 1 ? 's' : ''} to trash?`
+          : 'Move to trash?'
+        }
         message={
           confirmDel?.kind === 'local'
             ? `“${confirmDel.name}” will be permanently deleted from your computer.`
-            : confirmDel ? `“${confirmDel.name}” will be moved to trash and permanently deleted after 1 month.` : ''
+          : confirmDel?.kind === 'folder'
+            ? `“${confirmDel.name}” will be removed. The projects inside it aren’t deleted — they just become unfiled.`
+          : confirmDel?.kind === 'bulk'
+            ? 'They can be restored from Trash for 1 month.'
+          : confirmDel ? `“${confirmDel.name}” will be moved to trash and permanently deleted after 1 month.` : ''
         }
-        confirmLabel={confirmDel?.kind === 'local' ? 'Delete file' : 'Move to trash'}
+        confirmLabel={
+          confirmDel?.kind === 'local'  ? 'Delete file'
+          : confirmDel?.kind === 'folder' ? 'Delete folder'
+          : 'Move to trash'
+        }
         onConfirm={performDelete}
         onCancel={() => setConfirmDel(null)}
       />
@@ -629,6 +685,169 @@ function SourceBadge({ source }: { source: 'cloud' | 'local' }) {
       {cloud ? <Cloud size={10} /> : <HardDrive size={10} />}
       {cloud ? 'Cloud' : 'Local'}
     </span>
+  )
+}
+
+// ── Folder visuals (banner + logo) ─────────────────────────────────────────
+
+// The little thumbnail on a folder row. Falls back to the default icon; with a custom banner/logo it
+// shows the banner behind the logo, separated by a bottom opacity gradient.
+function FolderThumb({ folder }: { folder: FolderRec }) {
+  const { banner, logo } = folder
+  if (!banner && !logo) {
+    return (
+      <div className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'var(--border)' }}>
+        <Folder size={18} color="var(--accent-light)" />
+      </div>
+    )
+  }
+  return (
+    <div className="w-14 h-9 rounded-lg shrink-0 relative overflow-hidden" style={{ background: 'var(--border)' }}>
+      {banner && <img src={banner} alt="" className="absolute inset-0 w-full h-full object-cover" />}
+      {banner && logo && <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent 75%)' }} />}
+      <div className="absolute inset-0 flex items-center justify-center">
+        {logo
+          ? <img src={logo} alt="" className="max-w-[72%] max-h-[72%] object-contain" style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))' }} />
+          : <Folder size={16} color="#fff" style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.6))' }} />}
+      </div>
+    </div>
+  )
+}
+
+// The channel-style banner shown at the top of an opened folder: banner image fading through an opacity
+// gradient into the card, with the logo overlapping the bottom-left.
+function FolderHeader({ folder, onEdit }: { folder: FolderRec; onEdit: () => void }) {
+  const { banner, logo, name } = folder
+  return (
+    <div className="relative mb-4 rounded-2xl overflow-hidden border" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+      <div className="relative h-28 sm:h-36">
+        {banner
+          ? <img src={banner} alt="" className="absolute inset-0 w-full h-full object-cover" />
+          : <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-subtle))' }} />}
+        {/* opacity gradient: the banner dissolves into the card so the logo + title read cleanly */}
+        <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, transparent 25%, rgba(0,0,0,0.35) 65%, var(--bg-card) 100%)' }} />
+        <button onClick={onEdit} className="absolute top-3 right-3 flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg" style={{ background: 'rgba(0,0,0,0.5)', color: '#fff', backdropFilter: 'blur(4px)' }}>
+          <Pencil size={12} /> Edit
+        </button>
+      </div>
+      <div className="flex items-end gap-3 px-4 pb-3 -mt-9 relative">
+        <div className="w-16 h-16 rounded-2xl overflow-hidden shrink-0 flex items-center justify-center border-2" style={{ background: 'var(--bg-base)', borderColor: 'var(--bg-card)' }}>
+          {logo ? <img src={logo} alt="" className="w-full h-full object-contain" /> : <Folder size={26} color="var(--accent-light)" />}
+        </div>
+        <div className="min-w-0 pb-1">
+          <div className="text-lg font-bold truncate" style={{ color: 'var(--text-primary)' }}>{name}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Edit a folder: name + banner + logo. Reuses the same in-app modal treatment as ConfirmDialog so it
+// ports to desktop/mobile. The preview mirrors exactly how the header renders (banner→gradient→logo).
+function FolderEditModal({ folder, onClose, onSaved, onDelete }: {
+  folder: FolderRec
+  onClose: () => void
+  onSaved: (updated: FolderRec) => void
+  onDelete: () => void
+}) {
+  const [name, setName] = useState(folder.name)
+  const [banner, setBanner] = useState<string | null>(folder.banner)
+  const [logo, setLogo] = useState<string | null>(folder.logo)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const bannerInput = useRef<HTMLInputElement>(null)
+  const logoInput = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  async function pick(kind: 'banner' | 'logo', file?: File | null) {
+    if (!file) return
+    setErr(null)
+    try {
+      if (kind === 'banner') setBanner(await fileToDataUrl(file, 1280, 480, 'image/jpeg', 0.82))
+      else setLogo(await fileToDataUrl(file, 320, 320, 'image/png'))
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not read that image.') }
+  }
+
+  async function save() {
+    setBusy(true); setErr(null)
+    const cleanName = name.trim().slice(0, 60) || folder.name
+    const r = await fetch('/api/folders', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: folder.id, name: cleanName, banner: banner ?? '', logo: logo ?? '' }),
+    }).catch(() => null)
+    setBusy(false)
+    if (!r || !r.ok) { const d = r ? await r.json().catch(() => ({})) : {}; setErr((d as { error?: string }).error || 'Could not save. The image may be too large.'); return }
+    onSaved({ ...folder, name: cleanName, banner, logo })
+  }
+
+  return (
+    <div onMouseDown={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(0,0,0,0.5)' }}>
+      <div onMouseDown={e => e.stopPropagation()} role="dialog" aria-modal="true" className="w-full" style={{ maxWidth: 460, maxHeight: '90vh', overflowY: 'auto', borderRadius: 16, background: 'var(--bg-card)', border: '1px solid var(--border)', boxShadow: '0 16px 48px rgba(0,0,0,0.5)' }}>
+        <div className="flex items-center justify-between px-5 pt-4 pb-3">
+          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Edit folder</h2>
+          <button onClick={onClose} className="p-1 rounded-lg" style={{ color: 'var(--text-muted)' }}><X size={16} /></button>
+        </div>
+
+        {/* Live preview — identical banner→gradient→logo composition as the folder header */}
+        <div className="mx-5 rounded-xl overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
+          <div className="relative h-28">
+            {banner
+              ? <img src={banner} alt="" className="absolute inset-0 w-full h-full object-cover" />
+              : <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-subtle))' }} />}
+            <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, transparent 25%, rgba(0,0,0,0.35) 65%, var(--bg-card) 100%)' }} />
+          </div>
+          <div className="flex items-end gap-3 px-3 pb-2 -mt-8 relative">
+            <div className="w-14 h-14 rounded-2xl overflow-hidden shrink-0 flex items-center justify-center border-2" style={{ background: 'var(--bg-base)', borderColor: 'var(--bg-card)' }}>
+              {logo ? <img src={logo} alt="" className="w-full h-full object-contain" /> : <Folder size={22} color="var(--accent-light)" />}
+            </div>
+            <div className="text-sm font-bold truncate pb-1" style={{ color: 'var(--text-primary)' }}>{name || 'Folder name'}</div>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 flex flex-col gap-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>Name</span>
+            <input value={name} onChange={e => setName(e.target.value)} maxLength={60} className="text-sm rounded-lg px-3 py-2 outline-none" style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+          </label>
+
+          <div className="flex gap-3">
+            {/* Banner */}
+            <div className="flex-1 flex flex-col gap-1.5">
+              <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>Banner</span>
+              <input ref={bannerInput} type="file" accept="image/*" className="hidden" onChange={e => pick('banner', e.target.files?.[0])} />
+              <div className="flex gap-2">
+                <button onClick={() => bannerInput.current?.click()} className="flex-1 text-xs px-3 py-2 rounded-lg" style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>{banner ? 'Replace' : 'Upload'}</button>
+                {banner && <button onClick={() => setBanner(null)} className="text-xs px-2.5 py-2 rounded-lg" style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: '#ef4444' }}>Remove</button>}
+              </div>
+            </div>
+            {/* Logo */}
+            <div className="flex-1 flex flex-col gap-1.5">
+              <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>Logo</span>
+              <input ref={logoInput} type="file" accept="image/*" className="hidden" onChange={e => pick('logo', e.target.files?.[0])} />
+              <div className="flex gap-2">
+                <button onClick={() => logoInput.current?.click()} className="flex-1 text-xs px-3 py-2 rounded-lg" style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>{logo ? 'Replace' : 'Upload'}</button>
+                {logo && <button onClick={() => setLogo(null)} className="text-xs px-2.5 py-2 rounded-lg" style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: '#ef4444' }}>Remove</button>}
+              </div>
+            </div>
+          </div>
+
+          {err && <p className="text-xs" style={{ color: '#ef4444' }}>{err}</p>}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-5 py-3" style={{ borderTop: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+          <button onClick={onDelete} className="text-xs font-semibold px-3 py-2 rounded-lg" style={{ color: '#ef4444', background: 'transparent' }}>Delete folder</button>
+          <div className="flex gap-2">
+            <button onClick={onClose} disabled={busy} className="text-sm font-semibold px-4 py-2 rounded-lg" style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)' }}>Cancel</button>
+            <button onClick={save} disabled={busy} className="text-sm font-bold px-4 py-2 rounded-lg" style={{ border: 'none', color: '#fff', background: 'var(--accent)', opacity: busy ? 0.7 : 1 }}>{busy ? 'Saving…' : 'Save'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

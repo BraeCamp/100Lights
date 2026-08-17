@@ -17,16 +17,23 @@ async function ensureFolders() {
   await sql`CREATE INDEX IF NOT EXISTS folders_user_idx ON folders (user_id)`
   // Nesting: a folder can live inside another. NULL = top level.
   await sql`ALTER TABLE folders ADD COLUMN IF NOT EXISTS parent_id TEXT`
+  // Custom look: a banner image + a logo (replacing the default folder icon), both stored as
+  // downscaled data URLs (the client caps their size before upload; see MAX_IMG below).
+  await sql`ALTER TABLE folders ADD COLUMN IF NOT EXISTS banner TEXT`
+  await sql`ALTER TABLE folders ADD COLUMN IF NOT EXISTS logo TEXT`
   ready = true
 }
+
+// Server-side ceiling on the stored data URLs (the client already downscales; this is a backstop).
+const MAX_IMG = 700_000   // ~700 KB of base64
 
 export async function GET() {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
   try {
     await ensureFolders()
-    const rows = await sql`SELECT id, name, parent_id FROM folders WHERE user_id = ${userId} ORDER BY LOWER(name)` as { id: string; name: string; parent_id: string | null }[]
-    return Response.json(rows.map(r => ({ id: r.id, name: r.name, parentId: r.parent_id ?? null })))
+    const rows = await sql`SELECT id, name, parent_id, banner, logo FROM folders WHERE user_id = ${userId} ORDER BY LOWER(name)` as { id: string; name: string; parent_id: string | null; banner: string | null; logo: string | null }[]
+    return Response.json(rows.map(r => ({ id: r.id, name: r.name, parentId: r.parent_id ?? null, banner: r.banner ?? null, logo: r.logo ?? null })))
   } catch {
     return Response.json([])   // table not provisioned yet → no folders
   }
@@ -56,9 +63,23 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
-  const body = await req.json().catch(() => ({})) as { id?: string; name?: string; parentId?: string | null }
+  const body = await req.json().catch(() => ({})) as { id?: string; name?: string; parentId?: string | null; banner?: string | null; logo?: string | null }
   if (!body.id) return Response.json({ error: 'id required' }, { status: 400 })
   await ensureFolders()
+
+  // Banner / logo — set (data URL) or clear (null / empty). Reject oversized or non-image payloads.
+  for (const [key, val] of [['banner', body.banner], ['logo', body.logo]] as const) {
+    if (val === undefined) continue
+    if (val === null || val === '') {
+      if (key === 'banner') await sql`UPDATE folders SET banner = NULL WHERE id = ${body.id} AND user_id = ${userId}`
+      else                  await sql`UPDATE folders SET logo   = NULL WHERE id = ${body.id} AND user_id = ${userId}`
+      continue
+    }
+    if (typeof val !== 'string' || !val.startsWith('data:image/')) return Response.json({ error: `Invalid ${key}` }, { status: 400 })
+    if (val.length > MAX_IMG) return Response.json({ error: `${key} too large` }, { status: 413 })
+    if (key === 'banner') await sql`UPDATE folders SET banner = ${val} WHERE id = ${body.id} AND user_id = ${userId}`
+    else                  await sql`UPDATE folders SET logo   = ${val} WHERE id = ${body.id} AND user_id = ${userId}`
+  }
 
   // Move a folder under a new parent (or to top level with parentId: null). Guard against a folder
   // becoming its own ancestor (which would create a cycle).
