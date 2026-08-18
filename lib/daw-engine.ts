@@ -820,7 +820,12 @@ export class DawEngine extends EventTarget {
   async play(fromBeat?: number) {
     if (this.ctx.state === 'suspended') await this.ctx.resume()
     if (fromBeat !== undefined) this._startBeat = fromBeat
-    this._startCtxTime = this.ctx.currentTime
+    // Small scheduling headroom: without it, clips sitting exactly at the play
+    // position get startAt values already in the past by the time they're
+    // scheduled — the source clamps to "now" while the anti-click ramp stays
+    // anchored at startAt, chopping a random slice off the first transient
+    // (the "first hit is quieter" bug). 30 ms is imperceptible on Play.
+    this._startCtxTime = this.ctx.currentTime + 0.03
     this.isPlaying = true
     this._nextMetronomeBeat = Math.ceil(this._startBeat)
     this._noteKeyVersion++; this._scheduledNoteKeys.clear()
@@ -1435,7 +1440,7 @@ export class DawEngine extends EventTarget {
       this._killAllSources()
       this._noteKeyVersion++; this._scheduledNoteKeys.clear()
       this._startBeat    = this.loopStart
-      this._startCtxTime = this.ctx.currentTime
+      this._startCtxTime = this.ctx.currentTime + 0.03   // same headroom as play() — don't chop the loop-start hit
       this._nextMetronomeBeat = Math.ceil(this.loopStart)
     }
 
@@ -2003,8 +2008,17 @@ export class DawEngine extends EventTarget {
     // tempo map at the clip's actual position, so a tempo change mid-song places
     // and lengths the clip correctly (single-segment → old single-tempo math).
     const clipDuration  = this._spanSeconds(clip.startBeat, clip.startBeat + clip.durationBeats)
-    const alreadyPlayed = now > clip.startBeat ? this._spanSeconds(clip.startBeat, now) : 0
-    const startAt       = this._ctxTimeForBeat(Math.max(now, clip.startBeat), now, contextNow)
+    // How far past the clip's start the transport already is. Scheduling always
+    // runs a little behind the clock (the first tick after Play especially), so
+    // TINY lateness must NOT become a buffer seek — skipping the first few ms
+    // of a one-shot eats its transient ("the first snare is quieter"). Under
+    // 50 ms late: play the whole clip, a hair late — inaudible and intact.
+    // Genuinely mid-clip (a real seek/loop entry): keep the honest offset.
+    const lateSec       = now > clip.startBeat ? this._spanSeconds(clip.startBeat, now) : 0
+    const alreadyPlayed = lateSec > 0.05 ? lateSec : 0
+    const startAt       = alreadyPlayed > 0
+      ? this._ctxTimeForBeat(Math.max(now, clip.startBeat), now, contextNow)
+      : this._ctxTimeForBeat(clip.startBeat, now, contextNow)
 
     let playBuf           = buf
     let playTrimStart     = clip.trimStart
@@ -2060,9 +2074,9 @@ export class DawEngine extends EventTarget {
         // Re-pitch: speed and pitch change together (vinyl-style), no rate compensation
         basePlaybackRate = stretchFactor
         source.buffer = buf
-        const seekOffset = now > clip.startBeat
-          ? this._spanSeconds(clip.startBeat, now) * stretchFactor + clip.trimStart
-          : clip.trimStart
+        // alreadyPlayed (not the raw clock) — tiny scheduling lateness must not
+        // seek into the buffer and eat the transient (first-hit-quieter bug)
+        const seekOffset = alreadyPlayed * stretchFactor + clip.trimStart
         const totalDuration = buf.duration - clip.trimStart - clip.trimEnd
         effectiveDuration = Math.min(totalDuration, clipDuration * stretchFactor) - (seekOffset - clip.trimStart)
         effectiveDuration = Math.max(0, effectiveDuration)
@@ -2072,9 +2086,8 @@ export class DawEngine extends EventTarget {
       // Normal playback (also handles boomerang — playBuf is ping-pong buffer when active)
       source.buffer = playBuf
       const trimStartForSeek = boomerangActive ? 0 : clip.trimStart
-      const seekOffset    = now > clip.startBeat
-        ? this._spanSeconds(clip.startBeat, now) + trimStartForSeek
-        : trimStartForSeek
+      // alreadyPlayed (not the raw clock) — see above
+      const seekOffset    = alreadyPlayed + trimStartForSeek
       const totalDuration = playBuf.duration - playTrimStart - playTrimEnd
 
       if ((clip.loopEnabled || boomerangActive) && !clip.reverse) {
@@ -2172,13 +2185,17 @@ export class DawEngine extends EventTarget {
     // Always ramp from 0 to clip.gain at startAt — prevents pop/static from non-zero
     // first sample at any seekOffset.  5 ms is inaudible as a fade but eliminates the click.
     const ANTI_CLICK_S = 0.005
+    // If scheduling ran late, the source is clamped to "now" — anchor the ramp
+    // there too, or the first samples play into a partially-raised gain and the
+    // transient loses a random few dB (audible on one-shots at the playhead).
+    const rampAt = Math.max(startAt, fadeGain.context.currentTime)
     if (clip.fadeIn > 0) {
       const fs = this.beatsToSeconds(clip.fadeIn)
-      fadeGain.gain.setValueAtTime(0, startAt)
-      fadeGain.gain.linearRampToValueAtTime(clip.gain, startAt + Math.max(fs, ANTI_CLICK_S))
+      fadeGain.gain.setValueAtTime(0, rampAt)
+      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + Math.max(fs, ANTI_CLICK_S))
     } else {
-      fadeGain.gain.setValueAtTime(0, startAt)
-      fadeGain.gain.linearRampToValueAtTime(clip.gain, startAt + ANTI_CLICK_S)
+      fadeGain.gain.setValueAtTime(0, rampAt)
+      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + ANTI_CLICK_S)
     }
     if (clip.fadeOut > 0 && effectiveDuration > 0) {
       const fs        = this.beatsToSeconds(clip.fadeOut)
@@ -2753,6 +2770,28 @@ export class DawEngine extends EventTarget {
       sched(f.frequency, g => barParamValue(F.filterHz, fx.filterHz!, g))
       last.connect(f); last = f
     }
+    // Filter envelope sweep + auto-wah LFO — same semantics as the Sound panel
+    // (these bar fields used to be silently ignored on audio clips, which read
+    // as "my effect changes stopped changing").
+    if ((fx.filterEnv ?? 0) > 0 || (fx.filterLfoDepth ?? 0) > 0) {
+      const base = (fx.filterHz !== undefined && fx.filterHz < 17500) ? fx.filterHz : 2000
+      const f = n(ctx.createBiquadFilter())
+      f.type = 'lowpass'; f.frequency.value = base; f.Q.value = fx.filterQ ?? 0.8
+      if ((fx.filterEnv ?? 0) > 0) {
+        const startFreq = Math.max(30, Math.min(20000, base * Math.pow(2, -3 * fx.filterEnv!)))
+        try {
+          f.frequency.setValueAtTime(startFreq, effContextStart)
+          f.frequency.exponentialRampToValueAtTime(Math.max(30, base), effContextStart + 0.2)
+        } catch { /* overlapping automation */ }
+      }
+      if ((fx.filterLfoDepth ?? 0) > 0) {
+        const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = fx.filterLfoRate ?? 5
+        const lg = n(ctx.createGain())
+        lfo.connect(lg); lg.connect(f.frequency); lfo.start(); extraOscs.push(lfo)
+        sched(lg.gain, g => fx.filterLfoDepth! * base * 0.6 * g)
+      }
+      last.connect(f); last = f
+    }
     // Waveshapers (drive/distortion/bitcrush) — crossfade clean↔shaped by the graph.
     const crossfadeShaper = (curveArr: Float32Array) => {
       const ws = n(ctx.createWaveShaper()); ws.curve = curveArr as Float32Array<ArrayBuffer>; ws.oversample = '2x'
@@ -2856,12 +2895,33 @@ export class DawEngine extends EventTarget {
       last.connect(dry); dry.connect(sum); last.connect(conv); conv.connect(wet); wet.connect(sum)
       sched(wet.gain, g => fx.reverbWet! * g); last = sum
     }
-    if (has('delayWet')) {
-      const dl = n(ctx.createDelay(1.2)); dl.delayTime.value = fx.delayTime ?? 0.25
-      const fb = n(ctx.createGain()); fb.gain.value = Math.min(0.9, fx.delayFeedback ?? 0.3)
+    if (has('delayWet') || (fx.delayPingpong ?? 0) > 0) {
+      const t = fx.delayTime ?? 0.25
+      const fbAmt = Math.min(0.9, fx.delayFeedback ?? 0.3)
+      const wetTarget = has('delayWet') ? fx.delayWet! : 0.35   // pingpong alone implies a delay
+      const pp = Math.max(0, Math.min(1, fx.delayPingpong ?? 0))
       const dry = n(ctx.createGain()), wet = n(ctx.createGain()), sum = n(ctx.createGain())
-      last.connect(dry); dry.connect(sum); last.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(sum)
-      sched(wet.gain, g => fx.delayWet! * g); last = sum
+      last.connect(dry); dry.connect(sum)
+      if (pp > 0) {
+        // ping-pong: cross-fed L/R delays, stereo spread scaled by the amount
+        const dl = n(ctx.createDelay(2)), dr = n(ctx.createDelay(2))
+        dl.delayTime.value = t; dr.delayTime.value = t
+        const fbl = n(ctx.createGain()), fbr = n(ctx.createGain())
+        fbl.gain.value = fbAmt; fbr.gain.value = fbAmt
+        const pl = n(ctx.createStereoPanner()), pr = n(ctx.createStereoPanner())
+        pl.pan.value = -pp; pr.pan.value = pp
+        last.connect(dl)
+        dl.connect(fbl); fbl.connect(dr)
+        dr.connect(fbr); fbr.connect(dl)
+        dl.connect(pl); pl.connect(wet)
+        dr.connect(pr); pr.connect(wet)
+      } else {
+        const dl = n(ctx.createDelay(1.2)); dl.delayTime.value = t
+        const fb = n(ctx.createGain()); fb.gain.value = fbAmt
+        last.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet)
+      }
+      wet.connect(sum)
+      sched(wet.gain, g => wetTarget * g); last = sum
     }
     return { output: last, extraNodes, extraOscs }
   }

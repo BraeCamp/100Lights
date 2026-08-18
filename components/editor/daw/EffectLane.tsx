@@ -5,6 +5,21 @@ import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import type { ClipEffect, ClipEffectType } from '@/lib/daw-types'
 import { makeEffectBar, activeBarFields } from '@/lib/effect-bar'
+
+// Bars magnetize to clip edges on their track: a hand-drawn/dragged bar that
+// *looks* aligned but starts a few hundredths of a beat late misses a
+// one-shot's transient entirely (the "tremolo stopped working" report).
+function snapBarBeat(project: { arrangementClips: { trackId: string; startBeat: number; durationBeats: number }[] }, trackId: string, beat: number, threshold = 0.2) {
+  let best = beat, bestD = threshold
+  for (const c of project.arrangementClips) {
+    if (c.trackId !== trackId) continue
+    for (const edge of [c.startBeat, c.startBeat + c.durationBeats]) {
+      const d = Math.abs(edge - beat)
+      if (d < bestD) { bestD = d; best = edge }
+    }
+  }
+  return best
+}
 import BarEditor from './BarEditor'
 
 export const EFFECT_H = 40
@@ -161,7 +176,7 @@ function EffectRow({
   onShapeTarget: (t: { effect: ClipEffect; mode: 'volume' | 'pitch' }) => void
   onExpand: (eff: ClipEffect | null) => void
 }) {
-  const { dispatch } = useDaw()
+  const { project, dispatch } = useDaw()
   const dragRef    = useRef<{ effectId: string; startX: number; startBeat: number } | null>(null)
   const resizeRef  = useRef<{ effectId: string; startX: number; startDur: number } | null>(null)
   const clickTimer = useRef<{ effectId: string; timer: ReturnType<typeof setTimeout> } | null>(null)
@@ -229,7 +244,7 @@ function EffectRow({
                     const dx = (ev.clientX - dragRef.current.startX) / beatW
                     for (const id of dragIds) {
                       const orig = origins[id] ?? 0
-                      dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: id, patch: { startBeat: Math.max(0, orig + dx) } })
+                      dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: id, patch: { startBeat: Math.max(0, snapBarBeat(project, trackId, orig + dx)) } })
                     }
                   }
                   function mu() { dragRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
@@ -338,8 +353,10 @@ export default function EffectLaneView({
     return (clientX - rect.left + scrollLeft) / beatW
   }
 
+
+
   function addBar(beat: number, row: number, x: number, y: number) {
-    const bar = makeEffectBar(trackId, beat, row)
+    const bar = makeEffectBar(trackId, snapBarBeat(project, trackId, beat), row)
     dispatch({ type: 'ADD_CLIP_EFFECT', effect: bar })
     setSelectedEffectIds(new Set([bar.id]))
     setEditTarget({ effect: bar, x, y })   // open the bar editor immediately
