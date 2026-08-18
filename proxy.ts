@@ -68,7 +68,10 @@ export const config = {
     // `xml` and `txt` matter: without them /sitemap.xml and /robots.txt fall
     // through to auth.protect() and 404 for signed-out visitors — which means
     // every crawler, so neither file was ever reachable by Google.
-    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jte|ttf|woff2?|png|jpg|jpeg|gif|svg|ico|webp|xml|txt)).*)',
+    // `wav|mp3|m4a|mp4|webm` keep public media (drum-kit samples, fonts' kin)
+    // reachable for signed-out visitors — without them the guest studio's
+    // sampled kits 404 through auth.protect() and silently fall back to synth.
+    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jte|ttf|woff2?|png|jpg|jpeg|gif|svg|ico|webp|xml|txt|wav|mp3|m4a|mp4|webm)).*)',
     '/(api|trpc)(.*)',
   ],
 }
