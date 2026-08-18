@@ -123,6 +123,9 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
   const savedProjRef = useRef<DawProject | null>(null)
   const histRef = useRef<NonNullable<DawProject['history']>>([])
   const [poppedOut, setPoppedOut] = useState(false)
+  // While actually capturing, the card hides itself so it never appears in the
+  // recording — hover its corner to reveal the timer/Stop. (Brae 2026-08-18.)
+  const [reveal, setReveal] = useState(false)
   const winRef = useRef<Window | null>(null)
   const cmdRef = useRef<(d: Record<string, unknown>) => void>(() => {})
   const supported = screenRecordingSupported()
@@ -348,12 +351,20 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
   const curStep = hist[scrubStep - 1] as DawHistoryEntry | undefined
   const desc = curStep ? describeStep(curStep.action) : null
 
-  return (
-    <div style={{
-      position: 'fixed', right: 18, bottom: 84, zIndex: 60, width: 300,
-      background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12,
-      padding: '11px 13px', boxShadow: '0 18px 50px rgba(0,0,0,0.5)',
-    }}>
+  return (<>
+    {state === 'recording' && mode === 'screen' && highlightClicks && <ClickHighlighter style={clickStyle} />}
+    <div
+      onMouseEnter={() => setReveal(true)}
+      onMouseLeave={() => setReveal(false)}
+      style={{
+        position: 'fixed', right: 18, bottom: 84, zIndex: 60, width: 300,
+        background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12,
+        padding: '11px 13px', boxShadow: '0 18px 50px rgba(0,0,0,0.5)',
+        // invisible while recording (so the capture never shows the card);
+        // mouse over the corner brings it back to reach Stop
+        opacity: inProgress && !reveal ? 0 : 1,
+        transition: 'opacity 0.25s ease',
+      }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9 }}>
         <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>
           {mode === 'history' ? 'History' : 'Record session'}
@@ -470,7 +481,6 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
         )
       )}
 
-      {state === 'recording' && mode === 'screen' && highlightClicks && <ClickHighlighter style={clickStyle} />}
 
       {/* ── Screen recording in progress ── */}
       {inProgress && (
@@ -510,7 +520,7 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
 
       <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.25 } }`}</style>
     </div>
-  )
+  </>)
 }
 
 const ctrlBtn: React.CSSProperties = {

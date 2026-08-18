@@ -518,6 +518,11 @@ const FEELS = {
 }
 
 // ── Palette: per genre — kit, preset ids, and the STYLES that drive technique ──
+// NOTE (audit 2026-08-18): kit ids MUST exist in lib/drum-presets.ts DRUM_KITS
+// (studio·boombap·rock·pop·house·lofi·trap808·techno) — unknown ids silently
+// fell back to Studio, so dnb/dubstep/disco/funk/afrobeat all shared one kit.
+// Remapped to the closest real kits; if we ever add true break/disco/funk kits
+// to DRUM_KITS, point these back at them.
 const DEF = { keys: 'builtin-2', bass: 'builtin-4', pad: 'builtin-30', lead: 'builtin-3', kit: 'studio', ext: 7, bassStyle: 'root8', leadStyle: 'melody', keyRhythm: 'stab' }
 const PAL = {
   lofi: { keys: 'builtin-2', bass: 'builtin-19', pad: 'builtin-30', lead: 'builtin-36', kit: 'lofi', ext: 9, bassStyle: 'walk', leadStyle: 'melody', keyRhythm: 'lofi' },
@@ -528,17 +533,17 @@ const PAL = {
   trance: { keys: 'builtin-12', bass: 'builtin-4', pad: 'builtin-9', lead: 'builtin-3', kit: 'house', ext: 7, bassStyle: 'octarp', leadStyle: 'arp', keyRhythm: 'sustain' },
   synthwave: { keys: 'builtin-1', bass: 'builtin-4', pad: 'builtin-12', lead: 'builtin-3', kit: 'pop', ext: 7, bassStyle: 'octarp', leadStyle: 'riff', keyRhythm: 'sustain' },
   'future-bass': { keys: 'builtin-12', bass: 'builtin-4', pad: 'builtin-30', lead: 'builtin-3', kit: 'trap808', ext: 9, bassStyle: '808', leadStyle: 'stab', keyRhythm: 'stab' },
-  dnb: { keys: 'builtin-7', bass: 'builtin-4', pad: 'builtin-13', lead: 'builtin-8', kit: 'break', ext: 7, bassStyle: '808', leadStyle: 'arp', keyRhythm: 'sustain' },
-  dubstep: { keys: 'builtin-7', bass: 'builtin-4', pad: 'builtin-13', lead: 'builtin-8', kit: 'traphard', ext: 0, bassStyle: '808', leadStyle: 'riff', keyRhythm: 'sustain' },
+  dnb: { keys: 'builtin-7', bass: 'builtin-4', pad: 'builtin-13', lead: 'builtin-8', kit: 'techno', ext: 7, bassStyle: '808', leadStyle: 'arp', keyRhythm: 'sustain' },
+  dubstep: { keys: 'builtin-7', bass: 'builtin-4', pad: 'builtin-13', lead: 'builtin-8', kit: 'trap808', ext: 0, bassStyle: '808', leadStyle: 'riff', keyRhythm: 'sustain' },
   trap: { keys: 'builtin-2', bass: 'builtin-4', pad: 'builtin-13', lead: 'builtin-8', kit: 'trap808', ext: 0, bassStyle: '808', leadStyle: 'riff', keyRhythm: 'sustain' },
   ambient: { keys: 'builtin-30', bass: 'builtin-13', pad: 'builtin-13', lead: 'builtin-43', kit: 'none', ext: 9, bassStyle: 'pedal', leadStyle: 'sustained', keyRhythm: 'sustain' },
   rnb: { keys: 'builtin-2', bass: 'builtin-18', pad: 'builtin-30', lead: 'builtin-36', kit: 'pop', ext: 9, bassStyle: 'walk', leadStyle: 'melody', keyRhythm: 'lofi' },
-  funk: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-5', lead: 'builtin-15', kit: 'funk', ext: 9, bassStyle: 'walk', leadStyle: 'riff', keyRhythm: 'offstab' },
-  disco: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-9', lead: 'builtin-15', kit: 'disco', ext: 7, bassStyle: 'octarp', leadStyle: 'riff', keyRhythm: 'offstab' },
+  funk: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-5', lead: 'builtin-15', kit: 'studio', ext: 9, bassStyle: 'walk', leadStyle: 'riff', keyRhythm: 'offstab' },
+  disco: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-9', lead: 'builtin-15', kit: 'house', ext: 7, bassStyle: 'octarp', leadStyle: 'riff', keyRhythm: 'offstab' },
   pop: { keys: 'builtin-26', bass: 'builtin-18', pad: 'builtin-28', lead: 'builtin-10', kit: 'pop', ext: 7, bassStyle: 'rootfifth', leadStyle: 'melody', keyRhythm: 'stab' },
   rock: { keys: 'builtin-26', bass: 'builtin-18', pad: 'builtin-28', lead: 'builtin-15', kit: 'rock', ext: 0, bassStyle: 'rootfifth', leadStyle: 'riff', keyRhythm: 'sustain' },
   'bossa-nova': { keys: 'builtin-2', bass: 'builtin-19', pad: 'builtin-16', lead: 'builtin-24', kit: 'studio', ext: 9, bassStyle: 'bossa', leadStyle: 'melody', keyRhythm: 'offstab' },
-  afrobeat: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-5', lead: 'builtin-21', kit: 'disco', ext: 9, bassStyle: 'walk', leadStyle: 'riff', keyRhythm: 'offstab' },
+  afrobeat: { keys: 'builtin-1', bass: 'builtin-18', pad: 'builtin-5', lead: 'builtin-21', kit: 'studio', ext: 9, bassStyle: 'walk', leadStyle: 'riff', keyRhythm: 'offstab' },
   reggaeton: { keys: 'builtin-1', bass: 'builtin-4', pad: 'builtin-12', lead: 'builtin-3', kit: 'pop', ext: 7, bassStyle: '808', leadStyle: 'stab', keyRhythm: 'offstab' },
 }
 // Alternate sounds per role/style — the seed varies the TIMBRE, drawing from the
@@ -649,7 +654,61 @@ function trackFx(fxRole, pal, genreId, rand, mkId) {
     ],
   }
   const bank = CHAINS[fxRole] || CHAINS.keys
-  return rand.pick(bank)()
+  return applyGenreTone(rand.pick(bank)(), fxRole, genreId, rand, mkId)
+}
+
+// ── Genre tone (added 2026-08-18, Brae: "make sure recommended sounds and EQs
+// are connected to genres") — the chain BANKS above give per-song variety, but
+// their EQ voicings were identical for every genre. This table gives each genre
+// its own tonal fingerprint: per-role EQ offsets [low, mid, high] (added to any
+// eq3 in the picked chain — or appended as one if the chain had none) plus ONE
+// signature movement/character tool. Edit here to reshape how a genre sounds.
+const GENRE_TONE = {
+  lofi:          { eq: { drums: [1, -1, -2], bass: [2, -1, -3], keys: [-2, 0, -2], pad: [-3, -2, -2], lead: [-2, 0, -2] }, tool: { role: 'keys', fx: (k) => k.rx(12, 15000) } },
+  boombap:       { eq: { drums: [2, 0, -1], bass: [3, -1, -2], keys: [-1, 0, -1], pad: [-2, -1, -1], lead: [-1, 0, -1] }, tool: { role: 'drums', fx: (k) => k.sa(0.18) } },
+  house:         { eq: { drums: [1.5, -1, 2], bass: [1, -1, 0], keys: [-1, 0, 1.5], pad: [-2, -1, 1], lead: [-1, 0, 1] }, tool: { role: 'pad', fx: (k) => k.lf(0.25, 0.45) } },
+  'deep-house':  { eq: { drums: [1, -1, 1], bass: [2, -1, -1], keys: [-1, -1, 1], pad: [-2, 0, 0.5], lead: [-1, 0, 0.5] }, tool: { role: 'pad', fx: (k) => k.lf(0.18, 0.4) } },
+  techno:        { eq: { drums: [2, -2, 2], bass: [1, -2, 0], keys: [-2, -1, 1], pad: [-3, -2, 1], lead: [-2, -1, 1] }, tool: { role: 'keys', fx: (k) => k.lf(0.5, 0.5) } },
+  trance:        { eq: { drums: [1, -1, 2.5], bass: [1, -1, 0.5], keys: [-1, 0, 2], pad: [-2, 0, 2], lead: [-1, 0, 2] }, tool: { role: 'keys', fx: (k) => k.dl(0.22, 0.375, 0.42) } },
+  synthwave:     { eq: { drums: [1.5, 0, 2], bass: [1, -1, -0.5], keys: [-1, 0, 2], pad: [-2, -1, 2], lead: [-1, 0, 2] }, tool: { role: 'keys', fx: (k) => k.mo(0.35, 'chorus') } },
+  'future-bass': { eq: { drums: [1, 0, 2], bass: [2, -1, 0], keys: [0, 1, 2], pad: [-1, 0, 2], lead: [0, 1, 2] }, tool: { role: 'pad', fx: (k) => k.mo(0.4, 'chorus') } },
+  dnb:           { eq: { drums: [2, -1, 2.5], bass: [3, -2, -1], keys: [-2, -1, 1], pad: [-3, -1, 0], lead: [-2, 0, 1] }, tool: { role: 'drums', fx: (k) => k.ts(0.5) } },
+  dubstep:       { eq: { drums: [2, -1, 1.5], bass: [3, 0, -1], keys: [-2, -1, 0], pad: [-3, -2, 0], lead: [-2, -1, 0] }, tool: { role: 'bass', fx: (k) => k.lf(3.5, 0.55) } },
+  trap:          { eq: { drums: [2, -1, 1.5], bass: [3, -2, -2], keys: [-1, -1, 0], pad: [-2, -1, 0], lead: [-1, -1, 0] }, tool: { role: 'drums', fx: (k) => k.ts(0.4) } },
+  ambient:       { eq: { drums: [0, 0, 0], bass: [0, -1, -1], keys: [-1, 0, 1], pad: [-2, 0, 2], lead: [-1, 0, 1] }, tool: { role: 'pad', fx: (k) => k.ap(0.35, 0.15) } },
+  rnb:           { eq: { drums: [1, 0, 0.5], bass: [2, -1, -1], keys: [-1, 1, 0.5], pad: [-2, 0, 0], lead: [-1, 0, 0.5] }, tool: { role: 'keys', fx: (k) => k.mo(0.3, 'chorus') } },
+  funk:          { eq: { drums: [1, 1, 1], bass: [2, 0, -1], keys: [0, 1, 1], pad: [-2, 0, 0], lead: [0, 1, 1] }, tool: { role: 'keys', fx: (k) => k.ap(0.45, 0.6) } },
+  disco:         { eq: { drums: [1, 0, 2], bass: [1.5, 0, 0], keys: [-1, 0, 1.5], pad: [-2, 0, 1], lead: [-1, 0, 1.5] }, tool: { role: 'keys', fx: (k) => k.ap(0.4, 0.5) } },
+  pop:           { eq: { drums: [1, 0, 1.5], bass: [1.5, -1, 0], keys: [-1, 0, 1], pad: [-2, 0, 1], lead: [-1, 0, 1] }, tool: null },
+  rock:          { eq: { drums: [1.5, 1, 1], bass: [2, 0, -1], keys: [0, 1, 0.5], pad: [-2, 0, 0], lead: [0, 1, 0.5] }, tool: { role: 'keys', fx: (k) => k.sa(0.2) } },
+  'bossa-nova':  { eq: { drums: [0, 0, 0.5], bass: [1, 0, -2], keys: [-1, 0, 0.5], pad: [-2, 0, 0], lead: [-1, 0, 0.5] }, tool: null },
+  afrobeat:      { eq: { drums: [1, 1, 1], bass: [2, 0, -1], keys: [0, 1, 1], pad: [-2, 0, 0], lead: [0, 1, 1] }, tool: { role: 'keys', fx: (k) => k.ap(0.4, 0.55) } },
+  reggaeton:     { eq: { drums: [2, -1, 1.5], bass: [2.5, -1, -1], keys: [-1, 0, 1], pad: [-2, 0, 0], lead: [-1, 0, 1] }, tool: null },
+}
+function applyGenreTone(chain, fxRole, genreId, rand, mkId) {
+  const tone = GENRE_TONE[genreId]
+  if (!tone) return chain
+  const off = tone.eq?.[fxRole]
+  if (off) {
+    const clamp = (x) => Math.max(-12, Math.min(12, x))
+    const eq = chain.find(e => e.type === 'eq3')
+    if (eq) {
+      eq.params.lowGain = clamp(eq.params.lowGain + off[0])
+      eq.params.midGain = clamp(eq.params.midGain + off[1])
+      eq.params.highGain = clamp(eq.params.highGain + off[2])
+    } else if (off.some(v => v !== 0)) {
+      chain.push({ id: mkId(), type: 'eq3', params: { enabled: true, lowGain: clamp(off[0]), midGain: clamp(off[1]), highGain: clamp(off[2]), lowFreq: 200, midFreq: 1000, highFreq: 8000 } })
+    }
+  }
+  // one signature tool per genre, on its home role (seed-gated so it's a lean
+  // bias, not a guarantee; skipped if the chain already has that effect type)
+  const t = tone.tool
+  if (t && t.role === fxRole && rand.chance(0.8)) {
+    const k = fxKit(rand, mkId)
+    const fx = t.fx(k)
+    if (!chain.some(e => e.type === fx.type)) chain.push(fx)
+  }
+  return chain
 }
 
 // Build a form with seed-driven variety so songs don't all share one makeup.
@@ -1224,6 +1283,14 @@ function compose({ GENRES, DRUM_KITS }, genreId, keyStr, seed, opts = {}) {
   // A TEMPLATE can supply its OWN ensemble pool (the song-type's lineup) — else
   // the seed picks from the global set.
   let ens = rand.pick(opts.roster?.ensembles || ENSEMBLES)
+  // Brae 2026-08-18: LEAD LINES ARE OFF program-wide until lead is redesigned
+  // from scratch — strip lead + counter from every ensemble (arps stay: they're
+  // rhythmic texture, not a melody line). Re-enable explicitly with --lead.
+  if (!opts.lead) {
+    ens = ens.filter(r => r !== 'lead' && r !== 'counter')
+    if (!ens.includes('keys')) ens.push('keys')
+    if (ens.length < 2) ens.push('arp')
+  }
   // Cap voices sharing the lead register (lead/arp/counter) at TWO. The 3-voice
   // stacks were the main source of clashing, over-dense melodies in one octave.
   const leadReg = ens.filter(r => r === 'lead' || r === 'arp' || r === 'counter')
@@ -1608,6 +1675,7 @@ async function main() {
   const tgenreArg   = argv.find(a => a.startsWith('--genre='))
   const seed = seedArg ? parseInt(seedArg.split('=')[1], 10) : 12345
   let genreId = pos[0], keyStr = pos[1] || '', opts = {}
+  if (argv.includes('--lead')) opts.lead = true   // lead lines are OFF by default (Brae 2026-08-18)
 
   // TEMPLATE mode: a song-type reshapes structure/roster/dynamics/mix, then
   // draws a genre from its pool. Resolved PER-SEED so --best=K explores variants
