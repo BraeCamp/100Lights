@@ -767,7 +767,7 @@ export default function BeatMaker({ onPattern, restore, open, onHome }: {
           </div>
 
           {/* Step grid */}
-          <div data-tour="grid" style={{ overflowX: 'auto' }}>
+          <div data-tour="grid" style={{ overflowX: 'auto', overscrollBehaviorX: 'contain' }}>
             <div style={{ display: 'inline-block', minWidth: 'max-content' }}>
               {/* Step ruler */}
               <div style={{ display: 'flex', marginLeft: 88, marginBottom: 4 }}>

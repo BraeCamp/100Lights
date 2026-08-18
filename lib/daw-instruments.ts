@@ -15,7 +15,7 @@ import { playFMNote } from './fm-synth'
 // isn't decoded yet falls back to the synth voice for that single hit.
 const _drumSampleBuf = new Map<string, AudioBuffer | null>()
 
-async function _decodeDrumSample(ctx: AudioContext, sample: { id: string; data: string }): Promise<void> {
+async function _decodeDrumSample(ctx: BaseAudioContext, sample: { id: string; data: string }): Promise<void> {
   if (_drumSampleBuf.has(sample.id)) return
   _drumSampleBuf.set(sample.id, null)  // in-flight marker — don't decode twice
   try {
@@ -25,12 +25,15 @@ async function _decodeDrumSample(ctx: AudioContext, sample: { id: string; data: 
 }
 
 /** Warm the buffer cache for every baked pad sample in a drum instrument — call
- *  when a kit is applied so the first hit isn't silent. */
-export function preloadDrumInstrument(ctx: AudioContext, instrument: TrackInstrument): void {
-  if (instrument.type !== 'drum') return
+ *  when a kit is applied (or a project loads) so the first hit isn't silent.
+ *  Awaitable so offline renders can block until every pad is decoded. */
+export function preloadDrumInstrument(ctx: BaseAudioContext, instrument: TrackInstrument): Promise<void> {
+  if (instrument.type !== 'drum') return Promise.resolve()
   const pads = (instrument.params as DrumInstrumentParams).pads
-  if (!pads) return
-  for (const pad of Object.values(pads)) if (pad.sample) void _decodeDrumSample(ctx, pad.sample)
+  if (!pads) return Promise.resolve()
+  const jobs: Promise<void>[] = []
+  for (const pad of Object.values(pads)) if (pad.sample) jobs.push(_decodeDrumSample(ctx, pad.sample))
+  return Promise.all(jobs).then(() => {})
 }
 import { playWavetableNote } from './wavetable-synth'
 

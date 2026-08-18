@@ -8,7 +8,7 @@ import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from
 import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
-import { playInstrumentNote, type DrumVoiceHandle } from './daw-instruments'
+import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
@@ -921,6 +921,7 @@ export class DawEngine extends EventTarget {
     // Pre-warm sample-oscillator buffers for poly instruments — same reason as
     // preset buffers: a lazily-loaded sample would miss its first note.
     for (const track of project.tracks) {
+      if (track.instrument?.type === 'drum') void preloadDrumInstrument(this.ctx, track.instrument)
       if (track.instrument?.type !== 'poly') continue
       const oscs = (track.instrument.params as PolyInstrumentParams).oscillators
       if (!oscs) continue
@@ -3564,6 +3565,12 @@ export class DawEngine extends EventTarget {
       }
     }
     for (const track of this._tracks) {
+      // baked drum-pad samples must be decoded before the single offline
+      // scheduler pass, or every hit silently falls back to the synth voice
+      if (track.instrument?.type === 'drum') {
+        const inst = track.instrument
+        thunks.push(() => preloadDrumInstrument(this.ctx, inst))
+      }
       if (track.instrument?.type !== 'poly') continue
       const oscs = (track.instrument.params as PolyInstrumentParams).oscillators
       if (!oscs) continue

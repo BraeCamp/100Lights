@@ -1717,7 +1717,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
 
               {/* Horizontal scroll so the (wider-than-phone) keyboard never runs
                   off-screen; keys are larger + pointer-driven so they play on touch. */}
-              <div style={{ display: 'flex', overflowX: 'auto', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
+              <div style={{ display: 'flex', overflowX: 'auto', overscrollBehaviorX: 'contain', paddingBottom: 4, WebkitOverflowScrolling: 'touch' }}>
               {[octave, octave + 1].map(oct => {
                 const base = (oct + 1) * 12
                 const WW = isMobile ? 48 : 30, WH = isMobile ? 130 : 90, BW = isMobile ? 30 : 18, BH = isMobile ? 82 : 56
