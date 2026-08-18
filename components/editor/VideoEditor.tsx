@@ -589,6 +589,8 @@ export default function VideoEditor({
   const tracksRef        = useRef<Track[]>(DEFAULT_TRACKS)
   const adjustmentsRef   = useRef<VideoAdjustments>(DEFAULT_ADJUSTMENTS)
   const captionsRef      = useRef<Caption[]>(propCaptions)
+  const watermarkRef     = useRef<import('@/lib/video-export/compositor').Watermark | null>(null)
+  const [watermarkState, setWatermarkState] = useState<import('@/lib/video-export/compositor').Watermark | null>(null)
 
   // Push a new snapshot, truncating the redo stack above the current index.
   const pushHistory = useCallback((snap: HistorySnapshot) => {
@@ -1313,8 +1315,8 @@ export default function VideoEditor({
 
   // Title overlays — EVERY active title clip (multiple can overlap on one track and all must show). Each
   // carries the full rich styling + animation state; the player renders them on top of the video.
-  const titleOverlays = useMemo(() => (
-    activeTitleClips(timelineItems, tracks, currentTime).map(clip => {
+  const titleOverlays = useMemo(() => {
+    const overlays = activeTitleClips(timelineItems, tracks, currentTime).map(clip => {
       const d = clip.outPoint - clip.inPoint
       return {
         id: clip.id,
@@ -1336,7 +1338,27 @@ export default function VideoEditor({
         outline: clip.titleOutline, outlineColor: clip.titleOutlineColor,
       }
     })
-  ), [timelineItems, tracks, currentTime])
+    // Preview parity for the persistent watermark (export draws it in the compositor). Rendered as a
+    // corner title overlay so the editor shows what the export will bake in.
+    if (watermarkState?.text) {
+      const p = watermarkState.position ?? 'br'
+      overlays.push({
+        id: '__watermark__', startTime: 0, pulseBpm: undefined,
+        text: watermarkState.text, fontSize: Math.round((watermarkState.sizePct ?? 2.6) / 100 * 1080),
+        color: watermarkState.color ?? '#ffffff', bg: 'transparent',
+        position: p[0] === 't' ? 'upper' : 'lower-third', animation: 'none',
+        localProgress: 1, durSec: 9e9,
+        animAmount: undefined, textOpacity: (watermarkState.opacity ?? 0.62) * 100, offsetY: undefined,
+        offsetX: undefined, align: p[1] === 'l' ? 'left' : 'right',
+        activeColor: undefined, activeBox: undefined,
+        pulse: 0, gradient: undefined,
+        font: watermarkState.font, weight: watermarkState.weight ?? 700, letterSpacing: undefined,
+        uppercase: undefined, shadow: true, glow: undefined,
+        outline: undefined, outlineColor: undefined,
+      })
+    }
+    return overlays
+  }, [timelineItems, tracks, currentTime, watermarkState])
 
   // Draw-focus clips available as follow targets (for the Inspector's "Follow focus dot").
   const focusClips = useMemo(() => {
@@ -1486,18 +1508,71 @@ export default function VideoEditor({
       analyzeSpeaker: (url: string, opts?: Parameters<typeof analyzeSpeaker>[1]) => analyzeSpeaker(url, opts),
       // Vocal clarity on an audio item (0..1; 0 = off) — presence EQ + de-ess + compression.
       setVocalClarity: (clipId: string, amount = 0.8) => { setTimelineItems(prev => prev.map(i => i.id === clipId ? { ...i, vocalClarity: amount } : i)); return true },
+      // Author a clip's MOTION + placement directly (so a driver controls zoom feel/timing itself
+      // instead of the one-size hype pass). Patches a safe field set → stays fully editable in the
+      // Inspector. cropZoom/cropX/cropY: static crop. kenBurns: smooth-step push/drift ("push" feel).
+      // hypeBeats/hypeDrops: local-second punch times ("snap" feel; drops punch bigger). fadeIn/Out:
+      // seconds. startTime/inPoint/outPoint: position + trim (author cuts on the beat).
+      setClipMotion: (clipId: string, patch: Partial<Pick<TimelineItem, 'cropZoom' | 'cropX' | 'cropY' | 'kenBurns' | 'hypeBeats' | 'hypeDrops' | 'fadeIn' | 'fadeOut' | 'startTime' | 'inPoint' | 'outPoint'>>) => {
+        setTimelineItems(prev => prev.map(i => i.id === clipId ? { ...i, ...patch } : i))
+        return true
+      },
+      // Add editable on-screen text (a title clip → shows in preview AND export, restyles from the
+      // Inspector). Friendly opts map to the rich title fields. Returns the clip id; edit with setText.
+      addText: (text: string, o: { startTime?: number; duration?: number; position?: 'upper' | 'center' | 'lower-third'; fontSize?: number; color?: string; align?: 'left' | 'center' | 'right'; animation?: TimelineItem['titleAnimation']; offsetX?: number; offsetY?: number; weight?: number; uppercase?: boolean; bg?: string; font?: string } = {}) => {
+        const id = crypto.randomUUID()
+        const trackId = tracksRef.current.find(t => t.type === 'media' || t.type === 'video')?.id ?? 'v1'
+        setTimelineItems(prev => [...prev, {
+          id, label: 'Text', startTime: o.startTime ?? 0, inPoint: 0, outPoint: o.duration ?? 3,
+          captions: [], color: CLIP_COLORS[1], trackId, contentType: 'title',
+          titleText: text, titlePosition: o.position ?? 'center', titleFontSize: o.fontSize,
+          titleColor: o.color, titleAlign: o.align, titleAnimation: o.animation ?? 'none',
+          titleOffsetX: o.offsetX, titleOffsetY: o.offsetY, titleWeight: o.weight,
+          titleUppercase: o.uppercase, titleBg: o.bg, titleFont: o.font,
+        }])
+        return id
+      },
+      // Change text (or any style field) of a title clip with ease — pass a string to just change the
+      // words, or an object of friendly keys to restyle. Idempotent; use with the id from addText.
+      setText: (clipId: string, patch: string | { text?: string; position?: 'upper' | 'center' | 'lower-third'; fontSize?: number; color?: string; align?: 'left' | 'center' | 'right'; animation?: TimelineItem['titleAnimation']; offsetX?: number; offsetY?: number; weight?: number; uppercase?: boolean; bg?: string; font?: string; startTime?: number; duration?: number }) => {
+        const o = typeof patch === 'string' ? { text: patch } : patch
+        const f: Partial<TimelineItem> = {}
+        if (o.text != null) f.titleText = o.text
+        if (o.position != null) f.titlePosition = o.position
+        if (o.fontSize != null) f.titleFontSize = o.fontSize
+        if (o.color != null) f.titleColor = o.color
+        if (o.align != null) f.titleAlign = o.align
+        if (o.animation != null) f.titleAnimation = o.animation
+        if (o.offsetX != null) f.titleOffsetX = o.offsetX
+        if (o.offsetY != null) f.titleOffsetY = o.offsetY
+        if (o.weight != null) f.titleWeight = o.weight
+        if (o.uppercase != null) f.titleUppercase = o.uppercase
+        if (o.bg != null) f.titleBg = o.bg
+        if (o.font != null) f.titleFont = o.font
+        if (o.startTime != null) f.startTime = o.startTime
+        if (o.duration != null) f.outPoint = o.duration
+        setTimelineItems(prev => prev.map(i => i.id === clipId ? { ...i, ...f } : i))
+        return true
+      },
+      // Persistent branding watermark (a corner overlay drawn on every exported frame). Pass null to
+      // remove. Not a timeline clip — it can't be nudged and always stays put.
+      setWatermark: (spec: import('@/lib/video-export/compositor').Watermark | null) => {
+        watermarkRef.current = spec
+        setWatermarkState(spec)   // re-render so the preview overlay updates too
+        return true
+      },
       // Manual spotlight: pin a camera track at the playhead.
       setSpotlight: (cameraTrackId: string, dur?: number) => addSpotlightItem(cameraTrackId, dur),
       openExport: () => setShowExport(true),
       // Direct headless render — same path the Export modal uses (exportTimelineFidelity), building the
       // input from live editor state. Returns the finished video as a base64 data URL so a driver can
       // save it. This closes the "render a finished video through the product" loop.
-      export: async (opts: { quality?: 'high' | 'medium' | 'web'; resolution?: 'original' | '1080p' | '720p' | '480p'; aspect?: ProjectAspect; fast?: boolean } = {}) => {
+      export: async (opts: { quality?: 'high' | 'medium' | 'web'; resolution?: 'original' | '2160p' | '1440p' | '1080p' | '720p' | '480p'; aspect?: ProjectAspect; fast?: boolean } = {}) => {
         const { exportTimelineFidelity } = await import('@/lib/video-export')
         const blob = await exportTimelineFidelity({
           timelineItems, tracks, adjustments: adjustmentsRef.current, captions: captionsRef.current, captionStyle,
           luts: lutMap, quality: opts.quality ?? 'high', resolution: opts.resolution ?? '1080p',
-          aspect: opts.aspect ?? projectAspect, fast: opts.fast ?? true, range: null,
+          aspect: opts.aspect ?? projectAspect, fast: opts.fast ?? true, range: null, watermark: watermarkRef.current,
           onProgress: (frac: number, msg?: string) => { try { console.log(`[export] ${Math.round(frac * 100)}% ${msg ?? ''}`) } catch { /* noop */ } },
         })
         const dataUrl = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsDataURL(blob) })

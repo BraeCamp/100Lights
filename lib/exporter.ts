@@ -14,7 +14,7 @@ import type { ContentType } from '@/lib/types'
 // ── Types ──────────────────────────────────────────────────────
 
 export type ExportQuality    = 'high' | 'medium' | 'web'
-export type ExportResolution = 'original' | '1080p' | '720p' | '480p'
+export type ExportResolution = 'original' | '2160p' | '1440p' | '1080p' | '720p' | '480p'
 
 export interface ExportOptions {
   quality:    ExportQuality
@@ -47,6 +47,8 @@ const QUALITY_ABR:    Record<ExportQuality, string> = { high: '192k', medium: '1
 
 const RESOLUTION_VF: Record<ExportResolution, string | null> = {
   original: null,
+  '2160p':  'scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2',
+  '1440p':  'scale=2560:1440:force_original_aspect_ratio=decrease,pad=2560:1440:(ow-iw)/2:(oh-ih)/2',
   '1080p':  'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2',
   '720p':   'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
   '480p':   'scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2',

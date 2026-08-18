@@ -20,7 +20,7 @@ import type { CompositorState } from './compositor'
 export { fastExportSupported }
 
 export type FidelityQuality    = 'high' | 'medium' | 'web'
-export type FidelityResolution = 'original' | '1080p' | '720p' | '480p'
+export type FidelityResolution = 'original' | '2160p' | '1440p' | '1080p' | '720p' | '480p'
 
 export const EXPORT_FPS = 30
 
@@ -28,6 +28,8 @@ export const EXPORT_FPS = 30
 // project aspect (9:16 at 1080p = 1080×1920, not a letterboxed 1920×1080).
 const RES_LONG_EDGE: Record<FidelityResolution, number> = {
   original: 1920,
+  '2160p':  3840,   // 4K — for crisp zoom headroom on screen-capture footage
+  '1440p':  2560,   // QHD
   '1080p':  1920,
   '720p':   1280,
   '480p':   854,
@@ -64,12 +66,13 @@ export interface FidelityExportInput {
   range?:        { start: number; end: number } | null
   /** Try the WebCodecs offline renderer (faster than real time); falls back to real-time capture on failure. */
   fast?:         boolean
+  watermark?:    import('./compositor').Watermark | null   // persistent branding overlay
   onProgress:    (frac: number, msg: string) => void
   signal?:       AbortSignal
 }
 
 export async function exportTimelineFidelity(input: FidelityExportInput): Promise<Blob> {
-  const { timelineItems, tracks, adjustments, captions, captionStyle, luts, quality, resolution, aspect, range, fast, onProgress, signal } = input
+  const { timelineItems, tracks, adjustments, captions, captionStyle, luts, quality, resolution, aspect, range, fast, watermark, onProgress, signal } = input
 
   const items = timelineItems.filter(i => i.enabled !== false)
   const timelineEnd = items.reduce((m, i) => Math.max(m, i.startTime + (i.outPoint - i.inPoint)), 0)
@@ -79,7 +82,7 @@ export async function exportTimelineFidelity(input: FidelityExportInput): Promis
   if (windowDur <= 0) throw new Error('Nothing to export in the selected range.')
 
   const { w, h } = resDims(resolution, aspect)
-  const state: CompositorState = { items, tracks, adjustments, captions, captionStyle, luts, width: w, height: h }
+  const state: CompositorState = { items, tracks, adjustments, captions, captionStyle, luts, width: w, height: h, watermark: watermark ?? null }
 
   // 1. Offline audio mix (faster than real time) — 2%…30%.
   onProgress(0.02, 'Mixing audio…')

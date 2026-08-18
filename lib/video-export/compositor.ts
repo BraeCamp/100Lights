@@ -67,7 +67,20 @@ import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 import { followPan } from '@/lib/focus-utils'
+import { manifestEnabled, pushManifestFrame } from './manifest'
 import { fontStack, titleAnim, titleFontPx, revealLines, titleWordStates, readableText, beatPulse } from '@/lib/text-styles'
+
+// A persistent corner watermark drawn on top of every frame (branding). Not a timeline clip — it
+// survives all timeline edits and always stays in its corner. Set via window.__video.setWatermark.
+export interface Watermark {
+  text:       string
+  position?:  'br' | 'bl' | 'tr' | 'tl'   // corner, default 'br'
+  opacity?:   number   // 0..1, default 0.62
+  sizePct?:   number   // font size as % of frame height, default 2.6
+  color?:     string   // default '#ffffff'
+  font?:      string   // FONT_LIBRARY id
+  weight?:    number   // default 700
+}
 
 export interface CompositorState {
   items:        TimelineItem[]
@@ -78,6 +91,7 @@ export interface CompositorState {
   luts?:        Map<string, LutData>   // parsed .cube LUTs keyed by MediaItem id (clip.lutId)
   width:        number
   height:       number
+  watermark?:   Watermark | null      // persistent branding overlay, drawn last
 }
 
 /** Resolves the playing <video> element for a clip (owned by the capture layer). */
@@ -297,6 +311,26 @@ export function drawFrame(
 ): void {
   const { width: W, height: H, adjustments } = state
 
+  // Self-describing render tap (GATED — off for normal users). Records the ground truth of this frame
+  // so an automated editor can verify cut/zoom/overlay TIMING without watching playback. One boolean
+  // check when disabled; recomputes via the same pure resolvers the draw below uses.
+  if (manifestEnabled()) {
+    const viewer = pickViewerClip(state.items, state.tracks, t)
+    const tr = viewer ? computeClipTransform(viewer, t, state.items) : null
+    const trans = viewer ? transitionAt(state.items, state.tracks, viewer, t) : null
+    pushManifestFrame({
+      t: +t.toFixed(4),
+      viewer: viewer?.id ?? null,
+      visible: pickVisibleClips(state.items, state.tracks, t).map(c => c.id),
+      zoom: tr ? +tr.cropZoom.toFixed(2) : 100,
+      x: tr ? +tr.cropX.toFixed(1) : 0,
+      y: tr ? +tr.cropY.toFixed(1) : 0,
+      opacity: tr ? +tr.fadeOpacity.toFixed(3) : 1,
+      titles: activeTitleClips(state.items, state.tracks, t).map(c => ({ id: c.id, text: (c.titleText ?? '').slice(0, 80), anim: c.titleAnimation ?? 'none' })),
+      transition: trans ? { type: trans.type, p: +trans.p.toFixed(3) } : null,
+    })
+  }
+
   // Background — the preview monitor is solid black (#000).
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.globalAlpha = 1
@@ -353,6 +387,9 @@ export function drawFrame(
 
   // Title overlays — every active title clip, on top of the video stack (all overlapping ones render).
   for (const clip of activeTitleClips(state.items, state.tracks, t)) drawTitle(ctx, clip, t, W, H)
+
+  // Persistent branding watermark — drawn last so it sits above everything.
+  if (state.watermark?.text) drawWatermark(ctx, state.watermark, W, H)
 
   // Hype flash — a quick additive white pop on drops (paired with the punch-zoom), from the visible
   // clips' hypeDrops. Drawn over the video, under the vignette/captions.
@@ -533,6 +570,28 @@ export async function ensureTitleFonts(items: TimelineItem[]): Promise<void> {
       new Promise(r => setTimeout(r, 2500)),
     ])
   } catch { /* fall back to system faces */ }
+}
+
+// Corner branding watermark — a small, semi-transparent line pinned to a corner with a soft shadow
+// for legibility over any footage. Frame-relative sizing so preview and export match.
+function drawWatermark(ctx: CanvasRenderingContext2D, wm: Watermark, W: number, H: number) {
+  const text = wm.text
+  if (!text) return
+  const pos = wm.position ?? 'br'
+  const fontSize = Math.max(10, Math.round(H * ((wm.sizePct ?? 2.6) / 100)))
+  const pad = Math.round(H * 0.032)
+  const top = pos[0] === 't'
+  const left = pos[1] === 'l'
+  ctx.save()
+  ctx.globalAlpha = Math.max(0, Math.min(1, wm.opacity ?? 0.62))
+  ctx.font = `${wm.weight ?? 700} ${fontSize}px ${fontStack(wm.font)}`
+  ctx.textAlign = left ? 'left' : 'right'
+  ctx.textBaseline = top ? 'top' : 'alphabetic'
+  ctx.shadowColor = 'rgba(0,0,0,0.55)'
+  ctx.shadowBlur = fontSize * 0.28
+  ctx.fillStyle = wm.color ?? '#ffffff'
+  ctx.fillText(text, left ? pad : W - pad, top ? pad : H - pad)
+  ctx.restore()
 }
 
 function drawTitle(ctx: CanvasRenderingContext2D, clip: TimelineItem, t: number, W: number, H: number) {

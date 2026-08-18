@@ -762,16 +762,72 @@ export default function AudioEditor(props: AudioEditorProps) {
     const w = window as unknown as {
       __dawDispatch?: typeof dispatch
       __dawSnapshot?: () => { project: DawProject; history: NonNullable<DawProject['history']> }
+      __dawInspect?: () => unknown
       __dawRenderWav?: (opts?: Parameters<DawEngine['renderWav']>[0]) => Promise<unknown>
+      __dawRenderOffline?: (opts?: { startBeat?: number; endBeat?: number }) => Promise<unknown>
       __parseMid?: (file: File) => Promise<unknown>
       __exportMid?: () => Promise<Blob>
       __sessionCapture?: (opts?: { sessionId?: string; enabled?: boolean }) => Promise<unknown>
     }
     w.__dawDispatch = dispatch
     w.__dawSnapshot = () => ({ project: projectRef.current, history: buildLogRef.current })
+    // Dev-only "vision": a readable, at-a-glance view of what's actually happening in the studio as
+    // it's driven — transport, the LIVE master output level (so audio flow is verifiable, not guessed),
+    // and every track's instrument/FX/clips with real loop state + note counts. This is how an
+    // automated/agent driver "sees" the DAW the way a person sees the screen.
+    w.__dawInspect = () => {
+      const eng = engineRef.current as (DawEngine & { masterAnalyser?: AnalyserNode; isPlaying?: boolean; currentBeat?: number }) | null
+      const proj = projectRef.current
+      let masterLevelDb: number | null = null
+      try {
+        const an = eng?.masterAnalyser
+        if (an) {
+          const buf = new Uint8Array(an.fftSize)
+          an.getByteTimeDomainData(buf)
+          let sum = 0
+          for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v }
+          const rms = Math.sqrt(sum / buf.length)
+          masterLevelDb = rms > 0.0001 ? Math.round(20 * Math.log10(rms) * 10) / 10 : -Infinity
+        }
+      } catch { /* ignore */ }
+      return {
+        transport: { isPlaying: !!eng?.isPlaying, currentBeat: Math.round((eng?.currentBeat ?? 0) * 100) / 100, tempo: proj.tempo },
+        masterLevelDb,
+        trackCount: proj.tracks.length,
+        tracks: proj.tracks.map(t => ({
+          name: t.name, kind: t.kind, mute: !!t.mute, solo: !!(t as { solo?: boolean }).solo,
+          instrument: t.instrument?.type,
+          fx: (t.effects ?? []).map(e => e.type),
+          clips: proj.arrangementClips.filter(c => c.trackId === t.id).map(c => {
+            const lc = c as { loopEnabled?: boolean; loopLengthBeats?: number }
+            return {
+              name: c.name, start: c.startBeat, dur: c.durationBeats,
+              loop: lc.loopEnabled ? (lc.loopLengthBeats ?? true) : false,
+              notes: c.kind === 'midi' ? c.notes.length : undefined,
+            }
+          }),
+        })),
+      }
+    }
     // Bounce a beat range to lossless WAV(s) for offline mix analysis (see
     // scripts/analyze-mix.py). Real-time capture off the live engine graph.
     w.__dawRenderWav = (opts) => engineRef.current?.renderWav(opts ?? {}) ?? Promise.resolve(null)
+    // Bounce the REAL project audio via the OFFLINE render (OfflineAudioContext) — this is the ONE
+    // that produces actual sound in a headless/automated browser, unlike the realtime renderWav which
+    // captures silence when there's no audio device. Returns the encoded mix as base64 so an agent can
+    // pair it with a screen recording. Auto-picks the whole arrangement if no range is given.
+    w.__dawRenderOffline = async (opts) => {
+      const proj = projectRef.current
+      const clips = proj.arrangementClips ?? []
+      const startBeat = opts?.startBeat ?? 0
+      const endBeat = opts?.endBeat ?? Math.max(4, ...clips.map(c => c.startBeat + c.durationBeats))
+      const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
+      const mix = await renderProjectAudioBlob(proj, { startBeat, endBeat })
+      const bytes = new Uint8Array(await mix.blob.arrayBuffer())
+      let s = ''; const CH = 0x8000
+      for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CH)))
+      return { base64: btoa(s), type: mix.blob.type, durationSec: mix.durationSec, bytes: bytes.length }
+    }
     // Dev-only: exercise the MIDI importer in isolation (returns {project, report}).
     w.__parseMid = (file) => import('@/lib/midi-import').then(m => m.parseMidiFile(file))
     // Dev-only: export the current project as a .mid blob (round-trip testing).

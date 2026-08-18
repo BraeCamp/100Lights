@@ -72,7 +72,54 @@
           "accent": true
         }
       ],
-      "caption": "i let an AI make this beat. it took 12 seconds 🤖\n\n#aimusic #musicproducer #beatmaker #edm #fyp"
+      "caption": "i let an AI make this beat. it took 12 seconds 🤖\n\n#aimusic #musicproducer #beatmaker #edm #fyp",
+      "variants": [
+        {
+          "lines": [
+            { "text": "i let an AI", "at": 0.8 },
+            { "text": "make this beat.", "at": 1.5 },
+            { "text": "it took", "at": 4.3 },
+            { "text": "12 seconds. 🔊", "at": 5, "accent": true }
+          ],
+          "caption": "i let an AI make this beat. it took 12 seconds 🤖\n\n#aimusic #musicproducer #beatmaker #edm #fyp"
+        },
+        {
+          "lines": [
+            { "text": "no samples.", "at": 0.8 },
+            { "text": "no plugins.", "at": 1.6 },
+            { "text": "just me and", "at": 4 },
+            { "text": "one browser tab. 🔊", "at": 4.8, "accent": true }
+          ],
+          "caption": "made this in a single browser tab 🔊\n\n#aimusic #musicproducer #beatmaker #edm #fyp"
+        },
+        {
+          "lines": [
+            { "text": "everyone:", "at": 0.8 },
+            { "text": "\"AI can't make music\"", "at": 1.6 },
+            { "text": "me, in 100Lights:", "at": 4 },
+            { "text": "hold my headphones 🎧", "at": 4.8, "accent": true }
+          ],
+          "caption": "AI can't make music? hold my headphones 🎧\n\n#aimusic #musicproducer #beatmaker #edm #fyp"
+        },
+        {
+          "lines": [
+            { "text": "POV:", "at": 0.8 },
+            { "text": "you hum a melody", "at": 1.6 },
+            { "text": "and it becomes", "at": 4 },
+            { "text": "a full track. 🎶", "at": 4.8, "accent": true }
+          ],
+          "caption": "hum it → full track 🎶 made in 100Lights\n\n#aimusic #musicproducer #beatmaker #edm #fyp"
+        },
+        {
+          "lines": [
+            { "text": "spent $0.", "at": 0.8 },
+            { "text": "spent 5 minutes.", "at": 1.6 },
+            { "text": "walked away with", "at": 4 },
+            { "text": "a beat that slaps. 🔥", "at": 4.8, "accent": true }
+          ],
+          "caption": "$0, 5 minutes, one beat that slaps 🔥\n\n#aimusic #musicproducer #beatmaker #edm #fyp"
+        }
+      ]
     },
     {
       "id": "falling-notes",
@@ -130,41 +177,84 @@
       "start": 8,
       "seconds": 14,
       "accent": "#3b82f6",
+      "note": "`variants` gives this short a rotating pool of conversations so re-renders aren't identical (build picks one at random). The top-level chatTitle/messages are the fallback if variants is emptied.",
       "chatTitle": "producer friend 💬",
       "messages": [
-        {
-          "text": "yo send me that beat",
-          "at": 0.6
-        },
-        {
-          "me": true,
-          "text": "which one",
-          "at": 2.2
-        },
-        {
-          "text": "the fire one from ur story",
-          "at": 3.6
-        },
-        {
-          "me": true,
-          "text": "ngl an AI made it 😭",
-          "at": 6
-        },
-        {
-          "text": "in how long",
-          "at": 8
-        },
-        {
-          "me": true,
-          "text": "12 seconds",
-          "at": 9.6
-        },
-        {
-          "text": "delete this app 💀",
-          "at": 11.4
-        }
+        { "text": "yo send me that beat", "at": 0.6 },
+        { "me": true, "text": "which one", "at": 2.2 },
+        { "text": "the fire one from ur story", "at": 3.6 },
+        { "me": true, "text": "ngl an AI made it 😭", "at": 6 },
+        { "text": "in how long", "at": 8 },
+        { "me": true, "text": "12 seconds", "at": 9.6 },
+        { "text": "delete this app 💀", "at": 11.4 }
       ],
-      "caption": "my producer friend when I sent him an AI beat 💀\n\n#aimusic #producerlife #beatmaker #comedy #fyp"
+      "caption": "my producer friend when I sent him an AI beat 💀\n\n#aimusic #producerlife #beatmaker #comedy #fyp",
+      "variants": [
+        {
+          "chatTitle": "producer friend 💬",
+          "messages": [
+            { "text": "yo send me that beat", "at": 0.6 },
+            { "me": true, "text": "which one", "at": 2.2 },
+            { "text": "the fire one from ur story", "at": 3.6 },
+            { "me": true, "text": "ngl an AI made it 😭", "at": 6 },
+            { "text": "in how long", "at": 8 },
+            { "me": true, "text": "12 seconds", "at": 9.6 },
+            { "text": "delete this app 💀", "at": 11.4 }
+          ],
+          "caption": "my producer friend when I sent him an AI beat 💀\n\n#aimusic #producerlife #beatmaker #comedy #fyp"
+        },
+        {
+          "chatTitle": "the label 📀",
+          "messages": [
+            { "text": "who produced this??", "at": 0.6 },
+            { "me": true, "text": "me kinda", "at": 2.4 },
+            { "text": "kinda?", "at": 3.8 },
+            { "me": true, "text": "i made it in 100Lights", "at": 5.4 },
+            { "text": "so an app made it", "at": 7.4 },
+            { "me": true, "text": "so did i press the buttons 🤨", "at": 9.2 },
+            { "text": "fair 😭", "at": 11.2 }
+          ],
+          "caption": "the label finding out I made the beat in an app 😭\n\n#aimusic #musicproducer #beatmaker #comedy #fyp"
+        },
+        {
+          "chatTitle": "mom 💕",
+          "messages": [
+            { "text": "is that YOUR song on the radio??", "at": 0.6 },
+            { "me": true, "text": "no mom lol", "at": 2.4 },
+            { "me": true, "text": "but i made one that slaps too", "at": 4 },
+            { "text": "send it!!", "at": 6 },
+            { "me": true, "text": "took me like 12 seconds 😅", "at": 8 },
+            { "text": "my child the popstar 🥹", "at": 10.4 }
+          ],
+          "caption": "showing my mom the beat I made 🥹\n\n#aimusic #beatmaker #producerlife #wholesome #fyp"
+        },
+        {
+          "chatTitle": "group chat 🔥",
+          "messages": [
+            { "text": "aux is CRAZY who's is this", "at": 0.6 },
+            { "me": true, "text": "mine 😌", "at": 2.4 },
+            { "text": "cap", "at": 3.6 },
+            { "text": "no way you made that", "at": 4.8 },
+            { "me": true, "text": "100Lights. 12 seconds.", "at": 6.8 },
+            { "text": "teach me RIGHT NOW", "at": 9 },
+            { "me": true, "text": "it's literally free 💀", "at": 11 }
+          ],
+          "caption": "when it's your beat on the aux 😌\n\n#aimusic #beatmaker #producerlife #fyp #viral"
+        },
+        {
+          "chatTitle": "skeptical friend 🙄",
+          "messages": [
+            { "text": "AI music all sounds the same", "at": 0.6 },
+            { "me": true, "text": "listen to this then", "at": 2.4 },
+            { "text": "...", "at": 4.4 },
+            { "text": "ok that's actually hard", "at": 6 },
+            { "me": true, "text": "and i can edit every note", "at": 8 },
+            { "text": "wait you can EDIT it??", "at": 10 },
+            { "me": true, "text": "it's a whole studio 😏", "at": 11.8 }
+          ],
+          "caption": "converting my AI-hater friend one beat at a time 😏\n\n#aimusic #musicproducer #beatmaker #comedy #fyp"
+        }
+      ]
     },
     {
       "id": "vinyl-spin",

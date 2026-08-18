@@ -43,6 +43,8 @@ const QUALITIES = [
 
 const RESOLUTIONS = [
   { id: 'original', label: 'Original' },
+  { id: '2160p',    label: '4K' },
+  { id: '1440p',    label: '1440p' },
   { id: '1080p',    label: '1080p' },
   { id: '720p',     label: '720p' },
   { id: '480p',     label: '480p' },

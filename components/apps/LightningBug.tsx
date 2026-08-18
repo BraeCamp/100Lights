@@ -1341,6 +1341,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
   const [delayMs, setDelayMs] = useState(0)
   const [err, setErr] = useState<string | null>(null)
   const [fs, setFs] = useState(false)
+  const [recording, setRecording] = useState(false)   // screen+audio capture for content
+  const [recSecs, setRecSecs] = useState(0)
   const [railOpen, setRailOpen] = useState(true)   // left control rail — collapse it to give the stage the full window
   // Customization — colour config (palette OR a plane off the colour map) + how it maps.
   const [colorCfg, setColorCfg] = useState<LiveColor>({ paletteId: 'aurora', plane: null, mode: 'spectrum' })
@@ -2928,6 +2930,60 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
     document.addEventListener('fullscreenchange', on)
     return () => document.removeEventListener('fullscreenchange', on)
   }, [])
+
+  // ── Screen + audio recording (tape a session for content) ──────────────────────────────────────
+  // Captures the screen via getDisplayMedia (pick "this tab" for a clean, chrome-free grab) and mixes
+  // in the app's OWN audio tap (recDest) so the music is always captured cleanly even if the user
+  // doesn't check "share tab audio". Downloads a .webm when stopped.
+  const mediaRecRef = useRef<MediaRecorder | null>(null)
+  const recChunksRef = useRef<Blob[]>([])
+  const dispStreamRef = useRef<MediaStream | null>(null)
+  const recTimerRef = useRef<number | null>(null)
+  const stopRec = useCallback(() => {
+    if (recTimerRef.current) { window.clearInterval(recTimerRef.current); recTimerRef.current = null }
+    try { mediaRecRef.current?.stop() } catch { /* already stopped */ }
+    dispStreamRef.current?.getTracks().forEach(t => t.stop())
+    dispStreamRef.current = null
+    setRecording(false)
+  }, [])
+  const startRec = useCallback(async () => {
+    if (recording) { stopRec(); return }
+    const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c: DisplayMediaStreamOptions) => Promise<MediaStream> }
+    if (typeof MediaRecorder === 'undefined' || !md.getDisplayMedia) { setErr('Screen recording isn’t supported in this browser.'); return }
+    try {
+      const disp = await md.getDisplayMedia({ video: { frameRate: 30 }, audio: true })
+      dispStreamRef.current = disp
+      // Prefer the app's own clean audio tap; fall back to whatever audio the screen share carries.
+      const appAudio = recDestRef.current?.stream.getAudioTracks() ?? []
+      const audioTracks = appAudio.length ? appAudio : disp.getAudioTracks()
+      const mixed = new MediaStream([...disp.getVideoTracks(), ...audioTracks])
+      const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm'
+      const rec = new MediaRecorder(mixed, { mimeType: mime, videoBitsPerSecond: 8_000_000 })
+      recChunksRef.current = []
+      rec.ondataavailable = e => { if (e.data.size) recChunksRef.current.push(e.data) }
+      rec.onstop = () => {
+        const blob = new Blob(recChunksRef.current, { type: 'video/webm' })
+        recChunksRef.current = []
+        if (!blob.size) return
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = `lightning-bug-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`
+        a.click()
+        setTimeout(() => URL.revokeObjectURL(url), 4000)
+      }
+      // If the user ends the share from the browser's own bar, stop cleanly.
+      disp.getVideoTracks()[0]?.addEventListener('ended', stopRec)
+      mediaRecRef.current = rec
+      rec.start()
+      setRecSecs(0)
+      recTimerRef.current = window.setInterval(() => setRecSecs(s => s + 1), 1000)
+      setRecording(true)
+    } catch (e) {
+      // User cancelled the picker, or permission denied — not an error worth surfacing loudly.
+      if (e instanceof Error && e.name !== 'NotAllowedError' && e.name !== 'AbortError') setErr(e.message)
+    }
+  }, [recording, stopRec])
+  useEffect(() => () => stopRec(), [stopRec])   // stop on unmount
   // Wake locks drop when the tab hides — re-acquire when it comes back so the screen stays on.
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === 'visible' && streamRef.current && !wakeRef.current) void wake() }
@@ -3209,6 +3265,14 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
         )}
         {(running || !reactive) && !broadcast && (
           <button type="button" onClick={toggleFs} aria-label="Fullscreen" style={{ position: 'absolute', top: 10, right: 10, display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 10, background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer' }}><Maximize2 size={17} /></button>
+        )}
+        {(running || !reactive) && !broadcast && (
+          <button type="button" onClick={startRec} aria-label={recording ? 'Stop recording' : 'Record screen + audio'} title={recording ? 'Stop recording' : 'Record screen + audio for content'}
+            style={{ position: 'absolute', top: 10, right: 56, display: 'inline-flex', alignItems: 'center', gap: 7, height: 38, padding: recording ? '0 12px 0 10px' : '0', width: recording ? 'auto' : 38, justifyContent: 'center', borderRadius: 10, background: recording ? 'rgba(220,38,38,0.92)' : 'rgba(0,0,0,0.4)', border: `1px solid ${recording ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.2)'}`, color: '#fff', cursor: 'pointer', fontWeight: 800, fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}>
+            {recording
+              ? <><Square size={13} fill="#fff" /><span>{Math.floor(recSecs / 60)}:{String(recSecs % 60).padStart(2, '0')}</span></>
+              : <Circle size={16} fill="#ef4444" color="#ef4444" />}
+          </button>
         )}
         {/* Broadcast: now-playing card (carries attribution for the description) */}
         {broadcast && nowPlaying && (

@@ -323,7 +323,20 @@ function editableOverlayClips(sc, accent, dur) {
   return brand   // any other renderer → just the editable brand
 }
 
+// Diversity: a scene may carry a `variants` array (each an override object). Pick one at random per
+// build and merge it over the base scene, so re-rendering the same short (fake iMessage, kinetic hook,
+// tier heading…) doesn't always show the identical text. The base scene's own fields are the fallback.
+function pickVariant(sc) {
+  if (!Array.isArray(sc.variants) || !sc.variants.length) return sc
+  const v = sc.variants[Math.floor(Math.random() * sc.variants.length)]
+  const merged = { ...sc, ...v }
+  delete merged.variants
+  process.stdout.write(`[variant ${sc.variants.indexOf(v) + 1}/${sc.variants.length}] `)
+  return merged
+}
+
 async function buildOne(browser, folderId, sc) {
+  sc = pickVariant(sc)
   const tmp = mkdtempSync(join(tmpdir(), 'bs-'))
   try {
     let seconds = sc.seconds, start = sc.start ?? 0

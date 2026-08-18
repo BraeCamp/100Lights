@@ -1,5 +1,9 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 
+// Next 16 renamed the `middleware` file convention to `proxy` (identical functionality). Clerk's
+// clerkMiddleware still works unchanged as the default export here. See node_modules/next/dist/docs
+// → app/api-reference/file-conventions/proxy. ⚠️ auth flows are exercised here — smoke-test sign-in
+// after deploying this rename.
 const isPublicRoute = createRouteMatcher([
   '/',
   '/sign-in(.*)',
@@ -45,7 +49,7 @@ const isPublicRoute = createRouteMatcher([
   // audio/live/stations are genuinely public; agent/sync + provision check BROADCAST_AGENT_TOKEN /
   // CRON_SECRET). Admin broadcast controls live under /api/admin/broadcast/* and stay protected.
   '/api/broadcast/(.*)',
-  // Crawler files. Also excluded from the matcher below, so middleware never
+  // Crawler files. Also excluded from the matcher below, so proxy never
   // runs on them — listed here too so they stay public if that changes.
   '/sitemap.xml',
   '/robots.txt',
