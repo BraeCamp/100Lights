@@ -186,6 +186,14 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   // so adjusting either place moves the other. The clip's own gain/EQ fields are
   // hidden from the FX list below (see hideFields) — one system, two doorways.
   const { project, engine } = useDaw()
+  // Playhead mapped into this clip's span (0..1) for the graph modals — null
+  // whenever the transport is outside the clip.
+  const playheadClipT = () => {
+    const b = (engine as { currentBeat?: number })?.currentBeat
+    if (b == null || !clip.durationBeats) return null
+    const t = (b - clip.startBeat) / clip.durationBeats
+    return t >= 0 && t <= 1 ? t : null
+  }
   const trackIds = useMemo(() => [...new Set(targets.map(t => t.trackId))], [targets.map(t => t.trackId).join(',')])
   const eqTrack = project.tracks.find(t => t.id === trackIds[0])
   const eqMultiTrack = trackIds.length > 1
@@ -795,6 +803,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
             onReset={() => b.onChange(def.defaultCurve())}
             onOff={() => { b.toggle(false); setOpenGraph(null) }}
             offLabel={def.offLabel}
+            playheadT={area === 'volume' || (isFx && !motion?.perNote) ? playheadClipT : undefined}
             extra={isFx && motion ? (
               <div style={{ marginTop: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 0 8px' }}>
@@ -832,6 +841,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
             onReset={() => setFieldGraph(key, defaultFieldGraph())}
             onOff={() => { toggleFieldGraph(key, false); setOpenGraph(null) }}
             offLabel="Back to slider"
+            playheadT={playheadClipT}
           />
         )
       })()}

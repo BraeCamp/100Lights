@@ -179,6 +179,7 @@ function EffectRow({
   const { project, dispatch } = useDaw()
   const dragRef    = useRef<{ effectId: string; startX: number; startBeat: number } | null>(null)
   const resizeRef  = useRef<{ effectId: string; startX: number; startDur: number } | null>(null)
+  const leftResizeRef = useRef<{ effectId: string; startX: number; startBeat: number; startDur: number; graph: ClipEffect['graph'] } | null>(null)
   const clickTimer = useRef<{ effectId: string; timer: ReturnType<typeof setTimeout> } | null>(null)
 
   const viewStartBeat = scrollLeft / beatW
@@ -273,6 +274,29 @@ function EffectRow({
                 <span style={{ position: 'absolute', top: 3, left: 4, fontSize: 8, color, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', pointerEvents: 'none', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: width - 16, zIndex: 1 }}>
                   {barLabel(eff)}
                 </span>
+                {/* Left edge: expand the bar BACKWARDS. The drawn graph keeps its
+                    shape anchored to the audio it was drawn over — new space is
+                    added before it (points shift by the start delta). */}
+                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, cursor: 'ew-resize', zIndex: 2 }}
+                  onMouseDown={e => {
+                    e.stopPropagation()
+                    leftResizeRef.current = { effectId: eff.id, startX: e.clientX, startBeat: eff.startBeat, startDur: eff.durationBeats, graph: eff.graph }
+                    function mm(ev: MouseEvent) {
+                      const r = leftResizeRef.current
+                      if (!r) return
+                      const raw = r.startBeat + (ev.clientX - r.startX) / beatW
+                      const snapped = Math.max(0, snapBarBeat(project, trackId, raw))
+                      const newStart = Math.min(snapped, r.startBeat + r.startDur - 0.5)
+                      const delta = r.startBeat - newStart
+                      dispatch({ type: 'UPDATE_CLIP_EFFECT', effectId: r.effectId, patch: {
+                        startBeat: newStart,
+                        durationBeats: r.startDur + delta,
+                        graph: (r.graph ?? []).map(pt => ({ ...pt, t: Math.max(0, pt.t + delta) })),
+                      } })
+                    }
+                    function mu() { leftResizeRef.current = null; document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+                    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+                  }} />
                 <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 5, cursor: 'ew-resize', zIndex: 2 }}
                   onMouseDown={e => {
                     e.stopPropagation()
@@ -302,6 +326,10 @@ export default function EffectLaneView({
   const effects = (project.clipEffects ?? []).filter(e => e.trackId === trackId)
 
   const [numRows,          setNumRows]          = useState(1)
+  // Never hide existing bars: a project can carry bars on higher rows, and the
+  // lane used to reopen at one row — silently hiding them (a real support case:
+  // "my tremolo disappeared"). The shown row count is at least what data needs.
+  const rows = Math.max(numRows, 1, ...effects.map(e => (e.row ?? 0) + 1))
   const [addMenu,          setAddMenu]          = useState<{ x: number; y: number; beat: number; row: number } | null>(null)
   const [editTarget,       setEditTarget]       = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
   const [ctxMenu,          setCtxMenu]          = useState<{ effect: ClipEffect; x: number; y: number } | null>(null)
@@ -426,10 +454,10 @@ export default function EffectLaneView({
         e.preventDefault()
         const rect = laneRef.current?.getBoundingClientRect()
         const row  = rect ? Math.floor((e.clientY - rect.top) / EFFECT_H) : 0
-        setAddMenu({ x: e.clientX, y: e.clientY, beat: beatFromClientX(e.clientX), row: Math.min(row, numRows - 1) })
+        setAddMenu({ x: e.clientX, y: e.clientY, beat: beatFromClientX(e.clientX), row: Math.min(row, rows - 1) })
       }}
     >
-      {Array.from({ length: numRows }, (_, rowIndex) => (
+      {Array.from({ length: rows }, (_, rowIndex) => (
         <EffectRow
           key={rowIndex}
           rowIndex={rowIndex}
@@ -438,7 +466,7 @@ export default function EffectLaneView({
           scrollLeft={scrollLeft}
           viewWidth={viewWidth}
           effects={effects}
-          isLast={rowIndex === numRows - 1}
+          isLast={rowIndex === rows - 1}
           expandedEffectId={expandedEffectId}
           selectedEffectIds={selectedEffectIds}
           onSelect={selectEffect}
