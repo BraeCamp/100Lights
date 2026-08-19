@@ -116,6 +116,91 @@ function writeWav(path, x) {
 }
 
 // ── shared voice builders (heavily parameterized — recipes differ per kit) ──
+
+// ═══ v2 ACOUSTIC VOICES (2026-08-18) ═════════════════════════════════════
+// The v1 toms were single sine sweeps — synthy. Real drums are MODAL: a
+// fundamental plus inharmonic partials with independent (faster) decays, a
+// tension-drop pitch bend as the head settles, stick-attack noise and slight
+// head beating. Snare wires are comb-resonated noise, cymbals are dense
+// inharmonic banks with a bright fast layer over a long wash.
+
+// One decaying partial with a settling pitch bend and gentle head-beat.
+function modalPartial(sec, freq, decaySec, { bendSemis = 0, bendTime = 0.06, curve = 5, beatHz = 0 } = {}) {
+  const n = Math.round(sec * SR), out = new Float32Array(n)
+  const bendAmt = Math.pow(2, bendSemis / 12) - 1
+  let ph = rnd() * 0.4
+  for (let i = 0; i < n; i++) {
+    const t = i / SR
+    const f = freq * (1 + bendAmt * Math.exp(-t / bendTime))
+    ph += (2 * Math.PI * f) / SR
+    let a = Math.exp(-curve * t / decaySec)
+    if (beatHz > 0) a *= 1 - 0.18 * (1 - Math.cos(2 * Math.PI * beatHz * t)) / 2
+    out[i] = Math.sin(ph) * a
+  }
+  return out
+}
+// A modal drum body: modes = [ratio, level, decayMult] — partials die faster
+// than the fundamental, everything bends down together as the head settles.
+function modalBody({ f0, modes, decay, bendSemis = 1.6, bendTime = 0.05, len }) {
+  const layers = modes.map(([r, lvl, dm]) =>
+    gain(modalPartial(len, f0 * r, decay * dm, { bendSemis: bendSemis * (r > 1 ? 0.7 : 1), bendTime, beatHz: r === 1 ? 2.7 : 0 }), lvl))
+  return mix(...layers)
+}
+// Stick strike: broadband snap + low head-slap thump.
+function strike(len, { snapHz = 3000, snapLvl = 0.5, slapHz = 320, slapLvl = 0.4 } = {}) {
+  const snap = gain(biquad(mul(noise(0.01), env(Math.round(0.01 * SR), { decay: 0.005, curve: 6 })), 'bp', snapHz, 1), snapLvl)
+  const slap = gain(biquad(mul(noise(0.03), env(Math.round(0.03 * SR), { decay: 0.014, curve: 6 })), 'lp', slapHz * 3), slapLvl)
+  return mix(snap, slap)
+}
+// v2 acoustic tom: modal body + strike, mode set from real tom measurements.
+function tomV2({ f0 = 110, decay = 0.5, bendSemis = 2.2, strikeLvl = 0.5, drv = 0.04, len = 0.9 }) {
+  const body = modalBody({ f0, len, decay, bendSemis, bendTime: 0.07, modes: [
+    [1, 1, 1], [1.52, 0.55, 0.6], [2.12, 0.28, 0.45], [2.68, 0.13, 0.32], [3.24, 0.06, 0.22],
+  ] })
+  const hit = gain(strike(len, { snapHz: 2400, slapHz: f0 * 2.4 }), strikeLvl)
+  return drive(mix(body, hit), drv)
+}
+// v2 snare: modal shell + snare-WIRE rattle (comb-resonated noise buzz).
+function wires(sec, { decay = 0.16, combMs = 1.9, fb = 0.55, hp = 1400, lp = 9800, lvl = 1 } = {}) {
+  const n = Math.round(sec * SR)
+  const nz = mul(noise(sec), env(n, { decay, curve: 4.5 }))
+  const d = Math.max(1, Math.round(combMs / 1000 * SR))
+  const out = new Float32Array(n)
+  for (let i = 0; i < n; i++) out[i] = nz[i] + (i >= d ? out[i - d] * fb : 0)
+  return gain(biquad(biquad(out, 'hp', hp), 'lp', lp), lvl * (1 - fb) )
+}
+function snareV2({ tone = 196, toneDecay = 0.11, toneLvl = 0.7, wireDecay = 0.17, wireLvl = 1.0, wireHp = 1300, wireLp = 10000, strikeLvl = 0.55, drv = 0.06, bits = 0, plateLvl = 0, plateDecay = 0.22, len = 0.5 }) {
+  const body = gain(modalBody({ f0: tone, len, decay: toneDecay, bendSemis: 1.2, bendTime: 0.03, modes: [
+    [1, 1, 1], [1.6, 0.5, 0.5], [2.32, 0.25, 0.35],
+  ] }), toneLvl)
+  const wz = gain(wires(len, { decay: wireDecay, hp: wireHp, lp: wireLp }), wireLvl)
+  const hit = gain(strike(len, { snapHz: 3400, slapHz: tone * 1.8 }), strikeLvl)
+  let out = mix(body, wz, hit)
+  if (plateLvl > 0) out = mix(out, plate(len, { decay: plateDecay, level: plateLvl }))
+  out = drive(out, drv)
+  if (bits) out = crush(out, bits)
+  return out
+}
+// v2 kick: shell fundamental with settle-bend + beater (felt thump + click).
+function kickV2({ f0 = 52, decay = 0.4, bendSemis = 9, bendTime = 0.03, beater = 0.5, clickHz = 3400, drv = 0.1, sub = 0, lp = 0, len = 0.8 }) {
+  const body = modalBody({ f0, len, decay, bendSemis, bendTime, modes: [[1, 1, 1], [1.5, 0.12, 0.3]] })
+  const thump = gain(biquad(mul(noise(0.035), env(Math.round(0.035 * SR), { decay: 0.018, curve: 6 })), 'lp', 900), beater * 0.8)
+  const clk = gain(biquad(mul(noise(0.008), env(Math.round(0.008 * SR), { decay: 0.004, curve: 6 })), 'bp', clickHz, 1.2), beater * 0.6)
+  let out = mix(body, thump, clk)
+  if (sub > 0) out = mix(out, gain(modalPartial(len, f0 * 0.99, decay * 1.5, { bendSemis: 2, bendTime: bendTime * 2 }), sub))
+  out = drive(out, drv)
+  if (lp) out = biquad(out, 'lp', lp)
+  return out
+}
+// v2 cymbal: bright fast shimmer layer over a long dark wash — reads far more
+// acoustic than one metal bank with one envelope.
+function crashV2({ base = 4600, decay = 1.8, hp = 3600, lvl = 0.9, len = 3.4, grit = 0.25 }) {
+  const shimmer = gain(biquad(mul(metal(Math.min(len, 0.8), base * 1.6, [1, 1.13, 1.31, 1.56, 1.83, 2.17, 2.51, 2.99, 3.47, 4.03]), env(Math.round(Math.min(len, 0.8) * SR), { attack: 0.001, decay: 0.28, curve: 4 })), 'hp', hp * 1.5), 0.8)
+  const wash = mul(metal(len, base, [1, 1.19, 1.42, 1.71, 1.97, 2.39, 2.71, 3.11, 3.51, 3.97, 4.53, 5.11]), env(Math.round(len * SR), { attack: 0.002, decay, curve: 2.8 }))
+  const airNz = gain(mul(noise(len), env(Math.round(len * SR), { decay: decay * 0.9, curve: 2.6 })), grit)
+  return gain(biquad(mix(shimmer, wash, airNz), 'hp', hp), lvl)
+}
+
 function kick({ f0 = 120, f1 = 45, sweep = 0.035, decay = 0.35, click = 0.5, clickHz = 3000, drv = 0.15, lp = 0, sub = 0, len = 0.6 }) {
   const body = mul(sweepSine(len, f0, f1, sweep), env(Math.round(len * SR), { decay, curve: 5.5 }))
   const clk = gain(biquad(mul(noise(0.012), env(Math.round(0.012 * SR), { decay: 0.006, curve: 6 })), 'bp', clickHz, 1.2), click)
@@ -188,54 +273,54 @@ function rim({ f = 830, decay = 0.035, woody = 0.5, len = 0.12, harm = 0, ring =
 const KITS = {
   // clean, balanced acoustic — natural tones, a touch of room
   studio: {
-    36: () => room(kick({ f0: 95, f1: 47, sweep: 0.03, decay: 0.36, click: 0.35, clickHz: 3400, drv: 0.06, len: 0.7 }), { wet: 0.12 }),
-    38: () => room(snare({ tone: 200, toneLvl: 0.75, nzDecay: 0.15, nzHp: 1100, nzLp: 10500, drv: 0.05 }), { wet: 0.16 }),
+    36: () => room(kickV2({ f0: 49, decay: 0.38, bendSemis: 8, beater: 0.5, clickHz: 3400, drv: 0.05, len: 0.75 }), { wet: 0.12 }),
+    38: () => room(snareV2({ tone: 198, toneDecay: 0.12, toneLvl: 0.7, wireDecay: 0.17, wireHp: 1300, wireLp: 10500, strikeLvl: 0.55, drv: 0.04 }), { wet: 0.16 }),
     39: () => room(clap({ bursts: 3, gap: 0.009, bp: 1550, decay: 0.1, tailLvl: 0.15 }), { wet: 0.22 }),
-    41: () => room(tom({ f0: 98, decay: 0.34 }), { wet: 0.12 }),
+    41: () => room(tomV2({ f0: 84, decay: 0.55, bendSemis: 2.4, len: 1.0 }), { wet: 0.12 }),
     42: () => hat({ base: 3600, hp: 7200, decay: 0.04, partials: [1, 1.34, 1.78, 2.16, 2.62, 3.05] }),
-    45: () => room(tom({ f0: 140, decay: 0.3 }), { wet: 0.12 }),
+    45: () => room(tomV2({ f0: 118, decay: 0.48, bendSemis: 2.2, len: 0.9 }), { wet: 0.12 }),
     46: () => hat({ open: true, base: 3600, hp: 6800, decay: 0.32, partials: [1, 1.34, 1.78, 2.16, 2.62, 3.05] }),
-    48: () => room(tom({ f0: 190, decay: 0.26 }), { wet: 0.12 }),
-    49: () => crash({ base: 4400, decay: 1.7, grit: 0.22 }),
+    48: () => room(tomV2({ f0: 165, decay: 0.4, bendSemis: 2.0, len: 0.8 }), { wet: 0.12 }),
+    49: () => crashV2({ base: 4300, decay: 1.9, grit: 0.22, len: 3.6 }),
     51: () => room(rim({ f: 1700, decay: 0.05, woody: 0.6, len: 0.18 }), { wet: 0.1 }),
   },
   // dusty hip-hop — saturated, crushed, dark tops
   boombap: {
-    36: () => kick({ f0: 82, f1: 44, sweep: 0.028, decay: 0.18, click: 0.2, clickHz: 2200, drv: 0.4, lp: 3600, len: 0.45 }),
-    38: () => snare({ tone: 238, toneDecay: 0.07, nzDecay: 0.13, nzHp: 700, nzLp: 6800, drv: 0.3, bits: 12 }),
+    36: () => kickV2({ f0: 52, decay: 0.2, bendSemis: 7, beater: 0.35, clickHz: 2200, drv: 0.35, lp: 3400, len: 0.5 }),
+    38: () => snareV2({ tone: 235, toneDecay: 0.08, toneLvl: 0.85, wireDecay: 0.13, wireHp: 800, wireLp: 6800, strikeLvl: 0.5, drv: 0.28, bits: 12, len: 0.42 }),
     39: () => crush(biquad(clap({ bursts: 4, gap: 0.016, bp: 1000, decay: 0.13, tailLvl: 0.35, len: 0.5 }), 'lp', 5600), 11),
-    41: () => crush(drive(tom({ f0: 82, decay: 0.18, nz: 0.2, len: 0.4 }), 0.3), 11),
+    41: () => crush(drive(tomV2({ f0: 80, decay: 0.28, bendSemis: 2, strikeLvl: 0.45, len: 0.55 }), 0.28), 11),
     42: () => hat({ base: 2900, hp: 5200, lp: 11000, decay: 0.055, nz: 0.55, partials: [1, 1.5, 1.9, 2.4] }),
-    45: () => drive(tom({ f0: 128, decay: 0.22, nz: 0.18 }), 0.25),
+    45: () => crush(drive(tomV2({ f0: 112, decay: 0.25, bendSemis: 2, strikeLvl: 0.45, len: 0.5 }), 0.25), 11),
     46: () => hat({ open: true, base: 2900, hp: 4800, lp: 10500, decay: 0.28, nz: 0.55, partials: [1, 1.5, 1.9, 2.4] }),
-    48: () => drive(tom({ f0: 172, decay: 0.2, nz: 0.18 }), 0.25),
-    49: () => crush(crash({ base: 4100, decay: 1.2, hp: 3200, grit: 0.4, len: 2.2 }), 12),
+    48: () => crush(drive(tomV2({ f0: 152, decay: 0.22, bendSemis: 1.8, strikeLvl: 0.45, len: 0.45 }), 0.25), 11),
+    49: () => crush(crashV2({ base: 4000, decay: 1.3, hp: 3100, grit: 0.4, len: 2.4 }), 12),
     51: () => crush(rim({ f: 480, decay: 0.07, woody: 1.1, len: 0.16, lp: 3800 }), 11),
   },
   // big room — long, loud, roomy; gated-plate snare
   rock: {
-    36: () => room(kick({ f0: 100, f1: 42, sweep: 0.035, decay: 0.42, click: 0.5, clickHz: 4000, drv: 0.18, sub: 0.3, len: 0.8 }), { wet: 0.2 }),
-    38: () => snare({ tone: 215, toneLvl: 0.9, nzDecay: 0.2, nzHp: 900, nzLp: 11500, drv: 0.15, plateLvl: 0.7, plateDecay: 0.3, len: 0.55 }),
+    36: () => room(kickV2({ f0: 46, decay: 0.5, bendSemis: 10, beater: 0.7, clickHz: 4200, drv: 0.15, sub: 0.35, len: 0.95 }), { wet: 0.2 }),
+    38: () => snareV2({ tone: 212, toneDecay: 0.1, toneLvl: 0.85, wireDecay: 0.22, wireHp: 1000, wireLp: 11500, strikeLvl: 0.7, drv: 0.12, plateLvl: 0.65, plateDecay: 0.3, len: 0.6 }),
     39: () => clap({ bursts: 5, gap: 0.012, bp: 1300, q: 1.4, decay: 0.26, tailLvl: 0.7, len: 0.65 }),
-    41: () => room(tom({ f0: 88, decay: 0.5, nz: 0.16, drv: 0.12, len: 0.8 }), { wet: 0.22 }),
+    41: () => room(tomV2({ f0: 76, decay: 0.75, bendSemis: 3, strikeLvl: 0.6, drv: 0.1, len: 1.2 }), { wet: 0.22 }),
     42: () => hat({ base: 4100, hp: 7600, decay: 0.05, nz: 0.3, partials: [1, 1.23, 1.57, 2.03, 2.51, 3.13, 3.77] }),
-    45: () => room(tom({ f0: 126, decay: 0.45, nz: 0.16, drv: 0.12, len: 0.75 }), { wet: 0.22 }),
+    45: () => room(tomV2({ f0: 105, decay: 0.65, bendSemis: 2.8, strikeLvl: 0.6, drv: 0.1, len: 1.1 }), { wet: 0.22 }),
     46: () => hat({ open: true, base: 4100, hp: 7000, decay: 0.42, len: 0.9, partials: [1, 1.23, 1.57, 2.03, 2.51, 3.13, 3.77] }),
-    48: () => room(tom({ f0: 175, decay: 0.4, nz: 0.16, drv: 0.12, len: 0.7 }), { wet: 0.22 }),
-    49: () => crash({ base: 4800, decay: 2.4, lvl: 1, len: 4.5, grit: 0.35 }),
+    48: () => room(tomV2({ f0: 148, decay: 0.55, bendSemis: 2.5, strikeLvl: 0.6, drv: 0.1, len: 1.0 }), { wet: 0.22 }),
+    49: () => crashV2({ base: 4700, decay: 2.6, lvl: 1, len: 4.8, grit: 0.32 }),
     51: () => room(rim({ f: 420, decay: 0.12, woody: 0.8, ring: 0.7, len: 0.35 }), { wet: 0.2 }),
   },
   // crisp modern pop — tight lows, sparkly tops, clap-forward
   pop: {
-    36: () => kick({ f0: 105, f1: 50, sweep: 0.022, decay: 0.14, click: 0.6, clickHz: 5600, drv: 0.1, len: 0.4 }),
-    38: () => snare({ tone: 205, toneDecay: 0.06, toneLvl: 0.6, nzDecay: 0.12, nzHp: 1400, nzLp: 12500, drv: 0.08, plateLvl: 0.25, plateDecay: 0.14 }),
+    36: () => kickV2({ f0: 55, decay: 0.16, bendSemis: 11, beater: 0.75, clickHz: 5600, drv: 0.08, len: 0.42 }),
+    38: () => snareV2({ tone: 204, toneDecay: 0.06, toneLvl: 0.55, wireDecay: 0.12, wireHp: 1600, wireLp: 12500, strikeLvl: 0.65, drv: 0.07, plateLvl: 0.22, plateDecay: 0.14, len: 0.42 }),
     39: () => clap({ bursts: 4, gap: 0.0095, bp: 1650, q: 1.3, decay: 0.16, tailLvl: 0.45, bright: 0.4 }),
-    41: () => tom({ f0: 105, decay: 0.24, nz: 0.1 }),
+    41: () => tomV2({ f0: 96, decay: 0.3, bendSemis: 2, strikeLvl: 0.55, len: 0.55 }),
     42: () => hat({ base: 4500, hp: 8600, decay: 0.03, len: 0.1, partials: [1, 1.41, 2.05, 2.92, 3.6] }),
-    45: () => tom({ f0: 150, decay: 0.22, nz: 0.1 }),
+    45: () => tomV2({ f0: 132, decay: 0.26, bendSemis: 1.8, strikeLvl: 0.55, len: 0.5 }),
     46: () => hat({ open: true, base: 4500, hp: 8000, decay: 0.26, len: 0.6, partials: [1, 1.41, 2.05, 2.92, 3.6] }),
-    48: () => tom({ f0: 200, decay: 0.2, nz: 0.1 }),
-    49: () => crash({ base: 5200, decay: 1.3, hp: 4400, len: 2.6, grit: 0.18 }),
+    48: () => tomV2({ f0: 178, decay: 0.22, bendSemis: 1.6, strikeLvl: 0.55, len: 0.45 }),
+    49: () => crashV2({ base: 5100, decay: 1.4, hp: 4300, len: 2.8, grit: 0.16 }),
     51: () => rim({ f: 2400, decay: 0.02, woody: 0.25, len: 0.08 }),
   },
   // four-on-the-floor — 909 lineage: thumpy kick, noisy snare, big open hats
@@ -253,14 +338,14 @@ const KITS = {
   },
   // soft, dark, laid-back — muffled, crushed, everything rounded off
   lofi: {
-    36: () => kick({ f0: 75, f1: 42, sweep: 0.03, decay: 0.22, click: 0.1, clickHz: 1800, drv: 0.2, lp: 2400 }),
-    38: () => snare({ tone: 178, toneDecay: 0.07, nzDecay: 0.11, nzHp: 500, nzLp: 4200, drv: 0.16, bits: 10 }),
+    36: () => kickV2({ f0: 47, decay: 0.24, bendSemis: 6, beater: 0.2, clickHz: 1800, drv: 0.18, lp: 2200, len: 0.6 }),
+    38: () => snareV2({ tone: 178, toneDecay: 0.08, toneLvl: 0.8, wireDecay: 0.11, wireHp: 600, wireLp: 4200, strikeLvl: 0.35, drv: 0.15, bits: 10, len: 0.4 }),
     39: () => crush(biquad(clap({ bursts: 2, gap: 0.014, bp: 850, decay: 0.11, tailLvl: 0.2 }), 'lp', 3600), 10),
-    41: () => biquad(tom({ f0: 85, decay: 0.22, nz: 0.08 }), 'lp', 2800),
+    41: () => biquad(tomV2({ f0: 82, decay: 0.3, bendSemis: 1.8, strikeLvl: 0.3, len: 0.55 }), 'lp', 2600),
     42: () => hat({ base: 2600, hp: 4300, lp: 7800, decay: 0.04, nz: 0.65, lvl: 0.8, partials: [1, 1.62, 2.3] }),
-    45: () => biquad(tom({ f0: 120, decay: 0.2, nz: 0.08 }), 'lp', 3200),
+    45: () => biquad(tomV2({ f0: 112, decay: 0.26, bendSemis: 1.6, strikeLvl: 0.3, len: 0.5 }), 'lp', 3000),
     46: () => hat({ open: true, base: 2600, hp: 4000, lp: 7200, decay: 0.24, nz: 0.65, lvl: 0.8, len: 0.55, partials: [1, 1.62, 2.3] }),
-    48: () => biquad(tom({ f0: 160, decay: 0.18, nz: 0.08 }), 'lp', 3600),
+    48: () => biquad(tomV2({ f0: 150, decay: 0.22, bendSemis: 1.5, strikeLvl: 0.3, len: 0.45 }), 'lp', 3400),
     49: () => crush(crash({ base: 3800, decay: 1.0, hp: 2800, lvl: 0.7, len: 1.8, grit: 0.5 }), 10),
     51: () => biquad(rim({ f: 350, decay: 0.08, woody: 0.5, len: 0.16 }), 'lp', 2200),
   },
