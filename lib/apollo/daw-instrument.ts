@@ -23,6 +23,14 @@ interface Managed {
 
 const byDest = new WeakMap<AudioNode, Managed>()
 const byCtx = new WeakMap<BaseAudioContext, Set<Managed>>()
+const ctxTempo = new WeakMap<BaseAudioContext, number>()
+
+/** DawEngine reports the project tempo so synced LFOs/delays/env-sync follow it. */
+export function setApolloCtxTempo(ctx: BaseAudioContext, bpm: number): void {
+  ctxTempo.set(ctx, bpm)
+  const set = byCtx.get(ctx)
+  if (set) for (const m of set) { if (m.isReady) m.engine.setTransport({ bpm }) }
+}
 
 function create(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Managed {
   const engine = new ApolloEngine()
@@ -34,6 +42,8 @@ function create(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Man
   void engine.init({ ctx, destination: dest })
     .then(async () => {
       engine.sendPatch(patch)
+      const bpm = ctxTempo.get(ctx)
+      if (bpm) engine.setTransport({ bpm })
       m.lastParams = patch
       await restorePatchSamples(patch, engine)
       m.isReady = true

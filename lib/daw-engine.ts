@@ -8,7 +8,7 @@ import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from
 import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
-import { preloadApolloInstrument, apolloStopAll } from './apollo/daw-instrument'
+import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
@@ -921,6 +921,7 @@ export class DawEngine extends EventTarget {
     this._tracks      = project.tracks
     // Pre-warm sample-oscillator buffers for poly instruments — same reason as
     // preset buffers: a lazily-loaded sample would miss its first note.
+    setApolloCtxTempo(this.ctx, project.tempo)
     for (const track of project.tracks) {
       if (track.instrument?.type === 'drum') void preloadDrumInstrument(this.ctx, track.instrument)
       if (track.instrument?.type === 'apollo') {

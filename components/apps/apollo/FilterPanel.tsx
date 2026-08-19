@@ -4,7 +4,7 @@
 
 import React from 'react'
 import { useApollo, Knob, Sel, Section, ToggleBtn, UI } from './ApolloContext'
-import { FILTER_TYPES, FilterType, SourceDest } from '@/lib/apollo/patch'
+import { FILTER_TYPES, FilterType, SourceDest, BusDest } from '@/lib/apollo/patch'
 
 // toggle whether a source feeds filter `fi`, preserving its other-filter routing
 function toggleDest(dest: SourceDest, fi: 0 | 1): SourceDest {
@@ -66,6 +66,10 @@ function FilterSlot({ fi }: { fi: 0 | 1 }) {
           width={120}
         />
         <SourceButtons fi={fi} />
+        <Sel width={64} title="FX lane for this filter's output" value={cfg.bus || 'main'} options={[
+          { value: 'main', label: 'Main' }, { value: 'bus1', label: 'Bus 1' },
+          { value: 'bus2', label: 'Bus 2' }, { value: 'direct', label: 'Direct' },
+        ]} onChange={v => ctx.update(p => { p.filters[fi].bus = v as BusDest })} />
       </div>
       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
         <Knob path={`${pfx}.cutoff`} label="Cutoff" size={42} />

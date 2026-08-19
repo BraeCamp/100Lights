@@ -4,7 +4,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ApolloPatch, ModSource, ModRoute, PARAM_MAP, initPatch, getByPath, setByPath,
+  ApolloPatch, ModSource, ModRoute, FxUnit, PARAM_MAP, FX_DEFS, initPatch, getByPath, setByPath,
   resolvePatchPath, uid,
 } from '@/lib/apollo/patch'
 import { ApolloEngine, ApolloMeters, getApolloEngine } from '@/lib/apollo/engine-client'
@@ -228,10 +228,30 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
       }
       const path = midiMap.current[e.cc]
       if (!path) return
-      const def = PARAM_MAP[path]
-      if (!def) return
+      let range: { min: number; max: number; curve?: string } | null = PARAM_MAP[path] || null
+      if (!range && path.startsWith('fx.')) {
+        // fx.<unitId>.<key> — find the unit in any lane to learn its range
+        const [, unitId, key] = path.split('.')
+        const findUnit = (units: FxUnit[]): FxUnit | null => {
+          for (const u of units) {
+            if (u.id === unitId) return u
+            if (u.chains) for (const c of u.chains) { const hit = findUnit(c); if (hit) return hit }
+          }
+          return null
+        }
+        const p = patchRef.current as ApolloPatch
+        const u = findUnit(p.fxMain) || findUnit(p.fxBus1) || findUnit(p.fxBus2)
+        if (u) {
+          if (key === 'mix') range = { min: 0, max: 1 }
+          else {
+            const pd = FX_DEFS[u.type]?.params.find(pp => pp.key === key)
+            if (pd) range = { min: pd.min, max: pd.max, curve: pd.curve }
+          }
+        }
+      }
+      if (!range) return
       const t = e.value / 127
-      const val = def.curve === 'log' && def.min > 0 ? def.min * Math.pow(def.max / def.min, t) : def.min + (def.max - def.min) * t
+      const val = range.curve === 'log' && range.min > 0 ? range.min * Math.pow(range.max / range.min, t) : range.min + (range.max - range.min) * t
       setParam(path, val)
       if (commitTimer) clearTimeout(commitTimer)
       commitTimer = setTimeout(() => commit(), 250)

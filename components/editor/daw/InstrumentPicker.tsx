@@ -1055,6 +1055,22 @@ const ApolloPanel = memo(function ApolloPanel({ instrument, trackId }: { instrum
           style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
         >Design patches in Apollo ↗</a>
       </div>
+      {/* performance macros — the patch's own 8 assignable controls */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {patch.macros.map((mv, mi) => (
+          <SliderRow
+            key={mi}
+            label={patch.macroNames?.[mi] || `Macro ${mi + 1}`}
+            value={mv}
+            min={0} max={1} step={0.01}
+            fmt={v => `${Math.round(v * 100)}%`}
+            onChange={v => {
+              const next = { ...patch, macros: patch.macros.map((m2, k) => (k === mi ? v : m2)) }
+              dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: next } })
+            }}
+          />
+        ))}
+      </div>
       <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
         Full hybrid synth: wavetable · sample · granular · spectral. Edit sounds in the Apollo
         app, hit Save there, then pick the patch here. Sample-based patches pull their audio

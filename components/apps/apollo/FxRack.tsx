@@ -117,6 +117,7 @@ function UnitCard({ unit, locate, index, count, dnd, chainKey }: {
     controls.push(
       <Knob
         key={pd.key}
+        path={`fx.${unit.id}.${pd.key}`}
         value={paramValue(pd.key, pd.default)}
         min={pd.min}
         max={pd.max}
@@ -169,6 +170,7 @@ function UnitCard({ unit, locate, index, count, dnd, chainKey }: {
         <ToggleBtn on={unit.enabled} label={unit.enabled ? 'On' : 'Off'} onClick={() => mutUnit(() => { unit.enabled = !unit.enabled })} />
         {!isSplitter && (
           <Knob
+            path={`fx.${unit.id}.mix`}
             value={unit.mix}
             min={0} max={1} def={1}
             label="Mix"

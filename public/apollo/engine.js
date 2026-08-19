@@ -3,7 +3,7 @@
    sub + noise, dual filters, 4 envelopes, 10 LFOs, mod matrix, three FX
    lanes with splitters, arp + clip sequencer. Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-19-4 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-19-5 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -222,12 +222,14 @@ class VoiceFilter {
     this.aps = [new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048)]
     this.op = new OnePole()
     this.rmPhase = 0
+    this.ap1 = new Float32Array(8) // 1st-order allpass states (phaser filters)
+    this.fbAP = 0
     this.shVal = 0; this.shPhase = 0
     this.dsVal = 0; this.dsPhase = 0
     // mini reverb-filter state
     this.rvDl = [new DelayLine(sr * 0.05), new DelayLine(sr * 0.06), new DelayLine(sr * 0.071), new DelayLine(sr * 0.083)]
   }
-  reset() { this.svf1.reset(); this.svf2.reset(); this.svf3.reset(); this.svf4.reset(); this.ladder.reset() }
+  reset() { this.svf1.reset(); this.svf2.reset(); this.svf3.reset(); this.svf4.reset(); this.ladder.reset(); this.ap1.fill(0); this.fbAP = 0 }
   process(x, type, cutNorm, res, drive, fat) {
     const sr = this.sr
     const freq = cutoffHz(cutNorm)
@@ -305,13 +307,15 @@ class VoiceFilter {
         return (x + rd * (type === 'flangeMinus' ? -1 : 1)) * 0.6
       }
       case 'phasePlus': case 'phaseMinus': {
-        const coeff = clamp((freq / (sr * 0.5)) * 2 - 1, -0.98, 0.98)
+        // proper 6-stage 1st-order allpass phaser: a = (1-t)/(1+t)
+        const t = Math.tan(Math.PI * clamp(freq, 20, sr * 0.45) / sr)
+        const a = clamp((1 - t) / (1 + t), -0.98, 0.98)
         let y = x + this.fbAP * clamp(res, 0, 0.9) * (type === 'phaseMinus' ? -1 : 1)
-        for (let s = 0; s < 6; s++) {
-          const svf = s < 3 ? [this.svf1, this.svf2, this.svf3][s] : [this.svf4][0]
-          // first-order allpass chain using onepole trick
-          const ap = this.aps[s]
-          y = ap.process(y, 1.5, coeff)
+        for (let st = 0; st < 6; st++) {
+          const z = this.ap1[st]
+          const out = a * y + z
+          this.ap1[st] = y - a * out
+          y = out
         }
         this.fbAP = y
         return (x + y * (type === 'phaseMinus' ? -1 : 1)) * 0.6
@@ -367,7 +371,6 @@ class VoiceFilter {
     }
   }
 }
-VoiceFilter.prototype.fbAP = 0
 
 // ---------- wavetable warps ----------
 // phase-domain warps: return warped phase 0..1
@@ -644,10 +647,11 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
   if (eng === 'wavetable') {
     const tbl = engine.tables.get(cfg.wt.tableId) || engine.defaultTable
     if (!tbl) return false
-    const uni = clamp(Math.round(cfg.unison), 1, MAX_UNI)
+    const uni = clamp(Math.round(cfg.unison), 1, engine.patch.global.quality === 'draft' ? 4 : MAX_UNI)
     const detune = clamp(vp(voice, `osc${oi}.detune`, cfg.detune), 0, 1)
     const blend = clamp(vp(voice, `osc${oi}.blend`, cfg.blend), 0, 1)
     const width = clamp(vp(voice, `osc${oi}.width`, cfg.width), 0, 1)
+    const stW = clamp(cfg.stereo != null ? cfg.stereo : 1, 0, 1)
     const wtPos = clamp(vp(voice, `osc${oi}.wt.pos`, cfg.wt.pos), 0, 1)
     const framePos = cfg.wt.interp === 'off' ? Math.round(wtPos * (tbl.frames - 1)) : wtPos * (tbl.frames - 1)
     const w1m = cfg.wt.warp1.mode, w2m = cfg.wt.warp2.mode
@@ -668,8 +672,9 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
       const tData = mipOff == null ? tbl.data : tbl.mips
       const centerW = uni === 1 ? 1 : (u === (uni - 1) >> 1 ? 1 : blend)
       const sidePan = uni === 1 ? 0 : ((u % 2 ? 1 : -1) * ((u >> 1) + 1) / Math.max(1, uni >> 1)) * width
-      const gl = centerW * norm * Math.cos((sidePan + 1) * Math.PI / 4) * 1.414
-      const gr = centerW * norm * Math.sin((sidePan + 1) * Math.PI / 4) * 1.414
+      let gl = centerW * norm * Math.cos((sidePan + 1) * Math.PI / 4) * 1.414
+      let gr = centerW * norm * Math.sin((sidePan + 1) * Math.PI / 4) * 1.414
+      if (stW < 1) { const mid = (gl + gr) * 0.5; gl = mid + (gl - mid) * stW; gr = mid + (gr - mid) * stW }
       let ph = os.phases[u]
       for (let s = 0; s < n; s++) {
         let p = ph
@@ -755,13 +760,22 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
             else if (AMP_WARPS[wm]) { l = warpAmp(wm, l, wa, modBuf[s]); r = warpAmp(wm, r, wa, modBuf[s]) }
           }
         }
-        // loop crossfade: blend tail into loop start over xfade samples
-        if (loopMode !== 'off' && xfade > 1 && pos > loopE - xfade && pos <= loopE && step0 * dir > 0) {
-          const xf = (pos - (loopE - xfade)) / xfade
-          const xpos = loopS - xfade + (pos - (loopE - xfade))
-          if (xpos >= 0) {
-            l = l * (1 - xf) + sampleAt(smp, xpos, 0) * xf
-            r = stereo ? r * (1 - xf) + sampleAt(smp, xpos, 1) * xf : l
+        // loop crossfade: blend the approaching edge into the far edge
+        if (loopMode !== 'off' && xfade > 1) {
+          if (step0 * dir > 0 && pos > loopE - xfade && pos <= loopE) {
+            const xf = (pos - (loopE - xfade)) / xfade
+            const xpos = loopS - xfade + (pos - (loopE - xfade))
+            if (xpos >= 0) {
+              l = l * (1 - xf) + sampleAt(smp, xpos, 0) * xf
+              r = stereo ? r * (1 - xf) + sampleAt(smp, xpos, 1) * xf : l
+            }
+          } else if (step0 * dir < 0 && pos < loopS + xfade && pos >= loopS) {
+            const xf = (loopS + xfade - pos) / xfade
+            const xpos = loopE + xfade - (loopS + xfade - pos)
+            if (xpos < smp.len) {
+              l = l * (1 - xf) + sampleAt(smp, xpos, 0) * xf
+              r = stereo ? r * (1 - xf) + sampleAt(smp, xpos, 1) * xf : l
+            }
           }
         }
         outL[s] += l * panL * gain
@@ -1535,6 +1549,7 @@ function processFxUnit(engine, unit, st, L, R, n) {
     case 'hyper': {
       const rate = P('rate', 0.6), detune = clamp(P('detune', 0.35), 0, 1)
       const unison = Math.round(clamp(P('unison', 4), 1, 7))
+      if (P('retrig', 0) > 0.5 && engine.hyperRetrigFlag) { st.phase = 0; engine.hyperRetrigFlag = false }
       const dimSize = clamp(P('dimSize', 0.4), 0, 1), dimMix = clamp(P('dimMix', 0.3), 0, 1)
       for (let i = 0; i < n; i++) {
         st.phase += rate / sr
@@ -1789,6 +1804,13 @@ class ApolloProcessor extends AudioWorkletProcessor {
     this.f1inL = new Float32Array(BLOCK); this.f1inR = new Float32Array(BLOCK)
     this.f2inL = new Float32Array(BLOCK); this.f2inR = new Float32Array(BLOCK)
     this.byL = new Float32Array(BLOCK); this.byR = new Float32Array(BLOCK)
+    this.out2L = new Float32Array(BLOCK); this.out2R = new Float32Array(BLOCK)
+    this.byBus = {
+      main: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
+      bus1: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
+      bus2: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
+      direct: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
+    }
     this.busses = {
       main: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
       bus1: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
@@ -2029,6 +2051,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
   noteOn(note, vel, fromSeq, ch) {
     if (!this.patch) return
     ch = ch || 0
+    this.hyperRetrigFlag = true
     const patch = this.patch
     if (patch.arp.on && !fromSeq) {
       if (!this.heldNotes.includes(note)) this.heldNotes.push(note)
@@ -2171,7 +2194,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const stepBeats = this.SYNC_BEATS[clamp(Math.round(patch.arp.syncRate), 0, this.SYNC_BEATS.length - 1)]
       // never try to catch up over a long idle gap — snap to the current beat
       if (this.arpNextBeat < this.beat - stepBeats) this.arpNextBeat = this.beat
-      while (this.arpNextBeat < endBeat) {
+      while (this.arpNextBeat + (this.arpStep % 2 === 1 ? patch.arp.swing * stepBeats * 0.33 : 0) < endBeat) {
         const swing = this.arpStep % 2 === 1 ? patch.arp.swing * stepBeats * 0.33 : 0
         // release previous by gate
         this.stopArpNotes()
@@ -2190,6 +2213,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
             this.noteOn(note, 0.85, true)
             this.arpNotesDown.push(note)
             this.arpOffBeat = this.arpNextBeat + swing + stepBeats * clamp(patch.arp.gate, 0.05, 2)
+            void 0
           }
         }
         this.arpStep++
@@ -2352,15 +2376,17 @@ class ApolloProcessor extends AudioWorkletProcessor {
     v.curFreq = v.glideT >= 1 ? v.freq : v.glideFrom * Math.pow(v.freq / v.glideFrom, v.glideT)
     const chB = this.chanBend[v.ch || 0]
     if (chB !== 0) v.curFreq *= Math.pow(2, chB / 12)
+    const spreadIdxE = v.serial % 7 - 3
+    if (patch.global.voiceSpreadTune > 0) v.curFreq *= Math.pow(2, patch.global.voiceSpreadTune * spreadIdxE * 25 / 1200)
     this.updateVoiceLfos(v, blockSec)
     // envs 2-4 at block rate (env1 per-sample below)
     for (let e = 1; e < 4; e++) v.envs[e].process(this.envCfg(e), blockSec)
     this.computeVoiceMod(v)
     // clear work buffers
-    const f1L = this.f1inL, f1R = this.f1inR, f2L = this.f2inL, f2R = this.f2inR, byL = this.byL, byR = this.byR
-    f1L.fill(0, 0, n); f1R.fill(0, 0, n); f2L.fill(0, 0, n); f2R.fill(0, 0, n); byL.fill(0, 0, n); byR.fill(0, 0, n)
+    const f1L = this.f1inL, f1R = this.f1inR, f2L = this.f2inL, f2R = this.f2inR
+    f1L.fill(0, 0, n); f1R.fill(0, 0, n); f2L.fill(0, 0, n); f2R.fill(0, 0, n)
+    for (const key of ['main', 'bus1', 'bus2', 'direct']) { this.byBus[key][0].fill(0, 0, n); this.byBus[key][1].fill(0, 0, n) }
     for (let i = 0; i < 3; i++) this.oscMono[i].fill(0, 0, n)
-    let filteredBus = null
     let anyAlive = false
     // render osc C,B,A so FM sources are fresh
     for (let oi = 2; oi >= 0; oi--) {
@@ -2370,9 +2396,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
       sL.fill(0, 0, n); sR.fill(0, 0, n)
       const alive = renderOscBlock(this, v, oi, patch, n, sL, sR, this.oscMono[oi])
       if (alive) anyAlive = true
-      this.routeSource(cfg, sL, sR, n, f1L, f1R, f2L, f2R, byL, byR)
-      if (cfg.dest !== 'bypass') filteredBus = filteredBus || cfg.bus
-      else if (cfg.bus !== 'direct') { /* bypass handled in route */ }
+      this.routeSource(cfg, sL, sR, n, f1L, f1R, f2L, f2R)
     }
     // sub
     if (patch.sub.enabled) {
@@ -2381,11 +2405,11 @@ class ApolloProcessor extends AudioWorkletProcessor {
       this.renderSub(v, patch.sub, n, sL, sR)
       anyAlive = true
       if (patch.sub.direct) {
-        const [dl, dr] = this.busses.direct
-        for (let i = 0; i < n; i++) { dl[i] += sL[i] * this.env1Gain(v); dr[i] += sR[i] * this.env1Gain(v) }
+        // direct = skip filters AND all FX: straight to the direct accumulator
+        const [dl, dr] = this.byBus.direct
+        for (let i = 0; i < n; i++) { dl[i] += sL[i]; dr[i] += sR[i] }
       } else {
-        this.routeSource(patch.sub, sL, sR, n, f1L, f1R, f2L, f2R, byL, byR)
-        if (patch.sub.dest !== 'bypass') filteredBus = filteredBus || patch.sub.bus
+        this.routeSource(patch.sub, sL, sR, n, f1L, f1R, f2L, f2R)
       }
     }
     // noise
@@ -2396,17 +2420,19 @@ class ApolloProcessor extends AudioWorkletProcessor {
         sL.fill(0, 0, n); sR.fill(0, 0, n)
         this.renderNoise(v, patch.noise, smp, n, sL, sR)
         anyAlive = true
-        this.routeSource(patch.noise, sL, sR, n, f1L, f1R, f2L, f2R, byL, byR)
-        if (patch.noise.dest !== 'bypass') filteredBus = filteredBus || patch.noise.bus
+        this.routeSource(patch.noise, sL, sR, n, f1L, f1R, f2L, f2R)
       }
     }
-    // filters (per voice)
+    // filters (per voice) — each filter owns a bus assignment; serial mode's
+    // combined output takes the last enabled filter's bus
     const vs = patch.global
     const spreadIdx = v.serial % 7 - 3
     const ktBase = (v.note - 60) * 0.00738
     const serial = patch.filterRouting === 'serial'
     const outL = this.srcL, outR = this.srcR
     outL.fill(0, 0, n); outR.fill(0, 0, n)
+    const out2L = this.out2L, out2R = this.out2R
+    out2L.fill(0, 0, n); out2R.fill(0, 0, n)
     const fcfg1 = patch.filters[0], fcfg2 = patch.filters[1]
     const cutSpread = vs.voiceSpreadCutoff * spreadIdx * 0.02
     if (fcfg1.enabled) {
@@ -2417,7 +2443,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const fmix = clamp(this.vp(v, 'f1.mix', fcfg1.mix), 0, 1)
       const fpan = clamp(this.vp(v, 'f1.pan', fcfg1.pan), -1, 1)
       // per-sample cutoff ramp from the previous block's value: no zipper
-      const cutFrom = v.prevCut1 == null ? cut : v.prevCut1
+      const cutFrom = v.prevCut1 == null || patch.global.quality === 'draft' ? cut : v.prevCut1
       v.prevCut1 = cut
       for (let i = 0; i < n; i++) {
         const cutI = cutFrom + (cut - cutFrom) * ((i + 1) / n)
@@ -2432,6 +2458,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
         else { outL[i] += f1L[i]; outR[i] += f1R[i] }
       }
     }
+    const f2Target = serial ? [outL, outR] : [out2L, out2R]
     if (fcfg2.enabled) {
       const cut = clamp(this.vp(v, 'f2.cutoff', fcfg2.cutoff) + ktBase * fcfg2.keytrack + cutSpread, 0, 1)
       const res = clamp(this.vp(v, 'f2.res', fcfg2.res), 0, 1)
@@ -2439,17 +2466,17 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const fat = clamp(this.vp(v, 'f2.fat', fcfg2.fat), 0, 1)
       const fmix = clamp(this.vp(v, 'f2.mix', fcfg2.mix), 0, 1)
       const fpan = clamp(this.vp(v, 'f2.pan', fcfg2.pan), -1, 1)
-      const cutFrom2 = v.prevCut2 == null ? cut : v.prevCut2
+      const cutFrom2 = v.prevCut2 == null || patch.global.quality === 'draft' ? cut : v.prevCut2
       v.prevCut2 = cut
       for (let i = 0; i < n; i++) {
         const cutI = cutFrom2 + (cut - cutFrom2) * ((i + 1) / n)
         const wl = v.filters[2].process(f2L[i], fcfg2.type, clamp(cutI - fpan * 0.08, 0, 1), res, drv, fat)
         const wr = v.filters[3].process(f2R[i], fcfg2.type, clamp(cutI + fpan * 0.08, 0, 1), res, drv, fat)
-        outL[i] += lerp(f2L[i], wl, fmix)
-        outR[i] += lerp(f2R[i], wr, fmix)
+        f2Target[0][i] += lerp(f2L[i], wl, fmix)
+        f2Target[1][i] += lerp(f2R[i], wr, fmix)
       }
     } else if (!serial || !fcfg1.enabled) {
-      for (let i = 0; i < n; i++) { outL[i] += f2L[i]; outR[i] += f2R[i] }
+      for (let i = 0; i < n; i++) { f2Target[0][i] += f2L[i]; f2Target[1][i] += f2R[i] }
     }
     // amp env (per-sample), velocity, voice pan spread
     const e1cfg = this.envCfg(0)
@@ -2458,15 +2485,28 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const panSpread = clamp(vs.voiceSpreadPan * spreadIdx / 3, -1, 1)
     const pl = Math.cos((panSpread + 1) * Math.PI / 4) * 1.414 * velG
     const pr = Math.sin((panSpread + 1) * Math.PI / 4) * 1.414 * velG
-    const tuneSpread = vs.voiceSpreadTune > 0 ? Math.pow(2, vs.voiceSpreadTune * spreadIdx * 2 / 1200) : 1
-    if (tuneSpread !== 1) v.freq *= 1 // (applied at start; skip per-block)
-    const bus = this.busses[filteredBus || 'main'] || this.busses.main
-    const [bL, bR] = bus
+    // amp env once per sample into a gain buffer, then fan out to every bus
     const env1 = v.envs[0]
-    for (let i = 0; i < n; i++) {
-      const g = env1.process(e1cfg, dt)
-      bL[i] += (outL[i] + byL[i]) * g * pl
-      bR[i] += (outR[i] + byR[i]) * g * pr
+    const gBuf = this.oscMono[0] // reuse as scratch (osc rendering is done)
+    for (let i = 0; i < n; i++) gBuf[i] = env1.process(e1cfg, dt)
+    const busOf = (b) => this.busses[b] || this.busses.main
+    // filtered path 1 (serial: the whole chain)
+    const bus1Key = serial
+      ? (fcfg2.enabled ? (fcfg2.bus || 'main') : (fcfg1.bus || 'main'))
+      : (fcfg1.bus || 'main')
+    {
+      const [bL, bR] = busOf(bus1Key)
+      for (let i = 0; i < n; i++) { bL[i] += outL[i] * gBuf[i] * pl; bR[i] += outR[i] * gBuf[i] * pr }
+    }
+    if (!serial) {
+      const [bL, bR] = busOf(fcfg2.bus || 'main')
+      for (let i = 0; i < n; i++) { bL[i] += out2L[i] * gBuf[i] * pl; bR[i] += out2R[i] * gBuf[i] * pr }
+    }
+    // filter-bypassed sources: each on its own bus
+    for (const key of ['main', 'bus1', 'bus2', 'direct']) {
+      const [sBL, sBR] = this.byBus[key]
+      const [bL, bR] = this.busses[key]
+      for (let i = 0; i < n; i++) { bL[i] += sBL[i] * gBuf[i] * pl; bR[i] += sBR[i] * gBuf[i] * pr }
     }
     if (!env1.active) v.active = false
     if (!anyAlive && !v.gate && !env1.active) v.active = false
@@ -2489,7 +2529,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
     }
   }
 
-  routeSource(cfg, sL, sR, n, f1L, f1R, f2L, f2R, byL, byR) {
+  routeSource(cfg, sL, sR, n, f1L, f1R, f2L, f2R) {
     let w1 = 0, w2 = 0, wb = 0
     switch (cfg.dest) {
       case 'f1': w1 = 1; break
@@ -2499,7 +2539,12 @@ class ApolloProcessor extends AudioWorkletProcessor {
     }
     if (w1 > 0) for (let i = 0; i < n; i++) { f1L[i] += sL[i] * w1; f1R[i] += sR[i] * w1 }
     if (w2 > 0) for (let i = 0; i < n; i++) { f2L[i] += sL[i] * w2; f2R[i] += sR[i] * w2 }
-    if (wb > 0) for (let i = 0; i < n; i++) { byL[i] += sL[i] * wb; byR[i] += sR[i] * wb }
+    if (wb > 0) {
+      // filter-bypassed sources keep their own bus assignment
+      const bb = this.byBus[cfg.bus] || this.byBus.main
+      const [byL, byR] = bb
+      for (let i = 0; i < n; i++) { byL[i] += sL[i] * wb; byR[i] += sR[i] * wb }
+    }
   }
 
   renderSub(v, cfg, n, sL, sR) {

@@ -155,6 +155,7 @@ export interface FilterConfig {
   mix: number     // 0..1 dry/wet
   pan: number     // -1..1 stereo cutoff offset
   keytrack: number // 0..1
+  bus?: BusDest   // FX lane for this filter's output (serial mode: last enabled filter wins)
 }
 
 export interface EnvConfig {
@@ -618,8 +619,8 @@ export function initPatch(): ApolloPatch {
     sub: { enabled: false, shape: 'sine', octave: -1, level: 0.5, pan: 0, direct: false, dest: 'f1', filterBal: 0, bus: 'main' },
     noise: { enabled: false, sampleId: null, level: 0.5, pan: 0, pitch: 0, keytrack: false, oneShot: false, phase: 0, rand: 1, dest: 'f1', filterBal: 0, bus: 'main' },
     filters: [
-      { enabled: false, type: 'lp12', cutoff: 0.8, res: 0.15, drive: 0, fat: 0.5, mix: 1, pan: 0, keytrack: 0 },
-      { enabled: false, type: 'lp12', cutoff: 0.8, res: 0.15, drive: 0, fat: 0.5, mix: 1, pan: 0, keytrack: 0 },
+      { enabled: false, type: 'lp12', cutoff: 0.8, res: 0.15, drive: 0, fat: 0.5, mix: 1, pan: 0, keytrack: 0, bus: 'main' },
+      { enabled: false, type: 'lp12', cutoff: 0.8, res: 0.15, drive: 0, fat: 0.5, mix: 1, pan: 0, keytrack: 0, bus: 'main' },
     ],
     filterRouting: 'serial',
     envs: [defaultEnv(0), defaultEnv(1), defaultEnv(2), defaultEnv(3)],
