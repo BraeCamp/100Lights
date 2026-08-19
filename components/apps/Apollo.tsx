@@ -173,9 +173,11 @@ function ApolloInner() {
               onDragStart={() => { dragPanel.current = { tab, col, idx } }}
               title="Drag to rearrange panels"
               style={{
-                position: 'absolute', top: 3, right: 34, zIndex: 5,
-                width: 26, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: UI.dim, fontSize: 11, cursor: 'grab', opacity: 0.45, borderRadius: 4,
+                // left edge of the header bar: keeps clear of every panel's
+                // header-right controls (tabs, +Add, toggles)
+                position: 'absolute', top: 4, left: 2, zIndex: 5,
+                width: 16, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: UI.dim, fontSize: 11, cursor: 'grab', opacity: 0.4, borderRadius: 4,
               }}
             >⠿</div>
             {def.render()}

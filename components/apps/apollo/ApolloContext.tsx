@@ -25,6 +25,8 @@ export interface ApolloCtxValue {
   setSelectedOsc: (i: number) => void
   modSource: ModSource | null
   setModSource: (s: ModSource | null) => void
+  /** Synchronous read of the in-flight drag source (state can lag native drag events). */
+  getModSource: () => ModSource | null
   assignMod: (dest: string) => void
   routesFor: (dest: string) => ModRoute[]
   undo: () => void
@@ -75,7 +77,10 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
   }, [])
   const [started, setStarted] = useState(false)
   const [selectedOsc, setSelectedOsc] = useState(0)
-  const [modSource, setModSource] = useState<ModSource | null>(null)
+  const [modSource, _setModSource] = useState<ModSource | null>(null)
+  const modSourceRef = useRef<ModSource | null>(null)
+  const setModSource = useCallback((s: ModSource | null) => { modSourceRef.current = s; _setModSource(s) }, [])
+  const getModSource = useCallback(() => modSourceRef.current, [])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const persist = useCallback(() => {
@@ -151,8 +156,8 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
   }, [engine, persist, pushHistory])
 
   const assignMod = useCallback((dest: string) => {
-    if (!modSource) return
-    const src = modSource
+    const src = modSourceRef.current
+    if (!src) return
     setModSource(null)
     update(p => {
       const existing = p.matrix.find(r => r.source === src && r.dest === dest)
@@ -180,8 +185,8 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<ApolloCtxValue>(() => ({
     patch: patchRef.current as ApolloPatch,
     version, engine, started, start, update, setParam, commit,
-    selectedOsc, setSelectedOsc, modSource, setModSource, assignMod, routesFor, undo, redo,
-  }), [version, engine, started, start, update, setParam, commit, selectedOsc, modSource, assignMod, routesFor, undo, redo])
+    selectedOsc, setSelectedOsc, modSource, setModSource, getModSource, assignMod, routesFor, undo, redo,
+  }), [version, engine, started, start, update, setParam, commit, selectedOsc, modSource, setModSource, getModSource, assignMod, routesFor, undo, redo])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -373,7 +378,7 @@ export function Knob(props: KnobProps) {
   const routes = props.path && ctx ? ctx.routesFor(props.path) : []
   const modAmt = routes.length ? routes[0].amount : 0
   const modTo = Math.min(1, Math.max(0, norm + modAmt))
-  const canDrop = !!props.path && !!ctx?.modSource
+  const droppable = !!props.path && !!ctx
   const fmt = props.format || def?.unit === 'ct' || def?.unit === 'st'
     ? (v: number) => `${v.toFixed(def?.unit === 'ct' ? 0 : 1)}${def?.unit || ''}`
     : (v: number) => (max - min > 20 ? v.toFixed(0) : v.toFixed(2))
@@ -381,9 +386,9 @@ export function Knob(props: KnobProps) {
 
   return (
     <div
-      onDragOver={canDrop ? (e => { e.preventDefault(); setDragOver(true) }) : undefined}
+      onDragOver={droppable ? (e => { if (ctx!.getModSource()) { e.preventDefault(); setDragOver(true) } }) : undefined}
       onDragLeave={() => setDragOver(false)}
-      onDrop={canDrop ? (e => { e.preventDefault(); setDragOver(false); ctx!.assignMod(props.path!) }) : undefined}
+      onDrop={droppable ? (e => { e.preventDefault(); setDragOver(false); if (ctx!.getModSource()) ctx!.assignMod(props.path!) }) : undefined}
       style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: size + 14, userSelect: 'none' }}
       title={props.path ? `${props.label} — drag to change, double-click to reset${routes.length ? `, mod: ${routes.map(r2 => r2.source).join(',')}` : ''}` : props.label}
     >

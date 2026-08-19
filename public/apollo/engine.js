@@ -1964,8 +1964,12 @@ class ApolloProcessor extends AudioWorkletProcessor {
 
   noteOff(note, fromSeq) {
     if (!this.patch) return
-    const hi = this.heldNotes.indexOf(note)
-    if (hi >= 0) this.heldNotes.splice(hi, 1)
+    // only real (user) note-offs release held notes — a sequencer/arp note-off
+    // for the same pitch must not steal the player's held note
+    if (!fromSeq) {
+      const hi = this.heldNotes.indexOf(note)
+      if (hi >= 0) this.heldNotes.splice(hi, 1)
+    }
     if (this.patch.arp.on && !fromSeq) {
       if (!this.patch.arp.hold && !this.heldNotes.length) this.stopArpNotes()
       return
@@ -2074,6 +2078,8 @@ class ApolloProcessor extends AudioWorkletProcessor {
     if (patch.arp.on && (this.heldNotes.length || (patch.arp.hold && this.arpHeldCache && this.arpHeldCache.length))) {
       if (this.heldNotes.length) this.arpHeldCache = this.heldNotes.slice()
       const stepBeats = this.SYNC_BEATS[clamp(Math.round(patch.arp.syncRate), 0, this.SYNC_BEATS.length - 1)]
+      // never try to catch up over a long idle gap — snap to the current beat
+      if (this.arpNextBeat < this.beat - stepBeats) this.arpNextBeat = this.beat
       while (this.arpNextBeat < endBeat) {
         const swing = this.arpStep % 2 === 1 ? patch.arp.swing * stepBeats * 0.33 : 0
         // release previous by gate
@@ -2586,7 +2592,9 @@ class ApolloProcessor extends AudioWorkletProcessor {
         }
       }
     }
-    if (this.playing) this.beat += blockBeats
+    // the musical clock always runs so the arp free-runs without transport;
+    // clip playback + metronome are separately gated on this.playing
+    this.beat += blockBeats
     // meters
     if (++this.meterCounter >= 4) {
       this.meterCounter = 0
