@@ -3,7 +3,7 @@
 // slicing (auto transient + manual), loop modes, rate / tails controls.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { useApollo, Knob, Sel, ToggleBtn } from './ApolloContext'
+import { useApollo, Knob, Sel, ToggleBtn, UI } from './ApolloContext'
 import SamplePicker from './SamplePicker'
 
 type Marker = 'start' | 'end' | 'loopStart' | 'loopEnd' | null
@@ -28,7 +28,7 @@ export default function SampleView() {
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
     g.clearRect(0, 0, w, h)
     g.fillStyle = 'var(--bg-surface)'
-    g.fillStyle = '#0d1013'
+    g.fillStyle = UI.inset
     g.fillRect(0, 0, w, h)
     if (!smp) {
       g.fillStyle = '#666'
@@ -48,7 +48,7 @@ export default function SampleView() {
     g.fillRect(0, 0, c.start * w, h)
     g.fillRect(c.end * w, 0, w - c.end * w, h)
     // waveform peaks
-    g.strokeStyle = '#8ee67e'
+    g.strokeStyle = UI.green
     g.lineWidth = 1
     g.beginPath()
     const step = Math.max(1, Math.floor(smp.len / w))
@@ -65,13 +65,13 @@ export default function SampleView() {
     }
     g.stroke()
     // slices
-    g.strokeStyle = '#e8b849'
+    g.strokeStyle = UI.yellow
     for (const sl of c.slices) {
       g.beginPath()
       g.moveTo(sl.pos * w, 0)
       g.lineTo(sl.pos * w, h)
       g.stroke()
-      g.fillStyle = '#e8b849'
+      g.fillStyle = UI.yellow
       g.fillRect(sl.pos * w - 3, 0, 6, 5)
     }
     // markers
@@ -87,9 +87,9 @@ export default function SampleView() {
       g.textAlign = 'left'
       g.fillText(lbl, pos * w + 2, 9)
     }
-    mark(c.start, '#7de07d', 'S')
+    mark(c.start, UI.green, 'S')
     mark(c.end, '#e07d7d', 'E')
-    if (c.loopMode !== 'off') { mark(c.loopStart, '#3d8fef', 'L1'); mark(c.loopEnd, '#3d8fef', 'L2') }
+    if (c.loopMode !== 'off') { mark(c.loopStart, UI.blue, 'L1'); mark(c.loopEnd, UI.blue, 'L2') }
   }, [smp, ctx.patch, i])
 
   useEffect(() => { draw() }, [draw, ctx.version])

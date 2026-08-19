@@ -2,7 +2,7 @@
 // Arpeggiator: modes, rate, gate, swing, hold, custom pattern editor.
 
 import React, { useRef } from 'react'
-import { useApollo, Knob, Sel, Section, ToggleBtn } from './ApolloContext'
+import { useApollo, Knob, Sel, Section, ToggleBtn, UI } from './ApolloContext'
 import { SYNC_RATES, ArpConfig } from '@/lib/apollo/patch'
 
 const MODES: { value: ArpConfig['mode']; label: string }[] = [
@@ -74,7 +74,7 @@ export default function ArpPanel() {
                 title="Click toggles • drag = velocity • shift-click cycles chord index"
                 style={{
                   width: 22, height: 52, borderRadius: 4, border: '1px solid var(--border)', position: 'relative',
-                  background: '#101216', cursor: 'pointer', overflow: 'hidden', touchAction: 'none',
+                  background: UI.inset, cursor: 'pointer', overflow: 'hidden', touchAction: 'none',
                 }}
               >
                 {s.on && (

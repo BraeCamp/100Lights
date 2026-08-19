@@ -7,7 +7,7 @@
 // ids) is data — drag a panel's grip bar to rearrange; layout persists.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ApolloProvider, useApollo, useMeters, Section, Knob, UI } from '@/components/apps/apollo/ApolloContext'
+import { ApolloProvider, useApollo, useMeters, Section, Knob, UI, applyApolloTheme } from '@/components/apps/apollo/ApolloContext'
 import PresetBar from '@/components/apps/apollo/PresetBar'
 import OscPanel from '@/components/apps/apollo/OscPanel'
 import SubNoisePanel from '@/components/apps/apollo/SubNoisePanel'
@@ -84,6 +84,7 @@ function loadLayout(): Record<Tab, TabLayout> {
 }
 
 function ApolloInner() {
+  applyApolloTheme({}) // default Serum-2 look (test shells set their own)
   const ctx = useApollo()
   const meters = useMeters()
   const [tab, setTab] = useState<Tab>('synth')
@@ -195,7 +196,7 @@ function ApolloInner() {
       onClick={onClick}
       title={opts?.title}
       style={{
-        background: opts?.on ? UI.blue : `linear-gradient(180deg, #1c212a 0%, #14181e 100%)`,
+        background: opts?.on ? UI.blue : `linear-gradient(180deg, ${UI.header} 0%, ${UI.panel} 100%)`,
         color: opts?.on ? '#0b0d10' : UI.dim,
         border: `1px solid ${opts?.on ? UI.blue : UI.border}`,
         borderRadius: 5, padding: '4px 10px', fontSize: 10, fontWeight: 800, cursor: 'pointer',

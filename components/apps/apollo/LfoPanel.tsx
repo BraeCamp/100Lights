@@ -3,7 +3,7 @@
 // mode (2D X/Y output), chaos mode (Lorenz/Rossler/S&H) with live scope.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { useApollo, useMeters, Knob, Sel, ToggleBtn } from './ApolloContext'
+import { useApollo, useMeters, Knob, Sel, ToggleBtn, UI } from './ApolloContext'
 import { LfoPoint, SYNC_RATES, ChaosType, LfoTrigMode } from '@/lib/apollo/patch'
 
 const GRID_OPTS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32]
@@ -68,7 +68,7 @@ export default function LfoPanel() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#0d1013'
+    g.fillStyle = UI.inset
     g.fillRect(0, 0, w, h)
     // grid
     g.strokeStyle = 'rgba(255,255,255,0.07)'
@@ -78,7 +78,7 @@ export default function LfoPanel() {
     if (cfg.mode === 'chaos') return
     const cur = localPts || (isPath ? cfg.pathPoints : cfg.points)
     // shape
-    g.strokeStyle = '#3d8fef'
+    g.strokeStyle = UI.blue
     g.lineWidth = 2
     g.beginPath()
     for (let px = 0; px <= w; px++) {
@@ -97,13 +97,13 @@ export default function LfoPanel() {
     }
     // playhead + value
     const ph = meters.lfoPhase[sel] || 0
-    g.strokeStyle = '#7de07d'
+    g.strokeStyle = UI.green
     g.beginPath()
     g.moveTo(ph * w, 0)
     g.lineTo(ph * w, h)
     g.stroke()
     const val = evalPoints(cur, ph)
-    g.fillStyle = '#7de07d'
+    g.fillStyle = UI.green
     g.beginPath()
     g.arc(ph * w, (1 - val) * (h - 6) + 3, 3.5, 0, Math.PI * 2)
     g.fill()
@@ -125,9 +125,9 @@ export default function LfoPanel() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#0d1013'
+    g.fillStyle = UI.inset
     g.fillRect(0, 0, w, h)
-    g.strokeStyle = '#e8b849'
+    g.strokeStyle = UI.yellow
     g.lineWidth = 1.5
     g.beginPath()
     hist.forEach((v, k) => {

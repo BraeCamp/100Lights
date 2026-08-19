@@ -3,7 +3,7 @@
 // master + live output meter.
 
 import React from 'react'
-import { useApollo, useMeters, Knob, Sel, Section, ToggleBtn } from './ApolloContext'
+import { useApollo, useMeters, Knob, Sel, Section, ToggleBtn, UI } from './ApolloContext'
 import { SourceDest, BusDest } from '@/lib/apollo/patch'
 
 const DEST_OPTS = [
@@ -108,7 +108,7 @@ export default function MixerPanel() {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, width: 86, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 4px' }}>
           <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)' }}>MASTER</span>
           <Knob path="global.masterGain" label="Master" size={42} />
-          <div style={{ width: 14, height: meterH, background: '#101216', border: '1px solid var(--border)', borderRadius: 4, position: 'relative', overflow: 'hidden' }}>
+          <div style={{ width: 14, height: meterH, background: UI.inset, border: '1px solid var(--border)', borderRadius: 4, position: 'relative', overflow: 'hidden' }}>
             <div style={{
               position: 'absolute', bottom: 0, left: 0, right: 0,
               height: `${Math.min(100, peakN * 100)}%`,

@@ -3,7 +3,7 @@
 // glissando, QWERTY input, octave shift, sustain, velocity.
 
 import React, { useEffect, useRef, useState } from 'react'
-import { useApollo, ToggleBtn } from './ApolloContext'
+import { useApollo, ToggleBtn, UI } from './ApolloContext'
 
 const QWERTY: Record<string, number> = {
   a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11,
@@ -29,7 +29,7 @@ function Wheel({ label, value, onChange, spring }: { label: string; value: numbe
         onPointerDown={e => { drag.current = true; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); apply(e) }}
         onPointerMove={e => { if (drag.current) apply(e) }}
         onPointerUp={() => { drag.current = false; if (spring) onChange(0) }}
-        style={{ width: 22, height: 88, background: '#0d1013', border: '1px solid var(--border)', borderRadius: 11, position: 'relative', cursor: 'ns-resize', touchAction: 'none' }}
+        style={{ width: 22, height: 88, background: UI.inset, border: '1px solid var(--border)', borderRadius: 11, position: 'relative', cursor: 'ns-resize', touchAction: 'none' }}
       >
         <div style={{ position: 'absolute', left: 2, right: 2, height: 8, borderRadius: 4, background: 'var(--accent)', top: `${(1 - norm) * 78}px` }} />
       </div>

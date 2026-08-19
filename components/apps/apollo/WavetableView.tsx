@@ -3,7 +3,7 @@
 // scrubs the WT position of the selected oscillator.
 
 import React, { useEffect, useRef } from 'react'
-import { useApollo } from '@/components/apps/apollo/ApolloContext'
+import { useApollo, UI } from '@/components/apps/apollo/ApolloContext'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { generateFactoryTable, tableFromBase64, WT_LEN } from '@/lib/apollo/tables'
 
@@ -66,7 +66,7 @@ export default function WavetableView() {
       const curFrame = pos * (tbl.frames - 1)
       const style = getComputedStyle(c)
       // Serum-style: dim green frame stack, bright yellow current frame
-      const accent = '#ffd75e'
+      const accent = UI.yellow
       const dim = 'rgba(120, 200, 110, 0.32)'
       for (let s = stack - 1; s >= 0; s--) {
         const frame = stack > 1 ? Math.round((s / (stack - 1)) * (tbl.frames - 1)) : 0

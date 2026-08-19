@@ -3,7 +3,7 @@
 // controls, and the per-engine editor view.
 
 import React from 'react'
-import { useApollo, Knob, Sel, Section, ToggleBtn } from './ApolloContext'
+import { useApollo, Knob, Sel, Section, ToggleBtn, UI } from './ApolloContext'
 import { WARP_MODES, OscEngine, UnisonMode, SourceDest, BusDest, WarpMode } from '@/lib/apollo/patch'
 import { FACTORY_TABLE_IDS, FACTORY_TABLE_NAMES } from '@/lib/apollo/tables'
 import WavetableView from './WavetableView'
@@ -82,7 +82,7 @@ export default function OscPanel() {
                 title={ctx.patch.oscs[oi].enabled ? 'Disable' : 'Enable'}
                 style={{
                   width: 7, height: 7, borderRadius: '50%',
-                  background: ctx.patch.oscs[oi].enabled ? '#7de07d' : 'var(--border-light)',
+                  background: ctx.patch.oscs[oi].enabled ? UI.green : 'var(--border-light)',
                   display: 'inline-block', cursor: 'pointer',
                 }}
               />

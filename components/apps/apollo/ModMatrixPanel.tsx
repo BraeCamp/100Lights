@@ -3,7 +3,7 @@
 // curves, bypass, reorder.
 
 import React, { useMemo, useRef, useState } from 'react'
-import { useApollo, Sel, Section, ToggleBtn } from './ApolloContext'
+import { useApollo, Sel, Section, ToggleBtn, UI } from './ApolloContext'
 import { MOD_SOURCES, PARAMS, FX_DEFS, ModSource, ModRoute, FxUnit, LfoPoint, uid } from '@/lib/apollo/patch'
 
 function destGroup(path: string): string {
@@ -77,7 +77,7 @@ export function CurveEditor({ curve, onCommit }: { curve: LfoPoint[] | null; onC
     <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
       <svg
         width={W} height={H}
-        style={{ background: '#0d1013', border: '1px solid var(--border)', borderRadius: 6, cursor: 'crosshair', touchAction: 'none' }}
+        style={{ background: UI.inset, border: '1px solid var(--border)', borderRadius: 6, cursor: 'crosshair', touchAction: 'none' }}
         onPointerDown={e => {
           const { x, y } = cvPos(e)
           let pi = -1, bd = 0.08

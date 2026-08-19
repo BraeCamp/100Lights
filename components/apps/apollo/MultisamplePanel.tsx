@@ -3,7 +3,7 @@
 // from library/upload, key-range visualization.
 
 import React, { useRef, useState } from 'react'
-import { useApollo, ToggleBtn } from './ApolloContext'
+import { useApollo, ToggleBtn, UI } from './ApolloContext'
 import { LibrarySourcePicker } from '@/components/editor/SoundCreate'
 import type { LibraryEntry } from '@/lib/sound-library'
 import { decodeFileAudio } from '@/lib/media-import'
@@ -15,7 +15,7 @@ const inputStyle: React.CSSProperties = {
   border: '1px solid var(--border)', borderRadius: 4, padding: '1px 3px', fontSize: 10,
 }
 
-const ZONE_COLORS = ['#3d8fef', '#7de07d', '#e8b849', '#e07d7d', '#b07de0', '#7dd8e0']
+const ZONE_COLORS = [UI.blue, UI.green, UI.yellow, '#e07d7d', '#b07de0', '#7dd8e0']
 
 export default function MultisamplePanel() {
   const ctx = useApollo()
@@ -91,7 +91,7 @@ export default function MultisamplePanel() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {/* key range visualization */}
-      <div style={{ position: 'relative', height: 22, background: '#101216', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+      <div style={{ position: 'relative', height: 22, background: UI.inset, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
         {cfg.zones.map((z, zi) => (
           <div key={zi} style={{
             position: 'absolute', top: 2 + (zi % 3) * 6, height: 5,

@@ -3,7 +3,7 @@
 // parameter knobs, window shape preview.
 
 import React, { useCallback, useEffect, useRef } from 'react'
-import { useApollo, useMeters, Knob, Sel, ToggleBtn } from './ApolloContext'
+import { useApollo, useMeters, Knob, Sel, ToggleBtn, UI } from './ApolloContext'
 import SamplePicker from './SamplePicker'
 
 function grainWindow(t: number, shape: number, skew: number, amount: number): number {
@@ -43,7 +43,7 @@ export default function GranularView() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#0d1013'
+    g.fillStyle = UI.inset
     g.fillRect(0, 0, w, h)
     if (!smp) {
       g.fillStyle = '#666'; g.font = '11px system-ui'; g.textAlign = 'center'
@@ -57,7 +57,7 @@ export default function GranularView() {
     const sprayW = c.spray * 0.25 * w
     g.fillRect((scan * w) - sprayW, 0, sprayW * 2, h)
     // waveform
-    g.strokeStyle = '#8ee67e'
+    g.strokeStyle = UI.green
     g.lineWidth = 1
     g.beginPath()
     const step = Math.max(1, Math.floor(smp.len / w))
@@ -74,7 +74,7 @@ export default function GranularView() {
     }
     g.stroke()
     // playhead
-    g.strokeStyle = '#e8b849'
+    g.strokeStyle = UI.yellow
     g.lineWidth = 2
     g.beginPath()
     g.moveTo(scan * w, 0)
@@ -93,10 +93,10 @@ export default function GranularView() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#0d1013'
+    g.fillStyle = UI.inset
     g.fillRect(0, 0, w, h)
     g.strokeStyle = 'var(--accent)'
-    g.strokeStyle = '#3d8fef'
+    g.strokeStyle = UI.blue
     g.lineWidth = 1.5
     g.beginPath()
     for (let x = 0; x <= w; x++) {

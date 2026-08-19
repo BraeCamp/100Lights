@@ -3,7 +3,7 @@
 // per-stage curve drag, live output overlay, knob row below.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { useApollo, useMeters, Knob, ToggleBtn, Section } from '@/components/apps/apollo/ApolloContext'
+import { useApollo, useMeters, Knob, ToggleBtn, Section, UI } from '@/components/apps/apollo/ApolloContext'
 import { EnvConfig } from '@/lib/apollo/patch'
 
 const W = 480
@@ -76,7 +76,7 @@ export default function EnvPanel() {
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
     g.clearRect(0, 0, W, H)
     const st = getComputedStyle(cv)
-    const accent = st.getPropertyValue('--accent').trim() || '#3d8fef'
+    const accent = st.getPropertyValue('--accent').trim() || UI.blue
     const border = st.getPropertyValue('--border').trim() || '#333'
     const textMuted = st.getPropertyValue('--text-muted').trim() || '#888'
     const L = layoutOf(env)

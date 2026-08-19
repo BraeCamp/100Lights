@@ -201,26 +201,44 @@ export const UI = {
   inset: '#0d1013',
   border: '#262c35',
   borderLight: '#333a45',
-  green: '#8ee67e',
+  green: '#8ee67e',   // primary viz color (waveforms)
   greenDim: '#4f8f47',
-  yellow: '#ffd75e',
-  blue: '#4aa9ff',
+  yellow: '#ffd75e',  // viz highlight (current frame, playheads)
+  blue: '#4aa9ff',    // accent (arcs, active controls)
   blueDim: '#2c6db0',
   text: '#dbe1e8',
   dim: '#8b93a0',
+  knobHi: '#333b47',  // knob face gradient stops
+  knobMid: '#20252d',
+  knobLo: '#12151a',
+  panelLo: '#0f1216', // section body gradient bottom stop
+  headerLo: '#14181e', // section header gradient bottom stop
+}
+
+export type ApolloTheme = Partial<typeof UI>
+const DEFAULT_UI = { ...UI }
+
+/**
+ * Swap the whole visual language. Panels read UI.* at render time and
+ * canvases at draw time, so a shell calling this in its component body
+ * (before children render) re-skins every panel. Always resets to the
+ * default first so shells never inherit another shell's theme.
+ */
+export function applyApolloTheme(theme: ApolloTheme): void {
+  Object.assign(UI, DEFAULT_UI, theme)
 }
 
 export function Section({ title, right, led, children, style }: { title: string; right?: React.ReactNode; led?: boolean; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={{
-      background: `linear-gradient(180deg, ${UI.panel} 0%, #0f1216 100%)`,
+      background: `linear-gradient(180deg, ${UI.panel} 0%, ${UI.panelLo} 100%)`,
       border: `1px solid ${UI.border}`, borderRadius: 8, overflow: 'visible',
       display: 'flex', flexDirection: 'column', minWidth: 0,
       boxShadow: '0 2px 8px rgba(0,0,0,0.35)', ...style,
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-        background: `linear-gradient(180deg, ${UI.header} 0%, #14181e 100%)`,
+        background: `linear-gradient(180deg, ${UI.header} 0%, ${UI.headerLo} 100%)`,
         borderBottom: `1px solid ${UI.border}`, borderRadius: '7px 7px 0 0',
         padding: '5px 9px', minHeight: 26,
       }}>
@@ -253,7 +271,7 @@ export function Sel({ value, options, onChange, width, title }: {
     groups.get(g)!.push(o)
   }
   const selStyle: React.CSSProperties = {
-    background: `linear-gradient(180deg, #1c212a 0%, #14181e 100%)`, color: UI.text, border: `1px solid ${UI.border}`,
+    background: `linear-gradient(180deg, ${UI.header} 0%, ${UI.panel} 100%)`, color: UI.text, border: `1px solid ${UI.border}`,
     borderRadius: 5, padding: '3px 6px', fontSize: 10.5, fontWeight: 600, width: width || '100%', minWidth: 0, cursor: 'pointer',
   }
   return (
@@ -276,7 +294,7 @@ export function ToggleBtn({ on, label, onClick, title, accent }: { on: boolean; 
       onClick={onClick}
       title={title}
       style={{
-        background: on ? `linear-gradient(180deg, ${ac} 0%, ${ac}cc 100%)` : `linear-gradient(180deg, #1c212a 0%, #14181e 100%)`,
+        background: on ? `linear-gradient(180deg, ${ac} 0%, ${ac}cc 100%)` : `linear-gradient(180deg, ${UI.header} 0%, ${UI.panel} 100%)`,
         color: on ? '#0b0d10' : UI.dim,
         border: '1px solid ' + (on ? ac : UI.border),
         borderRadius: 5, padding: '3px 9px', fontSize: 9.5, fontWeight: 800, cursor: 'pointer',
@@ -400,13 +418,13 @@ export function Knob(props: KnobProps) {
       >
         <defs>
           <radialGradient id="apKnobBody" cx="38%" cy="30%" r="80%">
-            <stop offset="0%" stopColor="#333b47" />
-            <stop offset="55%" stopColor="#20252d" />
-            <stop offset="100%" stopColor="#12151a" />
+            <stop offset="0%" stopColor={UI.knobHi} />
+            <stop offset="55%" stopColor={UI.knobMid} />
+            <stop offset="100%" stopColor={UI.knobLo} />
           </radialGradient>
         </defs>
         {/* track */}
-        <path d={arc(a0, a0 + sweep, r)} stroke="#1c2129" strokeWidth={3} fill="none" strokeLinecap="round" />
+        <path d={arc(a0, a0 + sweep, r)} stroke={UI.border} strokeWidth={3} fill="none" strokeLinecap="round" />
         {/* value arc */}
         {props.bipolar
           ? <path d={norm >= 0.5 ? arc(0, a0 + norm * sweep, r) : arc(a0 + norm * sweep, 0, r)} stroke={props.color || UI.blue} strokeWidth={3} fill="none" strokeLinecap="round" />
@@ -419,7 +437,7 @@ export function Knob(props: KnobProps) {
           />
         )}
         {/* metallic body */}
-        <circle cx={cx} cy={cy} r={r - 4.5} fill="url(#apKnobBody)" stroke="#0a0c0f" strokeWidth={1} />
+        <circle cx={cx} cy={cy} r={r - 4.5} fill="url(#apKnobBody)" stroke={UI.bg} strokeWidth={1} />
         <circle cx={cx} cy={cy} r={r - 4.5} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={0.8} />
         {/* needle */}
         <line
@@ -427,7 +445,7 @@ export function Knob(props: KnobProps) {
           y1={cy + (r - 12) * Math.sin(((angle - 90) * Math.PI) / 180) * 0.25}
           x2={cx + (r - 7) * Math.cos(((angle - 90) * Math.PI) / 180)}
           y2={cy + (r - 7) * Math.sin(((angle - 90) * Math.PI) / 180)}
-          stroke="#e8edf3" strokeWidth={1.8} strokeLinecap="round"
+          stroke={UI.text} strokeWidth={1.8} strokeLinecap="round"
         />
         {/* mod source dot (Serum-style attachment indicator) */}
         {routes.length > 0 && <circle cx={size - 5} cy={5} r={3} fill={UI.green} opacity={0.9} />}

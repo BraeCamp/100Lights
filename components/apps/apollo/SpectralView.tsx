@@ -3,7 +3,7 @@
 // playhead, warp knobs.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { useApollo, useMeters, Knob, ToggleBtn } from './ApolloContext'
+import { useApollo, useMeters, Knob, ToggleBtn, UI } from './ApolloContext'
 import SamplePicker from './SamplePicker'
 
 export default function SpectralView() {
@@ -83,7 +83,7 @@ export default function SpectralView() {
     }
     // filter curve overlay (index 0 = low freq at bottom)
     const curve = curveRef.current || cfg.filterCurve
-    g.strokeStyle = '#e8b849'
+    g.strokeStyle = UI.yellow
     g.lineWidth = 1.5
     g.beginPath()
     for (let x = 0; x <= 63; x++) {
@@ -96,7 +96,7 @@ export default function SpectralView() {
     // playhead
     if (analysis) {
       const ph = meters.spec[i] || cfg.pos
-      g.strokeStyle = '#7de07d'
+      g.strokeStyle = UI.green
       g.lineWidth = 1.5
       g.beginPath()
       g.moveTo(ph * w, 0)

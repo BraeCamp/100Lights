@@ -3,7 +3,7 @@
 // bin editing, formula generator, audio import, morph, export.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { useApollo, ToggleBtn } from './ApolloContext'
+import { useApollo, ToggleBtn, UI } from './ApolloContext'
 import { WT_LEN, tableFromFormula, tableFromAudio, exportWavetableWav, tableToBase64, generateFactoryTable } from '@/lib/apollo/tables'
 import { getTableData } from './WavetableView'
 import { decodeFileAudio } from '@/lib/media-import'
@@ -73,13 +73,13 @@ export default function WavetableEditor({ onClose }: { onClose: () => void }) {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#0e1013'
+    g.fillStyle = UI.inset
     g.fillRect(0, 0, w, h)
     g.strokeStyle = 'rgba(255,255,255,0.08)'
     g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke()
     const fd = frameData(frame)
     if (view === 'wave') {
-      g.strokeStyle = '#3d8fef'
+      g.strokeStyle = UI.blue
       g.lineWidth = 1.5
       g.beginPath()
       for (let x = 0; x < w; x++) {
@@ -94,7 +94,7 @@ export default function WavetableEditor({ onClose }: { onClose: () => void }) {
       const bw = w / NUM_HARM
       for (let hI = 0; hI < NUM_HARM; hI++) {
         const v = Math.min(1, mags[hI])
-        g.fillStyle = hI % 2 ? '#3d8fef' : '#5aa2f2'
+        g.fillStyle = hI % 2 ? UI.blue : '#5aa2f2'
         g.fillRect(hI * bw + 1, h - v * (h - 8) - 4, bw - 2, v * (h - 8))
       }
     }
@@ -110,12 +110,12 @@ export default function WavetableEditor({ onClose }: { onClose: () => void }) {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#0e1013'
+    g.fillStyle = UI.inset
     g.fillRect(0, 0, w, h)
     const fw = w / working.frames
     for (let f = 0; f < working.frames; f++) {
       const fd = frameData(f)
-      g.strokeStyle = f === frame ? '#e8b849' : 'rgba(120,160,220,0.5)'
+      g.strokeStyle = f === frame ? UI.yellow : 'rgba(120,160,220,0.5)'
       g.lineWidth = f === frame ? 1.5 : 1
       g.beginPath()
       for (let x = 0; x < fw - 2; x++) {

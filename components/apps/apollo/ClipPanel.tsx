@@ -3,7 +3,7 @@
 // chance, macro automation lane, overdub recording, transport.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { useApollo, useMeters, Sel, Section, ToggleBtn } from './ApolloContext'
+import { useApollo, useMeters, Sel, Section, ToggleBtn, UI } from './ApolloContext'
 import { ClipNote, ClipConfig, SCALES, uid, ClipAutoPoint } from '@/lib/apollo/patch'
 
 const NOTE_H = 10
@@ -95,7 +95,7 @@ export default function ClipPanel() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#0e1013'
+    g.fillStyle = UI.inset
     g.fillRect(0, 0, w, h)
     if (!clip) {
       g.fillStyle = '#666'; g.font = '11px system-ui'; g.textAlign = 'center'
@@ -137,7 +137,7 @@ export default function ClipPanel() {
     // playhead
     if (playing && p.clipMode) {
       const ph = (meters.beat % len) / len
-      g.strokeStyle = '#7de07d'
+      g.strokeStyle = UI.green
       g.lineWidth = 1.5
       g.beginPath(); g.moveTo(ph * w, 0); g.lineTo(ph * w, h); g.stroke()
       g.lineWidth = 1
@@ -156,10 +156,10 @@ export default function ClipPanel() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#0e1013'
+    g.fillStyle = UI.inset
     g.fillRect(0, 0, w, h)
     const lane = autoPts.current || clip.automation.find(a => a.param === autoLane)?.points || []
-    g.strokeStyle = '#e8b849'
+    g.strokeStyle = UI.yellow
     g.lineWidth = 1.5
     g.beginPath()
     if (lane.length) {
