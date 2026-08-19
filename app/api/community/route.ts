@@ -5,6 +5,7 @@ import { getFlags } from '@/lib/platform-flags'
 import { isAdminEmail } from '@/lib/admin-auth'
 import { getSubscription } from '@/lib/subscription'
 import { entitlements } from '@/lib/entitlements'
+import { lightBySlug } from '@/lib/lights-registry'
 
 export const runtime = 'nodejs'
 
@@ -22,6 +23,8 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url)
   const kind = url.searchParams.get('kind')
+  // Per-app filter (Community v2): ?app=<registry slug> shows one app's shares
+  const app = url.searchParams.get('app')?.trim() || null
   const { communityScale } = await getFlags()
   // No explicit sort → the mode decides: a small community shows everything
   // newest-first (nothing gets buried); a large one leads with trending.
@@ -48,6 +51,7 @@ export async function GET(req: Request) {
   const like = q ? `%${q}%` : null
   const where = sql`
     (${kind}::text IS NULL OR kind = ${kind})
+      AND (${app}::text IS NULL OR app_slug = ${app})
       AND (${author}::text IS NULL OR author_name = ${author})
       AND (${tag}::text IS NULL OR payload->'tags' ? ${tag})
       AND (${category}::text IS NULL
@@ -108,18 +112,21 @@ export async function POST(req: Request) {
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
   await ensureTables()
 
-  let body: { kind?: string; name?: string; description?: string; payload?: unknown; r2Key?: string; asOfficial?: boolean; remixedFrom?: string }
+  let body: { kind?: string; name?: string; description?: string; payload?: unknown; r2Key?: string; asOfficial?: boolean; remixedFrom?: string; appSlug?: string }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
   const { kind, name } = body
   if (!kind || !(COMMUNITY_KINDS as readonly string[]).includes(kind) || !name?.trim()) {
     return Response.json({ error: `kind (${COMMUNITY_KINDS.join('|')}) and name are required` }, { status: 400 })
   }
-  const audioKind = kind === 'sample' || kind === 'song'
+  const audioKind = kind === 'sample' || kind === 'song' || kind === 'video'
   // A 'post' is a plain text discussion/help item — carries its body in
   // `description`, so it needs neither audio nor a payload.
   if (audioKind && !body.r2Key) return Response.json({ error: `${kind} requires r2Key` }, { status: 400 })
   if (!audioKind && kind !== 'post' && !body.payload) return Response.json({ error: `${kind} requires payload` }, { status: 400 })
+  // App attribution: validated against the registry so bad slugs never land in
+  // the feed (a wrong slug degrades to null, not an error — attribution only).
+  const appSlug = typeof body.appSlug === 'string' && lightBySlug(body.appSlug) ? body.appSlug : null
   if (kind === 'post' && !body.description?.trim()) return Response.json({ error: 'post requires a body' }, { status: 400 })
   const payloadJson = body.payload ? JSON.stringify(body.payload) : null
   if (payloadJson && payloadJson.length > 900_000) return Response.json({ error: 'payload too large' }, { status: 413 })
@@ -167,8 +174,8 @@ export async function POST(req: Request) {
   }
 
   const rows = await sql`
-    INSERT INTO community_items (user_id, author_name, author_username, kind, name, description, payload, r2_key, remixed_from)
-    VALUES (${userId}, ${authorName}, ${authorUsername}, ${kind}, ${name.trim().slice(0, 120)}, ${(body.description ?? '').slice(0, kind === 'post' ? 4000 : 500)}, ${payloadJson}::jsonb, ${body.r2Key ?? null}, ${remixedFrom})
+    INSERT INTO community_items (user_id, author_name, author_username, kind, name, description, payload, r2_key, remixed_from, app_slug)
+    VALUES (${userId}, ${authorName}, ${authorUsername}, ${kind}, ${name.trim().slice(0, 120)}, ${(body.description ?? '').slice(0, kind === 'post' ? 4000 : 500)}, ${payloadJson}::jsonb, ${body.r2Key ?? null}, ${remixedFrom}, ${appSlug})
     RETURNING id
   `
   return Response.json({ id: rows[0].id })

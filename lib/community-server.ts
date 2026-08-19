@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto'
 
 // Server-side shared helpers for the community API routes.
 
-export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip'] as const
+// Core studio kinds + app kinds (Community v2): 'patch' (Apollo synth patches),
+// 'wavetable' (Apollo wavetables), 'sketch' (Firefly voice sketches), 'station'
+// (Lightning Bug scenes), 'video' (rendered video exports). App-originated items
+// also carry `app_slug` so the feed can filter per app.
+export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip', 'patch', 'wavetable', 'sketch', 'station', 'video'] as const
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
 
 /** Stable per-user handle used to key creator profiles + aggregation (author_name
@@ -66,9 +70,13 @@ export async function ensureTables() {
     if (!COMMUNITY_KINDS.every(k => def.includes(`'${k}'`))) {
       await sql`ALTER TABLE community_items DROP CONSTRAINT IF EXISTS community_items_kind_check`
       // Keep this list in sync with COMMUNITY_KINDS above.
-      await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip'))`
+      await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip', 'patch', 'wavetable', 'sketch', 'station', 'video'))`
     }
   } catch { /* concurrent migration won the race — constraint is in place */ }
+  // Which app an item came from (Community v2) — lets the feed filter per app
+  // and cards deep-link back into the app. Nullable: studio kinds predate it.
+  await sql`ALTER TABLE community_items ADD COLUMN IF NOT EXISTS app_slug TEXT`
+  await sql`CREATE INDEX IF NOT EXISTS community_items_app_slug_idx ON community_items (app_slug) WHERE app_slug IS NOT NULL`
   await sql`
     CREATE TABLE IF NOT EXISTS community_votes (
       item_id UUID NOT NULL,
@@ -188,7 +196,7 @@ export function rowToItem(r: Record<string, unknown>, userId: string | null, vot
   return {
     id: r.id, kind: r.kind, name: r.name, description: r.description,
     authorName: r.author_name, authorUsername: r.author_username, votes: r.votes, downloads: r.downloads,
-    createdAt: r.created_at, payload: r.payload, r2Key: r.r2_key,
+    createdAt: r.created_at, payload: r.payload, r2Key: r.r2_key, appSlug: r.app_slug ?? null,
     votedByMe: votedIds.has(r.id as string),
     mine: userId !== null && r.user_id === userId,
     authorPro: proAuthors?.has(r.user_id as string) ?? false,

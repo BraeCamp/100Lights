@@ -8,6 +8,7 @@ import { ApolloPatch, initPatch, defaultFx, uid, ModSource, FxType, WarpMode, Fi
 import { FACTORY_PRESETS } from '@/lib/apollo/presets'
 import { saveBounceToLibrary } from '@/lib/apollo/sample-store'
 import { audioBufferToWav } from '@/lib/wav-encoder'
+import { shareAppItem, getCommunityItem } from '@/lib/community'
 
 const LS_PRESETS = 'apollo_presets_v1'
 
@@ -37,6 +38,18 @@ export default function PresetBar() {
       // re-send LFO luts + tables happens inside sendPatch via update
     })
   }, [ctx])
+
+  // Community install: /apollo?communityPatch=<id> loads a shared patch (the
+  // Community feed's "Open in Apollo" action). One-shot on mount.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('communityPatch')
+    if (!id) return
+    void getCommunityItem(id).then(item => {
+      const patch = (item?.payload as { patch?: Partial<ApolloPatch> } | null)?.patch
+      if (patch) applyPatch(patch)
+    }).catch(() => { /* item gone — start normally */ })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const allPresets = useMemo(() => [
     ...FACTORY_PRESETS.map(fp => ({ group: 'Factory', name: fp.name, load: () => applyPatch(structuredClone(fp.patch)) })),
@@ -178,6 +191,92 @@ export default function PresetBar() {
       <ToggleBtn on={false} label="Mutate" title="Small random nudges to the current patch" onClick={mutate} />
       <ToggleBtn on={abStored} label="A/B" title={abStored ? 'Swap with the stored B patch' : 'Store current as B, then swap back and forth'} onClick={abToggle} />
       <BounceButton />
+      <ShareButton />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Share: publish the patch to the Community feed (kind 'patch', app 'apollo')
+// with a rendered audio preview so anyone can listen before installing.
+
+function ShareButton() {
+  const ctx = useApollo()
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [done, setDone] = useState('')
+  const [desc, setDesc] = useState('')
+
+  const usesSamples = (p: ApolloPatch): boolean =>
+    p.oscs.some(o => o.enabled && (
+      (o.engine === 'sample' && o.smp.sampleId) ||
+      (o.engine === 'granular' && o.gran.sampleId) ||
+      (o.engine === 'spectral' && o.spec.sampleId) ||
+      (o.engine === 'multisample' && o.ms?.zones?.length)
+    )) || (p.noise.enabled && !!p.noise.sampleId)
+
+  const share = async () => {
+    setBusy('Rendering preview…')
+    setDone('')
+    try {
+      await ctx.start()
+      const p = ctx.patch
+      const patchCopy = JSON.parse(JSON.stringify(p)) as ApolloPatch
+      patchCopy.clipMode = false
+      const seconds = p.arp.on ? 5 : 4.2
+      const notes = [{ t: 0.03, dur: p.arp.on ? seconds - 1.8 : 2, note: 48, vel: 0.9 }]
+      const buf = await ctx.engine.renderToBuffer(patchCopy, notes, seconds)
+      setBusy('Publishing…')
+      const id = await shareAppItem({
+        kind: 'patch',
+        appSlug: 'apollo',
+        name: p.name?.trim() || 'Untitled patch',
+        description: desc.trim(),
+        payload: { patch: patchCopy, usesSamples: usesSamples(p) },
+        previewBlob: audioBufferToWav(buf),
+      })
+      setDone('Shared! Opening…')
+      window.open(`/community/${id}`, '_blank')
+    } catch (e) {
+      setDone(e instanceof Error ? e.message : 'Share failed')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <ToggleBtn on={open} label="Share" title="Publish this patch to the Community (with an audio preview)" onClick={() => { setOpen(!open); setDone('') }} />
+      {open && (
+        <div style={{
+          position: 'absolute', top: '110%', right: 0, zIndex: 200, minWidth: 250,
+          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+          padding: 10, display: 'flex', flexDirection: 'column', gap: 7, boxShadow: '0 8px 26px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>
+            Share “{ctx.patch.name || 'Untitled'}” to Community
+          </div>
+          <textarea
+            value={desc}
+            onChange={e => setDesc(e.target.value)}
+            placeholder="What does it sound like? (optional)"
+            rows={2}
+            maxLength={500}
+            style={{ fontSize: 11, padding: '6px 8px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', resize: 'vertical', fontFamily: 'inherit' }}
+          />
+          {usesSamples(ctx.patch) && (
+            <div style={{ fontSize: 9.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              ⚠︎ This patch uses samples. Listeners hear your rendered preview; the installed
+              patch loads its synthesis settings but not your sample audio (yet).
+            </div>
+          )}
+          {busy
+            ? <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>{busy}</div>
+            : <ToggleBtn on={false} label="Publish patch" onClick={() => { void share() }} />}
+          {done && <div style={{ fontSize: 10, color: 'var(--success)' }}>{done}</div>}
+          <div style={{ fontSize: 8.5, color: 'var(--text-muted)' }}>Anyone can listen; one click installs it into their Apollo.</div>
+        </div>
+      )}
     </div>
   )
 }

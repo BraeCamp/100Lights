@@ -7,9 +7,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import posthog from 'posthog-js'
-import { ArrowBigUp, Download, Trash2, Music, Piano, BookOpen, Disc3, Play, Pause, Loader2, Link2, Package, LayoutTemplate, ExternalLink, Flag, Palette, Drum, Grid3x3, Repeat, MessageCircle, Send, Lock, MessageSquare, Pencil } from 'lucide-react'
+import { ArrowBigUp, Download, Trash2, Music, Piano, BookOpen, Disc3, Play, Pause, Loader2, Link2, Package, LayoutTemplate, ExternalLink, Flag, Palette, Drum, Grid3x3, Repeat, MessageCircle, Send, Lock, MessageSquare, Pencil, SlidersHorizontal, Waves, Mic2, Radio, Film } from 'lucide-react'
 import { toggleReaction, downloadCommunityAudio, listComments, addComment, deleteComment, reportComment, editItem, type CommunityItem, type CommunityComment } from '@/lib/community'
 import { renderSpecToBuffer } from '@/lib/default-samples'
+import { lightBySlug } from '@/lib/lights-registry'
 import type { RenderSpec } from '@/lib/sound-library'
 import { playMelodicNote } from '@/lib/instrument-synth'
 
@@ -25,6 +26,12 @@ export const KIND_META: Record<CommunityItem['kind'], { label: string; plural: s
   pattern: { label: 'Pattern', plural: 'Patterns', color: '#fbbf24', icon: Grid3x3,        action: 'Add pattern' },
   post:    { label: 'Post',    plural: 'Posts',    color: '#94a3b8', icon: MessageSquare,   action: '' },
   clip:    { label: 'Clip',    plural: 'Clips',    color: '#f472b6', icon: Play,            action: '' },
+  // Community v2 — app-originated kinds (carry `appSlug` for the source badge)
+  patch:     { label: 'Patch',     plural: 'Patches',    color: '#f59e0b', icon: SlidersHorizontal, action: '' },
+  wavetable: { label: 'Wavetable', plural: 'Wavetables', color: '#fbbf24', icon: Waves,             action: '' },
+  sketch:    { label: 'Sketch',    plural: 'Sketches',   color: '#facc15', icon: Mic2,              action: '' },
+  station:   { label: 'Station',   plural: 'Stations',   color: '#a78bfa', icon: Radio,             action: '' },
+  video:     { label: 'Video',     plural: 'Videos',     color: '#8b5cf6', icon: Film,              action: '' },
 }
 
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
@@ -189,7 +196,7 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
   const [editBody, setEditBody] = useState(item.description)
   const [savingEdit, setSavingEdit] = useState(false)
   const isPro = useIsPro(signedIn)
-  const isAudio = item.kind === 'song' || item.kind === 'sample'
+  const isAudio = item.kind === 'song' || item.kind === 'sample' || (item.kind === 'patch' && !!item.r2Key)
   const canEdit = item.mine && item.kind === 'post'
 
   async function saveEdit() {
@@ -262,6 +269,17 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
           color: meta.color, background: `${meta.color}18`, border: `1px solid ${meta.color}45`,
           borderRadius: 999, padding: '3px 10px',
         }}><Icon size={11} /> {meta.label}</span>
+        {item.appSlug && lightBySlug(item.appSlug) && (
+          <a href={lightBySlug(item.appSlug)!.href} title={`Made with ${lightBySlug(item.appSlug)!.name}`} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            fontSize: 9.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+            color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 999,
+            padding: '3px 9px', textDecoration: 'none',
+          }}>
+            <span aria-hidden="true" style={{ fontSize: 10 }}>{lightBySlug(item.appSlug)!.icon}</span>
+            {lightBySlug(item.appSlug)!.name}
+          </a>
+        )}
       </div>
 
       {/* Title + badges + description */}
@@ -311,6 +329,8 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
       {/* Inline preview */}
       <div style={{ marginTop: 10 }}>
         {(item.kind === 'song' || item.kind === 'sample') && <AudioPreview item={item} color={meta.color} />}
+        {item.kind === 'patch' && item.r2Key && <AudioPreview item={item} color={meta.color} />}
+        {item.kind === 'video' && <ClipPreview item={item} />}
         {item.kind === 'recipe' && <RecipePreview item={item} color={meta.color} />}
         {item.kind === 'preset' && <PresetPreview item={item} color={meta.color} />}
         {item.kind === 'pack' && <PackPreview item={item} color={meta.color} />}
@@ -403,12 +423,17 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
               padding: '7px 12px', borderRadius: 999, border: `1px solid ${meta.color}55`, color: meta.color, background: `${meta.color}10`,
             }}><ExternalLink size={12} /> Open in Studio</a>
           )}
-          {item.kind === 'project' ? (
+          {item.kind === 'patch' ? (
+            <a href={`/apollo?communityPatch=${item.id}`} target="_blank" rel="noreferrer" title="Open this patch in the Apollo synthesizer" style={{
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, textDecoration: 'none',
+              padding: '7px 14px', borderRadius: 999, border: `1px solid ${meta.color}55`, color: meta.color, background: `${meta.color}10`,
+            }}><ExternalLink size={13} /> Open in Apollo</a>
+          ) : item.kind === 'project' ? (
             <a href={signedIn ? `/create?starter=${item.id}` : '/sign-in'} target={signedIn ? '_blank' : undefined} rel="noreferrer" style={{
               display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, textDecoration: 'none',
               padding: '7px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)',
             }}><ExternalLink size={13} /> {meta.action}</a>
-          ) : item.kind === 'post' ? null : (
+          ) : !meta.action ? null : (
             <button onClick={signedIn ? onImport : () => { window.location.assign('/sign-in') }} disabled={busy} style={{
               display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700,
               padding: '7px 14px', borderRadius: 999, cursor: 'pointer', border: '1px solid var(--border)',

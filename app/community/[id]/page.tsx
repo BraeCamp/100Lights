@@ -101,6 +101,7 @@ const fetchByAuthor = cache(async (handle: string | null, excludeId: string): Pr
 
 const KIND_LABEL: Record<string, string> = {
   song: 'Song', sample: 'Sample', preset: 'Preset', recipe: 'Recipe', pack: 'Sample pack', project: 'Project starter', theme: 'Theme', kit: 'Drum kit', pattern: 'Beat pattern', post: 'Post',
+  clip: 'Clip', patch: 'Synth patch', wavetable: 'Wavetable', sketch: 'Voice sketch', station: 'Visual station', video: 'Video',
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {

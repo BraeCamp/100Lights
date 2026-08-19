@@ -27,9 +27,14 @@ const KIND_META: Record<string, KindMeta> = {
   pattern: { label: 'Beat patterns',   blurb: 'Drum patterns you can drop onto the step grid and build a groove from.' },
   post:    { label: 'Posts',           blurb: 'Tips, questions, and feedback threads from the 100Lights community.' },
   clip:    { label: 'Clips',           blurb: 'Short screen-recorded clips from the studio.' },
+  patch:     { label: 'Synth patches',   blurb: 'Apollo synthesizer patches with audio previews — listen, then install into your own Apollo with one click.' },
+  wavetable: { label: 'Wavetables',      blurb: 'Custom wavetables drawn or imported in the Apollo wavetable editor.' },
+  sketch:    { label: 'Voice sketches',  blurb: 'Song ideas sketched by voice in Firefly — melodies and beats you can open and finish.' },
+  station:   { label: 'Visual stations', blurb: 'Lightning Bug visual scenes and stations — reactive looks for your music.' },
+  video:     { label: 'Videos',          blurb: 'Videos rendered in the Prism video suite.' },
 }
 // URL-friendly aliases so /community/browse/starters resolves to the 'project' kind.
-const ALIAS: Record<string, string> = { starters: 'project', starter: 'project', samples: 'sample', songs: 'song', presets: 'preset', recipes: 'recipe', packs: 'pack', kits: 'kit', patterns: 'pattern', themes: 'theme', posts: 'post', clips: 'clip' }
+const ALIAS: Record<string, string> = { starters: 'project', starter: 'project', samples: 'sample', songs: 'song', presets: 'preset', recipes: 'recipe', packs: 'pack', kits: 'kit', patterns: 'pattern', themes: 'theme', posts: 'post', clips: 'clip', patches: 'patch', wavetables: 'wavetable', sketches: 'sketch', stations: 'station', videos: 'video' }
 
 function resolveKind(param: string): string | null {
   const k = ALIAS[param] ?? param

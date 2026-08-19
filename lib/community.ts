@@ -10,7 +10,7 @@ import { importRecipe, type StoredRecipeSpec } from './practice-recipes'
 import { addKit, addPattern, type DrumKit, type DrumPattern } from './drum-presets'
 import type { MidiClip } from './daw-types'
 
-export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme' | 'kit' | 'pattern' | 'post' | 'clip'
+export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme' | 'kit' | 'pattern' | 'post' | 'clip' | 'patch' | 'wavetable' | 'sketch' | 'station' | 'video'
 
 export interface CommunityComment {
   id: string
@@ -33,6 +33,8 @@ export interface CommunityItem {
   createdAt: string
   payload: unknown
   r2Key: string | null
+  /** Which app this item came from (registry slug) — Community v2. */
+  appSlug?: string | null
   votedByMe: boolean
   mine: boolean
   authorPro?: boolean
@@ -45,6 +47,8 @@ export const COMMUNITY_TAGS = ['drums', 'melody', 'bass', 'vocals', 'lofi', 'ele
 
 export interface ListOptions {
   kind?: string
+  /** Per-app filter (registry slug) — Community v2. */
+  app?: string
   sort?: 'top' | 'new' | 'trending' | 'name'
   q?: string
   tag?: string
@@ -66,6 +70,7 @@ export interface ListResult {
 export async function listCommunity(opts: ListOptions = {}): Promise<ListResult> {
   const qs = new URLSearchParams()
   if (opts.kind) qs.set('kind', opts.kind)
+  if (opts.app) qs.set('app', opts.app)
   if (opts.sort) qs.set('sort', opts.sort)  // omitted → the server's scale mode decides
   if (opts.q) qs.set('q', opts.q)
   if (opts.tag) qs.set('tag', opts.tag)
@@ -270,6 +275,43 @@ export async function shareClip(blob: Blob, name: string, description: string, m
     body: JSON.stringify({ kind: 'clip', name, description, r2Key: key, payload: { contentType: baseType, ...meta } }),
   })
   if (!res.ok) throw new Error('share failed')
+  return (await res.json()).id as string
+}
+
+/** Generic app share (Community v2): any app posts a payload item — optionally
+ *  with a rendered audio/video preview blob so the feed can play it. Used by
+ *  Apollo ('patch'/'wavetable'), Firefly ('sketch'), Lightning Bug ('station'). */
+export async function shareAppItem(opts: {
+  kind: CommunityKind
+  appSlug: string
+  name: string
+  description?: string
+  payload: unknown
+  previewBlob?: Blob
+  tags?: string[]
+}): Promise<string> {
+  let r2Key: string | undefined
+  let contentType: string | undefined
+  if (opts.previewBlob) {
+    const blob = opts.previewBlob
+    contentType = (blob.type || 'audio/wav').split(';')[0]
+    const ext = contentType.includes('wav') ? '.wav' : contentType.includes('webm') ? '.webm' : contentType.includes('mp4') ? '.mp4' : '.mp3'
+    const presign = await fetch('/api/media/presign-upload', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: `app-${opts.kind}-${crypto.randomUUID()}${ext}`, contentType, mediaId: `community-app-${crypto.randomUUID()}`, size: blob.size }),
+    })
+    if (!presign.ok) throw new Error('upload not authorized')
+    const { uploadUrl, key } = await presign.json() as { uploadUrl: string; key: string }
+    const put = await fetch(uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': contentType } })
+    if (!put.ok) throw new Error('preview upload failed')
+    r2Key = key
+  }
+  const payload = { ...(opts.payload as Record<string, unknown>), ...(contentType ? { contentType } : {}), ...(opts.tags?.length ? { tags: opts.tags } : {}) }
+  const res = await fetch('/api/community', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: opts.kind, appSlug: opts.appSlug, name: opts.name, description: opts.description ?? '', payload, ...(r2Key ? { r2Key } : {}) }),
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? 'share failed')
   return (await res.json()).id as string
 }
 

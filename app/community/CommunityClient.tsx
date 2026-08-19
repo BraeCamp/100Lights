@@ -14,7 +14,7 @@ import { useUser } from '@clerk/nextjs'
 import { FeedCard, KIND_META, stopFeedPlayback } from './FeedCard'
 
 type Kind = 'all' | CommunityItem['kind']
-const KINDS: Kind[] = ['all', 'post', 'song', 'sample', 'preset', 'recipe', 'kit', 'pattern', 'pack', 'project', 'theme']
+const KINDS: Kind[] = ['all', 'post', 'song', 'sample', 'preset', 'patch', 'recipe', 'kit', 'pattern', 'pack', 'project', 'theme', 'video']
 
 export default function CommunityClient({ initialItems }: { initialItems?: CommunityItem[] }) {
   const { user, isLoaded, isSignedIn } = useUser()
@@ -29,6 +29,7 @@ export default function CommunityClient({ initialItems }: { initialItems?: Commu
   const [query, setQuery] = useState('')
   const [tag, setTag] = useState<string | null>(null)
   const [author, setAuthor] = useState<string | null>(null)
+  const [app, setApp] = useState<string | null>(null)  // ?app= per-app filter (Community v2)
   const [busy, setBusy] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [showUpload, setShowUpload] = useState(false)
@@ -42,7 +43,7 @@ export default function CommunityClient({ initialItems }: { initialItems?: Commu
     try {
       const catList = catGroup ? CATEGORY_GROUPS.find(g => g.label === catGroup)?.categories.join(',') : undefined
       const r = await listCommunity({
-        kind: kind === 'all' ? undefined : kind, sort: sort ?? undefined,
+        kind: kind === 'all' ? undefined : kind, sort: sort ?? undefined, app: app ?? undefined,
         q: query.trim() || undefined, tag: tag ?? undefined, author: author ?? undefined,
         category: catList, page: pageNum,
       })
@@ -65,16 +66,18 @@ export default function CommunityClient({ initialItems }: { initialItems?: Commu
         const sp = new URLSearchParams(window.location.search)
         const k = sp.get('kind')
         const a = sp.get('author')
+        const ap = sp.get('app')
         let adopted = false
         if (k && KINDS.includes(k as Kind) && k !== kind) { setKind(k as Kind); adopted = true }
         if (a) { setAuthor(a); adopted = true }
+        if (ap) { setApp(ap); adopted = true }
         if (adopted) return  // effect re-runs with the adopted filters
       }
       setPage(0)
       void load(true, 0)
     }, query ? 300 : 0)  // debounce typing; instant for filter clicks
     return () => clearTimeout(t)
-  }, [kind, sort, query, tag, author, catGroup]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [kind, sort, query, tag, author, app, catGroup]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function pickKind(k: Kind) {
     setKind(k)
@@ -140,6 +143,15 @@ export default function CommunityClient({ initialItems }: { initialItems?: Commu
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 14px', borderRadius: 10, background: 'rgba(124,58,237,0.1)', border: '1px solid rgba(167,139,250,0.35)' }}>
             <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>Shares by {author}</span>
             <button onClick={() => { setAuthor(null); window.history.replaceState(null, '', '/community') }} aria-label="Clear author filter"
+              style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}><X size={14} /></button>
+          </div>
+        )}
+
+        {/* App filter banner (?app=<slug> — e.g. every Apollo patch) */}
+        {app && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 14px', borderRadius: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>Made with {app}</span>
+            <button onClick={() => { setApp(null); window.history.replaceState(null, '', '/community') }} aria-label="Clear app filter"
               style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}><X size={14} /></button>
           </div>
         )}
