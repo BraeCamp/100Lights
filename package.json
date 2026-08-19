@@ -36,7 +36,8 @@
     "clap:setup": "python3 -m venv .venv-clap && ./.venv-clap/bin/pip install -q torch transformers librosa soundfile",
     "embed:jamendo": "node scripts/embed-jamendo.mjs",
     "looks:centroids": "node scripts/build-genre-centroids.mjs",
-    "calibrate:looks": "node scripts/calibrate-classifier.mjs"
+    "calibrate:looks": "node scripts/calibrate-classifier.mjs",
+    "test:apollo": "node scripts/apollo-tests/engine-smoke.js && node --experimental-strip-types scripts/apollo-tests/fx-audit.mjs && node --experimental-strip-types scripts/apollo-tests/completion-audit.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1067.0",

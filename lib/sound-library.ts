@@ -61,12 +61,20 @@ export function isProtectedSound(id: string): boolean {
 
 let _userId: string | null = null
 let _catalogPulled = false
+let _persistAsked = false
 
 /** Call once when the authenticated user is known. Scopes the IndexedDB to that
  *  user and pulls any sounds they added on other devices into this one. */
 export function initLibrary(userId: string | null) {
   const changed = userId !== _userId
   _userId = userId
+  // Ask the browser to protect our IndexedDB from storage-pressure eviction —
+  // the library IS the user's sound collection; losing it silently is the
+  // worst failure mode. One call is enough (idempotent, ignored if denied).
+  if (!_persistAsked && typeof navigator !== 'undefined' && navigator.storage?.persist) {
+    _persistAsked = true
+    void navigator.storage.persist().catch(() => {})
+  }
   if (userId && changed) {
     void syncLibrary()  // audio samples — background; safe to ignore
     // Presets / kits / patterns sync too (dynamic import avoids a static cycle).

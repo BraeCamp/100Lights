@@ -90,6 +90,13 @@ export class ApolloEngine extends EventTarget {
     const node = new AudioWorkletNode(ctx, 'apollo-engine', {
       numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
     })
+    // A worklet crash is otherwise SILENT (audio just stops) — surface it to
+    // Sentry with the engine version so stale-cache pairings are diagnosable.
+    node.onprocessorerror = () => {
+      void import('@sentry/nextjs')
+        .then(S => S.captureException(new Error(`Apollo engine processor crashed (v${ENGINE_VERSION})`)))
+        .catch(() => {})
+    }
     this.node = node
     if (external) {
       node.connect(opts?.destination || ctx.destination)

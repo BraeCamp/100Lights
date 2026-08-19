@@ -1,0 +1,30 @@
+# Apollo (Helios engine) regression suite — pure-Node worklet harness, no
+# browser. Runs the smoke test, the 115-check FX/filter A/B audit, and the
+# completion audit on every push that touches the engine or its libraries,
+# plus a repo-wide typecheck.
+name: apollo-tests
+
+on:
+  push:
+    paths:
+      - 'public/apollo/**'
+      - 'lib/apollo/**'
+      - 'components/apps/apollo/**'
+      - 'components/apps/Apollo.tsx'
+      - 'scripts/apollo-tests/**'
+      - '.github/workflows/apollo-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - name: Engine suite (smoke + fx audit + completion audit)
+        run: npm run test:apollo
+      - name: Typecheck
+        run: npx tsc --noEmit
