@@ -18,6 +18,7 @@ const CORE: Row[] = [
   { href: '/community', label: 'Community', hint: 'page', icon: '🌐' },
   { href: '/learn', label: 'Learn', hint: 'page', icon: '🎓' },
   { href: '/apps', label: 'All apps', hint: 'page', icon: '✳️' },
+  { href: '/store', label: 'Store', hint: 'page', icon: '🛒' },
 ]
 
 const KIND_HINT: Record<LightEntry['kind'], string> = {

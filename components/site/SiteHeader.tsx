@@ -10,7 +10,7 @@ const NAV = [
   { href: '/apps', label: 'Apps' },
   { href: '/community', label: 'Community' },
   { href: '/learn', label: 'Learn' },
-  { href: '/#pricing', label: 'Pricing' },
+  { href: '/store', label: 'Store' },
 ]
 
 export default function SiteHeader() {

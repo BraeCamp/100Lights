@@ -44,6 +44,7 @@ export default function SiteFooter() {
             ...GAMES.slice(0, 1).map(g => ({ href: '/play', label: 'Play' })),
           ]} />
           <Col title="100Lights" links={[
+            { href: '/store', label: 'Store' },
             { href: '/community', label: 'Community' },
             { href: '/creators', label: 'Creators' },
             { href: '/download', label: 'Desktop app' },

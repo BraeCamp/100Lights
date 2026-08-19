@@ -11,11 +11,16 @@
 //   Creator  $22 / 121,000 = 5,500 /$   (ElevenLabs shows $11 = first-month-50%-off; $22 is standard)
 //   Pro      $99 / 600,000 = 6,061 /$
 //   top-up   $5  / 25,000  = 5,000 /$ ; $20 / 110,000 = 5,500 /$
+// User-facing identity: credits are "Lumens", tiers are Spark/Glow/Beam.
+// (Keys stay 'starter'/'creator'/'pro' — Stripe env price ids + webhooks key
+// off them; only the labels people see changed, which also un-collides the
+// old credit-"Pro" with the $19 membership Pro.)
+export const LUMENS_NAME = 'Lumens'
 export const CREDIT_TIERS = {
   free:    { price: 0,  monthlyCredits: 10_000,  label: 'Free' },
-  starter: { price: 6,  monthlyCredits: 30_000,  label: 'Starter' },
-  creator: { price: 22, monthlyCredits: 121_000, label: 'Creator' },
-  pro:     { price: 99, monthlyCredits: 600_000, label: 'Pro' },
+  starter: { price: 6,  monthlyCredits: 30_000,  label: 'Spark' },
+  creator: { price: 22, monthlyCredits: 121_000, label: 'Glow' },
+  pro:     { price: 99, monthlyCredits: 600_000, label: 'Beam' },
 } as const
 export type CreditTier = keyof typeof CREDIT_TIERS
 

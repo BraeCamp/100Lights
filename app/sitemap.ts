@@ -43,6 +43,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // entries excluded).
   const apps: MetadataRoute.Sitemap = [
     { url: `${base}/apps`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
+    { url: `${base}/store`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
     ...MODULES.filter(m => m.status !== 'hidden').map(m => ({
       url: `${base}${m.href}`,
       lastModified: new Date(),

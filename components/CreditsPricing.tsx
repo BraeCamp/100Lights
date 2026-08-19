@@ -19,7 +19,7 @@ const BLURB: Record<CreditTier, string> = {
 const PERKS: Record<CreditTier, string[]> = {
   free:    ['Unlimited non-AI editing & tools', 'Local transcription (chords resolved free)'],
   starter: ['Everything in Free', 'All Pro features unlocked'],
-  creator: ['Everything in Starter', 'Best credits-per-dollar'],
+  creator: ['Everything in Spark', 'Best Lumens-per-dollar'],
   pro:     ['Everything in Creator', 'Highest monthly credit grant'],
 }
 const fmt = (n: number) => n.toLocaleString('en-US')
@@ -81,7 +81,7 @@ export default function CreditsPricing({ currentTier }: { currentTier?: CreditTi
                 {!isFree && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>/mo</span>}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700, color: 'var(--accent-light, var(--accent))' }}>
-                <Zap size={14} /> {fmt(t.monthlyCredits)} credits / mo
+                <Zap size={14} /> {fmt(t.monthlyCredits)} Lumens / mo
               </div>
               <ul style={{ listStyle: 'none', margin: '2px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {PERKS[tier].map(p => (
@@ -117,7 +117,7 @@ export default function CreditsPricing({ currentTier }: { currentTier?: CreditTi
       <div style={{ padding: 20, borderRadius: 16, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
         <p style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Need a one-time boost?</p>
         <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: '4px 0 14px' }}>
-          Buy credits without subscribing. They never expire and work across every app.
+          Buy Lumens without subscribing. They never expire and work across every app.
         </p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {CREDIT_TOPUPS.map(tp => (
@@ -133,7 +133,7 @@ export default function CreditsPricing({ currentTier }: { currentTier?: CreditTi
             >
               <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>${tp.usd}</span>
               <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                {loading === `topup:${tp.credits}` ? 'Starting…' : `${fmt(tp.credits)} credits`}
+                {loading === `topup:${tp.credits}` ? 'Starting…' : `${fmt(tp.credits)} Lumens`}
               </span>
             </button>
           ))}
@@ -141,7 +141,7 @@ export default function CreditsPricing({ currentTier }: { currentTier?: CreditTi
       </div>
 
       <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, textAlign: 'center' }}>
-        Credits are used only for AI features and are shared across every 100Lights app. All non-AI editing, playback, and export are always free.
+        Lumens are used only for AI features and are shared across every 100Lights app. All non-AI editing, playback, and export are always free.
       </p>
     </div>
   )

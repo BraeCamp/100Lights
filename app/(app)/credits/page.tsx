@@ -21,16 +21,16 @@ export default function CreditsPage() {
   return (
     <main style={{ maxWidth: 980, margin: '0 auto', padding: '40px 20px 64px' }}>
       <header style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 850, color: 'var(--text-primary)', margin: 0 }}>AI Credits</h1>
+        <h1 style={{ fontSize: 28, fontWeight: 850, color: 'var(--text-primary)', margin: 0 }}>Lumens</h1>
         <p style={{ fontSize: 14.5, color: 'var(--text-secondary)', margin: '8px 0 0', maxWidth: 640, lineHeight: 1.55 }}>
-          Credits power the AI features across every 100Lights app — music generation, stem separation, sheet-music vision.
+          Lumens — our AI credits — power the AI features across every 100Lights app — music generation, stem separation, sheet-music vision.
           Everything non-AI stays free, and our hybrid tools (like chord transcription) run locally at no cost.
         </p>
         {info && (
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 16, padding: '8px 14px', borderRadius: 999, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
             <Zap size={15} style={{ color: 'var(--accent)' }} />
             <span style={{ fontSize: 13.5, fontWeight: 750, color: 'var(--text-primary)' }}>{info.balance.toLocaleString('en-US')}</span>
-            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>credits available</span>
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Lumens available</span>
           </div>
         )}
       </header>
