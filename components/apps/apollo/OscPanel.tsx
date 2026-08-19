@@ -11,6 +11,7 @@ import SampleView from './SampleView'
 import GranularView from './GranularView'
 import SpectralView from './SpectralView'
 import MultisamplePanel from './MultisamplePanel'
+import { CurveEditor } from './ModMatrixPanel'
 
 const ENGINE_OPTS = [
   { value: 'wavetable', label: 'Wavetable' }, { value: 'sample', label: 'Sample' },
@@ -148,6 +149,18 @@ export default function OscPanel() {
                 onChange={v => ctx.update(p => { p.oscs[i].wt.fmSource = Number(v) as 0 | 1 | 2 })} />
             )}
           </div>
+          {(osc.wt.warp1.mode === 'remap' || osc.wt.warp2.mode === 'remap') && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700 }}>REMAP</span>
+              <CurveEditor
+                curve={osc.wt.remapCurve}
+                onCommit={c => {
+                  ctx.update(p => { p.oscs[i].wt.remapCurve = c })
+                  if (c) ctx.engine.sendOscRemapLut(`osc${i}`, c)
+                }}
+              />
+            </div>
+          )}
         </>
       )}
       {osc.engine === 'sample' && <SampleView />}

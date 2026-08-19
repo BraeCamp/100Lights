@@ -65,7 +65,7 @@ function AmountSlider({ value, onChange, onCommit }: { value: number; onChange: 
   )
 }
 
-function CurveEditor({ curve, onCommit }: { curve: LfoPoint[] | null; onCommit: (c: LfoPoint[] | null) => void }) {
+export function CurveEditor({ curve, onCommit }: { curve: LfoPoint[] | null; onCommit: (c: LfoPoint[] | null) => void }) {
   const [pts, setPts] = useState<LfoPoint[]>(curve || [{ x: 0, y: 0, curve: 0 }, { x: 1, y: 1, curve: 0 }])
   const drag = useRef(-1)
   const cvPos = (e: React.PointerEvent) => {
@@ -125,8 +125,6 @@ export default function ModMatrixPanel() {
     walkFx(ctx.patch.fxMain, opts)
     walkFx(ctx.patch.fxBus1, opts)
     walkFx(ctx.patch.fxBus2, opts)
-    opts.push({ value: 'bus1Return', label: 'Bus 1 Return', group: 'Global' })
-    opts.push({ value: 'bus2Return', label: 'Bus 2 Return', group: 'Global' })
     return opts
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx.version])

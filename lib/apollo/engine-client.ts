@@ -122,12 +122,10 @@ export class ApolloEngine extends EventTarget {
     collectFxRanges(patch.fxBus2, ranges)
     this.post({ type: 'ranges', ranges })
     // ensure tables + samples + LUTs the patch references are in the engine
-    for (const osc of patch.oscs) {
+    patch.oscs.forEach((osc, i) => {
       this.ensureTable(osc.wt.tableId, patch)
-      if (osc.wt.warp1.mode === 'remap' || osc.wt.warp2.mode === 'remap') {
-        // per-osc remap luts are sent by the UI when curves are edited
-      }
-    }
+      if (osc.wt.remapCurve?.length) this.post({ type: 'remapLut', key: `osc${i}`, lut: lfoLutFromPoints(osc.wt.remapCurve) })
+    })
     patch.lfos.forEach((lfo, i) => this.sendLfoLut(i, lfo.points, lfo.mode === 'path' ? lfo.pathPoints : null))
     for (const row of patch.matrix) {
       if (row.curve && row.curve.length) this.post({ type: 'remapLut', rowId: row.id, lut: lfoLutFromPoints(row.curve) })

@@ -35,6 +35,8 @@ function ApolloInner() {
   const [wtOpen, setWtOpen] = useState(false)
   const [midiOn, setMidiOn] = useState(false)
   const [midiName, setMidiName] = useState('')
+  const [midiAvailable, setMidiAvailable] = useState(false)
+  useEffect(() => { setMidiAvailable(webMidiSupported) }, [])
 
   // Web MIDI hookup
   useEffect(() => {
@@ -77,7 +79,7 @@ function ApolloInner() {
           onClick={() => setWtOpen(true)}
           style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 9px', fontSize: 10, fontWeight: 600, cursor: 'pointer' }}
         >WT Editor</button>
-        {webMidiSupported && (
+        {midiAvailable && (
           <button
             onClick={() => { void enableMidi() }}
             title={midiName}

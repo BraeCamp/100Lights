@@ -58,17 +58,19 @@ const LS_KEY = 'apollo_current_patch_v1'
 export function ApolloProvider({ children }: { children: React.ReactNode }) {
   const engine = useMemo(() => getApolloEngine(), [])
   const patchRef = useRef<ApolloPatch | null>(null)
-  if (!patchRef.current) {
-    let loaded: ApolloPatch | null = null
-    if (typeof window !== 'undefined') {
-      try {
-        const raw = localStorage.getItem(LS_KEY)
-        if (raw) loaded = { ...initPatch(), ...JSON.parse(raw) } as ApolloPatch
-      } catch { /* corrupt save, start fresh */ }
-    }
-    patchRef.current = loaded || initPatch()
-  }
+  if (!patchRef.current) patchRef.current = initPatch()
   const [version, setVersion] = useState(0)
+  // restore the autosaved patch after mount (avoids SSR hydration mismatch)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY)
+      if (raw) {
+        patchRef.current = { ...initPatch(), ...JSON.parse(raw) } as ApolloPatch
+        setVersion(v => v + 1)
+      }
+    } catch { /* corrupt save, start fresh */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [started, setStarted] = useState(false)
   const [selectedOsc, setSelectedOsc] = useState(0)
   const [modSource, setModSource] = useState<ModSource | null>(null)
@@ -123,6 +125,18 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
   const routesFor = useCallback((dest: string): ModRoute[] => {
     return (patchRef.current as ApolloPatch).matrix.filter(r => r.dest === dest && !r.bypass)
   }, [])
+
+  // programmatic hook for automation/tests (same convention as __dawDispatch)
+  useEffect(() => {
+    const w = window as unknown as Record<string, unknown>
+    w.__apolloEngine = engine
+    w.__apolloStart = start
+    w.__apolloUpdate = update
+    w.__apolloPatch = () => patchRef.current
+    return () => {
+      delete w.__apolloEngine; delete w.__apolloStart; delete w.__apolloUpdate; delete w.__apolloPatch
+    }
+  }, [engine, start, update])
 
   const value = useMemo<ApolloCtxValue>(() => ({
     patch: patchRef.current as ApolloPatch,

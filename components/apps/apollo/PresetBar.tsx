@@ -2,7 +2,7 @@
 // Preset management: name, browse factory/user presets, save/load,
 // import/export JSON, init, randomize.
 
-import React, { useCallback, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApollo, ToggleBtn } from './ApolloContext'
 import { ApolloPatch, initPatch, defaultFx, uid, ModSource, FxType, WarpMode, FilterType } from '@/lib/apollo/patch'
 import { FACTORY_PRESETS } from '@/lib/apollo/presets'
@@ -22,7 +22,8 @@ function loadUserPresets(): UserPreset[] {
 export default function PresetBar() {
   const ctx = useApollo()
   const [editingName, setEditingName] = useState(false)
-  const [userPresets, setUserPresets] = useState<UserPreset[]>(() => (typeof window === 'undefined' ? [] : loadUserPresets()))
+  const [userPresets, setUserPresets] = useState<UserPreset[]>([])
+  useEffect(() => { setUserPresets(loadUserPresets()) }, [])
   const fileRef = useRef<HTMLInputElement>(null)
 
   const applyPatch = useCallback((loaded: Partial<ApolloPatch>) => {

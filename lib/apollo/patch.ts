@@ -36,6 +36,7 @@ export interface WavetableParams {
   warp1: WarpSlot
   warp2: WarpSlot
   fmSource: 0 | 1 | 2 // osc index used by fm/am/rm warps
+  remapCurve: LfoPoint[] | null // phase remap curve for the 'remap' warp mode
 }
 
 export interface SliceInfo { pos: number /* 0..1 */ }
@@ -565,7 +566,7 @@ export function defaultOsc(i: number): OscConfig {
     level: 0.75, pan: 0, octave: 0, semi: 0, fine: 0,
     unison: 1, detune: 0.15, blend: 0.5, width: 1, phase: 0, rand: 1, stereo: 0.5,
     keytrackPitch: true, unisonMode: 'classic', dest: 'f1', filterBal: 0, bus: 'main',
-    wt: { tableId: 'basic-shapes', pos: 0, interp: 'smooth', warp1: defaultWarp(), warp2: defaultWarp(), fmSource: (i + 1) % 3 as 0 | 1 | 2 },
+    wt: { tableId: 'basic-shapes', pos: 0, interp: 'smooth', warp1: defaultWarp(), warp2: defaultWarp(), fmSource: (i + 1) % 3 as 0 | 1 | 2, remapCurve: null },
     smp: { sampleId: null, start: 0, end: 1, loopMode: 'off', loopStart: 0.25, loopEnd: 0.75, xfade: 0.01, rate: 1, keytrack: true, rootKey: 60, slices: [], sliceMap: 'off', warp1: defaultWarp(), warp2: defaultWarp() },
     gran: { sampleId: null, density: 20, length: 80, scan: 1, pos: 0, spray: 0.05, direction: 'fwd', pitchRand: 0, panRand: 0.3, windowShape: 0.5, windowSkew: 0, windowAmount: 1, loopGrains: false, manual: false, keytrack: true, rootKey: 60 },
     spec: { sampleId: null, speed: 1, freeze: false, pos: 0, smear: 0, shift: 0, pitchShift: 0, formant: 0, spread: 0, gate: 0, filterCurve: Array(64).fill(1), transients: 0.5, keytrack: true, rootKey: 60 },
