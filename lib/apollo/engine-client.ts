@@ -115,6 +115,13 @@ export class ApolloEngine extends EventTarget {
         this.dispatchEvent(new CustomEvent('meters', { detail: m }))
       } else if (m.type === 'voiceOn' || m.type === 'voiceOff') {
         this.dispatchEvent(new CustomEvent(m.type, { detail: m }))
+      } else if (m.type === 'procError') {
+        // the engine caught an exception in process() and recovered (killed
+        // voices, kept the processor alive) — surface it for diagnosis
+        console.warn('[apollo] engine recovered from a processing error:', m.message)
+        void import('@sentry/nextjs')
+          .then(S => S.captureException(new Error(`Apollo engine process() threw (v${ENGINE_VERSION}, #${m.count}): ${String(m.message).slice(0, 400)}`)))
+          .catch(() => {})
       }
     }
     // static param range table (patch-level params)

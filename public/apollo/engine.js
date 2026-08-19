@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-19-6 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-19-7 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -1856,6 +1856,24 @@ class ApolloProcessor extends AudioWorkletProcessor {
   }
 
   onMessage(m) {
+    // Same crash armor as process(): a throwing message handler (bad patch
+    // shape, note event hitting a corrupt voice) must never take the engine
+    // down — report, rebuild voices, keep running.
+    try {
+      this.onMessageInner(m)
+    } catch (err) {
+      try {
+        this.procErrCount = (this.procErrCount || 0) + 1
+        if (this.procErrCount <= 5) {
+          this.port.postMessage({ type: 'procError', message: String((err && err.stack) || err), count: this.procErrCount })
+        }
+        this.voices = Array.from({ length: 32 }, () => new Voice(this.sr))
+        this.monoVoice = null
+      } catch (e2) { /* keep running regardless */ }
+    }
+  }
+
+  onMessageInner(m) {
     switch (m.type) {
       case 'patch': {
         this.patch = m.patch
@@ -2059,6 +2077,10 @@ class ApolloProcessor extends AudioWorkletProcessor {
       return
     }
     if (!fromSeq && !this.heldNotes.includes(note)) this.heldNotes.push(note)
+    // Scale lock changes the SOUNDING pitch, but the voice must stay findable
+    // by the PLAYED key — otherwise noteOff(playedKey) never matches and the
+    // voice leaks (stuck gated forever, silently eating polyphony).
+    const srcNote = note
     if (patch.global.scaleLock) note = this.snapScale(note)
     const mode = patch.global.mode
     if (mode !== 'poly') {
@@ -2067,6 +2089,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
       if (!v) v = this.allocVoice()
       v.start(note, vel, patch, this, legato, fromSeq)
       v.ch = ch
+      v.srcNote = srcNote
       this.monoVoice = v
       this.port.postMessage({ type: 'voiceOn', note, fromSeq: !!fromSeq })
       return
@@ -2074,6 +2097,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const v = this.allocVoice()
     v.start(note, vel, patch, this, false, fromSeq)
     v.ch = ch
+    v.srcNote = srcNote
     this.port.postMessage({ type: 'voiceOn', note, fromSeq: !!fromSeq })
   }
 
@@ -2091,19 +2115,27 @@ class ApolloProcessor extends AudioWorkletProcessor {
     }
     if (this.sustainPedal && !fromSeq) return
     for (const v of this.voices) {
-      if (v.active && v.gate && v.note === note && v.fromSeq === !!fromSeq) v.release()
+      // match on the PLAYED key (srcNote) — with scale lock on, v.note is the
+      // snapped pitch and would never equal the released key
+      const key = v.srcNote != null ? v.srcNote : v.note
+      if (v.active && v.gate && (key === note || v.note === note) && v.fromSeq === !!fromSeq) v.release()
     }
     if (this.patch.global.mode !== 'poly' && this.heldNotes.length && !fromSeq) {
-      // return to previous held note (legato back-step)
+      // return to previous held note (legato back-step) — snapped like noteOn
       const prev = this.heldNotes[this.heldNotes.length - 1]
-      if (this.monoVoice && this.monoVoice.active) this.monoVoice.start(prev, this.monoVoice.vel, this.patch, this, true, false)
+      const prevSnapped = this.patch.global.scaleLock ? this.snapScale(prev) : prev
+      if (this.monoVoice && this.monoVoice.active) {
+        this.monoVoice.start(prevSnapped, this.monoVoice.vel, this.patch, this, true, false)
+        this.monoVoice.srcNote = prev
+      }
     }
     this.port.postMessage({ type: 'voiceOff', note, fromSeq: !!fromSeq })
   }
 
   releaseSustained() {
     for (const v of this.voices) {
-      if (v.active && v.gate && !this.heldNotes.includes(v.note)) v.release()
+      const key = v.srcNote != null ? v.srcNote : v.note
+      if (v.active && v.gate && !this.heldNotes.includes(key)) v.release()
     }
   }
 
@@ -2694,6 +2726,32 @@ class ApolloProcessor extends AudioWorkletProcessor {
   }
 
   process(inputs, outputs) {
+    // Crash armor: an uncaught exception in an AudioWorklet's process() kills
+    // the processor PERMANENTLY (silent until reload). Any edge case — a stale
+    // autosaved patch shape, a corrupt FX state — must degrade to one silent
+    // block + killed voices, never to dead audio. Errors are reported to the
+    // client (→ console + Sentry) with the first few stacks.
+    try {
+      return this.processInner(inputs, outputs)
+    } catch (err) {
+      try {
+        const out = outputs[0]
+        if (out && out[0]) out[0].fill(0)
+        if (out && out[1]) out[1].fill(0)
+        this.procErrCount = (this.procErrCount || 0) + 1
+        if (this.procErrCount <= 5) {
+          this.port.postMessage({ type: 'procError', message: String((err && err.stack) || err), count: this.procErrCount })
+        }
+        // rebuild the whole voice pool — the throwing voice's internals are in
+        // an unknown state and would throw again the next time it's allocated
+        this.voices = Array.from({ length: 32 }, () => new Voice(this.sr))
+        this.monoVoice = null
+      } catch (e3) { /* even recovery failed — still keep the processor alive */ }
+      return true
+    }
+  }
+
+  processInner(inputs, outputs) {
     const out = outputs[0]
     const OL = out[0], OR = out.length > 1 ? out[1] : out[0]
     if (!this.patch) return true
@@ -2770,12 +2828,22 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const r2 = clamp(this.gmodVal('bus2Return', patch.bus2Return), 0, 1)
     const mg = clamp(this.gmodVal('global.masterGain', patch.global.masterGain), 0, 1)
     let peak = 0
+    // Master peak limiter: polyphonic summing easily exceeds ±1 (8 notes ≈ 2.2
+    // peak), which used to slam the old ±1.5 soft clip and then the DAC — harsh
+    // distortion that reads as "it breaks when I play too many notes". Instant
+    // attack, ~120 ms release, 0.98 ceiling; unity gain below the ceiling.
+    if (this.limEnv === undefined) this.limEnv = 0
+    const limRel = 1 - Math.exp(-1 / (0.12 * this.sr))
     for (let i = 0; i < n; i++) {
       let l = (this.busses.main[0][i] + this.busses.bus1[0][i] * r1 + this.busses.bus2[0][i] * r2 + this.busses.direct[0][i]) * mg
       let r = (this.busses.main[1][i] + this.busses.bus1[1][i] * r1 + this.busses.bus2[1][i] * r2 + this.busses.direct[1][i]) * mg
-      // gentle safety clip
-      if (l > 1.5) l = 1.5 + Math.tanh(l - 1.5); if (l < -1.5) l = -1.5 + Math.tanh(l + 1.5)
-      if (r > 1.5) r = 1.5 + Math.tanh(r - 1.5); if (r < -1.5) r = -1.5 + Math.tanh(r + 1.5)
+      const aIn = Math.abs(l) > Math.abs(r) ? Math.abs(l) : Math.abs(r)
+      if (aIn > this.limEnv) this.limEnv = aIn
+      else this.limEnv += (aIn - this.limEnv) * limRel
+      if (this.limEnv > 0.98) { const g = 0.98 / this.limEnv; l *= g; r *= g }
+      // hard safety for anything pathological the limiter can't catch in-sample
+      if (l > 1.2) l = 1.2; else if (l < -1.2) l = -1.2
+      if (r > 1.2) r = 1.2; else if (r < -1.2) r = -1.2
       OL[i] = l; OR[i] = r
       const a = Math.abs(l) + Math.abs(r)
       if (a > peak) peak = a

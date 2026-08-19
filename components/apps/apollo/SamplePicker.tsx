@@ -7,7 +7,7 @@ import { useApollo } from '@/components/apps/apollo/ApolloContext'
 import { LibrarySourcePicker } from '@/components/editor/SoundCreate'
 import type { LibraryEntry } from '@/lib/sound-library'
 import { decodeFileAudio } from '@/lib/media-import'
-import { persistApolloSample } from '@/lib/apollo/sample-store'
+import { persistApolloSample, sampleDisplayName } from '@/lib/apollo/sample-store'
 
 export type SampleTarget = 'smp' | 'gran' | 'spec' | 'noise'
 
@@ -106,7 +106,7 @@ export default function SamplePicker({ oscIndex, target }: { oscIndex: number; t
             </div>
             <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>…or pick from your sound library:</div>
             <LibrarySourcePicker
-              onPick={(buf: AudioBuffer, entry: LibraryEntry) => { void applyBuffer(buf, entry.name) }}
+              onPick={(buf: AudioBuffer, entry: LibraryEntry) => { void applyBuffer(buf, sampleDisplayName(entry)) }}
               onError={(msg: string) => setErr(msg)}
             />
           </div>

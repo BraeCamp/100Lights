@@ -376,7 +376,7 @@ function EntryRow({
           the original in place. */}
       {!onPick && (
         <a
-          href={`/apollo?librarySample=${encodeURIComponent(entry.id)}&name=${encodeURIComponent(entry.name)}`}
+          href={`/apollo?librarySample=${encodeURIComponent(entry.id)}&name=${encodeURIComponent(entry.folder && /^[A-G](#|b)?-?\d+(\s*\(\d+\))?$/i.test(entry.name.trim()) ? entry.folder : entry.name)}`}
           target="_blank" rel="noreferrer"
           onClick={e => e.stopPropagation()}
           title="Open in Apollo — mangle this sound in the synthesizer, then bounce it back"

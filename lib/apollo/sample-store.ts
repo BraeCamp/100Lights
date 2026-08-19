@@ -96,12 +96,22 @@ export async function restorePatchSamples(patch: ApolloPatch, engine: ApolloEngi
         engine.loadSpectralData(id, an)
       } else {
         const buf = await blobToAudioBuffer(entry.audioBlob)
-        engine.loadSample(id, entry.name, buf)
+        engine.loadSample(id, sampleDisplayName(entry), buf)
       }
       restored.push(id)
     } catch { /* missing or undecodable — leave silent, UI shows the id */ }
   }
   return restored
+}
+
+/** Display name for a library sample loaded into Apollo. Instrument folders
+ *  store one entry per pitch named like "C4"/"F#3" — useless as a patch/sample
+ *  label when the MIDI keyboard already supplies the pitch. Prefer the folder
+ *  (the instrument's name) whenever the entry name is just a note. */
+const NOTE_NAME_RE = /^[A-G](#|b)?-?\d+(\s*\(\d+\))?$/i
+export function sampleDisplayName(entry: { name: string; folder?: string | null }): string {
+  if (entry.folder && NOTE_NAME_RE.test(entry.name.trim())) return entry.folder
+  return entry.name
 }
 
 // ── Library round-trip (the studio's sound-designer loop) ────────────────────
