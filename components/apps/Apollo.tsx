@@ -26,6 +26,7 @@ import GlobalPanel from '@/components/apps/apollo/GlobalPanel'
 import KeyboardStrip from '@/components/apps/apollo/KeyboardStrip'
 import WavetableEditor from '@/components/apps/apollo/WavetableEditor'
 import ScopeView from '@/components/apps/apollo/ScopeView'
+import LearnMode from '@/components/apps/apollo/LearnMode'
 import { startWebMidi, onMidiNote, onMidiCC, webMidiSupported, getMidiDeviceNames } from '@/lib/web-midi'
 import { startMpe, stopMpe } from '@/lib/apollo/mpe'
 
@@ -269,6 +270,7 @@ function ApolloInner() {
           <select
             value=""
             onChange={e => { if (e.target.value) window.location.href = e.target.value }}
+            data-learn="Skin"
             title="Try an alternate look (experimental shells)"
             style={{ background: UI.inset, color: UI.dim, border: `1px solid ${UI.border}`, borderRadius: 5, fontSize: 10, fontWeight: 800, padding: '5px 6px', cursor: 'pointer' }}
           >
@@ -291,6 +293,8 @@ function ApolloInner() {
               }} />
             </div>
           </div>
+          {/* Learn mode — top-right corner: magnifier cursor + description cards */}
+          <LearnMode />
         </div>
 
         {/* body: movable panel columns */}

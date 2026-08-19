@@ -368,7 +368,7 @@ export function Section({ title, right, led, children, style }: { title: string;
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {led != null && <span style={{ width: 7, height: 7, borderRadius: '50%', background: led ? UI.green : '#3a404a', boxShadow: led ? `0 0 5px ${UI.green}` : 'none', display: 'inline-block' }} />}
-          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: UI.text, textTransform: 'uppercase', fontStretch: 'condensed' }}>{title}</div>
+          <div data-learn={title} style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: UI.text, textTransform: 'uppercase', fontStretch: 'condensed' }}>{title}</div>
         </div>
         {right}
       </div>
@@ -399,7 +399,7 @@ export function Sel({ value, options, onChange, width, title }: {
     borderRadius: 5, padding: '3px 6px', fontSize: 10.5, fontWeight: 600, width: width || '100%', minWidth: 0, cursor: 'pointer',
   }
   return (
-    <select value={value} title={title} onChange={e => onChange(e.target.value)} style={selStyle}>
+    <select value={value} title={title} data-learn={title} onChange={e => onChange(e.target.value)} style={selStyle}>
       {hasGroups
         ? [...groups.entries()].map(([g, opts]) => (
           <optgroup key={g || '_'} label={g}>
@@ -417,6 +417,7 @@ export function ToggleBtn({ on, label, onClick, title, accent }: { on: boolean; 
     <button
       onClick={onClick}
       title={title}
+      data-learn={label}
       style={{
         background: on ? `linear-gradient(180deg, ${ac} 0%, ${ac}cc 100%)` : `linear-gradient(180deg, ${UI.header} 0%, ${UI.panel} 100%)`,
         color: on ? '#0b0d10' : UI.dim,
@@ -563,6 +564,7 @@ export function Knob(props: KnobProps) {
       onDragLeave={() => setDragOver(false)}
       onDrop={droppable ? (e => { e.preventDefault(); setDragOver(false); if (ctx!.getModSource()) ctx!.assignMod(props.path!) }) : undefined}
       style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: size + 14, userSelect: 'none', position: 'relative' }}
+      data-learn={props.label}
       title={props.path ? `${props.label} — drag to change, double-click resets, right-click for MIDI${routes.length ? `; ring drag edits ${routes[0].source} amount` : ''}` : props.label}
       onContextMenu={props.path ? (e => { e.preventDefault(); setMenuOpen(o => !o) }) : undefined}
     >
