@@ -712,10 +712,28 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
     let pos = os.samplePos[0]
     let dir = os.sampleDir[0]
     const releasing = !voice.gate
+    // sample-osc warps: fm = position modulation from another osc; pd = sine fold;
+    // am/rm/saturate = amplitude warps
+    const w1m = eng === 'sample' ? sc.warp1.mode : 'off'
+    const w2m = eng === 'sample' ? sc.warp2.mode : 'off'
+    const hasWarp = w1m !== 'off' || w2m !== 'off'
+    const w1a = hasWarp ? clamp(vp(voice, `osc${oi}.smp.warp1.amount`, sc.warp1.amount), 0, 1) : 0
+    const w2a = hasWarp ? clamp(vp(voice, `osc${oi}.smp.warp2.amount`, sc.warp2.amount), 0, 1) : 0
+    const modBuf = engine.oscMono[cfg.wt.fmSource != null ? cfg.wt.fmSource : (oi + 1) % 3]
     for (let s = 0; s < n; s++) {
-      if (pos >= sliceStart - 1 && pos <= sliceEnd + 1) {
-        let l = sampleAt(smp, pos, 0)
-        let r = stereo ? sampleAt(smp, pos, 1) : l
+      let rpos = pos
+      if (w1m === 'fm') rpos += modBuf[s] * w1a * 700 * srRatio
+      if (w2m === 'fm') rpos += modBuf[s] * w2a * 700 * srRatio
+      if (rpos >= sliceStart - 1 && rpos <= sliceEnd + 1) {
+        let l = sampleAt(smp, rpos, 0)
+        let r = stereo ? sampleAt(smp, rpos, 1) : l
+        if (hasWarp) {
+          for (const [wm, wa] of [[w1m, w1a], [w2m, w2a]]) {
+            if (wa <= 0) continue
+            if (wm === 'pd') { const d = 1 + wa * 6; l = Math.sin(l * d) / Math.tanh(d) * 0.8; r = Math.sin(r * d) / Math.tanh(d) * 0.8 }
+            else if (AMP_WARPS[wm]) { l = warpAmp(wm, l, wa, modBuf[s]); r = warpAmp(wm, r, wa, modBuf[s]) }
+          }
+        }
         // loop crossfade: blend tail into loop start over xfade samples
         if (loopMode !== 'off' && xfade > 1 && pos > loopE - xfade && pos <= loopE && step0 * dir > 0) {
           const xf = (pos - (loopE - xfade)) / xfade
@@ -1131,14 +1149,16 @@ function processFxUnit(engine, unit, st, L, R, n) {
     case 'distortion': {
       const mode = Math.round(P('mode', 0))
       const drive = clamp(P('drive', 0.3), 0, 1)
+      const bias = clamp(P('bias', 0), -1, 1) * 0.3
       const fpos = Math.round(P('filterPos', 0))
       const ftype = Math.round(P('filterType', 0))
       const cutoff = cutoffHz(clamp(P('cutoff', 0.7), 0, 1))
       const res = clamp(P('res', 0.2), 0, 0.95)
-      if (!st.fbqL) { st.fbqL = new SVF(); st.fbqR = new SVF() }
+      if (!st.fbqL) { st.fbqL = new SVF(); st.fbqR = new SVF(); st.dcL = new OnePole(); st.dcR = new OnePole() }
       const g = svfG(cutoff, sr), k = 2 - 1.9 * res
+      const dcC = onePoleCoeff(10, sr)
       for (let i = 0; i < n; i++) {
-        let l = L[i], r = R[i]
+        let l = L[i] + bias, r = R[i] + bias
         if (fpos === 1) {
           st.fbqL.process(l, g, k); st.fbqR.process(r, g, k)
           l = ftype === 0 ? st.fbqL.lp : ftype === 1 ? st.fbqL.bp : st.fbqL.hp
@@ -1158,6 +1178,7 @@ function processFxUnit(engine, unit, st, L, R, n) {
           l = ftype === 0 ? st.fbqL.lp : ftype === 1 ? st.fbqL.bp : st.fbqL.hp
           r = ftype === 0 ? st.fbqR.lp : ftype === 1 ? st.fbqR.bp : st.fbqR.hp
         }
+        if (bias !== 0) { l -= st.dcL.lp(l, dcC); r -= st.dcR.lp(r, dcC) }
         L[i] = lerp(L[i], l, mix); R[i] = lerp(R[i], r, mix)
       }
       return
@@ -2137,7 +2158,8 @@ class ApolloProcessor extends AudioWorkletProcessor {
 
   lfoEval(i, phase, wantY) {
     const cfg = this.patch.lfos[i]
-    let ph = phase
+    let ph = phase + (cfg.phase || 0)
+    ph -= Math.floor(ph)
     if (cfg.swing > 0 && cfg.sync) {
       const seg = ph * 2
       const w = 0.5 + cfg.swing * 0.25
@@ -2349,12 +2371,14 @@ class ApolloProcessor extends AudioWorkletProcessor {
   envCfg(i) {
     const cfg = this.patch.envs[i]
     const n = i + 1
+    // bpmSync: env times are authored at a 120 BPM reference and scale with tempo
+    const ts = cfg.bpmSync ? 120 / clamp(this.bpm, 40, 300) : 1
     return {
-      attack: this.gmodVal(`env${n}.attack`, cfg.attack),
-      hold: cfg.hold,
-      decay: this.gmodVal(`env${n}.decay`, cfg.decay),
+      attack: this.gmodVal(`env${n}.attack`, cfg.attack) * ts,
+      hold: cfg.hold * ts,
+      decay: this.gmodVal(`env${n}.decay`, cfg.decay) * ts,
       sustain: clamp(this.gmodVal(`env${n}.sustain`, cfg.sustain), 0, 1),
-      release: this.gmodVal(`env${n}.release`, cfg.release),
+      release: this.gmodVal(`env${n}.release`, cfg.release) * ts,
       aCurve: cfg.aCurve, dCurve: cfg.dCurve, rCurve: cfg.rCurve,
     }
   }

@@ -102,7 +102,7 @@ export default function PresetBar() {
       <select
         value={currentIdx >= 0 ? String(currentIdx) : ''}
         onChange={e => { const k = Number(e.target.value); if (!Number.isNaN(k) && allPresets[k]) allPresets[k].load() }}
-        style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 6px', fontSize: 11, width: 150 }}
+        style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 6px', fontSize: 11, width: 128 }}
       >
         <option value="" disabled>{ctx.patch.name || 'Presets…'}</option>
         <optgroup label="Factory">

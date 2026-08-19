@@ -15,6 +15,7 @@ export default function SpectralView() {
   const specImgRef = useRef<HTMLCanvasElement | null>(null)
   const specImgId = useRef<string>('')
   const [progress, setProgress] = useState<number | null>(null)
+  const imgRef = useRef<HTMLInputElement>(null)
   const drawingRef = useRef(false)
   const curveRef = useRef<number[] | null>(null)
   const analysis = cfg.sampleId ? ctx.engine.getSpectral(cfg.sampleId) : null
@@ -172,6 +173,27 @@ export default function SpectralView() {
           />
         </label>
         <ToggleBtn on={false} label="Reset Curve" onClick={() => ctx.update(p => { p.oscs[i].spec.filterCurve = Array(64).fill(1) })} />
+        <ToggleBtn on={false} label="Import Image…" title="Turn an image into a spectrum (x = time, y = frequency)" onClick={() => imgRef.current?.click()} />
+        <input
+          ref={imgRef} type="file" accept="image/*" style={{ display: 'none' }}
+          onChange={e => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (!f) return
+            const img = new Image()
+            img.onload = () => {
+              void ctx.start().then(() => {
+                const id = 'img_' + Date.now().toString(36)
+                if (ctx.engine.loadImageSpectral(id, img)) {
+                  ctx.update(p => { p.oscs[i].spec.sampleId = id })
+                  specImgId.current = ''
+                }
+                URL.revokeObjectURL(img.src)
+              })
+            }
+            img.src = URL.createObjectURL(f)
+          }}
+        />
       </div>
     </div>
   )

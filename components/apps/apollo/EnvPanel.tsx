@@ -257,6 +257,11 @@ export default function EnvPanel() {
         <Knob value={env.rCurve} min={-1} max={1} def={-0.5} label="R Crv" bipolar onChange={knobCommit('rCurve')} onCommit={commit} />
         <div style={{ flex: 1 }} />
         <ToggleBtn
+          on={env.bpmSync} label="BPM"
+          onClick={() => { const next = { ...env, bpmSync: !env.bpmSync }; envRef.current = next; setEnv(next); commit() }}
+          title="Times scale with tempo (authored at 120 BPM)"
+        />
+        <ToggleBtn
           on={env.legato} label="Legato"
           onClick={() => { const next = { ...env, legato: !env.legato }; envRef.current = next; setEnv(next); commit() }}
           title="In legato mode this envelope does not retrigger on overlapping notes"

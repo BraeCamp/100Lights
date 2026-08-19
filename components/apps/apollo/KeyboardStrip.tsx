@@ -29,7 +29,7 @@ function Wheel({ label, value, onChange, spring }: { label: string; value: numbe
         onPointerDown={e => { drag.current = true; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); apply(e) }}
         onPointerMove={e => { if (drag.current) apply(e) }}
         onPointerUp={() => { drag.current = false; if (spring) onChange(0) }}
-        style={{ width: 22, height: 88, background: '#101216', border: '1px solid var(--border)', borderRadius: 11, position: 'relative', cursor: 'ns-resize', touchAction: 'none' }}
+        style={{ width: 22, height: 88, background: '#0d1013', border: '1px solid var(--border)', borderRadius: 11, position: 'relative', cursor: 'ns-resize', touchAction: 'none' }}
       >
         <div style={{ position: 'absolute', left: 2, right: 2, height: 8, borderRadius: 4, background: 'var(--accent)', top: `${(1 - norm) * 78}px` }} />
       </div>

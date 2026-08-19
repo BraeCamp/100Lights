@@ -27,6 +27,8 @@ export interface ApolloCtxValue {
   setModSource: (s: ModSource | null) => void
   assignMod: (dest: string) => void
   routesFor: (dest: string) => ModRoute[]
+  undo: () => void
+  redo: () => void
 }
 
 const Ctx = createContext<ApolloCtxValue | null>(null)
@@ -90,26 +92,63 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
     setStarted(true)
   }, [engine])
 
-  const update = useCallback((fn: (p: ApolloPatch) => void) => {
-    const p = patchRef.current as ApolloPatch
-    fn(p)
-    if (engine.ready) engine.sendPatch(p)
+  // undo/redo: snapshots of the patch JSON, captured before each change
+  const history = useRef<string[]>([])
+  const future = useRef<string[]>([])
+  const gestureSnap = useRef<string | null>(null)
+
+  const pushHistory = useCallback((snap: string) => {
+    history.current.push(snap)
+    if (history.current.length > 60) history.current.shift()
+    future.current = []
+  }, [])
+
+  const applySnapshot = useCallback((json: string) => {
+    try {
+      patchRef.current = { ...initPatch(), ...JSON.parse(json) } as ApolloPatch
+    } catch { return }
+    if (engine.ready) engine.sendPatch(patchRef.current)
     persist()
     setVersion(v => v + 1)
   }, [engine, persist])
 
+  const undo = useCallback(() => {
+    const snap = history.current.pop()
+    if (snap == null) return
+    future.current.push(JSON.stringify(patchRef.current))
+    applySnapshot(snap)
+  }, [applySnapshot])
+
+  const redo = useCallback(() => {
+    const snap = future.current.pop()
+    if (snap == null) return
+    history.current.push(JSON.stringify(patchRef.current))
+    applySnapshot(snap)
+  }, [applySnapshot])
+
+  const update = useCallback((fn: (p: ApolloPatch) => void) => {
+    const p = patchRef.current as ApolloPatch
+    pushHistory(JSON.stringify(p))
+    fn(p)
+    if (engine.ready) engine.sendPatch(p)
+    persist()
+    setVersion(v => v + 1)
+  }, [engine, persist, pushHistory])
+
   const setParam = useCallback((path: string, value: number) => {
     const p = patchRef.current as ApolloPatch
+    if (gestureSnap.current == null) gestureSnap.current = JSON.stringify(p)
     setByPath(p, resolvePatchPath(path), value)
     if (engine.ready) engine.setParam(path, value)
     persist()
   }, [engine, persist])
 
   const commit = useCallback(() => {
+    if (gestureSnap.current != null) { pushHistory(gestureSnap.current); gestureSnap.current = null }
     if (engine.ready) engine.sendPatch(patchRef.current as ApolloPatch)
     persist()
     setVersion(v => v + 1)
-  }, [engine, persist])
+  }, [engine, persist, pushHistory])
 
   const assignMod = useCallback((dest: string) => {
     if (!modSource) return
@@ -141,23 +180,54 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<ApolloCtxValue>(() => ({
     patch: patchRef.current as ApolloPatch,
     version, engine, started, start, update, setParam, commit,
-    selectedOsc, setSelectedOsc, modSource, setModSource, assignMod, routesFor,
-  }), [version, engine, started, start, update, setParam, commit, selectedOsc, modSource, assignMod, routesFor])
+    selectedOsc, setSelectedOsc, modSource, setModSource, assignMod, routesFor, undo, redo,
+  }), [version, engine, started, start, update, setParam, commit, selectedOsc, modSource, assignMod, routesFor, undo, redo])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
 
 // ---------------------------------------------------------------------------
-// Shared atoms
+// Shared atoms — Serum-2-style palette
 
-export function Section({ title, right, children, style }: { title: string; right?: React.ReactNode; children: React.ReactNode; style?: React.CSSProperties }) {
+export const UI = {
+  bg: '#0a0c0f',
+  panel: '#12151a',
+  header: '#1a1f26',
+  inset: '#0d1013',
+  border: '#262c35',
+  borderLight: '#333a45',
+  green: '#8ee67e',
+  greenDim: '#4f8f47',
+  yellow: '#ffd75e',
+  blue: '#4aa9ff',
+  blueDim: '#2c6db0',
+  text: '#dbe1e8',
+  dim: '#8b93a0',
+}
+
+export function Section({ title, right, led, children, style }: { title: string; right?: React.ReactNode; led?: boolean; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: 10, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, ...style }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.2, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{title}</div>
+    <div style={{
+      background: `linear-gradient(180deg, ${UI.panel} 0%, #0f1216 100%)`,
+      border: `1px solid ${UI.border}`, borderRadius: 8, overflow: 'visible',
+      display: 'flex', flexDirection: 'column', minWidth: 0,
+      boxShadow: '0 2px 8px rgba(0,0,0,0.35)', ...style,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+        background: `linear-gradient(180deg, ${UI.header} 0%, #14181e 100%)`,
+        borderBottom: `1px solid ${UI.border}`, borderRadius: '7px 7px 0 0',
+        padding: '5px 9px', minHeight: 26,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {led != null && <span style={{ width: 7, height: 7, borderRadius: '50%', background: led ? UI.green : '#3a404a', boxShadow: led ? `0 0 5px ${UI.green}` : 'none', display: 'inline-block' }} />}
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: UI.text, textTransform: 'uppercase', fontStretch: 'condensed' }}>{title}</div>
+        </div>
         {right}
       </div>
-      {children}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 9 }}>
+        {children}
+      </div>
     </div>
   )
 }
@@ -178,8 +248,8 @@ export function Sel({ value, options, onChange, width, title }: {
     groups.get(g)!.push(o)
   }
   const selStyle: React.CSSProperties = {
-    background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)',
-    borderRadius: 6, padding: '3px 6px', fontSize: 11, width: width || '100%', minWidth: 0, cursor: 'pointer',
+    background: `linear-gradient(180deg, #1c212a 0%, #14181e 100%)`, color: UI.text, border: `1px solid ${UI.border}`,
+    borderRadius: 5, padding: '3px 6px', fontSize: 10.5, fontWeight: 600, width: width || '100%', minWidth: 0, cursor: 'pointer',
   }
   return (
     <select value={value} title={title} onChange={e => onChange(e.target.value)} style={selStyle}>
@@ -195,15 +265,19 @@ export function Sel({ value, options, onChange, width, title }: {
 }
 
 export function ToggleBtn({ on, label, onClick, title, accent }: { on: boolean; label: string; onClick: () => void; title?: string; accent?: string }) {
+  const ac = accent || UI.blue
   return (
     <button
       onClick={onClick}
       title={title}
       style={{
-        background: on ? (accent || 'var(--accent)') : 'var(--bg-surface)',
-        color: on ? 'var(--accent-contrast, #fff)' : 'var(--text-secondary)',
-        border: '1px solid ' + (on ? (accent || 'var(--accent)') : 'var(--border)'),
-        borderRadius: 6, padding: '3px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+        background: on ? `linear-gradient(180deg, ${ac} 0%, ${ac}cc 100%)` : `linear-gradient(180deg, #1c212a 0%, #14181e 100%)`,
+        color: on ? '#0b0d10' : UI.dim,
+        border: '1px solid ' + (on ? ac : UI.border),
+        borderRadius: 5, padding: '3px 9px', fontSize: 9.5, fontWeight: 800, cursor: 'pointer',
+        whiteSpace: 'nowrap', letterSpacing: 0.6, textTransform: 'uppercase',
+        transition: 'background 120ms, color 120ms, border-color 120ms',
+        boxShadow: on ? `0 0 8px ${ac}44` : 'inset 0 1px 0 rgba(255,255,255,0.04)',
       }}
     >{label}</button>
   )
@@ -317,28 +391,44 @@ export function Knob(props: KnobProps) {
         width={size} height={size}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
         onDoubleClick={() => { apply(defaultValue); if (props.path && ctx) ctx.commit(); props.onCommit?.() }}
-        style={{ cursor: 'ns-resize', touchAction: 'none', outline: dragOver ? '2px solid var(--accent)' : 'none', borderRadius: '50%' }}
+        style={{ cursor: 'ns-resize', touchAction: 'none', outline: dragOver ? `2px solid ${UI.blue}` : 'none', borderRadius: '50%' }}
       >
-        <path d={arc(a0, a0 + sweep, r)} stroke="var(--border)" strokeWidth={3} fill="none" strokeLinecap="round" />
+        <defs>
+          <radialGradient id="apKnobBody" cx="38%" cy="30%" r="80%">
+            <stop offset="0%" stopColor="#333b47" />
+            <stop offset="55%" stopColor="#20252d" />
+            <stop offset="100%" stopColor="#12151a" />
+          </radialGradient>
+        </defs>
+        {/* track */}
+        <path d={arc(a0, a0 + sweep, r)} stroke="#1c2129" strokeWidth={3} fill="none" strokeLinecap="round" />
+        {/* value arc */}
         {props.bipolar
-          ? <path d={norm >= 0.5 ? arc(0, a0 + norm * sweep, r) : arc(a0 + norm * sweep, 0, r)} stroke={props.color || 'var(--accent)'} strokeWidth={3} fill="none" strokeLinecap="round" />
-          : <path d={arc(a0, a0 + norm * sweep, r)} stroke={props.color || 'var(--accent)'} strokeWidth={3} fill="none" strokeLinecap="round" />}
+          ? <path d={norm >= 0.5 ? arc(0, a0 + norm * sweep, r) : arc(a0 + norm * sweep, 0, r)} stroke={props.color || UI.blue} strokeWidth={3} fill="none" strokeLinecap="round" />
+          : <path d={arc(a0, a0 + norm * sweep, r)} stroke={props.color || UI.blue} strokeWidth={3} fill="none" strokeLinecap="round" />}
+        {/* mod range arc */}
         {routes.length > 0 && (
           <path
-            d={modTo >= norm ? arc(a0 + norm * sweep, a0 + modTo * sweep, r - 4) : arc(a0 + modTo * sweep, a0 + norm * sweep, r - 4)}
-            stroke="var(--warning)" strokeWidth={2} fill="none" strokeLinecap="round" opacity={0.9}
+            d={modTo >= norm ? arc(a0 + norm * sweep, a0 + modTo * sweep, r) : arc(a0 + modTo * sweep, a0 + norm * sweep, r)}
+            stroke={UI.green} strokeWidth={1.8} fill="none" strokeLinecap="round" opacity={0.95}
           />
         )}
+        {/* metallic body */}
+        <circle cx={cx} cy={cy} r={r - 4.5} fill="url(#apKnobBody)" stroke="#0a0c0f" strokeWidth={1} />
+        <circle cx={cx} cy={cy} r={r - 4.5} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={0.8} />
+        {/* needle */}
         <line
-          x1={cx + (r - 8) * Math.cos(((angle - 90) * Math.PI) / 180) * 0.3}
-          y1={cy + (r - 8) * Math.sin(((angle - 90) * Math.PI) / 180) * 0.3}
-          x2={cx + (r - 5) * Math.cos(((angle - 90) * Math.PI) / 180)}
-          y2={cy + (r - 5) * Math.sin(((angle - 90) * Math.PI) / 180)}
-          stroke="var(--text-primary)" strokeWidth={2} strokeLinecap="round"
+          x1={cx + (r - 12) * Math.cos(((angle - 90) * Math.PI) / 180) * 0.25}
+          y1={cy + (r - 12) * Math.sin(((angle - 90) * Math.PI) / 180) * 0.25}
+          x2={cx + (r - 7) * Math.cos(((angle - 90) * Math.PI) / 180)}
+          y2={cy + (r - 7) * Math.sin(((angle - 90) * Math.PI) / 180)}
+          stroke="#e8edf3" strokeWidth={1.8} strokeLinecap="round"
         />
+        {/* mod source dot (Serum-style attachment indicator) */}
+        {routes.length > 0 && <circle cx={size - 5} cy={5} r={3} fill={UI.green} opacity={0.9} />}
       </svg>
-      <div style={{ fontSize: 9, color: 'var(--text-muted)', whiteSpace: 'nowrap', maxWidth: size + 18, overflow: 'hidden', textOverflow: 'ellipsis' }}>{props.label}</div>
-      <div style={{ fontSize: 9, color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>{fmtFn(val)}</div>
+      <div style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: 0.7, textTransform: 'uppercase', color: UI.dim, whiteSpace: 'nowrap', maxWidth: size + 20, overflow: 'hidden', textOverflow: 'ellipsis' }}>{props.label}</div>
+      <div style={{ fontSize: 8.5, color: UI.text, fontVariantNumeric: 'tabular-nums', opacity: 0.85 }}>{fmtFn(val)}</div>
     </div>
   )
 }

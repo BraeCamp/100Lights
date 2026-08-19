@@ -43,7 +43,7 @@ export default function GranularView() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#101216'
+    g.fillStyle = '#0d1013'
     g.fillRect(0, 0, w, h)
     if (!smp) {
       g.fillStyle = '#666'; g.font = '11px system-ui'; g.textAlign = 'center'
@@ -57,7 +57,7 @@ export default function GranularView() {
     const sprayW = c.spray * 0.25 * w
     g.fillRect((scan * w) - sprayW, 0, sprayW * 2, h)
     // waveform
-    g.strokeStyle = '#7fb3f0'
+    g.strokeStyle = '#8ee67e'
     g.lineWidth = 1
     g.beginPath()
     const step = Math.max(1, Math.floor(smp.len / w))
@@ -93,7 +93,7 @@ export default function GranularView() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#101216'
+    g.fillStyle = '#0d1013'
     g.fillRect(0, 0, w, h)
     g.strokeStyle = 'var(--accent)'
     g.strokeStyle = '#3d8fef'

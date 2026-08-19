@@ -65,8 +65,9 @@ export default function WavetableView() {
       const stepY = stack > 1 ? (h * 0.42) / (stack - 1) : 0
       const curFrame = pos * (tbl.frames - 1)
       const style = getComputedStyle(c)
-      const accent = style.getPropertyValue('--accent').trim() || '#3d8fef'
-      const dim = style.getPropertyValue('--border').trim() || '#333'
+      // Serum-style: dim green frame stack, bright yellow current frame
+      const accent = '#ffd75e'
+      const dim = 'rgba(120, 200, 110, 0.32)'
       for (let s = stack - 1; s >= 0; s--) {
         const frame = stack > 1 ? Math.round((s / (stack - 1)) * (tbl.frames - 1)) : 0
         const isCur = Math.abs(frame - curFrame) <= (tbl.frames - 1) / Math.max(1, (stack - 1) * 2) + 0.001

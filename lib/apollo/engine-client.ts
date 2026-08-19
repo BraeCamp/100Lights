@@ -212,6 +212,45 @@ export class ApolloEngine extends EventTarget {
 
   getSpectral(id: string): SpectralAnalysis | null { return this.spectralCache.get(id) || null }
 
+  // Serum-2-style image import: luminance becomes spectral magnitude.
+  // x axis = time frames, y axis = log-spaced frequency (top = high).
+  loadImageSpectral(id: string, img: HTMLImageElement): boolean {
+    const W = Math.min(600, Math.max(16, img.naturalWidth))
+    const H = 256
+    const cv = document.createElement('canvas')
+    cv.width = W; cv.height = H
+    const g = cv.getContext('2d')
+    if (!g) return false
+    g.drawImage(img, 0, 0, W, H)
+    const px = g.getImageData(0, 0, W, H).data
+    const bins = 1025
+    const frames = W
+    const mags = new Float32Array(frames * bins)
+    const sr = this.ctx?.sampleRate || 48000
+    for (let f = 0; f < frames; f++) {
+      for (let y = 0; y < H; y++) {
+        const i4 = (y * W + f) * 4
+        const lum = (px[i4] * 0.299 + px[i4 + 1] * 0.587 + px[i4 + 2] * 0.114) / 255
+        if (lum < 0.03) continue
+        // top row = highest frequency, log spacing
+        const bin = Math.max(1, Math.round(Math.pow((H - 1 - y) / (H - 1), 2.2) * (bins - 2)) + 1)
+        const m = lum * lum * 40
+        if (m > mags[f * bins + bin]) mags[f * bins + bin] = m
+      }
+    }
+    const phases = new Float32Array(frames * bins)
+    const onsets = new Uint8Array(frames)
+    onsets[0] = 1
+    const analysis: SpectralAnalysis = { frames, bins, hop: 512, sr, mags, phases, onsets }
+    this.spectralCache.set(id, analysis)
+    this.post(
+      { type: 'spectral', id, frames, bins, hop: 512, sr, mags: new Float32Array(mags), phases: new Float32Array(phases), onsets: new Uint8Array(onsets) },
+      [],
+    )
+    this.spectralSent.add(id)
+    return true
+  }
+
   sendLfoLut(index: number, points: LfoPoint[], pathPoints: { x: number; y: number; curve: number }[] | null): void {
     const main = lfoLutFromPoints(points)
     let y: Float32Array | null = null

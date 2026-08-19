@@ -28,7 +28,7 @@ export default function SampleView() {
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
     g.clearRect(0, 0, w, h)
     g.fillStyle = 'var(--bg-surface)'
-    g.fillStyle = '#101216'
+    g.fillStyle = '#0d1013'
     g.fillRect(0, 0, w, h)
     if (!smp) {
       g.fillStyle = '#666'
@@ -48,7 +48,7 @@ export default function SampleView() {
     g.fillRect(0, 0, c.start * w, h)
     g.fillRect(c.end * w, 0, w - c.end * w, h)
     // waveform peaks
-    g.strokeStyle = '#7fb3f0'
+    g.strokeStyle = '#8ee67e'
     g.lineWidth = 1
     g.beginPath()
     const step = Math.max(1, Math.floor(smp.len / w))
@@ -130,9 +130,29 @@ export default function SampleView() {
     draw()
   }
   const onPointerUp = () => {
-    if (!dragRef.current) return
+    const m = dragRef.current
+    if (!m) return
     dragRef.current = null
     setDrag(null)
+    // snap the released marker to the nearest zero crossing (Serum "snap loop")
+    if (smp) {
+      const c = ctx.patch.oscs[i].smp
+      const cur = c[m]
+      let idx = Math.round(cur * smp.len)
+      const span = Math.min(800, smp.len >> 2)
+      let best = idx, bd = Infinity
+      for (let d = 0; d < span; d++) {
+        for (const cand of [idx - d, idx + d]) {
+          if (cand < 1 || cand >= smp.len) continue
+          if ((smp.l[cand - 1] <= 0 && smp.l[cand] >= 0) || (smp.l[cand - 1] >= 0 && smp.l[cand] <= 0)) {
+            if (d < bd) { bd = d; best = cand }
+            break
+          }
+        }
+        if (bd < Infinity) break
+      }
+      if (bd < Infinity && best !== idx) ctx.setParam(`osc${i}.smp.${m}`, best / smp.len)
+    }
     ctx.commit()
   }
   const onContextMenu = (e: React.MouseEvent) => {

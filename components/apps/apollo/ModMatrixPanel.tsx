@@ -77,7 +77,7 @@ export function CurveEditor({ curve, onCommit }: { curve: LfoPoint[] | null; onC
     <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
       <svg
         width={W} height={H}
-        style={{ background: '#101216', border: '1px solid var(--border)', borderRadius: 6, cursor: 'crosshair', touchAction: 'none' }}
+        style={{ background: '#0d1013', border: '1px solid var(--border)', borderRadius: 6, cursor: 'crosshair', touchAction: 'none' }}
         onPointerDown={e => {
           const { x, y } = cvPos(e)
           let pi = -1, bd = 0.08

@@ -68,7 +68,7 @@ export default function LfoPanel() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#101216'
+    g.fillStyle = '#0d1013'
     g.fillRect(0, 0, w, h)
     // grid
     g.strokeStyle = 'rgba(255,255,255,0.07)'
@@ -125,7 +125,7 @@ export default function LfoPanel() {
     const g = cv.getContext('2d')
     if (!g) return
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    g.fillStyle = '#101216'
+    g.fillStyle = '#0d1013'
     g.fillRect(0, 0, w, h)
     g.strokeStyle = '#e8b849'
     g.lineWidth = 1.5
@@ -266,6 +266,8 @@ export default function LfoPanel() {
           onChange={v => { ctx.update(p => { p.lfos[sel].smooth = v }) }} />
         <Knob label="Swing" size={32} min={0} max={1} def={0} value={cfg.swing}
           onChange={v => { ctx.update(p => { p.lfos[sel].swing = v }) }} />
+        <Knob label="Phase" size={32} min={0} max={1} def={0} value={cfg.phase ?? 0}
+          onChange={v => { ctx.update(p => { p.lfos[sel].phase = v }) }} />
         <ToggleBtn on={cfg.bipolar} label="Bipolar" title="Source outputs -1..1 in the matrix" onClick={() => ctx.update(p => { p.lfos[sel].bipolar = !p.lfos[sel].bipolar })} />
       </div>
     </div>

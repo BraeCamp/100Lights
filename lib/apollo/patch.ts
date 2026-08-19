@@ -183,6 +183,7 @@ export interface LfoConfig {
   swing: number      // 0..1 (sync only)
   gridX: number; gridY: number // editor snap, stored for UI
   bipolar: boolean
+  phase: number      // 0..1 start phase at (re)trigger
 }
 
 export type ModSource =
@@ -338,6 +339,8 @@ function oscParams(i: number): ParamDef[] {
     P(`${o}.wt.warp1.amount`, `Osc ${'ABC'[i]} Warp 1`, 0, 1, 0, true),
     P(`${o}.wt.warp2.amount`, `Osc ${'ABC'[i]} Warp 2`, 0, 1, 0, true),
     P(`${o}.smp.rate`, `Osc ${'ABC'[i]} Smp Rate`, -2, 2, 1, true),
+    P(`${o}.smp.warp1.amount`, `Osc ${'ABC'[i]} Smp Warp 1`, 0, 1, 0, true),
+    P(`${o}.smp.warp2.amount`, `Osc ${'ABC'[i]} Smp Warp 2`, 0, 1, 0, true),
     P(`${o}.smp.start`, `Osc ${'ABC'[i]} Smp Start`, 0, 1, 0, true),
     P(`${o}.smp.loopStart`, `Osc ${'ABC'[i]} Loop Start`, 0, 1, 0, true),
     P(`${o}.smp.loopEnd`, `Osc ${'ABC'[i]} Loop End`, 0, 1, 1, true),
@@ -409,6 +412,7 @@ export const FX_DEFS: Record<FxType, { label: string; params: { key: string; lab
   distortion: { label: 'Distortion', params: [
     { key: 'mode', label: 'Mode', min: 0, max: 11, default: 0 },
     { key: 'drive', label: 'Drive', min: 0, max: 1, default: 0.3 },
+    { key: 'bias', label: 'DC Bias', min: -1, max: 1, default: 0 },
     { key: 'filterPos', label: 'Filt Pos', min: 0, max: 2, default: 0 }, // off/pre/post
     { key: 'filterType', label: 'Filt Type', min: 0, max: 2, default: 0 }, // lp/bp/hp
     { key: 'cutoff', label: 'Cutoff', min: 0, max: 1, default: 0.7 },
@@ -584,7 +588,7 @@ export function defaultLfo(): LfoConfig {
     points: [{ x: 0, y: 1, curve: 0 }, { x: 0.5, y: 0, curve: 0 }, { x: 1, y: 1, curve: 0 }],
     pathPoints: [{ x: 0, y: 0.5, curve: 0 }, { x: 1, y: 0.5, curve: 0 }],
     chaosType: 'lorenz', rate: 2, sync: true, syncRate: 7, trigMode: 'trig',
-    rise: 0, delay: 0, smooth: 0, swing: 0, gridX: 8, gridY: 8, bipolar: false,
+    rise: 0, delay: 0, smooth: 0, swing: 0, gridX: 8, gridY: 8, bipolar: false, phase: 0,
   }
 }
 

@@ -1,9 +1,51 @@
 'use client'
-// Dual filter section: 30+ filter types, serial/parallel routing.
+// Dual filter section: 30+ filter types, serial/parallel routing,
+// Serum-style per-source routing buttons (S A B C N).
 
 import React from 'react'
-import { useApollo, Knob, Sel, Section, ToggleBtn } from './ApolloContext'
-import { FILTER_TYPES, FilterType } from '@/lib/apollo/patch'
+import { useApollo, Knob, Sel, Section, ToggleBtn, UI } from './ApolloContext'
+import { FILTER_TYPES, FilterType, SourceDest } from '@/lib/apollo/patch'
+
+// toggle whether a source feeds filter `fi`, preserving its other-filter routing
+function toggleDest(dest: SourceDest, fi: 0 | 1): SourceDest {
+  const mine: SourceDest = fi === 0 ? 'f1' : 'f2'
+  const other: SourceDest = fi === 0 ? 'f2' : 'f1'
+  const feeds = dest === mine || dest === 'both'
+  if (feeds) return dest === 'both' ? other : 'bypass'
+  return dest === other ? 'both' : mine
+}
+
+function SourceButtons({ fi }: { fi: 0 | 1 }) {
+  const ctx = useApollo()
+  const p = ctx.patch
+  const mine: SourceDest = fi === 0 ? 'f1' : 'f2'
+  const feeds = (d: SourceDest) => d === mine || d === 'both'
+  const items: { label: string; on: boolean; toggle: () => void }[] = [
+    { label: 'S', on: feeds(p.sub.dest), toggle: () => ctx.update(pp => { pp.sub.dest = toggleDest(pp.sub.dest, fi) }) },
+    ...([0, 1, 2] as const).map(oi => ({
+      label: 'ABC'[oi], on: feeds(p.oscs[oi].dest),
+      toggle: () => ctx.update(pp => { pp.oscs[oi].dest = toggleDest(pp.oscs[oi].dest, fi) }),
+    })),
+    { label: 'N', on: feeds(p.noise.dest), toggle: () => ctx.update(pp => { pp.noise.dest = toggleDest(pp.noise.dest, fi) }) },
+  ]
+  return (
+    <div style={{ display: 'flex', gap: 2 }} title="Which sources feed this filter">
+      {items.map(it => (
+        <button
+          key={it.label}
+          onClick={it.toggle}
+          style={{
+            width: 20, height: 18, borderRadius: 4, fontSize: 9, fontWeight: 800, cursor: 'pointer',
+            background: it.on ? UI.blue : '#14181e',
+            color: it.on ? '#0b0d10' : UI.dim,
+            border: `1px solid ${it.on ? UI.blue : UI.border}`,
+            padding: 0, transition: 'background 100ms',
+          }}
+        >{it.label}</button>
+      ))}
+    </div>
+  )
+}
 
 const FAT_LABEL: Partial<Record<FilterType, string>> = {
   multiLBH: 'Morph', multiLNH: 'Morph', morphSVF: 'Morph', formant: 'Vowel', ringMod: 'Mix',
@@ -15,7 +57,7 @@ function FilterSlot({ fi }: { fi: 0 | 1 }) {
   const pfx = `f${fi + 1}`
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 220, opacity: cfg.enabled ? 1 : 0.55 }}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         <ToggleBtn on={cfg.enabled} label={`FILTER ${fi + 1}`} onClick={() => ctx.update(p => { p.filters[fi].enabled = !p.filters[fi].enabled })} />
         <Sel
           value={cfg.type}
@@ -23,6 +65,7 @@ function FilterSlot({ fi }: { fi: 0 | 1 }) {
           onChange={v => ctx.update(p => { p.filters[fi].type = v as FilterType })}
           width={120}
         />
+        <SourceButtons fi={fi} />
       </div>
       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
         <Knob path={`${pfx}.cutoff`} label="Cutoff" size={42} />

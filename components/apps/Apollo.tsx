@@ -1,9 +1,13 @@
 'use client'
 // Apollo — Serum-2-class hybrid synthesizer for sample mangling.
 // Hidden page: /apps/apollo (noindex). All audio runs in one AudioWorklet.
+//
+// The UI is decoupled from the engine: every panel is a self-contained module
+// registered in PANELS below, and the per-tab layout (two columns of panel
+// ids) is data — drag a panel's grip bar to rearrange; layout persists.
 
-import React, { useEffect, useState } from 'react'
-import { ApolloProvider, useApollo, useMeters, Section } from '@/components/apps/apollo/ApolloContext'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { ApolloProvider, useApollo, useMeters, Section, Knob, UI } from '@/components/apps/apollo/ApolloContext'
 import PresetBar from '@/components/apps/apollo/PresetBar'
 import OscPanel from '@/components/apps/apollo/OscPanel'
 import SubNoisePanel from '@/components/apps/apollo/SubNoisePanel'
@@ -24,9 +28,60 @@ import { startWebMidi, onMidiNote, onMidiCC, webMidiSupported, getMidiDeviceName
 
 type Tab = 'synth' | 'mix' | 'fx' | 'matrix' | 'seq' | 'global'
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'synth', label: 'SYNTH' }, { id: 'mix', label: 'MIX' }, { id: 'fx', label: 'FX' },
+  { id: 'synth', label: 'OSC' }, { id: 'mix', label: 'MIX' }, { id: 'fx', label: 'FX' },
   { id: 'matrix', label: 'MATRIX' }, { id: 'seq', label: 'SEQ' }, { id: 'global', label: 'GLOBAL' },
 ]
+
+// ---------------------------------------------------------------------------
+// Panel registry — the layout only refers to these ids.
+
+const PANELS: Record<string, { render: () => React.ReactNode }> = {
+  osc: { render: () => <OscPanel /> },
+  subnoise: { render: () => <SubNoisePanel /> },
+  filters: { render: () => <FilterPanel /> },
+  env: { render: () => <EnvPanel /> },
+  lfo: { render: () => <Section title="LFO"><LfoPanel /></Section> },
+  macros: { render: () => <Section title="Macros"><MacroPanel /></Section> },
+  matrix: { render: () => <ModMatrixPanel /> },
+  mixer: { render: () => <MixerPanel /> },
+  fx: { render: () => <FxRack /> },
+  arp: { render: () => <ArpPanel /> },
+  clip: { render: () => <ClipPanel /> },
+  global: { render: () => <GlobalPanel /> },
+}
+
+type TabLayout = [string[], string[]]
+const DEFAULT_LAYOUT: Record<Tab, TabLayout> = {
+  synth: [['osc', 'subnoise', 'filters'], ['env', 'lfo', 'macros']],
+  mix: [['mixer'], []],
+  fx: [['fx'], []],
+  matrix: [['matrix', 'macros'], ['env', 'lfo']],
+  seq: [['arp', 'clip'], []],
+  global: [['global'], []],
+}
+const LAYOUT_KEY = 'apollo_layout_v1'
+
+function loadLayout(): Record<Tab, TabLayout> {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<Tab, TabLayout>
+      const out = structuredClone(DEFAULT_LAYOUT)
+      for (const t of Object.keys(out) as Tab[]) {
+        if (parsed[t]) out[t] = [parsed[t][0].filter(id => PANELS[id]), parsed[t][1].filter(id => PANELS[id])]
+      }
+      // any panel missing from a tab's saved layout falls back to its default spot
+      for (const t of Object.keys(out) as Tab[]) {
+        const present = new Set([...out[t][0], ...out[t][1]])
+        for (const col of [0, 1] as const) {
+          for (const id of DEFAULT_LAYOUT[t][col]) if (!present.has(id)) out[t][col].push(id)
+        }
+      }
+      return out
+    }
+  } catch { /* corrupt layout */ }
+  return structuredClone(DEFAULT_LAYOUT)
+}
 
 function ApolloInner() {
   const ctx = useApollo()
@@ -36,7 +91,29 @@ function ApolloInner() {
   const [midiOn, setMidiOn] = useState(false)
   const [midiName, setMidiName] = useState('')
   const [midiAvailable, setMidiAvailable] = useState(false)
-  useEffect(() => { setMidiAvailable(webMidiSupported) }, [])
+  const [layout, setLayout] = useState<Record<Tab, TabLayout>>(DEFAULT_LAYOUT)
+  const [layoutTick, setLayoutTick] = useState(0)
+  const dragPanel = useRef<{ tab: Tab; col: 0 | 1; idx: number } | null>(null)
+  useEffect(() => { setMidiAvailable(webMidiSupported); setLayout(loadLayout()) }, [])
+
+  const saveLayout = useCallback((next: Record<Tab, TabLayout>) => {
+    setLayout(next)
+    setLayoutTick(t => t + 1)
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(next)) } catch { /* quota */ }
+  }, [])
+
+  const movePanel = useCallback((toCol: 0 | 1, toIdx: number) => {
+    const from = dragPanel.current
+    if (!from || from.tab !== tab) return
+    const next = structuredClone(layout)
+    const [id] = next[tab][from.col].splice(from.idx, 1)
+    if (!id) return
+    let insertAt = toIdx
+    if (from.col === toCol && from.idx < toIdx) insertAt -= 1
+    next[tab][toCol].splice(Math.max(0, Math.min(insertAt, next[tab][toCol].length)), 0, id)
+    dragPanel.current = null
+    saveLayout(next)
+  }, [layout, tab, saveLayout])
 
   // Web MIDI hookup
   useEffect(() => {
@@ -52,6 +129,20 @@ function ApolloInner() {
     return () => { offNote(); offCC() }
   }, [midiOn, ctx])
 
+  // undo / redo shortcuts
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      e.preventDefault()
+      if (e.shiftKey) ctx.redo()
+      else ctx.undo()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [ctx])
+
   const enableMidi = async () => {
     if (midiOn) { setMidiOn(false); return }
     const ok = await startWebMidi()
@@ -61,99 +152,138 @@ function ApolloInner() {
     } else setMidiName('No MIDI access')
   }
 
+  const renderColumn = (col: 0 | 1, ids: string[]) => (
+    <div
+      style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => { e.preventDefault(); movePanel(col, ids.length) }}
+    >
+      {ids.map((id, idx) => {
+        const def = PANELS[id]
+        if (!def) return null
+        return (
+          <div
+            key={id}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => { e.preventDefault(); e.stopPropagation(); movePanel(col, idx) }}
+            style={{ position: 'relative' }}
+          >
+            <div
+              draggable
+              onDragStart={() => { dragPanel.current = { tab, col, idx } }}
+              title="Drag to rearrange panels"
+              style={{
+                position: 'absolute', top: 3, right: 34, zIndex: 5,
+                width: 26, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: UI.dim, fontSize: 11, cursor: 'grab', opacity: 0.45, borderRadius: 4,
+              }}
+            >⠿</div>
+            {def.render()}
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  const [colA, colB] = layout[tab]
+  const twoCol = colB.length > 0
+
+  const headerBtn = (label: string, onClick: () => void, opts?: { on?: boolean; title?: string }) => (
+    <button
+      onClick={onClick}
+      title={opts?.title}
+      style={{
+        background: opts?.on ? UI.blue : `linear-gradient(180deg, #1c212a 0%, #14181e 100%)`,
+        color: opts?.on ? '#0b0d10' : UI.dim,
+        border: `1px solid ${opts?.on ? UI.blue : UI.border}`,
+        borderRadius: 5, padding: '4px 10px', fontSize: 10, fontWeight: 800, cursor: 'pointer',
+        letterSpacing: 0.6, textTransform: 'uppercase', transition: 'all 120ms',
+      }}
+    >{label}</button>
+  )
+
   return (
     <div
       data-editor="true"
       style={{
-        minHeight: '100dvh', background: 'var(--bg-base)', color: 'var(--text-primary)',
-        display: 'flex', flexDirection: 'column', gap: 8, padding: 10,
-        fontFamily: 'system-ui, -apple-system, sans-serif', maxWidth: 1200, margin: '0 auto',
+        minHeight: '100dvh', background: UI.bg, color: UI.text,
+        fontFamily: "'Avenir Next Condensed', 'Arial Narrow', system-ui, sans-serif",
       }}
     >
-      {/* header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 3, color: 'var(--accent)' }}>APOLLO</div>
-        <PresetBar />
-        <div style={{ flex: 1 }} />
-        <button
-          onClick={() => setWtOpen(true)}
-          style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 9px', fontSize: 10, fontWeight: 600, cursor: 'pointer' }}
-        >WT Editor</button>
-        {midiAvailable && (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 10, maxWidth: 1360, margin: '0 auto' }}>
+        {/* header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          background: `linear-gradient(180deg, ${UI.header} 0%, #101318 100%)`,
+          border: `1px solid ${UI.border}`, borderRadius: 8, padding: '7px 12px',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
+        }}>
+          <div style={{ fontSize: 17, fontWeight: 900, letterSpacing: 4, color: UI.text }}>
+            APOLLO<span style={{ color: UI.blue, marginLeft: 3 }}>2</span>
+          </div>
+          {/* tabs */}
+          <div style={{ display: 'flex', gap: 3 }}>
+            {TABS.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                style={{
+                  padding: '6px 13px', borderRadius: 5, fontSize: 10.5, fontWeight: 900, letterSpacing: 1.2, cursor: 'pointer',
+                  background: tab === t.id ? `linear-gradient(180deg, #2a3442 0%, #1e2530 100%)` : 'transparent',
+                  color: tab === t.id ? UI.text : UI.dim,
+                  border: `1px solid ${tab === t.id ? UI.borderLight : 'transparent'}`,
+                  transition: 'all 120ms', position: 'relative',
+                }}
+              >
+                <span style={{
+                  position: 'absolute', top: 3, left: '50%', transform: 'translateX(-50%)',
+                  width: 4, height: 4, borderRadius: '50%',
+                  background: tab === t.id ? UI.green : '#333a45',
+                }} />
+                <span style={{ display: 'inline-block', marginTop: 4 }}>{t.label}</span>
+              </button>
+            ))}
+          </div>
+          <PresetBar />
+          <div style={{ flex: 1 }} />
+          {headerBtn('↩', () => ctx.undo(), { title: 'Undo (Cmd+Z)' })}
+          {headerBtn('↪', () => ctx.redo(), { title: 'Redo (Shift+Cmd+Z)' })}
+          {headerBtn('WT Editor', () => setWtOpen(true))}
+          {midiAvailable && headerBtn('MIDI', () => { void enableMidi() }, { on: midiOn, title: midiName })}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Knob path="global.masterGain" label="Main" size={32} />
+            <div title="Output level" style={{ width: 8, height: 34, background: UI.inset, border: `1px solid ${UI.border}`, borderRadius: 3, overflow: 'hidden', position: 'relative' }}>
+              <div style={{
+                position: 'absolute', bottom: 0, left: 0, right: 0,
+                height: `${Math.min(100, meters.peak * 100)}%`,
+                background: meters.peak > 1 ? '#e05555' : UI.green,
+                transition: 'height 50ms linear',
+              }} />
+            </div>
+          </div>
+        </div>
+
+        {/* body: movable panel columns */}
+        <div
+          key={`${tab}-${layoutTick}`}
+          style={twoCol
+            ? { display: 'grid', gridTemplateColumns: 'minmax(390px, 3fr) minmax(330px, 2fr)', gap: 8, alignItems: 'start' }
+            : { display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          {renderColumn(0, colA)}
+          {twoCol ? renderColumn(1, colB) : renderColumn(1, colB)}
+        </div>
+
+        {/* footer */}
+        <ModSourcesStrip />
+        <KeyboardStrip />
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <button
-            onClick={() => { void enableMidi() }}
-            title={midiName}
-            style={{
-              background: midiOn ? 'var(--success)' : 'var(--bg-surface)', color: midiOn ? '#0a0a0a' : 'var(--text-secondary)',
-              border: '1px solid ' + (midiOn ? 'var(--success)' : 'var(--border)'), borderRadius: 6, padding: '3px 9px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
-            }}
-          >MIDI</button>
-        )}
-        <div title="Output level" style={{ width: 70, height: 8, background: '#101216', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: `${Math.min(100, meters.peak * 100)}%`, background: meters.peak > 1 ? 'var(--error)' : 'var(--success)' }} />
+            onClick={() => saveLayout(structuredClone(DEFAULT_LAYOUT))}
+            style={{ background: 'none', border: 'none', color: '#4a515c', fontSize: 9, cursor: 'pointer' }}
+          >Reset panel layout</button>
         </div>
       </div>
-
-      {/* tabs */}
-      <div style={{ display: 'flex', gap: 4 }}>
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            style={{
-              padding: '5px 14px', borderRadius: 7, fontSize: 11, fontWeight: 800, letterSpacing: 1, cursor: 'pointer',
-              background: tab === t.id ? 'var(--accent)' : 'var(--bg-card)',
-              color: tab === t.id ? '#fff' : 'var(--text-secondary)',
-              border: '1px solid ' + (tab === t.id ? 'var(--accent)' : 'var(--border)'),
-            }}
-          >{t.label}</button>
-        ))}
-      </div>
-
-      {/* body */}
-      <div style={{ flex: 1, minHeight: 0 }}>
-        {tab === 'synth' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(380px, 3fr) minmax(320px, 2fr)', gap: 8, alignItems: 'start' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <OscPanel />
-              <SubNoisePanel />
-              <FilterPanel />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <EnvPanel />
-              <Section title="LFO">
-                <LfoPanel />
-              </Section>
-              <Section title="Macros">
-                <MacroPanel />
-              </Section>
-            </div>
-          </div>
-        )}
-        {tab === 'mix' && <MixerPanel />}
-        {tab === 'fx' && <FxRack />}
-        {tab === 'matrix' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <ModMatrixPanel />
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'start' }}>
-              <EnvPanel />
-              <Section title="LFO"><LfoPanel /></Section>
-            </div>
-            <Section title="Macros"><MacroPanel /></Section>
-          </div>
-        )}
-        {tab === 'seq' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <ArpPanel />
-            <ClipPanel />
-          </div>
-        )}
-        {tab === 'global' && <GlobalPanel />}
-      </div>
-
-      {/* footer */}
-      <ModSourcesStrip />
-      <KeyboardStrip />
 
       {wtOpen && <WavetableEditor onClose={() => setWtOpen(false)} />}
 
@@ -161,13 +291,15 @@ function ApolloInner() {
         <div
           onClick={() => { void ctx.start() }}
           style={{
-            position: 'fixed', inset: 0, background: 'rgba(8,9,11,0.82)', zIndex: 500,
+            position: 'fixed', inset: 0, background: 'rgba(6,8,10,0.88)', zIndex: 500,
             display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, cursor: 'pointer',
           }}
         >
-          <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: 6, color: 'var(--accent)' }}>APOLLO</div>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Serum-class hybrid synthesizer · click anywhere to start audio</div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>wavetable · sample · multisample · granular · spectral</div>
+          <div style={{ fontSize: 30, fontWeight: 900, letterSpacing: 8, color: UI.text }}>
+            APOLLO<span style={{ color: UI.blue }}>2</span>
+          </div>
+          <div style={{ fontSize: 13, color: UI.dim }}>Serum-class hybrid synthesizer · click anywhere to start audio</div>
+          <div style={{ fontSize: 10, color: '#4a515c', letterSpacing: 1.5, textTransform: 'uppercase' }}>wavetable · sample · multisample · granular · spectral</div>
         </div>
       )}
     </div>
