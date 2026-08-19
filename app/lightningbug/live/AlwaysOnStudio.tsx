@@ -55,7 +55,7 @@ export default function AlwaysOnStudio() {
         <p style={{ fontSize: 18, color: 'var(--text-secondary)', margin: '20px auto 0', maxWidth: 520, lineHeight: 1.5 }}>Design it once, hand it to the cloud, and it runs around the clock. No OBS, no machine left humming.</p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 28, flexWrap: 'wrap' }}>
           <Link href="/admin/lightning-bug?tab=radio" style={{ padding: '13px 26px', borderRadius: 12, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontSize: 15, fontWeight: 850, textDecoration: 'none', boxShadow: '0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent)' }}>Start a channel — free</Link>
-          {liveOnes[0] && <a href={`${origin}/apps/lightningbug?station=${liveOnes[0].slug}&broadcast=1`} target="_blank" rel="noreferrer" style={{ padding: '13px 22px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 15, fontWeight: 700, textDecoration: 'none' }}>▷ See it live</a>}
+          {liveOnes[0] && <a href={`${origin}/lightningbug?station=${liveOnes[0].slug}&broadcast=1`} target="_blank" rel="noreferrer" style={{ padding: '13px 22px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 15, fontWeight: 700, textDecoration: 'none' }}>▷ See it live</a>}
         </div>
         {note && <p style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', marginTop: 14 }}>{note}</p>}
       </section>
@@ -65,7 +65,7 @@ export default function AlwaysOnStudio() {
         <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 30 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 850, color: liveOnes.length ? '#17a673' : 'var(--text-muted)' }}><span style={{ width: 9, height: 9, borderRadius: 9, background: liveOnes.length ? '#17a673' : 'var(--text-muted)' }} /> {liveOnes.length} LIVE NOW</span>
           <span style={{ color: 'var(--text-muted)', fontSize: 14, minWidth: 0, flex: 1 }}>{liveOnes.length ? liveOnes.map(c => c.title.split('—')[0].trim()).join(' · ') + ' — streaming right now' : 'No channels live — start one to see it here.'}</span>
-          {liveOnes[0] && <a href={`${origin}/apps/lightningbug?station=${liveOnes[0].slug}&broadcast=1`} target="_blank" rel="noreferrer" style={{ padding: '8px 16px', borderRadius: 999, border: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)', background: 'color-mix(in srgb, var(--accent) 8%, transparent)', color: 'var(--accent)', fontWeight: 800, fontSize: 13, textDecoration: 'none' }}>Watch</a>}
+          {liveOnes[0] && <a href={`${origin}/lightningbug?station=${liveOnes[0].slug}&broadcast=1`} target="_blank" rel="noreferrer" style={{ padding: '8px 16px', borderRadius: 999, border: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)', background: 'color-mix(in srgb, var(--accent) 8%, transparent)', color: 'var(--accent)', fontWeight: 800, fontSize: 13, textDecoration: 'none' }}>Watch</a>}
         </div>
 
         {/* value cards */}
@@ -90,7 +90,7 @@ export default function AlwaysOnStudio() {
                 <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>{c.title}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{c.wanted && !c.live ? 'starting…' : c.status}</div>
               </div>
-              <a href={`${origin}/apps/lightningbug?station=${c.slug}&broadcast=1`} target="_blank" rel="noreferrer" style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontWeight: 700, fontSize: 13, textDecoration: 'none' }}>Preview</a>
+              <a href={`${origin}/lightningbug?station=${c.slug}&broadcast=1`} target="_blank" rel="noreferrer" style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontWeight: 700, fontSize: 13, textDecoration: 'none' }}>Preview</a>
               {c.wanted
                 ? <button type="button" disabled={busy === c.slug} onClick={() => setLive(c.slug, false)} style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: '#d64550', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}><Square size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />Stop</button>
                 : <button type="button" disabled={busy === c.slug} onClick={() => setLive(c.slug, true)} style={{ padding: '8px 16px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: '#0e0d12', fontWeight: 850, fontSize: 13, cursor: 'pointer' }}><Play size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />Go live</button>}

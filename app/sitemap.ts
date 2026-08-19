@@ -3,7 +3,7 @@ import { sql } from '@/lib/db'
 import { getArticles } from '@/lib/learn-articles'
 import { TUTORIALS } from '@/lib/tutorials'
 import { LEARN_PATHS } from '@/lib/learn-paths'
-import { MINI_APPS } from '@/lib/apps-registry'
+import { MODULES, APPS, GAMES } from '@/lib/lights-registry'
 
 // Community items are the long-tail SEO surface: every shared sample, recipe,
 // and song is a public, playable page with its own OG card. Fragments (#…)
@@ -37,15 +37,30 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/legal/privacy`, lastModified: new Date(), changeFrequency: 'yearly',  priority: 0.3 },
   ]
 
-  // Mini-apps — the standalone /apps/<slug> tools (Lightning Bug, Firefly, Beat Maker…). Each is
-  // a real, indexable landing page; they were previously missing from the sitemap entirely.
+  // The constellation — module homes (/beacon, /prism), top-level apps, the
+  // /apps directory, and the /play games. All derived from the registry, so a
+  // new destination is advertised the moment it's registered (hidden/noindex
+  // entries excluded).
   const apps: MetadataRoute.Sitemap = [
     { url: `${base}/apps`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.8 },
-    ...MINI_APPS.map(a => ({
+    ...MODULES.filter(m => m.status !== 'hidden').map(m => ({
+      url: `${base}${m.href}`,
+      lastModified: new Date(),
+      changeFrequency: 'monthly' as const,
+      priority: 0.9,
+    })),
+    ...APPS.filter(a => a.status !== 'hidden' && !a.noindex).map(a => ({
       url: `${base}${a.href}`,
       lastModified: new Date(),
       changeFrequency: 'monthly' as const,
       priority: 0.7,
+    })),
+    { url: `${base}/play`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.6 },
+    ...GAMES.map(g => ({
+      url: `${base}${g.href}`,
+      lastModified: new Date(),
+      changeFrequency: 'monthly' as const,
+      priority: 0.6,
     })),
   ]
 

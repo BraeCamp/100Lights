@@ -126,7 +126,7 @@ const LS_KEY = 'beatmaker-v1'
 const SWING_MAX = 0.5
 
 // `onPattern` (optional) surfaces the current grid as beat-based MidiNotes so a host app — the
-// Firefly sketchpad — can fold the beat into a project. The standalone /apps/beatmaker page
+// Firefly sketchpad — can fold the beat into a project. The standalone /beatmaker page
 // passes nothing, so its behavior is unchanged.
 export type BeatData = { grid: Grid; bpm: number; swing: number; kitId: string }
 
@@ -156,7 +156,7 @@ export default function BeatMaker({ onPattern, restore, open, onHome }: {
   const [quantize, setQuantize] = useState(true)                         // pad taps snap to the grid → a clean sequence
   const totalSteps = bars * STEPS_PER_BAR
 
-  // Optional — present on the standalone /apps/beatmaker page (inside AppChrome), absent when
+  // Optional — present on the standalone /beatmaker page (inside AppChrome), absent when
   // BeatMaker is embedded (Firefly). Gates Save-to-history and the History restore hook.
   const shell = useAppShellOptional()
 

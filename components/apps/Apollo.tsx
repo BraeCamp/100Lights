@@ -1,6 +1,6 @@
 'use client'
 // Apollo — Serum-2-class hybrid synthesizer for sample mangling.
-// Hidden page: /apps/apollo (noindex). All audio runs in one AudioWorklet.
+// Hidden page: /apollo (noindex). All audio runs in one AudioWorklet.
 //
 // The UI is decoupled from the engine: every panel is a self-contained module
 // registered in PANELS below, and the per-tab layout (two columns of panel
@@ -263,6 +263,20 @@ function ApolloInner() {
           {headerBtn('↩', () => ctx.undo(), { title: 'Undo (Cmd+Z)' })}
           {headerBtn('↪', () => ctx.redo(), { title: 'Redo (Shift+Cmd+Z)' })}
           {headerBtn('WT Editor', () => setWtOpen(true))}
+          {/* Skins — alternate UI shells over the same engine. Plain links, so
+              removing a shell = delete its /apollo/test<N> page + one option. */}
+          <select
+            value=""
+            onChange={e => { if (e.target.value) window.location.href = e.target.value }}
+            title="Try an alternate look (experimental shells)"
+            style={{ background: UI.inset, color: UI.dim, border: `1px solid ${UI.border}`, borderRadius: 5, fontSize: 10, fontWeight: 800, padding: '5px 6px', cursor: 'pointer' }}
+          >
+            <option value="">SKIN</option>
+            <option value="/apollo">Classic</option>
+            <option value="/apollo/test1">Amber Console</option>
+            <option value="/apollo/test2">Porcelain</option>
+            <option value="/apollo/test3">Neon Grid</option>
+          </select>
           {midiAvailable && headerBtn('MIDI', () => { void enableMidi() }, { on: midiOn && !mpeOn, title: midiName })}
           {midiAvailable && headerBtn('MPE', () => { void toggleMpe() }, { on: mpeOn, title: 'MPE mode: per-note pitch bend + pressure (Seaboard, Linnstrument…)' })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

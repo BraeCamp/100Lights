@@ -1,14 +1,22 @@
 import type { NextConfig } from 'next'
 import { withSentryConfig } from '@sentry/nextjs'
+import { LEGACY_REDIRECTS } from './lib/lights-registry'
 
 const nextConfig: NextConfig = {
   async redirects() {
-    // Lightning Bug was renamed from "Music Video" (/apps/musicvideo → /apps/lightningbug).
-    // Permanent redirects so old links, shared scenes, and SEO carry over (query strings are
-    // preserved automatically).
+    // Permanent redirects so old links, shared scenes, and SEO carry over
+    // (query strings are preserved automatically).
     return [
-      { source: '/apps/musicvideo', destination: '/apps/lightningbug', permanent: true },
-      { source: '/apps/musicvideo/:path*', destination: '/apps/lightningbug/:path*', permanent: true },
+      // The great un-scattering (2026-08): apps moved from /apps/<slug> to
+      // top-level /<slug>, module homes to their light names (/beacon, /prism,
+      // /aperture) — all generated from the constellation registry.
+      ...LEGACY_REDIRECTS.map(r => ({ ...r, permanent: true })),
+      // Studio entry renamed /new → /create.
+      { source: '/new', destination: '/create', permanent: true },
+      // Lightning Bug's original "Music Video" name (predates the move above,
+      // so it points straight at the final home — no redirect chains).
+      { source: '/apps/musicvideo', destination: '/lightningbug', permanent: true },
+      { source: '/apps/musicvideo/:path*', destination: '/lightningbug/:path*', permanent: true },
     ]
   },
   async headers() {

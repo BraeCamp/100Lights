@@ -1007,7 +1007,7 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
 
 // ── Apollo (hybrid worklet synth) ──────────────────────────────────────────────
 // Compact panel: patch selection + handoff to the full Apollo editor at
-// /apps/apollo. Patch data is the instrument params (whole ApolloPatch).
+// /apollo. Patch data is the instrument params (whole ApolloPatch).
 
 const ApolloPanel = memo(function ApolloPanel({ instrument, trackId }: { instrument: TrackInstrument; trackId: string }) {
   const { dispatch } = useDaw()
@@ -1049,7 +1049,7 @@ const ApolloPanel = memo(function ApolloPanel({ instrument, trackId }: { instrum
           </optgroup>
         </select>
         <a
-          href="/apps/apollo"
+          href="/apollo"
           target="_blank"
           rel="noreferrer"
           style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}

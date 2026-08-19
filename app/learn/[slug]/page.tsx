@@ -170,7 +170,7 @@ export default async function LearnArticlePage({ params }: { params: Promise<{ s
         }}>
           <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 6px' }}>Try it yourself — free, in your browser</p>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 16px' }}>Everything in this guide works in the 100Lights studio. No account needed to start — no downloads, no plugins.</p>
-          <Link href="/new?modules=audio" style={{ display: 'inline-block', padding: '10px 22px', borderRadius: 10, background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 700, textDecoration: 'none' }}>
+          <Link href="/create?modules=audio" style={{ display: 'inline-block', padding: '10px 22px', borderRadius: 10, background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 700, textDecoration: 'none' }}>
             Open the studio →
           </Link>
         </aside>

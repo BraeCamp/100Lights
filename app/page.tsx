@@ -1,10 +1,11 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import DemoVideo from '@/components/DemoVideo'
-import { LogoMark } from '@/components/Logo'
-import HeaderAuthCta from '@/components/HeaderAuthCta'
 import HeroCta from '@/components/HeroCta'
-import { getArticles } from '@/lib/learn-articles'
+import SiteHeader from '@/components/site/SiteHeader'
+import SiteFooter from '@/components/site/SiteFooter'
+import Constellation from '@/components/site/Constellation'
+import ContinueRow from '@/components/site/ContinueRow'
 import {
   Zap, Check,
   Layers, Music2, Sliders, CircleDot,
@@ -198,8 +199,6 @@ const websiteJsonLd = {
 export const revalidate = 3600
 
 export default async function LandingPage() {
-  const hasGuides = (await getArticles({ includeDrafts: false })).length > 0
-
   return (
     <>
       <script
@@ -221,34 +220,14 @@ export default async function LandingPage() {
 
       <div style={{ background: 'var(--bg-base)', minHeight: '100vh' }}>
 
-        {/* ── Header ── */}
-        <header>
-          <nav
-            aria-label="Main navigation"
-            className="flex items-center justify-between px-6 py-4 max-w-6xl mx-auto"
-          >
-            {/* Logo */}
-            <Link href="/" className="flex items-center gap-2.5" aria-label="100Lights home">
-              <LogoMark size={32} />
-              <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>100Lights</span>
-            </Link>
-
-            {/* Nav links */}
-            <div className="hidden sm:flex items-center gap-6">
-              <Link href="#studio" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Studio</Link>
-              <Link href="/community" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Community</Link>
-              <Link href="#pricing" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Pricing</Link>
-            </div>
-
-            {/* Auth-aware right side */}
-            <div className="flex items-center gap-3">
-              <HeaderAuthCta />
-            </div>
-          </nav>
-        </header>
+        {/* ── Header — the one site-wide top bar ── */}
+        <SiteHeader />
 
         {/* ── Main ── */}
         <main id="main">
+
+          {/* Signed-in: recent projects first, so / is a real launcher */}
+          <ContinueRow />
 
           {/* ── Hero ── */}
           <section
@@ -314,6 +293,31 @@ export default async function LandingPage() {
                 ariaLabel="30-second loop of the 100Lights studio: adding tracks, capturing a live take with JAM, and riding a volume fader"
               />
             </div>
+          </section>
+
+          {/* ── The Constellation — every studio, app, and tool ── */}
+          <section
+            id="apps"
+            aria-labelledby="constellation-heading"
+            className="max-w-6xl mx-auto px-6 pb-16 sm:pb-24"
+          >
+            <div className="text-center mb-10 sm:mb-14">
+              <div
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-6"
+                style={{ background: 'rgba(245, 158, 11, 0.12)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.25)' }}
+              >
+                <Zap size={11} aria-hidden="true" />
+                The Constellation
+              </div>
+              <h2 id="constellation-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
+                One account, a hundred lights
+              </h2>
+              <p className="text-base max-w-2xl mx-auto" style={{ color: 'var(--text-secondary)' }}>
+                Full studios for music and video, plus a growing set of focused apps, tools, and
+                games — all free to open, all in your browser, all working together.
+              </p>
+            </div>
+            <Constellation />
           </section>
 
           {/* ── The Studio ── */}
@@ -528,26 +532,8 @@ export default async function LandingPage() {
 
         </main>
 
-        {/* ── Footer ── */}
-        <footer className="border-t" style={{ borderColor: 'var(--border)' }}>
-          <div className="max-w-6xl mx-auto px-6 py-8">
-            <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-0 sm:justify-between">
-              <div className="flex items-center gap-2">
-                <LogoMark size={22} />
-                <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>100Lights</span>
-              </div>
-              <nav aria-label="Footer navigation">
-                <div className="flex items-center gap-4">
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>© 2026 100Lights. Built for musicians.</p>
-                  <Link href="/community" className="text-xs" style={{ color: 'var(--text-muted)' }}>Community</Link>
-                  {hasGuides && <Link href="/learn" className="text-xs" style={{ color: 'var(--text-muted)' }}>Learn</Link>}
-                  <Link href="/legal/terms" className="text-xs" style={{ color: 'var(--text-muted)' }}>Terms</Link>
-                  <Link href="/legal/privacy" className="text-xs" style={{ color: 'var(--text-muted)' }}>Privacy</Link>
-                </div>
-              </nav>
-            </div>
-          </div>
-        </footer>
+        {/* ── Footer — the site-wide constellation footer ── */}
+        <SiteFooter />
 
       </div>
     </>

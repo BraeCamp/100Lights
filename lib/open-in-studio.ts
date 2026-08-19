@@ -33,7 +33,7 @@ function makeTrack(name: string, instrument: TrackInstrument): DawTrack {
 /** Stash a project and jump to the studio. */
 export function openProjectInStudio(project: DawProject) {
   try { sessionStorage.setItem(SEED_KEY, JSON.stringify(project)) } catch { /* private mode — just navigate */ }
-  window.location.assign('/new?modules=audio&audioMode=music')
+  window.location.assign('/create?modules=audio&audioMode=music')
 }
 
 /** Open the studio with one track holding `notes` as a single clip. */

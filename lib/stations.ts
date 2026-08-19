@@ -1,5 +1,5 @@
 // Broadcast "stations" — themed radio-with-visuals presets for the 24/7 streaming mode
-// (/apps/lightningbug?station=<slug>&broadcast=1). Each = a visual scene + a way to get its audio.
+// (/lightningbug?station=<slug>&broadcast=1). Each = a visual scene + a way to get its audio.
 // See STREAMING.md for how this drives YouTube/Twitch. Pure data + types (no React), so the
 // server playlist route and the client both import it.
 
@@ -69,7 +69,7 @@ export interface Station {
   /** Full Lightning Bug scene authored in the real UI (the "broadcast project"). A superset of
    *  `scene` — when present, the broadcast applies ALL of it (loadScene), so you're not limited to
    *  the admin panel's subset. Kept loose (it's the app's internal Scene shape) since it round-trips
-   *  through the app, not this file. Authored via /apps/lightningbug?broadcastEdit=<slug>. */
+   *  through the app, not this file. Authored via /lightningbug?broadcastEdit=<slug>. */
   fullScene?: Record<string, unknown>
 }
 

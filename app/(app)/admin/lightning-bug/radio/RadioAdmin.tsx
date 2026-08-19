@@ -99,7 +99,7 @@ export default function RadioAdmin() {
     return { title: t.title, artist: t.artist, url: t.audio, license: lic, attribution }
   }
 
-  const url = (slug: string) => `${origin}/apps/lightningbug?station=${slug}&broadcast=1`
+  const url = (slug: string) => `${origin}/lightningbug?station=${slug}&broadcast=1`
   const copyUrl = async (slug: string) => { try { await navigator.clipboard.writeText(url(slug)); setCopied(slug); setTimeout(() => setCopied(c => c === slug ? null : c), 1500) } catch {} }
 
   // ── playlist preview (what the station actually resolves to right now) ────────
@@ -199,7 +199,7 @@ export default function RadioAdmin() {
   return (
     <div>
       <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '0 0 20px', maxWidth: 720 }}>
-        Create + edit broadcast stations — visual look, audio source, and playlist. Changes save to the database and take effect on the live stream with no redeploy. Open a station to add tracks (Jamendo search or paste a link). <Link href="/apps/lightningbug/broadcast" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Broadcast launcher →</Link>
+        Create + edit broadcast stations — visual look, audio source, and playlist. Changes save to the database and take effect on the live stream with no redeploy. Open a station to add tracks (Jamendo search or paste a link). <Link href="/lightningbug/broadcast" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Broadcast launcher →</Link>
       </p>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 0 10px' }}>
@@ -381,7 +381,7 @@ export default function RadioAdmin() {
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
                     <button type="button" onClick={() => save(s)} disabled={saving === s.slug} style={btn('var(--accent)', '#0e0d12')}><Save size={15} /> {saving === s.slug ? 'Saving…' : 'Save'}</button>
-                    {!s.__new && <a href={`${origin}/apps/lightningbug?broadcastEdit=${encodeURIComponent(s.slug)}`} target="_blank" rel="noreferrer" title="Open the full Lightning Bug editor for this broadcast (all settings), then Save to broadcast" style={{ ...btn('transparent', 'var(--text-secondary)'), textDecoration: 'none' }}><Sparkles size={15} /> Author full look{s.fullScene ? ' ✓' : ''}</a>}
+                    {!s.__new && <a href={`${origin}/lightningbug?broadcastEdit=${encodeURIComponent(s.slug)}`} target="_blank" rel="noreferrer" title="Open the full Lightning Bug editor for this broadcast (all settings), then Save to broadcast" style={{ ...btn('transparent', 'var(--text-secondary)'), textDecoration: 'none' }}><Sparkles size={15} /> Author full look{s.fullScene ? ' ✓' : ''}</a>}
                     {!s.__new && <a href={url(s.slug)} target="_blank" rel="noreferrer" style={{ ...btn('transparent', 'var(--text-secondary)'), textDecoration: 'none' }}><Play size={15} /> Open</a>}
                     {!s.__new && <button type="button" onClick={() => copyUrl(s.slug)} style={btn('transparent', 'var(--text-secondary)')}>{copied === s.slug ? <><Check size={15} /> Copied</> : <><Copy size={15} /> OBS URL</>}</button>}
                     {!s.__new && codeSlugs.has(s.slug) && <button type="button" onClick={() => resetOne(s)} title="Restore this station to its built-in default" style={btn('transparent', 'var(--text-secondary)')}><RotateCcw size={15} /> Reset</button>}

@@ -24,7 +24,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: ['/', '/sign-in', '/sign-up', '/legal/'],
-        disallow: ['/dashboard', '/projects/', '/settings', '/admin', '/trash', '/new', '/api/', '/share/', '/guest/', '/assistant', '/inspector', '/test', '/history-control', '/audio-check', '/apps/apollo'],
+        disallow: ['/dashboard', '/projects/', '/settings', '/admin', '/trash', '/create', '/api/', '/share/', '/guest/', '/assistant', '/inspector', '/test', '/history-control', '/audio-check', '/apollo'],
       },
       // No LLM training: block the AI training/dataset crawlers from everything.
       { userAgent: AI_TRAINING_CRAWLERS, disallow: ['/'] },

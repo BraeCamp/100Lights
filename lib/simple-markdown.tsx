@@ -405,7 +405,7 @@ export function renderMarkdown(md: string): React.ReactNode {
     if (b.startsWith('@studio')) {
       const m2 = b.match(/^@studio\(([^)]*)\)\s*([\s\S]*)$/)
       if (m2) {
-        const href = m2[1].trim() || '/new?modules=audio'
+        const href = m2[1].trim() || '/create?modules=audio'
         const label = m2[2].trim() || 'Open in the studio'
         out.push(<StudioCta key={key} href={href} label={label} />)
       }

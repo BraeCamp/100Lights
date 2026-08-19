@@ -1,15 +1,19 @@
 'use client'
+// The front door of a flagship module — Beacon (/beacon, audio), Prism
+// (/prism, video), Aperture (/aperture, image). One shared component; each
+// module page is a thin wrapper passing its editor key. Internal data keys
+// stay 'audio'/'video'/'image'; only the public identity is the light name.
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import {useParams, useRouter } from 'next/navigation'
-import { notFound } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import {
   Film, AudioLines, Music2, Mic2, Palette,
   Plus, ArrowRight, Clock, Star, Pencil, RefreshCw, AlertCircle,
 } from 'lucide-react'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import type { ModuleKey } from '@/lib/editor-types'
+import { moduleEntry } from '@/lib/lights-registry'
 import { useIsMobile } from '@/lib/use-is-mobile'
 
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
@@ -45,13 +49,11 @@ function formatDate(iso: string) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export default function AppPage() {
-  const params = useParams()
+export default function ModuleHome({ moduleKey }: { moduleKey: ModuleKey }) {
   const isMobile = useIsMobile()
-  const moduleKey = params.module as string
 
-  const mod = MODULE_DEFS.find(m => m.key === moduleKey)
-  if (!mod) notFound()
+  const mod = MODULE_DEFS.find(m => m.key === moduleKey)!
+  const light = moduleEntry(moduleKey)
 
   const Icon = ICONS[mod.key]
   const copy = HERO_COPY[mod.key]
@@ -149,7 +151,7 @@ export default function AppPage() {
               </div>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: mod.color, marginBottom: 2 }}>
-                  {mod.label}
+                  {light.name} · {mod.label}
                 </div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{mod.tagline}</div>
               </div>
@@ -182,7 +184,7 @@ export default function AppPage() {
             {mod.key === 'audio' ? (
               <>
                 <Link
-                  href="/new?modules=audio&audioMode=music"
+                  href="/create?modules=audio&audioMode=music"
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8,
                     padding: '11px 18px', borderRadius: 10,
@@ -196,7 +198,7 @@ export default function AppPage() {
                   New Music Project
                 </Link>
                 <Link
-                  href="/new?modules=audio&audioMode=podcast"
+                  href="/create?modules=audio&audioMode=podcast"
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8,
                     padding: '11px 18px', borderRadius: 10,
@@ -212,7 +214,7 @@ export default function AppPage() {
               </>
             ) : (
               <Link
-                href={`/new?modules=${mod.key}`}
+                href={`/create?modules=${mod.key}`}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8,
                   padding: '12px 22px', borderRadius: 10,
@@ -274,7 +276,7 @@ export default function AppPage() {
               Create your first to get started.
             </p>
             <Link
-              href={`/new?modules=${mod.key}`}
+              href={`/create?modules=${mod.key}`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 7,
                 padding: '10px 20px', borderRadius: 8,

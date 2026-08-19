@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import generated from '@/lib/site-pages.json'
 
 export interface PageEntry {
-  route: string          // URL, e.g. '/', '/apps/lightningbug', '/learn/[slug]'
+  route: string          // URL, e.g. '/', '/lightningbug', '/learn/[slug]'
   file: string           // source path, e.g. 'app/(app)/admin/pages/page.tsx'
   kind: 'page' | 'api'   // page.* vs route.*
   dynamic: boolean       // has a [param] / [...catchall] segment

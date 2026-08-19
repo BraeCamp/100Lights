@@ -578,7 +578,7 @@ function ProjectEditorInner({ projectId, projectName, modules: moduleProp, allow
     // refreshing or sharing the link lands on the saved project. No remount —
     // just the address (the editor keeps its in-memory state). Prefer the pretty
     // /@username/slug-code URL; fall back to /projects/id if no username yet.
-    if (!projectId && typeof window !== 'undefined' && window.location.pathname === '/new') {
+    if (!projectId && typeof window !== 'undefined' && window.location.pathname === '/create') {
       const url = saved?.username
         ? projectPath(saved.username, saved.slug, savedProjectId.current)
         : `/projects/${savedProjectId.current}`

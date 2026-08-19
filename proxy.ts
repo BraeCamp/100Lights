@@ -1,4 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
+import { PUBLIC_LIGHT_ROUTES } from '@/lib/lights-registry'
 
 // Next 16 renamed the `middleware` file convention to `proxy` (identical functionality). Clerk's
 // clerkMiddleware still works unchanged as the default export here. See node_modules/next/dist/docs
@@ -19,7 +20,7 @@ const isPublicRoute = createRouteMatcher([
   '/api/guest/:token/confirm',
   '/guest/:token',
   '/dashboard',
-  '/new',
+  '/creators',
   '/projects',
   '/projects/(.*)',
   // Canonical pretty project + profile URLs (/@user and /@user/slug-code). These
@@ -27,6 +28,11 @@ const isPublicRoute = createRouteMatcher([
   // public), so opening a project via its canonical URL could 404 in production.
   // Access is enforced downstream by /api/projects/[id], same as /projects/{id}.
   '/@(.*)',
+  // Constellation destinations — module homes, top-level apps, /apps directory,
+  // /create, /store, /play, /tutorial — all derived from the registry so a new
+  // app is public the moment it's registered. '/apps/(.*)' stays for legacy
+  // URLs (they 301 before middleware, but belt-and-braces).
+  ...PUBLIC_LIGHT_ROUTES,
   '/apps/(.*)',
   '/settings',
   '/trash',

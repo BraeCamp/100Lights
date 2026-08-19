@@ -12,7 +12,7 @@ export default function ToolShell({
   title,
   intro,
   children,
-  studioHref = '/new?modules=audio',
+  studioHref = '/create?modules=audio',
   studioLabel = 'Open the full studio',
 }: {
   title: string

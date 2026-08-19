@@ -1413,7 +1413,7 @@ export default function VideoEditor({
       .finally(() => setIsLoadingProject(false))
   }, []) // eslint-disable-line
 
-  // Captions handed off from the standalone Captions app (/apps/captions → "Send to Video editor").
+  // Captions handed off from the standalone Captions app (/captions → "Send to Video editor").
   // Applied on mount when the URL carries ?captions=pending; the user imports/keeps their video and the
   // words are already here. Fires once, then clears the stash.
   useEffect(() => {
@@ -3957,7 +3957,7 @@ export default function VideoEditor({
       if (dawDirtyRef.current && timelineItemsRef.current.some(i => i.dawMixLinked && !i.dawMixLocked && syncModeOf(i) === 'save'))
         void refreshAllDawMixesRef.current(undefined, { modes: ['save'] })
       // Navigate to pretty URL after first save (exits /new) or any save that produced a slug
-      if (saved.slug && pathname === '/new') {
+      if (saved.slug && pathname === '/create') {
         navigateToProject(saved.slug, saved.username)
       }
     } catch {

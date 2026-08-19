@@ -1,5 +1,5 @@
 'use client'
-// Shared pieces for the experimental Apollo shells (/apps/apollo/test1..3).
+// Shared pieces for the experimental Apollo shells (/apollo/test1..3).
 // Every shell renders the SAME panels against the SAME engine — only the
 // chrome, layout, navigation, and theme differ.
 

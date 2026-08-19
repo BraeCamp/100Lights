@@ -131,7 +131,7 @@ function parseElements(body: string): ArticleEl[] {
 // Open the real studio seeded with this clip; the saveTo target lets its export
 // modal write the finished edit straight back over the source (in place).
 function editInStudio(src: string, name: string) {
-  const u = new URL('/new', window.location.origin)
+  const u = new URL('/create', window.location.origin)
   u.searchParams.set('modules', 'audio')
   // Prefer an editable recreation (real tracks/instruments/effects) when this
   // clip has one; otherwise import the flat audio (trim/effect only).

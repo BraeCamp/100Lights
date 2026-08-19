@@ -9,7 +9,7 @@ export type Fm4OpInstrumentParams     = FMPatch
 export type Fm4OpAlgorithm            = FMAlgorithm
 export type Fm4OpOperator             = FMOperator
 export type WavetableInstrumentParams = WavetablePatch
-// Apollo hybrid synth (wavetable/sample/granular/spectral engine at /apps/apollo)
+// Apollo hybrid synth (wavetable/sample/granular/spectral engine at /apollo)
 export type ApolloInstrumentParams = import('./apollo/patch').ApolloPatch
 
 export type TrackType = 'audio'

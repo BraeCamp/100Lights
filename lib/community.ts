@@ -475,7 +475,7 @@ export async function importItem(item: CommunityItem): Promise<string> {
 
   if (item.kind === 'project') {
     // Starters open in the editor rather than importing into the library
-    window.open(`/new?starter=${item.id}`, '_blank')
+    window.open(`/create?starter=${item.id}`, '_blank')
     void countDownload(item.id)
     return 'Opening the starter in a new studio tab…'
   }

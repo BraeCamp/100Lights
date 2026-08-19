@@ -169,7 +169,7 @@ function AudioSubCard({
   const router = useRouter()
 
   function handleOpen() {
-    router.push(`/apps/audio?mode=${mode}`)
+    router.push(`/beacon?mode=${mode}`)
   }
 
   return (
@@ -662,7 +662,7 @@ function LauncherInner() {
           ) : projects.length === 0 ? (
             <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
               No projects yet.{' '}
-              <Link href="/new" style={{ color: 'var(--accent-light)', textDecoration: 'none' }}>
+              <Link href="/create" style={{ color: 'var(--accent-light)', textDecoration: 'none' }}>
                 Create one →
               </Link>
             </p>

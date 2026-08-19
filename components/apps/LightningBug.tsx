@@ -176,7 +176,7 @@ function LightningBugApp() {
   const [accent, setAccent] = useState('#a78bfa')
   const [font, setFont] = useState('system-ui')
   const [live, setLive] = useState(false)   // party mode: visualize live audio from the device
-  const [initialBg, setInitialBg] = useState<string | null>(null)   // deep-link: /apps/lightningbug?bg=<clipId>
+  const [initialBg, setInitialBg] = useState<string | null>(null)   // deep-link: /lightningbug?bg=<clipId>
   const [broadcastStation, setBroadcastStation] = useState<string | null>(null)   // ?station=<slug>&broadcast=1
   const [broadcastEdit, setBroadcastEdit] = useState<string | null>(null)   // ?broadcastEdit=<slug> — author a broadcast's full look
   useEffect(() => {
@@ -2275,7 +2275,7 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
   }, [pushScene])
   const [sharedMsg, setSharedMsg] = useState('')
   const shareScene = useCallback((s: Scene) => {
-    const url = `${location.origin}/apps/lightningbug?scene=${sceneEncode({ ...s, id: undefined, isDefault: undefined })}`
+    const url = `${location.origin}/lightningbug?scene=${sceneEncode({ ...s, id: undefined, isDefault: undefined })}`
     navigator.clipboard?.writeText(url).then(() => { setSharedMsg(`Link copied for “${s.name}”`); setTimeout(() => setSharedMsg(''), 2500) }).catch(() => setSharedMsg('Couldn’t copy the link'))
   }, [])
   // Auto-load the default scene once, when it first becomes available — unless a shared

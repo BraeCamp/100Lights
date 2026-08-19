@@ -569,7 +569,7 @@ function SideDrawer({ onClose, onOpenClips }: { onClose: () => void; onOpenClips
         <div style={{ display: 'flex', flexDirection: 'column', padding: '0 8px 8px', gap: 2 }}>
           <DrawerLink href="/" icon={<Home size={16} />} label="Home" />
           <DrawerLink href="/dashboard" icon={<FolderOpen size={16} />} label="My projects" />
-          <DrawerLink href="/new" icon={<Plus size={16} />} label="New project" />
+          <DrawerLink href="/create" icon={<Plus size={16} />} label="New project" />
           <button onClick={onOpenClips} style={drawerBtn}><LayoutGrid size={16} /> Clips / Live</button>
         </div>
         <div style={{ display: 'flex', gap: 6, padding: '8px 12px', borderTop: '1px solid var(--border)' }}>

@@ -18,7 +18,7 @@ export default function BroadcastLauncher() {
     fetch('/api/broadcast/stations').then(r => r.json()).then(d => { if (Array.isArray(d.stations) && d.stations.length) setStations(d.stations) }).catch(() => {})
   }, [])
 
-  const url = (slug: string) => `${origin}/apps/lightningbug?station=${slug}&broadcast=1`
+  const url = (slug: string) => `${origin}/lightningbug?station=${slug}&broadcast=1`
   const copy = async (slug: string) => {
     try { await navigator.clipboard.writeText(url(slug)); setCopied(slug); setTimeout(() => setCopied(c => (c === slug ? null : c)), 1600) } catch { /* clipboard blocked */ }
   }

@@ -23,7 +23,7 @@ export function SmallScreenGate() {
 
   // A new/blank studio session belongs in the mobile studio; a saved project
   // (/projects/<id>) does not — that one keeps the informational gate.
-  const isNewSession = pathname === '/new'
+  const isNewSession = pathname === '/create'
 
   useEffect(() => {
     const check = () => setSmall(window.innerWidth < 760)

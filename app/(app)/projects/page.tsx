@@ -864,7 +864,7 @@ function EmptyState({ isSignedIn, hasFolder, onConnect }: { isSignedIn: boolean;
         </p>
       </div>
       <div className="flex items-center gap-2">
-        <Link href="/new" className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg" style={{ background: 'var(--accent)', color: '#fff' }}>
+        <Link href="/create" className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg" style={{ background: 'var(--accent)', color: '#fff' }}>
           <PlusCircle size={14} /> New project
         </Link>
         {!hasFolder && (
@@ -974,7 +974,7 @@ export default function ProjectsPage() {
               {importing ? 'Importing…' : isSignedIn ? 'Open / Import Files' : 'Open from File'}
             </button>
             <Link
-              href="/new"
+              href="/create"
               className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium"
               style={{ background: 'var(--accent)', color: '#fff' }}
             >

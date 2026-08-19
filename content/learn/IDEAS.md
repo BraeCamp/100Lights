@@ -49,4 +49,4 @@ drip; the rest drip.)
 Notes:
 - Every article should be doable start-to-finish in the free studio, and say so.
 - Chord/theory pieces can lift from `lib/practice-recipes.ts` (already in-voice).
-- One `/community` link + one `@studio(/new?modules=audio)` CTA per article; no keyword stuffing.
+- One `/community` link + one `@studio(/create?modules=audio)` CTA per article; no keyword stuffing.

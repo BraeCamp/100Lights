@@ -203,9 +203,9 @@ async function decodeBlobToMono(blob: Blob): Promise<{ samples: Float32Array; sa
   }
 }
 
-// `onNotes` (optional) lets a host app — e.g. the Firefly sketchpad at /apps/firefly — read
+// `onNotes` (optional) lets a host app — e.g. the Firefly sketchpad at /firefly — read
 // the final melody OUT of this flow without forking the tuned capture/edit/playback UI. Fired
-// with the current display notes + tempo whenever they change. The standalone /apps/voicemidi
+// with the current display notes + tempo whenever they change. The standalone /voicemidi
 // page passes nothing, so its behavior is unchanged.
 export default function VoiceMidi({ onNotes, restore }: {
   onNotes?: (notes: RecNote[], bpm: number) => void

@@ -138,7 +138,7 @@ export default function ToolsIndex() {
           <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.55 }}>
             The full studio is a browser DAW — record, sequence, mix, and finish a whole track. Free to start.
           </p>
-          <Link href="/new?modules=audio" style={{
+          <Link href="/create?modules=audio" style={{
             display: 'inline-block', padding: '11px 24px', borderRadius: 11,
             background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 700, textDecoration: 'none',
           }}>Open the studio</Link>

@@ -69,7 +69,7 @@ Set an end date at the start. Say it out loud in the first hour. Collaborations 
 
 @ear Play the arrangement owner's latest bounce and the version from a week earlier back to back. Don't judge them — count the differences you can identify without looking at the timeline. If you can't name three, the project has been busy rather than moving.
 
-@studio(/new?modules=audio) Share a project and co-edit live →
+@studio(/create?modules=audio) Share a project and co-edit live →
 
 ## Finding the other person
 

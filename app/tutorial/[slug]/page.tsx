@@ -86,7 +86,7 @@ export default async function TutorialPage({ params }: { params: Promise<{ slug:
         <div style={{ marginTop: 44, padding: '24px 22px', borderRadius: 16, textAlign: 'center', background: 'linear-gradient(135deg, rgba(124,58,237,0.12), rgba(59,130,246,0.08))', border: '1px solid rgba(139,92,246,0.3)' }}>
           <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 6px' }}>Now do it — the studio points at each control</p>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 16px' }}>Open the free studio with this walkthrough live. No account needed to start.</p>
-          <Link href={`/new?modules=audio&guide=${t.slug}`} style={{ display: 'inline-block', padding: '10px 22px', borderRadius: 10, background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 700, textDecoration: 'none' }}>
+          <Link href={`/create?modules=audio&guide=${t.slug}`} style={{ display: 'inline-block', padding: '10px 22px', borderRadius: 10, background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 700, textDecoration: 'none' }}>
             Do it in the studio →
           </Link>
         </div>

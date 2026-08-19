@@ -51,5 +51,5 @@ export async function takePendingMedia(): Promise<File[]> {
 /** Stash the media and open it in a fresh video project. */
 export async function openMediaInStudio(files: File[]): Promise<void> {
   await stashPendingMedia(files)
-  window.location.assign('/new?modules=video&importMedia=1')
+  window.location.assign('/create?modules=video&importMedia=1')
 }

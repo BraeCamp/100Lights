@@ -3,11 +3,12 @@
 import Link from 'next/link'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, FolderOpen, Settings, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn, Library, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { LayoutDashboard, FolderOpen, Settings, Trash2, MessageSquare, Film, AudioLines, Palette, Download, LogIn, Library, ChevronsLeft, ChevronsRight, Sparkles, Globe2 } from 'lucide-react'
 import { UserButton, useUser } from '@clerk/nextjs'
 import { useEffect, useState } from 'react'
 import { useUpgradeModal } from '@/components/UpgradeModal'
 import { MODULE_DEFS } from '@/lib/editor-types'
+import { moduleEntry } from '@/lib/lights-registry'
 import type { ModuleKey } from '@/lib/editor-types'
 import { LogoMark } from '@/components/Logo'
 
@@ -130,23 +131,24 @@ export default function Sidebar() {
         {navLink('/projects', 'All Projects', FolderOpen)}
         {navLink('/library', 'Sound Library', Library)}
 
-        {/* Apps */}
+        {/* Studios — the flagship modules, by their light names */}
         {!collapsed && (
           <div style={{ padding: '14px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-            Apps
+            Studios
           </div>
         )}
         {collapsed && <div style={{ height: 10 }} />}
         {MODULE_DEFS.filter(mod => enabledModules.includes(mod.key)).map(mod => {
           const Icon = APP_ICONS[mod.key]
-          const href = `/apps/${mod.key}`
+          const light = moduleEntry(mod.key)
+          const href = light.href
           const active = pathname === href || pathname.startsWith(`${href}/`)
           return (
             <Link
               key={mod.key}
               href={href}
               aria-current={active ? 'page' : undefined}
-              title={collapsed ? mod.label : undefined}
+              title={collapsed ? light.name : `${light.name} — ${mod.tagline}`}
               className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
               style={{
                 background: active ? `color-mix(in srgb, ${mod.color} 12%, transparent)` : 'transparent',
@@ -165,10 +167,20 @@ export default function Sidebar() {
               }}>
                 <Icon size={13} color={active ? mod.color : 'var(--text-muted)'} />
               </div>
-              {!collapsed && mod.label}
+              {!collapsed && light.name}
             </Link>
           )
         })}
+
+        {/* Explore — the rest of the constellation */}
+        {!collapsed && (
+          <div style={{ padding: '14px 12px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+            Explore
+          </div>
+        )}
+        {collapsed && <div style={{ height: 10 }} />}
+        {navLink('/apps', 'Apps', Sparkles)}
+        {navLink('/community', 'Community', Globe2)}
       </nav>
 
       {!isPro && usage && !collapsed && (

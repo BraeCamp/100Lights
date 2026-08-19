@@ -29,7 +29,7 @@ export function requestCreateRecipe() {
   const unhandled = window.dispatchEvent(ev)
   if (unhandled) {
     sessionStorage.setItem(CREATE_RECIPE_FLAG, '1')
-    window.location.assign('/new?modules=audio&audioMode=music')
+    window.location.assign('/create?modules=audio&audioMode=music')
   }
 }
 

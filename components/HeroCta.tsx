@@ -26,7 +26,7 @@ export default function HeroCta({ className, guestLabel = 'Start making music' }
     window.addEventListener('resize', check)
     return () => window.removeEventListener('resize', check)
   }, [])
-  const href = isSignedIn ? '/dashboard' : (isPhone ? '/m' : '/new?modules=audio')
+  const href = isSignedIn ? '/dashboard' : (isPhone ? '/m' : '/create?modules=audio')
   const label = isSignedIn ? 'Open your studio' : guestLabel
   return (
     <Link

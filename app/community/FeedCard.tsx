@@ -398,13 +398,13 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
             }}>{isPro ? <Download size={12} /> : <Lock size={11} />} Download</button>
           )}
           {openInStudio && (
-            <a href={`/new?communityItem=${item.id}`} target="_blank" rel="noreferrer" title="Open a new project with this ready to play" style={{
+            <a href={`/create?communityItem=${item.id}`} target="_blank" rel="noreferrer" title="Open a new project with this ready to play" style={{
               display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 700, textDecoration: 'none',
               padding: '7px 12px', borderRadius: 999, border: `1px solid ${meta.color}55`, color: meta.color, background: `${meta.color}10`,
             }}><ExternalLink size={12} /> Open in Studio</a>
           )}
           {item.kind === 'project' ? (
-            <a href={signedIn ? `/new?starter=${item.id}` : '/sign-in'} target={signedIn ? '_blank' : undefined} rel="noreferrer" style={{
+            <a href={signedIn ? `/create?starter=${item.id}` : '/sign-in'} target={signedIn ? '_blank' : undefined} rel="noreferrer" style={{
               display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, textDecoration: 'none',
               padding: '7px 14px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)',
             }}><ExternalLink size={13} /> {meta.action}</a>

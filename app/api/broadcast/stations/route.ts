@@ -1,4 +1,4 @@
-// Public list of ENABLED broadcast stations for the launcher (/apps/lightningbug/broadcast).
+// Public list of ENABLED broadcast stations for the launcher (/lightningbug/broadcast).
 // Returns just what the cards need; the full scene + playlist come from /api/broadcast/playlist.
 import { listEnabledStations } from '@/lib/broadcast-stations'
 

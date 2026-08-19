@@ -174,7 +174,7 @@ export default function Captions({ open, onHome }: { open?: { data?: unknown; no
   const sendToVideo = () => {
     try {
       sessionStorage.setItem('cf_pending_captions', JSON.stringify({ captions: tx.captions, style, fileName: file?.name, isVideo, at: Date.now() }))
-      window.location.href = '/new?modules=video&captions=pending'
+      window.location.href = '/create?modules=video&captions=pending'
     } catch { /* ignore */ }
   }
   const saveFeedback = async () => {

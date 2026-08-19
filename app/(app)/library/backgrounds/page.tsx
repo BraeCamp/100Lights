@@ -17,7 +17,7 @@ export default function BackgroundsLibraryPage() {
             <Link href="/library" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, padding: '8px 14px', borderRadius: 999, background: 'var(--bg-card)', color: 'var(--text-secondary)', textDecoration: 'none', border: '1px solid var(--border)' }}>
               <AudioLines size={13} /> Sounds
             </Link>
-            <Link href="/apps/lightningbug" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, padding: '8px 16px', borderRadius: 999, background: 'var(--accent)', color: '#0e0d12', textDecoration: 'none' }}>
+            <Link href="/lightningbug" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, padding: '8px 16px', borderRadius: 999, background: 'var(--accent)', color: '#0e0d12', textDecoration: 'none' }}>
               <Clapperboard size={13} /> Open Lightning Bug <ArrowRight size={12} />
             </Link>
           </div>

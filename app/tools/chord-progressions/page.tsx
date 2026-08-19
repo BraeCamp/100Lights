@@ -23,7 +23,7 @@ export default function ChordTeacherPage() {
     <ToolShell
       title="Chord Teacher"
       intro="Learn chords by hearing them. The piano at the top plays whatever you pick — a whole progression from the library, or a single chord from every one that exists on a given note. Transpose to any key and take the MIDI with you."
-      studioHref="/new?modules=audio"
+      studioHref="/create?modules=audio"
       studioLabel="Build a track around one"
     >
       <ChordTeacher />

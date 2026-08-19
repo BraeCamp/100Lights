@@ -67,7 +67,7 @@ Then — and this is the part that actually matters — do not open it again for
 
 @ear Play your last finished bounce next to a commercial track you love, at the same volume, and don't listen for quality. Listen for *events*: count how many times something new arrives in the first sixty seconds of each. That gap, not the mix, is what you're hearing when you think yours sounds "unfinished."
 
-@studio(/new?modules=audio) Open a loop and finish it today →
+@studio(/create?modules=audio) Open a loop and finish it today →
 
 ## What changes
 

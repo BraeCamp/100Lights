@@ -31,7 +31,7 @@ export default function LibraryPage() {
               display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700,
               padding: '8px 14px', borderRadius: 999, background: 'var(--bg-card)', color: 'var(--text-secondary)', textDecoration: 'none', border: '1px solid var(--border)',
             }}><Clapperboard size={13} /> Backgrounds</Link>
-            <Link href="/new?modules=audio&audioMode=music" style={{
+            <Link href="/create?modules=audio&audioMode=music" style={{
               display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700,
               padding: '8px 16px', borderRadius: 999, background: 'var(--accent)', color: '#fff', textDecoration: 'none',
             }}><AudioLines size={13} /> Open Studio <ArrowRight size={12} /></Link>

@@ -509,7 +509,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   function requireAccount(action: 'save' | 'export') {
     try { void saveSnapshot(snapshotKey, projectRef.current) } catch { /* best effort */ }
     try { sessionStorage.setItem('100lights-resume', JSON.stringify({ key: snapshotKey, action })) } catch { /* ok */ }
-    const back = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/new?modules=audio'
+    const back = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/create?modules=audio'
     if (typeof window !== 'undefined') window.location.assign(`/sign-up?redirect_url=${encodeURIComponent(back)}`)
   }
   const requireAccountRef = useRef(requireAccount)

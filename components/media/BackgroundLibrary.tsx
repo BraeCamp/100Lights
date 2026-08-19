@@ -5,7 +5,7 @@
 // motion, save for offline, download, or open a clip straight into Lightning Bug.
 //
 // Embedded in an app: pass `onPick` to select a clip. Standalone (library page): omit it and
-// each tile opens /apps/lightningbug?bg=<id>.
+// each tile opens /lightningbug?bg=<id>.
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
@@ -50,7 +50,7 @@ export default function BackgroundLibrary({ onPick }: { onPick?: (clip: BgClip) 
 
   const use = useCallback((c: BgClip) => {
     if (onPick) onPick(c)
-    else router.push(`/apps/lightningbug?bg=${c.id}`)
+    else router.push(`/lightningbug?bg=${c.id}`)
   }, [onPick, router])
 
   return (

@@ -1,7 +1,7 @@
 'use client'
 
 // Live "Do it in the studio" mode for the feature tutorials. A tutorial's
-// "Do it in the studio →" button links to /new?modules=audio&guide=<slug>; this
+// "Do it in the studio →" button links to /create?modules=audio&guide=<slug>; this
 // reads the slug, pulls that tutorial's steps from lib/tutorials.ts (the SAME
 // source the illustrated /tutorial page uses), and shows a step card whose
 // "Show me →" buttons glow the real control via the Help system's data-help-id

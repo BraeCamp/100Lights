@@ -292,7 +292,7 @@ export default function DashboardPage() {
                 Backgrounds <ArrowRight size={11} />
               </Link>
               <Link
-                href="/new"
+                href="/create"
                 style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--accent-light)', textDecoration: 'none' }}
               >
                 New project <ArrowRight size={11} />
