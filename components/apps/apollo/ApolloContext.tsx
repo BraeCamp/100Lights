@@ -8,7 +8,7 @@ import {
   resolvePatchPath, uid,
 } from '@/lib/apollo/patch'
 import { ApolloEngine, ApolloMeters, getApolloEngine } from '@/lib/apollo/engine-client'
-import { initApolloLibrary, restorePatchSamples } from '@/lib/apollo/sample-store'
+import { initApolloLibrary, restorePatchSamples, setApolloSourceSample } from '@/lib/apollo/sample-store'
 import { useUser } from '@clerk/nextjs'
 import { onMidiCC } from '@/lib/web-midi'
 
@@ -264,6 +264,23 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
   // engine automatically.
   const { user } = useUser()
   useEffect(() => { initApolloLibrary(user?.id ?? null) }, [user?.id])
+
+  // Library round-trip entry: /apollo?librarySample=<id> loads that Sound
+  // Library sound straight into osc 1's sample engine (audio arrives via the
+  // restore effect below — restorePatchSamples fulfills by library id) and
+  // remembers it as the session's source so a bounce can replace it in place.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    const libId = sp.get('librarySample')
+    if (!libId) return
+    setApolloSourceSample(libId, sp.get('name') || libId)
+    patchRef.current!.oscs[0].enabled = true
+    patchRef.current!.oscs[0].engine = 'sample'
+    patchRef.current!.oscs[0].smp.sampleId = libId
+    patchRef.current!.name = sp.get('name') || patchRef.current!.name
+    setVersion(v => v + 1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const restoring = useRef(false)
   useEffect(() => {
     if (!started || restoring.current) return
@@ -299,7 +316,7 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
 }
 
 // ---------------------------------------------------------------------------
-// Shared atoms — Serum-2-style palette
+// Shared atoms — the Apollo house palette
 
 export const UI = {
   bg: '#0a0c0f',
@@ -477,7 +494,7 @@ export function Knob(props: KnobProps) {
     if (e.button === 2) return
     e.preventDefault()
     ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-    // grabbing the outer arc of a modulated knob edits the mod AMOUNT (Serum-style)
+    // grabbing the outer arc of a modulated knob edits the mod AMOUNT
     const svgEl = e.currentTarget as SVGSVGElement
     const rect = svgEl.getBoundingClientRect()
     const dx = e.clientX - rect.left - rect.width / 2
@@ -604,7 +621,7 @@ export function Knob(props: KnobProps) {
           y2={cy + (r - 7) * Math.sin(((angle - 90) * Math.PI) / 180)}
           stroke={UI.text} strokeWidth={1.8} strokeLinecap="round"
         />
-        {/* mod source dot (Serum-style attachment indicator) */}
+        {/* mod source dot (attachment indicator) */}
         {routes.length > 0 && <circle cx={size - 5} cy={5} r={3} fill={UI.green} opacity={0.9} />}
         {midiCc != null && <circle cx={5} cy={5} r={3} fill={UI.yellow} opacity={0.9} />}
       </svg>

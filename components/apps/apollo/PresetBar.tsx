@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApollo, ToggleBtn } from './ApolloContext'
 import { ApolloPatch, initPatch, defaultFx, uid, ModSource, FxType, WarpMode, FilterType } from '@/lib/apollo/patch'
 import { FACTORY_PRESETS } from '@/lib/apollo/presets'
-import { saveBounceToLibrary } from '@/lib/apollo/sample-store'
+import { saveBounceToLibrary, getApolloSourceSample, overwriteLibrarySample } from '@/lib/apollo/sample-store'
 import { audioBufferToWav } from '@/lib/wav-encoder'
 import { shareAppItem, getCommunityItem } from '@/lib/community'
 
@@ -291,7 +291,9 @@ function BounceButton() {
   const [busy, setBusy] = useState('')
   const [done, setDone] = useState('')
 
-  const bounce = async (mode: 'note' | 'clip', dest: 'library' | 'download') => {
+  const source = getApolloSourceSample()
+
+  const bounce = async (mode: 'note' | 'clip', dest: 'library' | 'download' | 'replace') => {
     setBusy('Rendering…')
     setDone('')
     try {
@@ -308,10 +310,20 @@ function BounceButton() {
         notes = [{ t: 0.03, dur: p.arp.on ? seconds - 1.8 : 2, note: 48, vel: 0.9 }]
         seconds = p.arp.on ? 5 : 4.2
         patchCopy.clipMode = false
+        if (dest === 'replace' && source) {
+          // render the full processed source (held for its whole length + FX tail)
+          const smp = ctx.engine.samples.get(source.id)
+          const dur = smp ? smp.len / smp.sr : 2
+          notes = [{ t: 0.03, dur, note: p.oscs[0].smp.rootKey ?? 60, vel: 0.9 }]
+          seconds = Math.max(3, dur + 2)
+        }
       }
       const buf = await ctx.engine.renderToBuffer(patchCopy, notes, seconds)
       const name = `${p.name || 'Apollo'} ${mode === 'clip' ? 'clip' : 'note'}`
-      if (dest === 'library') {
+      if (dest === 'replace' && source) {
+        const ok = await overwriteLibrarySample(source.id, buf)
+        setDone(ok ? `Replaced “${source.name}” in the library` : 'Original no longer in the library')
+      } else if (dest === 'library') {
         await saveBounceToLibrary(name, buf)
         setDone('Saved to Sound Library → Apollo Bounces')
       } else {
@@ -348,6 +360,14 @@ function BounceButton() {
                   <ToggleBtn on={false} label="→ Library" onClick={() => { void bounce('note', 'library') }} />
                   <ToggleBtn on={false} label="Download" onClick={() => { void bounce('note', 'download') }} />
                 </div>
+                {source && (
+                  <ToggleBtn
+                    on={false}
+                    label={`Replace “${source.name.slice(0, 18)}”`}
+                    title="Overwrite the library sound this session opened — every project using it hears the new take"
+                    onClick={() => { void bounce('note', 'replace') }}
+                  />
+                )}
                 {ctx.patch.activeClip >= 0 && ctx.patch.clips[ctx.patch.activeClip] && (
                   <>
                     <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Clip “{ctx.patch.clips[ctx.patch.activeClip].name}” ×2</div>

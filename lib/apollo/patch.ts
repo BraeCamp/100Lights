@@ -1,4 +1,4 @@
-// Apollo — Serum-2-class hybrid synth. Patch schema + parameter registry.
+// Apollo — the 100Lights hybrid synth (Helios engine). Patch schema + parameter registry.
 // The patch is one JSON document; the engine worklet consumes it whole.
 
 export type OscEngine = 'wavetable' | 'sample' | 'multisample' | 'granular' | 'spectral'

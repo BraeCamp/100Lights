@@ -1,6 +1,6 @@
 'use client'
 // Dual filter section: 30+ filter types, serial/parallel routing,
-// Serum-style per-source routing buttons (S A B C N).
+// per-source routing buttons (S A B C N).
 
 import React from 'react'
 import { useApollo, Knob, Sel, Section, ToggleBtn, UI } from './ApolloContext'

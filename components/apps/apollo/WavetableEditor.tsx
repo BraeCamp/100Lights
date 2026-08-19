@@ -334,7 +334,7 @@ export default function WavetableEditor({ onClose }: { onClose: () => void }) {
           <ToggleBtn on={false} label="From Sample…" onClick={() => fileRef.current?.click()} />
           <input ref={fileRef} type="file" accept="audio/*" style={{ display: 'none' }}
             onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void fromSample(f) }} />
-          <ToggleBtn on={false} label="Export .wav" title="Serum-compatible 2048-sample-per-frame wavetable" onClick={() => {
+          <ToggleBtn on={false} label="Export .wav" title="Standard 2048-sample-per-frame wavetable .wav (works in other synths too)" onClick={() => {
             const blob = exportWavetableWav(working.data)
             const a = document.createElement('a')
             a.href = URL.createObjectURL(blob)

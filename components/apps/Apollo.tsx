@@ -1,5 +1,6 @@
 'use client'
-// Apollo — Serum-2-class hybrid synthesizer for sample mangling.
+// Apollo — the 100Lights hybrid synthesizer (Helios engine) for sound design
+// and sample mangling.
 // Hidden page: /apollo (noindex). All audio runs in one AudioWorklet.
 //
 // The UI is decoupled from the engine: every panel is a self-contained module
@@ -87,7 +88,7 @@ function loadLayout(): Record<Tab, TabLayout> {
 }
 
 function ApolloInner() {
-  applyApolloTheme({}) // default Serum-2 look (test shells set their own)
+  applyApolloTheme({}) // default Apollo look (test shells set their own)
   const ctx = useApollo()
   const meters = useMeters()
   const [tab, setTab] = useState<Tab>('synth')
@@ -327,7 +328,7 @@ function ApolloInner() {
           <div style={{ fontSize: 30, fontWeight: 900, letterSpacing: 8, color: UI.text }}>
             APOLLO<span style={{ color: UI.blue }}>2</span>
           </div>
-          <div style={{ fontSize: 13, color: UI.dim }}>Serum-class hybrid synthesizer · click anywhere to start audio</div>
+          <div style={{ fontSize: 13, color: UI.dim }}>Hybrid synthesizer, powered by the Helios engine · click anywhere to start audio</div>
           <div style={{ fontSize: 10, color: '#4a515c', letterSpacing: 1.5, textTransform: 'uppercase' }}>wavetable · sample · multisample · granular · spectral</div>
         </div>
       )}

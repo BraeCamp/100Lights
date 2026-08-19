@@ -1,9 +1,10 @@
-/* Apollo engine — single AudioWorkletProcessor running the whole synth:
-   3 oscillators (wavetable / sample / multisample / granular / spectral),
-   sub + noise, dual filters, 4 envelopes, 10 LFOs, mod matrix, three FX
-   lanes with splitters, arp + clip sequencer. Plain JS: worklet-loaded. */
+/* Helios — the Apollo synthesizer's engine. A single AudioWorkletProcessor
+   running the whole synth: 3 oscillators (wavetable / sample / multisample /
+   granular / spectral), sub + noise, dual filters, 4 envelopes, 10 LFOs, mod
+   matrix, three FX lanes with splitters, arp + clip sequencer.
+   Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-19-5 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-19-6 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -26,7 +27,7 @@ function makeRng(seed) {
 }
 const grng = makeRng(0x9e3779b9)
 
-// Serum-style curve interpolation: t 0..1, c -1..1
+// Curve interpolation: t 0..1, c -1..1
 function curveShape(t, c) {
   if (c === 0) return t
   const k = Math.pow(4, Math.abs(c) * 2)

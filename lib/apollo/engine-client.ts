@@ -235,7 +235,7 @@ export class ApolloEngine extends EventTarget {
     this.spectralSent.add(id)
   }
 
-  // Serum-2-style image import: luminance becomes spectral magnitude.
+  // Image import: luminance becomes spectral magnitude.
   // x axis = time frames, y axis = log-spaced frequency (top = high).
   loadImageSpectral(id: string, img: HTMLImageElement): boolean {
     const W = Math.min(600, Math.max(16, img.naturalWidth))

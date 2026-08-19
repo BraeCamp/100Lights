@@ -134,7 +134,7 @@ export default function SampleView() {
     if (!m) return
     dragRef.current = null
     setDrag(null)
-    // snap the released marker to the nearest zero crossing (Serum "snap loop")
+    // snap the released marker to the nearest zero crossing (click-free loops)
     if (smp) {
       const c = ctx.patch.oscs[i].smp
       const cur = c[m]

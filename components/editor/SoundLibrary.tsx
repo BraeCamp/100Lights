@@ -371,6 +371,18 @@ function EntryRow({
           <Globe2 size={10} />
         </button>
       )}
+      {/* Sound-designer loop: open this sound in the Apollo synth (sample
+          engine + filters/FX/mod), bounce it back as a new take or replace
+          the original in place. */}
+      {!onPick && (
+        <a
+          href={`/apollo?librarySample=${encodeURIComponent(entry.id)}&name=${encodeURIComponent(entry.name)}`}
+          target="_blank" rel="noreferrer"
+          onClick={e => e.stopPropagation()}
+          title="Open in Apollo — mangle this sound in the synthesizer, then bounce it back"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, flexShrink: 0, opacity: 0.5, textDecoration: 'none', fontSize: 10, lineHeight: 1 }}
+        >☀️</a>
+      )}
       {sharing && (
         <ShareCommunityDialog
           kind="sample"

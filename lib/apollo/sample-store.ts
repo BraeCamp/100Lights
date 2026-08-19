@@ -104,6 +104,29 @@ export async function restorePatchSamples(patch: ApolloPatch, engine: ApolloEngi
   return restored
 }
 
+// ── Library round-trip (the studio's sound-designer loop) ────────────────────
+// "Open in Apollo" hands a library sound's id over via /apollo?librarySample=…;
+// Apollo remembers it as the session's SOURCE so a bounce can replace the
+// original in place (new take stays available via the normal bounce).
+
+let sourceSample: { id: string; name: string } | null = null
+export function setApolloSourceSample(id: string, name: string): void { sourceSample = { id, name } }
+export function getApolloSourceSample(): { id: string; name: string } | null { return sourceSample }
+
+/** Overwrite an existing library entry's audio in place (keeps its identity —
+ *  name/folder/tags — so every project referencing it hears the new take). */
+export async function overwriteLibrarySample(id: string, buffer: AudioBuffer): Promise<boolean> {
+  const existing = await libraryGetById(id)
+  if (!existing) return false
+  await libraryAdd({
+    ...existing,
+    audioBlob: audioBufferToWav(buffer),
+    duration: buffer.duration,
+    addedAt: new Date().toISOString(),
+  })
+  return true
+}
+
 /** Save a bounced render into the library so it's usable anywhere in 100Lights. */
 export async function saveBounceToLibrary(name: string, buffer: AudioBuffer): Promise<string> {
   const id = 'apollo_bounce_' + Date.now().toString(36)

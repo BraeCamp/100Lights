@@ -1,5 +1,5 @@
 'use client'
-// Stacked-frame wavetable preview (Serum-style oblique stack). Vertical drag
+// Stacked-frame wavetable preview (oblique 3D stack). Vertical drag
 // scrubs the WT position of the selected oscillator.
 
 import React, { useEffect, useRef } from 'react'
@@ -65,7 +65,7 @@ export default function WavetableView() {
       const stepY = stack > 1 ? (h * 0.42) / (stack - 1) : 0
       const curFrame = pos * (tbl.frames - 1)
       const style = getComputedStyle(c)
-      // Serum-style: dim green frame stack, bright yellow current frame
+      // dim green frame stack, bright yellow current frame
       const accent = UI.yellow
       const dim = 'rgba(120, 200, 110, 0.32)'
       for (let s = stack - 1; s >= 0; s--) {

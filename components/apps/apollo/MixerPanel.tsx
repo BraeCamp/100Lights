@@ -1,5 +1,5 @@
 'use client'
-// Serum-2-style mix page: per-source levels, filter/bus routing, bus returns,
+// Mix page: per-source levels, filter/bus routing, bus returns,
 // master + live output meter.
 
 import React from 'react'

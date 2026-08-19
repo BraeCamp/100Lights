@@ -1,4 +1,5 @@
-// Apollo factory wavetables + formula evaluator + Serum-compatible .wav export.
+// Apollo factory wavetables + formula evaluator + standard wavetable .wav export
+// (2048-sample frames with a clm chunk — interchange format used across synths).
 
 export const WT_LEN = 2048
 
@@ -261,7 +262,7 @@ export function tableFromAudio(samples: Float32Array, frames = 32): Float32Array
 }
 
 // ---------------------------------------------------------------------------
-// Export as Serum-compatible wavetable wav: 32-bit float mono, 'clm ' chunk
+// Export as an interchange wavetable wav: 32-bit float mono, 'clm ' chunk
 // declaring 2048-sample frames.
 export function exportWavetableWav(data: Float32Array, sampleRate = 44100): Blob {
   const clm = `<!>2048 01000000 wavetable (apollo)`
