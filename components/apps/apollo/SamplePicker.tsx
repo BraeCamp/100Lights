@@ -22,6 +22,14 @@ export default function SamplePicker({ oscIndex, target }: { oscIndex: number; t
     : ctx.patch.oscs[oscIndex][target].sampleId
   const currentName = currentId ? (ctx.engine.samples.get(currentId)?.name || currentId) : '— none —'
 
+  // short audition note so a freshly loaded sample is immediately audible
+  const audition = () => {
+    void ctx.start().then(() => {
+      ctx.engine.noteOn(60, 0.85)
+      setTimeout(() => ctx.engine.noteOff(60), 900)
+    })
+  }
+
   const applyBuffer = async (buffer: AudioBuffer, name: string) => {
     setBusy(true)
     setErr('')
@@ -35,6 +43,7 @@ export default function SamplePicker({ oscIndex, target }: { oscIndex: number; t
       })
       if (target === 'spec') await ctx.engine.ensureSpectral(id)
       setOpen(false)
+      audition()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to load sample')
     } finally {
@@ -47,6 +56,13 @@ export default function SamplePicker({ oscIndex, target }: { oscIndex: number; t
       <div style={{ fontSize: 10, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }} title={currentName}>
         {currentName}
       </div>
+      {currentId && (
+        <button
+          onClick={audition}
+          title="Preview (plays C4 — or use the keyboard below to play it)"
+          style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', fontSize: 10, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+        >▶</button>
+      )}
       <button
         onClick={() => setOpen(true)}
         style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 10, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}

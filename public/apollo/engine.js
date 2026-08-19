@@ -2612,8 +2612,10 @@ class ApolloProcessor extends AudioWorkletProcessor {
         }),
         lfoPhase: Array.from({ length: 10 }, (_, i) => {
           const cfg = patch.lfos[i]
-          if (cfg.trigMode === 'off') return this.lfoFreePhase[i]
-          return nv ? nv.lfoPhase[i] : this.lfoFreePhase[i]
+          if (cfg.trigMode === 'off' || cfg.mode === 'chaos') return this.lfoFreePhase[i]
+          // trig/env LFOs only run per-voice: report -1 when idle so the UI
+          // shows a still curve instead of a free-running playhead
+          return nv ? nv.lfoPhase[i] : -1
         }),
         env: nv ? nv.envs.map(e => e.out) : [0, 0, 0, 0],
         grain: Array.from(this.grainViz),

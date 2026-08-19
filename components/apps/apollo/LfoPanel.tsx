@@ -95,18 +95,20 @@ export default function LfoPanel() {
       g.arc(p.x * w, (1 - p.y) * (h - 6) + 3, 4, 0, Math.PI * 2)
       g.fill()
     }
-    // playhead + value
-    const ph = meters.lfoPhase[sel] || 0
-    g.strokeStyle = UI.green
-    g.beginPath()
-    g.moveTo(ph * w, 0)
-    g.lineTo(ph * w, h)
-    g.stroke()
-    const val = evalPoints(cur, ph)
-    g.fillStyle = UI.green
-    g.beginPath()
-    g.arc(ph * w, (1 - val) * (h - 6) + 3, 3.5, 0, Math.PI * 2)
-    g.fill()
+    // playhead + value — hidden while a trig/env LFO is idle (engine sends -1)
+    const ph = meters.lfoPhase[sel] ?? 0
+    if (ph >= 0) {
+      g.strokeStyle = UI.green
+      g.beginPath()
+      g.moveTo(ph * w, 0)
+      g.lineTo(ph * w, h)
+      g.stroke()
+      const val = evalPoints(cur, ph)
+      g.fillStyle = UI.green
+      g.beginPath()
+      g.arc(ph * w, (1 - val) * (h - 6) + 3, 3.5, 0, Math.PI * 2)
+      g.fill()
+    }
   }, [cfg, localPts, isPath, meters.lfoPhase, sel])
 
   useEffect(() => { draw() }, [draw, ctx.version, meters])
