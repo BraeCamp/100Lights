@@ -3,7 +3,7 @@
    sub + noise, dual filters, 4 envelopes, 10 LFOs, mod matrix, three FX
    lanes with splitters, arp + clip sequencer. Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-19-1 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-19-2 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -614,7 +614,9 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
   const sr = engine.sr
   const vp = (vv, pp, bb) => engine.vp(vv, pp, bb)
   const level = clamp(vp(voice, `osc${oi}.level`, cfg.level), 0, 1)
-  if (!cfg.enabled || level <= 0) return false
+  // NOTE: a level-0 osc still renders (into oscMono) so it can serve as an
+  // FM/AM/RM modulator for another oscillator — the classic silent-modulator trick
+  if (!cfg.enabled) return false
   const pan = clamp(vp(voice, `osc${oi}.pan`, cfg.pan), -1, 1)
   const semi = vp(voice, `osc${oi}.semi`, cfg.semi)
   const fine = vp(voice, `osc${oi}.fine`, cfg.fine)
@@ -681,8 +683,8 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
     const srRatio = smp.sr / sr
     let pitchRatio
     if (eng === 'multisample') {
-      pitchRatio = Math.pow(2, (voice.note - zone.rootKey + zone.tune / 100) / 12) * pitchRatioBase
-    } else if (sc.keytrack) {
+      pitchRatio = cfg.keytrackPitch ? Math.pow(2, (voice.note - zone.rootKey + zone.tune / 100) / 12) * pitchRatioBase : pitchRatioBase
+    } else if (sc.keytrack && cfg.keytrackPitch) {
       pitchRatio = (voice.curFreq / midiFreq(sc.rootKey)) * pitchRatioBase
     } else pitchRatio = pitchRatioBase
     const rate = eng === 'sample' ? clamp(vp(voice, `osc${oi}.smp.rate`, sc.rate), -2, 2) : 1
@@ -782,7 +784,7 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
     const panRand = clamp(vp(voice, `osc${oi}.gran.panRand`, gc.panRand), 0, 1)
     const winShape = clamp(vp(voice, `osc${oi}.gran.windowShape`, gc.windowShape), 0, 1)
     const srRatio = smp.sr / sr
-    const pitchRatio = (gc.keytrack ? voice.curFreq / midiFreq(gc.rootKey) : 1) * pitchRatioBase
+    const pitchRatio = (gc.keytrack && cfg.keytrackPitch ? voice.curFreq / midiFreq(gc.rootKey) : 1) * pitchRatioBase
     if (!os.scanInit) { os.scanPos = posKnob * smp.len; os.scanInit = true }
     if (gc.manual) os.scanPos = posKnob * smp.len
     const uni = clamp(Math.round(cfg.unison), 1, MAX_UNI)
@@ -889,7 +891,7 @@ function renderSpectral(engine, voice, oi, cfg, spec, n, outL, outR, monoOut, pa
   const spread = clamp(vp(voice, `osc${oi}.spec.spread`, sc.spread), 0, 1)
   const gate = clamp(vp(voice, `osc${oi}.spec.gate`, sc.gate), 0, 1)
   const curve = sc.filterCurve
-  const keyRatio = sc.keytrack ? voice.curFreq / midiFreq(sc.rootKey) : 1
+  const keyRatio = sc.keytrack && cfg.keytrackPitch ? voice.curFreq / midiFreq(sc.rootKey) : 1
   const readStep = keyRatio * pitchRatioBase * Math.pow(2, pitchShift / 12) * (spec.sr / sr)
   const olaLen = os.olaBuf.length
 
