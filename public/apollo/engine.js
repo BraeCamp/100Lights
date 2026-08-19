@@ -3,6 +3,7 @@
    sub + noise, dual filters, 4 envelopes, 10 LFOs, mod matrix, three FX
    lanes with splitters, arp + clip sequencer. Plain JS: worklet-loaded. */
 /* eslint-disable */
+/* build 2026-08-19-1 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2

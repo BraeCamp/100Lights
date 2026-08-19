@@ -6,6 +6,7 @@
 import { ApolloPatch, FxUnit, LfoPoint, PARAMS, FX_DEFS } from '@/lib/apollo/patch'
 import { generateFactoryTable, tableFromBase64 } from '@/lib/apollo/tables'
 import { analyzeSpectral, SpectralAnalysis } from '@/lib/apollo/spectral'
+import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
 
 export interface ApolloMeters {
   peak: number
@@ -79,7 +80,7 @@ export class ApolloEngine extends EventTarget {
     if (this.ready) return
     const ctx = new AudioContext({ latencyHint: 'interactive' })
     this.ctx = ctx
-    await ctx.audioWorklet.addModule('/apollo/engine.js')
+    await ctx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const node = new AudioWorkletNode(ctx, 'apollo-engine', {
       numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
     })
@@ -297,7 +298,7 @@ export class ApolloEngine extends EventTarget {
   ): Promise<AudioBuffer> {
     const sr = this.ctx?.sampleRate || 48000
     const octx = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr)
-    await octx.audioWorklet.addModule('/apollo/engine.js')
+    await octx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const node = new AudioWorkletNode(octx, 'apollo-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
     node.connect(octx.destination)
     const post = (msg: unknown) => node.port.postMessage(msg)
