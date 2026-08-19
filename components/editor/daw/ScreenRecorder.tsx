@@ -64,6 +64,7 @@ function instrLabel(instr: any): string {
     case 'fm': return 'FM synth'
     case 'fm4op': return `FM synth${p.name ? ` · ${p.name}` : ''}`
     case 'wavetable': return 'wavetable synth'
+    case 'apollo': return 'Apollo hybrid synth'
     case 'sampler': return 'sampler'
     default: return String(instr.type)
   }

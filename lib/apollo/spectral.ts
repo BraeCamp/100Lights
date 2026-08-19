@@ -96,3 +96,86 @@ export async function analyzeSpectral(
   onProgress?.(1)
   return { frames, bins: BINS, hop: HOP, sr, mags, phases, onsets }
 }
+
+// ---------------------------------------------------------------------------
+// Worker-based analysis: same algorithm off the main thread (blob worker,
+// transferables both ways). Falls back to the inline version on any failure.
+
+const WORKER_SRC = `
+const FFT_SIZE = ${FFT_SIZE}, HOP = ${HOP}, BINS = ${BINS}
+${fftInPlace.toString()}
+self.onmessage = (e) => {
+  const { samples, sr } = e.data
+  const maxLen = sr * 20
+  const src = samples.length > maxLen ? samples.subarray(0, maxLen) : samples
+  const frames = Math.max(1, Math.floor((src.length - FFT_SIZE) / HOP) + 1)
+  const mags = new Float32Array(frames * BINS)
+  const phases = new Float32Array(frames * BINS)
+  const onsets = new Uint8Array(frames)
+  const re = new Float32Array(FFT_SIZE)
+  const im = new Float32Array(FFT_SIZE)
+  const hann = new Float32Array(FFT_SIZE)
+  for (let i = 0; i < FFT_SIZE; i++) hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / FFT_SIZE)
+  let prevFlux = 0
+  for (let f = 0; f < frames; f++) {
+    const off = f * HOP
+    for (let i = 0; i < FFT_SIZE; i++) {
+      const s = off + i < src.length ? src[off + i] : 0
+      re[i] = s * hann[i]; im[i] = 0
+    }
+    fftInPlace(re, im, false)
+    let flux = 0
+    const base = f * BINS, prevBase = (f - 1) * BINS
+    for (let b = 0; b < BINS; b++) {
+      const m = Math.hypot(re[b], im[b])
+      mags[base + b] = m
+      phases[base + b] = Math.atan2(im[b], re[b])
+      if (f > 0) { const d = m - mags[prevBase + b]; if (d > 0) flux += d }
+    }
+    if (f > 1 && flux > prevFlux * 1.6 && flux > 0.5) onsets[f] = 1
+    prevFlux = flux * 0.6 + prevFlux * 0.4
+    if (f % 64 === 63) self.postMessage({ progress: f / frames })
+  }
+  onsets[0] = 1
+  self.postMessage(
+    { done: { frames, bins: BINS, hop: HOP, sr, mags, phases, onsets } },
+    [mags.buffer, phases.buffer, onsets.buffer]
+  )
+}
+`
+
+export function analyzeSpectralInWorker(
+  samples: Float32Array,
+  sr: number,
+  onProgress?: (p: number) => void,
+): Promise<SpectralAnalysis> {
+  if (typeof Worker === 'undefined') return analyzeSpectral(samples, sr, onProgress)
+  return new Promise((resolve) => {
+    let settled = false
+    const fallback = () => {
+      if (settled) return
+      settled = true
+      void analyzeSpectral(samples, sr, onProgress).then(resolve)
+    }
+    try {
+      const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: 'application/javascript' }))
+      const w = new Worker(url)
+      const cleanup = () => { w.terminate(); URL.revokeObjectURL(url) }
+      w.onerror = () => { cleanup(); fallback() }
+      w.onmessage = (e: MessageEvent) => {
+        const d = e.data as { progress?: number; done?: SpectralAnalysis }
+        if (d.progress != null) onProgress?.(d.progress)
+        if (d.done) {
+          settled = true
+          onProgress?.(1)
+          cleanup()
+          resolve(d.done)
+        }
+      }
+      const copy = new Float32Array(samples)
+      w.postMessage({ samples: copy, sr }, [copy.buffer])
+    } catch {
+      fallback()
+    }
+  })
+}

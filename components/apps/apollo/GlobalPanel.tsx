@@ -1,15 +1,18 @@
 'use client'
 // Global voicing / tuning / quality settings.
 
-import React from 'react'
+import React, { useRef, useState } from 'react'
 import { useApollo, Knob, Sel, Section, ToggleBtn } from './ApolloContext'
 import { SCALES, GlobalConfig } from '@/lib/apollo/patch'
+import { parseTuningFile } from '@/lib/apollo/tuning'
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 export default function GlobalPanel() {
   const ctx = useApollo()
   const g = ctx.patch.global
+  const tuningRef = useRef<HTMLInputElement>(null)
+  const [tuningErr, setTuningErr] = useState('')
   const num = (v: number, set: (p: GlobalConfig, n: number) => void, min: number, max: number, w = 48) => (
     <input
       type="number" min={min} max={max} value={v}
@@ -44,9 +47,33 @@ export default function GlobalPanel() {
           onChange={v => ctx.update(p => { p.global.scaleName = v })} />
         <ToggleBtn on={g.scaleLock} label="Lock" title="Snap incoming notes to scale" onClick={() => ctx.update(p => { p.global.scaleLock = !p.global.scaleLock })} />
         <label style={lbl}>BPM {num(g.bpm, (gg, n) => { gg.bpm = n }, 40, 300, 54)}</label>
-        <Sel width={72} title="Render quality" value={g.quality} options={[
+        <Sel width={72} title="Render quality (High = 2× oversampled engine)" value={g.quality} options={[
           { value: 'draft', label: 'Draft' }, { value: 'good', label: 'Good' }, { value: 'high', label: 'High' },
         ]} onChange={v => ctx.update(p => { p.global.quality = v as GlobalConfig['quality'] })} />
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700 }}>MICROTUNING</span>
+        <span style={{ fontSize: 10, color: g.tuning ? 'var(--accent)' : 'var(--text-muted)' }}>
+          {g.tuning ? g.tuning.name : '12-TET (standard)'}
+        </span>
+        <ToggleBtn on={false} label="Load .scl / .tun…" onClick={() => tuningRef.current?.click()} />
+        {g.tuning && <ToggleBtn on={false} label="Reset" onClick={() => ctx.update(p => { p.global.tuning = null })} />}
+        {tuningErr && <span style={{ fontSize: 10, color: 'var(--error)' }}>{tuningErr}</span>}
+        <input
+          ref={tuningRef} type="file" accept=".scl,.tun,text/plain" style={{ display: 'none' }}
+          onChange={async e => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (!f) return
+            try {
+              const table = parseTuningFile(f.name, await f.text())
+              setTuningErr('')
+              ctx.update(p => { p.global.tuning = table })
+            } catch (err) {
+              setTuningErr(err instanceof Error ? err.message : 'Could not parse tuning file')
+            }
+          }}
+        />
       </div>
     </Section>
   )

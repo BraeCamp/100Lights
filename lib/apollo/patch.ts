@@ -259,6 +259,7 @@ export interface GlobalConfig {
   scaleName: string
   scaleLock: boolean
   masterTune: number // cents
+  tuning: { name: string; freqs: number[] } | null // microtuning table (.scl/.tun)
 }
 
 export interface ApolloPatch {
@@ -611,7 +612,7 @@ export function initPatch(): ApolloPatch {
       poly: 16, mode: 'poly', glide: 0, glideLegatoOnly: true, pbRange: 2,
       masterGain: 0.8, bpm: 120, quality: 'good',
       voiceSpreadPan: 0, voiceSpreadTune: 0, voiceSpreadCutoff: 0,
-      scaleRoot: 0, scaleName: 'Minor', scaleLock: false, masterTune: 0,
+      scaleRoot: 0, scaleName: 'Minor', scaleLock: false, masterTune: 0, tuning: null,
     },
     oscs: [defaultOsc(0), defaultOsc(1), defaultOsc(2)],
     sub: { enabled: false, shape: 'sine', octave: -1, level: 0.5, pan: 0, direct: false, dest: 'f1', filterBal: 0, bus: 'main' },

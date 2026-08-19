@@ -5,7 +5,7 @@
 
 import { ApolloPatch, FxUnit, LfoPoint, PARAMS, FX_DEFS } from '@/lib/apollo/patch'
 import { generateFactoryTable, tableFromBase64, buildTableMips } from '@/lib/apollo/tables'
-import { analyzeSpectral, SpectralAnalysis } from '@/lib/apollo/spectral'
+import { analyzeSpectralInWorker, SpectralAnalysis } from '@/lib/apollo/spectral'
 import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
 
 export interface ApolloMeters {
@@ -52,7 +52,7 @@ export function lfoLutFromPoints(points: LfoPoint[], size = 257): Float32Array {
   return lut
 }
 
-function collectFxRanges(units: FxUnit[], out: Record<string, [number, number]>): void {
+export function collectFxRanges(units: FxUnit[], out: Record<string, [number, number]>): void {
   for (const u of units) {
     const def = FX_DEFS[u.type]
     out[`fx.${u.id}.mix`] = [0, 1]
@@ -76,21 +76,31 @@ export class ApolloEngine extends EventTarget {
   private pvTimer: ReturnType<typeof setTimeout> | null = null
   ready = false
 
-  async init(): Promise<void> {
+  /**
+   * Standalone init creates its own AudioContext + master/analyser chain.
+   * DAW-instrument mode passes an existing context + destination: the node
+   * connects straight to the destination and no analyser is created.
+   */
+  async init(opts?: { ctx?: BaseAudioContext; destination?: AudioNode }): Promise<void> {
     if (this.ready) return
-    const ctx = new AudioContext({ latencyHint: 'interactive' })
+    const external = !!opts?.ctx
+    const ctx = (opts?.ctx as AudioContext) || new AudioContext({ latencyHint: 'interactive' })
     this.ctx = ctx
     await ctx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const node = new AudioWorkletNode(ctx, 'apollo-engine', {
       numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
     })
     this.node = node
-    this.master = ctx.createGain()
-    this.analyser = ctx.createAnalyser()
-    this.analyser.fftSize = 2048
-    node.connect(this.master)
-    this.master.connect(this.analyser)
-    this.analyser.connect(ctx.destination)
+    if (external) {
+      node.connect(opts?.destination || ctx.destination)
+    } else {
+      this.master = ctx.createGain()
+      this.analyser = ctx.createAnalyser()
+      this.analyser.fftSize = 2048
+      node.connect(this.master)
+      this.master.connect(this.analyser)
+      this.analyser.connect(ctx.destination)
+    }
     node.port.onmessage = (e: MessageEvent) => {
       const m = e.data
       if (m.type === 'meters') {
@@ -199,7 +209,7 @@ export class ApolloEngine extends EventTarget {
     if (!analysis) {
       const mono = smp.r ? new Float32Array(smp.len) : smp.l
       if (smp.r) for (let i = 0; i < smp.len; i++) mono[i] = (smp.l[i] + smp.r[i]) * 0.5
-      analysis = await analyzeSpectral(mono, smp.sr, onProgress)
+      analysis = await analyzeSpectralInWorker(mono, smp.sr, onProgress)
       this.spectralCache.set(id, analysis)
     }
     const mags = new Float32Array(analysis.mags)
@@ -293,6 +303,13 @@ export class ApolloEngine extends EventTarget {
   setTransport(opts: { playing?: boolean; bpm?: number; click?: boolean; beat?: number }): void {
     this.post({ type: 'transport', ...opts })
   }
+
+  /** Absolute-context-time note events (DAW instrument mode). */
+  scheduleEvents(events: { t: number; type: 'noteOn' | 'noteOff'; note: number; vel?: number }[]): void {
+    this.post({ type: 'scheduleAt', events })
+  }
+
+  clearScheduled(): void { this.post({ type: 'clearScheduled' }) }
 
   dispose(): void {
     this.node?.disconnect()

@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useCallback } from 'react'
+import { memo, useCallback , useMemo } from 'react'
 import { Play, Mic, Circle, X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useState, useEffect } from 'react'
@@ -17,6 +17,9 @@ import { previewNote } from '@/lib/daw-instruments'
 import { FM_ALGORITHMS, FM_PRESETS } from '@/lib/fm-synth'
 import { WAVETABLE_PRESETS } from '@/lib/wavetable-synth'
 import { useIsMobile } from '@/lib/use-is-mobile'
+import { initPatch as initApolloPatch } from '@/lib/apollo/patch'
+import { FACTORY_PRESETS as APOLLO_FACTORY } from '@/lib/apollo/presets'
+import type { ApolloInstrumentParams } from '@/lib/daw-types'
 
 const C = {
   bgBase:      '#141414',
@@ -907,6 +910,7 @@ const TYPE_BUTTONS: { label: string; value: InstrumentType }[] = [
   { label: 'FM 4-Op',    value: 'fm4op'     },
   { label: 'Wavetable',  value: 'wavetable' },
   { label: 'Poly',       value: 'poly'      },
+  { label: 'Apollo',     value: 'apollo'    },
 ]
 
 export default memo(function InstrumentPicker({ trackId }: { trackId: string }) {
@@ -928,6 +932,7 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
     else if (next === 'poly') newInstr = defaultPolyInstrument()
     else if (next === 'fm4op')     newInstr = defaultFm4opInstrument()
     else if (next === 'wavetable') newInstr = defaultWavetableInstrument()
+    else if (next === 'apollo')    newInstr = { type: 'apollo', params: initApolloPatch() }
     else newInstr = { type: 'none', params: {} }
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: newInstr })
   }, [dispatch, trackId])
@@ -995,6 +1000,66 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
       {instrType === 'poly'      && <PolyPanel      instrument={instrument} onSet={setPoly} />}
       {instrType === 'fm4op'     && <Fm4OpPanel     instrument={instrument} onSet={setFm4op} />}
       {instrType === 'wavetable' && <WavetablePanel instrument={instrument} onSet={setWavetable} />}
+      {instrType === 'apollo'    && <ApolloPanel    instrument={instrument} trackId={trackId} />}
     </div>
+  )
+})
+
+// ── Apollo (hybrid worklet synth) ──────────────────────────────────────────────
+// Compact panel: patch selection + handoff to the full Apollo editor at
+// /apps/apollo. Patch data is the instrument params (whole ApolloPatch).
+
+const ApolloPanel = memo(function ApolloPanel({ instrument, trackId }: { instrument: TrackInstrument; trackId: string }) {
+  const { dispatch } = useDaw()
+  const patch = instrument.params as ApolloInstrumentParams
+  interface ApolloPresetOpt { group: string; name: string; load: () => ApolloInstrumentParams }
+  const presets = useMemo<ApolloPresetOpt[]>(() => {
+    const user: { name: string; json: string }[] = []
+    try {
+      const raw = localStorage.getItem('apollo_presets_v1')
+      if (raw) user.push(...(JSON.parse(raw) as { name: string; json: string }[]))
+    } catch { /* none */ }
+    return [
+      ...APOLLO_FACTORY.map((fp): ApolloPresetOpt => ({ group: 'Factory', name: fp.name, load: () => structuredClone(fp.patch) })),
+      ...user.map((u): ApolloPresetOpt => ({ group: 'User', name: u.name, load: () => ({ ...initApolloPatch(), ...(JSON.parse(u.json) as Partial<ApolloInstrumentParams>) }) })),
+    ]
+  }, [])
+  const apply = (idx: number) => {
+    const pr = presets[idx]
+    if (!pr) return
+    try {
+      dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: pr.load() } })
+    } catch { /* bad preset json */ }
+  }
+  const current = presets.findIndex(pr => pr.name === patch.name)
+  return (
+    <Section title="Apollo patch">
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select
+          value={current >= 0 ? String(current) : ''}
+          onChange={e => apply(Number(e.target.value))}
+          style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', fontSize: 12, minWidth: 160 }}
+        >
+          <option value="" disabled>{patch.name || 'Pick a patch…'}</option>
+          <optgroup label="Factory">
+            {presets.map((pr, k) => pr.group === 'Factory' && <option key={pr.name} value={String(k)}>{pr.name}</option>)}
+          </optgroup>
+          <optgroup label="User (saved in Apollo)">
+            {presets.map((pr, k) => pr.group === 'User' && <option key={pr.name + k} value={String(k)}>{pr.name}</option>)}
+          </optgroup>
+        </select>
+        <a
+          href="/apps/apollo"
+          target="_blank"
+          rel="noreferrer"
+          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
+        >Design patches in Apollo ↗</a>
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        Full hybrid synth: wavetable · sample · granular · spectral. Edit sounds in the Apollo
+        app, hit Save there, then pick the patch here. Sample-based patches pull their audio
+        from your Sound Library automatically.
+      </div>
+    </Section>
   )
 })

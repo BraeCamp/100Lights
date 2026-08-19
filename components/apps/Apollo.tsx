@@ -26,6 +26,7 @@ import KeyboardStrip from '@/components/apps/apollo/KeyboardStrip'
 import WavetableEditor from '@/components/apps/apollo/WavetableEditor'
 import ScopeView from '@/components/apps/apollo/ScopeView'
 import { startWebMidi, onMidiNote, onMidiCC, webMidiSupported, getMidiDeviceNames } from '@/lib/web-midi'
+import { startMpe, stopMpe } from '@/lib/apollo/mpe'
 
 type Tab = 'synth' | 'mix' | 'fx' | 'matrix' | 'seq' | 'global'
 const TABS: { id: Tab; label: string }[] = [
@@ -94,6 +95,7 @@ function ApolloInner() {
   const [midiOn, setMidiOn] = useState(false)
   const [midiName, setMidiName] = useState('')
   const [midiAvailable, setMidiAvailable] = useState(false)
+  const [mpeOn, setMpeOn] = useState(false)
   const [layout, setLayout] = useState<Record<Tab, TabLayout>>(DEFAULT_LAYOUT)
   const [layoutTick, setLayoutTick] = useState(0)
   const dragPanel = useRef<{ tab: Tab; col: 0 | 1; idx: number } | null>(null)
@@ -118,9 +120,9 @@ function ApolloInner() {
     saveLayout(next)
   }, [layout, tab, saveLayout])
 
-  // Web MIDI hookup
+  // Web MIDI hookup (plain mode — disabled while MPE mode owns the input)
   useEffect(() => {
-    if (!midiOn) return
+    if (!midiOn || mpeOn) return
     const offNote = onMidiNote(e => {
       if (e.type === 'on') { void ctx.start().then(() => ctx.engine.noteOn(e.pitch, e.velocity / 127)) }
       else ctx.engine.noteOff(e.pitch)
@@ -130,7 +132,14 @@ function ApolloInner() {
       else if (e.cc === 64) ctx.engine.sustain(e.value >= 64)
     })
     return () => { offNote(); offCC() }
-  }, [midiOn, ctx])
+  }, [midiOn, mpeOn, ctx])
+
+  const toggleMpe = async () => {
+    if (mpeOn) { stopMpe(); setMpeOn(false); return }
+    await ctx.start()
+    const ok = await startMpe(ctx.engine)
+    if (ok) setMpeOn(true)
+  }
 
   // undo / redo shortcuts
   useEffect(() => {
@@ -254,7 +263,8 @@ function ApolloInner() {
           {headerBtn('↩', () => ctx.undo(), { title: 'Undo (Cmd+Z)' })}
           {headerBtn('↪', () => ctx.redo(), { title: 'Redo (Shift+Cmd+Z)' })}
           {headerBtn('WT Editor', () => setWtOpen(true))}
-          {midiAvailable && headerBtn('MIDI', () => { void enableMidi() }, { on: midiOn, title: midiName })}
+          {midiAvailable && headerBtn('MIDI', () => { void enableMidi() }, { on: midiOn && !mpeOn, title: midiName })}
+          {midiAvailable && headerBtn('MPE', () => { void toggleMpe() }, { on: mpeOn, title: 'MPE mode: per-note pitch bend + pressure (Seaboard, Linnstrument…)' })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Knob path="global.masterGain" label="Main" size={32} />
             <div title="Output level" style={{ width: 8, height: 34, background: UI.inset, border: `1px solid ${UI.border}`, borderRadius: 3, overflow: 'hidden', position: 'relative' }}>

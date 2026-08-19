@@ -1,6 +1,6 @@
 'use client'
 
-import type { TrackInstrument, FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams, PolyOscLayer, Fm4OpInstrumentParams, WavetableInstrumentParams } from './daw-types'
+import type { TrackInstrument, FmInstrumentParams, DrumInstrumentParams, PolyInstrumentParams, PolyOscLayer, Fm4OpInstrumentParams, WavetableInstrumentParams, ApolloInstrumentParams } from './daw-types'
 import { polyOscLayers } from './daw-types'
 import { getPolySample } from './poly-sample-cache'
 import { playDrumHit } from './drum-samples'
@@ -36,6 +36,7 @@ export function preloadDrumInstrument(ctx: BaseAudioContext, instrument: TrackIn
   return Promise.all(jobs).then(() => {})
 }
 import { playWavetableNote } from './wavetable-synth'
+import { playApolloNote } from './apollo/daw-instrument'
 
 // Reserved implicit choke group so hi-hats cut each other by default without
 // the user configuring anything. Kept out of the 1..8 range users pick from.
@@ -391,6 +392,13 @@ export function playInstrumentNote(
     const stop  = playWavetableNote(ctx, patch, pitch, velocity / 127, when, dest)
     const ms    = Math.max(0, (when + duration - ctx.currentTime) * 1000)
     setTimeout(stop, ms)
+    return
+  }
+
+  if (instrument.type === 'apollo') {
+    // Apollo runs a persistent AudioWorklet engine per track destination and
+    // schedules note on/off at absolute context time (offline-render safe).
+    playApolloNote(ctx, dest, instrument.params as ApolloInstrumentParams, pitch, velocity, when, duration)
     return
   }
 }

@@ -3,7 +3,7 @@
    sub + noise, dual filters, 4 envelopes, 10 LFOs, mod matrix, three FX
    lanes with splitters, arp + clip sequencer. Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-19-3 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-19-4 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -428,7 +428,7 @@ function unisonRatio(mode, i, n, detune, note) {
 }
 
 const MAX_UNI = 16
-const MAX_GRAINS = 24 // per osc-voice
+const MAX_GRAINS = 48 // per osc-voice
 
 class OscState {
   constructor(sr) {
@@ -493,6 +493,7 @@ class Voice {
     this.lfoSmY = new Float32Array(10)
     this.rand = 0
     this.serial = 0
+    this.ch = 0
     this.oscs = [new OscState(sr), new OscState(sr), new OscState(sr)]
     this.subPhase = 0
     this.noisePos = 0
@@ -508,7 +509,7 @@ class Voice {
     const wasActive = this.active
     this.active = true
     this.rand = grng()
-    const targetFreq = midiFreq(note + patch.global.masterTune / 100)
+    const targetFreq = engine.noteFreq(note) * Math.pow(2, patch.global.masterTune / 1200)
     const glide = engine.pv['global.glide'] != null ? engine.pv['global.glide'] : patch.global.glide
     if (glide > 0.001 && engine.lastFreq && (!patch.global.glideLegatoOnly || legato)) {
       this.glideFrom = engine.lastFreq; this.glideT = 0
@@ -818,23 +819,31 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
       os.grainTimer -= 1
       if (os.grainTimer <= 0) {
         os.grainTimer += spawnPeriod
-        // find free grain
-        let g = null
-        for (const gg of os.grains) if (!gg.active) { g = gg; break }
-        if (g) {
+        // true per-grain unison: one grain per unison voice, own detune/pan/blend
+        const blend = clamp(vp(voice, `osc${oi}.blend`, cfg.blend), 0, 1)
+        const width = clamp(vp(voice, `osc${oi}.width`, cfg.width), 0, 1)
+        const uniNorm = 1 / Math.sqrt(uni)
+        const sprayOff = (grng() * 2 - 1) * spray * smp.len * 0.25
+        const basePos = clamp(os.scanPos + sprayOff, 0, smp.len - 2)
+        os.grainAlt++
+        for (let u = 0; u < uni; u++) {
+          let g = null
+          for (const gg of os.grains) if (!gg.active) { g = gg; break }
+          if (!g) break
           g.active = true
           g.t = 0
           g.dur = Math.max(8, lengthMs * 0.001 * sr)
-          const sprayOff = (grng() * 2 - 1) * spray * smp.len * 0.25
-          g.pos = clamp(os.scanPos + sprayOff, 0, smp.len - 2)
-          const uRatio = unisonRatio(cfg.unisonMode, os.grainAlt % uni, uni, detune, voice.note)
-          os.grainAlt++
+          g.pos = basePos
+          const uRatio = unisonRatio(cfg.unisonMode, u, uni, detune, voice.note)
           const pr = pitchRand > 0 ? Math.pow(2, (grng() * 2 - 1) * pitchRand / 12) : 1
           g.rate = pitchRatio * uRatio * pr * srRatio
           g.dir = gc.direction === 'rev' ? -1 : gc.direction === 'alt' ? (os.grainAlt % 2 ? 1 : -1) : 1
-          const gp = (grng() * 2 - 1) * panRand
-          g.panL = Math.cos((gp + 1) * Math.PI / 4) * 1.414
-          g.panR = Math.sin((gp + 1) * Math.PI / 4) * 1.414
+          const centerW = uni === 1 ? 1 : (u === (uni - 1) >> 1 ? 1 : blend)
+          const sidePan = uni === 1 ? 0 : ((u % 2 ? 1 : -1) * ((u >> 1) + 1) / Math.max(1, uni >> 1)) * width
+          const gp = clamp(sidePan + (grng() * 2 - 1) * panRand, -1, 1)
+          const lvl = centerW * uniNorm
+          g.panL = Math.cos((gp + 1) * Math.PI / 4) * 1.414 * lvl
+          g.panR = Math.sin((gp + 1) * Math.PI / 4) * 1.414 * lvl
         }
       }
       let accL = 0, accR = 0
@@ -881,6 +890,7 @@ const specEnvWork = new Float32Array(SPEC_FFT / 2 + 1)
 const specEnvShift = new Float32Array(SPEC_FFT / 2 + 1)
 const specHann = new Float32Array(SPEC_FFT)
 for (let i = 0; i < SPEC_FFT; i++) specHann[i] = 0.5 - 0.5 * Math.cos(TWO_PI * i / SPEC_FFT)
+const specPeakOf = new Int32Array(SPEC_FFT / 2 + 1) // nearest-peak index per bin
 
 function renderSpectral(engine, voice, oi, cfg, spec, n, outL, outR, monoOut, panL, panR, pitchRatioBase) {
   const os = voice.oscs[oi]
@@ -973,17 +983,52 @@ function renderSpectral(engine, voice, oi, cfg, spec, n, outL, outR, monoOut, pa
           specMagWork[b] *= g
         }
       }
-      // phase advance; onset -> reset to analysis phases for transient punch
+      // phase handling: onsets reset toward analysis phases (transient punch);
+      // otherwise identity phase-locking (Laroche-Dolson): only spectral peaks
+      // accumulate phase, neighbors keep their analysis-frame offset from the
+      // peak — dramatically less phasiness on complex material.
       const isOnset = spec.onsets && spec.onsets[f0] && os.specFrame !== f0
       const usePhases = isOnset && spec.phases && sc.transients > 0.01
-      for (let b = 0; b < bins; b++) {
-        if (usePhases) {
+      if (usePhases) {
+        for (let b = 0; b < bins; b++) {
           const ap = spec.phases[m0 + b]
           os.specPhases[b] += (ap - os.specPhases[b]) * sc.transients
-        } else {
-          os.specPhases[b] += TWO_PI * b * SPEC_HOP / SPEC_FFT
         }
-        if (os.specPhases[b] > 1e4) os.specPhases[b] %= TWO_PI
+      } else if (spec.phases) {
+        // mark peaks and assign every bin to its nearest peak (valley split)
+        let lastPeak = -1
+        for (let b = 1; b < bins - 1; b++) {
+          if (specMagWork[b] > 1e-7 && specMagWork[b] >= specMagWork[b - 1] && specMagWork[b] > specMagWork[b + 1]) {
+            if (lastPeak >= 0) {
+              // split the region between the two peaks at the magnitude valley
+              let valley = lastPeak
+              for (let k = lastPeak + 1; k < b; k++) if (specMagWork[k] < specMagWork[valley]) valley = k
+              for (let k = lastPeak; k <= valley; k++) specPeakOf[k] = lastPeak
+              for (let k = valley + 1; k <= b; k++) specPeakOf[k] = b
+            } else {
+              for (let k = 0; k <= b; k++) specPeakOf[k] = b
+            }
+            lastPeak = b
+          }
+        }
+        if (lastPeak < 0) lastPeak = 0
+        for (let k = lastPeak; k < bins; k++) specPeakOf[k] = lastPeak
+        // advance peak phases, lock members to peak + analysis offset
+        for (let b = 0; b < bins; b++) {
+          if (specPeakOf[b] === b) {
+            os.specPhases[b] += TWO_PI * b * SPEC_HOP / SPEC_FFT
+            if (os.specPhases[b] > 1e4) os.specPhases[b] %= TWO_PI
+          }
+        }
+        for (let b = 0; b < bins; b++) {
+          const pk = specPeakOf[b]
+          if (pk !== b) os.specPhases[b] = os.specPhases[pk] + (spec.phases[m0 + b] - spec.phases[m0 + pk])
+        }
+      } else {
+        for (let b = 0; b < bins; b++) {
+          os.specPhases[b] += TWO_PI * b * SPEC_HOP / SPEC_FFT
+          if (os.specPhases[b] > 1e4) os.specPhases[b] %= TWO_PI
+        }
       }
       os.specFrame = f0
       // iFFT
@@ -1727,6 +1772,8 @@ class ApolloProcessor extends AudioWorkletProcessor {
     this.sustainPedal = false
     this.macros = new Float32Array(8)
     this.modwheel = 0; this.pitchbend = 0; this.aftertouch = 0
+    this.chanBend = new Float32Array(16)     // MPE per-channel bend (semitones)
+    this.chanPressure = new Float32Array(16) // MPE per-channel pressure
     this.pitchBendSemis = 0
     this.lastFreq = 0
     this.bpm = 120
@@ -1795,6 +1842,9 @@ class ApolloProcessor extends AudioWorkletProcessor {
         // quality switches change the internal rate — do it here, before notes
         const desired = sampleRate * (m.patch.global.quality === 'high' ? 2 : 1)
         if (this.sr !== desired) this.reconfigure(desired)
+        // microtuning table (128 note frequencies) or null = 12-TET
+        const tun = m.patch.global.tuning
+        this.tuningFreqs = tun && tun.freqs && tun.freqs.length === 128 ? tun.freqs : null
         break
       }
       case 'pv': { // base param values map
@@ -1811,7 +1861,9 @@ class ApolloProcessor extends AudioWorkletProcessor {
         if (m.rowId) this.rowLuts.set(m.rowId, m.lut)
         else this.remapLuts.set(m.key, m.lut)
         break
-      case 'noteOn': this.noteOn(m.note, m.vel, false); break
+      case 'noteOn': this.noteOn(m.note, m.vel, false, m.ch || 0); break
+      case 'chanBend': this.chanBend[m.ch & 15] = m.semis; break
+      case 'chanPressure': this.chanPressure[m.ch & 15] = m.value; break
       case 'noteOff': this.noteOff(m.note, false); break
       case 'allOff': this.allNotesOff(); break
       case 'sustain': this.sustainPedal = m.on; if (!m.on) this.releaseSustained(); break
@@ -1834,6 +1886,14 @@ class ApolloProcessor extends AudioWorkletProcessor {
       case 'schedule': // sample-accurate event list for offline rendering
         this.schedule = (m.events || []).slice().sort((a, b) => a.t - b.t)
         this.timeSec = 0
+        break
+      case 'scheduleAt': // events at absolute context time (DAW instrument mode)
+        if (!this.absEvents) this.absEvents = []
+        for (const ev of m.events || []) this.absEvents.push(ev)
+        this.absEvents.sort((a, b) => a.t - b.t)
+        break
+      case 'clearScheduled':
+        if (this.absEvents) this.absEvents.length = 0
         break
     }
   }
@@ -1878,6 +1938,11 @@ class ApolloProcessor extends AudioWorkletProcessor {
   }
 
   destTouched(voice, path) { return this.destIndex[path] != null }
+
+  noteFreq(note) {
+    const n = clamp(Math.round(note), 0, 127)
+    return this.tuningFreqs ? this.tuningFreqs[n] : midiFreq(note)
+  }
 
   vp(voice, path, base) {
     const b = this.pv[path] != null ? this.pv[path] : base
@@ -1931,7 +1996,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
       case 'gate': return voice.gate ? 1 : 0
       case 'modwheel': return this.modwheel
       case 'pitchwheel': return this.pitchbend
-      case 'aftertouch': return this.aftertouch
+      case 'aftertouch': return Math.max(this.aftertouch, this.chanPressure[voice.ch || 0])
     }
     if (src.startsWith('env')) return voice.envs[+src.slice(3) - 1].out
     if (src.startsWith('lfo')) {
@@ -1961,8 +2026,9 @@ class ApolloProcessor extends AudioWorkletProcessor {
     return best
   }
 
-  noteOn(note, vel, fromSeq) {
+  noteOn(note, vel, fromSeq, ch) {
     if (!this.patch) return
+    ch = ch || 0
     const patch = this.patch
     if (patch.arp.on && !fromSeq) {
       if (!this.heldNotes.includes(note)) this.heldNotes.push(note)
@@ -1976,12 +2042,14 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const legato = !!v && mode === 'legato'
       if (!v) v = this.allocVoice()
       v.start(note, vel, patch, this, legato, fromSeq)
+      v.ch = ch
       this.monoVoice = v
       this.port.postMessage({ type: 'voiceOn', note, fromSeq: !!fromSeq })
       return
     }
     const v = this.allocVoice()
     v.start(note, vel, patch, this, false, fromSeq)
+    v.ch = ch
     this.port.postMessage({ type: 'voiceOn', note, fromSeq: !!fromSeq })
   }
 
@@ -2282,6 +2350,8 @@ class ApolloProcessor extends AudioWorkletProcessor {
       v.glideT = Math.min(1, v.glideT + (v.glideRate || 1) * n)
     }
     v.curFreq = v.glideT >= 1 ? v.freq : v.glideFrom * Math.pow(v.freq / v.glideFrom, v.glideT)
+    const chB = this.chanBend[v.ch || 0]
+    if (chB !== 0) v.curFreq *= Math.pow(2, chB / 12)
     this.updateVoiceLfos(v, blockSec)
     // envs 2-4 at block rate (env1 per-sample below)
     for (let e = 1; e < 4; e++) v.envs[e].process(this.envCfg(e), blockSec)
@@ -2584,6 +2654,16 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const desired = sampleRate * (this.patch.global.quality === 'high' ? 2 : 1)
     if (this.sr !== desired) this.reconfigure(desired)
     const n = OL.length
+    // absolute-time events (DAW mode): currentTime is the context clock in
+    // both live and offline rendering
+    if (this.absEvents && this.absEvents.length) {
+      const end = currentTime + n / sampleRate
+      while (this.absEvents.length && this.absEvents[0].t < end) {
+        const ev = this.absEvents.shift()
+        if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false, ev.ch || 0)
+        else if (ev.type === 'noteOff') this.noteOff(ev.note, false)
+      }
+    }
     if (this.sr === sampleRate) { this.renderQuantum(OL, OR, n); return true }
     // 2x oversampled: render two internal quanta, half-band decimate
     if (!this.osUpL || this.osUpL.length !== n * 2) {

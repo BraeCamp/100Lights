@@ -1,6 +1,6 @@
 'use client'
 
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, RollFx } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
 import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
@@ -8,6 +8,7 @@ import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from
 import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
+import { preloadApolloInstrument, apolloStopAll } from './apollo/daw-instrument'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
@@ -922,6 +923,9 @@ export class DawEngine extends EventTarget {
     // preset buffers: a lazily-loaded sample would miss its first note.
     for (const track of project.tracks) {
       if (track.instrument?.type === 'drum') void preloadDrumInstrument(this.ctx, track.instrument)
+      if (track.instrument?.type === 'apollo') {
+        void preloadApolloInstrument(this.ctx, this.trackNodes.get(track.id)?.midiInput, track.instrument.params as ApolloInstrumentParams)
+      }
       if (track.instrument?.type !== 'poly') continue
       const oscs = (track.instrument.params as PolyInstrumentParams).oscillators
       if (!oscs) continue
@@ -3131,6 +3135,9 @@ export class DawEngine extends EventTarget {
 
   private _killAllSources() {
     this._chokeVoices.clear()  // voices are being killed; drop stale choke refs
+    // Apollo worklet instruments: silence + discard (the midiInput bus swap
+    // below orphans their connection; they rebuild on the next play)
+    apolloStopAll(this.ctx)
     const now      = this.ctx.currentTime
     const stopAt   = now + 0.015  // 15 ms fade window — inaudible but click-free
     for (const { source, gainNode, tailNodes, tailOscs, tailTimerId } of this.scheduledSources) {
@@ -3570,6 +3577,13 @@ export class DawEngine extends EventTarget {
       if (track.instrument?.type === 'drum') {
         const inst = track.instrument
         thunks.push(() => preloadDrumInstrument(this.ctx, inst))
+      }
+      if (track.instrument?.type === 'apollo') {
+        // worklet module + patch + samples must be live before the offline
+        // scheduler's single pass posts absolute-time note events
+        const patch = track.instrument.params as ApolloInstrumentParams
+        const dest = this.trackNodes.get(track.id)?.midiInput
+        thunks.push(() => preloadApolloInstrument(this.ctx, dest, patch))
       }
       if (track.instrument?.type !== 'poly') continue
       const oscs = (track.instrument.params as PolyInstrumentParams).oscillators
