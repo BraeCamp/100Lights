@@ -74,3 +74,6 @@ corr-fixture/
 .venv-clap/
 .calib-cache.json
 lib/genre-centroids.json
+
+# clerk configuration (can include secrets)
+/.clerk/

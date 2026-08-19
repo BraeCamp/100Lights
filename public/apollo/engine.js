@@ -1,0 +1,2596 @@
+/* Apollo engine — single AudioWorkletProcessor running the whole synth:
+   3 oscillators (wavetable / sample / multisample / granular / spectral),
+   sub + noise, dual filters, 4 envelopes, 10 LFOs, mod matrix, three FX
+   lanes with splitters, arp + clip sequencer. Plain JS: worklet-loaded. */
+/* eslint-disable */
+'use strict'
+
+const TWO_PI = Math.PI * 2
+const WT_LEN = 2048
+
+// ---------- utils ----------
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v }
+function lerp(a, b, t) { return a + (b - a) * t }
+function midiFreq(n) { return 440 * Math.pow(2, (n - 69) / 12) }
+function dbToLin(db) { return Math.pow(10, db / 20) }
+function cutoffHz(norm) { return 8 * Math.pow(2500, clamp(norm, 0, 1)) } // 8 Hz .. 20 kHz
+
+// xorshift RNG (deterministic per seed)
+function makeRng(seed) {
+  let s = seed >>> 0 || 1
+  return function () {
+    s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0
+    return s / 4294967296
+  }
+}
+const grng = makeRng(0x9e3779b9)
+
+// Serum-style curve interpolation: t 0..1, c -1..1
+function curveShape(t, c) {
+  if (c === 0) return t
+  const k = Math.pow(4, Math.abs(c) * 2)
+  return c > 0 ? Math.pow(t, k) : 1 - Math.pow(1 - t, k)
+}
+
+// evaluate 257-entry LUT at phase 0..1
+function lutEval(lut, x) {
+  const p = clamp(x, 0, 1) * 256
+  const i = p | 0
+  const f = p - i
+  return i >= 256 ? lut[256] : lut[i] + (lut[i + 1] - lut[i]) * f
+}
+
+// ---------- FFT (radix-2, in-place) ----------
+function fftInPlace(re, im, inverse) {
+  const n = re.length
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1
+    for (; j & bit; bit >>= 1) j ^= bit
+    j ^= bit
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (inverse ? 1 : -1) * TWO_PI / len
+    const wr = Math.cos(ang), wi = Math.sin(ang)
+    for (let i = 0; i < n; i += len) {
+      let cwr = 1, cwi = 0
+      for (let k = 0; k < len / 2; k++) {
+        const ur = re[i + k], ui = im[i + k]
+        const vr = re[i + k + len / 2] * cwr - im[i + k + len / 2] * cwi
+        const vi = re[i + k + len / 2] * cwi + im[i + k + len / 2] * cwr
+        re[i + k] = ur + vr; im[i + k] = ui + vi
+        re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi
+        const nwr = cwr * wr - cwi * wi
+        cwi = cwr * wi + cwi * wr; cwr = nwr
+      }
+    }
+  }
+  if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n }
+}
+
+// ---------- envelope ----------
+const ENV_IDLE = 0, ENV_ATK = 1, ENV_HOLD = 2, ENV_DEC = 3, ENV_SUS = 4, ENV_REL = 5
+class Env {
+  constructor() { this.state = ENV_IDLE; this.t = 0; this.out = 0; this.relFrom = 0 }
+  trigger(legato) { if (!legato || this.state === ENV_IDLE || this.state === ENV_REL) { this.state = ENV_ATK; this.t = 0 } else if (this.state !== ENV_IDLE) { this.state = ENV_ATK; this.t = this.out } }
+  release() { if (this.state !== ENV_IDLE) { this.relFrom = this.out; this.state = ENV_REL; this.t = 0 } }
+  kill() { this.state = ENV_IDLE; this.out = 0 }
+  process(cfg, dt) {
+    switch (this.state) {
+      case ENV_IDLE: this.out = 0; break
+      case ENV_ATK: {
+        const a = Math.max(cfg.attack, 0.0005)
+        this.t += dt / a
+        if (this.t >= 1) { this.t = 0; this.state = cfg.hold > 0 ? ENV_HOLD : ENV_DEC; this.out = 1 }
+        else this.out = curveShape(this.t, cfg.aCurve)
+        break
+      }
+      case ENV_HOLD:
+        this.t += dt
+        this.out = 1
+        if (this.t >= cfg.hold) { this.t = 0; this.state = ENV_DEC }
+        break
+      case ENV_DEC: {
+        const d = Math.max(cfg.decay, 0.001)
+        this.t += dt / d
+        if (this.t >= 1) { this.state = ENV_SUS; this.out = cfg.sustain }
+        else this.out = 1 - curveShape(this.t, cfg.dCurve) * (1 - cfg.sustain)
+        break
+      }
+      case ENV_SUS: this.out = cfg.sustain; break
+      case ENV_REL: {
+        const r = Math.max(cfg.release, 0.002)
+        this.t += dt / r
+        if (this.t >= 1) { this.state = ENV_IDLE; this.out = 0 }
+        else this.out = this.relFrom * (1 - curveShape(this.t, cfg.rCurve))
+        break
+      }
+    }
+    return this.out
+  }
+  get active() { return this.state !== ENV_IDLE }
+}
+
+// ---------- chaos oscillators ----------
+class Chaos {
+  constructor(type) { this.type = type; this.x = 0.1; this.y = 0; this.z = 0; this.sh = 0; this.shPhase = 1 }
+  step(rateHz, dt) {
+    const h = clamp(rateHz * dt * 0.5, 0, 0.2)
+    if (this.type === 'lorenz') {
+      const { x, y, z } = this
+      this.x += h * 10 * (y - x)
+      this.y += h * (x * (28 - z) - y)
+      this.z += h * (x * y - 8 / 3 * z)
+      return clamp(this.x / 20, -1, 1) * 0.5 + 0.5
+    }
+    if (this.type === 'rossler') {
+      const { x, y, z } = this
+      this.x += h * 3 * (-y - z)
+      this.y += h * 3 * (x + 0.2 * y)
+      this.z += h * 3 * (0.2 + z * (x - 5.7))
+      return clamp(this.x / 10, -1, 1) * 0.5 + 0.5
+    }
+    // sample & hold
+    this.shPhase += rateHz * dt
+    if (this.shPhase >= 1) { this.shPhase -= Math.floor(this.shPhase); this.sh = grng() }
+    return this.sh
+  }
+}
+
+// ---------- filters ----------
+// TPT state-variable filter, one per channel
+class SVF {
+  constructor() { this.ic1 = 0; this.ic2 = 0 }
+  reset() { this.ic1 = 0; this.ic2 = 0 }
+  // returns {lp, bp, hp} for input x
+  process(x, g, k) {
+    const a1 = 1 / (1 + g * (g + k))
+    const a2 = g * a1
+    const v1 = a1 * this.ic1 + a2 * (x - this.ic2)
+    const v2 = this.ic2 + g * v1
+    this.ic1 = 2 * v1 - this.ic1
+    this.ic2 = 2 * v2 - this.ic2
+    this.lp = v2; this.bp = v1; this.hp = x - k * v1 - v2
+    return v2
+  }
+}
+function svfG(freq, sr) { return Math.tan(Math.PI * clamp(freq, 5, sr * 0.49) / sr) }
+
+class OnePole {
+  constructor() { this.z = 0 }
+  lp(x, coeff) { this.z += coeff * (x - this.z); return this.z }
+}
+function onePoleCoeff(freq, sr) { const c = 1 - Math.exp(-TWO_PI * clamp(freq, 1, sr * 0.49) / sr); return c }
+
+// 4-stage ladder w/ tanh nonlinearity
+class Ladder {
+  constructor() { this.s = [0, 0, 0, 0]; this.d = 0 }
+  reset() { this.s[0] = this.s[1] = this.s[2] = this.s[3] = 0; this.d = 0 }
+  process(x, freq, res, drive, sr, flavor) {
+    const f = clamp(freq / (sr * 0.5), 0.0005, 0.99)
+    const g = 1 - Math.exp(-Math.PI * f)
+    const k = res * 4.2
+    const s = this.s
+    let inp = x - k * (s[3] - x * 0.5 * res)
+    if (flavor === 2) inp = Math.tanh(inp * (1 + drive * 3)) // german: hard sat
+    else if (flavor === 3) inp = inp / (1 + Math.abs(inp) * (0.4 + drive)) // french: soft fold
+    else inp = Math.tanh(inp * (1 + drive * 2))
+    s[0] += g * (inp - s[0])
+    s[1] += g * (Math.tanh(s[0]) - s[1])
+    s[2] += g * (s[1] - s[2])
+    s[3] += g * (Math.tanh(s[2]) - s[3])
+    return s[3] * (1 + res * 0.9)
+  }
+}
+
+class DelayLine {
+  constructor(maxSamps) { this.buf = new Float32Array(Math.max(4, maxSamps | 0)); this.pos = 0 }
+  write(x) { this.buf[this.pos] = x; this.pos = (this.pos + 1) % this.buf.length }
+  read(delaySamps) {
+    const d = clamp(delaySamps, 1, this.buf.length - 2)
+    let idx = this.pos - d
+    while (idx < 0) idx += this.buf.length
+    const i = idx | 0, f = idx - i
+    const a = this.buf[i], b = this.buf[(i + 1) % this.buf.length]
+    return a + (b - a) * f
+  }
+  reset() { this.buf.fill(0) }
+}
+
+class Allpass {
+  constructor(maxSamps) { this.dl = new DelayLine(maxSamps); this.last = 0 }
+  process(x, delaySamps, coeff) {
+    const d = this.dl.read(delaySamps)
+    const y = -coeff * x + d
+    this.dl.write(x + coeff * y)
+    return y
+  }
+}
+
+const VOWELS = [ // f1,f2,f3 for A E I O U
+  [800, 1150, 2900], [400, 1600, 2700], [350, 1700, 2700], [450, 800, 2830], [325, 700, 2700],
+]
+
+// Full multimode voice filter: one instance handles one channel of any FilterType
+class VoiceFilter {
+  constructor(sr) {
+    this.sr = sr
+    this.svf1 = new SVF(); this.svf2 = new SVF(); this.svf3 = new SVF(); this.svf4 = new SVF()
+    this.ladder = new Ladder()
+    this.dl = new DelayLine(Math.ceil(sr / 20))
+    this.aps = [new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048), new Allpass(2048)]
+    this.op = new OnePole()
+    this.rmPhase = 0
+    this.shVal = 0; this.shPhase = 0
+    this.dsVal = 0; this.dsPhase = 0
+    // mini reverb-filter state
+    this.rvDl = [new DelayLine(sr * 0.05), new DelayLine(sr * 0.06), new DelayLine(sr * 0.071), new DelayLine(sr * 0.083)]
+  }
+  reset() { this.svf1.reset(); this.svf2.reset(); this.svf3.reset(); this.svf4.reset(); this.ladder.reset() }
+  process(x, type, cutNorm, res, drive, fat) {
+    const sr = this.sr
+    const freq = cutoffHz(cutNorm)
+    const k = 2 - 1.9 * clamp(res, 0, 0.98)
+    const g = svfG(freq, sr)
+    if (drive > 0 && type !== 'ladder12' && type !== 'ladder24' && type !== 'germanLP' && type !== 'frenchLP') {
+      x = Math.tanh(x * (1 + drive * 4)) * (1 / (1 + drive * 0.5))
+    }
+    switch (type) {
+      case 'lp6': return this.op.lp(x, onePoleCoeff(freq, sr))
+      case 'lp12': this.svf1.process(x, g, k); return this.svf1.lp
+      case 'lp18': { this.svf1.process(x, g, k); return this.op.lp(this.svf1.lp, onePoleCoeff(freq, sr)) }
+      case 'lp24': { this.svf1.process(x, g, k); this.svf2.process(this.svf1.lp, g, k); return this.svf2.lp }
+      case 'hp6': return x - this.op.lp(x, onePoleCoeff(freq, sr))
+      case 'hp12': this.svf1.process(x, g, k); return this.svf1.hp
+      case 'hp24': { this.svf1.process(x, g, k); this.svf2.process(this.svf1.hp, g, k); return this.svf2.hp }
+      case 'bp12': this.svf1.process(x, g, k); return this.svf1.bp * (1 + res * 2)
+      case 'bp24': { this.svf1.process(x, g, k); this.svf2.process(this.svf1.bp, g, k); return this.svf2.bp * (1 + res * 3) }
+      case 'notch12': this.svf1.process(x, g, k); return this.svf1.lp + this.svf1.hp
+      case 'peak12': this.svf1.process(x, g, k); return this.svf1.lp + this.svf1.hp + this.svf1.bp * (1 + res * 4)
+      case 'multiLBH': { // fat: 0 lp, .5 bp, 1 hp
+        this.svf1.process(x, g, k)
+        const m = fat * 2
+        if (m <= 1) return this.svf1.lp * (1 - m) + this.svf1.bp * m * (1 + res)
+        return this.svf1.bp * (2 - m) * (1 + res) + this.svf1.hp * (m - 1)
+      }
+      case 'multiLNH': {
+        this.svf1.process(x, g, k)
+        const notch = this.svf1.lp + this.svf1.hp
+        const m = fat * 2
+        if (m <= 1) return this.svf1.lp * (1 - m) + notch * m
+        return notch * (2 - m) + this.svf1.hp * (m - 1)
+      }
+      case 'morphSVF': { // fat morphs lp -> bp -> hp -> notch -> lp
+        this.svf1.process(x, g, k)
+        const outs = [this.svf1.lp, this.svf1.bp * (1 + res * 2), this.svf1.hp, this.svf1.lp + this.svf1.hp]
+        const m = fat * 4
+        const i = Math.min(3, m | 0), f = m - i
+        return outs[i] * (1 - f) + outs[(i + 1) % 4] * f
+      }
+      case 'ladder12': { this.svf1.process(Math.tanh(x * (1 + drive * 3)), g, 2 - 1.6 * res); return this.svf1.lp * (1 + res * 0.5) }
+      case 'ladder24': return this.ladder.process(x, freq, res, drive, sr, 1)
+      case 'germanLP': return this.ladder.process(x, freq, res, drive, sr, 2)
+      case 'frenchLP': return this.ladder.process(x, freq, res, drive, sr, 3)
+      case 'formant': {
+        // fat = vowel morph 0..1 over A E I O U; cutoff shifts formants
+        const pos = clamp(fat, 0, 0.999) * (VOWELS.length - 1)
+        const vi = pos | 0, vf = pos - vi
+        const scale = Math.pow(2, (cutNorm - 0.5) * 2)
+        const q = 4 + res * 20
+        let out = 0
+        const va = VOWELS[vi], vb = VOWELS[Math.min(vi + 1, VOWELS.length - 1)]
+        const svfs = [this.svf1, this.svf2, this.svf3]
+        const gains = [1, 0.6, 0.3]
+        for (let fi = 0; fi < 3; fi++) {
+          const ffreq = lerp(va[fi], vb[fi], vf) * scale
+          const gg = svfG(ffreq, sr)
+          svfs[fi].process(x, gg, 1 / q)
+          out += svfs[fi].bp * gains[fi] * q * 0.5
+        }
+        return out * 0.5
+      }
+      case 'combPlus': case 'combMinus': {
+        const d = sr / clamp(freq, 20, sr * 0.45)
+        const fb = clamp(res, 0, 0.95)
+        const rd = this.dl.read(d)
+        const y = type === 'combPlus' ? x + rd * fb : x - rd * fb
+        this.dl.write(y)
+        return y * 0.7
+      }
+      case 'flangePlus': case 'flangeMinus': {
+        const d = sr / clamp(freq, 20, sr * 0.45)
+        const rd = this.dl.read(d)
+        this.dl.write(x + rd * clamp(res, 0, 0.9) * (type === 'flangeMinus' ? -1 : 1))
+        return (x + rd * (type === 'flangeMinus' ? -1 : 1)) * 0.6
+      }
+      case 'phasePlus': case 'phaseMinus': {
+        const coeff = clamp((freq / (sr * 0.5)) * 2 - 1, -0.98, 0.98)
+        let y = x + this.fbAP * clamp(res, 0, 0.9) * (type === 'phaseMinus' ? -1 : 1)
+        for (let s = 0; s < 6; s++) {
+          const svf = s < 3 ? [this.svf1, this.svf2, this.svf3][s] : [this.svf4][0]
+          // first-order allpass chain using onepole trick
+          const ap = this.aps[s]
+          y = ap.process(y, 1.5, coeff)
+        }
+        this.fbAP = y
+        return (x + y * (type === 'phaseMinus' ? -1 : 1)) * 0.6
+      }
+      case 'ringMod': {
+        this.rmPhase += freq / sr
+        if (this.rmPhase >= 1) this.rmPhase -= 1
+        const carrier = Math.sin(this.rmPhase * TWO_PI)
+        return lerp(x, x * carrier * (1 + res), clamp(0.3 + fat * 0.7, 0, 1))
+      }
+      case 'sampHold': {
+        this.shPhase += freq / sr
+        if (this.shPhase >= 1) { this.shPhase -= Math.floor(this.shPhase); this.shVal = x + this.shVal * clamp(res, 0, 0.9) }
+        return this.shVal
+      }
+      case 'downsample': {
+        this.dsPhase += clamp(freq, 20, sr) / sr
+        if (this.dsPhase >= 1) { this.dsPhase -= Math.floor(this.dsPhase); this.dsVal = x }
+        return this.dsVal
+      }
+      case 'reverbFilter': {
+        const fb = 0.5 + clamp(res, 0, 0.95) * 0.48
+        const scale = 0.3 + (1 - cutNorm) * 0.7
+        let out = 0
+        for (let i = 0; i < 4; i++) {
+          const dl = this.rvDl[i]
+          const d = dl.buf.length * scale * (0.5 + i * 0.13)
+          const rd = dl.read(d)
+          dl.write(x * 0.4 + rd * fb * (i % 2 ? -1 : 1))
+          out += rd
+        }
+        return out * 0.4 + x * 0.2
+      }
+      case 'dj': {
+        // cutoff < .5: LP sweep; > .5: HP sweep
+        if (cutNorm < 0.5) {
+          const f2 = cutoffHz(cutNorm * 2)
+          this.svf1.process(x, svfG(f2, sr), k)
+          return this.svf1.lp
+        }
+        const f2 = cutoffHz((cutNorm - 0.5) * 2)
+        this.svf1.process(x, svfG(f2, sr), k)
+        return this.svf1.hp
+      }
+      case 'diffuser': {
+        let y = x
+        const coeff = 0.4 + clamp(res, 0, 0.95) * 0.45
+        const base = 7 + (1 - cutNorm) * 90
+        for (let i = 0; i < 8; i++) y = this.aps[i].process(y, base * (1 + i * 0.618 % 1.9), coeff)
+        return y
+      }
+      default: return x
+    }
+  }
+}
+VoiceFilter.prototype.fbAP = 0
+
+// ---------- wavetable warps ----------
+// phase-domain warps: return warped phase 0..1
+function warpPhase(mode, p, a) {
+  switch (mode) {
+    case 'sync': { const w = p * (1 + a * 7); return w - Math.floor(w) }
+    case 'bendPlus': return curveShape(p, a)
+    case 'bendMinus': return curveShape(p, -a)
+    case 'bendBoth': { // pinch toward middle
+      if (p < 0.5) return curveShape(p * 2, a) * 0.5
+      return 0.5 + curveShape((p - 0.5) * 2, -a) * 0.5
+    }
+    case 'pwm': { const w = clamp(0.5 + a * 0.49, 0.5, 0.99); return p < w ? p / w * 0.5 : 0.5 + (p - w) / (1 - w) * 0.5 }
+    case 'asym': { const w = clamp(0.5 - a * 0.49, 0.01, 0.5); return p < w ? p / w * 0.5 : 0.5 + (p - w) / (1 - w) * 0.5 }
+    case 'flip': { if (a <= 0.001 || p < 1 - a) return p; return 1 - (p - (1 - a)) } // reverse the tail
+    case 'mirror': { const m = p * (1 + a); return m <= 1 ? m : 2 - m }
+    case 'quantize': { const steps = 2 + Math.floor(a * 62); return Math.floor(p * steps) / steps }
+    case 'squeeze': { const s = 1 + a * 3; const c = (p - 0.5) * s + 0.5; return clamp(c, 0, 1) }
+    case 'shift': { const w = p + a; return w - Math.floor(w) }
+    case 'pd': { // classic casio-style phase distortion: knee
+      const knee = clamp(0.5 - a * 0.45, 0.05, 0.5)
+      return p < knee ? p / knee * 0.5 : 0.5 + (p - knee) / (1 - knee) * 0.5
+    }
+    default: return p
+  }
+}
+
+// amplitude-domain warps: applied to output sample
+function warpAmp(mode, y, a, modSample) {
+  switch (mode) {
+    case 'am': return y * (1 - a + a * (modSample * 0.5 + 0.5))
+    case 'rm': return lerp(y, y * modSample, a)
+    case 'saturate': { const d = 1 + a * 15; return Math.tanh(y * d) / Math.tanh(d) }
+    default: return y
+  }
+}
+const PHASE_WARPS = { sync: 1, bendPlus: 1, bendMinus: 1, bendBoth: 1, pwm: 1, asym: 1, mirror: 1, quantize: 1, squeeze: 1, shift: 1, pd: 1, remap: 1 }
+const AMP_WARPS = { am: 1, rm: 1, saturate: 1 }
+
+// unison detune ratio table for voice i of n, mode + detune amount, note
+function unisonRatio(mode, i, n, detune, note) {
+  if (n <= 1) return 1
+  const t = n === 1 ? 0 : (i / (n - 1)) * 2 - 1 // -1..1
+  switch (mode) {
+    case 'harmonic': { // detune toward integer harmonic ratios
+      const h = Math.round(Math.abs(t) * detune * 3)
+      const r = 1 + h
+      return t < 0 ? 1 / r : r
+    }
+    case 'ratio': return 1 + t * detune * 0.5
+    case 'semitone': return Math.pow(2, Math.round(t * detune * 12) / 12)
+    case 'step': return Math.pow(2, (Math.round(t * detune * 24) / 24))
+    default: { // classic: cents spread, denser near center
+      const shaped = Math.sign(t) * Math.pow(Math.abs(t), 1.2)
+      return Math.pow(2, shaped * detune * 100 / 1200)
+    }
+  }
+}
+
+const MAX_UNI = 16
+const MAX_GRAINS = 24 // per osc-voice
+
+class OscState {
+  constructor(sr) {
+    this.sr = sr
+    this.phases = new Float32Array(MAX_UNI)
+    this.samplePos = new Float64Array(MAX_UNI)
+    this.sampleDir = new Float32Array(MAX_UNI).fill(1)
+    this.lastOut = 0
+    this.ended = false
+    // granular
+    this.grains = []
+    for (let i = 0; i < MAX_GRAINS; i++) this.grains.push({ active: false, pos: 0, t: 0, dur: 1, rate: 1, panL: 1, panR: 1, dir: 1 })
+    this.grainTimer = 0
+    this.grainAlt = 0
+    this.scanPos = 0
+    this.scanInit = false
+    // spectral
+    this.specPhases = null
+    this.specSmear = null
+    this.specFrame = -1
+    this.specPos = 0
+    this.olaBuf = null
+    this.olaWrite = 0
+    this.olaReadFrac = 0
+    this.olaFilled = 0
+    // multisample zone chosen at noteOn
+    this.msZone = null
+    this.msBuf = null
+  }
+  initNote(cfg, note, rng) {
+    for (let i = 0; i < MAX_UNI; i++) {
+      const base = cfg.phase
+      this.phases[i] = (base + (cfg.rand > 0 ? rng() * cfg.rand : 0)) % 1
+      this.samplePos[i] = -1
+      this.sampleDir[i] = 1
+    }
+    this.ended = false
+    this.grainTimer = 0
+    this.scanInit = false
+    for (const g of this.grains) g.active = false
+    this.specFrame = -1
+    this.specPhases = null
+    this.olaBuf = null
+    this.olaFilled = 0
+  }
+}
+
+let VOICE_SERIAL = 0
+
+class Voice {
+  constructor(sr) {
+    this.sr = sr
+    this.active = false
+    this.note = 60; this.vel = 1; this.gate = false
+    this.freq = 261.6; this.glideFrom = 261.6; this.glideT = 1
+    this.envs = [new Env(), new Env(), new Env(), new Env()]
+    this.lfoPhase = new Float32Array(10)
+    this.lfoRiseT = new Float32Array(10)
+    this.lfoOut = new Float32Array(10)
+    this.lfoOutY = new Float32Array(10)
+    this.lfoSm = new Float32Array(10)
+    this.lfoSmY = new Float32Array(10)
+    this.rand = 0
+    this.serial = 0
+    this.oscs = [new OscState(sr), new OscState(sr), new OscState(sr)]
+    this.subPhase = 0
+    this.noisePos = 0
+    // filters: [f1L, f1R, f2L, f2R]
+    this.filters = [new VoiceFilter(sr), new VoiceFilter(sr), new VoiceFilter(sr), new VoiceFilter(sr)]
+    this.mod = new Float32Array(64) // per-voice mod accum, indexed by destIdx
+    this.uniPan = new Float32Array(MAX_UNI)
+    this.fromSeq = false
+  }
+  start(note, vel, patch, engine, legato, fromSeq) {
+    this.note = note; this.vel = vel; this.gate = true; this.fromSeq = !!fromSeq
+    this.serial = ++VOICE_SERIAL
+    const wasActive = this.active
+    this.active = true
+    this.rand = grng()
+    const targetFreq = midiFreq(note + patch.global.masterTune / 100)
+    const glide = engine.pv['global.glide'] != null ? engine.pv['global.glide'] : patch.global.glide
+    if (glide > 0.001 && engine.lastFreq && (!patch.global.glideLegatoOnly || legato)) {
+      this.glideFrom = engine.lastFreq; this.glideT = 0
+      this.glideRate = 1 / (glide * this.sr)
+    } else { this.glideFrom = targetFreq; this.glideT = 1 }
+    this.freq = targetFreq
+    engine.lastFreq = targetFreq
+    const rng = makeRng((note * 7919 + this.serial * 104729) >>> 0)
+    for (let i = 0; i < 3; i++) this.oscs[i].initNote(patch.oscs[i], note, rng)
+    // multisample zone pick
+    for (let i = 0; i < 3; i++) {
+      const o = patch.oscs[i]
+      if (o.engine === 'multisample' && o.ms.zones.length) {
+        const v127 = Math.round(vel * 127)
+        let z = o.ms.zones.find(z => note >= z.loKey && note <= z.hiKey && v127 >= z.loVel && v127 <= z.hiVel)
+        if (!z) { // nearest by key
+          let best = null, bd = 1e9
+          for (const zz of o.ms.zones) { const d = Math.abs(zz.rootKey - note); if (d < bd) { bd = d; best = zz } }
+          z = best
+        }
+        this.oscs[i].msZone = z
+        this.oscs[i].msBuf = z ? engine.samples.get(z.sampleId) : null
+      }
+    }
+    this.subPhase = patch.sub.enabled ? 0 : 0
+    this.noisePos = -1
+    const legatoEnv = legato && wasActive && patch.global.mode === 'legato'
+    for (let e = 0; e < 4; e++) {
+      if (!(legatoEnv && patch.envs[e].legato)) this.envs[e].trigger(legatoEnv)
+    }
+    // per-voice LFO retrig
+    for (let l = 0; l < 10; l++) {
+      const cfg = patch.lfos[l]
+      if (cfg.trigMode === 'trig' || cfg.trigMode === 'env' || cfg.trigMode === 'loopHold') {
+        if (!legatoEnv) { this.lfoPhase[l] = 0; this.lfoRiseT[l] = 0 }
+      }
+    }
+    if (!wasActive) { for (const f of this.filters) f.reset() }
+    // unison pan spread
+    return this
+  }
+  release() { this.gate = false; for (const e of this.envs) e.release() }
+  kill() { this.active = false; for (const e of this.envs) e.kill() }
+}
+
+// ---------- source renderers ----------
+const BLOCK = 128
+
+function tableSample(tbl, framePos, phase) {
+  const frames = tbl.frames
+  const fp = clamp(framePos, 0, frames - 1)
+  const f0 = fp | 0
+  const ff = fp - f0
+  const p = phase * WT_LEN
+  const i0 = p | 0
+  const pf = p - i0
+  const ia = i0 & (WT_LEN - 1), ib = (i0 + 1) & (WT_LEN - 1)
+  const base0 = f0 * WT_LEN
+  const s0 = tbl.data[base0 + ia] + (tbl.data[base0 + ib] - tbl.data[base0 + ia]) * pf
+  if (ff < 1e-4 || f0 + 1 >= frames) return s0
+  const base1 = (f0 + 1) * WT_LEN
+  const s1 = tbl.data[base1 + ia] + (tbl.data[base1 + ib] - tbl.data[base1 + ia]) * pf
+  return s0 + (s1 - s0) * ff
+}
+
+function grainWindow(t, shape, skew, amount) {
+  // t 0..1; skew shifts peak; shape morphs triangle->hann->gauss
+  let tt = t
+  if (skew !== 0) {
+    const peak = clamp(0.5 + skew * 0.45, 0.05, 0.95)
+    tt = t < peak ? t / peak * 0.5 : 0.5 + (t - peak) / (1 - peak) * 0.5
+  }
+  let w
+  if (shape < 0.5) {
+    const tri = 1 - Math.abs(tt * 2 - 1)
+    const hann = 0.5 - 0.5 * Math.cos(TWO_PI * tt)
+    w = lerp(tri, hann, shape * 2)
+  } else {
+    const hann = 0.5 - 0.5 * Math.cos(TWO_PI * tt)
+    const g = Math.exp(-Math.pow((tt - 0.5) * 5, 2))
+    w = lerp(hann, g, shape * 2 - 1)
+  }
+  return lerp(1, w, amount)
+}
+
+function sampleAt(smp, pos, chan) {
+  const i = pos | 0
+  if (i < 0 || i >= smp.len - 1) return 0
+  const f = pos - i
+  const d = chan === 0 ? smp.l : (smp.r || smp.l)
+  return d[i] + (d[i + 1] - d[i]) * f
+}
+
+class ApolloEngineCore {
+  // (defined in part 5; source renderers live on prototype below)
+}
+
+// Render one oscillator for one voice into monoBuf (pre-pan) and stereo tmpL/tmpR.
+// Returns false if the source produced nothing (ended one-shot).
+function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
+  const cfg = patch.oscs[oi]
+  const os = voice.oscs[oi]
+  const sr = engine.sr
+  const vp = (vv, pp, bb) => engine.vp(vv, pp, bb)
+  const level = clamp(vp(voice, `osc${oi}.level`, cfg.level), 0, 1)
+  if (!cfg.enabled || level <= 0) return false
+  const pan = clamp(vp(voice, `osc${oi}.pan`, cfg.pan), -1, 1)
+  const semi = vp(voice, `osc${oi}.semi`, cfg.semi)
+  const fine = vp(voice, `osc${oi}.fine`, cfg.fine)
+  const pitchRatioBase = Math.pow(2, (cfg.octave * 12 + semi + fine / 100 + engine.pitchBendSemis) / 12)
+  const panL = Math.cos((pan + 1) * Math.PI / 4) * level
+  const panR = Math.sin((pan + 1) * Math.PI / 4) * level
+  const eng = cfg.engine
+
+  if (eng === 'wavetable') {
+    const tbl = engine.tables.get(cfg.wt.tableId) || engine.defaultTable
+    if (!tbl) return false
+    const uni = clamp(Math.round(cfg.unison), 1, MAX_UNI)
+    const detune = clamp(vp(voice, `osc${oi}.detune`, cfg.detune), 0, 1)
+    const blend = clamp(vp(voice, `osc${oi}.blend`, cfg.blend), 0, 1)
+    const width = clamp(vp(voice, `osc${oi}.width`, cfg.width), 0, 1)
+    const wtPos = clamp(vp(voice, `osc${oi}.wt.pos`, cfg.wt.pos), 0, 1)
+    const framePos = cfg.wt.interp === 'off' ? Math.round(wtPos * (tbl.frames - 1)) : wtPos * (tbl.frames - 1)
+    const w1m = cfg.wt.warp1.mode, w2m = cfg.wt.warp2.mode
+    const w1a = clamp(vp(voice, `osc${oi}.wt.warp1.amount`, cfg.wt.warp1.amount), 0, 1)
+    const w2a = clamp(vp(voice, `osc${oi}.wt.warp2.amount`, cfg.wt.warp2.amount), 0, 1)
+    const fmSrc = cfg.wt.fmSource
+    const modBuf = engine.oscMono[fmSrc]
+    const remap = engine.remapLuts.get(`osc${oi}`)
+    const freq = voice.curFreq * pitchRatioBase * (cfg.keytrackPitch ? 1 : midiFreq(60) / voice.curFreq)
+    const norm = 1 / Math.sqrt(uni)
+    let ended = true
+    for (let u = 0; u < uni; u++) {
+      const ratio = unisonRatio(cfg.unisonMode, u, uni, detune, voice.note)
+      const inc = freq * ratio / sr
+      if (inc >= 0.5) continue
+      ended = false
+      const centerW = uni === 1 ? 1 : (u === (uni - 1) >> 1 ? 1 : blend)
+      const sidePan = uni === 1 ? 0 : ((u % 2 ? 1 : -1) * ((u >> 1) + 1) / Math.max(1, uni >> 1)) * width
+      const gl = centerW * norm * Math.cos((sidePan + 1) * Math.PI / 4) * 1.414
+      const gr = centerW * norm * Math.sin((sidePan + 1) * Math.PI / 4) * 1.414
+      let ph = os.phases[u]
+      for (let s = 0; s < n; s++) {
+        let p = ph
+        // FM warp adds phase from mod osc
+        if (w1m === 'fm') p += modBuf[s] * w1a * 0.5
+        if (w2m === 'fm') p += modBuf[s] * w2a * 0.5
+        p -= Math.floor(p)
+        if (PHASE_WARPS[w1m] && w1m !== 'fm') p = w1m === 'remap' && remap ? lutEval(remap, p) : warpPhase(w1m, p, w1a)
+        if (PHASE_WARPS[w2m] && w2m !== 'fm') p = w2m === 'remap' && remap ? lutEval(remap, p) : warpPhase(w2m, p, w2a)
+        let y = tableSample(tbl, framePos, p)
+        if (AMP_WARPS[w1m]) y = warpAmp(w1m, y, w1a, modBuf[s])
+        if (AMP_WARPS[w2m]) y = warpAmp(w2m, y, w2a, modBuf[s])
+        outL[s] += y * gl * panL
+        outR[s] += y * gr * panR
+        monoOut[s] += y * centerW * norm
+        ph += inc
+        if (ph >= 1) ph -= 1
+      }
+      os.phases[u] = ph
+    }
+    return !ended
+  }
+
+  if (eng === 'sample' || eng === 'multisample') {
+    let smp, zone = null
+    if (eng === 'multisample') { zone = os.msZone; smp = os.msBuf; if (!zone || !smp) return false }
+    else { smp = engine.samples.get(cfg.smp.sampleId); if (!smp) return false }
+    const sc = cfg.smp
+    const srRatio = smp.sr / sr
+    let pitchRatio
+    if (eng === 'multisample') {
+      pitchRatio = Math.pow(2, (voice.note - zone.rootKey + zone.tune / 100) / 12) * pitchRatioBase
+    } else if (sc.keytrack) {
+      pitchRatio = (voice.curFreq / midiFreq(sc.rootKey)) * pitchRatioBase
+    } else pitchRatio = pitchRatioBase
+    const rate = eng === 'sample' ? clamp(vp(voice, `osc${oi}.smp.rate`, sc.rate), -2, 2) : 1
+    const startN = eng === 'sample' ? clamp(vp(voice, `osc${oi}.smp.start`, sc.start), 0, 1) : 0
+    const endN = eng === 'sample' ? sc.end : 1
+    const loopMode = eng === 'sample' ? sc.loopMode : zone.loopMode
+    let loopS, loopE
+    if (eng === 'sample') {
+      loopS = clamp(vp(voice, `osc${oi}.smp.loopStart`, sc.loopStart), 0, 1) * smp.len
+      loopE = clamp(vp(voice, `osc${oi}.smp.loopEnd`, sc.loopEnd), 0, 1) * smp.len
+    } else { loopS = zone.loopStart * smp.len; loopE = zone.loopEnd * smp.len }
+    if (loopE <= loopS + 4) loopE = loopS + 4
+    const xfade = eng === 'sample' ? sc.xfade * (loopE - loopS) : 64
+    const gain = (eng === 'multisample' ? dbToLin(zone.gain) : 1)
+    // slice targeting
+    let sliceStart = startN * smp.len, sliceEnd = endN * smp.len
+    if (eng === 'sample' && sc.sliceMap === 'keys' && sc.slices.length) {
+      const idx = clamp(voice.note - 36, 0, sc.slices.length - 1)
+      const sorted = sc.slices
+      sliceStart = sorted[idx].pos * smp.len
+      sliceEnd = idx + 1 < sorted.length ? sorted[idx + 1].pos * smp.len : smp.len
+      pitchRatio = pitchRatioBase // slices play at native pitch
+    }
+    const step0 = pitchRatio * srRatio * rate
+    const stereo = smp.r ? 1 : 0
+    let ended = true
+    if (os.samplePos[0] < 0) { os.samplePos[0] = rate >= 0 ? sliceStart : sliceEnd - 2; os.sampleDir[0] = 1 }
+    let pos = os.samplePos[0]
+    let dir = os.sampleDir[0]
+    const releasing = !voice.gate
+    for (let s = 0; s < n; s++) {
+      if (pos >= sliceStart - 1 && pos <= sliceEnd + 1) {
+        let l = sampleAt(smp, pos, 0)
+        let r = stereo ? sampleAt(smp, pos, 1) : l
+        // loop crossfade: blend tail into loop start over xfade samples
+        if (loopMode !== 'off' && xfade > 1 && pos > loopE - xfade && pos <= loopE && step0 * dir > 0) {
+          const xf = (pos - (loopE - xfade)) / xfade
+          const xpos = loopS - xfade + (pos - (loopE - xfade))
+          if (xpos >= 0) {
+            l = l * (1 - xf) + sampleAt(smp, xpos, 0) * xf
+            r = stereo ? r * (1 - xf) + sampleAt(smp, xpos, 1) * xf : l
+          }
+        }
+        outL[s] += l * panL * gain
+        outR[s] += r * panR * gain
+        monoOut[s] += (l + r) * 0.5 * gain
+        ended = false
+      }
+      pos += step0 * dir
+      if (loopMode === 'loop' && !(loopMode === 'tails' && releasing)) {
+        if (step0 * dir > 0 && pos >= loopE) pos = loopS + (pos - loopE)
+        else if (step0 * dir < 0 && pos <= loopS) pos = loopE - (loopS - pos)
+      } else if (loopMode === 'pingpong') {
+        if (pos >= loopE) { pos = loopE - (pos - loopE); dir = -dir }
+        else if (pos <= loopS && s > 0) { pos = loopS + (loopS - pos); dir = -dir }
+      } else if (loopMode === 'tails') {
+        if (!releasing) {
+          if (step0 * dir > 0 && pos >= loopE) pos = loopS + (pos - loopE)
+          else if (step0 * dir < 0 && pos <= loopS) pos = loopE - (loopS - pos)
+        }
+      }
+    }
+    os.samplePos[0] = pos
+    os.sampleDir[0] = dir
+    if (pos > sliceEnd + 2 && loopMode === 'off') { os.ended = true; return false }
+    return !ended || loopMode !== 'off'
+  }
+
+  if (eng === 'granular') {
+    const smp = engine.samples.get(cfg.gran.sampleId)
+    if (!smp) return false
+    const gc = cfg.gran
+    const density = clamp(vp(voice, `osc${oi}.gran.density`, gc.density), 0.5, 200)
+    const lengthMs = clamp(vp(voice, `osc${oi}.gran.length`, gc.length), 1, 500)
+    const scan = clamp(vp(voice, `osc${oi}.gran.scan`, gc.scan), -2, 2)
+    const posKnob = clamp(vp(voice, `osc${oi}.gran.pos`, gc.pos), 0, 1)
+    const spray = clamp(vp(voice, `osc${oi}.gran.spray`, gc.spray), 0, 1)
+    const pitchRand = vp(voice, `osc${oi}.gran.pitchRand`, gc.pitchRand)
+    const panRand = clamp(vp(voice, `osc${oi}.gran.panRand`, gc.panRand), 0, 1)
+    const winShape = clamp(vp(voice, `osc${oi}.gran.windowShape`, gc.windowShape), 0, 1)
+    const srRatio = smp.sr / sr
+    const pitchRatio = (gc.keytrack ? voice.curFreq / midiFreq(gc.rootKey) : 1) * pitchRatioBase
+    if (!os.scanInit) { os.scanPos = posKnob * smp.len; os.scanInit = true }
+    if (gc.manual) os.scanPos = posKnob * smp.len
+    const uni = clamp(Math.round(cfg.unison), 1, MAX_UNI)
+    const detune = clamp(vp(voice, `osc${oi}.detune`, cfg.detune), 0, 1)
+    const spawnPeriod = sr / density
+    const stereo = smp.r ? 1 : 0
+    for (let s = 0; s < n; s++) {
+      // advance scan
+      if (!gc.manual) {
+        os.scanPos += scan * srRatio
+        if (os.scanPos >= smp.len) os.scanPos = gc.loopGrains ? 0 : smp.len - 1
+        if (os.scanPos < 0) os.scanPos = gc.loopGrains ? smp.len - 1 : 0
+      }
+      os.grainTimer -= 1
+      if (os.grainTimer <= 0) {
+        os.grainTimer += spawnPeriod
+        // find free grain
+        let g = null
+        for (const gg of os.grains) if (!gg.active) { g = gg; break }
+        if (g) {
+          g.active = true
+          g.t = 0
+          g.dur = Math.max(8, lengthMs * 0.001 * sr)
+          const sprayOff = (grng() * 2 - 1) * spray * smp.len * 0.25
+          g.pos = clamp(os.scanPos + sprayOff, 0, smp.len - 2)
+          const uRatio = unisonRatio(cfg.unisonMode, os.grainAlt % uni, uni, detune, voice.note)
+          os.grainAlt++
+          const pr = pitchRand > 0 ? Math.pow(2, (grng() * 2 - 1) * pitchRand / 12) : 1
+          g.rate = pitchRatio * uRatio * pr * srRatio
+          g.dir = gc.direction === 'rev' ? -1 : gc.direction === 'alt' ? (os.grainAlt % 2 ? 1 : -1) : 1
+          const gp = (grng() * 2 - 1) * panRand
+          g.panL = Math.cos((gp + 1) * Math.PI / 4) * 1.414
+          g.panR = Math.sin((gp + 1) * Math.PI / 4) * 1.414
+        }
+      }
+      let accL = 0, accR = 0
+      for (const g of os.grains) {
+        if (!g.active) continue
+        const tNorm = g.t / g.dur
+        if (tNorm >= 1) { g.active = false; continue }
+        const w = grainWindow(tNorm, winShape, gc.windowSkew, gc.windowAmount)
+        const sm = sampleAt(smp, g.pos, 0)
+        const smR = stereo ? sampleAt(smp, g.pos, 1) : sm
+        accL += sm * w * g.panL
+        accR += smR * w * g.panR
+        g.pos += g.rate * g.dir
+        if (gc.loopGrains) {
+          if (g.pos >= smp.len) g.pos = 0
+          if (g.pos < 0) g.pos = smp.len - 1
+        } else if (g.pos < 0 || g.pos >= smp.len) g.active = false
+        g.t++
+      }
+      const sc = 0.5
+      outL[s] += accL * sc * panL
+      outR[s] += accR * sc * panR
+      monoOut[s] += (accL + accR) * 0.25
+    }
+    engine.grainViz[oi] = os.scanPos / smp.len
+    return true
+  }
+
+  if (eng === 'spectral') {
+    const spec = engine.spectral.get(cfg.spec.sampleId)
+    if (!spec) return false
+    return renderSpectral(engine, voice, oi, cfg, spec, n, outL, outR, monoOut, panL, panR, pitchRatioBase)
+  }
+  return false
+}
+
+// ---------- spectral resynthesis (phase vocoder + pitch resample) ----------
+const SPEC_FFT = 2048
+const SPEC_HOP = 512
+const specRe = new Float32Array(SPEC_FFT)
+const specIm = new Float32Array(SPEC_FFT)
+const specMagWork = new Float32Array(SPEC_FFT / 2 + 1)
+const specEnvWork = new Float32Array(SPEC_FFT / 2 + 1)
+const specEnvShift = new Float32Array(SPEC_FFT / 2 + 1)
+const specHann = new Float32Array(SPEC_FFT)
+for (let i = 0; i < SPEC_FFT; i++) specHann[i] = 0.5 - 0.5 * Math.cos(TWO_PI * i / SPEC_FFT)
+
+function renderSpectral(engine, voice, oi, cfg, spec, n, outL, outR, monoOut, panL, panR, pitchRatioBase) {
+  const os = voice.oscs[oi]
+  const sr = engine.sr
+  const sc = cfg.spec
+  const vp = (vv, pp, bb) => engine.vp(vv, pp, bb)
+  const bins = spec.bins
+  const frames = spec.frames
+  if (!os.specPhases) {
+    os.specPhases = new Float32Array(bins)
+    os.specSmear = new Float32Array(bins)
+    os.olaBuf = new Float32Array(SPEC_FFT * 4)
+    os.olaWrite = 0
+    os.olaRead = 0
+    os.olaFilled = 0
+    os.specPos = clamp(vp(voice, `osc${oi}.spec.pos`, sc.pos), 0, 1) * (frames - 1)
+    for (let b = 0; b < bins; b++) os.specPhases[b] = grng() * TWO_PI
+  }
+  const speed = sc.freeze ? 0 : clamp(vp(voice, `osc${oi}.spec.speed`, sc.speed), -2, 2)
+  const posMod = engine.destTouched(voice, `osc${oi}.spec.pos`)
+  const smear = clamp(vp(voice, `osc${oi}.spec.smear`, sc.smear), 0, 1)
+  const shift = clamp(vp(voice, `osc${oi}.spec.shift`, sc.shift), -1, 1)
+  const pitchShift = vp(voice, `osc${oi}.spec.pitchShift`, sc.pitchShift)
+  const formant = vp(voice, `osc${oi}.spec.formant`, sc.formant)
+  const spread = clamp(vp(voice, `osc${oi}.spec.spread`, sc.spread), 0, 1)
+  const gate = clamp(vp(voice, `osc${oi}.spec.gate`, sc.gate), 0, 1)
+  const curve = sc.filterCurve
+  const keyRatio = sc.keytrack ? voice.curFreq / midiFreq(sc.rootKey) : 1
+  const readStep = keyRatio * pitchRatioBase * Math.pow(2, pitchShift / 12) * (spec.sr / sr)
+  const olaLen = os.olaBuf.length
+
+  for (let s = 0; s < n; s++) {
+    // ensure enough synthesized samples ahead of read cursor
+    while (os.olaFilled < SPEC_FFT + SPEC_HOP) {
+      // pull one hop of resynthesis at analysis frame os.specPos
+      if (posMod) os.specPos = clamp(vp(voice, `osc${oi}.spec.pos`, sc.pos), 0, 1) * (frames - 1)
+      const fp = clamp(os.specPos, 0, frames - 1)
+      const f0 = fp | 0, ff = fp - f0
+      const m0 = f0 * bins, m1 = Math.min(f0 + 1, frames - 1) * bins
+      for (let b = 0; b < bins; b++) {
+        specMagWork[b] = spec.mags[m0 + b] * (1 - ff) + spec.mags[m1 + b] * ff
+      }
+      // smear (temporal low-pass on magnitudes)
+      if (smear > 0.001) {
+        const c = 1 - Math.pow(smear, 0.35) * 0.98
+        for (let b = 0; b < bins; b++) { os.specSmear[b] += c * (specMagWork[b] - os.specSmear[b]); specMagWork[b] = os.specSmear[b] }
+      }
+      // formant shift: extract envelope (smoothed log-mag), divide out, shift, re-apply
+      if (Math.abs(formant) > 0.05) {
+        let acc = 0
+        for (let b = 0; b < bins; b++) { acc += (specMagWork[b] - acc) * 0.08; specEnvWork[b] = acc }
+        for (let b = bins - 1; b >= 0; b--) { acc += (specEnvWork[b] - acc) * 0.5; specEnvWork[b] = Math.max(specEnvWork[b], acc * 0.7) }
+        const fr = Math.pow(2, -formant / 12)
+        for (let b = 0; b < bins; b++) {
+          const src = clamp(Math.round(b * fr), 0, bins - 1)
+          specEnvShift[b] = specEnvWork[src]
+        }
+        for (let b = 0; b < bins; b++) {
+          const e = specEnvWork[b] > 1e-9 ? specMagWork[b] / specEnvWork[b] : 0
+          specMagWork[b] = e * specEnvShift[b]
+        }
+      }
+      // spread: stretch harmonics upward
+      if (spread > 0.001) {
+        for (let b = bins - 1; b >= 1; b--) {
+          const src = b / (1 + spread * (b / bins))
+          const si = src | 0
+          if (si < bins - 1) specMagWork[b] = specMagWork[si] + (specMagWork[si + 1] - specMagWork[si]) * (src - si)
+        }
+      }
+      // linear bin shift
+      if (Math.abs(shift) > 0.002) {
+        const off = Math.round(shift * bins * 0.25)
+        if (off > 0) { for (let b = bins - 1; b >= off; b--) specMagWork[b] = specMagWork[b - off]; for (let b = 0; b < off; b++) specMagWork[b] = 0 }
+        else { for (let b = 0; b < bins + off; b++) specMagWork[b] = specMagWork[b - off]; for (let b = bins + off; b < bins; b++) specMagWork[b] = 0 }
+      }
+      // gate
+      if (gate > 0.001) {
+        let mx = 0
+        for (let b = 0; b < bins; b++) if (specMagWork[b] > mx) mx = specMagWork[b]
+        const th = mx * gate * gate
+        for (let b = 0; b < bins; b++) if (specMagWork[b] < th) specMagWork[b] = 0
+      }
+      // drawable spectral filter curve (64 points over log bins)
+      if (curve && curve.length === 64) {
+        for (let b = 1; b < bins; b++) {
+          const x = Math.log2(1 + b) / Math.log2(bins) * 63
+          const xi = x | 0
+          const g = curve[xi] + (curve[Math.min(63, xi + 1)] - curve[xi]) * (x - xi)
+          specMagWork[b] *= g
+        }
+      }
+      // phase advance; onset -> reset to analysis phases for transient punch
+      const isOnset = spec.onsets && spec.onsets[f0] && os.specFrame !== f0
+      const usePhases = isOnset && spec.phases && sc.transients > 0.01
+      for (let b = 0; b < bins; b++) {
+        if (usePhases) {
+          const ap = spec.phases[m0 + b]
+          os.specPhases[b] += (ap - os.specPhases[b]) * sc.transients
+        } else {
+          os.specPhases[b] += TWO_PI * b * SPEC_HOP / SPEC_FFT
+        }
+        if (os.specPhases[b] > 1e4) os.specPhases[b] %= TWO_PI
+      }
+      os.specFrame = f0
+      // iFFT
+      specRe.fill(0); specIm.fill(0)
+      for (let b = 0; b < bins; b++) {
+        const m = specMagWork[b]
+        if (m < 1e-9) continue
+        const phc = os.specPhases[b]
+        const re = m * Math.cos(phc), im = m * Math.sin(phc)
+        specRe[b] = re; specIm[b] = im
+        if (b > 0 && b < bins - 1) { specRe[SPEC_FFT - b] = re; specIm[SPEC_FFT - b] = -im }
+      }
+      fftInPlace(specRe, specIm, true)
+      // overlap-add hop into ring
+      for (let i = 0; i < SPEC_FFT; i++) {
+        const idx = (os.olaWrite + i) % olaLen
+        os.olaBuf[idx] += specRe[i] * specHann[i] * (2 / 3)
+      }
+      os.olaWrite = (os.olaWrite + SPEC_HOP) % olaLen
+      os.olaFilled += SPEC_HOP
+      // advance analysis playhead: speed 1 = natural rate
+      os.specPos += speed * (SPEC_HOP / spec.hop) * (spec.hop / SPEC_HOP)
+      if (os.specPos >= frames - 1) os.specPos = speed > 0 ? 0 : frames - 1
+      if (os.specPos < 0) os.specPos = frames - 1
+    }
+    // read with pitch resample
+    const ri = os.olaRead | 0
+    const rf = os.olaRead - ri
+    const a = os.olaBuf[ri % olaLen]
+    const b2 = os.olaBuf[(ri + 1) % olaLen]
+    const y = a + (b2 - a) * rf
+    outL[s] += y * panL
+    outR[s] += y * panR
+    monoOut[s] += y
+    const prevRead = os.olaRead
+    os.olaRead += readStep
+    const consumed = (os.olaRead | 0) - (prevRead | 0)
+    if (consumed > 0) {
+      // zero consumed cells so future OLA writes start clean
+      for (let c = 0; c < consumed; c++) os.olaBuf[((prevRead | 0) + c) % olaLen] = 0
+      os.olaFilled -= consumed
+    }
+    if (os.olaRead >= olaLen) os.olaRead -= olaLen
+  }
+  engine.specViz[oi] = os.specPos / Math.max(1, frames - 1)
+  return true
+}
+
+// ---------- FX ----------
+class Biquad {
+  constructor() { this.x1 = 0; this.x2 = 0; this.y1 = 0; this.y2 = 0; this.b0 = 1; this.b1 = 0; this.b2 = 0; this.a1 = 0; this.a2 = 0 }
+  set(b0, b1, b2, a0, a1, a2) { this.b0 = b0 / a0; this.b1 = b1 / a0; this.b2 = b2 / a0; this.a1 = a1 / a0; this.a2 = a2 / a0 }
+  peak(freq, q, gainDb, sr) {
+    const A = Math.pow(10, gainDb / 40), w = TWO_PI * clamp(freq, 10, sr * 0.49) / sr
+    const al = Math.sin(w) / (2 * q), c = Math.cos(w)
+    this.set(1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A)
+  }
+  shelf(freq, gainDb, high, sr) {
+    const A = Math.pow(10, gainDb / 40), w = TWO_PI * clamp(freq, 10, sr * 0.49) / sr
+    const c = Math.cos(w), s = Math.sin(w)
+    const beta = Math.sqrt(A) / 0.9
+    if (!high) this.set(A * ((A + 1) - (A - 1) * c + beta * s), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - beta * s), (A + 1) + (A - 1) * c + beta * s, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - beta * s)
+    else this.set(A * ((A + 1) + (A - 1) * c + beta * s), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - beta * s), (A + 1) - (A - 1) * c + beta * s, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - beta * s)
+  }
+  lp(freq, q, sr) {
+    const w = TWO_PI * clamp(freq, 10, sr * 0.49) / sr, al = Math.sin(w) / (2 * q), c = Math.cos(w)
+    this.set((1 - c) / 2, 1 - c, (1 - c) / 2, 1 + al, -2 * c, 1 - al)
+  }
+  hp(freq, q, sr) {
+    const w = TWO_PI * clamp(freq, 10, sr * 0.49) / sr, al = Math.sin(w) / (2 * q), c = Math.cos(w)
+    this.set((1 + c) / 2, -(1 + c), (1 + c) / 2, 1 + al, -2 * c, 1 - al)
+  }
+  process(x) {
+    const y = this.b0 * x + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2
+    this.x2 = this.x1; this.x1 = x; this.y2 = this.y1; this.y1 = y
+    return y
+  }
+}
+
+const DIST_MODES = ['tube', 'soft', 'hard', 'diode', 'fold', 'sine', 'zeroSquare', 'asym', 'rectify', 'bitcrush', 'downsample', 'overdrive']
+function distSample(mode, x, d) {
+  const drive = 1 + d * 30
+  switch (mode) {
+    case 0: return Math.tanh(x * drive) // tube
+    case 1: { const y = x * drive; return y / (1 + Math.abs(y)) } // soft
+    case 2: return clamp(x * drive, -0.8, 0.8) * 1.25 // hard
+    case 3: { const y = x * drive; return (y > 0 ? 1 - Math.exp(-y) : -1 + Math.exp(y)) * 0.9 } // diode
+    case 4: { let y = x * drive; y = y - 4 * Math.floor((y + 2) / 4) ; return Math.abs(y - 1) - 1 ? (Math.abs(((y + 1) % 4 + 4) % 4 - 2) - 1) : y } // fold
+    case 5: return Math.sin(x * drive) // sine
+    case 6: return x === 0 ? 0 : Math.sign(x) * Math.pow(Math.abs(clamp(x * drive, -1, 1)), 0.3) // zero square
+    case 7: { const y = x * drive; return Math.tanh(y + 0.3 * y * y) * 0.9 } // asym
+    case 8: return Math.abs(x * drive) * 2 - 0.5 // rectify-ish
+    case 11: { const y = x * drive * 0.7; return Math.tanh(y * (1 + Math.abs(y))) } // overdrive (2-stage)
+    default: return Math.tanh(x * drive)
+  }
+}
+
+// simple IIR Hilbert-pair approximation for frequency shifting
+class Hilbert {
+  constructor() {
+    this.a = [0.6923878, 0.9360654322959, 0.9882295226860, 0.9987488452737].map(c => ({ c, x1: 0, x2: 0, y1: 0, y2: 0 }))
+    this.b = [0.4021921162426, 0.8561710882420, 0.9722909545651, 0.9952884791278].map(c => ({ c, x1: 0, x2: 0, y1: 0, y2: 0 }))
+    this.delay = 0
+  }
+  static ap(st, x) {
+    const c2 = st.c * st.c
+    const y = c2 * (x + st.y2) - st.x2
+    st.x2 = st.x1; st.x1 = x; st.y2 = st.y1; st.y1 = y
+    return y
+  }
+  process(x) {
+    let re = x, im = x
+    for (const st of this.a) re = Hilbert.ap(st, re)
+    for (const st of this.b) im = Hilbert.ap(st, im)
+    const d = this.delay; this.delay = re
+    return [d, im]
+  }
+}
+
+class FxState {
+  constructor(type, sr, bpm) {
+    this.type = type
+    this.sr = sr
+    const S = sr
+    this.phase = 0
+    this.phase2 = 0
+    switch (type) {
+      case 'chorus': case 'flanger':
+        this.dlL = new DelayLine(S * 0.06); this.dlR = new DelayLine(S * 0.06); break
+      case 'phaser':
+        this.apL = Array.from({ length: 12 }, () => ({ z: 0 }))
+        this.apR = Array.from({ length: 12 }, () => ({ z: 0 }))
+        this.fbL = 0; this.fbR = 0; break
+      case 'delay':
+        this.dlL = new DelayLine(S * 4); this.dlR = new DelayLine(S * 4)
+        this.lpL = new OnePole(); this.lpR = new OnePole(); this.hpL = new OnePole(); this.hpR = new OnePole(); break
+      case 'echobode':
+        this.dlL = new DelayLine(S * 4); this.dlR = new DelayLine(S * 4)
+        this.hilL = new Hilbert(); this.hilR = new Hilbert()
+        this.apsL = [new Allpass(1024), new Allpass(1400), new Allpass(1900)]
+        this.apsR = [new Allpass(1100), new Allpass(1500), new Allpass(2100)]; break
+      case 'compressor':
+        this.envG = 0
+        this.bands = [0, 1, 2].map(() => ({ envG: 0, lpL: new SVF(), lpR: new SVF(), hpL: new SVF(), hpR: new SVF() }))
+        this.xoLo = [new SVF(), new SVF()], this.xoHi = [new SVF(), new SVF()]
+        this.xoLo2 = [new SVF(), new SVF()], this.xoHi2 = [new SVF(), new SVF()]; break
+      case 'reverb': this.initReverb(sr); break
+      case 'convolve': this.conv = null; this.irKey = ''; break
+      case 'eq': this.bq = [new Biquad(), new Biquad(), new Biquad(), new Biquad()]; break
+      case 'filter': this.vfL = new VoiceFilter(sr); this.vfR = new VoiceFilter(sr); break
+      case 'hyper':
+        this.taps = Array.from({ length: 8 }, () => new DelayLine(S * 0.05))
+        this.dimL = new DelayLine(S * 0.1); this.dimR = new DelayLine(S * 0.1); break
+      case 'octaver':
+        this.obuf = new Float32Array(4096); this.opos = 0; this.oread = 0; this.oread2 = 0; break
+      case 'bitcrush': this.hL = 0; this.hR = 0; this.ph = 0; break
+    }
+  }
+  initReverb(sr) {
+    const S = sr / 44100
+    this.preDl = new DelayLine(sr * 0.25)
+    this.inLp = new OnePole()
+    this.inAp = [142, 107, 379, 277].map(d => new Allpass(Math.ceil(d * S) + 8))
+    this.tank = {
+      ap1: new Allpass(Math.ceil(672 * S) + 2400), ap2: new Allpass(Math.ceil(1800 * S) + 8),
+      dl1: new DelayLine(Math.ceil(4453 * S) + 8), dl2: new DelayLine(Math.ceil(3720 * S) + 8),
+      ap3: new Allpass(Math.ceil(908 * S) + 2400), ap4: new Allpass(Math.ceil(2656 * S) + 8),
+      dl3: new DelayLine(Math.ceil(4217 * S) + 8), dl4: new DelayLine(Math.ceil(3163 * S) + 8),
+      lp1: new OnePole(), lp2: new OnePole(), f1: 0, f2: 0,
+    }
+    this.modPhase = 0
+    this.hpL = new OnePole(); this.hpR = new OnePole()
+  }
+}
+
+function processFxUnit(engine, unit, st, L, R, n) {
+  const p = unit.params
+  const sr = engine.sr
+  const mixKey = `fx.${unit.id}.mix`
+  const mix = clamp(engine.gmodVal(mixKey, unit.mix), 0, 1)
+  const P = (key, def) => engine.gmodVal(`fx.${unit.id}.${key}`, p[key] != null ? p[key] : def)
+  switch (unit.type) {
+    case 'distortion': {
+      const mode = Math.round(P('mode', 0))
+      const drive = clamp(P('drive', 0.3), 0, 1)
+      const fpos = Math.round(P('filterPos', 0))
+      const ftype = Math.round(P('filterType', 0))
+      const cutoff = cutoffHz(clamp(P('cutoff', 0.7), 0, 1))
+      const res = clamp(P('res', 0.2), 0, 0.95)
+      if (!st.fbqL) { st.fbqL = new SVF(); st.fbqR = new SVF() }
+      const g = svfG(cutoff, sr), k = 2 - 1.9 * res
+      for (let i = 0; i < n; i++) {
+        let l = L[i], r = R[i]
+        if (fpos === 1) {
+          st.fbqL.process(l, g, k); st.fbqR.process(r, g, k)
+          l = ftype === 0 ? st.fbqL.lp : ftype === 1 ? st.fbqL.bp : st.fbqL.hp
+          r = ftype === 0 ? st.fbqR.lp : ftype === 1 ? st.fbqR.bp : st.fbqR.hp
+        }
+        if (mode === 9) { // bitcrush in dist menu
+          const q = Math.pow(2, 2 + (1 - drive) * 12)
+          l = Math.round(l * q) / q; r = Math.round(r * q) / q
+        } else if (mode === 10) {
+          st.ph = (st.ph || 0) + 1
+          const hold = 1 + Math.round(drive * 40)
+          if (st.ph % hold === 0) { st.hL = l; st.hR = r }
+          l = st.hL; r = st.hR
+        } else { l = distSample(mode, l, drive); r = distSample(mode, r, drive) }
+        if (fpos === 2) {
+          st.fbqL.process(l, g, k); st.fbqR.process(r, g, k)
+          l = ftype === 0 ? st.fbqL.lp : ftype === 1 ? st.fbqL.bp : st.fbqL.hp
+          r = ftype === 0 ? st.fbqR.lp : ftype === 1 ? st.fbqR.bp : st.fbqR.hp
+        }
+        L[i] = lerp(L[i], l, mix); R[i] = lerp(R[i], r, mix)
+      }
+      return
+    }
+    case 'chorus': {
+      const rate = P('rate', 0.4), depth = clamp(P('depth', 0.4), 0, 1)
+      const baseMs = P('delay', 8), fb = clamp(P('feedback', 0.2), 0, 0.95), lpf = clamp(P('lpf', 0.8), 0, 1)
+      const voices = Math.round(clamp(P('voices', 2), 2, 4))
+      if (!st.lpfL) { st.lpfL = new OnePole(); st.lpfR = new OnePole() }
+      const lpc = onePoleCoeff(cutoffHz(lpf), sr)
+      for (let i = 0; i < n; i++) {
+        st.phase += rate / sr
+        if (st.phase >= 1) st.phase -= 1
+        let wl = 0, wr = 0
+        for (let v = 0; v < voices; v++) {
+          const ph = st.phase + v / voices
+          const lfo = Math.sin(TWO_PI * ph)
+          const lfo2 = Math.sin(TWO_PI * (ph + 0.25))
+          const dl = (baseMs + lfo * depth * baseMs * 0.6) * sr / 1000
+          const dr = (baseMs + lfo2 * depth * baseMs * 0.6) * sr / 1000
+          wl += st.dlL.read(dl); wr += st.dlR.read(dr)
+        }
+        wl /= voices; wr /= voices
+        st.dlL.write(L[i] + st.lpfL.lp(wl, lpc) * fb)
+        st.dlR.write(R[i] + st.lpfR.lp(wr, lpc) * fb)
+        L[i] = lerp(L[i], (L[i] + wl) * 0.7, mix)
+        R[i] = lerp(R[i], (R[i] + wr) * 0.7, mix)
+      }
+      return
+    }
+    case 'flanger': {
+      const rate = P('rate', 0.25), depth = clamp(P('depth', 0.6), 0, 1)
+      const fb = clamp(P('feedback', 0.6), 0, 0.97), phOff = P('phase', 90) / 360
+      const center = clamp(P('center', 0.3), 0, 1)
+      for (let i = 0; i < n; i++) {
+        st.phase += rate / sr
+        if (st.phase >= 1) st.phase -= 1
+        const baseMs = 0.5 + center * 9
+        const dl = (baseMs + Math.sin(TWO_PI * st.phase) * depth * baseMs * 0.9) * sr / 1000
+        const dr = (baseMs + Math.sin(TWO_PI * (st.phase + phOff)) * depth * baseMs * 0.9) * sr / 1000
+        const wl = st.dlL.read(Math.max(2, dl))
+        const wr = st.dlR.read(Math.max(2, dr))
+        st.dlL.write(L[i] + wl * fb)
+        st.dlR.write(R[i] + wr * fb)
+        L[i] = lerp(L[i], (L[i] + wl) * 0.7, mix)
+        R[i] = lerp(R[i], (R[i] + wr) * 0.7, mix)
+      }
+      return
+    }
+    case 'phaser': {
+      const rate = P('rate', 0.3), depth = clamp(P('depth', 0.6), 0, 1)
+      const freqN = clamp(P('freq', 0.5), 0, 1), fb = clamp(P('feedback', 0.5), 0, 0.95)
+      const stages = Math.round(clamp(P('stages', 6), 2, 12))
+      const phOff = P('phase', 45) / 360
+      for (let i = 0; i < n; i++) {
+        st.phase += rate / sr
+        if (st.phase >= 1) st.phase -= 1
+        const fL = cutoffHz(clamp(freqN + Math.sin(TWO_PI * st.phase) * depth * 0.35, 0, 1))
+        const fR = cutoffHz(clamp(freqN + Math.sin(TWO_PI * (st.phase + phOff)) * depth * 0.35, 0, 1))
+        const cL = clamp((1 - Math.tan(Math.PI * Math.min(fL, sr * 0.45) / sr)) / (1 + Math.tan(Math.PI * Math.min(fL, sr * 0.45) / sr)), -0.98, 0.98)
+        const cR = clamp((1 - Math.tan(Math.PI * Math.min(fR, sr * 0.45) / sr)) / (1 + Math.tan(Math.PI * Math.min(fR, sr * 0.45) / sr)), -0.98, 0.98)
+        let yl = L[i] + st.fbL * fb, yr = R[i] + st.fbR * fb
+        for (let s2 = 0; s2 < stages; s2++) {
+          const a = st.apL[s2]; const yo = -cL * yl + a.z; a.z = yl + cL * yo; yl = yo
+          const b = st.apR[s2]; const yo2 = -cR * yr + b.z; b.z = yr + cR * yo2; yr = yo2
+        }
+        st.fbL = yl; st.fbR = yr
+        L[i] = lerp(L[i], (L[i] + yl) * 0.6, mix)
+        R[i] = lerp(R[i], (R[i] + yr) * 0.6, mix)
+      }
+      return
+    }
+    case 'delay': {
+      const sync = P('sync', 1) > 0.5
+      const beats = engine.SYNC_BEATS
+      const tl = sync ? beats[Math.round(clamp(P('timeL', 9), 0, beats.length - 1))] * 60 / engine.bpm : P('freeMs', 350) / 1000
+      const tr = sync ? beats[Math.round(clamp(P('timeR', 9), 0, beats.length - 1))] * 60 / engine.bpm : P('freeMs', 350) / 1000
+      const fb = clamp(P('feedback', 0.4), 0, 1.1)
+      const pp = P('pingpong', 0) > 0.5
+      const lpc = onePoleCoeff(cutoffHz(clamp(P('lpf', 0.75), 0, 1)), sr)
+      const hpc = onePoleCoeff(cutoffHz(clamp(P('hpf', 0.1), 0, 1)), sr)
+      const tape = clamp(P('tape', 0), 0, 1)
+      const dSampsL = clamp(tl * sr, 32, sr * 4 - 4)
+      const dSampsR = clamp(tr * sr, 32, sr * 4 - 4)
+      for (let i = 0; i < n; i++) {
+        st.phase += 0.6 / sr
+        if (st.phase >= 1) st.phase -= 1
+        const wob = tape > 0 ? Math.sin(TWO_PI * st.phase) * tape * 30 : 0
+        let wl = st.dlL.read(dSampsL + wob)
+        let wr = st.dlR.read(dSampsR + wob * 1.3)
+        wl = st.lpL.lp(wl, lpc); wl = wl - st.hpL.lp(wl, hpc)
+        wr = st.lpR.lp(wr, lpc); wr = wr - st.hpR.lp(wr, hpc)
+        if (tape > 0) { wl = Math.tanh(wl * (1 + tape)); wr = Math.tanh(wr * (1 + tape)) }
+        if (pp) {
+          st.dlL.write(R[i] * 0.9 + wr * fb)
+          st.dlR.write(wl * fb + L[i] * 0.0)
+        } else {
+          st.dlL.write(L[i] + wl * fb)
+          st.dlR.write(R[i] + wr * fb)
+        }
+        L[i] = lerp(L[i], L[i] + wl, mix)
+        R[i] = lerp(R[i], R[i] + wr, mix)
+      }
+      return
+    }
+    case 'echobode': {
+      const shift = P('shift', 120)
+      const sync = P('sync', 1) > 0.5
+      const beats = engine.SYNC_BEATS
+      const t = sync ? beats[Math.round(clamp(P('time', 7), 0, beats.length - 1))] * 60 / engine.bpm : 0.35
+      const fb = clamp(P('feedback', 0.5), 0, 0.98)
+      const diff = clamp(P('diffusion', 0.3), 0, 1)
+      const lfoRate = P('lfoRate', 0.3), lfoAmt = clamp(P('lfoAmt', 0), 0, 1)
+      const dSamps = clamp(t * sr, 32, sr * 4 - 4)
+      for (let i = 0; i < n; i++) {
+        st.phase2 += lfoRate / sr
+        if (st.phase2 >= 1) st.phase2 -= 1
+        const sh = shift * (1 + Math.sin(TWO_PI * st.phase2) * lfoAmt * 0.5)
+        st.phase += sh / sr
+        st.phase -= Math.floor(st.phase)
+        const c = Math.cos(TWO_PI * st.phase), s2 = Math.sin(TWO_PI * st.phase)
+        let wl = st.dlL.read(dSamps)
+        let wr = st.dlR.read(dSamps * 1.01)
+        if (diff > 0.01) {
+          for (const ap of st.apsL) wl = ap.process(wl, 200 + diff * 700, 0.5 * diff)
+          for (const ap of st.apsR) wr = ap.process(wr, 220 + diff * 750, 0.5 * diff)
+        }
+        const [reL, imL] = st.hilL.process(wl)
+        const [reR, imR] = st.hilR.process(wr)
+        const shL = reL * c - imL * s2
+        const shR = reR * c - imR * s2
+        st.dlL.write(L[i] + shL * fb)
+        st.dlR.write(R[i] + shR * fb)
+        L[i] = lerp(L[i], L[i] + shL, mix)
+        R[i] = lerp(R[i], R[i] + shR, mix)
+      }
+      return
+    }
+    case 'compressor': {
+      const th = P('threshold', -18), ratio = Math.max(1, P('ratio', 4))
+      const atk = Math.exp(-1 / (P('attack', 10) * 0.001 * sr))
+      const rel = Math.exp(-1 / (P('release', 120) * 0.001 * sr))
+      const makeup = dbToLin(P('makeup', 0))
+      const mb = P('multiband', 0) > 0.5
+      if (!mb) {
+        for (let i = 0; i < n; i++) {
+          const inLvl = Math.max(Math.abs(L[i]), Math.abs(R[i]))
+          const db = 20 * Math.log10(inLvl + 1e-9)
+          const over = db - th
+          const targetGr = over > 0 ? -over * (1 - 1 / ratio) : 0
+          st.envG = targetGr < st.envG ? atk * st.envG + (1 - atk) * targetGr : rel * st.envG + (1 - rel) * targetGr
+          const g = dbToLin(st.envG) * makeup
+          L[i] = lerp(L[i], L[i] * g, mix); R[i] = lerp(R[i], R[i] * g, mix)
+        }
+      } else {
+        const loF = cutoffHz(clamp(P('loFreq', 0.25), 0, 1)), hiF = cutoffHz(clamp(P('hiFreq', 0.7), 0, 1))
+        const gLo = svfG(loF, sr), gHi = svfG(hiF, sr)
+        for (let i = 0; i < n; i++) {
+          // 3-band split (12 dB crossovers)
+          st.xoLo[0].process(L[i], gLo, 1.414); st.xoLo[1].process(R[i], gLo, 1.414)
+          const lowL = st.xoLo[0].lp, lowR = st.xoLo[1].lp
+          const rem1L = st.xoLo[0].hp, rem1R = st.xoLo[1].hp
+          st.xoHi[0].process(rem1L, gHi, 1.414); st.xoHi[1].process(rem1R, gHi, 1.414)
+          const midL = st.xoHi[0].lp, midR = st.xoHi[1].lp
+          const hiL = st.xoHi[0].hp, hiR = st.xoHi[1].hp
+          let outL2 = 0, outR2 = 0
+          const bandsL = [lowL, midL, hiL], bandsR = [lowR, midR, hiR]
+          for (let b = 0; b < 3; b++) {
+            const bl = bandsL[b], br = bandsR[b]
+            const bs = st.bands[b]
+            const db = 20 * Math.log10(Math.max(Math.abs(bl), Math.abs(br)) + 1e-9)
+            const over = db - th
+            const tg = over > 0 ? -over * (1 - 1 / ratio) : 0
+            bs.envG = tg < bs.envG ? atk * bs.envG + (1 - atk) * tg : rel * bs.envG + (1 - rel) * tg
+            const g = dbToLin(bs.envG)
+            outL2 += bl * g; outR2 += br * g
+          }
+          L[i] = lerp(L[i], outL2 * makeup, mix); R[i] = lerp(R[i], outR2 * makeup, mix)
+        }
+      }
+      return
+    }
+    case 'reverb': {
+      const mode = Math.round(P('mode', 0))
+      const size = clamp(P('size', 0.5), 0, 1)
+      const decay = clamp(P('decay', 0.5), 0, 1)
+      const dampN = clamp(P('damp', 0.4), 0, 1)
+      const preMs = P('predelay', 10)
+      const width = clamp(P('width', 1), 0, 1)
+      const lowcut = clamp(P('lowcut', 0.1), 0, 1)
+      const t = st.tank
+      // mode flavors: 0 hall, 1 plate, 2 vintage(dark, modulated), 3 nitrous(bright, tight), 4 basin(long, hollow)
+      let fbBase = 0.55 + decay * 0.44
+      let dampF = cutoffHz(1 - dampN * 0.85)
+      let diff = 0.7, modAmt = 6, szMul = 0.4 + size * 0.6
+      if (mode === 1) { diff = 0.62; modAmt = 2; szMul *= 0.7 }
+      if (mode === 2) { dampF *= 0.4; modAmt = 18; fbBase *= 0.98 }
+      if (mode === 3) { dampF = Math.min(dampF * 2.2, sr * 0.45); szMul *= 0.5; diff = 0.75 }
+      if (mode === 4) { fbBase = Math.min(0.995, fbBase * 1.02); szMul *= 1.2; diff = 0.5; dampF *= 0.7 }
+      const dampC = onePoleCoeff(dampF, sr)
+      const hpc = onePoleCoeff(cutoffHz(lowcut * 0.5), sr)
+      const pre = clamp(preMs * sr / 1000, 1, sr * 0.24)
+      for (let i = 0; i < n; i++) {
+        st.modPhase += 0.9 / sr
+        if (st.modPhase >= 1) st.modPhase -= 1
+        const mod = Math.sin(TWO_PI * st.modPhase) * modAmt
+        const inp = (L[i] + R[i]) * 0.5
+        st.preDl.write(inp)
+        let x = st.preDl.read(pre)
+        x = st.inLp.lp(x, dampC)
+        x = st.inAp[0].process(x, 142 * szMul + 2, diff)
+        x = st.inAp[1].process(x, 107 * szMul + 2, diff)
+        x = st.inAp[2].process(x, 379 * szMul + 2, diff * 0.9)
+        x = st.inAp[3].process(x, 277 * szMul + 2, diff * 0.9)
+        // figure-8 tank
+        let a = x + t.f2 * fbBase
+        a = t.ap1.process(a, (672 + mod) * szMul + 2, 0.7)
+        t.dl1.write(a)
+        let a2 = t.dl1.read(4453 * szMul)
+        a2 = t.lp1.lp(a2, dampC) * fbBase
+        a2 = t.ap2.process(a2, 1800 * szMul + 2, 0.5)
+        t.dl2.write(a2)
+        t.f1 = t.dl2.read(3720 * szMul)
+        let b = x + t.f1 * fbBase
+        b = t.ap3.process(b, (908 - mod) * szMul + 2, 0.7)
+        t.dl3.write(b)
+        let b2 = t.dl3.read(4217 * szMul)
+        b2 = t.lp2.lp(b2, dampC) * fbBase
+        b2 = t.ap4.process(b2, 2656 * szMul + 2, 0.5)
+        t.dl4.write(b2)
+        t.f2 = t.dl4.read(3163 * szMul)
+        let wl = t.dl1.read(266 * szMul) + t.dl3.read(1990 * szMul) - t.dl4.read(1066 * szMul)
+        let wr = t.dl3.read(353 * szMul) + t.dl1.read(2111 * szMul) - t.dl2.read(1223 * szMul)
+        wl = wl - st.hpL.lp(wl, hpc)
+        wr = wr - st.hpR.lp(wr, hpc)
+        const mid = (wl + wr) * 0.5, side = (wl - wr) * 0.5 * width
+        wl = mid + side; wr = mid - side
+        L[i] = (1 - mix) * L[i] + wl * mix * 1.5
+        R[i] = (1 - mix) * R[i] + wr * mix * 1.5
+      }
+      return
+    }
+    case 'convolve': {
+      const irIdx = Math.round(P('ir', 0))
+      const size = clamp(P('size', 0.7), 0.1, 1)
+      const key = irIdx + ':' + size.toFixed(2)
+      if (st.irKey !== key) { st.conv = engine.makeConvolver(irIdx, size); st.irKey = key }
+      if (!st.conv) return
+      const preMs = P('predelay', 0)
+      const damp = clamp(P('damp', 0.3), 0, 1)
+      const width = clamp(P('width', 1), 0, 1)
+      st.conv.process(engine, L, R, n, mix, preMs, damp, width)
+      return
+    }
+    case 'eq': {
+      const b1t = Math.round(P('t1', 1)), b2t = Math.round(P('t2', 1))
+      const f1 = cutoffHz(clamp(P('f1', 0.2), 0, 1)), f2 = cutoffHz(clamp(P('f2', 0.75), 0, 1))
+      const g1 = P('g1', 0), g2 = P('g2', 0), q1 = P('q1', 0.8), q2 = P('q2', 0.8)
+      if (st.eqKey !== `${b1t}${b2t}${f1}${f2}${g1}${g2}${q1}${q2}`) {
+        st.eqKey = `${b1t}${b2t}${f1}${f2}${g1}${g2}${q1}${q2}`
+        if (b1t === 0) { st.bq[0].shelf(f1, g1, false, sr); st.bq[1].shelf(f1, g1, false, sr) }
+        else if (b1t === 2) { st.bq[0].shelf(f1, g1, true, sr); st.bq[1].shelf(f1, g1, true, sr) }
+        else { st.bq[0].peak(f1, q1, g1, sr); st.bq[1].peak(f1, q1, g1, sr) }
+        if (b2t === 0) { st.bq[2].shelf(f2, g2, false, sr); st.bq[3].shelf(f2, g2, false, sr) }
+        else if (b2t === 2) { st.bq[2].shelf(f2, g2, true, sr); st.bq[3].shelf(f2, g2, true, sr) }
+        else { st.bq[2].peak(f2, q2, g2, sr); st.bq[3].peak(f2, q2, g2, sr) }
+      }
+      for (let i = 0; i < n; i++) {
+        L[i] = st.bq[2].process(st.bq[0].process(L[i]))
+        R[i] = st.bq[3].process(st.bq[1].process(R[i]))
+      }
+      return
+    }
+    case 'filter': {
+      const types = engine.FILTER_TYPE_IDS
+      const type = types[Math.round(clamp(P('type', 1), 0, types.length - 1))]
+      const cut = clamp(P('cutoff', 0.7), 0, 1)
+      const res = clamp(P('res', 0.2), 0, 1)
+      const drive = clamp(P('drive', 0), 0, 1)
+      const fat = clamp(P('fat', 0.5), 0, 1)
+      const fpan = clamp(P('pan', 0), -1, 1)
+      for (let i = 0; i < n; i++) {
+        const yl = st.vfL.process(L[i], type, clamp(cut - fpan * 0.1, 0, 1), res, drive, fat)
+        const yr = st.vfR.process(R[i], type, clamp(cut + fpan * 0.1, 0, 1), res, drive, fat)
+        L[i] = lerp(L[i], yl, mix); R[i] = lerp(R[i], yr, mix)
+      }
+      return
+    }
+    case 'hyper': {
+      const rate = P('rate', 0.6), detune = clamp(P('detune', 0.35), 0, 1)
+      const unison = Math.round(clamp(P('unison', 4), 1, 7))
+      const dimSize = clamp(P('dimSize', 0.4), 0, 1), dimMix = clamp(P('dimMix', 0.3), 0, 1)
+      for (let i = 0; i < n; i++) {
+        st.phase += rate / sr
+        if (st.phase >= 1) st.phase -= 1
+        let wl = 0, wr = 0
+        for (let v = 0; v < unison; v++) {
+          const ph = st.phase + v * 0.618
+          const lfo = Math.sin(TWO_PI * (ph - Math.floor(ph)))
+          const d = (2 + v * 2.7 + lfo * detune * 8) * sr / 1000
+          const w = st.taps[v].read(Math.max(2, d))
+          if (v % 2) wr += w; else wl += w
+          st.taps[v].write(v % 2 ? R[i] : L[i])
+        }
+        const hl = (L[i] + wl * 0.8), hr = (R[i] + wr * 0.8)
+        // dimension expander
+        const dd = (5 + dimSize * 40) * sr / 1000
+        const dl = st.dimL.read(dd), dr = st.dimR.read(dd * 1.02)
+        st.dimL.write(hl - dr * 0.5)
+        st.dimR.write(hr - dl * 0.5)
+        L[i] = lerp(L[i], hl * (1 - dimMix) + (hl + dl - dr) * dimMix * 0.7, mix)
+        R[i] = lerp(R[i], hr * (1 - dimMix) + (hr + dr - dl) * dimMix * 0.7, mix)
+      }
+      return
+    }
+    case 'utility': {
+      const g = dbToLin(P('gain', 0))
+      const pan = clamp(P('pan', 0), -1, 1)
+      const width = clamp(P('width', 1), 0, 2)
+      const gl = g * Math.cos((pan + 1) * Math.PI / 4) * 1.414
+      const gr = g * Math.sin((pan + 1) * Math.PI / 4) * 1.414
+      for (let i = 0; i < n; i++) {
+        const mid = (L[i] + R[i]) * 0.5, side = (L[i] - R[i]) * 0.5 * width
+        L[i] = (mid + side) * gl
+        R[i] = (mid - side) * gr
+      }
+      return
+    }
+    case 'octaver': {
+      const sub = clamp(P('sub', 0.5), 0, 1), up = clamp(P('up', 0), 0, 1), dry = clamp(P('dry', 1), 0, 1)
+      const N = st.obuf.length
+      for (let i = 0; i < n; i++) {
+        const x = (L[i] + R[i]) * 0.5
+        st.obuf[st.opos] = x
+        st.opos = (st.opos + 1) % N
+        // half-speed read (octave down) with crossfaded dual taps
+        st.oread += 0.5
+        if (st.oread >= N) st.oread -= N
+        const ri = st.oread | 0
+        const w1 = st.obuf[ri % N]
+        const win = 0.5 - 0.5 * Math.cos(TWO_PI * ((st.oread * 2) % N) / N)
+        const ri2 = (ri + (N >> 1)) % N
+        const w2 = st.obuf[ri2]
+        const down = w1 * win + w2 * (1 - win)
+        // double-speed read (octave up)
+        st.oread2 += 2
+        if (st.oread2 >= N) st.oread2 -= N
+        const upS = st.obuf[(st.oread2 | 0) % N]
+        const wet = down * sub + upS * up
+        L[i] = lerp(L[i], L[i] * dry + wet, mix)
+        R[i] = lerp(R[i], R[i] * dry + wet, mix)
+      }
+      return
+    }
+    case 'bitcrush': {
+      const bits = clamp(P('bits', 8), 1, 16)
+      const ds = clamp(P('downsample', 1), 1, 64)
+      const q = Math.pow(2, bits - 1)
+      for (let i = 0; i < n; i++) {
+        st.ph += 1
+        if (st.ph >= ds) { st.ph -= ds; st.hL = Math.round(L[i] * q) / q; st.hR = Math.round(R[i] * q) / q }
+        L[i] = lerp(L[i], st.hL, mix); R[i] = lerp(R[i], st.hR, mix)
+      }
+      return
+    }
+  }
+}
+
+// ---------- partitioned convolution ----------
+const CONV_B = 1024        // hop / partition size
+const CONV_FFT = 2048
+class PartConv {
+  constructor(sr, irL, irR) {
+    this.sr = sr
+    const K = Math.max(1, Math.ceil(irL.length / CONV_B))
+    this.K = K
+    this.HL = []; this.HR = []
+    const re = new Float32Array(CONV_FFT), im = new Float32Array(CONV_FFT)
+    for (let k = 0; k < K; k++) {
+      for (const [H, ir] of [[this.HL, irL], [this.HR, irR]]) {
+        re.fill(0); im.fill(0)
+        for (let i = 0; i < CONV_B; i++) re[i] = ir[k * CONV_B + i] || 0
+        fftInPlace(re, im, false)
+        H.push([new Float32Array(re), new Float32Array(im)])
+      }
+    }
+    this.X = [] // ring of input spectra
+    for (let k = 0; k < K; k++) this.X.push([new Float32Array(CONV_FFT), new Float32Array(CONV_FFT)])
+    this.xPos = 0
+    this.inBuf = new Float32Array(CONV_B)
+    this.prevBuf = new Float32Array(CONV_B)
+    this.inFill = 0
+    this.outL = new Float32Array(CONV_B)
+    this.outR = new Float32Array(CONV_B)
+    this.outPos = CONV_B // empty
+    this.accRe = new Float32Array(CONV_FFT); this.accIm = new Float32Array(CONV_FFT)
+    this.accRe2 = new Float32Array(CONV_FFT); this.accIm2 = new Float32Array(CONV_FFT)
+    this.preDl = new DelayLine(sr * 0.25)
+    this.dampL = new OnePole(); this.dampR = new OnePole()
+  }
+  process(engine, L, R, n, mix, preMs, damp, width) {
+    const pre = clamp(preMs * this.sr / 1000, 0, this.sr * 0.24)
+    const dampC = onePoleCoeff(cutoffHz(1 - damp * 0.8), this.sr)
+    for (let i = 0; i < n; i++) {
+      const mono = (L[i] + R[i]) * 0.5
+      this.preDl.write(mono)
+      this.inBuf[this.inFill++] = pre > 1 ? this.preDl.read(pre) : mono
+      if (this.inFill >= CONV_B) {
+        this.inFill = 0
+        this.convolveBlock()
+      }
+      let wl = this.outPos < CONV_B ? this.outL[this.outPos] : 0
+      let wr = this.outPos < CONV_B ? this.outR[this.outPos] : 0
+      this.outPos++
+      wl = this.dampL.lp(wl, dampC); wr = this.dampR.lp(wr, dampC)
+      const mid = (wl + wr) * 0.5, side = (wl - wr) * 0.5 * width
+      wl = mid + side; wr = mid - side
+      L[i] = (1 - mix) * L[i] + wl * mix
+      R[i] = (1 - mix) * R[i] + wr * mix
+    }
+  }
+  convolveBlock() {
+    // overlap-save: FFT [prev | current]
+    const re = this.accRe2, im = this.accIm2
+    re.fill(0); im.fill(0)
+    for (let i = 0; i < CONV_B; i++) { re[i] = this.prevBuf[i]; re[CONV_B + i] = this.inBuf[i] }
+    this.prevBuf.set(this.inBuf)
+    fftInPlace(re, im, false)
+    this.xPos = (this.xPos + 1) % this.K
+    this.X[this.xPos][0].set(re)
+    this.X[this.xPos][1].set(im)
+    const aRe = this.accRe, aIm = this.accIm
+    aRe.fill(0); aIm.fill(0)
+    const a2Re = this.accRe2, a2Im = this.accIm2 // reuse for R after copying X
+    // accumulate L
+    for (let k = 0; k < this.K; k++) {
+      const xi = (this.xPos - k + this.K) % this.K
+      const [xr, xim] = this.X[xi]
+      const [hLr, hLi] = this.HL[k]
+      for (let b = 0; b < CONV_FFT; b++) {
+        aRe[b] += xr[b] * hLr[b] - xim[b] * hLi[b]
+        aIm[b] += xr[b] * hLi[b] + xim[b] * hLr[b]
+      }
+    }
+    fftInPlace(aRe, aIm, true)
+    for (let i = 0; i < CONV_B; i++) this.outL[i] = aRe[CONV_B + i]
+    // accumulate R
+    a2Re.fill(0); a2Im.fill(0)
+    for (let k = 0; k < this.K; k++) {
+      const xi = (this.xPos - k + this.K) % this.K
+      const [xr, xim] = this.X[xi]
+      const [hRr, hRi] = this.HR[k]
+      for (let b = 0; b < CONV_FFT; b++) {
+        a2Re[b] += xr[b] * hRr[b] - xim[b] * hRi[b]
+        a2Im[b] += xr[b] * hRi[b] + xim[b] * hRr[b]
+      }
+    }
+    fftInPlace(a2Re, a2Im, true)
+    for (let i = 0; i < CONV_B; i++) this.outR[i] = a2Re[CONV_B + i]
+    this.outPos = 0
+  }
+}
+
+const IR_NAMES = ['Room', 'Hall', 'Cathedral', 'Plate', 'Spring', 'Chamber', 'Reverse', 'Gated']
+function generateIR(sr, idx, size) {
+  const durs = [0.4, 1.6, 2.6, 1.1, 0.9, 0.8, 1.2, 0.5]
+  const dur = durs[idx % 8] * (0.35 + size * 0.85)
+  const len = Math.min(Math.floor(sr * dur), sr * 3)
+  const irL = new Float32Array(len), irR = new Float32Array(len)
+  const rngL = makeRng(1234 + idx), rngR = makeRng(9876 + idx)
+  for (let i = 0; i < len; i++) {
+    const t = i / len
+    let env
+    switch (idx) {
+      case 6: env = Math.pow(t, 2.5); break // reverse
+      case 7: env = t < 0.7 ? Math.pow(1 - t / 0.7, 0.5) : 0; break // gated
+      case 3: env = Math.exp(-t * 5.5) * (1 + 0.3 * Math.sin(t * 90)); break // plate shimmer
+      case 4: env = Math.exp(-t * 6) * (0.7 + 0.5 * Math.sin(t * t * 4000 + t * 60)); break // spring chirp
+      case 2: env = Math.exp(-t * 3.2); break // cathedral
+      default: env = Math.exp(-t * (idx === 0 ? 9 : 4.5))
+    }
+    irL[i] = (rngL() * 2 - 1) * env
+    irR[i] = (rngR() * 2 - 1) * env
+  }
+  // darken tail: simple progressive lowpass
+  let zl = 0, zr = 0
+  for (let i = 0; i < len; i++) {
+    const c = 1 - (i / len) * 0.85
+    zl += c * (irL[i] - zl); irL[i] = zl
+    zr += c * (irR[i] - zr); irR[i] = zr
+  }
+  // normalize energy
+  let e = 0
+  for (let i = 0; i < len; i++) e += irL[i] * irL[i]
+  const g = 1 / Math.sqrt(Math.max(e, 1e-9))
+  for (let i = 0; i < len; i++) { irL[i] *= g * 3; irR[i] *= g * 3 }
+  return [irL, irR]
+}
+
+// ---------- main processor ----------
+const PER_VOICE_DEST_RE = /^(osc[012]|f[12]|sub|noise)\./
+
+function polyBlep(t, dt) {
+  if (dt <= 0) return 0
+  if (t < dt) { const x = t / dt; return x + x - x * x - 1 }
+  if (t > 1 - dt) { const x = (t - 1) / dt; return x * x + x + x + 1 }
+  return 0
+}
+
+class ApolloProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super()
+    this.sr = sampleRate
+    this.patch = null
+    this.ranges = {}
+    this.tables = new Map()
+    this.samples = new Map()
+    this.spectral = new Map()
+    this.lfoLuts = Array.from({ length: 10 }, () => null)
+    this.lfoLutsY = Array.from({ length: 10 }, () => null)
+    this.remapLuts = new Map()
+    this.rowLuts = new Map()
+    this.defaultTable = null
+    this.voices = Array.from({ length: 32 }, () => new Voice(this.sr))
+    this.heldNotes = []
+    this.sustainPedal = false
+    this.macros = new Float32Array(8)
+    this.modwheel = 0; this.pitchbend = 0; this.aftertouch = 0
+    this.pitchBendSemis = 0
+    this.lastFreq = 0
+    this.bpm = 120
+    this.playing = false
+    this.beat = 0
+    this.clickOn = false
+    this.arpNotesDown = []          // notes the arp is currently sounding
+    this.arpStep = 0
+    this.arpNextBeat = 0
+    this.clipNotesOn = []           // {note, endBeat}
+    this.oscMono = [new Float32Array(BLOCK), new Float32Array(BLOCK), new Float32Array(BLOCK)]
+    this.srcL = new Float32Array(BLOCK); this.srcR = new Float32Array(BLOCK)
+    this.f1inL = new Float32Array(BLOCK); this.f1inR = new Float32Array(BLOCK)
+    this.f2inL = new Float32Array(BLOCK); this.f2inR = new Float32Array(BLOCK)
+    this.byL = new Float32Array(BLOCK); this.byR = new Float32Array(BLOCK)
+    this.busses = {
+      main: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
+      bus1: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
+      bus2: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
+      direct: [new Float32Array(BLOCK), new Float32Array(BLOCK)],
+    }
+    this.tmpPool = Array.from({ length: 24 }, () => new Float32Array(BLOCK))
+    this.tmpPoolIdx = 0
+    this.fxStates = new Map()      // unitId -> FxState
+    this.convCache = new Map()
+    this.matrixRows = []
+    this.destIndex = {}
+    this.destCount = 0
+    this.gmodRows = []
+    this.gmodCache = {}
+    this.chaosInst = Array.from({ length: 10 }, () => new Chaos('lorenz'))
+    this.lfoFreePhase = new Float32Array(10)
+    this.lfoGlobalOut = new Float32Array(10)
+    this.lfoGlobalOutY = new Float32Array(10)
+    this.grainViz = new Float32Array(3)
+    this.specViz = new Float32Array(3)
+    this.meterCounter = 0
+    this.pv = {}                   // base param values (path -> value), synced from UI
+    this.monoVoice = null
+    this.SYNC_BEATS = [32, 16, 8, 4, 2, 4 / 3, 1.5, 1, 2 / 3, 0.75, 0.5, 1 / 3, 0.375, 0.25, 1 / 6, 0.125, 0.0625]
+    this.FILTER_TYPE_IDS = ['lp6', 'lp12', 'lp18', 'lp24', 'hp6', 'hp12', 'hp24', 'bp12', 'bp24', 'notch12', 'peak12', 'multiLBH', 'multiLNH', 'morphSVF', 'ladder12', 'ladder24', 'germanLP', 'frenchLP', 'formant', 'combPlus', 'combMinus', 'flangePlus', 'flangeMinus', 'phasePlus', 'phaseMinus', 'ringMod', 'sampHold', 'downsample', 'reverbFilter', 'dj', 'diffuser']
+    this.port.onmessage = (e) => this.onMessage(e.data)
+    // default table: saw
+    const dt = new Float32Array(WT_LEN)
+    for (let i = 0; i < WT_LEN; i++) dt[i] = 1 - 2 * (i / WT_LEN)
+    this.defaultTable = { frames: 1, data: dt }
+  }
+
+  makeConvolver(idx, size) {
+    const key = idx + ':' + size.toFixed(2)
+    if (this.convCache.has(key)) return this.convCache.get(key)
+    const [l, r] = generateIR(this.sr, idx, size)
+    const c = new PartConv(this.sr, l, r)
+    if (this.convCache.size > 4) this.convCache.clear()
+    this.convCache.set(key, c)
+    return c
+  }
+
+  onMessage(m) {
+    switch (m.type) {
+      case 'patch': {
+        this.patch = m.patch
+        this.bpm = m.patch.global.bpm
+        this.pv = {} // patch is the new source of truth; drop knob-drag overrides
+        this.compileMatrix()
+        break
+      }
+      case 'pv': { // base param values map
+        Object.assign(this.pv, m.values)
+        break
+      }
+      case 'ranges': this.ranges = m.ranges; break
+      case 'table': this.tables.set(m.id, { frames: m.frames, data: m.data }); break
+      case 'dropTable': this.tables.delete(m.id); break
+      case 'sample': this.samples.set(m.id, { sr: m.sr, len: m.len, l: m.l, r: m.r || null }); break
+      case 'spectral': this.spectral.set(m.id, { frames: m.frames, bins: m.bins, hop: m.hop, sr: m.sr, mags: m.mags, phases: m.phases || null, onsets: m.onsets || null }); break
+      case 'lfoLut': this.lfoLuts[m.index] = m.main; this.lfoLutsY[m.index] = m.y || null; break
+      case 'remapLut':
+        if (m.rowId) this.rowLuts.set(m.rowId, m.lut)
+        else this.remapLuts.set(m.key, m.lut)
+        break
+      case 'noteOn': this.noteOn(m.note, m.vel, false); break
+      case 'noteOff': this.noteOff(m.note, false); break
+      case 'allOff': this.allNotesOff(); break
+      case 'sustain': this.sustainPedal = m.on; if (!m.on) this.releaseSustained(); break
+      case 'macro': this.macros[m.index] = m.value; break
+      case 'wheel': this.modwheel = m.mod != null ? m.mod : this.modwheel
+        if (m.pitch != null) { this.pitchbend = m.pitch; this.pitchBendSemis = m.pitch * (this.patch ? this.patch.global.pbRange : 2) }
+        break
+      case 'aftertouch': this.aftertouch = m.value; break
+      case 'transport': {
+        if (m.playing != null && m.playing !== this.playing) {
+          this.playing = m.playing
+          if (m.playing) { this.beat = m.beat || 0; this.arpNextBeat = this.beat; this.arpStep = 0 }
+          else { this.seqAllOff() }
+        }
+        if (m.bpm) this.bpm = m.bpm
+        if (m.click != null) this.clickOn = m.click
+        break
+      }
+      case 'panic': this.allNotesOff(true); break
+      case 'schedule': // sample-accurate event list for offline rendering
+        this.schedule = (m.events || []).slice().sort((a, b) => a.t - b.t)
+        this.timeSec = 0
+        break
+    }
+  }
+
+  runSchedule(blockSec) {
+    if (!this.schedule || !this.schedule.length) return
+    this.timeSec = (this.timeSec || 0)
+    const end = this.timeSec + blockSec
+    while (this.schedule.length && this.schedule[0].t < end) {
+      const ev = this.schedule.shift()
+      if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false)
+      else if (ev.type === 'noteOff') this.noteOff(ev.note, false)
+      else if (ev.type === 'macro') this.macros[ev.index] = ev.value
+    }
+    this.timeSec = end
+  }
+
+  compileMatrix() {
+    const patch = this.patch
+    this.matrixRows = []
+    this.gmodRows = []
+    this.destIndex = {}
+    let idx = 0
+    for (const row of patch.matrix) {
+      if (row.bypass || row.source === 'none' || !row.dest) continue
+      const range = this.ranges[row.dest]
+      const compiled = {
+        src: row.source, dest: row.dest, amt: row.amount, bipolar: row.bipolar,
+        aux: row.aux, auxAmt: row.auxAmount, id: row.id,
+        span: range ? range[1] - range[0] : 1,
+        lo: range ? range[0] : 0, hi: range ? range[1] : 1,
+      }
+      if (PER_VOICE_DEST_RE.test(row.dest)) {
+        if (this.destIndex[row.dest] == null) this.destIndex[row.dest] = idx++
+        compiled.destIdx = this.destIndex[row.dest]
+        this.matrixRows.push(compiled)
+      } else {
+        this.gmodRows.push(compiled)
+      }
+    }
+    this.destCount = idx
+  }
+
+  destTouched(voice, path) { return this.destIndex[path] != null }
+
+  vp(voice, path, base) {
+    const b = this.pv[path] != null ? this.pv[path] : base
+    const idx = this.destIndex[path]
+    if (idx == null) return b
+    return b + voice.mod[idx]
+  }
+
+  gmodVal(path, base) {
+    const b = this.pv[path] != null ? this.pv[path] : base
+    const g = this.gmodCache[path]
+    return g != null ? b + g : b
+  }
+
+  // source value for GLOBAL rows (voice-independent); returns 0..1 or -1..1
+  globalSourceVal(src) {
+    if (src[0] === 'm' && src.startsWith('macro')) return this.macros[+src.slice(5) - 1]
+    switch (src) {
+      case 'modwheel': return this.modwheel
+      case 'pitchwheel': return this.pitchbend
+      case 'aftertouch': return this.aftertouch
+      case 'gate': return this.heldNotes.length ? 1 : 0
+      case 'vel': case 'note': case 'rand': {
+        const v = this.newestVoice()
+        if (!v) return 0
+        return src === 'vel' ? v.vel : src === 'note' ? v.note / 127 : v.rand
+      }
+    }
+    if (src.startsWith('env')) {
+      const v = this.newestVoice()
+      return v ? v.envs[+src.slice(3) - 1].out : 0
+    }
+    if (src.startsWith('lfo')) {
+      const y = src.endsWith('y')
+      const i = +(y ? src.slice(3, -1) : src.slice(3)) - 1
+      const cfg = this.patch.lfos[i]
+      if (cfg.trigMode === 'off' || cfg.mode === 'chaos') return y ? this.lfoGlobalOutY[i] : this.lfoGlobalOut[i]
+      const v = this.newestVoice()
+      if (!v) return y ? this.lfoGlobalOutY[i] : this.lfoGlobalOut[i]
+      return y ? v.lfoOutY[i] : v.lfoOut[i]
+    }
+    return 0
+  }
+
+  voiceSourceVal(voice, src) {
+    if (src[0] === 'm' && src.startsWith('macro')) return this.macros[+src.slice(5) - 1]
+    switch (src) {
+      case 'vel': return voice.vel
+      case 'note': return voice.note / 127
+      case 'rand': return voice.rand
+      case 'gate': return voice.gate ? 1 : 0
+      case 'modwheel': return this.modwheel
+      case 'pitchwheel': return this.pitchbend
+      case 'aftertouch': return this.aftertouch
+    }
+    if (src.startsWith('env')) return voice.envs[+src.slice(3) - 1].out
+    if (src.startsWith('lfo')) {
+      const y = src.endsWith('y')
+      const i = +(y ? src.slice(3, -1) : src.slice(3)) - 1
+      const cfg = this.patch.lfos[i]
+      if (cfg.trigMode === 'off' || cfg.mode === 'chaos') return y ? this.lfoGlobalOutY[i] : this.lfoGlobalOut[i]
+      return y ? voice.lfoOutY[i] : voice.lfoOut[i]
+    }
+    return 0
+  }
+
+  applyRowShaping(row, v) {
+    // v arrives 0..1 (or -1..1 for inherently bipolar sources)
+    if (row.bipolar) { if (v >= 0 && v <= 1) v = v * 2 - 1 }
+    const lut = this.rowLuts.get(row.id)
+    if (lut) {
+      const t = clamp((v + 1) / 2, 0, 1)
+      v = lutEval(lut, row.bipolar ? t : clamp(v, 0, 1)) * (row.bipolar ? 2 : 1) - (row.bipolar ? 1 : 0)
+    }
+    return v
+  }
+
+  newestVoice() {
+    let best = null
+    for (const v of this.voices) if (v.active && (!best || v.serial > best.serial)) best = v
+    return best
+  }
+
+  noteOn(note, vel, fromSeq) {
+    if (!this.patch) return
+    const patch = this.patch
+    if (patch.arp.on && !fromSeq) {
+      if (!this.heldNotes.includes(note)) this.heldNotes.push(note)
+      return
+    }
+    if (!fromSeq && !this.heldNotes.includes(note)) this.heldNotes.push(note)
+    if (patch.global.scaleLock) note = this.snapScale(note)
+    const mode = patch.global.mode
+    if (mode !== 'poly') {
+      let v = this.monoVoice && this.monoVoice.active ? this.monoVoice : null
+      const legato = !!v && mode === 'legato'
+      if (!v) v = this.allocVoice()
+      v.start(note, vel, patch, this, legato, fromSeq)
+      this.monoVoice = v
+      this.port.postMessage({ type: 'voiceOn', note, fromSeq: !!fromSeq })
+      return
+    }
+    const v = this.allocVoice()
+    v.start(note, vel, patch, this, false, fromSeq)
+    this.port.postMessage({ type: 'voiceOn', note, fromSeq: !!fromSeq })
+  }
+
+  noteOff(note, fromSeq) {
+    if (!this.patch) return
+    const hi = this.heldNotes.indexOf(note)
+    if (hi >= 0) this.heldNotes.splice(hi, 1)
+    if (this.patch.arp.on && !fromSeq) {
+      if (!this.patch.arp.hold && !this.heldNotes.length) this.stopArpNotes()
+      return
+    }
+    if (this.sustainPedal && !fromSeq) return
+    for (const v of this.voices) {
+      if (v.active && v.gate && v.note === note && v.fromSeq === !!fromSeq) v.release()
+    }
+    if (this.patch.global.mode !== 'poly' && this.heldNotes.length && !fromSeq) {
+      // return to previous held note (legato back-step)
+      const prev = this.heldNotes[this.heldNotes.length - 1]
+      if (this.monoVoice && this.monoVoice.active) this.monoVoice.start(prev, this.monoVoice.vel, this.patch, this, true, false)
+    }
+    this.port.postMessage({ type: 'voiceOff', note, fromSeq: !!fromSeq })
+  }
+
+  releaseSustained() {
+    for (const v of this.voices) {
+      if (v.active && v.gate && !this.heldNotes.includes(v.note)) v.release()
+    }
+  }
+
+  allocVoice() {
+    const poly = this.patch ? this.patch.global.poly : 16
+    let free = null
+    for (const v of this.voices) if (!v.active) { free = v; break }
+    if (free) {
+      let count = 0
+      for (const v of this.voices) if (v.active) count++
+      if (count < poly) return free
+    }
+    // steal: released first, then oldest
+    let steal = null
+    for (const v of this.voices) {
+      if (!v.active) continue
+      if (!steal) { steal = v; continue }
+      const vRel = !v.gate, sRel = !steal.gate
+      if (vRel && !sRel) steal = v
+      else if (vRel === sRel && v.serial < steal.serial) steal = v
+    }
+    if (steal) { steal.kill(); return steal }
+    return this.voices[0]
+  }
+
+  allNotesOff(hard) {
+    this.heldNotes.length = 0
+    this.stopArpNotes()
+    for (const v of this.voices) { if (v.active) { if (hard) v.kill(); else v.release() } }
+  }
+
+  seqAllOff() {
+    for (const no of this.clipNotesOn) this.noteOff(no.note, true)
+    this.clipNotesOn.length = 0
+    this.stopArpNotes()
+  }
+
+  stopArpNotes() {
+    for (const n of this.arpNotesDown) this.noteOff(n, true)
+    this.arpNotesDown.length = 0
+  }
+
+  snapScale(note) {
+    const patch = this.patch
+    const SC = { Major: [0, 2, 4, 5, 7, 9, 11], Minor: [0, 2, 3, 5, 7, 8, 10], Dorian: [0, 2, 3, 5, 7, 9, 10], Phrygian: [0, 1, 3, 5, 7, 8, 10], Lydian: [0, 2, 4, 6, 7, 9, 11], Mixolydian: [0, 2, 4, 5, 7, 9, 10], 'Harmonic Minor': [0, 2, 3, 5, 7, 8, 11], 'Melodic Minor': [0, 2, 3, 5, 7, 9, 11], 'Pentatonic Maj': [0, 2, 4, 7, 9], 'Pentatonic Min': [0, 3, 5, 7, 10], Blues: [0, 3, 5, 6, 7, 10], Chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
+    const iv = SC[patch.global.scaleName] || SC.Minor
+    const root = patch.global.scaleRoot
+    const rel = ((note - root) % 12 + 12) % 12
+    let best = iv[0], bd = 99
+    for (const s of iv) { const d = Math.min(Math.abs(s - rel), 12 - Math.abs(s - rel)); if (d < bd) { bd = d; best = s } }
+    return note - rel + best
+  }
+
+  // ------- sequencer -------
+  arpPool() {
+    const patch = this.patch
+    const held = this.heldNotes.slice()
+    if (!held.length) return held
+    const base = patch.arp.mode === 'asplayed' ? held : held.slice().sort((a, b) => a - b)
+    const pool = []
+    for (let o = 0; o < patch.arp.octaves; o++) for (const nn of base) pool.push(nn + o * 12)
+    switch (patch.arp.mode) {
+      case 'down': pool.reverse(); break
+      case 'updown': { const rev = pool.slice(1, -1).reverse(); return pool.concat(rev) }
+      case 'downup': { const r = pool.slice().reverse(); const rev = r.slice(1, -1).reverse(); return r.concat(rev) }
+      case 'converge': {
+        const out = []
+        let lo = 0, hi = pool.length - 1
+        while (lo <= hi) { out.push(pool[lo++]); if (lo <= hi) out.push(pool[hi--]) }
+        return out
+      }
+      case 'diverge': {
+        const out = []
+        let mid = pool.length >> 1
+        let l = mid - 1, r2 = mid
+        while (r2 < pool.length || l >= 0) { if (r2 < pool.length) out.push(pool[r2++]); if (l >= 0) out.push(pool[l--]) }
+        return out
+      }
+    }
+    return pool
+  }
+
+  stepSequencer(blockBeats) {
+    const patch = this.patch
+    const endBeat = this.beat + blockBeats
+    // --- arp ---
+    if (patch.arp.on && (this.heldNotes.length || (patch.arp.hold && this.arpHeldCache && this.arpHeldCache.length))) {
+      if (this.heldNotes.length) this.arpHeldCache = this.heldNotes.slice()
+      const stepBeats = this.SYNC_BEATS[clamp(Math.round(patch.arp.syncRate), 0, this.SYNC_BEATS.length - 1)]
+      while (this.arpNextBeat < endBeat) {
+        const swing = this.arpStep % 2 === 1 ? patch.arp.swing * stepBeats * 0.33 : 0
+        // release previous by gate
+        this.stopArpNotes()
+        const pool = this.heldNotes.length ? this.arpPool() : this.arpHeldCacheToPool()
+        if (pool.length) {
+          let note
+          if (patch.arp.mode === 'random') note = pool[(grng() * pool.length) | 0]
+          else if (patch.arp.mode === 'pattern') {
+            const pat = patch.arp.pattern
+            const ps = pat.length ? pat[this.arpStep % pat.length] : null
+            if (ps && ps.on) note = pool[((ps.step % pool.length) + pool.length) % pool.length]
+          } else note = pool[this.arpStep % pool.length]
+          if (note != null) {
+            note += patch.arp.transpose
+            if (patch.arp.scaleLock || patch.global.scaleLock) note = this.snapScale(note)
+            this.noteOn(note, 0.85, true)
+            this.arpNotesDown.push(note)
+            this.arpOffBeat = this.arpNextBeat + swing + stepBeats * clamp(patch.arp.gate, 0.05, 2)
+          }
+        }
+        this.arpStep++
+        this.arpNextBeat += stepBeats
+      }
+      if (this.arpOffBeat != null && this.beat >= this.arpOffBeat) { this.stopArpNotes(); this.arpOffBeat = null }
+    } else if (this.arpNotesDown.length) this.stopArpNotes()
+    // --- clip ---
+    if (this.playing && patch.clipMode && patch.activeClip >= 0 && patch.clips[patch.activeClip]) {
+      const clip = patch.clips[patch.activeClip]
+      const len = clip.lengthBeats || 4
+      const lb = this.beat % len
+      const le = lb + blockBeats
+      for (const note of clip.notes) {
+        let hit = note.start >= lb && note.start < le
+        if (!hit && le > len) hit = note.start < le - len // wrap
+        if (hit) {
+          if (note.chance >= 1 || grng() < note.chance) {
+            this.noteOn(note.note, note.vel, true)
+            this.clipNotesOn.push({ note: note.note, endBeat: this.beat + note.len })
+          }
+        }
+      }
+      for (let i = this.clipNotesOn.length - 1; i >= 0; i--) {
+        if (this.beat >= this.clipNotesOn[i].endBeat) {
+          this.noteOff(this.clipNotesOn[i].note, true)
+          this.clipNotesOn.splice(i, 1)
+        }
+      }
+      // automation lanes -> macros
+      for (const lane of clip.automation || []) {
+        const m = lane.param.match(/^macro([1-8])$/)
+        if (!m || !lane.points.length) continue
+        const x = lb / len
+        let val = lane.points[0].y
+        for (let i2 = 0; i2 < lane.points.length; i2++) {
+          const p0 = lane.points[i2], p1 = lane.points[i2 + 1]
+          if (!p1) { if (x >= p0.x) val = p0.y; break }
+          if (x >= p0.x && x <= p1.x) { val = p1.x > p0.x ? lerp(p0.y, p1.y, (x - p0.x) / (p1.x - p0.x)) : p0.y; break }
+        }
+        this.macros[+m[1] - 1] = val
+      }
+    }
+  }
+
+  arpHeldCacheToPool() {
+    const saved = this.heldNotes
+    this.heldNotes = this.arpHeldCache || []
+    const pool = this.arpPool()
+    this.heldNotes = saved
+    return pool
+  }
+
+  // ------- LFOs -------
+  lfoFreq(i) {
+    const cfg = this.patch.lfos[i]
+    if (cfg.sync) {
+      const beats = this.SYNC_BEATS[clamp(Math.round(cfg.syncRate), 0, this.SYNC_BEATS.length - 1)]
+      return 1 / (beats * 60 / this.bpm)
+    }
+    return this.gmodVal(`lfo${i + 1}.rate`, cfg.rate)
+  }
+
+  lfoEval(i, phase, wantY) {
+    const cfg = this.patch.lfos[i]
+    let ph = phase
+    if (cfg.swing > 0 && cfg.sync) {
+      const seg = ph * 2
+      const w = 0.5 + cfg.swing * 0.25
+      ph = seg < 1 ? curveShape(seg, cfg.swing * 0.5) * 0.5 : 0.5 + curveShape(seg - 1, -cfg.swing * 0.5) * 0.5
+    }
+    const lut = wantY ? this.lfoLutsY[i] : this.lfoLuts[i]
+    if (!lut) return Math.sin(ph * TWO_PI) * 0.5 + 0.5
+    return lutEval(lut, ph)
+  }
+
+  updateGlobalLfos(blockSec) {
+    const patch = this.patch
+    for (let i = 0; i < 10; i++) {
+      const cfg = patch.lfos[i]
+      if (cfg.mode === 'chaos') {
+        const c = this.chaosInst[i]
+        if (c.type !== cfg.chaosType) { this.chaosInst[i] = new Chaos(cfg.chaosType); continue }
+        this.lfoGlobalOut[i] = c.step(this.lfoFreq(i), blockSec)
+        this.lfoGlobalOutY[i] = clamp(c.y != null ? c.y / 25 + 0.5 : this.lfoGlobalOut[i], 0, 1)
+        continue
+      }
+      const f = this.lfoFreq(i)
+      this.lfoFreePhase[i] += f * blockSec
+      this.lfoFreePhase[i] -= Math.floor(this.lfoFreePhase[i])
+      const ph = this.lfoFreePhase[i]
+      this.lfoGlobalOut[i] = this.lfoEval(i, ph, false)
+      this.lfoGlobalOutY[i] = cfg.mode === 'path' ? this.lfoEval(i, ph, true) : this.lfoGlobalOut[i]
+    }
+  }
+
+  updateVoiceLfos(v, blockSec) {
+    const patch = this.patch
+    for (let i = 0; i < 10; i++) {
+      const cfg = patch.lfos[i]
+      if (cfg.mode === 'chaos' || cfg.trigMode === 'off') { v.lfoOut[i] = this.lfoGlobalOut[i]; v.lfoOutY[i] = this.lfoGlobalOutY[i]; continue }
+      const f = this.lfoFreq(i)
+      let ph = v.lfoPhase[i]
+      // delay/rise
+      if (cfg.delay > 0 && v.lfoRiseT[i] < cfg.delay) { v.lfoRiseT[i] += blockSec; v.lfoOut[i] = this.lfoEval(i, 0, false); continue }
+      ph += f * blockSec
+      if (cfg.trigMode === 'env') ph = Math.min(ph, 0.99999)
+      else if (cfg.trigMode === 'loopHold' && !v.gate) { /* freeze phase at release */ ph = v.lfoPhase[i] }
+      else ph -= Math.floor(ph)
+      v.lfoPhase[i] = ph
+      let out = this.lfoEval(i, ph, false)
+      let outY = cfg.mode === 'path' ? this.lfoEval(i, ph, true) : out
+      if (cfg.rise > 0) {
+        const riseAmt = clamp((v.lfoRiseT[i] - cfg.delay) / Math.max(cfg.rise, 0.001), 0, 1)
+        v.lfoRiseT[i] += blockSec
+        out = lerp(0.5, out, riseAmt); outY = lerp(0.5, outY, riseAmt)
+      } else v.lfoRiseT[i] += blockSec
+      if (cfg.smooth > 0) {
+        const c = 1 - Math.pow(clamp(cfg.smooth, 0, 1), 0.3) * 0.995
+        v.lfoSm[i] += c * (out - v.lfoSm[i]); out = v.lfoSm[i]
+        v.lfoSmY[i] += c * (outY - v.lfoSmY[i]); outY = v.lfoSmY[i]
+      }
+      v.lfoOut[i] = out
+      v.lfoOutY[i] = outY
+    }
+  }
+
+  computeGmod() {
+    this.gmodCache = {}
+    for (const row of this.gmodRows) {
+      let v = this.globalSourceVal(row.src)
+      v = this.applyRowShaping(row, v)
+      let aux = 1
+      if (row.aux && row.aux !== 'none') aux = lerp(1, clamp(this.globalSourceVal(row.aux), -1, 1), row.auxAmt)
+      const contrib = v * row.amt * aux * row.span
+      this.gmodCache[row.dest] = (this.gmodCache[row.dest] || 0) + contrib
+    }
+  }
+
+  computeVoiceMod(v) {
+    const mod = v.mod
+    for (let i = 0; i < this.destCount; i++) mod[i] = 0
+    for (const row of this.matrixRows) {
+      let val = this.voiceSourceVal(v, row.src)
+      val = this.applyRowShaping(row, val)
+      let aux = 1
+      if (row.aux && row.aux !== 'none') aux = lerp(1, clamp(this.voiceSourceVal(v, row.aux), -1, 1), row.auxAmt)
+      mod[row.destIdx] += val * row.amt * aux * row.span
+    }
+  }
+
+  // ------- voice block render -------
+  renderVoice(v, n, blockSec) {
+    const patch = this.patch
+    // glide
+    if (v.glideT < 1) {
+      v.glideT = Math.min(1, v.glideT + (v.glideRate || 1) * n)
+    }
+    v.curFreq = v.glideT >= 1 ? v.freq : v.glideFrom * Math.pow(v.freq / v.glideFrom, v.glideT)
+    this.updateVoiceLfos(v, blockSec)
+    // envs 2-4 at block rate (env1 per-sample below)
+    for (let e = 1; e < 4; e++) v.envs[e].process(this.envCfg(e), blockSec)
+    this.computeVoiceMod(v)
+    // clear work buffers
+    const f1L = this.f1inL, f1R = this.f1inR, f2L = this.f2inL, f2R = this.f2inR, byL = this.byL, byR = this.byR
+    f1L.fill(0, 0, n); f1R.fill(0, 0, n); f2L.fill(0, 0, n); f2R.fill(0, 0, n); byL.fill(0, 0, n); byR.fill(0, 0, n)
+    for (let i = 0; i < 3; i++) this.oscMono[i].fill(0, 0, n)
+    let filteredBus = null
+    let anyAlive = false
+    // render osc C,B,A so FM sources are fresh
+    for (let oi = 2; oi >= 0; oi--) {
+      const cfg = patch.oscs[oi]
+      if (!cfg.enabled) continue
+      const sL = this.srcL, sR = this.srcR
+      sL.fill(0, 0, n); sR.fill(0, 0, n)
+      const alive = renderOscBlock(this, v, oi, patch, n, sL, sR, this.oscMono[oi])
+      if (alive) anyAlive = true
+      this.routeSource(cfg, sL, sR, n, f1L, f1R, f2L, f2R, byL, byR)
+      if (cfg.dest !== 'bypass') filteredBus = filteredBus || cfg.bus
+      else if (cfg.bus !== 'direct') { /* bypass handled in route */ }
+    }
+    // sub
+    if (patch.sub.enabled) {
+      const sL = this.srcL, sR = this.srcR
+      sL.fill(0, 0, n); sR.fill(0, 0, n)
+      this.renderSub(v, patch.sub, n, sL, sR)
+      anyAlive = true
+      if (patch.sub.direct) {
+        const [dl, dr] = this.busses.direct
+        for (let i = 0; i < n; i++) { dl[i] += sL[i] * this.env1Gain(v); dr[i] += sR[i] * this.env1Gain(v) }
+      } else {
+        this.routeSource(patch.sub, sL, sR, n, f1L, f1R, f2L, f2R, byL, byR)
+        if (patch.sub.dest !== 'bypass') filteredBus = filteredBus || patch.sub.bus
+      }
+    }
+    // noise
+    if (patch.noise.enabled && patch.noise.sampleId) {
+      const smp = this.samples.get(patch.noise.sampleId)
+      if (smp) {
+        const sL = this.srcL, sR = this.srcR
+        sL.fill(0, 0, n); sR.fill(0, 0, n)
+        this.renderNoise(v, patch.noise, smp, n, sL, sR)
+        anyAlive = true
+        this.routeSource(patch.noise, sL, sR, n, f1L, f1R, f2L, f2R, byL, byR)
+        if (patch.noise.dest !== 'bypass') filteredBus = filteredBus || patch.noise.bus
+      }
+    }
+    // filters (per voice)
+    const vs = patch.global
+    const spreadIdx = v.serial % 7 - 3
+    const ktBase = (v.note - 60) * 0.00738
+    const serial = patch.filterRouting === 'serial'
+    const outL = this.srcL, outR = this.srcR
+    outL.fill(0, 0, n); outR.fill(0, 0, n)
+    const fcfg1 = patch.filters[0], fcfg2 = patch.filters[1]
+    const cutSpread = vs.voiceSpreadCutoff * spreadIdx * 0.02
+    if (fcfg1.enabled) {
+      const cut = clamp(this.vp(v, 'f1.cutoff', fcfg1.cutoff) + ktBase * fcfg1.keytrack + cutSpread, 0, 1)
+      const res = clamp(this.vp(v, 'f1.res', fcfg1.res), 0, 1)
+      const drv = clamp(this.vp(v, 'f1.drive', fcfg1.drive), 0, 1)
+      const fat = clamp(this.vp(v, 'f1.fat', fcfg1.fat), 0, 1)
+      const fmix = clamp(this.vp(v, 'f1.mix', fcfg1.mix), 0, 1)
+      const fpan = clamp(this.vp(v, 'f1.pan', fcfg1.pan), -1, 1)
+      for (let i = 0; i < n; i++) {
+        const wl = v.filters[0].process(f1L[i], fcfg1.type, clamp(cut - fpan * 0.08, 0, 1), res, drv, fat)
+        const wr = v.filters[1].process(f1R[i], fcfg1.type, clamp(cut + fpan * 0.08, 0, 1), res, drv, fat)
+        const l = lerp(f1L[i], wl, fmix), r = lerp(f1R[i], wr, fmix)
+        if (serial && fcfg2.enabled) { f2L[i] += l; f2R[i] += r } else { outL[i] += l; outR[i] += r }
+      }
+    } else {
+      for (let i = 0; i < n; i++) {
+        if (serial && fcfg2.enabled) { f2L[i] += f1L[i]; f2R[i] += f1R[i] }
+        else { outL[i] += f1L[i]; outR[i] += f1R[i] }
+      }
+    }
+    if (fcfg2.enabled) {
+      const cut = clamp(this.vp(v, 'f2.cutoff', fcfg2.cutoff) + ktBase * fcfg2.keytrack + cutSpread, 0, 1)
+      const res = clamp(this.vp(v, 'f2.res', fcfg2.res), 0, 1)
+      const drv = clamp(this.vp(v, 'f2.drive', fcfg2.drive), 0, 1)
+      const fat = clamp(this.vp(v, 'f2.fat', fcfg2.fat), 0, 1)
+      const fmix = clamp(this.vp(v, 'f2.mix', fcfg2.mix), 0, 1)
+      const fpan = clamp(this.vp(v, 'f2.pan', fcfg2.pan), -1, 1)
+      for (let i = 0; i < n; i++) {
+        const wl = v.filters[2].process(f2L[i], fcfg2.type, clamp(cut - fpan * 0.08, 0, 1), res, drv, fat)
+        const wr = v.filters[3].process(f2R[i], fcfg2.type, clamp(cut + fpan * 0.08, 0, 1), res, drv, fat)
+        outL[i] += lerp(f2L[i], wl, fmix)
+        outR[i] += lerp(f2R[i], wr, fmix)
+      }
+    } else if (!serial || !fcfg1.enabled) {
+      for (let i = 0; i < n; i++) { outL[i] += f2L[i]; outR[i] += f2R[i] }
+    }
+    // amp env (per-sample), velocity, voice pan spread
+    const e1cfg = this.envCfg(0)
+    const dt = 1 / this.sr
+    const velG = 0.2 + 0.8 * v.vel
+    const panSpread = clamp(vs.voiceSpreadPan * spreadIdx / 3, -1, 1)
+    const pl = Math.cos((panSpread + 1) * Math.PI / 4) * 1.414 * velG
+    const pr = Math.sin((panSpread + 1) * Math.PI / 4) * 1.414 * velG
+    const tuneSpread = vs.voiceSpreadTune > 0 ? Math.pow(2, vs.voiceSpreadTune * spreadIdx * 2 / 1200) : 1
+    if (tuneSpread !== 1) v.freq *= 1 // (applied at start; skip per-block)
+    const bus = this.busses[filteredBus || 'main'] || this.busses.main
+    const [bL, bR] = bus
+    const env1 = v.envs[0]
+    for (let i = 0; i < n; i++) {
+      const g = env1.process(e1cfg, dt)
+      bL[i] += (outL[i] + byL[i]) * g * pl
+      bR[i] += (outR[i] + byR[i]) * g * pr
+    }
+    if (!env1.active) v.active = false
+    if (!anyAlive && !v.gate && !env1.active) v.active = false
+  }
+
+  env1Gain(v) { return v.envs[0].out }
+
+  envCfg(i) {
+    const cfg = this.patch.envs[i]
+    const n = i + 1
+    return {
+      attack: this.gmodVal(`env${n}.attack`, cfg.attack),
+      hold: cfg.hold,
+      decay: this.gmodVal(`env${n}.decay`, cfg.decay),
+      sustain: clamp(this.gmodVal(`env${n}.sustain`, cfg.sustain), 0, 1),
+      release: this.gmodVal(`env${n}.release`, cfg.release),
+      aCurve: cfg.aCurve, dCurve: cfg.dCurve, rCurve: cfg.rCurve,
+    }
+  }
+
+  routeSource(cfg, sL, sR, n, f1L, f1R, f2L, f2R, byL, byR) {
+    let w1 = 0, w2 = 0, wb = 0
+    switch (cfg.dest) {
+      case 'f1': w1 = 1; break
+      case 'f2': w2 = 1; break
+      case 'both': w1 = 1 - cfg.filterBal; w2 = cfg.filterBal; break
+      default: wb = 1
+    }
+    if (w1 > 0) for (let i = 0; i < n; i++) { f1L[i] += sL[i] * w1; f1R[i] += sR[i] * w1 }
+    if (w2 > 0) for (let i = 0; i < n; i++) { f2L[i] += sL[i] * w2; f2R[i] += sR[i] * w2 }
+    if (wb > 0) for (let i = 0; i < n; i++) { byL[i] += sL[i] * wb; byR[i] += sR[i] * wb }
+  }
+
+  renderSub(v, cfg, n, sL, sR) {
+    const level = clamp(this.vp(v, 'sub.level', cfg.level), 0, 1)
+    const pan = clamp(this.vp(v, 'sub.pan', cfg.pan), -1, 1)
+    const pl = Math.cos((pan + 1) * Math.PI / 4) * level
+    const pr = Math.sin((pan + 1) * Math.PI / 4) * level
+    const freq = v.curFreq * Math.pow(2, cfg.octave) * Math.pow(2, this.pitchBendSemis / 12)
+    const inc = freq / this.sr
+    let ph = v.subPhase
+    for (let i = 0; i < n; i++) {
+      let y
+      switch (cfg.shape) {
+        case 'triangle': y = 4 * Math.abs(ph - 0.5) - 1; break
+        case 'square': {
+          y = ph < 0.5 ? 1 : -1
+          y -= polyBlep(ph, inc); y += polyBlep((ph + 0.5) % 1, inc)
+          break
+        }
+        case 'saw': {
+          y = 2 * ph - 1
+          y -= polyBlep(ph, inc)
+          break
+        }
+        default: y = Math.sin(ph * TWO_PI)
+      }
+      sL[i] += y * pl
+      sR[i] += y * pr
+      ph += inc
+      if (ph >= 1) ph -= 1
+    }
+    v.subPhase = ph
+  }
+
+  renderNoise(v, cfg, smp, n, sL, sR) {
+    const level = clamp(this.vp(v, 'noise.level', cfg.level), 0, 1)
+    const pan = clamp(this.vp(v, 'noise.pan', cfg.pan), -1, 1)
+    const pitch = this.vp(v, 'noise.pitch', cfg.pitch)
+    const pl = Math.cos((pan + 1) * Math.PI / 4) * level
+    const pr = Math.sin((pan + 1) * Math.PI / 4) * level
+    const kt = cfg.keytrack ? v.curFreq / midiFreq(60) : 1
+    const step = Math.pow(2, pitch / 12) * kt * (smp.sr / this.sr)
+    if (v.noisePos < 0) v.noisePos = (cfg.phase + (cfg.rand > 0 ? v.rand * cfg.rand : 0)) % 1 * smp.len
+    let pos = v.noisePos
+    const stereo = !!smp.r
+    for (let i = 0; i < n; i++) {
+      if (pos >= smp.len) {
+        if (cfg.oneShot) break
+        pos -= smp.len
+      }
+      const l = sampleAt(smp, pos, 0)
+      sL[i] += l * pl
+      sR[i] += (stereo ? sampleAt(smp, pos, 1) : l) * pr
+      pos += step
+    }
+    v.noisePos = pos
+  }
+
+  // ------- FX chains -------
+  fxState(unit) {
+    let st = this.fxStates.get(unit.id)
+    if (!st || st.type !== unit.type) { st = new FxState(unit.type, this.sr, this.bpm); this.fxStates.set(unit.id, st) }
+    return st
+  }
+
+  tmp() {
+    if (this.tmpPoolIdx >= this.tmpPool.length) this.tmpPool.push(new Float32Array(BLOCK))
+    const b = this.tmpPool[this.tmpPoolIdx++]
+    b.fill(0)
+    return b
+  }
+
+  processChain(units, L, R, n) {
+    for (const unit of units) {
+      if (!unit.enabled) continue
+      if (unit.type === 'splitLH' || unit.type === 'splitLMH' || unit.type === 'splitMS') {
+        this.processSplitter(unit, L, R, n)
+        continue
+      }
+      processFxUnit(this, unit, this.fxState(unit), L, R, n)
+    }
+  }
+
+  processSplitter(unit, L, R, n) {
+    const st = this.fxState(unit)
+    if (!st.xo) { st.xo = [new SVF(), new SVF(), new SVF(), new SVF()] }
+    const save = this.tmpPoolIdx
+    const chains = unit.chains || []
+    if (unit.type === 'splitMS') {
+      const mL = this.tmp(), mR = this.tmp(), sL2 = this.tmp(), sR2 = this.tmp()
+      for (let i = 0; i < n; i++) {
+        const mid = (L[i] + R[i]) * 0.5, side = (L[i] - R[i]) * 0.5
+        mL[i] = mid; mR[i] = mid; sL2[i] = side; sR2[i] = -side
+      }
+      if (chains[0]) this.processChain(chains[0], mL, mR, n)
+      if (chains[1]) this.processChain(chains[1], sL2, sR2, n)
+      for (let i = 0; i < n; i++) {
+        const mid = (mL[i] + mR[i]) * 0.5, side = (sL2[i] - sR2[i]) * 0.5
+        L[i] = mid + side; R[i] = mid - side
+      }
+      this.tmpPoolIdx = save
+      return
+    }
+    if (unit.type === 'splitLH') {
+      const xf = cutoffHz(clamp(this.gmodVal(`fx.${unit.id}.xover`, unit.params.xover != null ? unit.params.xover : 0.4), 0, 1))
+      const g = svfG(xf, this.sr)
+      const loL = this.tmp(), loR = this.tmp(), hiL = this.tmp(), hiR = this.tmp()
+      for (let i = 0; i < n; i++) {
+        st.xo[0].process(L[i], g, 1.414); st.xo[1].process(R[i], g, 1.414)
+        loL[i] = st.xo[0].lp; hiL[i] = st.xo[0].hp
+        loR[i] = st.xo[1].lp; hiR[i] = st.xo[1].hp
+      }
+      if (chains[0]) this.processChain(chains[0], loL, loR, n)
+      if (chains[1]) this.processChain(chains[1], hiL, hiR, n)
+      for (let i = 0; i < n; i++) { L[i] = loL[i] + hiL[i]; R[i] = loR[i] + hiR[i] }
+      this.tmpPoolIdx = save
+      return
+    }
+    // LMH
+    const xlo = cutoffHz(clamp(this.gmodVal(`fx.${unit.id}.xlo`, unit.params.xlo != null ? unit.params.xlo : 0.3), 0, 1))
+    const xhi = cutoffHz(clamp(this.gmodVal(`fx.${unit.id}.xhi`, unit.params.xhi != null ? unit.params.xhi : 0.65), 0, 1))
+    const gLo = svfG(xlo, this.sr), gHi = svfG(Math.max(xhi, xlo * 1.02), this.sr)
+    const loL = this.tmp(), loR = this.tmp(), miL = this.tmp(), miR = this.tmp(), hiL = this.tmp(), hiR = this.tmp()
+    for (let i = 0; i < n; i++) {
+      st.xo[0].process(L[i], gLo, 1.414); st.xo[1].process(R[i], gLo, 1.414)
+      loL[i] = st.xo[0].lp; loR[i] = st.xo[1].lp
+      st.xo[2].process(st.xo[0].hp, gHi, 1.414); st.xo[3].process(st.xo[1].hp, gHi, 1.414)
+      miL[i] = st.xo[2].lp; miR[i] = st.xo[3].lp
+      hiL[i] = st.xo[2].hp; hiR[i] = st.xo[3].hp
+    }
+    if (chains[0]) this.processChain(chains[0], loL, loR, n)
+    if (chains[1]) this.processChain(chains[1], miL, miR, n)
+    if (chains[2]) this.processChain(chains[2], hiL, hiR, n)
+    for (let i = 0; i < n; i++) { L[i] = loL[i] + miL[i] + hiL[i]; R[i] = loR[i] + miR[i] + hiR[i] }
+    this.tmpPoolIdx = save
+  }
+
+  // ------- main -------
+  process(inputs, outputs) {
+    const out = outputs[0]
+    const OL = out[0], OR = out.length > 1 ? out[1] : out[0]
+    const n = OL.length
+    if (!this.patch) return true
+    const patch = this.patch
+    const blockSec = n / this.sr
+    const blockBeats = this.bpm / 60 * blockSec
+    this.tmpPoolIdx = 0
+    for (const key of ['main', 'bus1', 'bus2', 'direct']) { this.busses[key][0].fill(0, 0, n); this.busses[key][1].fill(0, 0, n) }
+    this.updateGlobalLfos(blockSec)
+    this.computeGmod()
+    this.runSchedule(blockSec)
+    this.stepSequencer(blockBeats)
+    let voiceCount = 0
+    for (const v of this.voices) {
+      if (!v.active) continue
+      voiceCount++
+      this.renderVoice(v, n, blockSec)
+    }
+    // FX lanes
+    this.processChain(patch.fxMain, this.busses.main[0], this.busses.main[1], n)
+    this.processChain(patch.fxBus1, this.busses.bus1[0], this.busses.bus1[1], n)
+    this.processChain(patch.fxBus2, this.busses.bus2[0], this.busses.bus2[1], n)
+    const r1 = clamp(this.gmodVal('bus1Return', patch.bus1Return), 0, 1)
+    const r2 = clamp(this.gmodVal('bus2Return', patch.bus2Return), 0, 1)
+    const mg = clamp(this.gmodVal('global.masterGain', patch.global.masterGain), 0, 1)
+    let peak = 0
+    for (let i = 0; i < n; i++) {
+      let l = (this.busses.main[0][i] + this.busses.bus1[0][i] * r1 + this.busses.bus2[0][i] * r2 + this.busses.direct[0][i]) * mg
+      let r = (this.busses.main[1][i] + this.busses.bus1[1][i] * r1 + this.busses.bus2[1][i] * r2 + this.busses.direct[1][i]) * mg
+      // gentle safety clip
+      if (l > 1.5) l = 1.5 + Math.tanh(l - 1.5); if (l < -1.5) l = -1.5 + Math.tanh(l + 1.5)
+      if (r > 1.5) r = 1.5 + Math.tanh(r - 1.5); if (r < -1.5) r = -1.5 + Math.tanh(r + 1.5)
+      OL[i] = l; OR[i] = r
+      const a = Math.abs(l) + Math.abs(r)
+      if (a > peak) peak = a
+    }
+    // metronome click
+    if (this.playing && this.clickOn) {
+      const beatIn = Math.ceil(this.beat)
+      if (beatIn < this.beat + blockBeats) {
+        this.clickT = 0
+        this.clickHi = beatIn % 4 === 0
+      }
+      if (this.clickT != null && this.clickT < 0.05 * this.sr) {
+        const f = this.clickHi ? 1500 : 1000
+        for (let i = 0; i < n && this.clickT < 0.05 * this.sr; i++, this.clickT++) {
+          const env = Math.exp(-this.clickT / (0.012 * this.sr))
+          const c = Math.sin(TWO_PI * f * this.clickT / this.sr) * env * 0.25
+          OL[i] += c; OR[i] += c
+        }
+      }
+    }
+    if (this.playing) this.beat += blockBeats
+    // meters
+    if (++this.meterCounter >= 4) {
+      this.meterCounter = 0
+      const nv = this.newestVoice()
+      this.port.postMessage({
+        type: 'meters',
+        peak: peak * 0.5,
+        voices: voiceCount,
+        beat: this.beat,
+        playing: this.playing,
+        lfo: Array.from({ length: 10 }, (_, i) => {
+          const cfg = patch.lfos[i]
+          if (cfg.trigMode === 'off' || cfg.mode === 'chaos') return this.lfoGlobalOut[i]
+          return nv ? nv.lfoOut[i] : this.lfoGlobalOut[i]
+        }),
+        lfoPhase: Array.from({ length: 10 }, (_, i) => {
+          const cfg = patch.lfos[i]
+          if (cfg.trigMode === 'off') return this.lfoFreePhase[i]
+          return nv ? nv.lfoPhase[i] : this.lfoFreePhase[i]
+        }),
+        env: nv ? nv.envs.map(e => e.out) : [0, 0, 0, 0],
+        grain: Array.from(this.grainViz),
+        spec: Array.from(this.specViz),
+        macros: Array.from(this.macros),
+      })
+    }
+    return true
+  }
+}
+
+registerProcessor('apollo-engine', ApolloProcessor)
