@@ -289,6 +289,62 @@ export function exportWavetableWav(data: Float32Array, sampleRate = 44100): Blob
   return new Blob([buf], { type: 'audio/wav' })
 }
 
+// ---------------------------------------------------------------------------
+// Band-limited mip levels. Level k (1..7) keeps 1024>>k harmonics per frame;
+// the engine picks the level whose harmonic count fits under Nyquist for the
+// playing frequency, killing wavetable aliasing at high notes.
+
+export const MIP_LEVELS = 7
+
+function fftRadix2(re: Float32Array, im: Float32Array, inverse: boolean): void {
+  const n = re.length
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1
+    for (; j & bit; bit >>= 1) j ^= bit
+    j ^= bit
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (inverse ? 1 : -1) * 2 * Math.PI / len
+    const wr = Math.cos(ang), wi = Math.sin(ang)
+    for (let i = 0; i < n; i += len) {
+      let cwr = 1, cwi = 0
+      for (let k = 0; k < len / 2; k++) {
+        const ur = re[i + k], ui = im[i + k]
+        const vr = re[i + k + len / 2] * cwr - im[i + k + len / 2] * cwi
+        const vi = re[i + k + len / 2] * cwi + im[i + k + len / 2] * cwr
+        re[i + k] = ur + vr; im[i + k] = ui + vi
+        re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi
+        const nwr = cwr * wr - cwi * wi
+        cwi = cwr * wi + cwi * wr; cwr = nwr
+      }
+    }
+  }
+  if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n }
+}
+
+/** Build MIP_LEVELS band-limited copies of every frame.
+ *  Returns Float32Array(MIP_LEVELS * frames * WT_LEN); level k-1 keeps 1024>>k harmonics. */
+export function buildTableMips(data: Float32Array, frames: number): Float32Array {
+  const out = new Float32Array(MIP_LEVELS * frames * WT_LEN)
+  const re = new Float32Array(WT_LEN)
+  const im = new Float32Array(WT_LEN)
+  const fre = new Float32Array(WT_LEN)
+  const fim = new Float32Array(WT_LEN)
+  for (let f = 0; f < frames; f++) {
+    for (let i = 0; i < WT_LEN; i++) { fre[i] = data[f * WT_LEN + i]; fim[i] = 0 }
+    fftRadix2(fre, fim, false)
+    for (let lvl = 1; lvl <= MIP_LEVELS; lvl++) {
+      const keep = 1024 >> lvl // 512, 256, … 8 harmonics
+      re.set(fre); im.set(fim)
+      for (let b = keep + 1; b <= WT_LEN - keep - 1; b++) { re[b] = 0; im[b] = 0 }
+      fftRadix2(re, im, true)
+      out.set(re, ((lvl - 1) * frames + f) * WT_LEN)
+    }
+  }
+  return out
+}
+
 // base64 helpers for embedding user tables in patches
 export function tableToBase64(data: Float32Array): string {
   const u8 = new Uint8Array(data.buffer, data.byteOffset, data.byteLength)

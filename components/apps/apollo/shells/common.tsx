@@ -17,15 +17,16 @@ import FxRack from '../FxRack'
 import ArpPanel from '../ArpPanel'
 import ClipPanel from '../ClipPanel'
 import GlobalPanel from '../GlobalPanel'
+import ScopeView from '../ScopeView'
 
 export type PanelId =
   | 'osc' | 'subnoise' | 'filters' | 'env' | 'lfo' | 'macros'
-  | 'matrix' | 'mixer' | 'fx' | 'arp' | 'clip' | 'global'
+  | 'matrix' | 'mixer' | 'fx' | 'arp' | 'clip' | 'global' | 'scope'
 
 export const PANEL_LABEL: Record<PanelId, string> = {
   osc: 'Oscillators', subnoise: 'Sub + Noise', filters: 'Filters', env: 'Envelopes',
   lfo: 'LFOs', macros: 'Macros', matrix: 'Mod Matrix', mixer: 'Mixer', fx: 'Effects',
-  arp: 'Arpeggiator', clip: 'Clips', global: 'Global',
+  arp: 'Arpeggiator', clip: 'Clips', global: 'Global', scope: 'Scope',
 }
 
 export function renderPanel(id: PanelId): React.ReactNode {
@@ -42,6 +43,7 @@ export function renderPanel(id: PanelId): React.ReactNode {
     case 'arp': return <ArpPanel />
     case 'clip': return <ClipPanel />
     case 'global': return <GlobalPanel />
+    case 'scope': return <ScopeView />
   }
 }
 

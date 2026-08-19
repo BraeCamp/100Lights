@@ -24,6 +24,7 @@ import ClipPanel from '@/components/apps/apollo/ClipPanel'
 import GlobalPanel from '@/components/apps/apollo/GlobalPanel'
 import KeyboardStrip from '@/components/apps/apollo/KeyboardStrip'
 import WavetableEditor from '@/components/apps/apollo/WavetableEditor'
+import ScopeView from '@/components/apps/apollo/ScopeView'
 import { startWebMidi, onMidiNote, onMidiCC, webMidiSupported, getMidiDeviceNames } from '@/lib/web-midi'
 
 type Tab = 'synth' | 'mix' | 'fx' | 'matrix' | 'seq' | 'global'
@@ -48,12 +49,13 @@ const PANELS: Record<string, { render: () => React.ReactNode }> = {
   arp: { render: () => <ArpPanel /> },
   clip: { render: () => <ClipPanel /> },
   global: { render: () => <GlobalPanel /> },
+  scope: { render: () => <ScopeView /> },
 }
 
 type TabLayout = [string[], string[]]
 const DEFAULT_LAYOUT: Record<Tab, TabLayout> = {
-  synth: [['osc', 'subnoise', 'filters'], ['env', 'lfo', 'macros']],
-  mix: [['mixer'], []],
+  synth: [['osc', 'subnoise', 'filters'], ['env', 'lfo', 'macros', 'scope']],
+  mix: [['mixer', 'scope'], []],
   fx: [['fx'], []],
   matrix: [['matrix', 'macros'], ['env', 'lfo']],
   seq: [['arp', 'clip'], []],

@@ -33,7 +33,7 @@ const THEME = {
 
 const STAGES: { id: string; label: string; hint: string; panels: PanelId[] }[] = [
   { id: 'sound', label: '1 · Sound', hint: 'pick and shape your sources', panels: ['osc', 'subnoise'] },
-  { id: 'shape', label: '2 · Shape', hint: 'filter and balance', panels: ['filters', 'mixer'] },
+  { id: 'shape', label: '2 · Shape', hint: 'filter and balance', panels: ['filters', 'mixer', 'scope'] },
   { id: 'motion', label: '3 · Motion', hint: 'make it move', panels: ['env', 'lfo', 'macros', 'matrix'] },
   { id: 'space', label: '4 · Space', hint: 'effects and atmosphere', panels: ['fx'] },
   { id: 'perform', label: '5 · Perform', hint: 'sequence and play', panels: ['arp', 'clip', 'global'] },

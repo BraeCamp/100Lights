@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useApollo, useMeters, Knob, ToggleBtn, UI } from './ApolloContext'
 import SamplePicker from './SamplePicker'
+import { persistApolloSpectral } from '@/lib/apollo/sample-store'
 
 export default function SpectralView() {
   const ctx = useApollo()
@@ -185,6 +186,8 @@ export default function SpectralView() {
               void ctx.start().then(() => {
                 const id = 'img_' + Date.now().toString(36)
                 if (ctx.engine.loadImageSpectral(id, img)) {
+                  const an = ctx.engine.getSpectral(id)
+                  if (an) void persistApolloSpectral(id, f.name, an)
                   ctx.update(p => { p.oscs[i].spec.sampleId = id })
                   specImgId.current = ''
                 }

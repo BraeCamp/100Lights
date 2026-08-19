@@ -3,7 +3,7 @@
    sub + noise, dual filters, 4 envelopes, 10 LFOs, mod matrix, three FX
    lanes with splitters, arp + clip sequencer. Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-19-2 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-19-3 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -547,6 +547,8 @@ class Voice {
       }
     }
     if (!wasActive) { for (const f of this.filters) f.reset() }
+    this.prevCut1 = null
+    this.prevCut2 = null
     // unison pan spread
     return this
   }
@@ -557,8 +559,10 @@ class Voice {
 // ---------- source renderers ----------
 const BLOCK = 128
 
-function tableSample(tbl, framePos, phase) {
+function tableSample(tbl, framePos, phase, data, dataOff) {
   const frames = tbl.frames
+  const arr = data || tbl.data
+  const off = dataOff || 0
   const fp = clamp(framePos, 0, frames - 1)
   const f0 = fp | 0
   const ff = fp - f0
@@ -566,12 +570,23 @@ function tableSample(tbl, framePos, phase) {
   const i0 = p | 0
   const pf = p - i0
   const ia = i0 & (WT_LEN - 1), ib = (i0 + 1) & (WT_LEN - 1)
-  const base0 = f0 * WT_LEN
-  const s0 = tbl.data[base0 + ia] + (tbl.data[base0 + ib] - tbl.data[base0 + ia]) * pf
+  const base0 = off + f0 * WT_LEN
+  const s0 = arr[base0 + ia] + (arr[base0 + ib] - arr[base0 + ia]) * pf
   if (ff < 1e-4 || f0 + 1 >= frames) return s0
-  const base1 = (f0 + 1) * WT_LEN
-  const s1 = tbl.data[base1 + ia] + (tbl.data[base1 + ib] - tbl.data[base1 + ia]) * pf
+  const base1 = off + (f0 + 1) * WT_LEN
+  const s1 = arr[base1 + ia] + (arr[base1 + ib] - arr[base1 + ia]) * pf
   return s0 + (s1 - s0) * ff
+}
+
+// pick the band-limited mip whose harmonics fit under Nyquist for phaseInc
+function mipFor(tbl, inc) {
+  if (!tbl.mips || inc <= 0) return null
+  const H = 0.45 / inc
+  if (H >= 1024) return null
+  let lvl = Math.ceil(Math.log2(1024 / H))
+  if (lvl < 1) return null
+  if (lvl > 7) lvl = 7
+  return (lvl - 1) * tbl.frames * WT_LEN
 }
 
 function grainWindow(t, shape, skew, amount) {
@@ -648,6 +663,8 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
       const inc = freq * ratio / sr
       if (inc >= 0.5) continue
       ended = false
+      const mipOff = mipFor(tbl, inc)
+      const tData = mipOff == null ? tbl.data : tbl.mips
       const centerW = uni === 1 ? 1 : (u === (uni - 1) >> 1 ? 1 : blend)
       const sidePan = uni === 1 ? 0 : ((u % 2 ? 1 : -1) * ((u >> 1) + 1) / Math.max(1, uni >> 1)) * width
       const gl = centerW * norm * Math.cos((sidePan + 1) * Math.PI / 4) * 1.414
@@ -661,7 +678,7 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
         p -= Math.floor(p)
         if (PHASE_WARPS[w1m] && w1m !== 'fm') p = w1m === 'remap' && remap ? lutEval(remap, p) : warpPhase(w1m, p, w1a)
         if (PHASE_WARPS[w2m] && w2m !== 'fm') p = w2m === 'remap' && remap ? lutEval(remap, p) : warpPhase(w2m, p, w2a)
-        let y = tableSample(tbl, framePos, p)
+        let y = tableSample(tbl, framePos, p, tData, mipOff == null ? 0 : mipOff)
         if (AMP_WARPS[w1m]) y = warpAmp(w1m, y, w1a, modBuf[s])
         if (AMP_WARPS[w2m]) y = warpAmp(w2m, y, w2a, modBuf[s])
         outL[s] += y * gl * panL
@@ -1775,6 +1792,9 @@ class ApolloProcessor extends AudioWorkletProcessor {
         this.bpm = m.patch.global.bpm
         this.pv = {} // patch is the new source of truth; drop knob-drag overrides
         this.compileMatrix()
+        // quality switches change the internal rate — do it here, before notes
+        const desired = sampleRate * (m.patch.global.quality === 'high' ? 2 : 1)
+        if (this.sr !== desired) this.reconfigure(desired)
         break
       }
       case 'pv': { // base param values map
@@ -1782,7 +1802,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
         break
       }
       case 'ranges': this.ranges = m.ranges; break
-      case 'table': this.tables.set(m.id, { frames: m.frames, data: m.data }); break
+      case 'table': this.tables.set(m.id, { frames: m.frames, data: m.data, mips: m.mips || null }); break
       case 'dropTable': this.tables.delete(m.id); break
       case 'sample': this.samples.set(m.id, { sr: m.sr, len: m.len, l: m.l, r: m.r || null }); break
       case 'spectral': this.spectral.set(m.id, { frames: m.frames, bins: m.bins, hop: m.hop, sr: m.sr, mags: m.mags, phases: m.phases || null, onsets: m.onsets || null }); break
@@ -2326,9 +2346,13 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const fat = clamp(this.vp(v, 'f1.fat', fcfg1.fat), 0, 1)
       const fmix = clamp(this.vp(v, 'f1.mix', fcfg1.mix), 0, 1)
       const fpan = clamp(this.vp(v, 'f1.pan', fcfg1.pan), -1, 1)
+      // per-sample cutoff ramp from the previous block's value: no zipper
+      const cutFrom = v.prevCut1 == null ? cut : v.prevCut1
+      v.prevCut1 = cut
       for (let i = 0; i < n; i++) {
-        const wl = v.filters[0].process(f1L[i], fcfg1.type, clamp(cut - fpan * 0.08, 0, 1), res, drv, fat)
-        const wr = v.filters[1].process(f1R[i], fcfg1.type, clamp(cut + fpan * 0.08, 0, 1), res, drv, fat)
+        const cutI = cutFrom + (cut - cutFrom) * ((i + 1) / n)
+        const wl = v.filters[0].process(f1L[i], fcfg1.type, clamp(cutI - fpan * 0.08, 0, 1), res, drv, fat)
+        const wr = v.filters[1].process(f1R[i], fcfg1.type, clamp(cutI + fpan * 0.08, 0, 1), res, drv, fat)
         const l = lerp(f1L[i], wl, fmix), r = lerp(f1R[i], wr, fmix)
         if (serial && fcfg2.enabled) { f2L[i] += l; f2R[i] += r } else { outL[i] += l; outR[i] += r }
       }
@@ -2345,9 +2369,12 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const fat = clamp(this.vp(v, 'f2.fat', fcfg2.fat), 0, 1)
       const fmix = clamp(this.vp(v, 'f2.mix', fcfg2.mix), 0, 1)
       const fpan = clamp(this.vp(v, 'f2.pan', fcfg2.pan), -1, 1)
+      const cutFrom2 = v.prevCut2 == null ? cut : v.prevCut2
+      v.prevCut2 = cut
       for (let i = 0; i < n; i++) {
-        const wl = v.filters[2].process(f2L[i], fcfg2.type, clamp(cut - fpan * 0.08, 0, 1), res, drv, fat)
-        const wr = v.filters[3].process(f2R[i], fcfg2.type, clamp(cut + fpan * 0.08, 0, 1), res, drv, fat)
+        const cutI = cutFrom2 + (cut - cutFrom2) * ((i + 1) / n)
+        const wl = v.filters[2].process(f2L[i], fcfg2.type, clamp(cutI - fpan * 0.08, 0, 1), res, drv, fat)
+        const wr = v.filters[3].process(f2R[i], fcfg2.type, clamp(cutI + fpan * 0.08, 0, 1), res, drv, fat)
         outL[i] += lerp(f2L[i], wl, fmix)
         outR[i] += lerp(f2R[i], wr, fmix)
       }
@@ -2541,11 +2568,59 @@ class ApolloProcessor extends AudioWorkletProcessor {
   }
 
   // ------- main -------
+  reconfigure(newSr) {
+    // quality switch: rebuild everything whose state is sample-rate bound
+    this.sr = newSr
+    this.voices = Array.from({ length: 32 }, () => new Voice(newSr))
+    this.monoVoice = null
+    this.fxStates.clear()
+    this.convCache.clear()
+  }
+
   process(inputs, outputs) {
     const out = outputs[0]
     const OL = out[0], OR = out.length > 1 ? out[1] : out[0]
-    const n = OL.length
     if (!this.patch) return true
+    const desired = sampleRate * (this.patch.global.quality === 'high' ? 2 : 1)
+    if (this.sr !== desired) this.reconfigure(desired)
+    const n = OL.length
+    if (this.sr === sampleRate) { this.renderQuantum(OL, OR, n); return true }
+    // 2x oversampled: render two internal quanta, half-band decimate
+    if (!this.osUpL || this.osUpL.length !== n * 2) {
+      this.osUpL = new Float32Array(n * 2); this.osUpR = new Float32Array(n * 2)
+      const TAPS = 33
+      this.osFir = new Float32Array(TAPS)
+      const fc = 0.23
+      for (let i = 0; i < TAPS; i++) {
+        const m = i - (TAPS - 1) / 2
+        const sinc = m === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * m) / (Math.PI * m)
+        this.osFir[i] = sinc * (0.54 - 0.46 * Math.cos(2 * Math.PI * i / (TAPS - 1)))
+      }
+      let g = 0
+      for (let i = 0; i < TAPS; i++) g += this.osFir[i]
+      for (let i = 0; i < TAPS; i++) this.osFir[i] /= g
+      this.osHistL = new Float32Array(TAPS)
+      this.osHistR = new Float32Array(TAPS)
+    }
+    this.renderQuantum(this.osUpL.subarray(0, n), this.osUpR.subarray(0, n), n)
+    this.renderQuantum(this.osUpL.subarray(n), this.osUpR.subarray(n), n)
+    const TAPS = this.osFir.length
+    const hL = this.osHistL, hR = this.osHistR, fir = this.osFir
+    let oi = 0
+    for (let i = 0; i < n * 2; i++) {
+      // shift history (small TAPS — fine)
+      for (let k = TAPS - 1; k > 0; k--) { hL[k] = hL[k - 1]; hR[k] = hR[k - 1] }
+      hL[0] = this.osUpL[i]; hR[0] = this.osUpR[i]
+      if (i & 1) {
+        let al = 0, ar = 0
+        for (let k = 0; k < TAPS; k++) { al += hL[k] * fir[k]; ar += hR[k] * fir[k] }
+        OL[oi] = al; OR[oi] = ar; oi++
+      }
+    }
+    return true
+  }
+
+  renderQuantum(OL, OR, n) {
     const patch = this.patch
     const blockSec = n / this.sr
     const blockBeats = this.bpm / 60 * blockSec
@@ -2626,7 +2701,6 @@ class ApolloProcessor extends AudioWorkletProcessor {
         macros: Array.from(this.macros),
       })
     }
-    return true
   }
 }
 

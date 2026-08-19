@@ -31,7 +31,7 @@ const THEME = {
   headerLo: '#241d16',
 }
 
-const RACK_ORDER: PanelId[] = ['osc', 'subnoise', 'filters', 'mixer', 'env', 'lfo', 'macros', 'matrix', 'fx', 'arp', 'clip', 'global']
+const RACK_ORDER: PanelId[] = ['scope', 'osc', 'subnoise', 'filters', 'mixer', 'env', 'lfo', 'macros', 'matrix', 'fx', 'arp', 'clip', 'global']
 
 function Inner() {
   applyApolloTheme(THEME)

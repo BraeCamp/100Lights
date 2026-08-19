@@ -99,6 +99,7 @@ function Inner() {
             <Glow>{renderPanel('lfo')}</Glow>
             <Glow color={THEME.yellow}>{renderPanel('matrix')}</Glow>
             <Glow>{renderPanel('global')}</Glow>
+            <Glow color={THEME.green}>{renderPanel('scope')}</Glow>
           </div>
           <div style={colStyle}>
             <Glow color={THEME.yellow}>{renderPanel('fx')}</Glow>

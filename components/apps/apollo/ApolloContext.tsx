@@ -8,6 +8,9 @@ import {
   resolvePatchPath, uid,
 } from '@/lib/apollo/patch'
 import { ApolloEngine, ApolloMeters, getApolloEngine } from '@/lib/apollo/engine-client'
+import { initApolloLibrary, restorePatchSamples } from '@/lib/apollo/sample-store'
+import { useUser } from '@clerk/nextjs'
+import { onMidiCC } from '@/lib/web-midi'
 
 export interface ApolloCtxValue {
   patch: ApolloPatch
@@ -31,6 +34,14 @@ export interface ApolloCtxValue {
   routesFor: (dest: string) => ModRoute[]
   undo: () => void
   redo: () => void
+  /** Live structural mutation during a drag: applies + throttled engine resend,
+   *  no history/re-render. Call commit() at gesture end. */
+  mutateLive: (fn: (p: ApolloPatch) => void) => void
+  /** MIDI-learn: arm a param path; the next CC binds to it. */
+  armMidiLearn: (path: string) => void
+  clearMidiBinding: (path: string) => void
+  midiBindingFor: (path: string) => number | null
+  midiArmed: string | null
 }
 
 const Ctx = createContext<ApolloCtxValue | null>(null)
@@ -170,6 +181,81 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
     return (patchRef.current as ApolloPatch).matrix.filter(r => r.dest === dest && !r.bypass)
   }, [])
 
+  // live mutation during ring drags: mutate + throttled full resend, history on commit
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mutateLive = useCallback((fn: (p: ApolloPatch) => void) => {
+    const p = patchRef.current as ApolloPatch
+    if (gestureSnap.current == null) gestureSnap.current = JSON.stringify(p)
+    fn(p)
+    if (!liveTimer.current) {
+      liveTimer.current = setTimeout(() => {
+        liveTimer.current = null
+        if (engine.ready) engine.sendPatch(patchRef.current as ApolloPatch)
+      }, 80)
+    }
+  }, [engine])
+
+  // ---- MIDI learn: cc -> param path map, persisted per browser ----
+  const MIDI_MAP_KEY = 'apollo_midi_map_v1'
+  const midiMap = useRef<Record<number, string>>({})
+  const [midiArmed, setMidiArmed] = useState<string | null>(null)
+  const midiArmedRef = useRef<string | null>(null)
+  useEffect(() => {
+    try { midiMap.current = JSON.parse(localStorage.getItem(MIDI_MAP_KEY) || '{}') as Record<number, string> } catch { /* fresh */ }
+  }, [])
+  const saveMidiMap = () => { try { localStorage.setItem(MIDI_MAP_KEY, JSON.stringify(midiMap.current)) } catch { /* quota */ } }
+  const armMidiLearn = useCallback((path: string) => { midiArmedRef.current = path; setMidiArmed(path) }, [])
+  const clearMidiBinding = useCallback((path: string) => {
+    for (const cc of Object.keys(midiMap.current)) if (midiMap.current[Number(cc)] === path) delete midiMap.current[Number(cc)]
+    saveMidiMap()
+    setVersion(v => v + 1)
+  }, [])
+  const midiBindingFor = useCallback((path: string): number | null => {
+    for (const cc of Object.keys(midiMap.current)) if (midiMap.current[Number(cc)] === path) return Number(cc)
+    return null
+  }, [])
+  useEffect(() => {
+    let commitTimer: ReturnType<typeof setTimeout> | null = null
+    const off = onMidiCC(e => {
+      if (e.cc === 1 || e.cc === 64) return // reserved: mod wheel + sustain
+      if (midiArmedRef.current) {
+        midiMap.current[e.cc] = midiArmedRef.current
+        midiArmedRef.current = null
+        setMidiArmed(null)
+        saveMidiMap()
+        setVersion(v => v + 1)
+        return
+      }
+      const path = midiMap.current[e.cc]
+      if (!path) return
+      const def = PARAM_MAP[path]
+      if (!def) return
+      const t = e.value / 127
+      const val = def.curve === 'log' && def.min > 0 ? def.min * Math.pow(def.max / def.min, t) : def.min + (def.max - def.min) * t
+      setParam(path, val)
+      if (commitTimer) clearTimeout(commitTimer)
+      commitTimer = setTimeout(() => commit(), 250)
+    })
+    return () => { off(); if (commitTimer) clearTimeout(commitTimer) }
+  }, [setParam, commit])
+
+  // Sound Library scoping + sample restoration: any patch (autosave, preset,
+  // import) that references library samples gets them re-fulfilled into the
+  // engine automatically.
+  const { user } = useUser()
+  useEffect(() => { initApolloLibrary(user?.id ?? null) }, [user?.id])
+  const restoring = useRef(false)
+  useEffect(() => {
+    if (!started || restoring.current) return
+    restoring.current = true
+    void restorePatchSamples(patchRef.current as ApolloPatch, engine)
+      .then(ids => {
+        restoring.current = false
+        if (ids.length) setVersion(v => v + 1) // redraw waveforms with audio present
+      })
+      .catch(() => { restoring.current = false })
+  }, [version, started, engine])
+
   // programmatic hook for automation/tests (same convention as __dawDispatch)
   useEffect(() => {
     const w = window as unknown as Record<string, unknown>
@@ -186,7 +272,8 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
     patch: patchRef.current as ApolloPatch,
     version, engine, started, start, update, setParam, commit,
     selectedOsc, setSelectedOsc, modSource, setModSource, getModSource, assignMod, routesFor, undo, redo,
-  }), [version, engine, started, start, update, setParam, commit, selectedOsc, modSource, setModSource, getModSource, assignMod, routesFor, undo, redo])
+    mutateLive, armMidiLearn, clearMidiBinding, midiBindingFor, midiArmed,
+  }), [version, engine, started, start, update, setParam, commit, selectedOsc, modSource, setModSource, getModSource, assignMod, routesFor, undo, redo, mutateLive, armMidiLearn, clearMidiBinding, midiBindingFor, midiArmed])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -344,7 +431,10 @@ export function Knob(props: KnobProps) {
   }, [props.value, props.path, ctx, defaultValue])
   const [val, setVal] = useState(readValue)
   const [dragOver, setDragOver] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [ringAmt, setRingAmt] = useState<number | null>(null)
   const dragRef = useRef<{ y: number; v: number } | null>(null)
+  const ringRef = useRef<{ y: number; amt: number; id: string } | null>(null)
   useEffect(() => { setVal(readValue()) }, [readValue, ctx?.version])
 
   const apply = (v: number) => {
@@ -364,17 +454,44 @@ export function Knob(props: KnobProps) {
   }
 
   const onPointerDown = (e: React.PointerEvent) => {
+    if (e.button === 2) return
     e.preventDefault()
     ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    // grabbing the outer arc of a modulated knob edits the mod AMOUNT (Serum-style)
+    const svgEl = e.currentTarget as SVGSVGElement
+    const rect = svgEl.getBoundingClientRect()
+    const dx = e.clientX - rect.left - rect.width / 2
+    const dyC = e.clientY - rect.top - rect.height / 2
+    const dist = Math.hypot(dx, dyC)
+    const myRoutes = props.path && ctx ? ctx.routesFor(props.path) : []
+    if (myRoutes.length && dist > rect.width / 2 - 6.5) {
+      ringRef.current = { y: e.clientY, amt: myRoutes[0].amount, id: myRoutes[0].id }
+      setRingAmt(myRoutes[0].amount)
+      return
+    }
     dragRef.current = { y: e.clientY, v: toNorm(val) }
   }
   const onPointerMove = (e: React.PointerEvent) => {
+    if (ringRef.current && ctx) {
+      const dy = ringRef.current.y - e.clientY
+      const amt = Math.min(1, Math.max(-1, ringRef.current.amt + dy / 120 * (e.shiftKey ? 0.25 : 1)))
+      const id = ringRef.current.id
+      ctx.mutateLive(p => { const row = p.matrix.find(r => r.id === id); if (row) row.amount = amt })
+      setRingAmt(amt)
+      return
+    }
     if (!dragRef.current) return
     const dy = dragRef.current.y - e.clientY
     const fine = e.shiftKey ? 0.25 : 1
     apply(fromNorm(Math.min(1, Math.max(0, dragRef.current.v + dy / 150 * fine))))
   }
   const onPointerUp = () => {
+    if (ringRef.current) {
+      ringRef.current = null
+      setRingAmt(null)
+      ctx?.commit()
+      return
+    }
     if (!dragRef.current) return
     dragRef.current = null
     if (props.path && ctx) ctx.commit()
@@ -394,7 +511,8 @@ export function Knob(props: KnobProps) {
     return `M ${x1} ${y1} A ${radius} ${radius} 0 ${large} 1 ${x2} ${y2}`
   }
   const routes = props.path && ctx ? ctx.routesFor(props.path) : []
-  const modAmt = routes.length ? routes[0].amount : 0
+  const modAmt = ringAmt != null ? ringAmt : (routes.length ? routes[0].amount : 0)
+  const midiCc = props.path && ctx ? ctx.midiBindingFor(props.path) : null
   const modTo = Math.min(1, Math.max(0, norm + modAmt))
   const droppable = !!props.path && !!ctx
   const fmt = props.format || def?.unit === 'ct' || def?.unit === 'st'
@@ -407,9 +525,28 @@ export function Knob(props: KnobProps) {
       onDragOver={droppable ? (e => { if (ctx!.getModSource()) { e.preventDefault(); setDragOver(true) } }) : undefined}
       onDragLeave={() => setDragOver(false)}
       onDrop={droppable ? (e => { e.preventDefault(); setDragOver(false); if (ctx!.getModSource()) ctx!.assignMod(props.path!) }) : undefined}
-      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: size + 14, userSelect: 'none' }}
-      title={props.path ? `${props.label} — drag to change, double-click to reset${routes.length ? `, mod: ${routes.map(r2 => r2.source).join(',')}` : ''}` : props.label}
+      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: size + 14, userSelect: 'none', position: 'relative' }}
+      title={props.path ? `${props.label} — drag to change, double-click resets, right-click for MIDI${routes.length ? `; ring drag edits ${routes[0].source} amount` : ''}` : props.label}
+      onContextMenu={props.path ? (e => { e.preventDefault(); setMenuOpen(o => !o) }) : undefined}
     >
+      {menuOpen && props.path && ctx && (
+        <div style={{
+          position: 'absolute', zIndex: 300, top: '100%', left: '50%', transform: 'translateX(-50%)',
+          background: UI.panel, border: `1px solid ${UI.borderLight}`, borderRadius: 7, padding: 6,
+          display: 'flex', flexDirection: 'column', gap: 4, minWidth: 110, boxShadow: '0 8px 22px rgba(0,0,0,0.55)',
+        }}>
+          {ctx.midiArmed === props.path
+            ? <div style={{ fontSize: 9, color: UI.yellow }}>move a MIDI knob…</div>
+            : <button style={menuBtn} onClick={() => { ctx.armMidiLearn(props.path as string); }}>MIDI Learn</button>}
+          {midiCc != null && <button style={menuBtn} onClick={() => { ctx.clearMidiBinding(props.path as string); setMenuOpen(false) }}>Unbind CC {midiCc}</button>}
+          {routes.length > 0 && (
+            <button style={menuBtn} onClick={() => { const id = routes[0].id; ctx.update(p => { p.matrix = p.matrix.filter(r => r.id !== id) }); setMenuOpen(false) }}>
+              Remove {routes[0].source} mod
+            </button>
+          )}
+          <button style={menuBtn} onClick={() => setMenuOpen(false)}>Close</button>
+        </div>
+      )}
       <svg
         width={size} height={size}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
@@ -449,11 +586,17 @@ export function Knob(props: KnobProps) {
         />
         {/* mod source dot (Serum-style attachment indicator) */}
         {routes.length > 0 && <circle cx={size - 5} cy={5} r={3} fill={UI.green} opacity={0.9} />}
+        {midiCc != null && <circle cx={5} cy={5} r={3} fill={UI.yellow} opacity={0.9} />}
       </svg>
       <div style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: 0.7, textTransform: 'uppercase', color: UI.dim, whiteSpace: 'nowrap', maxWidth: size + 20, overflow: 'hidden', textOverflow: 'ellipsis' }}>{props.label}</div>
       <div style={{ fontSize: 8.5, color: UI.text, fontVariantNumeric: 'tabular-nums', opacity: 0.85 }}>{fmtFn(val)}</div>
     </div>
   )
+}
+
+const menuBtn: React.CSSProperties = {
+  background: 'none', border: 'none', color: UI.text, fontSize: 9.5, fontWeight: 600,
+  textAlign: 'left', cursor: 'pointer', padding: '2px 4px', borderRadius: 4,
 }
 
 // Draggable mod-source chip: drag onto any Knob with a path to create a route.

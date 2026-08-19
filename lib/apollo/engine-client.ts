@@ -4,7 +4,7 @@
 // computes LFO/remap LUTs, and exposes note/transport/param APIs to the UI.
 
 import { ApolloPatch, FxUnit, LfoPoint, PARAMS, FX_DEFS } from '@/lib/apollo/patch'
-import { generateFactoryTable, tableFromBase64 } from '@/lib/apollo/tables'
+import { generateFactoryTable, tableFromBase64, buildTableMips } from '@/lib/apollo/tables'
 import { analyzeSpectral, SpectralAnalysis } from '@/lib/apollo/spectral'
 import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
 
@@ -151,13 +151,15 @@ export class ApolloEngine extends EventTarget {
     if (!data) return
     this.tablesSent.add(tableId)
     const copy = new Float32Array(data) // keep original for UI drawing
-    this.post({ type: 'table', id: tableId, frames, data: copy }, [copy.buffer])
+    const mips = buildTableMips(data, frames)
+    this.post({ type: 'table', id: tableId, frames, data: copy, mips }, [copy.buffer, mips.buffer])
   }
 
   sendTable(tableId: string, frames: number, data: Float32Array): void {
     this.tablesSent.add(tableId)
     const copy = new Float32Array(data)
-    this.post({ type: 'table', id: tableId, frames, data: copy }, [copy.buffer])
+    const mips = buildTableMips(data, frames)
+    this.post({ type: 'table', id: tableId, frames, data: copy, mips }, [copy.buffer, mips.buffer])
   }
 
   // continuous knob changes: engine-side override until next full patch send
@@ -212,6 +214,16 @@ export class ApolloEngine extends EventTarget {
   }
 
   getSpectral(id: string): SpectralAnalysis | null { return this.spectralCache.get(id) || null }
+
+  /** Inject a precomputed spectral analysis (restored image-import spectra). */
+  loadSpectralData(id: string, an: SpectralAnalysis): void {
+    this.spectralCache.set(id, an)
+    this.post(
+      { type: 'spectral', id, frames: an.frames, bins: an.bins, hop: an.hop, sr: an.sr, mags: new Float32Array(an.mags), phases: new Float32Array(an.phases), onsets: new Uint8Array(an.onsets) },
+      [],
+    )
+    this.spectralSent.add(id)
+  }
 
   // Serum-2-style image import: luminance becomes spectral magnitude.
   // x axis = time frames, y axis = log-spaced frequency (top = high).
@@ -312,10 +324,12 @@ export class ApolloEngine extends EventTarget {
     const tableIds = new Set(patch.oscs.map(o => o.wt.tableId))
     for (const id of tableIds) {
       const user = patch.userTables?.[id]
-      if (user) post({ type: 'table', id, frames: user.frames, data: tableFromBase64(user.data) })
-      else {
+      if (user) {
+        const d = tableFromBase64(user.data)
+        post({ type: 'table', id, frames: user.frames, data: d, mips: buildTableMips(d, user.frames) })
+      } else {
         const t = generateFactoryTable(id)
-        if (t) post({ type: 'table', id, frames: t.frames, data: t.data })
+        if (t) post({ type: 'table', id, frames: t.frames, data: t.data, mips: buildTableMips(t.data, t.frames) })
       }
     }
     // samples + spectral

@@ -7,6 +7,7 @@ import { useApollo } from '@/components/apps/apollo/ApolloContext'
 import { LibrarySourcePicker } from '@/components/editor/SoundCreate'
 import type { LibraryEntry } from '@/lib/sound-library'
 import { decodeFileAudio } from '@/lib/media-import'
+import { persistApolloSample } from '@/lib/apollo/sample-store'
 
 export type SampleTarget = 'smp' | 'gran' | 'spec' | 'noise'
 
@@ -37,6 +38,7 @@ export default function SamplePicker({ oscIndex, target }: { oscIndex: number; t
       await ctx.start()
       const id = 'user_' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36)
       ctx.engine.loadSample(id, name, buffer)
+      void persistApolloSample(id, name, buffer) // survive reloads via Sound Library
       ctx.update(p => {
         if (target === 'noise') p.noise.sampleId = id
         else p.oscs[oscIndex][target].sampleId = id

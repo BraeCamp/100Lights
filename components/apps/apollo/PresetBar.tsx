@@ -6,6 +6,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApollo, ToggleBtn } from './ApolloContext'
 import { ApolloPatch, initPatch, defaultFx, uid, ModSource, FxType, WarpMode, FilterType } from '@/lib/apollo/patch'
 import { FACTORY_PRESETS } from '@/lib/apollo/presets'
+import { saveBounceToLibrary } from '@/lib/apollo/sample-store'
+import { audioBufferToWav } from '@/lib/wav-encoder'
 
 const LS_PRESETS = 'apollo_presets_v1'
 
@@ -96,6 +98,38 @@ export default function PresetBar() {
     })
   }
 
+  // Mutate: small musical nudges instead of a full re-roll
+  const mutate = () => {
+    const nudge = (v: number, lo: number, hi: number, amt: number) =>
+      Math.min(hi, Math.max(lo, v + (Math.random() * 2 - 1) * (hi - lo) * amt))
+    ctx.update(p => {
+      const o = p.oscs[ctx.selectedOsc]
+      o.wt.pos = nudge(o.wt.pos, 0, 1, 0.2)
+      o.detune = nudge(o.detune, 0, 1, 0.1)
+      if (o.wt.warp1.mode !== 'off') o.wt.warp1.amount = nudge(o.wt.warp1.amount, 0, 1, 0.15)
+      if (p.filters[0].enabled) {
+        p.filters[0].cutoff = nudge(p.filters[0].cutoff, 0.1, 1, 0.12)
+        p.filters[0].res = nudge(p.filters[0].res, 0, 0.9, 0.1)
+      }
+      p.envs[0].release = nudge(p.envs[0].release, 0.02, 3, 0.1)
+      for (const row of p.matrix) row.amount = Math.min(1, Math.max(-1, row.amount + (Math.random() * 2 - 1) * 0.12))
+    })
+  }
+
+  // A/B compare: store a B snapshot, then swap back and forth
+  const abRef = useRef<string | null>(null)
+  const [abStored, setAbStored] = useState(false)
+  const abToggle = () => {
+    if (abRef.current == null) {
+      abRef.current = JSON.stringify(ctx.patch)
+      setAbStored(true)
+      return
+    }
+    const other = abRef.current
+    abRef.current = JSON.stringify(ctx.patch)
+    try { applyPatch(JSON.parse(other) as Partial<ApolloPatch>) } catch { /* bad snapshot */ }
+  }
+
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
       <button style={navBtn} onClick={() => step(-1)} title="Previous preset">◀</button>
@@ -141,6 +175,95 @@ export default function PresetBar() {
       />
       <ToggleBtn on={false} label="Init" onClick={() => applyPatch(initPatch())} />
       <ToggleBtn on={false} label="⟳ Random" onClick={randomize} />
+      <ToggleBtn on={false} label="Mutate" title="Small random nudges to the current patch" onClick={mutate} />
+      <ToggleBtn on={abStored} label="A/B" title={abStored ? 'Swap with the stored B patch' : 'Store current as B, then swap back and forth'} onClick={abToggle} />
+      <BounceButton />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Bounce: offline-render the patch and save into the Sound Library (usable
+// across 100Lights) or download as WAV.
+
+function BounceButton() {
+  const ctx = useApollo()
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [done, setDone] = useState('')
+
+  const bounce = async (mode: 'note' | 'clip', dest: 'library' | 'download') => {
+    setBusy('Rendering…')
+    setDone('')
+    try {
+      await ctx.start()
+      const p = ctx.patch
+      let notes: { t: number; dur: number; note: number; vel: number }[] = []
+      let seconds = 4
+      const patchCopy = JSON.parse(JSON.stringify(p)) as ApolloPatch
+      if (mode === 'clip' && p.activeClip >= 0 && p.clips[p.activeClip]) {
+        const clip = p.clips[p.activeClip]
+        patchCopy.clipMode = true
+        seconds = (clip.lengthBeats * 60 / p.global.bpm) * 2 + 2
+      } else {
+        notes = [{ t: 0.03, dur: p.arp.on ? seconds - 1.8 : 2, note: 48, vel: 0.9 }]
+        seconds = p.arp.on ? 5 : 4.2
+        patchCopy.clipMode = false
+      }
+      const buf = await ctx.engine.renderToBuffer(patchCopy, notes, seconds)
+      const name = `${p.name || 'Apollo'} ${mode === 'clip' ? 'clip' : 'note'}`
+      if (dest === 'library') {
+        await saveBounceToLibrary(name, buf)
+        setDone('Saved to Sound Library → Apollo Bounces')
+      } else {
+        const blob = audioBufferToWav(buf)
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = `${name}.wav`
+        a.click()
+        URL.revokeObjectURL(a.href)
+        setDone('Downloaded')
+      }
+    } catch (e) {
+      setDone(e instanceof Error ? e.message : 'Bounce failed')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <ToggleBtn on={open} label="⭳ Bounce" title="Render this patch to audio" onClick={() => { setOpen(!open); setDone('') }} />
+      {open && (
+        <div style={{
+          position: 'absolute', top: '110%', right: 0, zIndex: 200, minWidth: 210,
+          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+          padding: 8, display: 'flex', flexDirection: 'column', gap: 5, boxShadow: '0 8px 26px rgba(0,0,0,0.5)',
+        }}>
+          {busy
+            ? <div style={{ fontSize: 10, color: 'var(--text-secondary)', padding: 4 }}>{busy}</div>
+            : (
+              <>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Note (C3{ctx.patch.arp.on ? ' + arp' : ''})</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <ToggleBtn on={false} label="→ Library" onClick={() => { void bounce('note', 'library') }} />
+                  <ToggleBtn on={false} label="Download" onClick={() => { void bounce('note', 'download') }} />
+                </div>
+                {ctx.patch.activeClip >= 0 && ctx.patch.clips[ctx.patch.activeClip] && (
+                  <>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Clip “{ctx.patch.clips[ctx.patch.activeClip].name}” ×2</div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <ToggleBtn on={false} label="→ Library" onClick={() => { void bounce('clip', 'library') }} />
+                      <ToggleBtn on={false} label="Download" onClick={() => { void bounce('clip', 'download') }} />
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          {done && <div style={{ fontSize: 10, color: 'var(--success)', padding: 2 }}>{done}</div>}
+          <div style={{ fontSize: 8.5, color: 'var(--text-muted)' }}>Library bounces appear in the studio’s Sound Library.</div>
+        </div>
+      )}
     </div>
   )
 }

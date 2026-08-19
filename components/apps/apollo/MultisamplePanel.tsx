@@ -8,6 +8,7 @@ import { LibrarySourcePicker } from '@/components/editor/SoundCreate'
 import type { LibraryEntry } from '@/lib/sound-library'
 import { decodeFileAudio } from '@/lib/media-import'
 import { parseSfz, matchSfzFiles } from '@/lib/apollo/sfz'
+import { persistApolloSample } from '@/lib/apollo/sample-store'
 import type { MultisampleZone } from '@/lib/apollo/patch'
 
 const inputStyle: React.CSSProperties = {
@@ -37,6 +38,7 @@ export default function MultisamplePanel() {
     await ctx.start()
     const id = 'user_' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36)
     ctx.engine.loadSample(id, name, buf)
+    void persistApolloSample(id, name, buf)
     ctx.update(p => {
       p.oscs[i].ms.zones.push({ sampleId: id, loKey: 0, hiKey: 127, loVel: 0, hiVel: 127, rootKey: 60, tune: 0, gain: 0, loopMode: 'off', loopStart: 0, loopEnd: 1 })
       if (!p.oscs[i].ms.name) p.oscs[i].ms.name = name
@@ -66,6 +68,7 @@ export default function MultisamplePanel() {
           const buf = await decodeFileAudio(f)
           const id = 'sfz_' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36)
           ctx.engine.loadSample(id, f.name.replace(/\.[^.]+$/, ''), buf)
+          void persistApolloSample(id, f.name, buf)
           rec = { id, len: buf.length }
           loadedByPath.set(r.sample, rec)
         }
