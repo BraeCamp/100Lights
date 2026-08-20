@@ -150,5 +150,58 @@ function rms(buf) { let s = 0; for (const v of buf) s += v * v; return Math.sqrt
   check('synth recovers after degenerate FX removed', rms(after) > 0.05, `rms ${rms(after).toFixed(3)}`)
 }
 
+// 8. Serum-2 filter models (2026-08-20 video batch): every new type is
+// audible, finite, and actually filters (differs from bypass)
+{
+  const mkF = (type) => fresh(pp => {
+    pp.filters[0].enabled = true
+    pp.filters[0].type = type
+    pp.filters[0].cutoff = 0.45
+    pp.filters[0].res = 0.6
+  })
+  const ref = fresh(); ref.noteOn(45, 0.9, false)
+  const refBuf = render(ref, 60)
+  for (const type of ['acidLadder', 'emsLadder', 'mgDirty', 'comb2', 'expBPF']) {
+    const f = mkF(type); f.noteOn(45, 0.9, false)
+    const buf = render(f, 60)
+    let finite = true
+    for (const v of buf) if (!Number.isFinite(v)) { finite = false; break }
+    const level = rms(buf.subarray(20 * 128))
+    let diff = 0
+    for (let i = 20 * 128; i < buf.length; i++) diff += Math.abs(buf[i] - refBuf[i])
+    diff /= buf.length - 20 * 128
+    check(`filter ${type} audible+finite+filtering`, finite && level > 0.01 && diff > 0.01,
+      `rms ${level.toFixed(3)} diff ${diff.toFixed(3)}`)
+  }
+  // resonance character: acid at high res must ring harder than plain ladder24
+  const hot = (type) => {
+    const f = fresh(pp => { pp.filters[0].enabled = true; pp.filters[0].type = type; pp.filters[0].cutoff = 0.4; pp.filters[0].res = 0.95 })
+    f.noteOn(45, 0.9, false)
+    const buf = render(f, 60).subarray(20 * 128)
+    return bandEnergy(buf, 2000) / (rms(buf) + 1e-9)
+  }
+  check('acid ladder resonance bites harder than Ladder 24', hot('acidLadder') > hot('ladder24'),
+    `${hot('acidLadder').toFixed(1)} vs ${hot('ladder24').toFixed(1)}`)
+}
+
+// 9. New convolve IR models (Cabinet / Chimes / Tank) render + differ
+{
+  const mkIr = (ir) => fresh(pp => {
+    pp.fxMain = [{ id: 'cv1', type: 'convolve', enabled: true, mix: 1, params: { ir, size: 0.6, predelay: 0, damp: 0.2, width: 1 } }]
+  })
+  const outs = {}
+  for (const ir of [8, 9, 10]) {
+    const p2 = mkIr(ir); p2.noteOn(57, 0.9, false)
+    const buf = render(p2, 80)
+    let finite = true
+    for (const v of buf) if (!Number.isFinite(v)) { finite = false; break }
+    outs[ir] = buf
+    check(`convolve IR ${ir} (${['Cabinet','Chimes','Tank'][ir - 8]}) audible+finite`, finite && rms(buf) > 0.005, `rms ${rms(buf).toFixed(3)}`)
+  }
+  let d89 = 0
+  for (let i = 0; i < outs[8].length; i++) d89 += Math.abs(outs[8][i] - outs[9][i])
+  check('IR models are distinct', d89 / outs[8].length > 0.005, `mean diff ${(d89 / outs[8].length).toFixed(4)}`)
+}
+
 console.log(failures === 0 ? 'ALL FEATURE CHECKS PASS' : `${failures} FAILURES`)
 process.exit(failures ? 1 : 0)

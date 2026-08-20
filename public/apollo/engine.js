@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-20-10 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-20-11 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -171,16 +171,25 @@ class Ladder {
   process(x, freq, res, drive, sr, flavor) {
     const f = clamp(freq / (sr * 0.5), 0.0005, 0.99)
     const g = 1 - Math.exp(-Math.PI * f)
-    const k = res * 4.2
+    // acid pushes resonance harder (self-osc squelch), EMS is wilder still
+    const k = res * (flavor === 4 ? 4.6 : flavor === 5 ? 5.2 : 4.2)
     const s = this.s
-    let inp = x - k * (s[3] - x * 0.5 * res)
+    // acid: AC-couple the feedback (DC blocker) — the classic clicky 303 bite
+    let fb = s[3]
+    if (flavor === 4) { this.d += 0.002 * (s[3] - this.d); fb = s[3] - this.d }
+    let inp = x - k * (fb - x * 0.5 * res)
     if (flavor === 2) inp = Math.tanh(inp * (1 + drive * 3)) // german: hard sat
     else if (flavor === 3) inp = inp / (1 + Math.abs(inp) * (0.4 + drive)) // french: soft fold
+    else if (flavor === 5) inp = Math.tanh(inp * 1.4 + 0.12) - 0.119 // EMS diode: asymmetric
+    else if (flavor === 6) inp = Math.tanh(inp * (2.2 + drive * 6) + 0.25 * inp * inp) * 0.8 // dirty: heavy asym drive
     else inp = Math.tanh(inp * (1 + drive * 2))
     s[0] += g * (inp - s[0])
     s[1] += g * (Math.tanh(s[0]) - s[1])
     s[2] += g * (s[1] - s[2])
     s[3] += g * (Math.tanh(s[2]) - s[3])
+    if (flavor === 4) return s[2] * 0.35 + s[3] * (0.85 + res * 1.1) // acid: brighter 18dB-ish blend
+    if (flavor === 5) return Math.tanh(s[3] * (1 + res * 1.6)) // EMS: resonance folds back in
+    if (flavor === 6) return s[3] * (1 + res * 0.9) * 1.15
     return s[3] * (1 + res * 0.9)
   }
 }
@@ -229,14 +238,16 @@ class VoiceFilter {
     this.dsVal = 0; this.dsPhase = 0
     // mini reverb-filter state
     this.rvDl = [new DelayLine(sr * 0.05), new DelayLine(sr * 0.06), new DelayLine(sr * 0.071), new DelayLine(sr * 0.083)]
+    this.combLp = 0
   }
-  reset() { this.svf1.reset(); this.svf2.reset(); this.svf3.reset(); this.svf4.reset(); this.ladder.reset(); this.ap1.fill(0); this.fbAP = 0 }
+  reset() { this.svf1.reset(); this.svf2.reset(); this.svf3.reset(); this.svf4.reset(); this.ladder.reset(); this.ap1.fill(0); this.fbAP = 0; this.combLp = 0 }
   process(x, type, cutNorm, res, drive, fat) {
     const sr = this.sr
     const freq = cutoffHz(cutNorm)
     const k = 2 - 1.9 * clamp(res, 0, 0.98)
     const g = svfG(freq, sr)
-    if (drive > 0 && type !== 'ladder12' && type !== 'ladder24' && type !== 'germanLP' && type !== 'frenchLP') {
+    if (drive > 0 && type !== 'ladder12' && type !== 'ladder24' && type !== 'germanLP' && type !== 'frenchLP'
+      && type !== 'acidLadder' && type !== 'emsLadder' && type !== 'mgDirty') {
       x = Math.tanh(x * (1 + drive * 4)) * (1 / (1 + drive * 0.5))
     }
     switch (type) {
@@ -273,6 +284,9 @@ class VoiceFilter {
       }
       case 'ladder12': { this.svf1.process(Math.tanh(x * (1 + drive * 3)), g, 2 - 1.6 * res); return this.svf1.lp * (1 + res * 0.5) }
       case 'ladder24': return this.ladder.process(x, freq, res, drive, sr, 1)
+      case 'acidLadder': return this.ladder.process(x, freq, res, drive, sr, 4)
+      case 'emsLadder': return this.ladder.process(x, freq, res, drive, sr, 5)
+      case 'mgDirty': return this.ladder.process(x, freq, res, drive, sr, 6)
       case 'germanLP': return this.ladder.process(x, freq, res, drive, sr, 2)
       case 'frenchLP': return this.ladder.process(x, freq, res, drive, sr, 3)
       case 'formant': {
@@ -292,6 +306,24 @@ class VoiceFilter {
           out += svfs[fi].bp * gains[fi] * q * 0.5
         }
         return out * 0.5
+      }
+      case 'comb2': {
+        // feedback comb with a damped (lowpassed) loop — smoother, more 'tuned'
+        // than Comb ±; fat sets the damping darkness
+        const d = sr / clamp(freq, 20, sr * 0.45)
+        const fb = clamp(res, 0, 0.96)
+        const rd = this.dl.read(d)
+        this.combLp += (0.15 + (1 - fat) * 0.8) * (rd - this.combLp)
+        const y = x + this.combLp * fb
+        this.dl.write(y)
+        return y * 0.65
+      }
+      case 'expBPF': {
+        // steep resonant bandpass: two cascaded BP stages, tight k, exponential emphasis
+        const k2 = 2 - 1.95 * clamp(res, 0, 0.985)
+        this.svf1.process(x, g, k2)
+        this.svf2.process(this.svf1.bp, g, k2)
+        return this.svf2.bp * (1 + res * res * 14)
       }
       case 'combPlus': case 'combMinus': {
         const d = sr / clamp(freq, 20, sr * 0.45)
@@ -1829,11 +1861,54 @@ class PartConv {
 
 const IR_NAMES = ['Room', 'Hall', 'Cathedral', 'Plate', 'Spring', 'Chamber', 'Reverse', 'Gated']
 function generateIR(sr, idx, size) {
-  const durs = [0.4, 1.6, 2.6, 1.1, 0.9, 0.8, 1.2, 0.5]
-  const dur = durs[idx % 8] * (0.35 + size * 0.85)
+  const durs = [0.4, 1.6, 2.6, 1.1, 0.9, 0.8, 1.2, 0.5, 0.09, 2.4, 1.6]
+  const dur = durs[idx % durs.length] * (0.35 + size * 0.85)
   const len = Math.min(Math.floor(sr * dur), sr * 3)
   const irL = new Float32Array(len), irR = new Float32Array(len)
   const rngL = makeRng(1234 + idx), rngR = makeRng(9876 + idx)
+  // Non-reverb IR models (Serum 2's Convolve ships cabinets/metallic IRs, not
+  // just rooms): built from resonant modes instead of enveloped noise.
+  if (idx === 8) {
+    // guitar cabinet: tight noise burst + speaker-body modes, dark rolloff
+    const modes = [96, 210, 420, 760, 1350, 2400]
+    for (let i = 0; i < len; i++) {
+      const t = i / sr
+      let v = (rngL() * 2 - 1) * Math.exp(-t * 260)
+      for (let m = 0; m < modes.length; m++) v += Math.sin(TWO_PI * modes[m] * t) * Math.exp(-t * (34 + m * 26)) * (0.5 - m * 0.06)
+      irL[i] = v; irR[i] = v * 0.985 + (rngR() * 2 - 1) * Math.exp(-t * 300) * 0.1
+    }
+  } else if (idx === 9) {
+    // chimes: sparse inharmonic metallic partials, long shimmer
+    const f0 = 480 * (0.6 + size * 0.9)
+    const ratios = [1, 2.76, 5.4, 8.93, 13.3, 18.6]
+    for (let i = 0; i < len; i++) {
+      const t = i / sr
+      let vl = 0, vr = 0
+      for (let m = 0; m < ratios.length; m++) {
+        const a = Math.exp(-t * (1.6 + m * 1.1)) * (0.6 - m * 0.08)
+        vl += Math.sin(TWO_PI * f0 * ratios[m] * t) * a
+        vr += Math.sin(TWO_PI * f0 * ratios[m] * 1.004 * t + m) * a
+      }
+      irL[i] = vl + (rngL() * 2 - 1) * Math.exp(-t * 40) * 0.05
+      irR[i] = vr + (rngR() * 2 - 1) * Math.exp(-t * 40) * 0.05
+    }
+  } else if (idx === 10) {
+    // metal tank: dense noise + clangy ringing modes with flutter
+    const modes = [311, 522, 941, 1570, 2210]
+    for (let i = 0; i < len; i++) {
+      const t = i / sr
+      let v = (rngL() * 2 - 1) * Math.exp(-t * 2.6) * 0.5
+      for (let m = 0; m < modes.length; m++) v += Math.sin(TWO_PI * modes[m] * (1 + 0.002 * Math.sin(t * 7 + m)) * t) * Math.exp(-t * (2.2 + m * 0.8)) * 0.28
+      irL[i] = v; irR[i] = v * 0.7 + (rngR() * 2 - 1) * Math.exp(-t * 2.6) * 0.25
+    }
+  }
+  if (idx >= 8) {
+    let e = 0
+    for (let i = 0; i < len; i++) e += irL[i] * irL[i]
+    const g = 1 / Math.sqrt(Math.max(e, 1e-9))
+    for (let i = 0; i < len; i++) { irL[i] *= g * 3; irR[i] *= g * 3 }
+    return [irL, irR]
+  }
   for (let i = 0; i < len; i++) {
     const t = i / len
     let env
@@ -1942,7 +2017,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
     this.pv = {}                   // base param values (path -> value), synced from UI
     this.monoVoice = null
     this.SYNC_BEATS = [32, 16, 8, 4, 2, 4 / 3, 1.5, 1, 2 / 3, 0.75, 0.5, 1 / 3, 0.375, 0.25, 1 / 6, 0.125, 0.0625]
-    this.FILTER_TYPE_IDS = ['lp6', 'lp12', 'lp18', 'lp24', 'hp6', 'hp12', 'hp24', 'bp12', 'bp24', 'notch12', 'peak12', 'multiLBH', 'multiLNH', 'morphSVF', 'ladder12', 'ladder24', 'germanLP', 'frenchLP', 'formant', 'combPlus', 'combMinus', 'flangePlus', 'flangeMinus', 'phasePlus', 'phaseMinus', 'ringMod', 'sampHold', 'downsample', 'reverbFilter', 'dj', 'diffuser']
+    this.FILTER_TYPE_IDS = ['lp6', 'lp12', 'lp18', 'lp24', 'hp6', 'hp12', 'hp24', 'bp12', 'bp24', 'notch12', 'peak12', 'multiLBH', 'multiLNH', 'morphSVF', 'ladder12', 'ladder24', 'germanLP', 'frenchLP', 'formant', 'combPlus', 'combMinus', 'flangePlus', 'flangeMinus', 'phasePlus', 'phaseMinus', 'ringMod', 'sampHold', 'downsample', 'reverbFilter', 'dj', 'diffuser', 'acidLadder', 'emsLadder', 'mgDirty', 'comb2', 'expBPF']
     this.port.onmessage = (e) => this.onMessage(e.data)
     // default table: saw
     const dt = new Float32Array(WT_LEN)

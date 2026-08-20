@@ -26,6 +26,8 @@ export type FilterType =
   | 'combPlus' | 'combMinus' | 'flangePlus' | 'flangeMinus' | 'phasePlus' | 'phaseMinus'
   // Misc
   | 'ringMod' | 'sampHold' | 'downsample' | 'reverbFilter' | 'dj' | 'diffuser'
+  // Serum 2 models (watched from the S2 Filters menu)
+  | 'acidLadder' | 'emsLadder' | 'mgDirty' | 'comb2' | 'expBPF'
 
 export interface WarpSlot { mode: WarpMode; amount: number /* 0..1 */ }
 
@@ -484,7 +486,7 @@ export const FX_DEFS: Record<FxType, { label: string; params: { key: string; lab
     { key: 'hiFreq', label: 'Hi X', min: 0, max: 1, default: 0.7 },
   ]},
   convolve: { label: 'Convolve', params: [
-    { key: 'ir', label: 'IR', min: 0, max: 7, default: 0 },
+    { key: 'ir', label: 'IR', min: 0, max: 10, default: 0 },
     { key: 'size', label: 'Size', min: 0.1, max: 1, default: 0.7 },
     { key: 'predelay', label: 'Predelay', min: 0, max: 200, default: 0 },
     { key: 'damp', label: 'Damp', min: 0, max: 1, default: 0.3 },
@@ -510,7 +512,7 @@ export const FX_DEFS: Record<FxType, { label: string; params: { key: string; lab
     { key: 't2', label: 'Type 2', min: 0, max: 2, default: 1 },
   ]},
   filter: { label: 'Filter', params: [
-    { key: 'type', label: 'Type', min: 0, max: 27, default: 1 }, // FILTER_TYPES index
+    { key: 'type', label: 'Type', min: 0, max: 35, default: 1 }, // FILTER_TYPES index
     { key: 'cutoff', label: 'Cutoff', min: 0, max: 1, default: 0.7 },
     { key: 'res', label: 'Res', min: 0, max: 1, default: 0.2 },
     { key: 'drive', label: 'Drive', min: 0, max: 1, default: 0 },
@@ -557,6 +559,10 @@ export const FILTER_TYPES: { id: FilterType; label: string; group: string }[] = 
   { id: 'ringMod', label: 'Ring Mod', group: 'Misc' }, { id: 'sampHold', label: 'Samp/Hold', group: 'Misc' },
   { id: 'downsample', label: 'Downsample', group: 'Misc' }, { id: 'reverbFilter', label: 'Reverb', group: 'Misc' },
   { id: 'dj', label: 'DJ LP/HP', group: 'Misc' }, { id: 'diffuser', label: 'Diffuser', group: 'Misc' },
+  // appended AFTER the originals — the FX 'filter' unit stores a numeric index
+  { id: 'acidLadder', label: 'Acid Ladder', group: 'Analog' }, { id: 'emsLadder', label: 'EMS Ladder', group: 'Analog' },
+  { id: 'mgDirty', label: 'MG Dirty', group: 'Analog' },
+  { id: 'comb2', label: 'Comb 2', group: 'Flanges' }, { id: 'expBPF', label: 'Exp BPF', group: 'Clean' },
 ]
 
 export const WARP_MODES: { id: WarpMode; label: string }[] = [

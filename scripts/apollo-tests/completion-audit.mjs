@@ -7,7 +7,7 @@ global.sampleRate = 48000
 global.AudioWorkletProcessor = class { constructor() { this.port = { postMessage: () => {}, onmessage: null } } }
 global.registerProcessor = (name, cls) => { global.__cls = cls }
 await import(new URL('../../public/apollo/engine.js', import.meta.url).href)
-const { PARAMS, FX_DEFS } = await import('/Users/brae/.claude/jobs/0055fedb/tmp/patch.ts')
+const { PARAMS, FX_DEFS } = await import(new URL('../../lib/apollo/patch.ts', import.meta.url).href)
 const { generateFactoryTable } = await import(new URL('../../lib/apollo/tables.ts', import.meta.url).href)
 
 const SR = 48000

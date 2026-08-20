@@ -26,7 +26,7 @@ function cloneFxUnit(u: FxUnit): FxUnit {
 
 const DIST_MODES = ['Tube', 'Soft', 'Hard', 'Diode', 'Fold', 'Sine', 'ZeroSq', 'Asym', 'Rectify', 'Bitcrush', 'Downsmp', 'Overdrive']
 const REVERB_MODES = ['Hall', 'Plate', 'Vintage', 'Nitrous', 'Basin']
-const IR_NAMES = ['Room', 'Hall', 'Cathedral', 'Plate', 'Spring', 'Chamber', 'Reverse', 'Gated']
+const IR_NAMES = ['Room', 'Hall', 'Cathedral', 'Plate', 'Spring', 'Chamber', 'Reverse', 'Gated', 'Cabinet', 'Chimes', 'Tank']
 const FILTER_POS = ['Off', 'Pre', 'Post']
 const FILTER_KIND = ['LP', 'BP', 'HP']
 const EQ_TYPES = ['LoShelf', 'Peak', 'HiShelf']
@@ -431,6 +431,122 @@ function GrMeter({ unitId, multiband }: { unitId: string; multiband: boolean }) 
   )
 }
 
+const RACKS_KEY = 'apollo_fx_racks_v1'
+const CLIP_KEY = 'apollo_fx_clipboard_v1'
+interface RackPreset { name: string; units: FxUnit[] }
+
+function loadRacks(): RackPreset[] {
+  try { return JSON.parse(localStorage.getItem(RACKS_KEY) || '[]') as RackPreset[] } catch { return [] }
+}
+
+// Factory racks — curated chains in the spirit of Serum 2's factory rack
+// presets (echo-band distortion, big retro mod reverb, …)
+const fxWith = (type: FxType, params: Record<string, number>, mix?: number): FxUnit => {
+  const u = defaultFx(type)
+  Object.assign(u.params, params)
+  if (mix != null) u.mix = mix
+  return u
+}
+const FACTORY_RACKS: { name: string; make: () => FxUnit[] }[] = [
+  { name: 'Echo Band Distortion', make: () => [
+    fxWith('distortion', { drive: 0.55 }),
+    fxWith('eq', { t1: 1, f1: 0.35, g1: 3, q1: 1.2, t2: 2, f2: 0.85, g2: -2, q2: 0.8 }),
+    fxWith('delay', { timeL: 8, timeR: 10, feedback: 0.45 }, 0.3),
+  ]},
+  { name: 'Big Retro Mod Reverb', make: () => [
+    fxWith('chorus', { rate: 0.35, depth: 0.6 }, 0.5),
+    fxWith('reverb', { size: 0.85, decay: 0.8, damp: 0.35 }, 0.45),
+  ]},
+  { name: 'OTT Bright', make: () => [
+    fxWith('compressor', { multiband: 1, upward: 0.6, makeup: 3 }),
+    fxWith('eq', { t1: 0, f1: 0.2, g1: -1.5, t2: 2, f2: 0.8, g2: 2.5 }),
+  ]},
+  { name: 'Cab & Spring', make: () => [
+    fxWith('convolve', { ir: 8, size: 0.6, damp: 0.4 }, 0.85),
+    fxWith('convolve', { ir: 4, size: 0.5 }, 0.25),
+  ]},
+  { name: 'Wide Wash', make: () => [
+    fxWith('hyper', { rate: 0.5, detune: 0.4, unison: 5 }, 0.6),
+    fxWith('delay', { timeL: 9, timeR: 11, feedback: 0.5 }, 0.35),
+    fxWith('reverb', { size: 0.9, decay: 0.85 }, 0.4),
+  ]},
+]
+
+function RacksMenu({ lane, locate }: { lane: Lane; locate: Locate }) {
+  const ctx = useApollo()
+  const [open, setOpen] = useState(false)
+  const [saved, setSaved] = useState<RackPreset[]>([])
+  useEffect(() => { if (open) setSaved(loadRacks()) }, [open])
+  const freshIds = (units: FxUnit[]): FxUnit[] => units.map(u => ({
+    ...structuredClone(u), id: uid(),
+    chains: u.chains?.map(c => freshIds(c)),
+  }))
+  const setLane = (units: FxUnit[]) => {
+    ctx.update(p => {
+      const arr = locate(p)
+      arr.splice(0, arr.length, ...freshIds(units))
+    })
+    setOpen(false)
+  }
+  const item: React.CSSProperties = {
+    display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px', borderRadius: 5,
+    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 10.5,
+  }
+  const head: React.CSSProperties = { fontSize: 8.5, fontWeight: 800, letterSpacing: 1, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '3px 8px 1px' }
+  return (
+    <div style={{ position: 'relative' }} data-learn="Racks">
+      <ToggleBtn on={open} label="Racks ▾" title="Whole-chain presets: save this lane, load factory or saved racks, copy/paste between lanes" onClick={() => setOpen(o => !o)} />
+      {open && (
+        <div style={{
+          position: 'absolute', top: '110%', right: 0, zIndex: 260, minWidth: 190, maxHeight: 280, overflowY: 'auto',
+          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 5,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+        }}>
+          <div style={head}>Factory racks</div>
+          {FACTORY_RACKS.map(r => (
+            <button key={r.name} style={item} onClick={() => setLane(r.make())}>{r.name}</button>
+          ))}
+          {saved.length > 0 && <div style={head}>Saved racks</div>}
+          {saved.map(r => (
+            <div key={r.name} style={{ display: 'flex', alignItems: 'center' }}>
+              <button style={{ ...item, flex: 1 }} onClick={() => setLane(r.units)}>{r.name}</button>
+              <button
+                title="Delete rack"
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10, padding: 2 }}
+                onClick={() => {
+                  const next = saved.filter(x => x.name !== r.name)
+                  setSaved(next)
+                  try { localStorage.setItem(RACKS_KEY, JSON.stringify(next)) } catch { /* quota */ }
+                }}
+              >🗑</button>
+            </div>
+          ))}
+          <div style={head}>This lane</div>
+          <button style={item} onClick={() => {
+            const name = window.prompt('Rack name:')?.trim()
+            if (!name) return
+            const units = locate(ctx.patch)
+            const next = [...loadRacks().filter(r => r.name !== name), { name, units: structuredClone(units) }]
+            try { localStorage.setItem(RACKS_KEY, JSON.stringify(next)) } catch { /* quota */ }
+            setSaved(next)
+          }}>Save as rack…</button>
+          <button style={item} onClick={() => {
+            try { localStorage.setItem(CLIP_KEY, JSON.stringify(locate(ctx.patch))) } catch { /* quota */ }
+            setOpen(false)
+          }}>Copy lane</button>
+          <button style={item} onClick={() => {
+            try {
+              const units = JSON.parse(localStorage.getItem(CLIP_KEY) || 'null') as FxUnit[] | null
+              if (Array.isArray(units)) setLane(units)
+            } catch { /* nothing on the clipboard */ }
+          }}>Paste lane</button>
+          <button style={item} onClick={() => setLane([])}>Clear lane</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function FxRack({ minimal = false }: { minimal?: boolean } = {}) {
   const ctx = useApollo()
   const [lane, setLane] = useState<Lane>('main')
@@ -480,6 +596,7 @@ export default function FxRack({ minimal = false }: { minimal?: boolean } = {}) 
           {!showBusses && (
             <ToggleBtn on={false} label="+" title="Effect busses — separate lanes you can route sources to" onClick={() => setRevealBusses(true)} />
           )}
+          <RacksMenu lane={lane} locate={locate} />
         </div>
       }
       style={{ flex: 1, minHeight: 0 }}
