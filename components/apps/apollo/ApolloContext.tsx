@@ -300,8 +300,30 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
     w.__apolloStart = start
     w.__apolloUpdate = update
     w.__apolloPatch = () => patchRef.current
+    // Offline render → base64 WAV (parity with __dawRenderOffline): AI/automation
+    // sessions audition patches without touching the live audio path. `patch`
+    // may be null (renders the current patch) or a partial merged over it.
+    w.__apolloRenderOffline = async (
+      partial: Partial<ApolloPatch> | null,
+      notes: { note: number; t: number; dur: number; vel?: number }[] | null,
+      seconds?: number,
+    ) => {
+      await start()
+      const base = JSON.parse(JSON.stringify(patchRef.current)) as ApolloPatch
+      const p = partial ? { ...base, ...partial } as ApolloPatch : base
+      const evs = (notes && notes.length ? notes : [{ note: 48, t: 0.03, dur: 2, vel: 0.9 }])
+        .map(n => ({ t: n.t, dur: n.dur, note: n.note, vel: n.vel ?? 0.9 }))
+      const secs = seconds ?? Math.max(...evs.map(n => n.t + n.dur)) + 2
+      const buf = await engine.renderToBuffer(p, evs, secs)
+      const { audioBufferToWav } = await import('@/lib/wav-encoder')
+      const blob = audioBufferToWav(buf)
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      let bin = ''
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+      return { base64: btoa(bin), seconds: secs, sampleRate: buf.sampleRate }
+    }
     return () => {
-      delete w.__apolloEngine; delete w.__apolloStart; delete w.__apolloUpdate; delete w.__apolloPatch
+      delete w.__apolloEngine; delete w.__apolloStart; delete w.__apolloUpdate; delete w.__apolloPatch; delete w.__apolloRenderOffline
     }
   }, [engine, start, update])
 
