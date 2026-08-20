@@ -153,6 +153,9 @@ export interface HeliosChain {
   output: AudioNode
   handles: Map<string, { setParam(key: string, value: number | string | boolean): void; dispose(): void }>
   dispose(): void
+  /** Resolves once the worklet has ACKED patch + fx mode — offline bounces
+   * MUST await this before startRendering (port delivery races the render). */
+  ready: Promise<void>
 }
 
 /**
@@ -169,12 +172,17 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
   const engine = new ApolloEngine()
   const current: TrackEffect[] = effects.map(e => ({ ...e, params: { ...(e.params as object) } as TrackEffect['params'] }))
   let alive = true
-  void engine.init({ ctx, destination: output, fxInput: true }).then(() => {
-    if (!alive) return
-    engine.sendPatch(fxOnlyPatch(units))
-    engine.node?.port.postMessage({ type: 'fxMode', on: true })
-    if (engine.node) input.connect(engine.node)
-  }).catch(() => { /* worklet unavailable — silence; the legacy path is the upstream safety net */ })
+  const ready = new Promise<void>(resolve => {
+    const done = () => { engine.removeEventListener('fxModeAck', done); resolve() }
+    engine.addEventListener('fxModeAck', done)
+    setTimeout(resolve, 4000)   // never wedge a bounce on a dead worklet
+    void engine.init({ ctx, destination: output, fxInput: true }).then(() => {
+      if (!alive) { resolve(); return }
+      engine.sendPatch(fxOnlyPatch(units))
+      engine.node?.port.postMessage({ type: 'fxMode', on: true })
+      if (engine.node) input.connect(engine.node)
+    }).catch(() => resolve()) /* worklet unavailable — silence; the legacy path is the upstream safety net */
+  })
 
   const resend = () => {
     const u2 = translateChain(current, tempo)
@@ -209,6 +217,7 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
     input,
     output,
     handles,
+    ready,
     dispose() {
       alive = false
       try { input.disconnect() } catch { /* ok */ }

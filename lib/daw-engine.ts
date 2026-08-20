@@ -3660,6 +3660,13 @@ export class DawEngine extends EventTarget {
     const start = opts.startBeat, end = opts.endBeat
     const octx = this.ctx as unknown as OfflineAudioContext
     await this._preloadAll()
+    // Helios FX chains initialize asynchronously (worklet + patch + ack) —
+    // rendering before they confirm bakes a dry/silent chain into the bounce
+    await Promise.all(
+      [...this.effectsChains.values(), ...this.returnEffectsChains.values()]
+        .map(c => (c as { ready?: Promise<void> }).ready)
+        .filter(Boolean),
+    )
     this.loopEnabled = false
     this.isPlaying   = true
     this._startBeat  = start

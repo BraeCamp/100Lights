@@ -119,6 +119,8 @@ export class ApolloEngine extends EventTarget {
         this.dispatchEvent(new CustomEvent('meters', { detail: m }))
       } else if (m.type === 'voiceOn' || m.type === 'voiceOff') {
         this.dispatchEvent(new CustomEvent(m.type, { detail: m }))
+      } else if (m.type === 'fxModeAck') {
+        this.dispatchEvent(new CustomEvent('fxModeAck'))
       } else if (m.type === 'procError') {
         // the engine caught an exception in process() and recovered (killed
         // voices, kept the processor alive) — surface it for diagnosis

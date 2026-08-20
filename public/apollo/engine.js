@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-20-14 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-20-15 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -2114,6 +2114,9 @@ class ApolloProcessor extends AudioWorkletProcessor {
         // through the fxMain lane; voices/sequencer stay dormant. Forced to
         // 1x internal rate so the worklet input needs no resampling.
         this.fxOnly = !!m.on
+        // ack — offline hosts must KNOW the patch+mode landed before they
+        // call startRendering (port delivery can lose that race silently)
+        try { this.port.postMessage({ type: 'fxModeAck' }) } catch { /* ok */ }
         break
       case 'panic':
         this.allNotesOff(true)
