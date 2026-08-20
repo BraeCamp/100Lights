@@ -28,6 +28,7 @@ export const KIND_META: Record<CommunityItem['kind'], { label: string; plural: s
   clip:    { label: 'Clip',    plural: 'Clips',    color: '#f472b6', icon: Play,            action: '' },
   // Community v2 — app-originated kinds (carry `appSlug` for the source badge)
   patch:     { label: 'Patch',     plural: 'Patches',    color: '#f59e0b', icon: SlidersHorizontal, action: '' },
+  patchpack: { label: 'Preset Pack', plural: 'Preset Packs', color: '#38bdf8', icon: Package,          action: '' },
   wavetable: { label: 'Wavetable', plural: 'Wavetables', color: '#fbbf24', icon: Waves,             action: '' },
   sketch:    { label: 'Sketch',    plural: 'Sketches',   color: '#facc15', icon: Mic2,              action: '' },
   station:   { label: 'Station',   plural: 'Stations',   color: '#a78bfa', icon: Radio,             action: '' },
@@ -156,6 +157,7 @@ function metaBadges(item: CommunityItem): string[] {
   if (item.kind === 'sample' && typeof (p as { duration?: number }).duration === 'number') out.push(`${((p as { duration?: number }).duration!).toFixed(1)}s`)
   if (item.kind === 'recipe' && p.spec?.durationBeats) out.push(`${p.spec.durationBeats} beats${p.spec.isDrumClip ? ' · drums' : ''}`)
   if (item.kind === 'pack' && p.samples) out.push(`${p.samples.length} samples`)
+  if (item.kind === 'patchpack' && Array.isArray((p as { presets?: unknown[] }).presets)) out.push(`${(p as { presets: unknown[] }).presets.length} presets`)
   if (item.kind === 'project') {
     if (p.tempo) out.push(`${p.tempo} BPM`)
     if (p.key) out.push(prettyKey(p.key))
@@ -334,6 +336,7 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
         {item.kind === 'recipe' && <RecipePreview item={item} color={meta.color} />}
         {item.kind === 'preset' && <PresetPreview item={item} color={meta.color} />}
         {item.kind === 'pack' && <PackPreview item={item} color={meta.color} />}
+        {item.kind === 'patchpack' && <PatchPackPreview item={item} color={meta.color} />}
         {item.kind === 'project' && <ProjectPreview item={item} color={meta.color} />}
         {item.kind === 'post' && !editing && <PostPreview body={desc} />}
         {item.kind === 'clip' && <ClipPreview item={item} />}
@@ -423,7 +426,12 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
               padding: '7px 12px', borderRadius: 999, border: `1px solid ${meta.color}55`, color: meta.color, background: `${meta.color}10`,
             }}><ExternalLink size={12} /> Open in Studio</a>
           )}
-          {item.kind === 'patch' ? (
+          {item.kind === 'patchpack' ? (
+            <a href={`/apollo?communityPack=${item.id}`} target="_blank" rel="noreferrer" title="Install every preset in this pack into your Apollo synth" style={{
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, textDecoration: 'none',
+              padding: '7px 14px', borderRadius: 999, border: `1px solid ${meta.color}55`, color: meta.color, background: `${meta.color}10`,
+            }}><Download size={13} /> Install in Apollo</a>
+          ) : item.kind === 'patch' ? (
             <a href={`/apollo?communityPatch=${item.id}`} target="_blank" rel="noreferrer" title="Open this patch in the Apollo synthesizer" style={{
               display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, textDecoration: 'none',
               padding: '7px 14px', borderRadius: 999, border: `1px solid ${meta.color}55`, color: meta.color, background: `${meta.color}10`,
@@ -445,6 +453,23 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
 
       {showComments && <CommentsSection itemId={item.id} signedIn={signedIn} onToast={onToast} onCount={setCommentCount} />}
     </article>
+  )
+}
+
+// A downloadable Apollo preset pack — show what's inside before installing.
+function PatchPackPreview({ item, color }: { item: CommunityItem; color: string }) {
+  const presets = ((item.payload as { presets?: { name?: string }[] } | null)?.presets ?? []).slice(0, 14)
+  const total = ((item.payload as { presets?: unknown[] } | null)?.presets ?? []).length
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {presets.map((pr, i) => (
+        <span key={i} style={{
+          fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 999,
+          border: `1px solid ${color}40`, color, background: `${color}0d`,
+        }}>{pr.name || `Preset ${i + 1}`}</span>
+      ))}
+      {total > presets.length && <span style={{ fontSize: 11, color: 'var(--text-muted)', alignSelf: 'center' }}>+{total - presets.length} more</span>}
+    </div>
   )
 }
 

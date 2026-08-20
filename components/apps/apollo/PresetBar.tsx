@@ -8,7 +8,7 @@ import { ApolloPatch, initPatch, defaultFx, uid, ModSource, FxType, WarpMode, Fi
 import { FACTORY_PRESETS } from '@/lib/apollo/presets'
 import { saveBounceToLibrary, getApolloSourceSample, overwriteLibrarySample } from '@/lib/apollo/sample-store'
 import { audioBufferToWav } from '@/lib/wav-encoder'
-import { shareAppItem, getCommunityItem } from '@/lib/community'
+import { shareAppItem, getCommunityItem, countDownload } from '@/lib/community'
 
 const LS_PRESETS = 'apollo_presets_v1'
 
@@ -22,11 +22,27 @@ function loadUserPresets(): UserPreset[] {
   return []
 }
 
+// Merge downloaded presets into the user's list. Name clashes get " (2)"-style
+// suffixes instead of overwriting anything the user already saved.
+function mergePresets(existing: UserPreset[], incoming: UserPreset[]): UserPreset[] {
+  const out = [...existing]
+  const names = new Set(out.map(u => u.name))
+  for (const inc of incoming) {
+    if (!inc?.name || typeof inc.json !== 'string') continue
+    let name = inc.name
+    for (let i = 2; names.has(name); i++) name = `${inc.name} (${i})`
+    names.add(name)
+    out.push({ name, json: inc.json })
+  }
+  return out
+}
+
 export default function PresetBar() {
   const ctx = useApollo()
   const [editingName, setEditingName] = useState(false)
   const [fileOpen, setFileOpen] = useState(false)
   const [userPresets, setUserPresets] = useState<UserPreset[]>([])
+  const [installedMsg, setInstalledMsg] = useState('')
   useEffect(() => { setUserPresets(loadUserPresets()) }, [])
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -48,6 +64,25 @@ export default function PresetBar() {
     void getCommunityItem(id).then(item => {
       const patch = (item?.payload as { patch?: Partial<ApolloPatch> } | null)?.patch
       if (patch) applyPatch(patch)
+    }).catch(() => { /* item gone — start normally */ })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Pack install: /apollo?communityPack=<id> downloads every preset in a shared
+  // pack into the user's preset list ("Install in Apollo" on Preset Pack cards).
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('communityPack')
+    if (!id) return
+    void getCommunityItem(id).then(item => {
+      const presets = (item?.payload as { presets?: UserPreset[] } | null)?.presets
+      if (!Array.isArray(presets) || presets.length === 0) return
+      setUserPresets(prev => {
+        const next = mergePresets(prev, presets)
+        try { localStorage.setItem(LS_PRESETS, JSON.stringify(next)) } catch { /* quota */ }
+        return next
+      })
+      setInstalledMsg(`Installed ${presets.length} preset${presets.length === 1 ? '' : 's'} from “${item?.name ?? 'pack'}”`)
+      void countDownload(id)
     }).catch(() => { /* item gone — start normally */ })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -150,9 +185,19 @@ export default function PresetBar() {
             <div style={{ borderTop: '1px solid var(--border)' }} />
             <BounceButton />
             <ShareButton />
+            <SharePackButton userPresets={userPresets} />
           </div>
         )}
       </div>
+      {installedMsg && (
+        <span style={{
+          fontSize: 10.5, fontWeight: 700, color: 'var(--accent, #5eead4)', background: 'rgba(94,234,212,0.08)',
+          border: '1px solid rgba(94,234,212,0.35)', borderRadius: 999, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: 6,
+        }}>
+          {installedMsg}
+          <button onClick={() => setInstalledMsg('')} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
+        </span>
+      )}
       <input
         ref={fileRef} type="file" accept=".json,.apollo.json,application/json" style={{ display: 'none' }}
         onChange={async e => {
@@ -245,6 +290,96 @@ function ShareButton() {
             : <ToggleBtn on={false} label="Publish patch" onClick={() => { void share() }} />}
           {done && <div style={{ fontSize: 10, color: 'var(--success)' }}>{done}</div>}
           <div style={{ fontSize: 8.5, color: 'var(--text-muted)' }}>Anyone can listen; one click installs it into their Apollo.</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Share a preset PACK: pick several saved presets, publish them as one
+// installable Community item (kind 'patchpack'). Anyone can install the whole
+// set into their Apollo with one click.
+
+function SharePackButton({ userPresets }: { userPresets: UserPreset[] }) {
+  const [open, setOpen] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [packName, setPackName] = useState('')
+  const [desc, setDesc] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState('')
+
+  const toggle = (name: string) => setPicked(prev => {
+    const next = new Set(prev)
+    if (next.has(name)) next.delete(name); else next.add(name)
+    return next
+  })
+
+  const publish = async () => {
+    const chosen = userPresets.filter(u => picked.has(u.name))
+    if (!chosen.length) { setDone('Pick at least one preset.'); return }
+    setBusy(true); setDone('')
+    try {
+      const id = await shareAppItem({
+        kind: 'patchpack',
+        appSlug: 'apollo',
+        name: packName.trim() || 'Apollo preset pack',
+        description: desc.trim(),
+        payload: { presets: chosen },
+      })
+      setDone('Shared! Opening…')
+      window.open(`/community/${id}`, '_blank')
+    } catch (e) {
+      setDone(e instanceof Error ? e.message : 'Share failed — are you signed in?')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <ToggleBtn on={open} label="Share preset pack…" title="Publish several saved presets as one installable pack" onClick={() => { setOpen(!open); setDone('') }} />
+      {open && (
+        <div style={{
+          position: 'absolute', top: '110%', right: 0, zIndex: 200, minWidth: 260, maxHeight: 320, overflowY: 'auto',
+          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+          padding: 10, display: 'flex', flexDirection: 'column', gap: 7, boxShadow: '0 8px 26px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>
+            Share a preset pack to Community
+          </div>
+          {userPresets.length === 0 && (
+            <div style={{ fontSize: 10.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Save some presets first (the Save button) — a pack is a bundle of your saved presets.
+            </div>
+          )}
+          {userPresets.map(u => (
+            <label key={u.name} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--text-primary)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={picked.has(u.name)} onChange={() => toggle(u.name)} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name}</span>
+            </label>
+          ))}
+          {userPresets.length > 0 && (
+            <>
+              <input
+                value={packName}
+                onChange={e => setPackName(e.target.value)}
+                placeholder="Pack name"
+                maxLength={120}
+                style={{ fontSize: 11, padding: '6px 8px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+              />
+              <textarea
+                value={desc}
+                onChange={e => setDesc(e.target.value)}
+                placeholder="What's inside? (optional)"
+                rows={2}
+                maxLength={500}
+                style={{ fontSize: 11, padding: '6px 8px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', resize: 'vertical', fontFamily: 'inherit' }}
+              />
+              <ToggleBtn on={false} label={busy ? 'Publishing…' : `Publish ${picked.size || ''} preset${picked.size === 1 ? '' : 's'}`} onClick={() => { if (!busy) void publish() }} />
+            </>
+          )}
+          {done && <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{done}</div>}
         </div>
       )}
     </div>

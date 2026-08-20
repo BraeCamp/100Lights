@@ -14,7 +14,7 @@ import { useUser } from '@clerk/nextjs'
 import { FeedCard, KIND_META, stopFeedPlayback } from './FeedCard'
 
 type Kind = 'all' | CommunityItem['kind']
-const KINDS: Kind[] = ['all', 'post', 'song', 'sample', 'preset', 'patch', 'recipe', 'kit', 'pattern', 'pack', 'project', 'theme', 'video']
+const KINDS: Kind[] = ['all', 'post', 'song', 'sample', 'preset', 'patch', 'patchpack', 'recipe', 'kit', 'pattern', 'pack', 'project', 'theme', 'video']
 
 export default function CommunityClient({ initialItems }: { initialItems?: CommunityItem[] }) {
   const { user, isLoaded, isSignedIn } = useUser()

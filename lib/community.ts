@@ -10,7 +10,7 @@ import { importRecipe, type StoredRecipeSpec } from './practice-recipes'
 import { addKit, addPattern, type DrumKit, type DrumPattern } from './drum-presets'
 import type { MidiClip } from './daw-types'
 
-export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme' | 'kit' | 'pattern' | 'post' | 'clip' | 'patch' | 'wavetable' | 'sketch' | 'station' | 'video'
+export type CommunityKind = 'song' | 'sample' | 'preset' | 'recipe' | 'pack' | 'project' | 'theme' | 'kit' | 'pattern' | 'post' | 'clip' | 'patch' | 'patchpack' | 'wavetable' | 'sketch' | 'station' | 'video'
 
 export interface CommunityComment {
   id: string
@@ -104,7 +104,7 @@ export async function toggleVote(id: string): Promise<{ votes: number; votedByMe
   return res.json()
 }
 
-async function countDownload(id: string): Promise<void> {
+export async function countDownload(id: string): Promise<void> {
   fetch(`/api/community/${id}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'download' }),
   }).catch(() => {})

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 // 'wavetable' (Apollo wavetables), 'sketch' (Firefly voice sketches), 'station'
 // (Lightning Bug scenes), 'video' (rendered video exports). App-originated items
 // also carry `app_slug` so the feed can filter per app.
-export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip', 'patch', 'wavetable', 'sketch', 'station', 'video'] as const
+export const COMMUNITY_KINDS = ['song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip', 'patch', 'patchpack', 'wavetable', 'sketch', 'station', 'video'] as const
 export const REACTION_EMOJI = ['🔥', '❤️', '🎧']
 
 /** Stable per-user handle used to key creator profiles + aggregation (author_name
@@ -70,7 +70,7 @@ export async function ensureTables() {
     if (!COMMUNITY_KINDS.every(k => def.includes(`'${k}'`))) {
       await sql`ALTER TABLE community_items DROP CONSTRAINT IF EXISTS community_items_kind_check`
       // Keep this list in sync with COMMUNITY_KINDS above.
-      await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip', 'patch', 'wavetable', 'sketch', 'station', 'video'))`
+      await sql`ALTER TABLE community_items ADD CONSTRAINT community_items_kind_check CHECK (kind IN ('song', 'sample', 'preset', 'recipe', 'pack', 'project', 'theme', 'kit', 'pattern', 'post', 'clip', 'patch', 'patchpack', 'wavetable', 'sketch', 'station', 'video'))`
     }
   } catch { /* concurrent migration won the race — constraint is in place */ }
   // Which app an item came from (Community v2) — lets the feed filter per app
