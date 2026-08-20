@@ -72,13 +72,23 @@ export function useMeters(): ApolloMeters {
 
 const LS_KEY = 'apollo_current_patch_v1'
 
-export function ApolloProvider({ children, quickMod }: { children: React.ReactNode; quickMod?: boolean }) {
+// Embedded mode: the provider edits a patch OWNED BY A HOST (e.g. a DAW track's
+// instrument params) instead of the standalone working copy — changes flow to
+// `onChange` (debounced) rather than localStorage, and the standalone-only
+// behaviors (autosave restore, ?librarySample deep link, window.__apollo*
+// hooks) stay off so an open /apollo tab is never fought over.
+export interface ApolloEmbed { patch: ApolloPatch; onChange: (p: ApolloPatch) => void }
+
+export function ApolloProvider({ children, quickMod, embed }: { children: React.ReactNode; quickMod?: boolean; embed?: ApolloEmbed }) {
   const engine = useMemo(() => getApolloEngine(), [])
   const patchRef = useRef<ApolloPatch | null>(null)
-  if (!patchRef.current) patchRef.current = initPatch()
+  const embedRef = useRef(embed)
+  embedRef.current = embed
+  if (!patchRef.current) patchRef.current = embed ? { ...initPatch(), ...JSON.parse(JSON.stringify(embed.patch)) } as ApolloPatch : initPatch()
   const [version, setVersion] = useState(0)
   // restore the autosaved patch after mount (avoids SSR hydration mismatch)
   useEffect(() => {
+    if (embedRef.current) return   // embedded: the host's patch is the source of truth
     try {
       const raw = localStorage.getItem(LS_KEY)
       if (raw) {
@@ -99,6 +109,8 @@ export function ApolloProvider({ children, quickMod }: { children: React.ReactNo
   const persist = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
+      const em = embedRef.current
+      if (em) { em.onChange(JSON.parse(JSON.stringify(patchRef.current)) as ApolloPatch); return }
       try { localStorage.setItem(LS_KEY, JSON.stringify(patchRef.current)) } catch { /* quota */ }
     }, 800)
   }, [])
@@ -272,6 +284,7 @@ export function ApolloProvider({ children, quickMod }: { children: React.ReactNo
   // restore effect below — restorePatchSamples fulfills by library id) and
   // remembers it as the session's source so a bounce can replace it in place.
   useEffect(() => {
+    if (embedRef.current) return   // deep links belong to the standalone app
     const sp = new URLSearchParams(window.location.search)
     const libId = sp.get('librarySample')
     if (!libId) return
@@ -297,6 +310,7 @@ export function ApolloProvider({ children, quickMod }: { children: React.ReactNo
 
   // programmatic hook for automation/tests (same convention as __dawDispatch)
   useEffect(() => {
+    if (embedRef.current) return   // hooks belong to the standalone app
     const w = window as unknown as Record<string, unknown>
     w.__apolloEngine = engine
     w.__apolloStart = start
@@ -380,14 +394,14 @@ export function applyApolloTheme(theme: ApolloTheme): void {
 export function Section({ title, right, led, dice, children, style }: { title: string; right?: React.ReactNode; led?: boolean; dice?: () => void; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={{
-      background: UI.panel,
-      border: `1px solid ${UI.border}`, borderRadius: 8, overflow: 'visible',
+      background: `var(--ap-sec-bg, ${UI.panel})`,
+      border: `1px solid var(--ap-sec-border, ${UI.border})`, borderRadius: 8, overflow: 'visible',
       display: 'flex', flexDirection: 'column', minWidth: 0, ...style,
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
         background: UI.header,
-        borderBottom: `1px solid ${UI.border}`, borderRadius: '7px 7px 0 0',
+        borderBottom: `1px solid var(--ap-sec-border, ${UI.border})`, borderRadius: '7px 7px 0 0',
         padding: '5px 9px', minHeight: 26,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'var(--ap-grip-pad, 0px)' }}>

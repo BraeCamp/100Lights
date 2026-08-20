@@ -184,7 +184,7 @@ function Module({ spec, onSpan, onDropBefore, children }: {
 }
 
 // ── Macros: only named knobs exist; "+" names a new one ─────────────────────
-function MacrosBlock() {
+export function MacrosBlock() {
   const ctx = useApollo()
   const named = ctx.patch.macroNames.map((name, i) => ({ name, i })).filter(m => m.name && m.name !== `Macro ${m.i + 1}`)
   const free = ctx.patch.macroNames.findIndex((n, i) => !n || n === `Macro ${i + 1}`)
@@ -492,15 +492,25 @@ function ApolloInner() {
     global: <GlobalPanel />,
   }
 
+  // One PLATE per tab (Serum-style): the grid sits on a single card surface and
+  // the modules dissolve their own chrome (via the --ap-sec-* vars Section
+  // reads), so the whole synth reads as ONE instrument panel — the header bars
+  // alone delineate the modules, and drag/resize still work the same.
   const grid = (t: Tab) => (
     <div style={{
+      background: UI.panel,
+      border: `1px solid ${UI.border}`,
+      borderRadius: 10,
+      padding: GAP,
       display: 'grid',
       gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
       gridAutoRows: ROW_UNIT,
       gridAutoFlow: 'dense',
       gap: GAP,
       alignItems: 'stretch',
-    }}>
+      ['--ap-sec-bg' as string]: 'transparent',
+      ['--ap-sec-border' as string]: 'transparent',
+    } as React.CSSProperties}>
       {(layout[t] ?? []).map(spec => (
         <Module
           key={spec.id}

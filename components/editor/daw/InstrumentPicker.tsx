@@ -20,6 +20,10 @@ import { useIsMobile } from '@/lib/use-is-mobile'
 import { initPatch as initApolloPatch } from '@/lib/apollo/patch'
 import { FACTORY_PRESETS as APOLLO_FACTORY } from '@/lib/apollo/presets'
 import type { ApolloInstrumentParams } from '@/lib/daw-types'
+import dynamic from 'next/dynamic'
+import type { ApolloCardScope } from '@/components/apps/apollo/ApolloCard'
+// Lazy: the full Apollo UI only loads when a card is actually opened.
+const ApolloCard = dynamic(() => import('@/components/apps/apollo/ApolloCard'), { ssr: false })
 
 const C = {
   bgBase:      '#141414',
@@ -1012,6 +1016,9 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
 const ApolloPanel = memo(function ApolloPanel({ instrument, trackId }: { instrument: TrackInstrument; trackId: string }) {
   const { dispatch } = useDaw()
   const patch = instrument.params as ApolloInstrumentParams
+  // Serum-style: the synth opens as its own card above the studio — the whole
+  // instrument, or any single module.
+  const [cardScope, setCardScope] = useState<ApolloCardScope | null>(null)
   interface ApolloPresetOpt { group: string; name: string; load: () => ApolloInstrumentParams }
   const presets = useMemo<ApolloPresetOpt[]>(() => {
     const user: { name: string; json: string }[] = []
@@ -1048,13 +1055,36 @@ const ApolloPanel = memo(function ApolloPanel({ instrument, trackId }: { instrum
             {presets.map((pr, k) => pr.group === 'User' && <option key={pr.name + k} value={String(k)}>{pr.name}</option>)}
           </optgroup>
         </select>
-        <a
-          href="/apollo"
-          target="_blank"
-          rel="noreferrer"
-          style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
-        >Design patches in Apollo ↗</a>
+        <button
+          onClick={() => setCardScope('all')}
+          style={{
+            fontSize: 11.5, fontWeight: 700, padding: '5px 12px', borderRadius: 999, cursor: 'pointer',
+            background: 'var(--accent)', color: '#0b0d10', border: '1px solid var(--accent)',
+          }}
+        >Open Apollo</button>
       </div>
+      {/* open a single module straight into its own card */}
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 9.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: 700 }}>Modules</span>
+        {([
+          ['osc', 'Osc'], ['subnoise', 'Sub/Noise'], ['filters', 'Filters'], ['env', 'Env'],
+          ['lfo', 'LFO'], ['macros', 'Macros'], ['fx', 'FX'], ['arp', 'Arp'], ['global', 'Global'],
+        ] as [ApolloCardScope, string][]).map(([id, label]) => (
+          <button key={id} onClick={() => setCardScope(id)} style={{
+            fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 999, cursor: 'pointer',
+            background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)',
+          }}>{label}</button>
+        ))}
+      </div>
+      {cardScope && (
+        <ApolloCard
+          patch={patch}
+          scope={cardScope}
+          title={patch.name || 'Untitled patch'}
+          onChange={next => dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: next } })}
+          onClose={() => setCardScope(null)}
+        />
+      )}
       {/* performance macros — the patch's own 8 assignable controls */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {patch.macros.map((mv, mi) => (
