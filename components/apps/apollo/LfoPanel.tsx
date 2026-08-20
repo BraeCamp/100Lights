@@ -265,10 +265,14 @@ export default function LfoPanel({ visible = 10, onAdd }: { visible?: number; on
           </>
         )}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-        {SHAPES.map(s => (
-          <button key={s.label} onClick={() => commitPts(s.pts.map(p => ({ ...p })))}
-            style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 5, padding: '2px 6px', fontSize: 9, cursor: 'pointer' }}>{s.label}</button>
-        ))}
+        {/* seven shape chips → one selector (same pattern as engine/warp menus) */}
+        <Sel
+          width={92}
+          value=""
+          title="Load a starting shape into the drawable curve"
+          options={[{ value: '', label: 'Shape…' }, ...SHAPES.map((sh, k) => ({ value: String(k), label: sh.label }))]}
+          onChange={v => { if (v !== '') commitPts(SHAPES[Number(v)].pts.map(pt => ({ ...pt }))) }}
+        />
         <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Grid</span>
         <Sel width={44} value={String(cfg.gridX)} options={GRID_OPTS.map(gx => ({ value: String(gx), label: `${gx}` }))} onChange={v => ctx.update(p => { p.lfos[sel].gridX = Number(v) })} />
         <Sel width={44} value={String(cfg.gridY)} options={GRID_OPTS.map(gy => ({ value: String(gy), label: `${gy}` }))} onChange={v => ctx.update(p => { p.lfos[sel].gridY = Number(v) })} />

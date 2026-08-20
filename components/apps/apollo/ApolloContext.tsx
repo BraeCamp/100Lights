@@ -80,6 +80,13 @@ const LS_KEY = 'apollo_current_patch_v1'
 export interface ApolloEmbed { patch: ApolloPatch; onChange: (p: ApolloPatch) => void }
 
 export function ApolloProvider({ children, quickMod, embed }: { children: React.ReactNode; quickMod?: boolean; embed?: ApolloEmbed }) {
+  // Reset the palette every provider render, BEFORE children read UI.*.
+  // Without this, prerendering leaks themes between pages: the /apollo/test*
+  // skin pages call applyApolloTheme during SSR in the same Node process, and
+  // whichever page builds next bakes the previous page's palette into its
+  // HTML (the violet-knobs-on-/apollo bug). Skins re-apply inside their own
+  // Inner components, which render after this — so they still work.
+  Object.assign(UI, DEFAULT_UI)
   const engine = useMemo(() => getApolloEngine(), [])
   const patchRef = useRef<ApolloPatch | null>(null)
   const embedRef = useRef(embed)
@@ -451,7 +458,7 @@ export function Sel({ value, options, onChange, width, title }: {
   }
   const selStyle: React.CSSProperties = {
     background: UI.header, color: UI.text, border: `1px solid ${UI.border}`,
-    borderRadius: 5, padding: '3px 6px', fontSize: 10.5, fontWeight: 600, width: width || '100%', minWidth: 0, cursor: 'pointer',
+    borderRadius: 5, padding: '0 6px', height: 22, fontSize: 10.5, fontWeight: 600, width: width || '100%', minWidth: 0, cursor: 'pointer',
   }
   return (
     <select value={value} title={title} data-learn={title} onChange={e => onChange(e.target.value)} style={selStyle}>
@@ -477,7 +484,7 @@ export function ToggleBtn({ on, label, onClick, title, accent }: { on: boolean; 
         background: on ? ac : UI.header,
         color: on ? '#0b0d10' : UI.dim,
         border: '1px solid ' + (on ? ac : UI.border),
-        borderRadius: 5, padding: '3px 9px', fontSize: 9.5, fontWeight: 800, cursor: 'pointer',
+        borderRadius: 5, padding: '0 9px', height: 22, display: 'inline-flex', alignItems: 'center', fontSize: 9.5, fontWeight: 800, cursor: 'pointer',
         whiteSpace: 'nowrap', letterSpacing: 0.6, textTransform: 'uppercase',
         transition: 'background 120ms, color 120ms, border-color 120ms',
       }}

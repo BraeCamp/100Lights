@@ -87,7 +87,11 @@ function Module({ spec, onSpan, onDropBefore, children }: {
     if (!el) return
     const ro = new ResizeObserver(() => {
       const h = el.offsetHeight
-      const rows = Math.max(6, Math.ceil((h + GAP) / (ROW_UNIT + GAP)))
+      // quantize UP to 6-row (48px) bands: neighboring modules of similar
+      // content land on the SAME height, so seams run unbroken across the
+      // plate the way Serum's row lines do
+      const raw = Math.max(6, Math.ceil((h + GAP) / (ROW_UNIT + GAP)))
+      const rows = Math.ceil(raw / 6) * 6
       setAutoRows(r => (r === rows ? r : rows))
     })
     ro.observe(el)

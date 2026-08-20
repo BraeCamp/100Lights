@@ -130,6 +130,8 @@ export const LEARN_ENTRIES: LearnEntry[] = [
     'Engine-wide settings: [[polyphony]], [[mono|voice mode]], [[glide]], [[pitch-bend|bend range]], [[oversampling|quality]], scale lock and [[tuning|microtuning]].', ['global tab', 'global']),
   E('preset', 'Presets', 'Saved sounds — browse with the arrows, save your own.',
     'A preset is a complete saved patch: every knob, route and effect. Browse factory and saved sounds with the ◀ ▶ arrows, type a name and Save to keep your own, or Share to publish it (with an audio preview) to the Community.', ['presets', 'save', 'preset name']),
+  E('ladder', 'Ladder filter', 'The classic analog filter circuit — four stages in a cascade.',
+    'A ladder filter runs the signal through four one-pole stages in a cascade (24 dB/oct total) with a feedback path for [[resonance]] — the circuit at the heart of the most famous analog synths. Each stage saturates a little, which is where the "warm" analog character comes from. Apollo has several voicings: Ladder 12/24, German, French, [[acid-ladder|Acid]], [[ems-ladder|EMS]] and [[mg-dirty|MG Dirty]].'),
   E('acid-ladder', 'Acid Ladder filter', 'A 303-style ladder — clicky, squelchy resonance.',
     'A [[ladder|ladder filter]] voiced like the TB-303: the feedback path is AC-coupled, which gives the resonance its clicky, vocal "acid" bite, and the output blends in a brighter stage for an 18 dB feel. Push [[resonance]] high and sweep [[cutoff]] with an [[envelope]] for the classic acid squelch.', ['acid ladder']),
   E('ems-ladder', 'EMS Ladder filter', 'A wild diode ladder — asymmetric, unstable, characterful.',
