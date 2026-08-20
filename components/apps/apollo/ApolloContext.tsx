@@ -395,13 +395,13 @@ export function Section({ title, right, led, dice, children, style }: { title: s
   return (
     <div style={{
       background: `var(--ap-sec-bg, ${UI.panel})`,
-      border: `1px solid var(--ap-sec-border, ${UI.border})`, borderRadius: 8, overflow: 'visible',
+      border: `1px solid var(--ap-sec-border, ${UI.border})`, borderRadius: 'var(--ap-sec-radius, 8px)', overflow: 'visible',
       display: 'flex', flexDirection: 'column', minWidth: 0, ...style,
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
         background: UI.header,
-        borderBottom: `1px solid var(--ap-sec-border, ${UI.border})`, borderRadius: '7px 7px 0 0',
+        borderBottom: `1px solid var(--ap-sec-border, ${UI.border})`, borderRadius: 'var(--ap-sec-head-radius, 7px 7px 0 0)',
         padding: '5px 9px', minHeight: 26,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'var(--ap-grip-pad, 0px)' }}>

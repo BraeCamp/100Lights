@@ -90,19 +90,24 @@ function CardBody({ scope }: { scope: ApolloCardScope }) {
     background: UI.panel,
     border: `1px solid ${UI.border}`,
     borderRadius: 10,
-    padding: 8,
+    overflow: 'hidden',
     ['--ap-sec-bg' as string]: 'transparent',
     ['--ap-sec-border' as string]: 'transparent',
+    ['--ap-sec-radius' as string]: '0px',
+    ['--ap-sec-head-radius' as string]: '0px',
   } as React.CSSProperties
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {scope === 'all' ? (
         <div style={{
           ...plate,
-          display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 8, alignItems: 'start',
+          display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 0, alignItems: 'stretch',
         }}>
           {ALL_LAYOUT.map(m => (
-            <div key={m.id} style={{ gridColumn: `span ${m.cols}`, minWidth: 0 }}>{render(m.id)}</div>
+            <div key={m.id} style={{
+              gridColumn: `span ${m.cols}`, minWidth: 0,
+              borderRight: `1px solid ${UI.border}`, borderBottom: `1px solid ${UI.border}`,
+            }}>{render(m.id)}</div>
           ))}
         </div>
       ) : (

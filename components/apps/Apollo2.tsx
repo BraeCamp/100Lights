@@ -52,7 +52,7 @@ const TABS: { id: Tab; label: string }[] = [
 // (shape preserved); double-click a handle resets. Order + spans persist.
 const GRID_COLS = 12
 const ROW_UNIT = 8   // px per grid row
-const GAP = 8
+const GAP = 0        // modules SHARE edges (Serum-style): seams, not gutters
 const LAYOUT_KEY = 'apollo_layout_grid_v1'
 
 interface ModSpec { id: string; cols: number; rows: number | null } // rows null = auto (content height)
@@ -158,7 +158,9 @@ function Module({ spec, onSpan, onDropBefore, children }: {
         display: 'flex', flexDirection: 'column',
         overflow: 'visible',
         outline: dragOver ? `2px solid ${UI.blue}` : 'none',
-        borderRadius: 8,
+        // shared seams: only right + bottom, so adjacent modules split one line
+        borderRight: `1px solid ${UI.border}`,
+        borderBottom: `1px solid ${UI.border}`,
         ['--ap-grip-pad' as string]: '13px',
       } as React.CSSProperties}
     >
@@ -492,24 +494,27 @@ function ApolloInner() {
     global: <GlobalPanel />,
   }
 
-  // One PLATE per tab (Serum-style): the grid sits on a single card surface and
+  // One PLATE per tab (Serum-style): the grid sits on a single card surface,
   // the modules dissolve their own chrome (via the --ap-sec-* vars Section
-  // reads), so the whole synth reads as ONE instrument panel — the header bars
-  // alone delineate the modules, and drag/resize still work the same.
+  // reads) and SHARE EDGES — zero gap, each module drawing only its right +
+  // bottom seam, so neighbors split a single 1px line the way Serum 2's
+  // panels do. Header bars alone delineate the modules; drag/resize unchanged.
   const grid = (t: Tab) => (
     <div style={{
       background: UI.panel,
       border: `1px solid ${UI.border}`,
       borderRadius: 10,
-      padding: GAP,
+      overflow: 'hidden',
       display: 'grid',
       gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
       gridAutoRows: ROW_UNIT,
       gridAutoFlow: 'dense',
-      gap: GAP,
+      gap: 0,
       alignItems: 'stretch',
       ['--ap-sec-bg' as string]: 'transparent',
       ['--ap-sec-border' as string]: 'transparent',
+      ['--ap-sec-radius' as string]: '0px',
+      ['--ap-sec-head-radius' as string]: '0px',
     } as React.CSSProperties}>
       {(layout[t] ?? []).map(spec => (
         <Module
