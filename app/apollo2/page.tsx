@@ -1,16 +1,16 @@
 import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
 
-const Apollo2 = dynamic(() => import('@/components/apps/Apollo2'))
+const Apollo = dynamic(() => import('@/components/apps/Apollo'))
 
-// The approachability experiment: /apollo recomposed around new users
-// (Play mode first, full Design mode one click away). Hidden while the
-// two versions are compared side by side on production.
+// The UI experiment copy: currently identical to /apollo. UI restructuring
+// (progressive disclosure, signal-chain grouping) lands HERE first so the two
+// can be compared on production; /apollo stays stable.
 export const metadata: Metadata = {
   title: 'Apollo 2',
   robots: { index: false, follow: false },
 }
 
 export default function Apollo2Page() {
-  return <Apollo2 />
+  return <Apollo />
 }
