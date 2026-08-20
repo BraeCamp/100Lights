@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-20-8 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-20-9 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -594,6 +594,83 @@ function mipFor(tbl, inc) {
   return (lvl - 1) * tbl.frames * WT_LEN
 }
 
+// ---------- spectral warp (harmonic-domain wavetable warps, Vital-style) ----
+// Operates on the CURRENT wavetable frame in the frequency domain, cached per
+// (frame, mode, amount, band-limit) on the per-voice osc state. Band-limiting
+// happens in the same pass (zeroing bins above the note's Nyquist headroom),
+// so warped output is alias-safe without the mip chain.
+const swRe = new Float32Array(WT_LEN)
+const swIm = new Float32Array(WT_LEN)
+function swRead(buf, phase) {
+  const p = phase * WT_LEN
+  const i0 = p | 0
+  const pf = p - i0
+  const ia = i0 & (WT_LEN - 1), ib = (i0 + 1) & (WT_LEN - 1)
+  return buf[ia] + (buf[ib] - buf[ia]) * pf
+}
+function swRand(k) { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x) }
+function computeSpecWarp(tbl, framePos, mode, amt, maxH) {
+  // render the (interpolated) source frame
+  for (let i = 0; i < WT_LEN; i++) { swRe[i] = tableSample(tbl, framePos, i / WT_LEN, null, 0); swIm[i] = 0 }
+  let srcPeak = 0
+  for (let i = 0; i < WT_LEN; i++) { const a = Math.abs(swRe[i]); if (a > srcPeak) srcPeak = a }
+  fftInPlace(swRe, swIm, false)
+  const H = WT_LEN >> 1
+  // magnitude/phase per bin 1..H-1
+  const mags = new Float32Array(H)
+  const phs = new Float32Array(H)
+  for (let k = 1; k < H; k++) { mags[k] = Math.hypot(swRe[k], swIm[k]); phs[k] = Math.atan2(swIm[k], swRe[k]) }
+  const out = new Float32Array(H)
+  const oph = new Float32Array(H)
+  if (mode === 'stretch') {
+    // harmonic stretch: harmonic k comes from source position k/(1+amt*1.5)
+    const f = 1 + amt * 1.5
+    for (let k = 1; k < H; k++) {
+      const srcK = k / f
+      const k0 = srcK | 0, kf = srcK - k0
+      if (k0 >= 1 && k0 + 1 < H) { out[k] = mags[k0] * (1 - kf) + mags[k0 + 1] * kf; oph[k] = phs[k0] }
+    }
+  } else if (mode === 'shift') {
+    const sh = Math.round(amt * 48)
+    for (let k = 1; k < H; k++) { const sk = k - sh; if (sk >= 1 && sk < H) { out[k] = mags[sk]; oph[k] = phs[sk] } }
+  } else if (mode === 'smear') {
+    const w = Math.max(1, Math.round(amt * 14))
+    for (let k = 1; k < H; k++) {
+      let sum = 0, cnt = 0
+      for (let j = -w; j <= w; j++) { const kk = k + j; if (kk >= 1 && kk < H) { sum += mags[kk]; cnt++ } }
+      out[k] = sum / cnt; oph[k] = phs[k]
+    }
+  } else if (mode === 'lowpass') {
+    const keep = Math.max(1, Math.round(Math.pow(1 - amt, 2) * H))
+    for (let k = 1; k < H; k++) { out[k] = k <= keep ? mags[k] : 0; oph[k] = phs[k] }
+  } else if (mode === 'evenodd') {
+    // tilt toward odd harmonics (hollow/square-like) as amount rises
+    for (let k = 1; k < H; k++) { out[k] = mags[k] * (k % 2 === 0 ? (1 - amt) : (1 + amt * 0.4)); oph[k] = phs[k] }
+  } else if (mode === 'inharm') {
+    for (let k = 1; k < H; k++) {
+      const off = Math.round((swRand(k) - 0.5) * 2 * amt * Math.min(12, k * 0.5))
+      const sk = k + off
+      if (sk >= 1 && sk < H) { out[k] = mags[sk]; oph[k] = phs[sk] }
+    }
+  } else {
+    for (let k = 1; k < H; k++) { out[k] = mags[k]; oph[k] = phs[k] }
+  }
+  // rebuild spectrum, band-limited to maxH
+  for (let i = 0; i < WT_LEN; i++) { swRe[i] = 0; swIm[i] = 0 }
+  const lim = Math.min(H - 1, maxH)
+  for (let k = 1; k <= lim; k++) {
+    const re = out[k] * Math.cos(oph[k]), im = out[k] * Math.sin(oph[k])
+    swRe[k] = re; swIm[k] = im
+    swRe[WT_LEN - k] = re; swIm[WT_LEN - k] = -im
+  }
+  fftInPlace(swRe, swIm, true)
+  const buf = new Float32Array(WT_LEN)
+  let peak = 0
+  for (let i = 0; i < WT_LEN; i++) { buf[i] = swRe[i]; const a = Math.abs(buf[i]); if (a > peak) peak = a }
+  if (peak > 1e-6 && srcPeak > 1e-6) { const g = srcPeak / peak; for (let i = 0; i < WT_LEN; i++) buf[i] *= g }
+  return buf
+}
+
 function grainWindow(t, shape, skew, amount) {
   // t 0..1; skew shifts peak; shape morphs triangle->hann->gauss
   let tt = t
@@ -663,6 +740,24 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
     const remap = engine.remapLuts.get(`osc${oi}`)
     const freq = voice.curFreq * pitchRatioBase * (cfg.keytrackPitch ? 1 : midiFreq(60) / voice.curFreq)
     const norm = 1 / Math.sqrt(uni)
+    // spectral warp: swap the table read for a cached harmonic-warped frame
+    let swBuf = null
+    const swCfg = cfg.wt.specWarp
+    if (swCfg && swCfg.mode && swCfg.mode !== 'off') {
+      const swAmt = clamp(vp(voice, `osc${oi}.wt.specWarp.amount`, swCfg.amount), 0, 1)
+      const amtQ = Math.round(swAmt * 32)
+      if (amtQ > 0) {
+        const fpQ = Math.round(framePos * 4) / 4
+        const baseInc = freq / sr
+        let maxH = Math.floor(0.45 / Math.max(1e-6, baseInc * (1 + detune * 0.06)))
+        maxH = Math.max(4, Math.min(1023, maxH))
+        let bucket = 4
+        while (bucket < maxH) bucket <<= 1
+        const key = fpQ + '|' + swCfg.mode + '|' + amtQ + '|' + bucket + '|' + tbl.frames
+        if (os.swKey !== key) { os.swBuf = computeSpecWarp(tbl, fpQ, swCfg.mode, amtQ / 32, Math.min(bucket, 1023)); os.swKey = key }
+        swBuf = os.swBuf
+      }
+    }
     let ended = true
     for (let u = 0; u < uni; u++) {
       const ratio = unisonRatio(cfg.unisonMode, u, uni, detune, voice.note)
@@ -685,7 +780,7 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
         p -= Math.floor(p)
         if (PHASE_WARPS[w1m] && w1m !== 'fm') p = w1m === 'remap' && remap ? lutEval(remap, p) : warpPhase(w1m, p, w1a)
         if (PHASE_WARPS[w2m] && w2m !== 'fm') p = w2m === 'remap' && remap ? lutEval(remap, p) : warpPhase(w2m, p, w2a)
-        let y = tableSample(tbl, framePos, p, tData, mipOff == null ? 0 : mipOff)
+        let y = swBuf ? swRead(swBuf, p) : tableSample(tbl, framePos, p, tData, mipOff == null ? 0 : mipOff)
         if (AMP_WARPS[w1m]) y = warpAmp(w1m, y, w1a, modBuf[s])
         if (AMP_WARPS[w2m]) y = warpAmp(w2m, y, w2a, modBuf[s])
         outL[s] += y * gl * panL
@@ -1402,17 +1497,25 @@ function processFxUnit(engine, unit, st, L, R, n) {
       const atk = Math.exp(-1 / (P('attack', 10) * 0.001 * sr))
       const rel = Math.exp(-1 / (P('release', 120) * 0.001 * sr))
       const makeup = dbToLin(P('makeup', 0))
+      // OTT-style upward compression: signals BELOW threshold are pushed up
+      // toward it (capped at 24 dB, gated below -60 dB so silence stays silent)
+      const upAmt = clamp(P('upward', 0), 0, 1)
+      const upTarget = (db) => {
+        if (upAmt <= 0 || db >= th || db < -60) return 0
+        return Math.min(24, (th - db) * (1 - 1 / ratio)) * upAmt
+      }
       const mb = P('multiband', 0) > 0.5
       if (!mb) {
         for (let i = 0; i < n; i++) {
           const inLvl = Math.max(Math.abs(L[i]), Math.abs(R[i]))
           const db = 20 * Math.log10(inLvl + 1e-9)
           const over = db - th
-          const targetGr = over > 0 ? -over * (1 - 1 / ratio) : 0
+          const targetGr = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
           st.envG = targetGr < st.envG ? atk * st.envG + (1 - atk) * targetGr : rel * st.envG + (1 - rel) * targetGr
           const g = dbToLin(st.envG) * makeup
           L[i] = lerp(L[i], L[i] * g, mix); R[i] = lerp(R[i], R[i] * g, mix)
         }
+        engine.fxGr[unit.id] = [st.envG]
       } else {
         const loF = cutoffHz(clamp(P('loFreq', 0.25), 0, 1)), hiF = cutoffHz(clamp(P('hiFreq', 0.7), 0, 1))
         const gLo = svfG(loF, sr), gHi = svfG(hiF, sr)
@@ -1431,13 +1534,14 @@ function processFxUnit(engine, unit, st, L, R, n) {
             const bs = st.bands[b]
             const db = 20 * Math.log10(Math.max(Math.abs(bl), Math.abs(br)) + 1e-9)
             const over = db - th
-            const tg = over > 0 ? -over * (1 - 1 / ratio) : 0
+            const tg = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
             bs.envG = tg < bs.envG ? atk * bs.envG + (1 - atk) * tg : rel * bs.envG + (1 - rel) * tg
             const g = dbToLin(bs.envG)
             outL2 += bl * g; outR2 += br * g
           }
           L[i] = lerp(L[i], outL2 * makeup, mix); R[i] = lerp(R[i], outR2 * makeup, mix)
         }
+        engine.fxGr[unit.id] = [st.bands[0].envG, st.bands[1].envG, st.bands[2].envG]
       }
       return
     }
@@ -1784,6 +1888,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
     this.rowLuts = new Map()
     this.defaultTable = null
     this.voices = Array.from({ length: 32 }, () => new Voice(this.sr))
+    this.fxGr = {}
     this.heldNotes = []
     this.sustainPedal = false
     this.macros = new Float32Array(8)
@@ -2008,6 +2113,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
   globalSourceVal(src) {
     if (src[0] === 'm' && src.startsWith('macro')) return this.macros[+src.slice(5) - 1]
     switch (src) {
+      case 'follower': return this.followEnv || 0
       case 'modwheel': return this.modwheel
       case 'pitchwheel': return this.pitchbend
       case 'aftertouch': return this.aftertouch
@@ -2037,6 +2143,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
   voiceSourceVal(voice, src) {
     if (src[0] === 'm' && src.startsWith('macro')) return this.macros[+src.slice(5) - 1]
     switch (src) {
+      case 'follower': return this.followEnv || 0
       case 'vel': return voice.vel
       case 'note': return voice.note / 127
       case 'rand': return voice.rand
@@ -2840,10 +2947,18 @@ class ApolloProcessor extends AudioWorkletProcessor {
     // attack, ~120 ms release, 0.98 ceiling; unity gain below the ceiling.
     if (this.limEnv === undefined) this.limEnv = 0
     const limRel = 1 - Math.exp(-1 / (0.12 * this.sr))
+    // envelope follower mod source: tracks the master output level (pre-limiter)
+    if (this.followEnv === undefined) this.followEnv = 0
+    const folCfg = patch.global.follower || {}
+    const folAtk = 1 - Math.exp(-1 / (Math.max(1, folCfg.attack != null ? folCfg.attack : 10) * 0.001 * this.sr))
+    const folRel = 1 - Math.exp(-1 / (Math.max(5, folCfg.release != null ? folCfg.release : 200) * 0.001 * this.sr))
+    const folGain = folCfg.gain != null ? folCfg.gain : 1
     for (let i = 0; i < n; i++) {
       let l = (this.busses.main[0][i] + this.busses.bus1[0][i] * r1 + this.busses.bus2[0][i] * r2 + this.busses.direct[0][i]) * mg
       let r = (this.busses.main[1][i] + this.busses.bus1[1][i] * r1 + this.busses.bus2[1][i] * r2 + this.busses.direct[1][i]) * mg
       const aIn = Math.abs(l) > Math.abs(r) ? Math.abs(l) : Math.abs(r)
+      const folTarget = Math.min(1, aIn * folGain)
+      this.followEnv += (folTarget - this.followEnv) * (folTarget > this.followEnv ? folAtk : folRel)
       if (aIn > this.limEnv) this.limEnv = aIn
       else this.limEnv += (aIn - this.limEnv) * limRel
       if (this.limEnv > 0.98) { const g = 0.98 / this.limEnv; l *= g; r *= g }
@@ -2899,6 +3014,8 @@ class ApolloProcessor extends AudioWorkletProcessor {
         grain: Array.from(this.grainViz),
         spec: Array.from(this.specViz),
         macros: Array.from(this.macros),
+        follower: this.followEnv || 0,
+        fxGr: this.fxGr,
       })
     }
   }

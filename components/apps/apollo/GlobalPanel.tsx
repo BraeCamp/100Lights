@@ -22,6 +22,16 @@ export default function GlobalPanel() {
   )
   return (
     <Section title="Global">
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span data-learn="Follower" title="Envelope follower — a mod source that tracks the output level" style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700 }}>FOLLOWER</span>
+        <Knob label="Attack" size={30} min={1} max={200} def={10} log value={ctx.patch.global.follower?.attack ?? 10}
+          onChange={v => ctx.update(p => { p.global.follower = { attack: v, release: p.global.follower?.release ?? 200, gain: p.global.follower?.gain ?? 1 } })} />
+        <Knob label="Release" size={30} min={20} max={2000} def={200} log value={ctx.patch.global.follower?.release ?? 200}
+          onChange={v => ctx.update(p => { p.global.follower = { attack: p.global.follower?.attack ?? 10, release: v, gain: p.global.follower?.gain ?? 1 } })} />
+        <Knob label="Gain" size={30} min={0.2} max={8} def={1} log value={ctx.patch.global.follower?.gain ?? 1}
+          onChange={v => ctx.update(p => { p.global.follower = { attack: p.global.follower?.attack ?? 10, release: p.global.follower?.release ?? 200, gain: v } })} />
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>drag the Follower chip onto any knob — it follows the sound's own level</span>
+      </div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <Sel width={78} value={g.mode} options={[
           { value: 'poly', label: 'Poly' }, { value: 'mono', label: 'Mono' }, { value: 'legato', label: 'Legato' },

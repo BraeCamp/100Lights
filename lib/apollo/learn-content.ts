@@ -156,6 +156,18 @@ export const LEARN_ENTRIES: LearnEntry[] = [
     'Learn mode turns the cursor into a magnifying glass: hover anything to see what it is, click it to read the full story (the control does NOT activate). Highlighted words open further cards. Click the Learn button again (or press Esc) to go back to playing.', ['?', 'learn mode']),
 
   // ── Oscillator panel controls ───────────────────────────────────────────
+  E('spec-warp', 'Spectral warp', 'Reshapes the frame’s harmonics directly — stretch, shift, smear.',
+    'Unlike the time-domain [[warp]]s, spectral warp operates on the [[wavetable]] frame’s harmonics themselves: Stretch spreads them apart (inharmonic, bell-like), Shift slides the whole spectrum, Smear blurs it, Spec LP removes highs surgically, Even/Odd tilts the tone hollow, Inharmonic scatters partials. The Amount is modulatable — sweep it with an [[lfo|LFO]] for evolving harmonic motion.', ['spectral warp — reshapes the frame’s harmonics', 'spec lp']),
+  E('follower', 'Envelope follower', 'A mod source that follows the sound’s own loudness.',
+    'The follower listens to Apollo’s output and turns its level into a [[modulation]] source: loud moments push routed knobs further. Route it to [[cutoff]] for auto-wah, to reverb mix for blooming tails. Attack/Release (on the GLOBAL page) set how fast it reacts; drag its chip from MOD SOURCES like any other source.'),
+  E('filter-display', 'Filter display', 'The filter’s response curve — drag it to play the filter.',
+    'The curve shows what the [[filter]] does to each frequency; the green shadow behind it is the live output spectrum. Drag on the display: left/right moves the [[cutoff]], up/down the [[resonance]] — same parameters as the knobs, so [[modulation]] and MIDI mapping still apply.', ['filter display']),
+  E('eq-curve', 'EQ curve', 'Drag the two handles to shape the tone; scroll for width.',
+    'The EQ’s two bands drawn as one response curve over the live spectrum. Drag a numbered handle: left/right picks the frequency, up/down boosts or cuts; the scroll wheel narrows or widens that band (Q). The band type (shelf/peak) stays on the selectors below.', ['eq curve']),
+  E('upward', 'Upward compression', 'Lifts quiet material up toward the threshold (the OTT sound).',
+    'Normal [[fx-compressor|compression]] turns loud parts down. Upward compression also turns QUIET parts up toward the threshold — both at once is the dense, in-your-face “OTT” sound of modern electronic music. The meter shows red when reducing, green when lifting.', ['ott']),
+  E('gain-reduction', 'Gain reduction', 'How much the compressor is changing the level right now.',
+    'The GR meter shows the [[fx-compressor|compressor]] working in real time: red bars mean the level is being pulled down, green bars ([[upward]] compression) mean it’s being lifted. In multiband mode each band meters separately.', ['gr']),
   E('engine', 'Engine', 'Which synthesis method this oscillator uses.',
     'Each [[oscillator]] can be a [[wavetable]] (morphing waveforms), Sample (a recording), Multisample (an instrument with several recordings mapped across the keys), [[granular|Granular]] (grain cloud) or [[spectral|Spectral]] (frequency-analysis resynthesis). Different engines expose different controls below.'),
   E('level', 'Level', 'This source’s volume in the mix.', 'How loud this [[oscillator]] (or sub/noise) is relative to the others. Balancing levels between layered oscillators is most of the art of a good patch.'),

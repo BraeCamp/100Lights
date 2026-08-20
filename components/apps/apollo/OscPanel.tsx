@@ -4,7 +4,7 @@
 
 import React from 'react'
 import { useApollo, Knob, Sel, Section, ToggleBtn, UI } from './ApolloContext'
-import { WARP_MODES, OscEngine, UnisonMode, SourceDest, BusDest, WarpMode } from '@/lib/apollo/patch'
+import { WARP_MODES, OscEngine, UnisonMode, SourceDest, BusDest, WarpMode , SpecWarpMode } from '@/lib/apollo/patch'
 import { FACTORY_TABLE_IDS, FACTORY_TABLE_NAMES } from '@/lib/apollo/tables'
 import WavetableView from './WavetableView'
 import SampleView from './SampleView'
@@ -151,6 +151,15 @@ export default function OscPanel({ osc: oscProp }: { osc?: number } = {}) {
               <Sel width={90} title="Modulator oscillator" value={String(osc.wt.fmSource)} options={[0, 1, 2].filter(s => s !== i).map(s => ({ value: String(s), label: `From Osc ${'ABC'[s]}` }))}
                 onChange={v => ctx.update(p => { p.oscs[i].wt.fmSource = Number(v) as 0 | 1 | 2 })} />
             )}
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700 }}>SPECTRAL</span>
+              <Sel width={96} title="Spectral warp — reshapes the frame's harmonics" value={osc.wt.specWarp?.mode ?? 'off'} options={[
+                { value: 'off', label: 'Off' }, { value: 'stretch', label: 'Stretch' }, { value: 'shift', label: 'Shift' },
+                { value: 'smear', label: 'Smear' }, { value: 'lowpass', label: 'Spec LP' }, { value: 'evenodd', label: 'Even/Odd' },
+                { value: 'inharm', label: 'Inharmonic' },
+              ]} onChange={v => ctx.update(p => { p.oscs[i].wt.specWarp = { mode: v as SpecWarpMode, amount: p.oscs[i].wt.specWarp?.amount ?? 0 } })} />
+              <Knob path={`osc${i}.wt.specWarp.amount`} label="Amount" size={34} />
+            </div>
           </div>
           {(osc.wt.warp1.mode === 'remap' || osc.wt.warp2.mode === 'remap') && (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

@@ -29,6 +29,10 @@ export type FilterType =
 
 export interface WarpSlot { mode: WarpMode; amount: number /* 0..1 */ }
 
+/** Harmonic-domain warp applied to the current wavetable frame (Vital-style). */
+export type SpecWarpMode = 'off' | 'stretch' | 'shift' | 'smear' | 'lowpass' | 'evenodd' | 'inharm'
+export interface SpecWarpSlot { mode: SpecWarpMode; amount: number /* 0..1 */ }
+
 export interface WavetableParams {
   tableId: string
   pos: number // 0..1 frame morph
@@ -37,6 +41,8 @@ export interface WavetableParams {
   warp2: WarpSlot
   fmSource: 0 | 1 | 2 // osc index used by fm/am/rm warps
   remapCurve: LfoPoint[] | null // phase remap curve for the 'remap' warp mode
+  /** Optional (older patches lack it): spectral warp — operates on harmonics. */
+  specWarp?: SpecWarpSlot
 }
 
 export interface SliceInfo { pos: number /* 0..1 */ }
@@ -191,7 +197,7 @@ export type ModSource =
   | 'env1' | 'env2' | 'env3' | 'env4'
   | 'lfo1' | 'lfo2' | 'lfo3' | 'lfo4' | 'lfo5' | 'lfo6' | 'lfo7' | 'lfo8' | 'lfo9' | 'lfo10'
   | 'lfo1y' | 'lfo2y' | 'lfo3y' | 'lfo4y' | 'lfo5y' | 'lfo6y' | 'lfo7y' | 'lfo8y' | 'lfo9y' | 'lfo10y'
-  | 'vel' | 'note' | 'modwheel' | 'pitchwheel' | 'aftertouch' | 'rand' | 'gate'
+  | 'vel' | 'note' | 'modwheel' | 'pitchwheel' | 'aftertouch' | 'rand' | 'gate' | 'follower'
   | 'macro1' | 'macro2' | 'macro3' | 'macro4' | 'macro5' | 'macro6' | 'macro7' | 'macro8'
   | 'none'
 
@@ -261,6 +267,8 @@ export interface GlobalConfig {
   scaleLock: boolean
   masterTune: number // cents
   tuning: { name: string; freqs: number[] } | null // microtuning table (.scl/.tun)
+  /** Optional: envelope-follower mod source (tracks the master output level). */
+  follower?: { attack: number; release: number; gain: number }
 }
 
 export interface ApolloPatch {
@@ -343,6 +351,7 @@ function oscParams(i: number): ParamDef[] {
     P(`${o}.smp.rate`, `Osc ${'ABC'[i]} Smp Rate`, -2, 2, 1, true),
     P(`${o}.smp.warp1.amount`, `Osc ${'ABC'[i]} Smp Warp 1`, 0, 1, 0, true),
     P(`${o}.smp.warp2.amount`, `Osc ${'ABC'[i]} Smp Warp 2`, 0, 1, 0, true),
+    P(`${o}.wt.specWarp.amount`, `Osc ${'ABC'[i]} Spectral Warp`, 0, 1, 0, true),
     P(`${o}.smp.start`, `Osc ${'ABC'[i]} Smp Start`, 0, 1, 0, true),
     P(`${o}.smp.loopStart`, `Osc ${'ABC'[i]} Loop Start`, 0, 1, 0, true),
     P(`${o}.smp.loopEnd`, `Osc ${'ABC'[i]} Loop End`, 0, 1, 1, true),
@@ -469,6 +478,7 @@ export const FX_DEFS: Record<FxType, { label: string; params: { key: string; lab
     { key: 'attack', label: 'Attack', min: 0.1, max: 200, default: 10, curve: 'log' },
     { key: 'release', label: 'Release', min: 10, max: 2000, default: 120, curve: 'log' },
     { key: 'makeup', label: 'Makeup', min: 0, max: 24, default: 0 },
+    { key: 'upward', label: 'Upward', min: 0, max: 1, default: 0 },
     { key: 'multiband', label: 'Multiband', min: 0, max: 1, default: 0 },
     { key: 'loFreq', label: 'Lo X', min: 0, max: 1, default: 0.25 },
     { key: 'hiFreq', label: 'Hi X', min: 0, max: 1, default: 0.7 },
@@ -572,7 +582,7 @@ export function defaultOsc(i: number): OscConfig {
     level: 0.75, pan: 0, octave: 0, semi: 0, fine: 0,
     unison: 1, detune: 0.15, blend: 0.5, width: 1, phase: 0, rand: 1, stereo: 0.5,
     keytrackPitch: true, unisonMode: 'classic', dest: 'f1', filterBal: 0, bus: 'main',
-    wt: { tableId: 'basic-shapes', pos: 0, interp: 'smooth', warp1: defaultWarp(), warp2: defaultWarp(), fmSource: (i + 1) % 3 as 0 | 1 | 2, remapCurve: null },
+    wt: { tableId: 'basic-shapes', pos: 0, interp: 'smooth', warp1: defaultWarp(), warp2: defaultWarp(), fmSource: (i + 1) % 3 as 0 | 1 | 2, remapCurve: null, specWarp: { mode: 'off', amount: 0 } },
     smp: { sampleId: null, start: 0, end: 1, loopMode: 'off', loopStart: 0.25, loopEnd: 0.75, xfade: 0.01, rate: 1, keytrack: true, rootKey: 60, slices: [], sliceMap: 'off', warp1: defaultWarp(), warp2: defaultWarp() },
     gran: { sampleId: null, density: 20, length: 80, scan: 1, pos: 0, spray: 0.05, direction: 'fwd', pitchRand: 0, panRand: 0.3, windowShape: 0.5, windowSkew: 0, windowAmount: 1, loopGrains: false, manual: false, keytrack: true, rootKey: 60 },
     spec: { sampleId: null, speed: 1, freeze: false, pos: 0, smear: 0, shift: 0, pitchShift: 0, formant: 0, spread: 0, gate: 0, filterCurve: Array(64).fill(1), transients: 0.5, keytrack: true, rootKey: 60 },
@@ -614,6 +624,7 @@ export function initPatch(): ApolloPatch {
       masterGain: 0.8, bpm: 120, quality: 'good',
       voiceSpreadPan: 0, voiceSpreadTune: 0, voiceSpreadCutoff: 0,
       scaleRoot: 0, scaleName: 'Minor', scaleLock: false, masterTune: 0, tuning: null,
+      follower: { attack: 10, release: 200, gain: 1 },
     },
     oscs: [defaultOsc(0), defaultOsc(1), defaultOsc(2)],
     sub: { enabled: false, shape: 'sine', octave: -1, level: 0.5, pan: 0, direct: false, dest: 'f1', filterBal: 0, bus: 'main' },
@@ -677,5 +688,6 @@ export const MOD_SOURCES: { id: ModSource; label: string; group: string }[] = [
   { id: 'gate', label: 'Gate', group: 'Note' }, { id: 'rand', label: 'Random', group: 'Note' },
   { id: 'modwheel', label: 'Mod Wheel', group: 'MIDI' }, { id: 'pitchwheel', label: 'Pitch Wheel', group: 'MIDI' },
   { id: 'aftertouch', label: 'Aftertouch', group: 'MIDI' },
+  { id: 'follower', label: 'Follower', group: 'Audio' },
   ...Array.from({ length: 8 }, (_, i) => ({ id: `macro${i + 1}` as ModSource, label: `Macro ${i + 1}`, group: 'Macros' })),
 ]

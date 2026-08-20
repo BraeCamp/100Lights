@@ -19,6 +19,10 @@ export interface ApolloMeters {
   grain: number[]
   spec: number[]
   macros: number[]
+  /** Envelope-follower level (0..1) — the 'follower' mod source's live value. */
+  follower?: number
+  /** Per-compressor gain reduction in dB (negative = reducing), keyed by unit id. */
+  fxGr?: Record<string, number[]>
 }
 
 export interface LoadedSample {

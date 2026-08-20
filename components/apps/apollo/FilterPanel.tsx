@@ -2,9 +2,127 @@
 // Dual filter section: 30+ filter types, serial/parallel routing,
 // per-source routing buttons (S A B C N).
 
-import React from 'react'
+import React, { useCallback, useEffect, useRef } from 'react'
 import { useApollo, Knob, Sel, Section, ToggleBtn, UI } from './ApolloContext'
 import { FILTER_TYPES, FilterType, SourceDest, BusDest } from '@/lib/apollo/patch'
+
+// ── Filter response display (Serum/Vital-style): approximate magnitude curve
+// with a live output-spectrum underlay. Dragging ON the curve edits this
+// filter — x = cutoff, y = resonance — via the same params the knobs use.
+const SLOPES: Partial<Record<FilterType, number>> = {
+  lp6: 6, lp12: 12, lp18: 18, lp24: 24, hp6: 6, hp12: 12, hp24: 24,
+  bp12: 12, bp24: 24, notch12: 12, peak12: 12,
+  ladder12: 12, ladder24: 24, germanLP: 24, frenchLP: 24,
+}
+function responseDb(type: FilterType, x: number, cutoff: number, res: number, fat: number): number {
+  const OCT_SPAN = 10 // display axis ≈ 10 octaves
+  const d = (x - cutoff) * OCT_SPAN
+  const slope = SLOPES[type] ?? 12
+  const peak = res * 24 * Math.exp(-(d * d) / (2 * 0.18 * 0.18))
+  const lp = (dd: number) => (dd > 0 ? -slope * dd : 0)
+  const hp = (dd: number) => (dd < 0 ? slope * dd : 0)
+  if (type.startsWith('lp') || type.startsWith('ladder') || type === 'germanLP' || type === 'frenchLP') return lp(d) + peak
+  if (type.startsWith('hp')) return hp(d) + peak
+  if (type.startsWith('bp')) return -Math.abs(d) * slope + peak
+  if (type === 'notch12') return -res * 30 * Math.exp(-(d * d) / (2 * 0.12 * 0.12))
+  if (type === 'peak12') return peak
+  if (type === 'multiLBH' || type === 'multiLNH' || type === 'morphSVF') {
+    // morph LP → (band/notch) → HP by fat
+    const a = fat * 2
+    if (a <= 1) return lp(d) * (1 - a) + (-Math.abs(d) * slope) * a + peak
+    return (-Math.abs(d) * slope) * (2 - a) + hp(d) * (a - 1) + peak
+  }
+  if (type === 'formant') {
+    const centers = [cutoff - 0.12 + fat * 0.05, cutoff + 0.08 + fat * 0.1]
+    let out = -14
+    for (const c of centers) {
+      const dd = (x - c) * OCT_SPAN
+      out = Math.max(out, (10 + res * 14) * Math.exp(-(dd * dd) / (2 * 0.12 * 0.12)) - 14)
+    }
+    return out
+  }
+  if (type.startsWith('comb') || type.startsWith('flange') || type.startsWith('phase')) {
+    return Math.cos((x - cutoff) * 46) * (4 + res * 14) - 2
+  }
+  return -Math.abs(d) * 4 // stylized fallback for the exotic types
+}
+
+function FilterResponse({ fi }: { fi: 0 | 1 }) {
+  const ctx = useApollo()
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const dragging = useRef(false)
+  const W = 300, H = 64
+
+  const draw = useCallback(() => {
+    const cv = canvasRef.current
+    if (!cv) return
+    const cfg = ctx.patch.filters[fi]
+    const dpr = window.devicePixelRatio || 1
+    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr }
+    const g = cv.getContext('2d')
+    if (!g) return
+    g.setTransform(dpr, 0, 0, dpr, 0, 0)
+    g.clearRect(0, 0, W, H)
+    g.fillStyle = 'rgba(0,0,0,0.28)'
+    g.fillRect(0, 0, W, H)
+    const an = ctx.engine.analyser
+    if (an && ctx.engine.meters.peak > 0.001) {
+      const bins = new Uint8Array(an.frequencyBinCount)
+      an.getByteFrequencyData(bins)
+      const sr = ctx.engine.ctx?.sampleRate ?? 48000
+      g.fillStyle = 'rgba(111,208,140,0.15)'
+      for (let px = 0; px < W; px += 2) {
+        const fHz = 20 * Math.pow(1000, px / W)
+        const bin = Math.min(bins.length - 1, Math.round(fHz / (sr / 2) * bins.length))
+        const h = (bins[bin] / 255) * (H - 4)
+        g.fillRect(px, H - h, 2, h)
+      }
+    }
+    g.strokeStyle = cfg.enabled ? UI.blue : 'rgba(255,255,255,0.2)'
+    g.lineWidth = 1.6
+    g.beginPath()
+    for (let px = 0; px <= W; px++) {
+      const db = responseDb(cfg.type, px / W, cfg.cutoff, cfg.res, cfg.fat)
+      const y = Math.min(H - 2, Math.max(2, H * 0.32 - (db / 36) * H * 0.6))
+      if (px === 0) g.moveTo(px, y); else g.lineTo(px, y)
+    }
+    g.stroke()
+    // cutoff handle
+    const hx = cfg.cutoff * W
+    const hy = Math.min(H - 4, Math.max(4, H * 0.32 - (responseDb(cfg.type, cfg.cutoff, cfg.cutoff, cfg.res, cfg.fat) / 36) * H * 0.6))
+    g.fillStyle = cfg.enabled ? UI.blue : 'rgba(255,255,255,0.3)'
+    g.beginPath(); g.arc(hx, hy, 4, 0, Math.PI * 2); g.fill()
+  }, [ctx, fi])
+
+  useEffect(() => {
+    draw()
+    const eng = ctx.engine
+    const onMeters = () => { if (eng.meters.peak > 0.001 || dragging.current) draw() }
+    eng.addEventListener('meters', onMeters)
+    return () => eng.removeEventListener('meters', onMeters)
+  }, [draw, ctx.version, ctx.engine])
+
+  const apply = (e: React.PointerEvent) => {
+    if (!dragging.current) return
+    const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect()
+    const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
+    const y = Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height))
+    ctx.setParam(`f${fi + 1}.cutoff`, x)
+    ctx.setParam(`f${fi + 1}.res`, y)
+    draw()
+  }
+  return (
+    <canvas
+      ref={canvasRef}
+      data-learn="Filter display"
+      title="The filter's frequency response — drag: left/right = cutoff, up/down = resonance"
+      style={{ width: '100%', height: H, borderRadius: 6, border: `1px solid ${UI.border}`, touchAction: 'none', cursor: 'crosshair' }}
+      onPointerDown={e => { dragging.current = true; e.currentTarget.setPointerCapture?.(e.pointerId); apply(e) }}
+      onPointerMove={apply}
+      onPointerUp={() => { if (dragging.current) { dragging.current = false; ctx.commit() } }}
+    />
+  )
+}
 
 // toggle whether a source feeds filter `fi`, preserving its other-filter routing
 function toggleDest(dest: SourceDest, fi: 0 | 1): SourceDest {
@@ -71,6 +189,7 @@ function FilterSlot({ fi }: { fi: 0 | 1 }) {
           { value: 'bus2', label: 'Bus 2' }, { value: 'direct', label: 'Direct' },
         ]} onChange={v => ctx.update(p => { p.filters[fi].bus = v as BusDest })} />
       </div>
+      <FilterResponse fi={fi} />
       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
         <Knob path={`${pfx}.cutoff`} label="Cutoff" size={42} />
         <Knob path={`${pfx}.res`} label="Res" size={36} />

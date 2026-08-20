@@ -190,6 +190,8 @@ function UnitCard({ unit, locate, index, count, dnd, chainKey }: {
           style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, padding: 2 }}
         >✕</button>
       </div>
+      {unit.type === 'eq' && <EqGraph unit={unit} />}
+      {unit.type === 'compressor' && <GrMeter unitId={unit.id} multiband={paramValue('multiband', 0) > 0.5} />}
       {controls.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-end' }}>{controls}</div>
       )}
@@ -263,6 +265,169 @@ function laneLocate(lane: Lane): Locate {
 
 // `minimal` (optional — Apollo 2): empty bus lanes are collapsed behind one
 // bare "+" until used or revealed, so a fresh patch shows a single Effects lane.
+// ── EQ visual editor: drag the two band handles on the response curve ───────
+// (x = frequency, y = gain; scroll wheel over a handle = Q). The same params
+// the knobs edit — this is just a face for them, so modulation still works.
+function EqGraph({ unit }: { unit: FxUnit }) {
+  const ctx = useApollo()
+  const canvasRef = React.useRef<HTMLCanvasElement>(null)
+  const dragRef = React.useRef<number>(-1)
+  const W = 300, H = 84
+  const pv = (k: string, d: number) => (unit.params[k] != null ? unit.params[k] : d)
+
+  // one band's dB response at normalized log-frequency x (display approximation)
+  const bandDb = React.useCallback((x: number, f: number, g: number, q: number, t: number) => {
+    const w = Math.max(0.02, 0.25 / Math.sqrt(q))
+    const d = x - f
+    if (Math.round(t) === 1) return g * Math.exp(-(d * d) / (2 * w * w)) // peak
+    // shelves: smooth step below (t=0) / above (t=2) the corner
+    const sig = 1 / (1 + Math.exp(-d / (w * 0.6)))
+    return Math.round(t) === 0 ? g * (1 - sig) : g * sig
+  }, [])
+
+  const draw = React.useCallback(() => {
+    const cv = canvasRef.current
+    if (!cv) return
+    const dpr = window.devicePixelRatio || 1
+    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr }
+    const g2d = cv.getContext('2d')
+    if (!g2d) return
+    g2d.setTransform(dpr, 0, 0, dpr, 0, 0)
+    g2d.clearRect(0, 0, W, H)
+    g2d.fillStyle = 'rgba(0,0,0,0.28)'
+    g2d.fillRect(0, 0, W, H)
+    // spectrum underlay (standalone page only — DAW mode has no analyser)
+    const an = ctx.engine.analyser
+    if (an && ctx.engine.meters.peak > 0.001) {
+      const bins = new Uint8Array(an.frequencyBinCount)
+      an.getByteFrequencyData(bins)
+      const sr = ctx.engine.ctx?.sampleRate ?? 48000
+      g2d.fillStyle = 'rgba(111,208,140,0.16)'
+      for (let px = 0; px < W; px += 2) {
+        const fHz = 20 * Math.pow(1000, px / W) // 20 Hz → 20 kHz log
+        const bin = Math.min(bins.length - 1, Math.round(fHz / (sr / 2) * bins.length))
+        const h = (bins[bin] / 255) * (H - 6)
+        g2d.fillRect(px, H - h, 2, h)
+      }
+    }
+    // zero line
+    g2d.strokeStyle = 'rgba(255,255,255,0.12)'
+    g2d.beginPath(); g2d.moveTo(0, H / 2); g2d.lineTo(W, H / 2); g2d.stroke()
+    // combined curve
+    g2d.strokeStyle = 'var(--accent)'
+    g2d.strokeStyle = '#7c9fd4'
+    g2d.lineWidth = 1.6
+    g2d.beginPath()
+    for (let px = 0; px <= W; px++) {
+      const x = px / W
+      const db = bandDb(x, pv('f1', 0.2), pv('g1', 0), pv('q1', 0.8), pv('t1', 1))
+        + bandDb(x, pv('f2', 0.75), pv('g2', 0), pv('q2', 0.8), pv('t2', 1))
+      const y = H / 2 - (db / 18) * (H / 2 - 6)
+      if (px === 0) g2d.moveTo(px, y); else g2d.lineTo(px, y)
+    }
+    g2d.stroke()
+    // handles
+    for (const b of [1, 2]) {
+      const x = pv(`f${b}`, b === 1 ? 0.2 : 0.75) * W
+      const y = H / 2 - (pv(`g${b}`, 0) / 18) * (H / 2 - 6)
+      g2d.fillStyle = b === 1 ? '#e0b355' : '#6fd08c'
+      g2d.beginPath(); g2d.arc(x, y, 5, 0, Math.PI * 2); g2d.fill()
+      g2d.fillStyle = '#0b0d10'
+      g2d.font = 'bold 7px sans-serif'; g2d.textAlign = 'center'; g2d.textBaseline = 'middle'
+      g2d.fillText(String(b), x, y)
+    }
+  }, [bandDb, ctx.engine, unit.params]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // redraw on meter events while audio plays (spectrum), and on patch changes
+  React.useEffect(() => {
+    draw()
+    const eng = ctx.engine
+    const onMeters = () => { if (eng.meters.peak > 0.001 || dragRef.current >= 0) draw() }
+    eng.addEventListener('meters', onMeters)
+    return () => eng.removeEventListener('meters', onMeters)
+  }, [draw, ctx.version, ctx.engine])
+
+  const apply = (e: React.PointerEvent) => {
+    const b = dragRef.current
+    if (b < 0) return
+    const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect()
+    const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
+    const db = Math.min(18, Math.max(-18, ((H / 2 - (e.clientY - r.top) / r.height * H) / (H / 2 - 6)) * 18))
+    unit.params[`f${b}`] = x
+    unit.params[`g${b}`] = db
+    ctx.engine.setParam(`fx.${unit.id}.f${b}`, x)
+    ctx.engine.setParam(`fx.${unit.id}.g${b}`, db)
+    draw()
+  }
+  return (
+    <canvas
+      ref={canvasRef}
+      data-learn="EQ curve"
+      title="Drag a handle: left/right = frequency, up/down = gain · scroll over a handle = Q"
+      style={{ width: '100%', maxWidth: W, height: H, borderRadius: 6, border: '1px solid var(--border)', touchAction: 'none', cursor: 'crosshair' }}
+      onPointerDown={e => {
+        const r = e.currentTarget.getBoundingClientRect()
+        const x = (e.clientX - r.left) / r.width
+        const d1 = Math.abs(x - pv('f1', 0.2)), d2 = Math.abs(x - pv('f2', 0.75))
+        dragRef.current = d1 <= d2 ? 1 : 2
+        e.currentTarget.setPointerCapture?.(e.pointerId)
+        apply(e)
+      }}
+      onPointerMove={e => apply(e)}
+      onPointerUp={() => { if (dragRef.current >= 0) { dragRef.current = -1; ctx.commit() } }}
+      onWheel={e => {
+        e.preventDefault()
+        const r = e.currentTarget.getBoundingClientRect()
+        const x = (e.clientX - r.left) / r.width
+        const b = Math.abs(x - pv('f1', 0.2)) <= Math.abs(x - pv('f2', 0.75)) ? 1 : 2
+        const q = Math.min(8, Math.max(0.2, pv(`q${b}`, 0.8) * (e.deltaY > 0 ? 0.92 : 1.09)))
+        unit.params[`q${b}`] = q
+        ctx.engine.setParam(`fx.${unit.id}.q${b}`, q)
+        ctx.commit()
+      }}
+    />
+  )
+}
+
+// ── Compressor gain-reduction meter (fed by the engine's fxGr meters) ───────
+function GrMeter({ unitId, multiband }: { unitId: string; multiband: boolean }) {
+  const ctx = useApollo()
+  const [gr, setGr] = React.useState<number[]>([])
+  React.useEffect(() => {
+    const eng = ctx.engine
+    const onMeters = () => {
+      const v = eng.meters.fxGr?.[unitId]
+      setGr(prev => {
+        const next = v ?? []
+        if (prev.length === next.length && prev.every((x, i) => Math.abs(x - next[i]) < 0.1)) return prev
+        return [...next]
+      })
+    }
+    eng.addEventListener('meters', onMeters)
+    return () => eng.removeEventListener('meters', onMeters)
+  }, [ctx.engine, unitId])
+  const bands = multiband ? ['Lo', 'Mid', 'Hi'] : ['GR']
+  return (
+    <div data-learn="Gain reduction" title="Gain change per band: red bars = compression down, green = upward lift" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {bands.map((label, i) => {
+        const db = gr[i] ?? 0
+        const down = Math.min(1, Math.max(0, -db / 24))
+        const up = Math.min(1, Math.max(0, db / 24))
+        return (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: 8, color: 'var(--text-muted)', width: 18 }}>{label}</span>
+            <div style={{ width: 64, height: 7, borderRadius: 3, background: 'rgba(0,0,0,0.35)', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', right: '50%', top: 0, bottom: 0, width: `${down * 50}%`, background: '#e07a6a' }} />
+              <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: `${up * 50}%`, background: '#6fd08c' }} />
+            </div>
+            <span style={{ fontSize: 8, color: 'var(--text-muted)', width: 30, fontVariantNumeric: 'tabular-nums' }}>{db.toFixed(1)}dB</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function FxRack({ minimal = false }: { minimal?: boolean } = {}) {
   const ctx = useApollo()
   const [lane, setLane] = useState<Lane>('main')
