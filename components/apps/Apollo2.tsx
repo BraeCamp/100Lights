@@ -38,82 +38,140 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'sound', label: 'SOUND' }, { id: 'effects', label: 'EFFECTS' }, { id: 'perform', label: 'PERFORM' },
 ]
 
-// ── Resizable module wrapper ────────────────────────────────────────────────
-// Every panel sits in a Module that can be stretched in any direction: right
-// edge = width, bottom edge = height, corner = both. Sizes persist per module.
-const SIZES_KEY = 'apollo_mod_sizes_v2'
-type ModSize = { w: number | null; h: number | null }
-function loadSizes(): Record<string, ModSize> {
-  try { return JSON.parse(localStorage.getItem(SIZES_KEY) || '{}') as Record<string, ModSize> } catch { return {} }
+// ── Dense module grid (Serum-style packing) ─────────────────────────────────
+// Modules live on a 12-column grid with dense auto-flow: widths are FRACTIONS
+// of the window (so everything always fills edge-to-edge and scales with the
+// viewport), heights are auto-measured into row units (so rows pack with no
+// holes). Drag the ⠿ grip on a module's title bar to move it; drag the right
+// edge for width, the corner to scale width AND height by the same ratio
+// (shape preserved); double-click a handle resets. Order + spans persist.
+const GRID_COLS = 12
+const ROW_UNIT = 8   // px per grid row
+const GAP = 8
+const LAYOUT_KEY = 'apollo_layout_grid_v1'
+
+interface ModSpec { id: string; cols: number; rows: number | null } // rows null = auto (content height)
+type GridLayout = Record<string, ModSpec[]> // per tab
+
+function loadLayout(): GridLayout {
+  try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}') as GridLayout } catch { return {} }
 }
-function saveSize(id: string, size: ModSize) {
-  try {
-    const all = loadSizes()
-    all[id] = size
-    localStorage.setItem(SIZES_KEY, JSON.stringify(all))
-  } catch { /* quota */ }
+function saveLayout(all: GridLayout) {
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(all)) } catch { /* quota */ }
 }
 
-function Module({ id, defaultW, minW = 260, children }: { id: string; defaultW: number; minW?: number; children: React.ReactNode }) {
-  const [size, setSize] = useState<ModSize>({ w: null, h: null })
-  const sizeRef = useRef(size)
-  sizeRef.current = size
-  const dragRef = useRef<{ mode: 'w' | 'h' | 'wh'; x: number; y: number; w: number; h: number } | null>(null)
+const dragMod = { id: null as string | null }
+
+function Module({ spec, onSpan, onDropBefore, children }: {
+  spec: ModSpec
+  onSpan: (cols: number, rows: number | null) => void
+  onDropBefore: (draggedId: string) => void
+  children: React.ReactNode
+}) {
   const boxRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { setSize(loadSizes()[id] ?? { w: null, h: null }) }, [id])
+  const innerRef = useRef<HTMLDivElement>(null)
+  const [autoRows, setAutoRows] = useState(12)
+  const [dragOver, setDragOver] = useState(false)
+  const resizeRef = useRef<{ mode: 'w' | 'wh' | 'h'; x: number; y: number; cols: number; rows: number } | null>(null)
 
-  const startDrag = (mode: 'w' | 'h' | 'wh') => (e: React.PointerEvent) => {
+  // auto height: measure content → row span (rows pack densely, no dead space)
+  useEffect(() => {
+    const el = innerRef.current
+    if (!el || spec.rows != null) return
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight
+      const rows = Math.max(6, Math.ceil((h + GAP) / (ROW_UNIT + GAP)))
+      setAutoRows(r => (r === rows ? r : rows))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [spec.rows])
+
+  const rows = spec.rows ?? autoRows
+  const colPx = () => {
+    const parent = boxRef.current?.parentElement
+    if (!parent) return 100
+    return (parent.clientWidth - GAP * (GRID_COLS - 1)) / GRID_COLS
+  }
+
+  const startResize = (mode: 'w' | 'wh' | 'h') => (e: React.PointerEvent) => {
     e.preventDefault()
-    const box = boxRef.current
-    if (!box) return
-    dragRef.current = { mode, x: e.clientX, y: e.clientY, w: box.offsetWidth, h: box.offsetHeight }
+    e.stopPropagation()
+    resizeRef.current = { mode, x: e.clientX, y: e.clientY, cols: spec.cols, rows }
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* synthetic */ }
   }
-  const onMove = (e: React.PointerEvent) => {
-    const d = dragRef.current
+  const onResizeMove = (e: React.PointerEvent) => {
+    const d = resizeRef.current
     if (!d) return
-    if (e.buttons === 0) { dragRef.current = null; saveSize(id, sizeRef.current); return }
-    const next: ModSize = { ...sizeRef.current }
-    if (d.mode !== 'h') next.w = Math.max(minW, d.w + (e.clientX - d.x))
-    if (d.mode !== 'w') next.h = Math.max(120, d.h + (e.clientY - d.y))
-    setSize(next)
+    if (e.buttons === 0) { resizeRef.current = null; return }
+    const dCols = Math.round((e.clientX - d.x) / (colPx() + GAP))
+    const newCols = Math.min(GRID_COLS, Math.max(2, d.cols + dCols))
+    if (d.mode === 'w') {
+      if (newCols !== spec.cols) onSpan(newCols, spec.rows)
+    } else if (d.mode === 'wh') {
+      // corner: scale height by the SAME ratio as width — shape preserved
+      const ratio = newCols / d.cols
+      const newRows = Math.max(6, Math.round(d.rows * ratio))
+      if (newCols !== spec.cols || newRows !== spec.rows) onSpan(newCols, newRows)
+    } else {
+      const dRows = Math.round((e.clientY - d.y) / (ROW_UNIT + GAP))
+      const newRows = Math.max(6, d.rows + dRows)
+      if (newRows !== spec.rows) onSpan(spec.cols, newRows)
+    }
   }
-  const endDrag = () => {
-    if (!dragRef.current) return
-    dragRef.current = null
-    saveSize(id, sizeRef.current)
-  }
-  const handle = (mode: 'w' | 'h' | 'wh', style: React.CSSProperties) => (
+  const endResize = () => { resizeRef.current = null }
+  const handle = (mode: 'w' | 'wh' | 'h', style: React.CSSProperties) => (
     <div
       key={mode}
-      onPointerDown={startDrag(mode)}
-      onPointerMove={onMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-      onDoubleClick={() => { const reset = { w: null, h: null }; setSize(reset); saveSize(id, reset) }}
-      title="Drag to resize this module (double-click resets)"
-      style={{ position: 'absolute', zIndex: 4, touchAction: 'none', ...style }}
+      onPointerDown={startResize(mode)}
+      onPointerMove={onResizeMove}
+      onPointerUp={endResize}
+      onPointerCancel={endResize}
+      onDoubleClick={() => onSpan(spec.cols, null)}
+      title="Drag to resize (corner keeps the shape · double-click = auto height)"
+      style={{ position: 'absolute', zIndex: 6, touchAction: 'none', ...style }}
     />
   )
 
   return (
     <div
       ref={boxRef}
+      onDragOver={e => { if (dragMod.id && dragMod.id !== spec.id) { e.preventDefault(); setDragOver(true) } }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={e => {
+        e.preventDefault()
+        setDragOver(false)
+        if (dragMod.id && dragMod.id !== spec.id) onDropBefore(dragMod.id)
+      }}
       style={{
         position: 'relative',
-        width: size.w ?? defaultW,
-        height: size.h ?? undefined,
-        minWidth: minW,
-        maxWidth: '100%',
+        gridColumn: `span ${spec.cols}`,
+        gridRow: `span ${rows}`,
+        minWidth: 0,
         display: 'flex', flexDirection: 'column',
-        overflow: size.h ? 'auto' : 'visible',
-        flexGrow: 0, flexShrink: 0,
-      }}
+        overflow: spec.rows != null ? 'auto' : 'visible',
+        outline: dragOver ? `2px solid ${UI.blue}` : 'none',
+        borderRadius: 8,
+        ['--ap-grip-pad' as string]: '13px',
+      } as React.CSSProperties}
     >
-      {children}
-      {handle('w', { top: 0, bottom: 0, right: -3, width: 7, cursor: 'ew-resize' })}
-      {handle('h', { left: 0, right: 0, bottom: -3, height: 7, cursor: 'ns-resize' })}
-      {handle('wh', { right: -3, bottom: -3, width: 13, height: 13, cursor: 'nwse-resize' })}
+      {/* ⠿ move grip — title-bar left, above the Section header */}
+      <span
+        draggable
+        onDragStart={e => { dragMod.id = spec.id; e.dataTransfer.setData('text/plain', spec.id) }}
+        onDragEnd={() => { dragMod.id = null }}
+        title="Drag to move this module"
+        style={{
+          position: 'absolute', top: 7, left: 7, zIndex: 6, cursor: 'grab',
+          color: UI.dim, fontSize: 10, lineHeight: 1, userSelect: 'none', padding: '1px 2px',
+        }}
+      >⠿</span>
+      <div ref={innerRef} style={{ display: 'flex', flexDirection: 'column', minHeight: spec.rows != null ? '100%' : undefined }}>
+        {children}
+      </div>
+      {handle('w', { top: 0, bottom: 0, right: -4, width: 8, cursor: 'ew-resize' })}
+      {handle('h', { left: 0, right: 0, bottom: -4, height: 8, cursor: 'ns-resize' })}
+      {handle('wh', { right: -4, bottom: -4, width: 14, height: 14, cursor: 'nwse-resize' })}
     </div>
   )
 }
@@ -274,9 +332,86 @@ function ApolloInner() {
     else setMidiName('No MIDI access')
   }
 
-  const modules = (list: [string, number, React.ReactNode][]) => (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'flex-start' }}>
-      {list.map(([id, w, node]) => <Module key={id} id={id} defaultW={w}>{node}</Module>)}
+  // per-tab layout: ordered specs (id, colSpan, rowSpan|null=auto), persisted.
+  // Defaults are packed Serum-dense: sources + filters up top, modulation row
+  // beneath, slim macro/scope columns filling the remainder.
+  const DEFAULT_LAYOUT: GridLayout = {
+    sound: [
+      { id: 'osc', cols: 7, rows: null }, { id: 'env', cols: 5, rows: null },
+      { id: 'filters', cols: 7, rows: null }, { id: 'lfo', cols: 5, rows: null },
+      { id: 'subnoise', cols: 5, rows: null }, { id: 'macros', cols: 3, rows: null }, { id: 'scope', cols: 4, rows: null },
+    ],
+    effects: [{ id: 'fx', cols: 12, rows: null }],
+    perform: [
+      { id: 'arp', cols: 5, rows: null }, { id: 'clip', cols: 7, rows: null }, { id: 'global', cols: 7, rows: null },
+    ],
+  }
+  const [layout, setLayout] = useState<GridLayout>(DEFAULT_LAYOUT)
+  useEffect(() => {
+    const saved = loadLayout()
+    setLayout(prev => {
+      const merged: GridLayout = { ...prev }
+      for (const t of Object.keys(DEFAULT_LAYOUT)) {
+        const def = DEFAULT_LAYOUT[t]
+        const sv = saved[t]
+        if (!sv) continue
+        // keep saved order/spans, but only for ids that still exist + append new ids
+        const kept = sv.filter(m => def.some(d => d.id === m.id))
+        for (const d of def) if (!kept.some(m => m.id === d.id)) kept.push(d)
+        merged[t] = kept
+      }
+      return merged
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const mutateLayout = (t: string, fn: (arr: ModSpec[]) => ModSpec[]) => {
+    setLayout(prev => {
+      const next = { ...prev, [t]: fn(prev[t] ?? []) }
+      saveLayout(next)
+      return next
+    })
+  }
+
+  const PANEL_RENDER: Record<string, React.ReactNode> = {
+    osc: <OscPanel />,
+    env: <EnvPanel visible={envVisible} onAdd={() => setExtraEnvs(n => Math.min(3, Math.max(n + 1, envVisible)))} />,
+    subnoise: <SubNoisePanel />,
+    filters: <FilterPanel />,
+    lfo: <Section title="LFO"><LfoPanel visible={lfoVisible} onAdd={() => setExtraLfos(n => Math.min(9, Math.max(n + 1, lfoVisible)))} /></Section>,
+    macros: <MacrosBlock />,
+    scope: <ScopeView />,
+    fx: <FxRack minimal />,
+    arp: <ArpPanel />,
+    clip: <ClipPanel />,
+    global: <GlobalPanel />,
+  }
+
+  const grid = (t: Tab) => (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+      gridAutoRows: ROW_UNIT,
+      gridAutoFlow: 'dense',
+      gap: GAP,
+      alignItems: 'stretch',
+    }}>
+      {(layout[t] ?? []).map(spec => (
+        <Module
+          key={spec.id}
+          spec={spec}
+          onSpan={(cols, rows) => mutateLayout(t, arr => arr.map(m => (m.id === spec.id ? { ...m, cols, rows } : m)))}
+          onDropBefore={draggedId => mutateLayout(t, arr => {
+            const next = arr.filter(m => m.id !== draggedId)
+            const dragged = arr.find(m => m.id === draggedId)
+            if (!dragged) return arr
+            const at = next.findIndex(m => m.id === spec.id)
+            next.splice(at, 0, dragged)
+            return next
+          })}
+        >
+          {PANEL_RENDER[spec.id]}
+        </Module>
+      ))}
     </div>
   )
 
@@ -320,24 +455,9 @@ function ApolloInner() {
         <LearnMode />
       </div>
 
-      {/* body — resizable module grid per tab */}
-      {tab === 'sound' && modules([
-        ['osc', 860, <OscPanel key="osc" />],
-        ['env', 560, <EnvPanel key="env" visible={envVisible} onAdd={() => setExtraEnvs(n => Math.min(3, Math.max(n + 1, envVisible)))} />],
-        ['subnoise', 560, <SubNoisePanel key="sn" />],
-        ['filters', 860, <FilterPanel key="f" />],
-        ['lfo', 560, <Section key="l" title="LFO"><LfoPanel visible={lfoVisible} onAdd={() => setExtraLfos(n => Math.min(9, Math.max(n + 1, lfoVisible)))} /></Section>],
-        ['macros', 380, <MacrosBlock key="m" />],
-        ['scope', 380, <ScopeView key="s" />],
-      ])}
-      {tab === 'effects' && modules([
-        ['fx', 900, <FxRack key="fx" minimal />],
-      ])}
-      {tab === 'perform' && modules([
-        ['arp', 560, <ArpPanel key="a" />],
-        ['clip', 720, <ClipPanel key="c" />],
-        ['global', 560, <GlobalPanel key="g" />],
-      ])}
+      {tab === 'sound' && grid('sound')}
+      {tab === 'effects' && grid('effects')}
+      {tab === 'perform' && grid('perform')}
 
       <ModSourcesStrip />
       <div style={kbdPinned

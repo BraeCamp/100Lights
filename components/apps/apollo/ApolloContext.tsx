@@ -390,7 +390,7 @@ export function Section({ title, right, led, dice, children, style }: { title: s
         borderBottom: `1px solid ${UI.border}`, borderRadius: '7px 7px 0 0',
         padding: '5px 9px', minHeight: 26,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'var(--ap-grip-pad, 0px)' }}>
           {led != null && <span style={{ width: 7, height: 7, borderRadius: '50%', background: led ? UI.green : '#3a404a', display: 'inline-block' }} />}
           <div data-learn={title} style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: UI.text, textTransform: 'uppercase', fontStretch: 'condensed' }}>{title}</div>
           {dice && (
