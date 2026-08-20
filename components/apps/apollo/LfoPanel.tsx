@@ -37,10 +37,13 @@ const SHAPES: { label: string; pts: LfoPoint[] }[] = [
   { label: 'Ramp', pts: [{ x: 0, y: 1, curve: -0.6 }, { x: 1, y: 0, curve: 0 }] },
 ]
 
-export default function LfoPanel() {
+// `visible`/`onAdd` (optional — Apollo 2's minimal UI): show only the first
+// `visible` LFO slots plus a bare "+" that reveals the next one.
+export default function LfoPanel({ visible = 10, onAdd }: { visible?: number; onAdd?: () => void } = {}) {
   const ctx = useApollo()
   const meters = useMeters()
   const [sel, setSel] = useState(0)
+  useEffect(() => { if (sel >= visible) setSel(0) }, [sel, visible])
   const cfg = ctx.patch.lfos[sel]
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const scopeRef = useRef<HTMLCanvasElement>(null)
@@ -211,7 +214,7 @@ export default function LfoPanel() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-        {Array.from({ length: 10 }, (_, k) => (
+        {Array.from({ length: visible }, (_, k) => (
           <button key={k} onClick={() => { setSel(k); setLocalPts(null); scopeHist.current = [] }}
             style={{
               width: 24, height: 20, borderRadius: 5, fontSize: 9, fontWeight: 700, cursor: 'pointer',
@@ -220,6 +223,10 @@ export default function LfoPanel() {
               border: '1px solid ' + (k === sel ? 'var(--accent)' : 'var(--border)'),
             }}>{k + 1}</button>
         ))}
+        {onAdd && visible < 10 && (
+          <button onClick={onAdd} title="Another LFO"
+            style={{ width: 24, height: 20, borderRadius: 5, fontSize: 11, fontWeight: 800, cursor: 'pointer', background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px dashed var(--border)' }}>+</button>
+        )}
         <Sel width={72} value={cfg.mode} options={[
           { value: 'normal', label: 'Normal' }, { value: 'path', label: 'Path' }, { value: 'chaos', label: 'Chaos' },
         ]} onChange={v => { setLocalPts(null); ctx.update(p => { p.lfos[sel].mode = v as typeof cfg.mode }) }} />

@@ -32,6 +32,8 @@ export interface ApolloCtxValue {
   getModSource: () => ModSource | null
   assignMod: (dest: string) => void
   routesFor: (dest: string) => ModRoute[]
+  /** Apollo 2's minimal UI: knobs grow a hover "+" that creates modulation in place. */
+  quickMod?: boolean
   undo: () => void
   redo: () => void
   /** Live structural mutation during a drag: applies + throttled engine resend,
@@ -70,7 +72,7 @@ export function useMeters(): ApolloMeters {
 
 const LS_KEY = 'apollo_current_patch_v1'
 
-export function ApolloProvider({ children }: { children: React.ReactNode }) {
+export function ApolloProvider({ children, quickMod }: { children: React.ReactNode; quickMod?: boolean }) {
   const engine = useMemo(() => getApolloEngine(), [])
   const patchRef = useRef<ApolloPatch | null>(null)
   if (!patchRef.current) patchRef.current = initPatch()
@@ -331,8 +333,8 @@ export function ApolloProvider({ children }: { children: React.ReactNode }) {
     patch: patchRef.current as ApolloPatch,
     version, engine, started, start, update, setParam, commit,
     selectedOsc, setSelectedOsc, modSource, setModSource, getModSource, assignMod, routesFor, undo, redo,
-    mutateLive, armMidiLearn, clearMidiBinding, midiBindingFor, midiArmed,
-  }), [version, engine, started, start, update, setParam, commit, selectedOsc, modSource, setModSource, getModSource, assignMod, routesFor, undo, redo, mutateLive, armMidiLearn, clearMidiBinding, midiBindingFor, midiArmed])
+    mutateLive, armMidiLearn, clearMidiBinding, midiBindingFor, midiArmed, quickMod,
+  }), [version, engine, started, start, update, setParam, commit, selectedOsc, modSource, setModSource, getModSource, assignMod, routesFor, undo, redo, mutateLive, armMidiLearn, clearMidiBinding, midiBindingFor, midiArmed, quickMod])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -492,6 +494,40 @@ export function Knob(props: KnobProps) {
   const [val, setVal] = useState(readValue)
   const [dragOver, setDragOver] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [hovered, setHovered] = useState(false)
+  const [quickOpen, setQuickOpen] = useState(false)
+
+  // Apollo 2 quick-mod: create a modulation route from the destination side —
+  // hover a knob, press its "+", pick what should move it. Sources are chosen
+  // as the lowest unused slot so the corresponding panel reveals itself.
+  const quickAssign = (kind: 'lfo' | 'env' | 'macro') => {
+    if (!ctx || !props.path) return
+    setQuickOpen(false)
+    const dest = props.path
+    const pm = ctx.patch
+    const mkRoute = (source: ModSource) => ({ id: uid(), source, dest, amount: 0.35, bipolar: false, aux: 'none' as ModSource, auxAmount: 0, curve: null, bypass: false })
+    if (kind === 'macro') {
+      let slot = 0
+      for (let i = 0; i < 8; i++) {
+        if (pm.macroNames[i] === `Macro ${i + 1}` && !pm.matrix.some(r => r.source === `macro${i + 1}`)) { slot = i; break }
+      }
+      const name = window.prompt('Name this knob', props.label)?.trim()
+      ctx.update(pp => {
+        if (name) pp.macroNames[slot] = name
+        pp.matrix.push(mkRoute(`macro${slot + 1}` as ModSource))
+      })
+      return
+    }
+    let src: ModSource | null = null
+    if (kind === 'lfo') {
+      for (let n = 1; n <= 10; n++) if (!pm.matrix.some(r => r.source === `lfo${n}`)) { src = `lfo${n}` as ModSource; break }
+      src = src ?? ('lfo1' as ModSource)
+    } else {
+      for (let n = 2; n <= 4; n++) if (!pm.matrix.some(r => r.source === `env${n}`)) { src = `env${n}` as ModSource; break }
+      src = src ?? ('env2' as ModSource)
+    }
+    ctx.update(pp => { pp.matrix.push(mkRoute(src as ModSource)) })
+  }
   const [ringAmt, setRingAmt] = useState<number | null>(null)
   const dragRef = useRef<{ y: number; v: number } | null>(null)
   const ringRef = useRef<{ y: number; amt: number; id: string } | null>(null)
@@ -589,7 +625,34 @@ export function Knob(props: KnobProps) {
       data-learn={props.label}
       title={props.path ? `${props.label} — drag to change, double-click resets, right-click for MIDI${routes.length ? `; ring drag edits ${routes[0].source} amount` : ''}` : props.label}
       onContextMenu={props.path ? (e => { e.preventDefault(); setMenuOpen(o => !o) }) : undefined}
+      onMouseEnter={ctx?.quickMod ? () => setHovered(true) : undefined}
+      onMouseLeave={ctx?.quickMod ? () => { setHovered(false); setQuickOpen(false) } : undefined}
     >
+      {ctx?.quickMod && props.path && hovered && (
+        <button
+          onClick={e => { e.stopPropagation(); setQuickOpen(o => !o) }}
+          title="Make this knob move by itself"
+          style={{
+            position: 'absolute', top: -6, right: -3, zIndex: 290,
+            width: 15, height: 15, borderRadius: '50%', padding: 0, lineHeight: 1,
+            fontSize: 11, fontWeight: 800, cursor: 'pointer',
+            background: quickOpen ? UI.green : UI.panel, color: quickOpen ? '#0b0d10' : UI.dim,
+            border: `1px solid ${quickOpen ? UI.green : UI.borderLight}`,
+          }}
+        >+</button>
+      )}
+      {quickOpen && props.path && ctx && (
+        <div style={{
+          position: 'absolute', zIndex: 300, top: '100%', left: '50%', transform: 'translateX(-50%)',
+          background: UI.panel, border: `1px solid ${UI.borderLight}`, borderRadius: 7, padding: 6,
+          display: 'flex', flexDirection: 'column', gap: 4, minWidth: 128, boxShadow: '0 8px 22px rgba(0,0,0,0.55)',
+        }}>
+          <div style={{ fontSize: 8.5, color: UI.dim, letterSpacing: 0.8, textTransform: 'uppercase' }}>Move this with…</div>
+          <button style={menuBtn} onClick={() => quickAssign('lfo')}>a wobble (LFO)</button>
+          <button style={menuBtn} onClick={() => quickAssign('env')}>over time (Env)</button>
+          <button style={menuBtn} onClick={() => quickAssign('macro')}>a knob of its own (Macro)</button>
+        </div>
+      )}
       {menuOpen && props.path && ctx && (
         <div style={{
           position: 'absolute', zIndex: 300, top: '100%', left: '50%', transform: 'translateX(-50%)',

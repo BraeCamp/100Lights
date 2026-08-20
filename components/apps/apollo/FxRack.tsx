@@ -3,7 +3,7 @@
 // units with auto-generated controls, splitter units with nested sub-chains,
 // sibling drag-reorder, duplicate/delete, per-unit enable + mix.
 
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useApollo, Knob, Sel, Section, ToggleBtn } from '@/components/apps/apollo/ApolloContext'
 import {
   ApolloPatch, FxUnit, FxType, FX_DEFS, FILTER_TYPES, SYNC_RATES, defaultFx, uid,
@@ -261,9 +261,12 @@ function laneLocate(lane: Lane): Locate {
   return p => p.fxBus2
 }
 
-export default function FxRack() {
+// `minimal` (optional — Apollo 2): empty bus lanes are collapsed behind one
+// bare "+" until used or revealed, so a fresh patch shows a single Effects lane.
+export default function FxRack({ minimal = false }: { minimal?: boolean } = {}) {
   const ctx = useApollo()
   const [lane, setLane] = useState<Lane>('main')
+  const [revealBusses, setRevealBusses] = useState(false)
   const dnd = useRef<DragInfo | null>(null)
   const locate = laneLocate(lane)
   const counts: Record<Lane, number> = {
@@ -271,12 +274,18 @@ export default function FxRack() {
     bus1: ctx.patch.fxBus1.length,
     bus2: ctx.patch.fxBus2.length,
   }
+  const busUsed = counts.bus1 > 0 || counts.bus2 > 0
+    || ctx.patch.filters.some(f => f.bus === 'bus1' || f.bus === 'bus2')
+    || [...ctx.patch.oscs, ctx.patch.sub, ctx.patch.noise].some(s => s.bus === 'bus1' || s.bus === 'bus2')
+  const showBusses = !minimal || busUsed || revealBusses
+  const lanes = showBusses ? LANES : LANES.filter(l => l.key === 'main')
+  useEffect(() => { if (!showBusses && lane !== 'main') setLane('main') }, [showBusses, lane])
   return (
     <Section
       title="Effects"
       right={
         <div style={{ display: 'flex', gap: 4 }}>
-          {LANES.map(l => (
+          {lanes.map(l => (
             <ToggleBtn
               key={l.key}
               on={lane === l.key}
@@ -284,6 +293,9 @@ export default function FxRack() {
               onClick={() => setLane(l.key)}
             />
           ))}
+          {!showBusses && (
+            <ToggleBtn on={false} label="+" title="Effect busses — separate lanes you can route sources to" onClick={() => setRevealBusses(true)} />
+          )}
         </div>
       }
       style={{ flex: 1, minHeight: 0 }}

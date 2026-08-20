@@ -11,12 +11,14 @@ const DEST_OPTS = [
   { value: 'both', label: '→ F1+F2' }, { value: 'bypass', label: 'Bypass' },
 ]
 
-export default function SubNoisePanel() {
+// `only` (optional — Apollo 2's voice chain renders Sub and Noise as separate
+// chain segments): limit to one of the two strips.
+export default function SubNoisePanel({ only }: { only?: 'sub' | 'noise' } = {}) {
   const ctx = useApollo()
   const { sub, noise } = ctx.patch
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-      <Section
+    <div style={{ display: 'grid', gridTemplateColumns: only ? '1fr' : '1fr 1fr', gap: 8 }}>
+      {only !== 'noise' && <Section
         title="Sub"
         right={<ToggleBtn on={sub.enabled} label={sub.enabled ? 'On' : 'Off'} onClick={() => ctx.update(p => { p.sub.enabled = !p.sub.enabled })} />}
       >
@@ -37,8 +39,8 @@ export default function SubNoisePanel() {
           <Sel width={80} value={sub.dest} options={DEST_OPTS} onChange={v => ctx.update(p => { p.sub.dest = v as SourceDest })} />
           <ToggleBtn on={sub.direct} label="Direct" title="Bypass filters and FX to output" onClick={() => ctx.update(p => { p.sub.direct = !p.sub.direct })} />
         </div>
-      </Section>
-      <Section
+      </Section>}
+      {only !== 'sub' && <Section
         title="Noise"
         right={<ToggleBtn on={noise.enabled} label={noise.enabled ? 'On' : 'Off'} onClick={() => ctx.update(p => { p.noise.enabled = !p.noise.enabled })} />}
       >
@@ -51,7 +53,7 @@ export default function SubNoisePanel() {
           <ToggleBtn on={noise.keytrack} label="Key" onClick={() => ctx.update(p => { p.noise.keytrack = !p.noise.keytrack })} />
           <ToggleBtn on={noise.oneShot} label="1-shot" onClick={() => ctx.update(p => { p.noise.oneShot = !p.noise.oneShot })} />
         </div>
-      </Section>
+      </Section>}
     </div>
   )
 }

@@ -45,10 +45,13 @@ function layoutOf(env: EnvConfig): Layout {
   return { xA0, xA1, xH1, xD1, xS1, xR1, ySus }
 }
 
-export default function EnvPanel() {
+// `visible`/`onAdd` (optional — Apollo 2's minimal UI): show only the first
+// `visible` envelope tabs plus a bare "+" that reveals the next one.
+export default function EnvPanel({ visible = 4, onAdd }: { visible?: number; onAdd?: () => void } = {}) {
   const ctx = useApollo()
   const meters = useMeters()
   const [sel, setSel] = useState(0)
+  useEffect(() => { if (sel >= visible) setSel(0) }, [sel, visible])
   const [env, setEnv] = useState<EnvConfig>({ ...ctx.patch.envs[0] })
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const dragRef = useRef<{ mode: DragMode; startY: number; startC: number } | null>(null)
@@ -229,9 +232,10 @@ export default function EnvPanel() {
       title="Envelopes"
       right={
         <div style={{ display: 'flex', gap: 4 }}>
-          {[0, 1, 2, 3].map(i => (
+          {[0, 1, 2, 3].filter(i => i < visible).map(i => (
             <ToggleBtn key={i} on={sel === i} label={i === 0 ? 'ENV 1 (amp)' : `ENV ${i + 1}`} onClick={() => setSel(i)} />
           ))}
+          {onAdd && visible < 4 && <ToggleBtn on={false} label="+" title="Another envelope" onClick={onAdd} />}
         </div>
       }
     >
