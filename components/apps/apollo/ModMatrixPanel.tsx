@@ -68,6 +68,7 @@ function AmountSlider({ value, onChange, onCommit }: { value: number; onChange: 
 export function CurveEditor({ curve, onCommit }: { curve: LfoPoint[] | null; onCommit: (c: LfoPoint[] | null) => void }) {
   const [pts, setPts] = useState<LfoPoint[]>(curve || [{ x: 0, y: 0, curve: 0 }, { x: 1, y: 1, curve: 0 }])
   const drag = useRef(-1)
+  const lastCurveDown = useRef<{ t: number; x: number; y: number } | null>(null)
   const cvPos = (e: React.PointerEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
     return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height)) }
@@ -82,7 +83,12 @@ export function CurveEditor({ curve, onCommit }: { curve: LfoPoint[] | null; onC
           const { x, y } = cvPos(e)
           let pi = -1, bd = 0.08
           pts.forEach((p, k) => { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; pi = k } })
-          if (e.detail >= 2) {
+          // manual double-press: Chrome reports detail=0 on pointer events
+          const now = performance.now()
+          const prev = lastCurveDown.current
+          const isDbl = e.detail >= 2 || (prev != null && now - prev.t < 350 && Math.abs(prev.x - x) < 0.03 && Math.abs(prev.y - y) < 0.08)
+          lastCurveDown.current = isDbl ? null : { t: now, x, y }
+          if (isDbl) {
             if (pi >= 0 && pts.length > 2) setPts(pts.filter((_, k) => k !== pi))
             else if (pi < 0) setPts([...pts, { x, y, curve: 0 }].sort((a, b) => a.x - b.x))
             return

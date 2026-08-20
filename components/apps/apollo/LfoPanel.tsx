@@ -153,6 +153,10 @@ export default function LfoPanel({ visible = 10, onAdd }: { visible?: number; on
   }
   const snap = (v: number, div: number) => Math.round(v * div) / div
 
+  // Manual double-press detection: modern Chrome reports detail=0 on pointer
+  // events (per spec), so `e.detail >= 2` silently stopped firing — the
+  // add/remove-point gesture died with it. Track the last press ourselves.
+  const lastDown = useRef<{ t: number; x: number; y: number } | null>(null)
   const onDown = (e: React.PointerEvent) => {
     if (cfg.mode === 'chaos') return
     const { x, y } = canvasPos(e)
@@ -164,7 +168,11 @@ export default function LfoPanel({ visible = 10, onAdd }: { visible?: number; on
       if (d < bd) { bd = d; pi = k }
     })
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    if (e.detail >= 2) { // double click: add or remove
+    const now = performance.now()
+    const prev = lastDown.current
+    const isDbl = e.detail >= 2 || (prev != null && now - prev.t < 350 && Math.abs(prev.x - x) < 0.03 && Math.abs(prev.y - y) < 0.08)
+    lastDown.current = isDbl ? null : { t: now, x, y }
+    if (isDbl) { // double click: add or remove
       if (pi >= 0 && cur.length > 2) {
         const next = cur.filter((_, k) => k !== pi)
         setLocalPts(next)
