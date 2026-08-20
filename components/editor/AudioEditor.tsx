@@ -771,6 +771,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
     w.__dawDispatch = dispatch
     w.__dawSnapshot = () => ({ project: projectRef.current, history: buildLogRef.current })
+    try { Object.defineProperty(w, '__dawEngine', { get: () => engineRef.current, configurable: true }) } catch { /* redefined */ }
     // Dev-only "vision": a readable, at-a-glance view of what's actually happening in the studio as
     // it's driven — transport, the LIVE master output level (so audio flow is verifiable, not guessed),
     // and every track's instrument/FX/clips with real loop state + note counts. This is how an

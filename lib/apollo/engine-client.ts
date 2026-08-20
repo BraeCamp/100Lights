@@ -85,14 +85,14 @@ export class ApolloEngine extends EventTarget {
    * DAW-instrument mode passes an existing context + destination: the node
    * connects straight to the destination and no analyser is created.
    */
-  async init(opts?: { ctx?: BaseAudioContext; destination?: AudioNode }): Promise<void> {
+  async init(opts?: { ctx?: BaseAudioContext; destination?: AudioNode; fxInput?: boolean }): Promise<void> {
     if (this.ready) return
     const external = !!opts?.ctx
     const ctx = (opts?.ctx as AudioContext) || new AudioContext({ latencyHint: 'interactive' })
     this.ctx = ctx
     await ctx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const node = new AudioWorkletNode(ctx, 'apollo-engine', {
-      numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
+      numberOfInputs: opts?.fxInput ? 1 : 0, numberOfOutputs: 1, outputChannelCount: [2],
     })
     // A worklet crash is otherwise SILENT (audio just stops) — surface it to
     // Sentry with the engine version so stale-cache pairings are diagnosable.

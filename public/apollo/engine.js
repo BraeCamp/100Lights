@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-20-12 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-20-14 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -2109,6 +2109,12 @@ class ApolloProcessor extends AudioWorkletProcessor {
         if (m.click != null) this.clickOn = m.click
         break
       }
+      case 'fxMode':
+        // FX-only host mode (Beacon track inserts): external audio is routed
+        // through the fxMain lane; voices/sequencer stay dormant. Forced to
+        // 1x internal rate so the worklet input needs no resampling.
+        this.fxOnly = !!m.on
+        break
       case 'panic':
         this.allNotesOff(true)
         // a panic also clears every pitch offset that could linger — a stray
@@ -2959,7 +2965,8 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const out = outputs[0]
     const OL = out[0], OR = out.length > 1 ? out[1] : out[0]
     if (!this.patch) return true
-    const desired = sampleRate * (this.patch.global.quality === 'high' ? 2 : 1)
+    this._inp = this.fxOnly && inputs && inputs[0] && inputs[0].length ? inputs[0] : null
+    const desired = this.fxOnly ? sampleRate : sampleRate * (this.patch.global.quality === 'high' ? 2 : 1)
     if (this.sr !== desired) this.reconfigure(desired)
     const n = OL.length
     // absolute-time events (DAW mode): currentTime is the context clock in
@@ -3016,13 +3023,23 @@ class ApolloProcessor extends AudioWorkletProcessor {
     for (const key of ['main', 'bus1', 'bus2', 'direct']) { this.busses[key][0].fill(0, 0, n); this.busses[key][1].fill(0, 0, n) }
     this.updateGlobalLfos(blockSec)
     this.computeGmod()
-    this.runSchedule(blockSec)
-    this.stepSequencer(blockBeats)
     let voiceCount = 0
-    for (const v of this.voices) {
-      if (!v.active) continue
-      voiceCount++
-      this.renderVoice(v, n, blockSec)
+    if (this.fxOnly) {
+      // external input becomes the "voice mix": straight into the main lane
+      const inp = this._inp
+      if (inp && inp[0]) {
+        const IL = inp[0], IR = inp[1] || inp[0]
+        const ML = this.busses.main[0], MR = this.busses.main[1]
+        for (let i = 0; i < n; i++) { ML[i] = IL[i] || 0; MR[i] = IR[i] || 0 }
+      }
+    } else {
+      this.runSchedule(blockSec)
+      this.stepSequencer(blockBeats)
+      for (const v of this.voices) {
+        if (!v.active) continue
+        voiceCount++
+        this.renderVoice(v, n, blockSec)
+      }
     }
     // FX lanes
     this.processChain(patch.fxMain, this.busses.main[0], this.busses.main[1], n)
@@ -3057,10 +3074,16 @@ class ApolloProcessor extends AudioWorkletProcessor {
       this.followEnv += (folTarget - this.followEnv) * (folTarget > this.followEnv ? folAtk : folRel)
       if (aIn > this.limEnv) this.limEnv = aIn
       else this.limEnv += (aIn - this.limEnv) * limRel
-      if (this.limEnv > 0.98) { const g = 0.98 / this.limEnv; l *= g; r *= g }
-      // hard safety for anything pathological the limiter can't catch in-sample
-      if (l > 1.2) l = 1.2; else if (l < -1.2) l = -1.2
-      if (r > 1.2) r = 1.2; else if (r < -1.2) r = -1.2
+      // fx-only host mode is a TRANSPARENT insert: the host (Beacon) owns gain
+      // staging, and hot inter-effect levels are legitimate there — limiting or
+      // clipping them adds harmonics the legacy path never had. Standalone
+      // Apollo keeps its limiter + hard safety unchanged.
+      if (!this.fxOnly) {
+        if (this.limEnv > 0.98) { const g = 0.98 / this.limEnv; l *= g; r *= g }
+        // hard safety for anything pathological the limiter can't catch in-sample
+        if (l > 1.2) l = 1.2; else if (l < -1.2) l = -1.2
+        if (r > 1.2) r = 1.2; else if (r < -1.2) r = -1.2
+      }
       OL[i] = l; OR[i] = r
       const a = Math.abs(l) + Math.abs(r)
       if (a > peak) peak = a

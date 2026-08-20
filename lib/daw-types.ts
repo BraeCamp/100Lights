@@ -644,6 +644,8 @@ export interface DawTrack {
   sendAmounts?: Record<string, number>  // returnTrackId → send level 0–1
   sendModes?: Record<string, 'pre' | 'post'>  // returnTrackId → pre/post fader
   crossfader?: CrossfaderSide
+  /** false = force the legacy WebAudio FX path for this track (Helios FX is the default when the chain translates) */
+  heliosFx?: boolean
 }
 
 export interface ReturnTrack {

@@ -735,26 +735,27 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
       width: 180,
       minHeight: 160,
       background: 'var(--bg-card)',
-      border: '1px solid var(--border)',
-      borderRadius: 4,
+      borderRight: '1px solid var(--border)',   // shared seam, Apollo-plate style
       display: 'flex',
       flexDirection: 'column',
       flexShrink: 0,
       opacity: enabled ? 1 : 0.55,
       transition: 'opacity 0.1s',
     }}>
-      {/* Header */}
+      {/* Header — Apollo Section-bar look */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         gap: 4,
-        padding: '5px 6px 4px',
+        padding: '5px 8px 4px',
+        background: 'var(--bg-surface)',
         borderBottom: '1px solid var(--border)',
+        minHeight: 26,
       }}>
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <span style={{
-            color: 'var(--text-primary)', fontSize: 11, fontWeight: 600,
-            letterSpacing: '0.02em', display: 'block',
+            color: 'var(--text-primary)', fontSize: 10, fontWeight: 800,
+            letterSpacing: 1.2, textTransform: 'uppercase', fontStretch: 'condensed', display: 'block',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
             {EFFECT_LABELS[effect.type]}
@@ -1186,18 +1187,17 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-      {/* Audio FX row */}
-      <div style={{
-        display: 'flex',
-        flexDirection: 'row',
-        gap: 8,
-        overflowX: 'auto',
-        padding: 8,
-        alignItems: 'flex-start',
-      }}>
-        {track.effects.map(effect => (
-          <EffectDevice key={effect.id} effect={effect} trackId={trackId} />
-        ))}
+      {/* Audio FX row — Apollo-style plate: devices share edges (seams, not
+          gutters), one rounded border around the whole chain */}
+      <div style={{ display: 'flex', flexDirection: 'row', overflowX: 'auto', padding: 8, alignItems: 'flex-start', gap: 8 }}>
+        {track.effects.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'stretch', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', flexShrink: 0 }}>
+            {track.effects.map(effect => (
+              <EffectDevice key={effect.id} effect={effect} trackId={trackId} />
+            ))}
+          </div>
+        )}
+        <HeliosFxChip trackId={trackId} />
         <VoiceChainButton trackId={trackId} />
         <AddDeviceButton trackId={trackId} />
       </div>
@@ -1214,6 +1214,32 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
         </div>
       )}
     </div>
+  )
+}
+
+// Per-track engine chip: Helios (Apollo's engine renders the chain) is the
+// default; the chip drops a track back to the legacy WebAudio path. Chains
+// Helios can't translate yet (sidechain, custom IRs, gate/de-esser/…) fall
+// back automatically regardless.
+function HeliosFxChip({ trackId }: { trackId: string }) {
+  const { project, dispatch } = useDaw()
+  const track = project.tracks.find(t => t.id === trackId)
+  if (!track || track.effects.length === 0) return null
+  const on = track.heliosFx !== false
+  return (
+    <button
+      onClick={() => dispatch({ type: 'SET_TRACK_HELIOS_FX', trackId, on: !on })}
+      title={on
+        ? 'FX render on the Helios engine (Apollo) — click for the legacy per-node path'
+        : 'FX render on the legacy WebAudio path — click for the Helios engine'}
+      style={{
+        alignSelf: 'flex-start', flexShrink: 0, height: 22, padding: '0 9px', borderRadius: 5,
+        fontSize: 9, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', cursor: 'pointer',
+        background: on ? 'var(--accent)' : 'transparent',
+        color: on ? '#0b0d10' : 'var(--text-muted)',
+        border: '1px solid ' + (on ? 'var(--accent)' : 'var(--border)'),
+      }}
+    >{on ? 'Helios' : 'Legacy'}</button>
   )
 }
 

@@ -8,6 +8,7 @@ import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from
 import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
+import { buildHeliosFxChain } from './apollo/daw-fx'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
@@ -278,6 +279,17 @@ export class DawEngine extends EventTarget {
 
   // ── Track routing ──────────────────────────────────────────────────────────
 
+  // Per-track preference: Helios FX is the default; a track sets heliosFx:false
+  // to force the legacy WebAudio path (and untranslatable chains fall back
+  // automatically). Kept engine-side so ensureTrack callers stay unchanged.
+  private heliosFxPref = new Map<string, boolean>()
+  private _fxSnapshots = new Map<string, DawTrack['effects']>()
+  setHeliosFxPref(trackId: string, on: boolean) {
+    if (this.heliosFxPref.get(trackId) === on) return
+    this.heliosFxPref.set(trackId, on)
+    this._chainSigs.delete(trackId)   // force a rebuild on next sync
+  }
+
   ensureTrack(id: string, effects?: DawTrack['effects']) {
     if (this.ctx.state === 'closed') return
     if (!this.trackNodes.has(id)) {
@@ -346,10 +358,32 @@ export class DawEngine extends EventTarget {
     // delay is tempo-synced, since that's the one tempo-dependent build.
     if (effects !== undefined) {
       const tempoDependent = effects.some(e => e.type === 'delay' && (e.params as { syncToTempo?: boolean }).syncToTempo)
-      const sig = JSON.stringify(effects) + (tempoDependent ? `@${this.tempo}` : '')
+      const wantHelios = this.heliosFxPref.get(id) !== false
+      // Helios chains stream continuous param edits into the running worklet
+      // (no rebuild, no tail cut) — only STRUCTURE changes rebuild. The legacy
+      // path keeps its historical rebuild-on-any-change behavior.
+      const sig = wantHelios
+        ? JSON.stringify(effects.map(e => ({ i: e.id, t: e.type, en: (e.params as { enabled?: boolean }).enabled !== false }))) + (tempoDependent ? `@${this.tempo}` : '') + '#helios'
+        : JSON.stringify(effects) + (tempoDependent ? `@${this.tempo}` : '') + '#legacy'
       if (this._chainSigs.get(id) !== sig) {
         this._chainSigs.set(id, sig)
         this._rebuildEffectsChain(id, effects)
+        this._fxSnapshots.set(id, JSON.parse(JSON.stringify(effects)) as DawTrack['effects'])
+      } else if (wantHelios) {
+        const prev = this._fxSnapshots.get(id)
+        const chain = this.effectsChains.get(id)
+        if (prev && chain) {
+          for (let k = 0; k < effects.length; k++) {
+            const cur = effects[k], old = prev[k]
+            if (!old || old.id !== cur.id) continue
+            const cp = cur.params as unknown as Record<string, unknown>
+            const op = old.params as unknown as Record<string, unknown>
+            for (const key of Object.keys(cp)) {
+              if (cp[key] !== op[key]) chain.handles.get(cur.id)?.setParam(key, cp[key] as number | string | boolean)
+            }
+          }
+        }
+        this._fxSnapshots.set(id, JSON.parse(JSON.stringify(effects)) as DawTrack['effects'])
       }
     }
   }
@@ -375,10 +409,15 @@ export class DawEngine extends EventTarget {
       return
     }
 
-    const chain = buildEffectsChain(this.ctx, effects, this.tempo)
+    // Helios first (Apollo's hardened engine renders the whole chain in one
+    // worklet); untranslatable chains and opted-out tracks use the legacy
+    // per-node graph. Same {input,output,handles,dispose} shape either way.
+    const wantHelios = this.heliosFxPref.get(trackId) !== false
+    const chain = (wantHelios ? buildHeliosFxChain(this.ctx, effects, this.tempo) : null)
+      ?? buildEffectsChain(this.ctx, effects, this.tempo)
     nodes.effectsInput.connect(chain.input)
     chain.output.connect(nodes.effectsOutput)
-    this.effectsChains.set(trackId, chain)
+    this.effectsChains.set(trackId, chain as ReturnType<typeof buildEffectsChain>)
     this._wireSidechains(trackId, effects)
   }
 
@@ -477,10 +516,10 @@ export class DawEngine extends EventTarget {
       return
     }
 
-    const chain = buildEffectsChain(this.ctx, effects, this.tempo)
+    const chain = buildHeliosFxChain(this.ctx, effects, this.tempo) ?? buildEffectsChain(this.ctx, effects, this.tempo)
     bus.input.connect(chain.input)
     chain.output.connect(bus.effectsOutput)
-    this.returnEffectsChains.set(returnId, chain)
+    this.returnEffectsChains.set(returnId, chain as ReturnType<typeof buildEffectsChain>)
   }
 
   getReturnEffectHandle(returnId: string, effectId: string): EffectHandle | undefined {
@@ -949,7 +988,7 @@ export class DawEngine extends EventTarget {
     const byId          = new Map(project.tracks.map(t => [t.id, t]))
     // Pass 1: make sure every node exists — so a group bus is ready before its
     // children try to route into it.
-    for (const t of project.tracks) this.ensureTrack(t.id, t.effects)
+    for (const t of project.tracks) { this.setHeliosFxPref(t.id, t.heliosFx !== false); this.ensureTrack(t.id, t.effects) }
     // Pass 2: route each track to its group bus (or master) and set its params.
     for (const t of project.tracks) {
       const group      = t.groupId ? byId.get(t.groupId) : undefined
