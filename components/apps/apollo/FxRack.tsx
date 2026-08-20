@@ -476,7 +476,16 @@ function RacksMenu({ lane, locate }: { lane: Lane; locate: Locate }) {
   const ctx = useApollo()
   const [open, setOpen] = useState(false)
   const [saved, setSaved] = useState<RackPreset[]>([])
+  const menuRef = useRef<HTMLDivElement>(null)
   useEffect(() => { if (open) setSaved(loadRacks()) }, [open])
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [open])
   const freshIds = (units: FxUnit[]): FxUnit[] => units.map(u => ({
     ...structuredClone(u), id: uid(),
     chains: u.chains?.map(c => freshIds(c)),
@@ -494,7 +503,7 @@ function RacksMenu({ lane, locate }: { lane: Lane; locate: Locate }) {
   }
   const head: React.CSSProperties = { fontSize: 8.5, fontWeight: 800, letterSpacing: 1, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '3px 8px 1px' }
   return (
-    <div style={{ position: 'relative' }} data-learn="Racks">
+    <div ref={menuRef} style={{ position: 'relative' }} data-learn="Racks">
       <ToggleBtn on={open} label="Racks ▾" title="Whole-chain presets: save this lane, load factory or saved racks, copy/paste between lanes" onClick={() => setOpen(o => !o)} />
       {open && (
         <div style={{

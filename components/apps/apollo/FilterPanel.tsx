@@ -211,11 +211,17 @@ export default function FilterPanel() {
   const dice = () => {
     const r = (a: number, b: number) => a + Math.random() * (b - a)
     const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]
-    const types: FilterType[] = ['lp12', 'lp24', 'ladder24', 'multiLBH', 'morphSVF', 'formant', 'combPlus', 'bp12', 'notch12']
     ctx.update(p => {
+      // if an enabled sub routes through F1, avoid band/notch/comb types and
+      // very low cutoffs — a random BP at 200Hz silently swallows a 55Hz sub
+      // ("sub sometimes doesn't play" after rolling the dice)
+      const subThroughF1 = p.sub.enabled && !p.sub.direct
+      const types: FilterType[] = subThroughF1
+        ? ['lp12', 'lp24', 'ladder24', 'multiLBH', 'morphSVF']
+        : ['lp12', 'lp24', 'ladder24', 'multiLBH', 'morphSVF', 'formant', 'combPlus', 'bp12', 'notch12']
       p.filters[0].enabled = true
       p.filters[0].type = pick(types)
-      p.filters[0].cutoff = r(0.25, 0.85)
+      p.filters[0].cutoff = r(subThroughF1 ? 0.35 : 0.25, 0.85)
       p.filters[0].res = r(0, 0.55)
       p.filters[0].drive = r(0, 0.4)
     })

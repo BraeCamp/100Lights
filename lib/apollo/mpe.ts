@@ -19,7 +19,7 @@ export async function startMpe(engine: ApolloEngine): Promise<boolean> {
   } catch {
     return false
   }
-  stopMpe()
+  stopMpe(engine)
   const fn = (e: MIDIMessageEvent) => {
     const d = e.data
     if (!d || d.length < 2) return
@@ -32,7 +32,11 @@ export async function startMpe(engine: ApolloEngine): Promise<boolean> {
       engine.node?.port.postMessage({ type: 'noteOff', note: d[1] })
     } else if (status === 0xe0) {
       const raw = (d[2] << 7) | d[1]
-      engine.node?.port.postMessage({ type: 'chanBend', ch, semis: ((raw - 8192) / 8192) * MPE_BEND_RANGE })
+      // MPE spec: member channels bend ±48; the MASTER channel (0) bends ±2.
+      // A regular (non-MPE) keyboard sends everything on ch 0 — interpreting
+      // its wheel at ±48 turned a nudge into several semitones.
+      const range = ch === 0 ? 2 : MPE_BEND_RANGE
+      engine.node?.port.postMessage({ type: 'chanBend', ch, semis: ((raw - 8192) / 8192) * range })
     } else if (status === 0xd0) {
       engine.node?.port.postMessage({ type: 'chanPressure', ch, value: d[1] / 127 })
     } else if (status === 0xb0 && d[1] === 64) {
@@ -46,7 +50,13 @@ export async function startMpe(engine: ApolloEngine): Promise<boolean> {
   return handlers.length > 0
 }
 
-export function stopMpe(): void {
+export function stopMpe(engine?: ApolloEngine): void {
   for (const h of handlers) h.input.removeEventListener('midimessage', h.fn)
   handlers = []
+  // clear every per-channel bend — otherwise the last bend value persists in
+  // the engine FOREVER and transposes all future notes (even non-MPE ones,
+  // which play on channel 0)
+  if (engine?.node) {
+    for (let ch = 0; ch < 16; ch++) engine.node.port.postMessage({ type: 'chanBend', ch, semis: 0 })
+  }
 }

@@ -20,8 +20,14 @@ export interface MidiCCEvent {
   deviceName: string
 }
 
+export interface MidiBendEvent {
+  value: number        // -1..1 (0 = centered)
+  deviceName: string
+}
+
 type NoteListener = (e: MidiNoteEvent) => void
 type CCListener = (e: MidiCCEvent) => void
+type BendListener = (e: MidiBendEvent) => void
 type DevicesListener = (names: string[]) => void
 
 export const webMidiSupported =
@@ -31,6 +37,7 @@ let access: MIDIAccess | null = null
 let starting: Promise<boolean> | null = null
 const noteListeners = new Set<NoteListener>()
 const ccListeners = new Set<CCListener>()
+const bendListeners = new Set<BendListener>()
 const deviceListeners = new Set<DevicesListener>()
 
 function deviceNames(): string[] {
@@ -49,6 +56,10 @@ function handleMessage(deviceName: string) {
       for (const l of noteListeners) l({ type: 'on', pitch, velocity, deviceName })
     } else if (status === 0x80 || (status === 0x90 && velocity === 0)) {
       for (const l of noteListeners) l({ type: 'off', pitch, velocity: 0, deviceName })
+    } else if (status === 0xe0) {
+      // pitch wheel — 14-bit, center 8192 → -1..1
+      const raw = (velocity << 7) | pitch
+      for (const l of bendListeners) l({ value: (raw - 8192) / 8192, deviceName })
     } else if (status === 0xb0) {
       // Control change — knobs, faders, mod wheel. `pitch`/`velocity` here are
       // the controller number and its 0–127 value.
@@ -95,6 +106,12 @@ export function onMidiNote(listener: NoteListener): () => void {
 export function onMidiCC(listener: CCListener): () => void {
   ccListeners.add(listener)
   return () => ccListeners.delete(listener)
+}
+
+/** Subscribe to hardware pitch-wheel events (-1..1, 0 = centered). */
+export function onMidiBend(listener: BendListener): () => void {
+  bendListeners.add(listener)
+  return () => bendListeners.delete(listener)
 }
 
 /** Subscribe to the connected-device list (fires on hot-plug). */

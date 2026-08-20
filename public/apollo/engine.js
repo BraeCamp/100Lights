@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-20-11 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-20-12 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -2109,7 +2109,15 @@ class ApolloProcessor extends AudioWorkletProcessor {
         if (m.click != null) this.clickOn = m.click
         break
       }
-      case 'panic': this.allNotesOff(true); break
+      case 'panic':
+        this.allNotesOff(true)
+        // a panic also clears every pitch offset that could linger — a stray
+        // MPE channel bend (±48st!) or a stuck wheel otherwise transposes
+        // every future note ("MIDI plays a few notes higher" bug)
+        this.chanBend.fill(0)
+        this.pitchbend = 0
+        this.pitchBendSemis = 0
+        break
       case 'schedule': // sample-accurate event list for offline rendering
         this.schedule = (m.events || []).slice().sort((a, b) => a.t - b.t)
         this.timeSec = 0
@@ -2372,9 +2380,17 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const iv = SC[patch.global.scaleName] || SC.Minor
     const root = patch.global.scaleRoot
     const rel = ((note - root) % 12 + 12) % 12
-    let best = iv[0], bd = 99
-    for (const s of iv) { const d = Math.min(Math.abs(s - rel), 12 - Math.abs(s - rel)); if (d < bd) { bd = d; best = s } }
-    return note - rel + best
+    // nearest scale tone with signed octave wrap: a note just under the root
+    // must snap UP 1 semitone to the next root, not 11 semitones DOWN (the
+    // old `note - rel + best` had no wrap and did exactly that)
+    let delta = 0, bd = 99
+    for (const s of iv) {
+      let d = s - rel
+      if (d > 6) d -= 12
+      if (d < -6) d += 12
+      if (Math.abs(d) < bd) { bd = Math.abs(d); delta = d }
+    }
+    return note + delta
   }
 
   // ------- sequencer -------

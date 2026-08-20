@@ -45,6 +45,15 @@ export default function PresetBar() {
   const [installedMsg, setInstalledMsg] = useState('')
   useEffect(() => { setUserPresets(loadUserPresets()) }, [])
   const fileRef = useRef<HTMLInputElement>(null)
+  const fileMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!fileOpen) return
+    const onDown = (e: PointerEvent) => {
+      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) setFileOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [fileOpen])
 
   const applyPatch = useCallback((loaded: Partial<ApolloPatch>) => {
     const merged = { ...initPatch(), ...loaded } as ApolloPatch
@@ -170,7 +179,7 @@ export default function PresetBar() {
       <ToggleBtn on={abStored} label="A/B" title={abStored ? 'Swap with the stored B patch' : 'Store current as B, then swap back and forth'} onClick={abToggle} />
       {/* File ▾ — Export / Import / Bounce / Share in one place (fewer buttons;
           Random/Mutate moved onto the modules they affect, as 🎲 dice) */}
-      <div style={{ position: 'relative' }}>
+      <div ref={fileMenuRef} style={{ position: 'relative' }}>
         <ToggleBtn on={fileOpen} label="File ▾" title="Export, import, bounce to audio, share to Community" onClick={() => setFileOpen(o => !o)} />
         {fileOpen && (
           <div

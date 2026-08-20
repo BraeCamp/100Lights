@@ -125,6 +125,7 @@ export function ApolloProvider({ children, quickMod, embed }: { children: React.
   const start = useCallback(async () => {
     if (engine.ready) { engine.resume(); setStarted(true); return }
     await engine.init()
+    engine.wireResumeWatchdog()
     engine.sendPatch(patchRef.current as ApolloPatch)
     setStarted(true)
   }, [engine])

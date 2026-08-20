@@ -137,6 +137,21 @@ export class ApolloEngine extends EventTarget {
 
   resume(): void { void this.ctx?.resume() }
 
+  /** Watchdog: the browser suspends/interrupts AudioContexts on its own
+   * (device switches, focus loss on some platforms, bluetooth renegotiation)
+   * — the "audio just cuts out" report. Auto-resume whenever the tab is
+   * visible and the context leaves 'running'. */
+  private watchdogWired = false
+  wireResumeWatchdog(): void {
+    if (this.watchdogWired || !this.ctx || typeof document === 'undefined') return
+    this.watchdogWired = true
+    const kick = () => {
+      if (document.visibilityState === 'visible' && this.ctx && this.ctx.state !== 'running') void this.ctx.resume()
+    }
+    this.ctx.addEventListener('statechange', kick)
+    document.addEventListener('visibilitychange', kick)
+  }
+
   private post(msg: unknown, transfer?: Transferable[]): void {
     this.node?.port.postMessage(msg, transfer || [])
   }

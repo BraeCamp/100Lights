@@ -30,7 +30,7 @@ import WavetableEditor from '@/components/apps/apollo/WavetableEditor'
 import ScopeView from '@/components/apps/apollo/ScopeView'
 import LearnMode from '@/components/apps/apollo/LearnMode'
 import HelpButton from '@/components/apps/apollo/HelpButton'
-import { startWebMidi, onMidiNote, webMidiSupported, getMidiDeviceNames } from '@/lib/web-midi'
+import { startWebMidi, onMidiNote, onMidiBend, webMidiSupported, getMidiDeviceNames } from '@/lib/web-midi'
 import { startMpe, stopMpe } from '@/lib/apollo/mpe'
 import { initPatch, type ApolloPatch } from '@/lib/apollo/patch'
 import {
@@ -307,11 +307,20 @@ function ApolloInner() {
       if (e.type === 'on') { void ctx.start().then(() => ctx.engine.noteOn(e.pitch, e.velocity / 127)) }
       else ctx.engine.noteOff(e.pitch)
     })
-    return () => { off() }
+    // hardware pitch wheel (was silently ignored before)
+    const offBend = onMidiBend(e => ctx.engine.setWheel(e.value, null))
+    return () => {
+      off(); offBend()
+      // leaving MIDI mode silences everything it started and re-centers the
+      // wheel — a note or bend must never outlive its input mode ("stuck
+      // note kept playing on its own")
+      ctx.engine.setWheel(0, null)
+      ctx.engine.panic()
+    }
   }, [midiOn, mpeOn, ctx])
 
   const toggleMpe = async () => {
-    if (mpeOn) { stopMpe(); setMpeOn(false); return }
+    if (mpeOn) { stopMpe(ctx.engine); ctx.engine.panic(); setMpeOn(false); return }
     await ctx.start()
     const ok = await startMpe(ctx.engine)
     if (ok) setMpeOn(true)
@@ -466,6 +475,20 @@ function ApolloInner() {
     if (!sessionsOpen) { setSessionList(null); void listSessions().then(setSessionList) }
   }
 
+  // any open header menu closes on a click anywhere outside it
+  const sessionsRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!sessionsOpen && !inputOpen) return
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node
+      if (sessionsOpen && sessionsRef.current && !sessionsRef.current.contains(t)) setSessionsOpen(false)
+      if (inputOpen && inputRef.current && !inputRef.current.contains(t)) setInputOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [sessionsOpen, inputOpen])
+
   // per-tab layout: ordered specs (id, colSpan, rowSpan|null=auto), persisted.
   // Defaults are packed Serum-dense: sources + filters up top, modulation row
   // beneath, slim macro/scope columns filling the remainder.
@@ -586,7 +609,7 @@ function ApolloInner() {
         <PresetBar />
         <div style={{ flex: 1 }} />
         <HeaderReadout />
-        <div style={{ position: 'relative' }}>
+        <div ref={sessionsRef} style={{ position: 'relative' }}>
           {headerBtn('Sessions ▾', openSessions, { on: sessionsOpen, title: 'Your saved Apollo sessions — each one keeps its own sound' })}
           {sessionsOpen && (
             <div style={{
@@ -637,7 +660,7 @@ function ApolloInner() {
         {headerBtn('↪', () => ctx.redo(), { title: 'Redo (Shift+Cmd+Z)' })}
         {headerBtn(`Movement · ${routeCount}`, () => setMovementOpen(true), { title: 'Everything that moves by itself (the mod matrix)' })}
         {midiAvailable && (
-          <div style={{ position: 'relative' }}>
+          <div ref={inputRef} style={{ position: 'relative' }}>
             {headerBtn('⌨ Input ▾', () => setInputOpen(o => !o), { on: inputOpen || midiOn || mpeOn, title: 'Hardware input — MIDI keyboards and MPE controllers' })}
             {inputOpen && (
               <div style={{
