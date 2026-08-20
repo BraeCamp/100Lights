@@ -25,6 +25,7 @@ function loadUserPresets(): UserPreset[] {
 export default function PresetBar() {
   const ctx = useApollo()
   const [editingName, setEditingName] = useState(false)
+  const [fileOpen, setFileOpen] = useState(false)
   const [userPresets, setUserPresets] = useState<UserPreset[]>([])
   useEffect(() => { setUserPresets(loadUserPresets()) }, [])
   const fileRef = useRef<HTMLInputElement>(null)
@@ -81,53 +82,8 @@ export default function PresetBar() {
     URL.revokeObjectURL(a.href)
   }
 
-  const randomize = () => {
-    const r = (a: number, b: number) => a + Math.random() * (b - a)
-    const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]
-    ctx.update(p => {
-      const tables = ['basic-shapes', 'analog-saws', 'pwm', 'harmonic-sweep', 'bells', 'vocal', 'fm-scan', 'squares-morph', 'sub-fold', 'reso-sweep', 'metallic']
-      p.oscs[0].enabled = true
-      p.oscs[0].engine = 'wavetable'
-      p.oscs[0].wt.tableId = pick(tables)
-      p.oscs[0].wt.pos = r(0, 1)
-      p.oscs[0].unison = pick([1, 2, 3, 5, 7])
-      p.oscs[0].detune = r(0.05, 0.3)
-      const warps: WarpMode[] = ['off', 'sync', 'bendPlus', 'pwm', 'asym', 'mirror', 'squeeze', 'saturate']
-      p.oscs[0].wt.warp1 = { mode: pick(warps), amount: r(0, 0.6) }
-      p.filters[0].enabled = Math.random() > 0.25
-      const ftypes: FilterType[] = ['lp12', 'lp24', 'ladder24', 'multiLBH', 'formant', 'combPlus', 'bp12']
-      p.filters[0].type = pick(ftypes)
-      p.filters[0].cutoff = r(0.3, 0.85)
-      p.filters[0].res = r(0.05, 0.5)
-      p.envs[0].attack = pick([0.002, 0.01, 0.3, 0.8])
-      p.envs[0].release = r(0.1, 1.5)
-      p.matrix = [
-        { id: uid(), source: 'env2' as ModSource, dest: 'f1.cutoff', amount: r(0.2, 0.6), bipolar: false, aux: 'none', auxAmount: 0, curve: null, bypass: false },
-        { id: uid(), source: 'lfo1' as ModSource, dest: 'osc0.wt.pos', amount: r(0.1, 0.5), bipolar: false, aux: 'none', auxAmount: 0, curve: null, bypass: false },
-      ]
-      const fxPool: FxType[] = ['chorus', 'delay', 'reverb', 'phaser', 'distortion']
-      p.fxMain = [defaultFx(pick(fxPool)), defaultFx(pick(fxPool))]
-      p.name = 'Random ' + Math.floor(Math.random() * 1000)
-    })
-  }
 
   // Mutate: small musical nudges instead of a full re-roll
-  const mutate = () => {
-    const nudge = (v: number, lo: number, hi: number, amt: number) =>
-      Math.min(hi, Math.max(lo, v + (Math.random() * 2 - 1) * (hi - lo) * amt))
-    ctx.update(p => {
-      const o = p.oscs[ctx.selectedOsc]
-      o.wt.pos = nudge(o.wt.pos, 0, 1, 0.2)
-      o.detune = nudge(o.detune, 0, 1, 0.1)
-      if (o.wt.warp1.mode !== 'off') o.wt.warp1.amount = nudge(o.wt.warp1.amount, 0, 1, 0.15)
-      if (p.filters[0].enabled) {
-        p.filters[0].cutoff = nudge(p.filters[0].cutoff, 0.1, 1, 0.12)
-        p.filters[0].res = nudge(p.filters[0].res, 0, 0.9, 0.1)
-      }
-      p.envs[0].release = nudge(p.envs[0].release, 0.02, 3, 0.1)
-      for (const row of p.matrix) row.amount = Math.min(1, Math.max(-1, row.amount + (Math.random() * 2 - 1) * 0.12))
-    })
-  }
 
   // A/B compare: store a B snapshot, then swap back and forth
   const abRef = useRef<string | null>(null)
@@ -175,8 +131,28 @@ export default function PresetBar() {
         >{ctx.patch.name}</span>
       )}
       <ToggleBtn on={false} label="Save" onClick={save} title="Save to browser presets" />
-      <ToggleBtn on={false} label="Export" onClick={exportFile} />
-      <ToggleBtn on={false} label="Import" onClick={() => fileRef.current?.click()} />
+      <ToggleBtn on={false} label="Init" onClick={() => applyPatch(initPatch())} />
+      <ToggleBtn on={abStored} label="A/B" title={abStored ? 'Swap with the stored B patch' : 'Store current as B, then swap back and forth'} onClick={abToggle} />
+      {/* File ▾ — Export / Import / Bounce / Share in one place (fewer buttons;
+          Random/Mutate moved onto the modules they affect, as 🎲 dice) */}
+      <div style={{ position: 'relative' }}>
+        <ToggleBtn on={fileOpen} label="File ▾" title="Export, import, bounce to audio, share to Community" onClick={() => setFileOpen(o => !o)} />
+        {fileOpen && (
+          <div
+            style={{
+              position: 'absolute', top: '110%', right: 0, zIndex: 210, minWidth: 190,
+              background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+              padding: 8, display: 'flex', flexDirection: 'column', gap: 6,
+            }}
+          >
+            <ToggleBtn on={false} label="Export patch (.json)" onClick={() => { exportFile(); setFileOpen(false) }} />
+            <ToggleBtn on={false} label="Import patch…" onClick={() => { fileRef.current?.click(); setFileOpen(false) }} />
+            <div style={{ borderTop: '1px solid var(--border)' }} />
+            <BounceButton />
+            <ShareButton />
+          </div>
+        )}
+      </div>
       <input
         ref={fileRef} type="file" accept=".json,.apollo.json,application/json" style={{ display: 'none' }}
         onChange={async e => {
@@ -186,12 +162,6 @@ export default function PresetBar() {
           try { applyPatch(JSON.parse(await f.text()) as Partial<ApolloPatch>) } catch { /* invalid file */ }
         }}
       />
-      <ToggleBtn on={false} label="Init" onClick={() => applyPatch(initPatch())} />
-      <ToggleBtn on={false} label="⟳ Random" onClick={randomize} />
-      <ToggleBtn on={false} label="Mutate" title="Small random nudges to the current patch" onClick={mutate} />
-      <ToggleBtn on={abStored} label="A/B" title={abStored ? 'Swap with the stored B patch' : 'Store current as B, then swap back and forth'} onClick={abToggle} />
-      <BounceButton />
-      <ShareButton />
     </div>
   )
 }

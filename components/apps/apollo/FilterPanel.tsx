@@ -208,9 +208,22 @@ function FilterSlot({ fi }: { fi: 0 | 1 }) {
 
 export default function FilterPanel() {
   const ctx = useApollo()
+  const dice = () => {
+    const r = (a: number, b: number) => a + Math.random() * (b - a)
+    const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]
+    const types: FilterType[] = ['lp12', 'lp24', 'ladder24', 'multiLBH', 'morphSVF', 'formant', 'combPlus', 'bp12', 'notch12']
+    ctx.update(p => {
+      p.filters[0].enabled = true
+      p.filters[0].type = pick(types)
+      p.filters[0].cutoff = r(0.25, 0.85)
+      p.filters[0].res = r(0, 0.55)
+      p.filters[0].drive = r(0, 0.4)
+    })
+  }
   return (
     <Section
       title="Filters"
+      dice={dice}
       right={
         <div style={{ display: 'flex', gap: 4 }}>
           <ToggleBtn on={ctx.patch.filterRouting === 'serial'} label="Serial" onClick={() => ctx.update(p => { p.filterRouting = 'serial' })} />

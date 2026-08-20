@@ -1,22 +1,18 @@
 'use client'
-// Apollo 2 (/apollo2) — the same synth, restructured to be minimal and
-// self-explaining. Nothing is removed; the UI grows as the sound does:
+// Apollo — the merged shell (/apollo). Formerly the /apollo2 experiment; now
+// the one UI. Flat theme, three tabs, and every module always visible as a
+// RESIZABLE panel (drag its right edge for width, bottom edge for height,
+// corner for both — sizes persist), so the space fills the way you want.
 //
-//  · The VOICE CHAIN: Sub, Noise, Filters and Arp hang off the oscillator as
-//    collapsed segments of one visible signal path. Closed segments are one
-//    honest summary line; click to open in place. (idea #1 + #4)
-//  · Bare "+" everywhere instead of fixed inventories: oscillator layers,
-//    envelopes, LFOs, macros, FX busses appear only when added/used. (#3)
-//  · Hover any knob → "+" → "move this with…" creates the modulation AND
-//    reveals the panel of whatever source it used. (#5)
-//  · Three tabs — SOUND / EFFECTS / PERFORM — with the mod-matrix as a
-//    slide-over "Movement" list, since routes are created elsewhere. (#7)
-//  · While audio plays, the chain segments glow in signal order. (#9)
-//
-// /apollo keeps the original six-tab UI; both share engine, patches and state.
+// Kept from the experiment: bare "+" inventories (envelopes / LFOs / macros /
+// FX busses grow as used), knob-hover ⊕ quick-mod, Movement drawer, keyboard
+// HOLD latch + 📌 pin, /apollo/new. Changed on Brae's direction: collapsed
+// chain segments are gone (modules are plain panels again), knobs are flat
+// solid color, File ▾ gathers Export/Import/Bounce/Share, and Random/Mutate
+// live as 🎲 dice on the modules they affect.
 
 import React, { useEffect, useRef, useState } from 'react'
-import { ApolloProvider, useApollo, useMeters, Knob, ToggleBtn, UI } from '@/components/apps/apollo/ApolloContext'
+import { ApolloProvider, useApollo, useMeters, Knob, UI, Section } from '@/components/apps/apollo/ApolloContext'
 import PresetBar from '@/components/apps/apollo/PresetBar'
 import OscPanel from '@/components/apps/apollo/OscPanel'
 import SubNoisePanel from '@/components/apps/apollo/SubNoisePanel'
@@ -35,168 +31,100 @@ import ScopeView from '@/components/apps/apollo/ScopeView'
 import LearnMode from '@/components/apps/apollo/LearnMode'
 import HelpButton from '@/components/apps/apollo/HelpButton'
 import { startWebMidi, onMidiNote, webMidiSupported, getMidiDeviceNames } from '@/lib/web-midi'
-import { FILTER_TYPES } from '@/lib/apollo/patch'
+import { startMpe, stopMpe } from '@/lib/apollo/mpe'
 
 type Tab = 'sound' | 'effects' | 'perform'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'sound', label: 'SOUND' }, { id: 'effects', label: 'EFFECTS' }, { id: 'perform', label: 'PERFORM' },
 ]
 
-// ── Chain segment: a slim bar (summary + toggle) that opens into the panel ──
-function Seg({ title, summary, enabled, onToggle, open, onOpen, glowIndex, playing, children }: {
-  title: string
-  summary: string
-  enabled: boolean | null   // null = no on/off concept (oscillator A)
-  onToggle?: () => void
-  open: boolean
-  onOpen: () => void
-  glowIndex: number
-  playing: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <div
-        onClick={onOpen}
-        data-learn={title}
-        className={playing && enabled !== false ? 'ap2-flow' : undefined}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-          background: `linear-gradient(180deg, ${UI.header} 0%, ${UI.panelLo} 100%)`,
-          border: `1px solid ${open ? UI.borderLight : UI.border}`, borderRadius: 7,
-          padding: '5px 10px', animationDelay: `${glowIndex * 90}ms`,
-          opacity: enabled === false ? 0.55 : 1,
-        }}
-      >
-        <span style={{ fontSize: 9, color: UI.dim }}>{open ? '▾' : '▸'}</span>
-        <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.2, color: UI.text, textTransform: 'uppercase' }}>{title}</span>
-        <span style={{ fontSize: 10, color: UI.dim, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</span>
-        {enabled !== null && onToggle && (
-          <span onClick={e => e.stopPropagation()}>
-            <ToggleBtn on={enabled} label={enabled ? 'On' : 'Off'} onClick={onToggle} />
-          </span>
-        )}
-      </div>
-      {open && children}
-    </div>
-  )
+// ── Resizable module wrapper ────────────────────────────────────────────────
+// Every panel sits in a Module that can be stretched in any direction: right
+// edge = width, bottom edge = height, corner = both. Sizes persist per module.
+const SIZES_KEY = 'apollo_mod_sizes_v2'
+type ModSize = { w: number | null; h: number | null }
+function loadSizes(): Record<string, ModSize> {
+  try { return JSON.parse(localStorage.getItem(SIZES_KEY) || '{}') as Record<string, ModSize> } catch { return {} }
+}
+function saveSize(id: string, size: ModSize) {
+  try {
+    const all = loadSizes()
+    all[id] = size
+    localStorage.setItem(SIZES_KEY, JSON.stringify(all))
+  } catch { /* quota */ }
 }
 
-function filterLabel(t: string): string {
-  return FILTER_TYPES.find(f => f.id === t)?.label ?? t
-}
+function Module({ id, defaultW, minW = 260, children }: { id: string; defaultW: number; minW?: number; children: React.ReactNode }) {
+  const [size, setSize] = useState<ModSize>({ w: null, h: null })
+  const sizeRef = useRef(size)
+  sizeRef.current = size
+  const dragRef = useRef<{ mode: 'w' | 'h' | 'wh'; x: number; y: number; w: number; h: number } | null>(null)
+  const boxRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { setSize(loadSizes()[id] ?? { w: null, h: null }) }, [id])
 
-// ── The voice chain (#1): OSC layers → Sub → Noise → Filters → Arp ─────────
-function VoiceChain({ playing }: { playing: boolean }) {
-  const ctx = useApollo()
-  const p = ctx.patch
-  // multiple segments can be open at once — opening one never closes another
-  const [openSet, setOpenSet] = useState<Set<string>>(() => new Set(['oscA']))
-  const isOpen = (id: string) => openSet.has(id)
-  const toggleOpen = (id: string) => setOpenSet(prev => {
-    const next = new Set(prev)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    return next
-  })
-
-  const oscSummary = (i: number) => {
-    const o = p.oscs[i]
-    if (!o.enabled) return 'off'
-    const src = o.engine === 'wavetable' ? o.wt.tableId : o.engine
-    return `${src} · ${o.unison > 1 ? `${o.unison} voices` : '1 voice'}`
+  const startDrag = (mode: 'w' | 'h' | 'wh') => (e: React.PointerEvent) => {
+    e.preventDefault()
+    const box = boxRef.current
+    if (!box) return
+    dragRef.current = { mode, x: e.clientX, y: e.clientY, w: box.offsetWidth, h: box.offsetHeight }
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* synthetic */ }
   }
-  const enabledOscs = p.oscs.map((o, i) => ({ o, i })).filter(x => x.i === 0 || x.o.enabled)
-  const nextOsc = p.oscs.findIndex((o, i) => i > 0 && !o.enabled)
+  const onMove = (e: React.PointerEvent) => {
+    const d = dragRef.current
+    if (!d) return
+    if (e.buttons === 0) { dragRef.current = null; saveSize(id, sizeRef.current); return }
+    const next: ModSize = { ...sizeRef.current }
+    if (d.mode !== 'h') next.w = Math.max(minW, d.w + (e.clientX - d.x))
+    if (d.mode !== 'w') next.h = Math.max(120, d.h + (e.clientY - d.y))
+    setSize(next)
+  }
+  const endDrag = () => {
+    if (!dragRef.current) return
+    dragRef.current = null
+    saveSize(id, sizeRef.current)
+  }
+  const handle = (mode: 'w' | 'h' | 'wh', style: React.CSSProperties) => (
+    <div
+      key={mode}
+      onPointerDown={startDrag(mode)}
+      onPointerMove={onMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onDoubleClick={() => { const reset = { w: null, h: null }; setSize(reset); saveSize(id, reset) }}
+      title="Drag to resize this module (double-click resets)"
+      style={{ position: 'absolute', zIndex: 4, touchAction: 'none', ...style }}
+    />
+  )
 
-  const filterSummary = p.filters.filter(f => f.enabled).map(f => `${filterLabel(f.type)} · ${Math.round(f.cutoff * 100)}%`).join('  +  ') || 'off'
-
-  let gi = 0
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {enabledOscs.map(({ o, i }) => (
-        <Seg
-          key={i}
-          title={`Osc ${'ABC'[i]}`}
-          summary={oscSummary(i)}
-          enabled={i === 0 ? null : o.enabled}
-          onToggle={i === 0 ? undefined : () => ctx.update(pp => { pp.oscs[i].enabled = !pp.oscs[i].enabled })}
-          open={isOpen(`osc${'ABC'[i]}`)}
-          onOpen={() => { ctx.setSelectedOsc(i); toggleOpen(`osc${'ABC'[i]}`) }}
-          glowIndex={gi++}
-          playing={playing}
-        >
-          <OscPanel osc={i} />
-        </Seg>
-      ))}
-      {nextOsc > 0 && (
-        <button
-          onClick={() => {
-            ctx.update(pp => { pp.oscs[nextOsc].enabled = true })
-            ctx.setSelectedOsc(nextOsc)
-            setOpenSet(prev => new Set(prev).add(`osc${'ABC'[nextOsc]}`))
-          }}
-          title="Another oscillator layer"
-          style={{
-            border: `1px dashed ${UI.border}`, background: 'transparent', color: UI.dim,
-            borderRadius: 7, padding: '4px 10px', fontSize: 11, fontWeight: 800, cursor: 'pointer', textAlign: 'left',
-          }}
-        >+</button>
-      )}
-
-      <Seg
-        title="Sub & Noise"
-        summary={[
-          p.sub.enabled ? `sub: ${p.sub.shape} · ${p.sub.octave} oct` : 'sub off',
-          p.noise.enabled ? `noise: ${p.noise.sampleId ? (ctx.engine.samples.get(p.noise.sampleId)?.name ?? 'sample') : 'no sample yet'}` : 'noise off',
-        ].join('  ·  ')}
-        enabled={p.sub.enabled || p.noise.enabled}
-        onToggle={() => ctx.update(pp => {
-          const any = pp.sub.enabled || pp.noise.enabled
-          if (any) { pp.sub.enabled = false; pp.noise.enabled = false }
-          else pp.sub.enabled = true
-        })}
-        open={isOpen('subnoise')} onOpen={() => toggleOpen('subnoise')} glowIndex={gi++} playing={playing}
-      >
-        <SubNoisePanel />
-      </Seg>
-
-      <Seg
-        title="Filter" summary={filterSummary}
-        enabled={p.filters.some(f => f.enabled)}
-        onToggle={() => ctx.update(pp => {
-          const any = pp.filters.some(f => f.enabled)
-          if (any) pp.filters.forEach(f => { f.enabled = false })
-          else pp.filters[0].enabled = true
-        })}
-        open={isOpen('filter')} onOpen={() => toggleOpen('filter')} glowIndex={gi++} playing={playing}
-      >
-        <FilterPanel />
-      </Seg>
-
-      <Seg
-        title="Arp" summary={p.arp.on ? `${p.arp.mode} · ${p.arp.octaves} oct` : 'off'}
-        enabled={p.arp.on}
-        onToggle={() => ctx.update(pp => { pp.arp.on = !pp.arp.on })}
-        open={isOpen('arp')} onOpen={() => toggleOpen('arp')} glowIndex={gi++} playing={playing}
-      >
-        <ArpPanel />
-      </Seg>
+    <div
+      ref={boxRef}
+      style={{
+        position: 'relative',
+        width: size.w ?? defaultW,
+        height: size.h ?? undefined,
+        minWidth: minW,
+        maxWidth: '100%',
+        display: 'flex', flexDirection: 'column',
+        overflow: size.h ? 'auto' : 'visible',
+        flexGrow: 0, flexShrink: 0,
+      }}
+    >
+      {children}
+      {handle('w', { top: 0, bottom: 0, right: -3, width: 7, cursor: 'ew-resize' })}
+      {handle('h', { left: 0, right: 0, bottom: -3, height: 7, cursor: 'ns-resize' })}
+      {handle('wh', { right: -3, bottom: -3, width: 13, height: 13, cursor: 'nwse-resize' })}
     </div>
   )
 }
 
-// ── Macros (#3): only named knobs exist; "+" names a new one ────────────────
+// ── Macros: only named knobs exist; "+" names a new one ─────────────────────
 function MacrosBlock() {
   const ctx = useApollo()
   const named = ctx.patch.macroNames.map((name, i) => ({ name, i })).filter(m => m.name && m.name !== `Macro ${m.i + 1}`)
   const free = ctx.patch.macroNames.findIndex((n, i) => !n || n === `Macro ${i + 1}`)
   return (
-    <div style={{
-      background: `linear-gradient(180deg, ${UI.panel} 0%, ${UI.panelLo} 100%)`,
-      border: `1px solid ${UI.border}`, borderRadius: 8, padding: '8px 10px',
-    }}>
-      <div data-learn="Macros" style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: UI.text, textTransform: 'uppercase', marginBottom: 6 }}>Knobs</div>
+    <Section title="Knobs">
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         {named.map(m => (
           <Knob
@@ -223,11 +151,11 @@ function MacrosBlock() {
           >+</button>
         )}
       </div>
-    </div>
+    </Section>
   )
 }
 
-// ── Movement slide-over (#7): the matrix, as a drawer ───────────────────────
+// ── Movement slide-over: the matrix as a drawer ─────────────────────────────
 function MovementDrawer({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
@@ -241,7 +169,6 @@ function MovementDrawer({ onClose }: { onClose: () => void }) {
         style={{
           position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(560px, 94vw)',
           background: UI.bg, borderLeft: `1px solid ${UI.borderLight}`, padding: 12, overflowY: 'auto',
-          boxShadow: '-18px 0 50px rgba(0,0,0,0.55)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
@@ -259,7 +186,7 @@ function MovementDrawer({ onClose }: { onClose: () => void }) {
 }
 
 // ── Shell ───────────────────────────────────────────────────────────────────
-function Apollo2Inner() {
+function ApolloInner() {
   const ctx = useApollo()
   const meters = useMeters()
   const [tab, setTab] = useState<Tab>('sound')
@@ -268,7 +195,7 @@ function Apollo2Inner() {
   const [midiOn, setMidiOn] = useState(false)
   const [midiName, setMidiName] = useState('')
   const [midiAvailable, setMidiAvailable] = useState(false)
-  // keyboard pinned = floats fixed at the bottom of the window while you scroll
+  const [mpeOn, setMpeOn] = useState(false)
   const [kbdPinned, setKbdPinned] = useState(false)
   useEffect(() => {
     setMidiAvailable(webMidiSupported)
@@ -280,34 +207,23 @@ function Apollo2Inner() {
       return !v
     })
   }
-  const playing = meters.peak > 0.015
-
-  // #9: signal-flow glow keyframes
-  useEffect(() => {
-    const id = 'ap2-styles'
-    if (document.getElementById(id)) return
-    const style = document.createElement('style')
-    style.id = id
-    style.textContent = `
-@keyframes ap2Flow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(111,208,140,0); }
-  35% { box-shadow: 0 0 8px 1px rgba(111,208,140,0.35), inset 0 0 6px rgba(111,208,140,0.12); }
-}
-.ap2-flow { animation: ap2Flow 1.6s ease-in-out infinite; }
-`
-    document.head.appendChild(style)
-  }, [])
 
   useEffect(() => {
-    if (!midiOn) return
+    if (!midiOn || mpeOn) return
     const off = onMidiNote(e => {
       if (e.type === 'on') { void ctx.start().then(() => ctx.engine.noteOn(e.pitch, e.velocity / 127)) }
       else ctx.engine.noteOff(e.pitch)
     })
     return () => { off() }
-  }, [midiOn, ctx])
+  }, [midiOn, mpeOn, ctx])
 
-  // undo/redo shortcuts (same as /apollo)
+  const toggleMpe = async () => {
+    if (mpeOn) { stopMpe(); setMpeOn(false); return }
+    await ctx.start()
+    const ok = await startMpe(ctx.engine)
+    if (ok) setMpeOn(true)
+  }
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
@@ -321,7 +237,7 @@ function Apollo2Inner() {
     return () => window.removeEventListener('keydown', onKey)
   }, [ctx])
 
-  // envelopes / LFOs visible-count (#3): derived from use + session "+" clicks
+  // "+"-grown inventories: derived from use + session clicks
   const [extraEnvs, setExtraEnvs] = useState(0)
   const [extraLfos, setExtraLfos] = useState(0)
   let envUsed = 1
@@ -342,7 +258,7 @@ function Apollo2Inner() {
       onClick={onClick}
       title={opts?.title}
       style={{
-        background: opts?.on ? `linear-gradient(180deg, ${UI.blue} 0%, ${UI.blue}cc 100%)` : `linear-gradient(180deg, ${UI.header} 0%, ${UI.panel} 100%)`,
+        background: opts?.on ? UI.blue : UI.header,
         color: opts?.on ? '#0b0d10' : UI.dim,
         border: '1px solid ' + (opts?.on ? UI.blue : UI.border),
         borderRadius: 5, padding: '4px 10px', fontSize: 10, fontWeight: 800, cursor: 'pointer',
@@ -358,12 +274,18 @@ function Apollo2Inner() {
     else setMidiName('No MIDI access')
   }
 
+  const modules = (list: [string, number, React.ReactNode][]) => (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'flex-start' }}>
+      {list.map(([id, w, node]) => <Module key={id} id={id} defaultW={w}>{node}</Module>)}
+    </div>
+  )
+
   return (
     <div style={{ minHeight: '100vh', background: UI.bg, color: UI.text, padding: '10px 14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       {/* header */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-        background: `linear-gradient(180deg, ${UI.panel} 0%, ${UI.panelLo} 100%)`,
+        background: UI.panel,
         border: `1px solid ${UI.border}`, borderRadius: 8, padding: '7px 12px',
       }}>
         <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: 4 }}>
@@ -373,7 +295,7 @@ function Apollo2Inner() {
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{
               padding: '5px 13px', borderRadius: 5, fontSize: 10.5, fontWeight: 900, letterSpacing: 1.2, cursor: 'pointer',
-              background: tab === t.id ? `linear-gradient(180deg, #2a3442 0%, #1e2530 100%)` : 'transparent',
+              background: tab === t.id ? UI.header : 'transparent',
               color: tab === t.id ? UI.text : UI.dim,
               border: `1px solid ${tab === t.id ? UI.borderLight : 'transparent'}`,
             }}>{t.label}</button>
@@ -381,12 +303,13 @@ function Apollo2Inner() {
         </div>
         <PresetBar />
         <div style={{ flex: 1 }} />
-        {headerBtn('New', () => { window.location.href = '/apollo2/new' }, { title: 'Start fresh — a clean patch and a clean slate' })}
+        {headerBtn('New', () => { window.location.href = '/apollo/new' }, { title: 'Start fresh — a clean patch and a clean slate' })}
         {headerBtn('↩', () => ctx.undo(), { title: 'Undo (Cmd+Z)' })}
         {headerBtn('↪', () => ctx.redo(), { title: 'Redo (Shift+Cmd+Z)' })}
         {headerBtn(`Movement · ${routeCount}`, () => setMovementOpen(true), { title: 'Everything that moves by itself (the mod matrix)' })}
         {headerBtn('WT', () => setWtOpen(true), { title: 'Wavetable editor' })}
-        {midiAvailable && headerBtn('MIDI', () => { void enableMidi() }, { on: midiOn, title: midiName || 'Connect a MIDI keyboard' })}
+        {midiAvailable && headerBtn('MIDI', () => { void enableMidi() }, { on: midiOn && !mpeOn, title: midiName || 'Connect a MIDI keyboard' })}
+        {midiAvailable && headerBtn('MPE', () => { void toggleMpe() }, { on: mpeOn, title: 'MPE mode: per-note pitch bend + pressure (Seaboard, Linnstrument…)' })}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <Knob path="global.masterGain" label="Main" size={30} />
           <div title="Output level" style={{ width: 7, height: 30, background: UI.inset, border: `1px solid ${UI.border}`, borderRadius: 3, overflow: 'hidden', position: 'relative' }}>
@@ -397,29 +320,28 @@ function Apollo2Inner() {
         <LearnMode />
       </div>
 
-      {/* body */}
-      {tab === 'sound' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(390px, 3fr) minmax(330px, 2fr)', gap: 8, alignItems: 'start' }}>
-          <VoiceChain playing={playing} />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-            <EnvPanel visible={envVisible} onAdd={() => setExtraEnvs(n => Math.min(3, Math.max(n + 1, envVisible)))} />
-            <LfoPanel visible={lfoVisible} onAdd={() => setExtraLfos(n => Math.min(9, Math.max(n + 1, lfoVisible)))} />
-            <MacrosBlock />
-            <ScopeView />
-          </div>
-        </div>
-      )}
-      {tab === 'effects' && <FxRack minimal />}
-      {tab === 'perform' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'start' }}>
-          <ClipPanel />
-          <GlobalPanel />
-        </div>
-      )}
+      {/* body — resizable module grid per tab */}
+      {tab === 'sound' && modules([
+        ['osc', 860, <OscPanel key="osc" />],
+        ['env', 560, <EnvPanel key="env" visible={envVisible} onAdd={() => setExtraEnvs(n => Math.min(3, Math.max(n + 1, envVisible)))} />],
+        ['subnoise', 560, <SubNoisePanel key="sn" />],
+        ['filters', 860, <FilterPanel key="f" />],
+        ['lfo', 560, <Section key="l" title="LFO"><LfoPanel visible={lfoVisible} onAdd={() => setExtraLfos(n => Math.min(9, Math.max(n + 1, lfoVisible)))} /></Section>],
+        ['macros', 380, <MacrosBlock key="m" />],
+        ['scope', 380, <ScopeView key="s" />],
+      ])}
+      {tab === 'effects' && modules([
+        ['fx', 900, <FxRack key="fx" minimal />],
+      ])}
+      {tab === 'perform' && modules([
+        ['arp', 560, <ArpPanel key="a" />],
+        ['clip', 720, <ClipPanel key="c" />],
+        ['global', 560, <GlobalPanel key="g" />],
+      ])}
 
       <ModSourcesStrip />
       <div style={kbdPinned
-        ? { position: 'fixed', left: 10, right: 10, bottom: 8, zIndex: 350, boxShadow: '0 -8px 30px rgba(0,0,0,0.55)', borderRadius: 10 }
+        ? { position: 'fixed', left: 10, right: 10, bottom: 8, zIndex: 350, borderRadius: 10 }
         : undefined}>
         <div style={{ position: 'relative' }}>
           <button
@@ -428,7 +350,7 @@ function Apollo2Inner() {
             style={{
               position: 'absolute', top: 4, right: 6, zIndex: 5,
               width: 22, height: 22, borderRadius: 6, cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: 0,
-              background: kbdPinned ? `linear-gradient(180deg, ${UI.blue} 0%, ${UI.blue}cc 100%)` : UI.inset,
+              background: kbdPinned ? UI.blue : UI.inset,
               color: kbdPinned ? '#0b0d10' : UI.dim,
               border: `1px solid ${kbdPinned ? UI.blue : UI.border}`,
             }}
@@ -462,7 +384,7 @@ function Apollo2Inner() {
 export default function Apollo2() {
   return (
     <ApolloProvider quickMod>
-      <Apollo2Inner />
+      <ApolloInner />
     </ApolloProvider>
   )
 }

@@ -356,9 +356,10 @@ export const UI = {
   blueDim: '#2c6db0',
   text: '#dbe1e8',
   dim: '#8b93a0',
-  knobHi: '#333b47',  // knob face gradient stops
+  knobHi: '#333b47',  // legacy gradient stops (kept for shell themes)
   knobMid: '#20252d',
   knobLo: '#12151a',
+  knob: '#252c36',    // flat knob face (solid, no gradient/shadow)
   panelLo: '#0f1216', // section body gradient bottom stop
   headerLo: '#14181e', // section header gradient bottom stop
 }
@@ -376,23 +377,30 @@ export function applyApolloTheme(theme: ApolloTheme): void {
   Object.assign(UI, DEFAULT_UI, theme)
 }
 
-export function Section({ title, right, led, children, style }: { title: string; right?: React.ReactNode; led?: boolean; children: React.ReactNode; style?: React.CSSProperties }) {
+export function Section({ title, right, led, dice, children, style }: { title: string; right?: React.ReactNode; led?: boolean; dice?: () => void; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={{
-      background: `linear-gradient(180deg, ${UI.panel} 0%, ${UI.panelLo} 100%)`,
+      background: UI.panel,
       border: `1px solid ${UI.border}`, borderRadius: 8, overflow: 'visible',
-      display: 'flex', flexDirection: 'column', minWidth: 0,
-      boxShadow: '0 2px 8px rgba(0,0,0,0.35)', ...style,
+      display: 'flex', flexDirection: 'column', minWidth: 0, ...style,
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-        background: `linear-gradient(180deg, ${UI.header} 0%, ${UI.headerLo} 100%)`,
+        background: UI.header,
         borderBottom: `1px solid ${UI.border}`, borderRadius: '7px 7px 0 0',
         padding: '5px 9px', minHeight: 26,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {led != null && <span style={{ width: 7, height: 7, borderRadius: '50%', background: led ? UI.green : '#3a404a', boxShadow: led ? `0 0 5px ${UI.green}` : 'none', display: 'inline-block' }} />}
+          {led != null && <span style={{ width: 7, height: 7, borderRadius: '50%', background: led ? UI.green : '#3a404a', display: 'inline-block' }} />}
           <div data-learn={title} style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: UI.text, textTransform: 'uppercase', fontStretch: 'condensed' }}>{title}</div>
+          {dice && (
+            <button
+              onClick={dice}
+              data-learn="Dice"
+              title={`Roll the dice — randomize just this module (${title})`}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, padding: '0 2px', lineHeight: 1, opacity: 0.7 }}
+            >🎲</button>
+          )}
         </div>
         {right}
       </div>
@@ -419,7 +427,7 @@ export function Sel({ value, options, onChange, width, title }: {
     groups.get(g)!.push(o)
   }
   const selStyle: React.CSSProperties = {
-    background: `linear-gradient(180deg, ${UI.header} 0%, ${UI.panel} 100%)`, color: UI.text, border: `1px solid ${UI.border}`,
+    background: UI.header, color: UI.text, border: `1px solid ${UI.border}`,
     borderRadius: 5, padding: '3px 6px', fontSize: 10.5, fontWeight: 600, width: width || '100%', minWidth: 0, cursor: 'pointer',
   }
   return (
@@ -443,13 +451,12 @@ export function ToggleBtn({ on, label, onClick, title, accent }: { on: boolean; 
       title={title}
       data-learn={label}
       style={{
-        background: on ? `linear-gradient(180deg, ${ac} 0%, ${ac}cc 100%)` : `linear-gradient(180deg, ${UI.header} 0%, ${UI.panel} 100%)`,
+        background: on ? ac : UI.header,
         color: on ? '#0b0d10' : UI.dim,
         border: '1px solid ' + (on ? ac : UI.border),
         borderRadius: 5, padding: '3px 9px', fontSize: 9.5, fontWeight: 800, cursor: 'pointer',
         whiteSpace: 'nowrap', letterSpacing: 0.6, textTransform: 'uppercase',
         transition: 'background 120ms, color 120ms, border-color 120ms',
-        boxShadow: on ? `0 0 8px ${ac}44` : 'inset 0 1px 0 rgba(255,255,255,0.04)',
       }}
     >{label}</button>
   )
@@ -687,13 +694,6 @@ export function Knob(props: KnobProps) {
         onDoubleClick={() => { apply(defaultValue); if (props.path && ctx) ctx.commit(); props.onCommit?.() }}
         style={{ cursor: 'ns-resize', touchAction: 'none', outline: dragOver ? `2px solid ${UI.blue}` : 'none', borderRadius: '50%' }}
       >
-        <defs>
-          <radialGradient id="apKnobBody" cx="38%" cy="30%" r="80%">
-            <stop offset="0%" stopColor={UI.knobHi} />
-            <stop offset="55%" stopColor={UI.knobMid} />
-            <stop offset="100%" stopColor={UI.knobLo} />
-          </radialGradient>
-        </defs>
         {/* track */}
         <path d={arc(a0, a0 + sweep, r)} stroke={UI.border} strokeWidth={3} fill="none" strokeLinecap="round" />
         {/* value arc */}
@@ -707,9 +707,8 @@ export function Knob(props: KnobProps) {
             stroke={UI.green} strokeWidth={1.8} fill="none" strokeLinecap="round" opacity={0.95}
           />
         )}
-        {/* metallic body */}
-        <circle cx={cx} cy={cy} r={r - 4.5} fill="url(#apKnobBody)" stroke={UI.bg} strokeWidth={1} />
-        <circle cx={cx} cy={cy} r={r - 4.5} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={0.8} />
+        {/* flat body — solid color, no gradient or shadow */}
+        <circle cx={cx} cy={cy} r={r - 4.5} fill={UI.knob} />
         {/* needle */}
         <line
           x1={cx + (r - 12) * Math.cos(((angle - 90) * Math.PI) / 180) * 0.25}

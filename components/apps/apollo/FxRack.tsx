@@ -448,9 +448,25 @@ export default function FxRack({ minimal = false }: { minimal?: boolean } = {}) 
   const showBusses = !minimal || busUsed || revealBusses
   const lanes = showBusses ? LANES : LANES.filter(l => l.key === 'main')
   useEffect(() => { if (!showBusses && lane !== 'main') setLane('main') }, [showBusses, lane])
+  const dice = () => {
+    ctx.update(p => {
+      for (const u of locate(p)) {
+        if (!u.enabled) continue
+        const def = FX_DEFS[u.type]
+        if (!def) continue
+        for (const pd of def.params) {
+          if (BOOL_KEYS.has(pd.key) || TIME_KEYS.has(pd.key)) continue
+          const cur = u.params[pd.key] != null ? u.params[pd.key] : pd.default
+          const span = (pd.max - pd.min) * 0.18
+          u.params[pd.key] = Math.min(pd.max, Math.max(pd.min, cur + (Math.random() - 0.5) * 2 * span))
+        }
+      }
+    })
+  }
   return (
     <Section
       title="Effects"
+      dice={dice}
       right={
         <div style={{ display: 'flex', gap: 4 }}>
           {lanes.map(l => (

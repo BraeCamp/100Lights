@@ -13,6 +13,9 @@ const nextConfig: NextConfig = {
       ...LEGACY_REDIRECTS.map(r => ({ ...r, permanent: true })),
       // Studio entry renamed /new → /create.
       { source: '/new', destination: '/create', permanent: true },
+      // The /apollo2 UI experiment merged back into /apollo (2026-08-20).
+      { source: '/apollo2', destination: '/apollo', permanent: true },
+      { source: '/apollo2/:path*', destination: '/apollo/:path*', permanent: true },
       // Lightning Bug's original "Music Video" name (predates the move above,
       // so it points straight at the final home — no redirect chains).
       { source: '/apps/musicvideo', destination: '/lightningbug', permanent: true },

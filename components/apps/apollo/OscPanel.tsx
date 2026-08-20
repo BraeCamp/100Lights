@@ -122,6 +122,25 @@ export default function OscPanel({ osc: oscProp }: { osc?: number } = {}) {
   const osc = ctx.patch.oscs[i]
   const isFmWarp = (m: WarpMode) => m === 'fm' || m === 'am' || m === 'rm'
 
+  // randomize just this oscillator (replaces the old header-wide Random)
+  const dice = () => {
+    const r = (a: number, b: number) => a + Math.random() * (b - a)
+    const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]
+    ctx.update(p => {
+      const o = p.oscs[i]
+      o.engine = 'wavetable'
+      o.wt.tableId = pick(FACTORY_TABLE_IDS)
+      o.wt.pos = r(0, 1)
+      o.unison = pick([1, 1, 2, 3, 5, 7])
+      o.detune = r(0.05, 0.3)
+      const warps: WarpMode[] = ['off', 'off', 'sync', 'bendPlus', 'pwm', 'asym', 'mirror', 'squeeze', 'saturate']
+      o.wt.warp1 = { mode: pick(warps), amount: r(0, 0.6) }
+      o.wt.warp2 = { mode: 'off', amount: 0 }
+      const sw = pick(['off', 'off', 'stretch', 'shift', 'smear', 'evenodd', 'inharm'] as const)
+      o.wt.specWarp = { mode: sw, amount: sw === 'off' ? 0 : r(0.1, 0.6) }
+    })
+  }
+
   const tableOpts = [
     ...FACTORY_TABLE_IDS.map(id => ({ value: id, label: FACTORY_TABLE_NAMES[id] || id, group: 'Factory' })),
     ...Object.entries(ctx.patch.userTables).map(([id, t]) => ({ value: id, label: t.name, group: 'User' })),
@@ -130,6 +149,7 @@ export default function OscPanel({ osc: oscProp }: { osc?: number } = {}) {
   return (
     <Section
       title={`Oscillator ${'ABC'[i]}`}
+      dice={dice}
       right={oscProp != null ? undefined : (
         <div style={{ display: 'flex', gap: 4 }}>
           {[0, 1, 2].map(oi => (

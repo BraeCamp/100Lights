@@ -223,6 +223,21 @@ export default function LfoPanel({ visible = 10, onAdd }: { visible?: number; on
               border: '1px solid ' + (k === sel ? 'var(--accent)' : 'var(--border)'),
             }}>{k + 1}</button>
         ))}
+        <button
+          onClick={() => {
+            const n = 3 + Math.floor(Math.random() * 5)
+            const pts = Array.from({ length: n }, (_, k) => ({
+              x: k / (n - 1),
+              y: Math.random(),
+              curve: (Math.random() - 0.5) * 1.2,
+            }))
+            commitPts(pts)
+            ctx.update(p => { p.lfos[sel].syncRate = [7, 9, 11, 13][Math.floor(Math.random() * 4)] })
+          }}
+          data-learn="Dice"
+          title="Roll the dice — random shape and rate for this LFO"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, padding: '0 2px', lineHeight: 1, opacity: 0.7 }}
+        >🎲</button>
         {onAdd && visible < 10 && (
           <button onClick={onAdd} title="Another LFO"
             style={{ width: 24, height: 20, borderRadius: 5, fontSize: 11, fontWeight: 800, cursor: 'pointer', background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px dashed var(--border)' }}>+</button>

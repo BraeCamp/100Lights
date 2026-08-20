@@ -230,6 +230,16 @@ export default function EnvPanel({ visible = 4, onAdd }: { visible?: number; onA
   return (
     <Section
       title="Envelopes"
+      dice={() => {
+        const r = (a: number, b: number) => a + Math.random() * (b - a)
+        ctx.update(p => {
+          const e = p.envs[sel]
+          e.attack = [0.002, 0.002, 0.01, 0.2, 0.6][Math.floor(Math.random() * 5)]
+          e.decay = r(0.1, 1.6)
+          e.sustain = Math.random() < 0.4 ? 0 : r(0.3, 0.9)
+          e.release = r(0.08, 1.4)
+        })
+      }}
       right={
         <div style={{ display: 'flex', gap: 4 }}>
           {[0, 1, 2, 3].filter(i => i < visible).map(i => (
