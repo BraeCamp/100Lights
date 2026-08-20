@@ -90,8 +90,15 @@ function filterLabel(t: string): string {
 function VoiceChain({ playing }: { playing: boolean }) {
   const ctx = useApollo()
   const p = ctx.patch
-  const [open, setOpen] = useState<string>('oscA') // accordion: one open segment
-  const toggleOpen = (id: string) => setOpen(o => (o === id ? '' : id))
+  // multiple segments can be open at once — opening one never closes another
+  const [openSet, setOpenSet] = useState<Set<string>>(() => new Set(['oscA']))
+  const isOpen = (id: string) => openSet.has(id)
+  const toggleOpen = (id: string) => setOpenSet(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
 
   const oscSummary = (i: number) => {
     const o = p.oscs[i]
@@ -114,12 +121,12 @@ function VoiceChain({ playing }: { playing: boolean }) {
           summary={oscSummary(i)}
           enabled={i === 0 ? null : o.enabled}
           onToggle={i === 0 ? undefined : () => ctx.update(pp => { pp.oscs[i].enabled = !pp.oscs[i].enabled })}
-          open={open === `osc${'ABC'[i]}`}
+          open={isOpen(`osc${'ABC'[i]}`)}
           onOpen={() => { ctx.setSelectedOsc(i); toggleOpen(`osc${'ABC'[i]}`) }}
           glowIndex={gi++}
           playing={playing}
         >
-          <OscPanel />
+          <OscPanel osc={i} />
         </Seg>
       ))}
       {nextOsc > 0 && (
@@ -127,7 +134,7 @@ function VoiceChain({ playing }: { playing: boolean }) {
           onClick={() => {
             ctx.update(pp => { pp.oscs[nextOsc].enabled = true })
             ctx.setSelectedOsc(nextOsc)
-            setOpen(`osc${'ABC'[nextOsc]}`)
+            setOpenSet(prev => new Set(prev).add(`osc${'ABC'[nextOsc]}`))
           }}
           title="Another oscillator layer"
           style={{
@@ -138,21 +145,20 @@ function VoiceChain({ playing }: { playing: boolean }) {
       )}
 
       <Seg
-        title="Sub" summary={p.sub.enabled ? `${p.sub.shape} · ${p.sub.octave} oct` : 'off'}
-        enabled={p.sub.enabled}
-        onToggle={() => ctx.update(pp => { pp.sub.enabled = !pp.sub.enabled })}
-        open={open === 'sub'} onOpen={() => toggleOpen('sub')} glowIndex={gi++} playing={playing}
+        title="Sub & Noise"
+        summary={[
+          p.sub.enabled ? `sub: ${p.sub.shape} · ${p.sub.octave} oct` : 'sub off',
+          p.noise.enabled ? `noise: ${p.noise.sampleId ? (ctx.engine.samples.get(p.noise.sampleId)?.name ?? 'sample') : 'no sample yet'}` : 'noise off',
+        ].join('  ·  ')}
+        enabled={p.sub.enabled || p.noise.enabled}
+        onToggle={() => ctx.update(pp => {
+          const any = pp.sub.enabled || pp.noise.enabled
+          if (any) { pp.sub.enabled = false; pp.noise.enabled = false }
+          else pp.sub.enabled = true
+        })}
+        open={isOpen('subnoise')} onOpen={() => toggleOpen('subnoise')} glowIndex={gi++} playing={playing}
       >
-        <SubNoisePanel only="sub" />
-      </Seg>
-
-      <Seg
-        title="Noise" summary={p.noise.enabled ? (p.noise.sampleId ? (ctx.engine.samples.get(p.noise.sampleId)?.name ?? 'sample') : 'no sample yet') : 'off'}
-        enabled={p.noise.enabled}
-        onToggle={() => ctx.update(pp => { pp.noise.enabled = !pp.noise.enabled })}
-        open={open === 'noise'} onOpen={() => toggleOpen('noise')} glowIndex={gi++} playing={playing}
-      >
-        <SubNoisePanel only="noise" />
+        <SubNoisePanel />
       </Seg>
 
       <Seg
@@ -163,7 +169,7 @@ function VoiceChain({ playing }: { playing: boolean }) {
           if (any) pp.filters.forEach(f => { f.enabled = false })
           else pp.filters[0].enabled = true
         })}
-        open={open === 'filter'} onOpen={() => toggleOpen('filter')} glowIndex={gi++} playing={playing}
+        open={isOpen('filter')} onOpen={() => toggleOpen('filter')} glowIndex={gi++} playing={playing}
       >
         <FilterPanel />
       </Seg>
@@ -172,7 +178,7 @@ function VoiceChain({ playing }: { playing: boolean }) {
         title="Arp" summary={p.arp.on ? `${p.arp.mode} · ${p.arp.octaves} oct` : 'off'}
         enabled={p.arp.on}
         onToggle={() => ctx.update(pp => { pp.arp.on = !pp.arp.on })}
-        open={open === 'arp'} onOpen={() => toggleOpen('arp')} glowIndex={gi++} playing={playing}
+        open={isOpen('arp')} onOpen={() => toggleOpen('arp')} glowIndex={gi++} playing={playing}
       >
         <ArpPanel />
       </Seg>
@@ -262,7 +268,18 @@ function Apollo2Inner() {
   const [midiOn, setMidiOn] = useState(false)
   const [midiName, setMidiName] = useState('')
   const [midiAvailable, setMidiAvailable] = useState(false)
-  useEffect(() => { setMidiAvailable(webMidiSupported) }, [])
+  // keyboard pinned = floats fixed at the bottom of the window while you scroll
+  const [kbdPinned, setKbdPinned] = useState(false)
+  useEffect(() => {
+    setMidiAvailable(webMidiSupported)
+    setKbdPinned(localStorage.getItem('apollo2_kbd_pin') === '1')
+  }, [])
+  const togglePin = () => {
+    setKbdPinned(v => {
+      try { localStorage.setItem('apollo2_kbd_pin', v ? '0' : '1') } catch { /* quota */ }
+      return !v
+    })
+  }
   const playing = meters.peak > 0.015
 
   // #9: signal-flow glow keyframes
@@ -364,6 +381,7 @@ function Apollo2Inner() {
         </div>
         <PresetBar />
         <div style={{ flex: 1 }} />
+        {headerBtn('New', () => { window.location.href = '/apollo2/new' }, { title: 'Start fresh — a clean patch and a clean slate' })}
         {headerBtn('↩', () => ctx.undo(), { title: 'Undo (Cmd+Z)' })}
         {headerBtn('↪', () => ctx.redo(), { title: 'Redo (Shift+Cmd+Z)' })}
         {headerBtn(`Movement · ${routeCount}`, () => setMovementOpen(true), { title: 'Everything that moves by itself (the mod matrix)' })}
@@ -400,7 +418,25 @@ function Apollo2Inner() {
       )}
 
       <ModSourcesStrip />
-      <KeyboardStrip />
+      <div style={kbdPinned
+        ? { position: 'fixed', left: 10, right: 10, bottom: 8, zIndex: 350, boxShadow: '0 -8px 30px rgba(0,0,0,0.55)', borderRadius: 10 }
+        : undefined}>
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={togglePin}
+            title={kbdPinned ? 'Unpin the keyboard' : 'Pin the keyboard to the bottom of the window'}
+            style={{
+              position: 'absolute', top: 4, right: 6, zIndex: 5,
+              width: 22, height: 22, borderRadius: 6, cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: 0,
+              background: kbdPinned ? `linear-gradient(180deg, ${UI.blue} 0%, ${UI.blue}cc 100%)` : UI.inset,
+              color: kbdPinned ? '#0b0d10' : UI.dim,
+              border: `1px solid ${kbdPinned ? UI.blue : UI.border}`,
+            }}
+          >📌</button>
+          <KeyboardStrip holdOption />
+        </div>
+      </div>
+      {kbdPinned && <div style={{ height: 120 }} />}
 
       {movementOpen && <MovementDrawer onClose={() => setMovementOpen(false)} />}
       {wtOpen && <WavetableEditor onClose={() => setWtOpen(false)} />}

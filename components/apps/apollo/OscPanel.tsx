@@ -49,9 +49,12 @@ function Stepper({ value, min, max, label, onChange }: { value: number; min: num
   )
 }
 
-export default function OscPanel() {
+// `osc` (optional — Apollo 2's voice chain renders one panel per oscillator):
+// pin the panel to a specific oscillator instead of the shared selection, and
+// hide the A/B/C switcher (each osc has its own chain segment there).
+export default function OscPanel({ osc: oscProp }: { osc?: number } = {}) {
   const ctx = useApollo()
-  const i = ctx.selectedOsc
+  const i = oscProp ?? ctx.selectedOsc
   const osc = ctx.patch.oscs[i]
   const isFmWarp = (m: WarpMode) => m === 'fm' || m === 'am' || m === 'rm'
 
@@ -63,7 +66,7 @@ export default function OscPanel() {
   return (
     <Section
       title={`Oscillator ${'ABC'[i]}`}
-      right={
+      right={oscProp != null ? undefined : (
         <div style={{ display: 'flex', gap: 4 }}>
           {[0, 1, 2].map(oi => (
             <button
@@ -90,7 +93,7 @@ export default function OscPanel() {
             </button>
           ))}
         </div>
-      }
+      )}
     >
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <Sel width={104} value={osc.engine} options={ENGINE_OPTS} onChange={v => {

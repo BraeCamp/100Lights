@@ -38,11 +38,37 @@ function Wheel({ label, value, onChange, spring }: { label: string; value: numbe
   )
 }
 
-export default function KeyboardStrip() {
+// `holdOption` (optional — Apollo 2): adds a HOLD latch — pressed keys keep
+// playing until pressed again, so a sound can be edited while it sustains.
+export default function KeyboardStrip({ holdOption }: { holdOption?: boolean } = {}) {
   const ctx = useApollo()
   const [octave, setOctave] = useState(4) // C4-based QWERTY origin
   const [velocity, setVelocity] = useState(0.9)
   const [sustain, setSustain] = useState(false)
+  const [hold, setHold] = useState(false)
+  const holdRef = useRef(false)
+  const latched = useRef(new Set<number>())
+  // latch toggle: returns true when the event is fully handled by hold mode
+  const holdPress = async (note: number): Promise<boolean> => {
+    if (!holdRef.current) return false
+    await ctx.start()
+    if (latched.current.has(note)) {
+      latched.current.delete(note)
+      ctx.engine.noteOff(note)
+    } else {
+      latched.current.add(note)
+      ctx.engine.noteOn(note, velRef.current)
+    }
+    return true
+  }
+  const setHoldMode = (on: boolean) => {
+    holdRef.current = on
+    setHold(on)
+    if (!on) {
+      for (const n of latched.current) ctx.engine.noteOff(n)
+      latched.current.clear()
+    }
+  }
   const [pitch, setPitch] = useState(0)
   const [mod, setMod] = useState(0)
   const [active, setActive] = useState<Set<number>>(new Set())
@@ -86,6 +112,7 @@ export default function KeyboardStrip() {
       if (note == null) return
       downKeys.current.add(k)
       e.preventDefault()
+      if (await holdPress(note)) return
       await ctx.start()
       ctx.engine.noteOn(note, velRef.current)
     }
@@ -93,6 +120,7 @@ export default function KeyboardStrip() {
       const k = e.key.toLowerCase()
       if (!downKeys.current.has(k)) return
       downKeys.current.delete(k)
+      if (holdRef.current) return // latched — released by pressing again
       const note = noteFor(k)
       if (note != null) ctx.engine.noteOff(note)
     }
@@ -104,6 +132,7 @@ export default function KeyboardStrip() {
   const baseNote = (octave - 1) * 12 + 12 // start display an octave below QWERTY origin
   const numWhite = 22
   const keyDown = async (note: number) => {
+    if (holdRef.current) { void holdPress(note); return }
     await ctx.start()
     if (pointerNote.current === note) return
     if (pointerNote.current >= 0) ctx.engine.noteOff(pointerNote.current)
@@ -131,6 +160,15 @@ export default function KeyboardStrip() {
           <button style={octBtn} onClick={() => setOctave(o => Math.min(7, o + 1))}>+</button>
         </div>
         <ToggleBtn on={sustain} label="Sus" onClick={() => { setSustain(!sustain); ctx.engine.sustain(!sustain) }} />
+        {holdOption && (
+          <ToggleBtn
+            on={hold}
+            label="Hold"
+            accent="#6fd08c"
+            title="Latch keys: pressed notes keep playing until pressed again — tweak the sound while it plays"
+            onClick={() => setHoldMode(!hold)}
+          />
+        )}
         <input
           type="range" min={0.05} max={1} step={0.01} value={velocity} className="cf-slider" style={{ width: 56 }}
           title={`Velocity ${Math.round(velocity * 127)}`}
@@ -146,7 +184,7 @@ export default function KeyboardStrip() {
           {whites.map(note => (
             <div
               key={note}
-              onPointerDown={e => { (e.currentTarget.parentElement?.parentElement as HTMLElement)?.setPointerCapture?.(e.pointerId); void keyDown(note) }}
+              onPointerDown={e => { try { (e.currentTarget.parentElement?.parentElement as HTMLElement)?.setPointerCapture?.(e.pointerId) } catch { /* synthetic events have no live pointer */ } void keyDown(note) }}
               onPointerEnter={e => { if (e.buttons) void keyDown(note) }}
               style={{
                 flex: 1, border: '1px solid #222', borderRadius: '0 0 4px 4px',
