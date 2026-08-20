@@ -14,6 +14,7 @@ interface ProjectSummary {
   name: string
   savedAt: string
   thumbnail: string | null
+  modules?: string[] | null
 }
 
 function ago(iso: string) {
@@ -52,7 +53,7 @@ export default function ContinueRow() {
         {projects.map(p => (
           <Link
             key={p.id}
-            href={`/projects/${p.id}`}
+            href={p.modules?.length === 1 && p.modules[0] === 'apollo' ? `/apollo?session=${p.id}` : `/projects/${p.id}`}
             style={{
               display: 'flex', alignItems: 'center', gap: 11, padding: '11px 13px', borderRadius: 10,
               border: '1px solid var(--border)', background: 'var(--bg-card)', textDecoration: 'none',

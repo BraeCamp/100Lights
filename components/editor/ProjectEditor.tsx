@@ -403,6 +403,13 @@ function ProjectEditorInner({ projectId, projectName, modules: moduleProp, allow
 
     async function applyLoaded(data: CfProjFile) {
       if (!alive) return
+      // Apollo sessions are projects rows too, but they open in the synth —
+      // never in the studio editor (there is nothing here to edit them with).
+      const mods = (data as unknown as { modules?: string[] }).modules
+      if (Array.isArray(mods) && mods.length === 1 && mods[0] === 'apollo') {
+        window.location.replace(`/apollo?session=${projectId}`)
+        return
+      }
       if ((data as CfProjFile & { _isOwner?: boolean })._isOwner === false) setIsOwner(false)
       if ((data as CfProjFile & { _access?: string })._access === 'view') setViewOnly(true)
       setSavedData(data)

@@ -23,6 +23,7 @@ interface CloudSummary {
   slug: string | null
   username: string | null
   folderId: string | null
+  modules: string[] | null
 }
 
 interface FolderRec { id: string; name: string; parentId: string | null; banner: string | null; logo: string | null }
@@ -54,14 +55,17 @@ interface LocalFileHandle {
 
 // One row in the unified list — either a cloud project or a local file.
 type Row =
-  | { source: 'cloud'; key: string; ts: number; name: string; id: string; starred: boolean; clips: number; media: number; thumbnail: string | null; slug: string | null; username: string | null; folderId: string | null }
+  | { source: 'cloud'; key: string; ts: number; name: string; id: string; starred: boolean; clips: number; media: number; thumbnail: string | null; slug: string | null; username: string | null; folderId: string | null; modules: string[] | null }
   | { source: 'local'; key: string; ts: number; name: string; file: LocalFileHandle }
 
 // Link straight to the canonical /@username/slug-code URL so opening a project
 // no longer bounces through /projects/{id} first. Falls back to /projects/{id}
 // when the project has no owner username yet (projectPath handles that).
-const cloudHref = (r: { username: string | null; slug: string | null; id: string }) =>
-  projectPath(r.username, r.slug, r.id)
+const cloudHref = (r: { username: string | null; slug: string | null; id: string; modules?: string[] | null }) =>
+  // Apollo sessions live in the synth, not the studio editor.
+  r.modules?.length === 1 && r.modules[0] === 'apollo'
+    ? `/apollo?session=${r.id}`
+    : projectPath(r.username, r.slug, r.id)
 
 function formatDate(ms: number) {
   if (!ms) return ''
@@ -307,7 +311,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
     // a filed project is still findable from anywhere. Local files aren't folder-able → root only.
     ...cloud
       .filter(p => q ? true : (p.folderId ?? null) === activeFolder)
-      .map((p): Row => ({ source: 'cloud', key: `c:${p.id}`, ts: Date.parse(p.savedAt) || 0, name: p.name, id: p.id, starred: p.starred, clips: p.clips, media: p.media, thumbnail: p.thumbnail, slug: p.slug, username: p.username, folderId: p.folderId })),
+      .map((p): Row => ({ source: 'cloud', key: `c:${p.id}`, ts: Date.parse(p.savedAt) || 0, name: p.name, id: p.id, starred: p.starred, clips: p.clips, media: p.media, thumbnail: p.thumbnail, slug: p.slug, username: p.username, folderId: p.folderId, modules: p.modules })),
     ...(activeFolder === null ? local.map((f): Row => ({ source: 'local', key: `l:${f.name}`, ts: f.modifiedAt ?? 0, name: f.name.replace(/\.(cfproj|zip)$/i, ''), file: f })) : []),
   ]
     .filter(r => !q || r.name.toLowerCase().includes(q))

@@ -11,7 +11,7 @@
 // solid color, File ▾ gathers Export/Import/Bounce/Share, and Random/Mutate
 // live as 🎲 dice on the modules they affect.
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ApolloProvider, useApollo, useMeters, Knob, UI, Section } from '@/components/apps/apollo/ApolloContext'
 import PresetBar from '@/components/apps/apollo/PresetBar'
 import OscPanel from '@/components/apps/apollo/OscPanel'
@@ -32,6 +32,11 @@ import LearnMode from '@/components/apps/apollo/LearnMode'
 import HelpButton from '@/components/apps/apollo/HelpButton'
 import { startWebMidi, onMidiNote, webMidiSupported, getMidiDeviceNames } from '@/lib/web-midi'
 import { startMpe, stopMpe } from '@/lib/apollo/mpe'
+import { initPatch, type ApolloPatch } from '@/lib/apollo/patch'
+import {
+  type SessionMeta, WORKING_COPY_KEY, newSessionId, getCurrent, setCurrent,
+  localPut, saveSession, loadSession, listSessions, renameSession, deleteSession,
+} from '@/lib/apollo/sessions'
 
 type Tab = 'sound' | 'effects' | 'perform'
 const TABS: { id: Tab; label: string }[] = [
@@ -332,6 +337,105 @@ function ApolloInner() {
     else setMidiName('No MIDI access')
   }
 
+  // ── Sessions ────────────────────────────────────────────────────────────
+  // Which saveable session this bench belongs to (a projects row with
+  // modules:['apollo']). Everything autosaves into it; deep links spawn a NEW
+  // session instead of stomping the last one.
+  const [session, setSession] = useState<{ id: string; name: string } | null>(null)
+  const [sessionsOpen, setSessionsOpen] = useState(false)
+  const [sessionList, setSessionList] = useState<SessionMeta[] | null>(null)
+
+  const applyLoadedPatch = useCallback((loaded: Partial<ApolloPatch>) => {
+    const merged = { ...initPatch(), ...loaded } as ApolloPatch
+    ctx.update(p => {
+      for (const key of Object.keys(merged) as (keyof ApolloPatch)[]) {
+        ;(p as unknown as Record<string, unknown>)[key] = merged[key]
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.update])
+
+  useEffect(() => {
+    // Resolve which session this visit is, exactly once on mount.
+    const sp = new URLSearchParams(window.location.search)
+    const deepLink = sp.get('librarySample') || sp.get('communityPatch')
+    const want = sp.get('session')
+    const cur = getCurrent()
+    // Whatever was on the bench gets captured into its session (or rescued as
+    // "Recovered session" from the pre-sessions era) before any switch.
+    const stashBench = () => {
+      try {
+        const raw = localStorage.getItem(WORKING_COPY_KEY)
+        if (!raw) return
+        const patch = JSON.parse(raw) as ApolloPatch
+        if (cur) localPut(cur.id, cur.name, patch)
+        else localPut(newSessionId(), 'Recovered session', patch)
+      } catch { /* corrupt working copy */ }
+    }
+    if (deepLink) {
+      // Library sample / community patch → its own fresh session. The existing
+      // deep-link effects apply the patch async; by then this session is current.
+      stashBench()
+      const meta = { id: newSessionId(), name: sp.get('librarySample') ? 'From library' : 'Community patch' }
+      setCurrent(meta); setSession(meta)
+    } else if (want && want !== cur?.id) {
+      stashBench()
+      void loadSession(want).then(res => {
+        if (res) applyLoadedPatch(res.patch)
+        const meta = { id: want, name: res?.name ?? 'Session' }
+        setCurrent(meta); setSession(meta)
+      })
+    } else if (cur) {
+      setSession(cur)   // the bench already IS this session's live copy
+    } else {
+      const hadBench = !!localStorage.getItem(WORKING_COPY_KEY)
+      const meta = { id: newSessionId(), name: hadBench ? 'Recovered session' : 'Untitled session' }
+      setCurrent(meta); setSession(meta)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Per-session autosave: local always, cloud when signed in (debounced).
+  // An un-renamed session adopts the patch name, so the Sessions list reads
+  // "Warm Keys · Aug 20" instead of a wall of "Untitled session".
+  useEffect(() => {
+    if (!session || ctx.version === 0) return
+    const t = setTimeout(() => {
+      let name = session.name
+      const patchName = ctx.patch.name?.trim()
+      if (name === 'Untitled session' && patchName && patchName !== 'Init' && patchName !== 'Untitled') {
+        name = patchName
+        setCurrent({ id: session.id, name })
+        setSession({ id: session.id, name })
+      }
+      void saveSession(session.id, name, ctx.patch)
+    }, 1500)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.version, session])
+
+  const switchSession = async (m: { id: string; name: string }) => {
+    if (session) void saveSession(session.id, session.name, ctx.patch)
+    const res = await loadSession(m.id)
+    if (res) applyLoadedPatch(res.patch)
+    const meta = { id: m.id, name: res?.name ?? m.name }
+    setCurrent(meta); setSession(meta)
+    window.history.replaceState(null, '', `/apollo?session=${m.id}`)
+    setSessionsOpen(false)
+  }
+  const newSession = () => {
+    if (session) void saveSession(session.id, session.name, ctx.patch)
+    const meta = { id: newSessionId(), name: 'Untitled session' }
+    setCurrent(meta); setSession(meta)
+    applyLoadedPatch(initPatch())
+    window.history.replaceState(null, '', '/apollo')
+    setSessionsOpen(false)
+  }
+  const openSessions = () => {
+    setSessionsOpen(v => !v)
+    if (!sessionsOpen) { setSessionList(null); void listSessions().then(setSessionList) }
+  }
+
   // per-tab layout: ordered specs (id, colSpan, rowSpan|null=auto), persisted.
   // Defaults are packed Serum-dense: sources + filters up top, modulation row
   // beneath, slim macro/scope columns filling the remainder.
@@ -438,7 +542,53 @@ function ApolloInner() {
         </div>
         <PresetBar />
         <div style={{ flex: 1 }} />
-        {headerBtn('New', () => { window.location.href = '/apollo/new' }, { title: 'Start fresh — a clean patch and a clean slate' })}
+        <div style={{ position: 'relative' }}>
+          {headerBtn('Sessions ▾', openSessions, { on: sessionsOpen, title: 'Your saved Apollo sessions — each one keeps its own sound' })}
+          {sessionsOpen && (
+            <div style={{
+              position: 'absolute', top: '110%', right: 0, zIndex: 300, minWidth: 260, maxHeight: 340, overflowY: 'auto',
+              background: UI.panel, border: `1px solid ${UI.borderLight}`, borderRadius: 8, padding: 6,
+              boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+            }}>
+              <button onClick={newSession} style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '7px 9px', borderRadius: 6, cursor: 'pointer',
+                background: UI.header, color: UI.text, border: `1px dashed ${UI.borderLight}`, fontSize: 11, fontWeight: 800, marginBottom: 5,
+              }}>+ New session</button>
+              {sessionList == null && <div style={{ padding: '6px 9px', fontSize: 10.5, color: UI.dim }}>Loading…</div>}
+              {sessionList?.length === 0 && <div style={{ padding: '6px 9px', fontSize: 10.5, color: UI.dim }}>No saved sessions yet — everything you do here autosaves into this one.</div>}
+              {sessionList?.map(m => (
+                <div key={m.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '5px 7px', borderRadius: 6,
+                  background: m.id === session?.id ? UI.header : 'transparent',
+                }}>
+                  <button data-session-id={m.id} onClick={() => { void switchSession(m) }} style={{
+                    flex: 1, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: UI.text,
+                    fontSize: 11.5, fontWeight: m.id === session?.id ? 800 : 500, padding: 0, minWidth: 0,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {m.name}
+                    <span style={{ color: UI.dim, fontWeight: 400, marginLeft: 7, fontSize: 9.5 }}>
+                      {new Date(m.savedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}{m.cloud ? ' · ☁' : ''}
+                    </span>
+                  </button>
+                  <button title="Rename session" onClick={() => {
+                    const name = window.prompt('Session name:', m.name)?.trim()
+                    if (!name) return
+                    void renameSession(m.id, name)
+                    setSessionList(list => list?.map(s => (s.id === m.id ? { ...s, name } : s)) ?? null)
+                    if (m.id === session?.id) setSession({ id: m.id, name })
+                  }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: UI.dim, fontSize: 11, padding: 1 }}>✎</button>
+                  <button title="Delete session" onClick={() => {
+                    if (!window.confirm(`Delete "${m.name}"?`)) return
+                    void deleteSession(m.id)
+                    setSessionList(list => list?.filter(s => s.id !== m.id) ?? null)
+                  }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: UI.dim, fontSize: 11, padding: 1 }}>🗑</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {headerBtn('New', newSession, { title: 'Start fresh — a clean patch in its own new session' })}
         {headerBtn('↩', () => ctx.undo(), { title: 'Undo (Cmd+Z)' })}
         {headerBtn('↪', () => ctx.redo(), { title: 'Redo (Shift+Cmd+Z)' })}
         {headerBtn(`Movement · ${routeCount}`, () => setMovementOpen(true), { title: 'Everything that moves by itself (the mod matrix)' })}

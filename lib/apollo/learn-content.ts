@@ -130,6 +130,8 @@ export const LEARN_ENTRIES: LearnEntry[] = [
     'Engine-wide settings: [[polyphony]], [[mono|voice mode]], [[glide]], [[pitch-bend|bend range]], [[oversampling|quality]], scale lock and [[tuning|microtuning]].', ['global tab', 'global']),
   E('preset', 'Presets', 'Saved sounds — browse with the arrows, save your own.',
     'A preset is a complete saved patch: every knob, route and effect. Browse factory and saved sounds with the ◀ ▶ arrows, type a name and Save to keep your own, or Share to publish it (with an audio preview) to the Community.', ['presets', 'save', 'preset name']),
+  E('session', 'Sessions', 'Saveable workspaces — each keeps its own sound and history.',
+    'A session is a whole Apollo workspace saved as one of your projects: the current [[preset|patch]], every route and effect, autosaved as you work. Sessions ▾ lists them all — open one, rename it, or start a New session without losing the last one. Signed in, sessions sync to your account and appear on the Projects page; signed out they live in this browser.', ['sessions', 'sessions ▾', 'new session', 'untitled session']),
   E('init', 'Init', 'Resets the synth to a clean starting patch.',
     'Init(ialize) wipes the current sound back to a simple single-oscillator starting point — the blank canvas for designing from scratch. Your previous state stays in undo.'),
   E('randomize', 'Random', 'Rolls dice on the core parameters for a surprise patch.',
