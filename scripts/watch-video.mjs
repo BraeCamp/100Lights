@@ -195,9 +195,14 @@ if (vtt) {
       .replace(/\s+/g, ' ')
       .trim()
     if (!text || text === last) continue
-    // rolling captions repeat the previous line as their first half — trim overlap
+    // rolling captions repeat the previous cue's TAIL as their prefix — trim
+    // the largest suffix of `last` that this cue restates
     let clean = text
-    if (last && text.startsWith(last)) clean = text.slice(last.length).trim()
+    if (last) {
+      for (let n = Math.min(last.length, text.length); n >= 8; n--) {
+        if (text.startsWith(last.slice(last.length - n))) { clean = text.slice(n).trim(); break }
+      }
+    }
     last = text
     if (clean) out.push(`[${fmtT(t)}] ${clean}`)
   }
