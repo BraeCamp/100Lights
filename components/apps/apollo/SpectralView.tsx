@@ -140,7 +140,7 @@ export default function SpectralView() {
             ctx.update(p => { p.oscs[i].spec.filterCurve = c })
           }
         }}
-        style={{ width: '100%', height: 140, display: 'block', borderRadius: 8, border: '1px solid var(--border)', cursor: 'crosshair', touchAction: 'none' }}
+        style={{ width: '100%', height: 140, display: 'block', borderRadius: 8, cursor: 'crosshair', touchAction: 'none' }}
         title="Draw the spectral filter curve"
       />
       <SamplePicker oscIndex={i} target="spec" />

@@ -252,13 +252,13 @@ export default function LfoPanel({ visible = 10, onAdd }: { visible?: number; on
         )}
       </div>
       {cfg.mode === 'chaos'
-        ? <canvas ref={scopeRef} style={{ width: '100%', height: 110, display: 'block', borderRadius: 8, border: '1px solid var(--border)' }} />
+        ? <canvas ref={scopeRef} style={{ width: '100%', height: 110, display: 'block', borderRadius: 8 }} />
         : (
           <>
             <canvas
               ref={canvasRef}
               onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
-              style={{ width: '100%', height: 110, display: 'block', borderRadius: 8, border: '1px solid var(--border)', cursor: 'crosshair', touchAction: 'none' }}
+              style={{ width: '100%', height: 110, display: 'block', borderRadius: 8, cursor: 'crosshair', touchAction: 'none' }}
               title="Drag points • double-click adds/removes • drag a segment to curve it"
             />
             {isPath && <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Path mode: this curve is the X output (LFO {sel + 1}); its mirrored Y is available as source “LFO {sel + 1} Y”.</div>}

@@ -366,7 +366,7 @@ function EqGraph({ unit }: { unit: FxUnit }) {
       ref={canvasRef}
       data-learn="EQ curve"
       title="Drag a handle: left/right = frequency, up/down = gain · scroll over a handle = Q"
-      style={{ width: '100%', maxWidth: W, height: H, borderRadius: 6, border: '1px solid var(--border)', touchAction: 'none', cursor: 'crosshair' }}
+      style={{ width: '100%', maxWidth: W, height: H, borderRadius: 6, touchAction: 'none', cursor: 'crosshair' }}
       onPointerDown={e => {
         const r = e.currentTarget.getBoundingClientRect()
         const x = (e.clientX - r.left) / r.width

@@ -12,7 +12,7 @@
 // live as 🎲 dice on the modules they affect.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ApolloProvider, useApollo, useMeters, Knob, UI, Section } from '@/components/apps/apollo/ApolloContext'
+import { ApolloProvider, useApollo, useMeters, Knob, UI, Section, ToggleBtn } from '@/components/apps/apollo/ApolloContext'
 import PresetBar from '@/components/apps/apollo/PresetBar'
 import OscPanel from '@/components/apps/apollo/OscPanel'
 import SubNoisePanel from '@/components/apps/apollo/SubNoisePanel'
@@ -204,9 +204,8 @@ export function MacrosBlock() {
             onCommit={() => ctx.commit()}
           />
         ))}
-        {named.length === 0 && (
-          <span style={{ fontSize: 10.5, color: UI.dim }}>No performance knobs yet — add one, then point it at anything via its ring or the Movement list.</span>
-        )}
+        {/* quiet empty state: the + carries the hint; details live in Learn mode */}
+        {named.length === 0 && <span style={{ fontSize: 10.5, color: UI.dim, opacity: 0.6 }}>—</span>}
         {free >= 0 && (
           <button
             onClick={() => {
@@ -253,6 +252,28 @@ function MovementDrawer({ onClose }: { onClose: () => void }) {
 }
 
 // ── Shell ───────────────────────────────────────────────────────────────────
+// The shared header readout: mirrors whatever control is being hovered or
+// dragged ("CUTOFF · 0.80"), Serum-style, so knobs themselves only need one
+// line of text.
+function HeaderReadout() {
+  const [text, setText] = useState('')
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent).detail as { label: string; value: string } | null
+      setText(d ? `${d.label} · ${d.value}` : '')
+    }
+    window.addEventListener('apollo-readout', on)
+    return () => window.removeEventListener('apollo-readout', on)
+  }, [])
+  return (
+    <span style={{
+      minWidth: 130, textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: 0.6,
+      color: UI.dim, textTransform: 'uppercase', fontVariantNumeric: 'tabular-nums',
+      overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+    }}>{text}</span>
+  )
+}
+
 function ApolloInner() {
   const ctx = useApollo()
   const meters = useMeters()
@@ -264,6 +285,7 @@ function ApolloInner() {
   const [midiAvailable, setMidiAvailable] = useState(false)
   const [mpeOn, setMpeOn] = useState(false)
   const [kbdPinned, setKbdPinned] = useState(false)
+  const [inputOpen, setInputOpen] = useState(false)
   useEffect(() => {
     setMidiAvailable(webMidiSupported)
     setKbdPinned(localStorage.getItem('apollo2_kbd_pin') === '1')
@@ -481,7 +503,7 @@ function ApolloInner() {
   }
 
   const PANEL_RENDER: Record<string, React.ReactNode> = {
-    osc: <OscPanel />,
+    osc: <OscPanel onOpenWt={() => setWtOpen(true)} />,
     env: <EnvPanel visible={envVisible} onAdd={() => setExtraEnvs(n => Math.min(3, Math.max(n + 1, envVisible)))} />,
     subnoise: <SubNoisePanel />,
     filters: <FilterPanel />,
@@ -559,6 +581,7 @@ function ApolloInner() {
         </div>
         <PresetBar />
         <div style={{ flex: 1 }} />
+        <HeaderReadout />
         <div style={{ position: 'relative' }}>
           {headerBtn('Sessions ▾', openSessions, { on: sessionsOpen, title: 'Your saved Apollo sessions — each one keeps its own sound' })}
           {sessionsOpen && (
@@ -609,9 +632,21 @@ function ApolloInner() {
         {headerBtn('↩', () => ctx.undo(), { title: 'Undo (Cmd+Z)' })}
         {headerBtn('↪', () => ctx.redo(), { title: 'Redo (Shift+Cmd+Z)' })}
         {headerBtn(`Movement · ${routeCount}`, () => setMovementOpen(true), { title: 'Everything that moves by itself (the mod matrix)' })}
-        {headerBtn('WT', () => setWtOpen(true), { title: 'Wavetable editor' })}
-        {midiAvailable && headerBtn('MIDI', () => { void enableMidi() }, { on: midiOn && !mpeOn, title: midiName || 'Connect a MIDI keyboard' })}
-        {midiAvailable && headerBtn('MPE', () => { void toggleMpe() }, { on: mpeOn, title: 'MPE mode: per-note pitch bend + pressure (Seaboard, Linnstrument…)' })}
+        {midiAvailable && (
+          <div style={{ position: 'relative' }}>
+            {headerBtn('⌨ Input ▾', () => setInputOpen(o => !o), { on: inputOpen || midiOn || mpeOn, title: 'Hardware input — MIDI keyboards and MPE controllers' })}
+            {inputOpen && (
+              <div style={{
+                position: 'absolute', top: '110%', right: 0, zIndex: 300, minWidth: 190,
+                background: UI.panel, border: `1px solid ${UI.borderLight}`, borderRadius: 8, padding: 6,
+                display: 'flex', flexDirection: 'column', gap: 5, boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+              }}>
+                <ToggleBtn on={midiOn && !mpeOn} label={midiOn && !mpeOn ? `MIDI · ${midiName || 'on'}` : 'MIDI keyboard'} title={midiName || 'Connect a MIDI keyboard'} onClick={() => { void enableMidi() }} />
+                <ToggleBtn on={mpeOn} label="MPE controller" title="Per-note pitch bend + pressure (Seaboard, Linnstrument…)" onClick={() => { void toggleMpe() }} />
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <Knob path="global.masterGain" label="Main" size={30} />
           <div title="Output level" style={{ width: 7, height: 30, background: UI.inset, border: `1px solid ${UI.border}`, borderRadius: 3, overflow: 'hidden', position: 'relative' }}>

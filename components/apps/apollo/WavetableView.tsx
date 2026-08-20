@@ -142,7 +142,7 @@ export default function WavetableView() {
   return (
     <canvas
       ref={canvasRef}
-      style={{ width: '100%', height: 150, display: 'block', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, cursor: 'ns-resize', touchAction: 'none' }}
+      style={{ width: '100%', height: 150, display: 'block', background: 'var(--bg-surface)', borderRadius: 8, cursor: 'ns-resize', touchAction: 'none' }}
       title="Drag vertically to scrub wavetable position"
     />
   )

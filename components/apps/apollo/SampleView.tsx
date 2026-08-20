@@ -195,7 +195,7 @@ export default function SampleView() {
         ref={canvasRef}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
         onContextMenu={onContextMenu}
-        style={{ width: '100%', height: 120, display: 'block', borderRadius: 8, border: '1px solid var(--border)', cursor: drag ? 'ew-resize' : 'crosshair', touchAction: 'none' }}
+        style={{ width: '100%', height: 120, display: 'block', borderRadius: 8, cursor: drag ? 'ew-resize' : 'crosshair', touchAction: 'none' }}
         title="Drag markers • Alt-click adds slice • right-click removes slice"
       />
       <SamplePicker oscIndex={i} target="smp" />

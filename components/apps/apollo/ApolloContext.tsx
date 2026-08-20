@@ -391,6 +391,15 @@ export function applyApolloTheme(theme: ApolloTheme): void {
   Object.assign(UI, DEFAULT_UI, theme)
 }
 
+// Shared readout: any control can broadcast "label · value" to the header
+// (the Serum-style single readout — knobs show their value in place on hover,
+// and this mirrors it somewhere fixed so long drags stay readable).
+export function readout(label: string | null, value?: string) {
+  try {
+    window.dispatchEvent(new CustomEvent('apollo-readout', { detail: label == null ? null : { label, value: value ?? '' } }))
+  } catch { /* SSR */ }
+}
+
 export function Section({ title, right, led, dice, children, style }: { title: string; right?: React.ReactNode; led?: boolean; dice?: () => void; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={{
@@ -516,6 +525,7 @@ export function Knob(props: KnobProps) {
   const [dragOver, setDragOver] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [hovered, setHovered] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
 
   // Apollo 2 quick-mod: create a modulation route from the destination side —
@@ -587,9 +597,11 @@ export function Knob(props: KnobProps) {
     if (myRoutes.length && dist > rect.width / 2 - 6.5) {
       ringRef.current = { y: e.clientY, amt: myRoutes[0].amount, id: myRoutes[0].id }
       setRingAmt(myRoutes[0].amount)
+      setDragging(true)
       return
     }
     dragRef.current = { y: e.clientY, v: toNorm(val) }
+    setDragging(true)
   }
   const onPointerMove = (e: React.PointerEvent) => {
     // self-heal: pointermove fires on plain hover too — if the button is no
@@ -609,9 +621,12 @@ export function Knob(props: KnobProps) {
     if (!dragRef.current) return
     const dy = dragRef.current.y - e.clientY
     const fine = e.shiftKey ? 0.25 : 1
-    apply(fromNorm(Math.min(1, Math.max(0, dragRef.current.v + dy / 150 * fine))))
+    const nv = fromNorm(Math.min(1, Math.max(0, dragRef.current.v + dy / 150 * fine)))
+    apply(nv)
+    readout(props.label, fmtFn(nv))
   }
   const onPointerUp = () => {
+    setDragging(false)
     if (ringRef.current) {
       ringRef.current = null
       setRingAmt(null)
@@ -655,8 +670,8 @@ export function Knob(props: KnobProps) {
       data-learn={props.label}
       title={props.path ? `${props.label} — drag to change, double-click resets, right-click for MIDI${routes.length ? `; ring drag edits ${routes[0].source} amount` : ''}` : props.label}
       onContextMenu={props.path ? (e => { e.preventDefault(); setMenuOpen(o => !o) }) : undefined}
-      onMouseEnter={ctx?.quickMod ? () => setHovered(true) : undefined}
-      onMouseLeave={ctx?.quickMod ? () => { setHovered(false); setQuickOpen(false) } : undefined}
+      onMouseEnter={() => { setHovered(true); readout(props.label, fmtFn(val)) }}
+      onMouseLeave={() => { setHovered(false); setQuickOpen(false); readout(null) }}
     >
       {ctx?.quickMod && props.path && hovered && (
         <button
@@ -735,8 +750,14 @@ export function Knob(props: KnobProps) {
         {routes.length > 0 && <circle cx={size - 5} cy={5} r={3} fill={UI.green} opacity={0.9} />}
         {midiCc != null && <circle cx={5} cy={5} r={3} fill={UI.yellow} opacity={0.9} />}
       </svg>
-      <div style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: 0.7, textTransform: 'uppercase', color: UI.dim, whiteSpace: 'nowrap', maxWidth: size + 20, overflow: 'hidden', textOverflow: 'ellipsis' }}>{props.label}</div>
-      <div style={{ fontSize: 8.5, color: UI.text, fontVariantNumeric: 'tabular-nums', opacity: 0.85 }}>{fmtFn(val)}</div>
+      {/* one line, not two: the label rests, the VALUE takes its place only
+          while the knob is hovered or dragged (plus the shared header readout) */}
+      <div style={{
+        fontSize: 8.5, fontWeight: 700, letterSpacing: 0.7, textTransform: 'uppercase',
+        color: hovered || dragging ? UI.text : UI.dim,
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap', maxWidth: size + 20, overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>{hovered || dragging ? fmtFn(val) : props.label}</div>
     </div>
   )
 }

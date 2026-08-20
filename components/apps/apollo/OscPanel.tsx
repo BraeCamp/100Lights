@@ -108,7 +108,7 @@ function SpectralBands({ oscIndex }: { oscIndex: number }) {
       ref={canvasRef}
       data-learn="Spectral bands"
       title="The frame's harmonics — amber shows how the spectral warp reshapes them"
-      style={{ width: '100%', height: H, borderRadius: 6, border: '1px solid var(--border)' }}
+      style={{ width: '100%', height: H, borderRadius: 6 }}
     />
   )
 }
@@ -116,7 +116,7 @@ function SpectralBands({ oscIndex }: { oscIndex: number }) {
 // `osc` (optional — Apollo 2's voice chain renders one panel per oscillator):
 // pin the panel to a specific oscillator instead of the shared selection, and
 // hide the A/B/C switcher (each osc has its own chain segment there).
-export default function OscPanel({ osc: oscProp }: { osc?: number } = {}) {
+export default function OscPanel({ osc: oscProp, onOpenWt }: { osc?: number; onOpenWt?: () => void } = {}) {
   const ctx = useApollo()
   const i = oscProp ?? ctx.selectedOsc
   const osc = ctx.patch.oscs[i]
@@ -152,6 +152,9 @@ export default function OscPanel({ osc: oscProp }: { osc?: number } = {}) {
       dice={dice}
       right={oscProp != null ? undefined : (
         <div style={{ display: 'flex', gap: 4 }}>
+          {onOpenWt && (
+            <ToggleBtn on={false} label="WT" title="Wavetable editor — draw and edit this oscillator's frames" onClick={onOpenWt} />
+          )}
           {[0, 1, 2].map(oi => (
             <button
               key={oi}

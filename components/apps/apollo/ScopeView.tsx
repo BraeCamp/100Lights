@@ -79,7 +79,7 @@ export default function ScopeView() {
         </div>
       }
     >
-      <canvas ref={canvasRef} style={{ width: '100%', height: 110, display: 'block', borderRadius: 8, border: `1px solid ${UI.border}` }} />
+      <canvas ref={canvasRef} style={{ width: '100%', height: 110, display: 'block', borderRadius: 8 }} />
     </Section>
   )
 }

@@ -117,7 +117,7 @@ function FilterResponse({ fi }: { fi: 0 | 1 }) {
       ref={canvasRef}
       data-learn="Filter display"
       title="The filter's frequency response — drag: left/right = cutoff, up/down = resonance"
-      style={{ width: '100%', height: H, borderRadius: 6, border: `1px solid ${UI.border}`, touchAction: 'none', cursor: 'crosshair' }}
+      style={{ width: '100%', height: H, borderRadius: 6, touchAction: 'none', cursor: 'crosshair' }}
       onPointerDown={e => { dragging.current = true; e.currentTarget.setPointerCapture?.(e.pointerId); apply(e) }}
       onPointerMove={apply}
       onPointerUp={() => { if (dragging.current) { dragging.current = false; ctx.commit() } }}

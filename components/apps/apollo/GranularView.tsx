@@ -120,7 +120,7 @@ export default function GranularView() {
       <canvas
         ref={canvasRef}
         onPointerDown={onCanvasDown}
-        style={{ width: '100%', height: 110, display: 'block', borderRadius: 8, border: '1px solid var(--border)', cursor: 'crosshair', touchAction: 'none' }}
+        style={{ width: '100%', height: 110, display: 'block', borderRadius: 8, cursor: 'crosshair', touchAction: 'none' }}
         title="Click to set grain position"
       />
       <SamplePicker oscIndex={i} target="gran" />
@@ -139,7 +139,7 @@ export default function GranularView() {
           onChange={v => ctx.setParam(`osc${i}.gran.windowSkew`, v)} onCommit={() => ctx.commit()} />
         <Knob label="Win Amt" size={34} min={0} max={1} def={1} value={cfg.windowAmount}
           onChange={v => ctx.setParam(`osc${i}.gran.windowAmount`, v)} onCommit={() => ctx.commit()} />
-        <canvas ref={winRef} style={{ width: 70, height: 36, borderRadius: 6, border: '1px solid var(--border)' }} />
+        <canvas ref={winRef} style={{ width: 70, height: 36, borderRadius: 6 }} />
         <Sel width={64} value={cfg.direction} options={[
           { value: 'fwd', label: 'Fwd' }, { value: 'rev', label: 'Rev' }, { value: 'alt', label: 'Alt' },
         ]} onChange={v => ctx.update(p => { p.oscs[i].gran.direction = v as typeof cfg.direction })} />

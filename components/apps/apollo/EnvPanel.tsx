@@ -251,7 +251,7 @@ export default function EnvPanel({ visible = 4, onAdd }: { visible?: number; onA
     >
       <canvas
         ref={canvasRef}
-        style={{ width: '100%', maxWidth: W, height: H, touchAction: 'none', cursor: 'crosshair', background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border)' }}
+        style={{ width: '100%', maxWidth: W, height: H, touchAction: 'none', cursor: 'crosshair', background: 'var(--bg-surface)', borderRadius: 8 }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
