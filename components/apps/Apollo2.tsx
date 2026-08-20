@@ -79,10 +79,12 @@ function Module({ spec, onSpan, onDropBefore, children }: {
   const [dragOver, setDragOver] = useState(false)
   const resizeRef = useRef<{ mode: 'w' | 'wh' | 'h'; x: number; y: number; cols: number; rows: number } | null>(null)
 
-  // auto height: measure content → row span (rows pack densely, no dead space)
+  // Content height is ALWAYS measured (even with a manual row span): it is the
+  // hard floor for the module's height, so a module can never be dragged short
+  // enough to need internal scrolling — content shows in full, period.
   useEffect(() => {
     const el = innerRef.current
-    if (!el || spec.rows != null) return
+    if (!el) return
     const ro = new ResizeObserver(() => {
       const h = el.offsetHeight
       const rows = Math.max(6, Math.ceil((h + GAP) / (ROW_UNIT + GAP)))
@@ -90,9 +92,9 @@ function Module({ spec, onSpan, onDropBefore, children }: {
     })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [spec.rows])
+  }, [])
 
-  const rows = spec.rows ?? autoRows
+  const rows = Math.max(spec.rows ?? 0, autoRows)
   const colPx = () => {
     const parent = boxRef.current?.parentElement
     if (!parent) return 100
@@ -154,7 +156,7 @@ function Module({ spec, onSpan, onDropBefore, children }: {
         gridRow: `span ${rows}`,
         minWidth: 0,
         display: 'flex', flexDirection: 'column',
-        overflow: spec.rows != null ? 'auto' : 'visible',
+        overflow: 'visible',
         outline: dragOver ? `2px solid ${UI.blue}` : 'none',
         borderRadius: 8,
         ['--ap-grip-pad' as string]: '13px',
@@ -171,7 +173,7 @@ function Module({ spec, onSpan, onDropBefore, children }: {
           color: UI.dim, fontSize: 10, lineHeight: 1, userSelect: 'none', padding: '1px 2px',
         }}
       >⠿</span>
-      <div ref={innerRef} style={{ display: 'flex', flexDirection: 'column', minHeight: spec.rows != null ? '100%' : undefined }}>
+      <div ref={innerRef} style={{ display: 'flex', flexDirection: 'column' }}>
         {children}
       </div>
       {handle('w', { top: 0, bottom: 0, right: -4, width: 8, cursor: 'ew-resize' })}
