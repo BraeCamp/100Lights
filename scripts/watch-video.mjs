@@ -77,6 +77,9 @@ fs.mkdirSync(framesDir, { recursive: true })
 fs.mkdirSync(sheetsDir, { recursive: true })
 
 // ── 1. download (or use local file) ─────────────────────────────────────────
+// Prefer the pipx build (yt-dlp[curl-cffi]) — YouTube 403s plain clients on
+// many videos; the impersonation-capable build sails through.
+const YTDLP = [path.join(os.homedir(), '.local/bin/yt-dlp'), '/opt/homebrew/bin/yt-dlp', 'yt-dlp'].find(f => f === 'yt-dlp' || fs.existsSync(f))
 let videoFile
 let info = null
 if (isUrl) {
@@ -86,7 +89,7 @@ if (isUrl) {
     // a failed subtitle fetch (rate limits on secondary langs) must not kill
     // the run — as long as the video landed, keep going
     try {
-      execFileSync('yt-dlp', [
+      execFileSync(YTDLP, [
         '-f', `bv*[height<=${HEIGHT}]+ba/b[height<=${HEIGHT}]`,
         '--merge-output-format', 'mp4',
         '--write-info-json',
