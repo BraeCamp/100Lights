@@ -27,6 +27,7 @@ import KeyboardStrip from '@/components/apps/apollo/KeyboardStrip'
 import WavetableEditor from '@/components/apps/apollo/WavetableEditor'
 import ScopeView from '@/components/apps/apollo/ScopeView'
 import LearnMode from '@/components/apps/apollo/LearnMode'
+import HelpButton from '@/components/apps/apollo/HelpButton'
 import { startWebMidi, onMidiNote, onMidiCC, webMidiSupported, getMidiDeviceNames } from '@/lib/web-midi'
 import { startMpe, stopMpe } from '@/lib/apollo/mpe'
 
@@ -293,7 +294,8 @@ function ApolloInner() {
               }} />
             </div>
           </div>
-          {/* Learn mode — top-right corner: magnifier cursor + description cards */}
+          {/* Help + Learn mode — top-right corner */}
+          <HelpButton onShowTab={t => setTab(t)} />
           <LearnMode />
         </div>
 
