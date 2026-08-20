@@ -104,6 +104,7 @@ function FilterResponse({ fi }: { fi: 0 | 1 }) {
 
   const apply = (e: React.PointerEvent) => {
     if (!dragging.current) return
+    if (e.type === 'pointermove' && e.buttons === 0) { dragging.current = false; ctx.commit(); return }
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect()
     const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
     const y = Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height))
@@ -120,6 +121,7 @@ function FilterResponse({ fi }: { fi: 0 | 1 }) {
       onPointerDown={e => { dragging.current = true; e.currentTarget.setPointerCapture?.(e.pointerId); apply(e) }}
       onPointerMove={apply}
       onPointerUp={() => { if (dragging.current) { dragging.current = false; ctx.commit() } }}
+      onPointerCancel={() => { if (dragging.current) { dragging.current = false; ctx.commit() } }}
     />
   )
 }

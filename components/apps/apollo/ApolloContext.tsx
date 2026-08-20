@@ -552,7 +552,10 @@ export function Knob(props: KnobProps) {
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button === 2) return
     e.preventDefault()
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    // capture on the SVG itself — e.target is an inner path that React
+    // replaces as the arc redraws, which silently kills the capture and
+    // leaves the drag stuck "held" after the mouse is released
+    try { (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId) } catch { /* synthetic */ }
     // grabbing the outer arc of a modulated knob edits the mod AMOUNT
     const svgEl = e.currentTarget as SVGSVGElement
     const rect = svgEl.getBoundingClientRect()
@@ -568,6 +571,12 @@ export function Knob(props: KnobProps) {
     dragRef.current = { y: e.clientY, v: toNorm(val) }
   }
   const onPointerMove = (e: React.PointerEvent) => {
+    // self-heal: pointermove fires on plain hover too — if the button is no
+    // longer down but a drag ref survived (lost capture), end the drag now
+    if (e.buttons === 0) {
+      if (dragRef.current || ringRef.current) onPointerUp()
+      return
+    }
     if (ringRef.current && ctx) {
       const dy = ringRef.current.y - e.clientY
       const amt = Math.min(1, Math.max(-1, ringRef.current.amt + dy / 120 * (e.shiftKey ? 0.25 : 1)))
@@ -674,6 +683,7 @@ export function Knob(props: KnobProps) {
       <svg
         width={size} height={size}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp} onLostPointerCapture={onPointerUp}
         onDoubleClick={() => { apply(defaultValue); if (props.path && ctx) ctx.commit(); props.onCommit?.() }}
         style={{ cursor: 'ns-resize', touchAction: 'none', outline: dragOver ? `2px solid ${UI.blue}` : 'none', borderRadius: '50%' }}
       >

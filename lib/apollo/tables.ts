@@ -360,3 +360,70 @@ export function tableFromBase64(b64: string): Float32Array {
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i)
   return new Float32Array(u8.buffer)
 }
+
+
+// ── Harmonic view helpers (the spectral-bands visual) ────────────────────────
+// Magnitude spectrum of one (interpolated) wavetable frame, and a client-side
+// mirror of the engine's spectral-warp magnitude math so the UI can preview
+// exactly how a warp reshapes the harmonics.
+
+function frameWave(data: Float32Array, frames: number, framePos: number): Float32Array {
+  const out = new Float32Array(WT_LEN)
+  const fp = Math.max(0, Math.min(frames - 1, framePos))
+  const f0 = Math.floor(fp)
+  const ff = fp - f0
+  const b0 = f0 * WT_LEN, b1 = Math.min(f0 + 1, frames - 1) * WT_LEN
+  for (let i = 0; i < WT_LEN; i++) out[i] = data[b0 + i] * (1 - ff) + data[b1 + i] * ff
+  return out
+}
+
+/** First `bins` harmonic magnitudes of the frame at `framePos` (normalized to peak 1). */
+export function frameHarmonics(data: Float32Array, frames: number, framePos: number, bins = 96): Float32Array {
+  const wave = frameWave(data, frames, framePos)
+  const re = new Float32Array(WT_LEN)
+  const im = new Float32Array(WT_LEN)
+  re.set(wave)
+  fftRadix2(re, im, false)
+  const out = new Float32Array(bins)
+  let peak = 1e-9
+  for (let k = 1; k <= bins; k++) {
+    out[k - 1] = Math.hypot(re[k], im[k])
+    if (out[k - 1] > peak) peak = out[k - 1]
+  }
+  for (let k = 0; k < bins; k++) out[k] /= peak
+  return out
+}
+
+function hRand(k: number): number { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x) }
+
+/** Preview of the engine's spectral warp, applied to a magnitude array. */
+export function warpHarmonics(mags: Float32Array, mode: string, amt: number): Float32Array {
+  const H = mags.length
+  const out = new Float32Array(H)
+  const src = (k: number) => (k >= 1 && k <= H ? mags[k - 1] : 0)
+  for (let k = 1; k <= H; k++) {
+    if (mode === 'stretch') {
+      const f = 1 + amt * 1.5
+      const sk = k / f
+      const k0 = Math.floor(sk), kf = sk - k0
+      out[k - 1] = src(k0) * (1 - kf) + src(k0 + 1) * kf
+    } else if (mode === 'shift') {
+      out[k - 1] = src(k - Math.round(amt * 48))
+    } else if (mode === 'smear') {
+      const w = Math.max(1, Math.round(amt * 14))
+      let sum = 0, cnt = 0
+      for (let j = -w; j <= w; j++) { const kk = k + j; if (kk >= 1 && kk <= H) { sum += src(kk); cnt++ } }
+      out[k - 1] = sum / cnt
+    } else if (mode === 'lowpass') {
+      const keep = Math.max(1, Math.round(Math.pow(1 - amt, 2) * 1024))
+      out[k - 1] = k <= keep ? src(k) : 0
+    } else if (mode === 'evenodd') {
+      out[k - 1] = src(k) * (k % 2 === 0 ? (1 - amt) : (1 + amt * 0.4))
+    } else if (mode === 'inharm') {
+      out[k - 1] = src(k + Math.round((hRand(k) - 0.5) * 2 * amt * Math.min(12, k * 0.5)))
+    } else {
+      out[k - 1] = src(k)
+    }
+  }
+  return out
+}

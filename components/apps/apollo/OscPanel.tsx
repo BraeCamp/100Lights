@@ -2,11 +2,11 @@
 // One oscillator strip (A/B/C tabs): engine selector, common voicing
 // controls, and the per-engine editor view.
 
-import React from 'react'
+import React, { useCallback, useEffect, useRef } from 'react'
 import { useApollo, Knob, Sel, Section, ToggleBtn, UI } from './ApolloContext'
 import { WARP_MODES, OscEngine, UnisonMode, SourceDest, BusDest, WarpMode , SpecWarpMode } from '@/lib/apollo/patch'
-import { FACTORY_TABLE_IDS, FACTORY_TABLE_NAMES } from '@/lib/apollo/tables'
-import WavetableView from './WavetableView'
+import { FACTORY_TABLE_IDS, FACTORY_TABLE_NAMES, frameHarmonics, warpHarmonics } from '@/lib/apollo/tables'
+import WavetableView, { getTableData } from './WavetableView'
 import SampleView from './SampleView'
 import GranularView from './GranularView'
 import SpectralView from './SpectralView'
@@ -46,6 +46,70 @@ function Stepper({ value, min, max, label, onChange }: { value: number; min: num
       </div>
       <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{label}</span>
     </div>
+  )
+}
+
+// ── Spectral bands: the current frame's harmonics as bars, with the spectral
+// warp's reshaping previewed live (dim = original, bright = after the warp).
+function SpectralBands({ oscIndex }: { oscIndex: number }) {
+  const ctx = useApollo()
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const W = 300, H = 54
+
+  const draw = useCallback(() => {
+    const cv = canvasRef.current
+    if (!cv) return
+    const cfg = ctx.patch.oscs[oscIndex]
+    const tbl = getTableData(ctx.patch, cfg.wt.tableId)
+    const dpr = window.devicePixelRatio || 1
+    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr }
+    const g = cv.getContext('2d')
+    if (!g) return
+    g.setTransform(dpr, 0, 0, dpr, 0, 0)
+    g.clearRect(0, 0, W, H)
+    g.fillStyle = 'rgba(0,0,0,0.28)'
+    g.fillRect(0, 0, W, H)
+    if (!tbl) return
+    const BINS = 96
+    const framePos = cfg.wt.pos * (tbl.frames - 1)
+    const base = frameHarmonics(tbl.data, tbl.frames, framePos, BINS)
+    const sw = cfg.wt.specWarp
+    const warped = sw && sw.mode !== 'off' && sw.amount > 0 ? warpHarmonics(base, sw.mode, sw.amount) : null
+    const bw = W / BINS
+    for (let k = 0; k < BINS; k++) {
+      const hb = Math.pow(base[k], 0.6) * (H - 4)
+      g.fillStyle = warped ? 'rgba(255,255,255,0.14)' : 'rgba(124,159,212,0.55)'
+      g.fillRect(k * bw + 0.5, H - hb, bw - 1, hb)
+      if (warped) {
+        const hw = Math.pow(Math.min(1, warped[k]), 0.6) * (H - 4)
+        g.fillStyle = 'rgba(224,179,85,0.85)'
+        g.fillRect(k * bw + 0.5, H - hw, bw - 1, hw)
+      }
+    }
+  }, [ctx, oscIndex])
+
+  // redraw on structural changes + while knobs drag (meters tick ~90 Hz, but
+  // only while audio runs — also listen cheaply during silent editing)
+  useEffect(() => {
+    draw()
+    const eng = ctx.engine
+    let last = ''
+    const onMeters = () => {
+      const cfg = ctx.patch.oscs[oscIndex]
+      const key = `${cfg.wt.tableId}|${cfg.wt.pos.toFixed(3)}|${cfg.wt.specWarp?.mode}|${(cfg.wt.specWarp?.amount ?? 0).toFixed(3)}`
+      if (key !== last) { last = key; draw() }
+    }
+    eng.addEventListener('meters', onMeters)
+    return () => eng.removeEventListener('meters', onMeters)
+  }, [draw, ctx.version, ctx.engine, oscIndex])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      data-learn="Spectral bands"
+      title="The frame's harmonics — amber shows how the spectral warp reshapes them"
+      style={{ width: '100%', height: H, borderRadius: 6, border: '1px solid var(--border)' }}
+    />
   )
 }
 
@@ -161,6 +225,7 @@ export default function OscPanel({ osc: oscProp }: { osc?: number } = {}) {
               <Knob path={`osc${i}.wt.specWarp.amount`} label="Amount" size={34} />
             </div>
           </div>
+          <SpectralBands oscIndex={i} />
           {(osc.wt.warp1.mode === 'remap' || osc.wt.warp2.mode === 'remap') && (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700 }}>REMAP</span>

@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-20-9 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-20-10 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -2945,7 +2945,8 @@ class ApolloProcessor extends AudioWorkletProcessor {
     // peak), which used to slam the old ±1.5 soft clip and then the DAC — harsh
     // distortion that reads as "it breaks when I play too many notes". Instant
     // attack, ~120 ms release, 0.98 ceiling; unity gain below the ceiling.
-    if (this.limEnv === undefined) this.limEnv = 0
+    if (this.limEnv === undefined || !isFinite(this.limEnv)) this.limEnv = 0
+    if (this.followEnv !== undefined && !isFinite(this.followEnv)) this.followEnv = 0
     const limRel = 1 - Math.exp(-1 / (0.12 * this.sr))
     // envelope follower mod source: tracks the master output level (pre-limiter)
     if (this.followEnv === undefined) this.followEnv = 0
@@ -2956,6 +2957,10 @@ class ApolloProcessor extends AudioWorkletProcessor {
     for (let i = 0; i < n; i++) {
       let l = (this.busses.main[0][i] + this.busses.bus1[0][i] * r1 + this.busses.bus2[0][i] * r2 + this.busses.direct[0][i]) * mg
       let r = (this.busses.main[1][i] + this.busses.bus1[1][i] * r1 + this.busses.bus2[1][i] * r2 + this.busses.direct[1][i]) * mg
+      // a single NaN from any voice/FX must stay a transient blip — unflushed
+      // it poisons the limiter envelope and mutes the synth PERMANENTLY
+      if (!isFinite(l)) l = 0
+      if (!isFinite(r)) r = 0
       const aIn = Math.abs(l) > Math.abs(r) ? Math.abs(l) : Math.abs(r)
       const folTarget = Math.min(1, aIn * folGain)
       this.followEnv += (folTarget - this.followEnv) * (folTarget > this.followEnv ? folAtk : folRel)

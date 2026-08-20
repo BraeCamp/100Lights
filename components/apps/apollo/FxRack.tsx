@@ -350,8 +350,10 @@ function EqGraph({ unit }: { unit: FxUnit }) {
   const apply = (e: React.PointerEvent) => {
     const b = dragRef.current
     if (b < 0) return
+    if (e.type === 'pointermove' && e.buttons === 0) { dragRef.current = -1; ctx.commit(); return }
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect()
-    const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
+    // clamp: freq 0/1 would push the biquad to degenerate coefficients
+    const x = Math.min(0.98, Math.max(0.02, (e.clientX - r.left) / r.width))
     const db = Math.min(18, Math.max(-18, ((H / 2 - (e.clientY - r.top) / r.height * H) / (H / 2 - 6)) * 18))
     unit.params[`f${b}`] = x
     unit.params[`g${b}`] = db
@@ -375,6 +377,7 @@ function EqGraph({ unit }: { unit: FxUnit }) {
       }}
       onPointerMove={e => apply(e)}
       onPointerUp={() => { if (dragRef.current >= 0) { dragRef.current = -1; ctx.commit() } }}
+      onPointerCancel={() => { if (dragRef.current >= 0) { dragRef.current = -1; ctx.commit() } }}
       onWheel={e => {
         e.preventDefault()
         const r = e.currentTarget.getBoundingClientRect()

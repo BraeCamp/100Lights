@@ -158,6 +158,8 @@ export const LEARN_ENTRIES: LearnEntry[] = [
   // ── Oscillator panel controls ───────────────────────────────────────────
   E('spec-warp', 'Spectral warp', 'Reshapes the frame’s harmonics directly — stretch, shift, smear.',
     'Unlike the time-domain [[warp]]s, spectral warp operates on the [[wavetable]] frame’s harmonics themselves: Stretch spreads them apart (inharmonic, bell-like), Shift slides the whole spectrum, Smear blurs it, Spec LP removes highs surgically, Even/Odd tilts the tone hollow, Inharmonic scatters partials. The Amount is modulatable — sweep it with an [[lfo|LFO]] for evolving harmonic motion.', ['spectral warp — reshapes the frame’s harmonics', 'spec lp']),
+  E('spectral-bands', 'Spectral bands', 'The frame’s harmonics as bars — amber shows the warp’s effect.',
+    'Each bar is one harmonic of the current [[wavetable]] frame (left = fundamental, right = high partials). When a [[spec-warp|spectral warp]] is active, the dim bars are the original harmonics and the amber bars are what the warp turns them into — watch them stretch, slide, or vanish as you turn Amount.', ['spectral bands']),
   E('follower', 'Envelope follower', 'A mod source that follows the sound’s own loudness.',
     'The follower listens to Apollo’s output and turns its level into a [[modulation]] source: loud moments push routed knobs further. Route it to [[cutoff]] for auto-wah, to reverb mix for blooming tails. Attack/Release (on the GLOBAL page) set how fast it reacts; drag its chip from MOD SOURCES like any other source.'),
   E('filter-display', 'Filter display', 'The filter’s response curve — drag it to play the filter.',

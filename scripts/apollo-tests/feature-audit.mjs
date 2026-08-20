@@ -131,5 +131,24 @@ function rms(buf) { let s = 0; for (const v of buf) s += v * v; return Math.sqrt
   check('multiband GR has three bands', !!(m2 && m2.fxGr && m2.fxGr.c2 && m2.fxGr.c2.length === 3), '')
 }
 
+// 5. NaN resilience: degenerate FX params must never mute the synth for good
+{
+  const p = fresh(pp => {
+    pp.fxMain = [{ id: 'bad', type: 'eq', enabled: true, mix: 1, params: { f1: 0, g1: 18, q1: 8, t1: 1, f2: 1, g2: 18, q2: 8, t2: 2 } }]
+  })
+  p.noteOn(60, 0.9, false)
+  const storm = render(p, 60)
+  let finite = true
+  for (const v of storm) if (!isFinite(v)) { finite = false; break }
+  check('degenerate EQ output stays finite', finite, '')
+  p.noteOff(60, false)
+  render(p, 100)
+  // remove the bad unit, play again — must be audible (no poisoned limiter)
+  p.onMessage({ type: 'patch', patch: (() => { const pp = makePatch(); pp.filters[0].enabled = false; return pp })() })
+  p.noteOn(64, 0.9, false)
+  const after = render(p, 40)
+  check('synth recovers after degenerate FX removed', rms(after) > 0.05, `rms ${rms(after).toFixed(3)}`)
+}
+
 console.log(failures === 0 ? 'ALL FEATURE CHECKS PASS' : `${failures} FAILURES`)
 process.exit(failures ? 1 : 0)
