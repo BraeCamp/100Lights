@@ -349,3 +349,7 @@ export default function Apollo() {
     </ApolloProvider>
   )
 }
+
+// The full synth UI without a provider — Apollo 2 (/apollo2) composes this as
+// its "Design" mode inside its own provider/mode shell.
+export const ApolloFullUI = ApolloInner

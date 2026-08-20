@@ -16,6 +16,31 @@ function make(name: string, build: (p: ApolloPatch) => void): { name: string; pa
 export const FACTORY_PRESETS: { name: string; patch: ApolloPatch }[] = [
   make('Init', () => { /* stock */ }),
 
+  // The first sound a new user hears (Apollo 2 / Play mode auto-loads it):
+  // warm, moving, obviously "a real sound" — with four named performance macros.
+  make('First Light', p => {
+    p.oscs[0].wt.tableId = 'basic-shapes'
+    p.oscs[0].level = 0.95
+    p.oscs[0].unison = 3
+    p.oscs[0].detune = 0.09
+    p.oscs[0].wt.pos = 0.3
+    p.envs[0].attack = 0.012
+    p.envs[0].decay = 1.2
+    p.envs[0].sustain = 0.7
+    p.envs[0].release = 0.7
+    p.filters[0].enabled = true
+    p.filters[0].type = 'lp24'
+    p.filters[0].cutoff = 0.65
+    p.filters[0].res = 0.12
+    p.matrix.push(route('lfo1', 'osc0.wt.pos', 0.15))
+    p.lfos[0].sync = false
+    p.lfos[0].rate = 0.4
+    const ch = defaultFx('chorus'); ch.mix = 0.35
+    p.fxMain.push(ch)
+    const rv = defaultFx('reverb'); rv.mix = 0.22; rv.params.decay = 0.55
+    p.fxMain.push(rv)
+  }),
+
   make('Analog Bass', p => {
     p.oscs[0].wt.tableId = 'analog-saws'
     p.oscs[0].unison = 3
@@ -171,3 +196,26 @@ export const FACTORY_PRESETS: { name: string; patch: ApolloPatch }[] = [
     // needs a sample loaded by the user — engine stays silent until then
   }),
 ]
+
+// ── Standard performance macros ──────────────────────────────────────────────
+// Every factory preset (except the blank Init) ships with the same four named,
+// routed macros, so the "this sound's knobs" surface is never empty and always
+// does something audible: Brightness (filter cutoff), Motion (wavetable/grain
+// travel), Space (reverb mix — a reverb is added at 0 if the preset has none),
+// Grit (filter drive). Presets keep any extra routes they already define.
+function addStandardMacros(p: ApolloPatch): void {
+  if (!p.filters[0].enabled) { p.filters[0].enabled = true; p.filters[0].cutoff = Math.max(p.filters[0].cutoff, 0.85) }
+  p.macroNames[0] = 'Brightness'
+  p.matrix.push(route('macro1', 'f1.cutoff', 0.4))
+  p.macroNames[1] = 'Motion'
+  p.matrix.push(route('macro2', p.oscs[0].engine === 'granular' ? 'osc0.gran.spray' : 'osc0.wt.pos', 0.45))
+  let rv = p.fxMain.find(u => u.type === 'reverb')
+  if (!rv) { rv = defaultFx('reverb'); rv.mix = 0; rv.params.decay = 0.55; p.fxMain.push(rv) }
+  p.macroNames[2] = 'Space'
+  p.matrix.push(route('macro3', `fx.${rv.id}.mix`, 0.6))
+  p.macroNames[3] = 'Grit'
+  p.matrix.push(route('macro4', 'f1.drive', 0.55))
+}
+for (const fp of FACTORY_PRESETS) {
+  if (fp.name !== 'Init') addStandardMacros(fp.patch)
+}

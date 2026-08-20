@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-19-7 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-20-8 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -1879,6 +1879,12 @@ class ApolloProcessor extends AudioWorkletProcessor {
         this.patch = m.patch
         this.bpm = m.patch.global.bpm
         this.pv = {} // patch is the new source of truth; drop knob-drag overrides
+        // seed macro values from the patch — without this, saved macro states
+        // are silent in offline renders, the DAW instrument, and the CLI
+        // (live UI drags still land via the 'macro' message afterwards)
+        if (Array.isArray(m.patch.macros)) {
+          for (let i = 0; i < 8 && i < m.patch.macros.length; i++) this.macros[i] = m.patch.macros[i] || 0
+        }
         this.compileMatrix()
         // quality switches change the internal rate — do it here, before notes
         const desired = sampleRate * (m.patch.global.quality === 'high' ? 2 : 1)
