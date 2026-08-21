@@ -116,6 +116,7 @@ export type DawAction =
   | { type: 'SET_TRACK_FROZEN'; trackId: string; frozen: boolean }
   | { type: 'SET_TRACK_HELIOS_FX'; trackId: string; on: boolean }
   | { type: 'SET_TRACK_HELIOS_SYNTH'; trackId: string; on: boolean }
+  | { type: 'SET_TRACK_EFFECTS'; trackId: string; effects: TrackEffect[] }
   // Full replace (load from saved)
   | { type: 'LOAD_PROJECT'; project: DawProject }
 
@@ -753,6 +754,13 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'SET_TRACK_HELIOS_SYNTH': {
       const tracks = project.tracks.map(t =>
         t.id === action.trackId ? { ...t, heliosSynth: action.on } : t
+      )
+      return { ...project, tracks }
+    }
+
+    case 'SET_TRACK_EFFECTS': {
+      const tracks = project.tracks.map(t =>
+        t.id === action.trackId ? { ...t, effects: action.effects } : t
       )
       return { ...project, tracks }
     }

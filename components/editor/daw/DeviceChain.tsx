@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, createContext, useContext } from 'react'
+import nextDynamic from 'next/dynamic'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
@@ -20,7 +21,9 @@ import {
 
 // ── Label map ──────────────────────────────────────────────────────────────────
 
+
 const EFFECT_LABELS: Record<EffectType, string> = {
+  helios:         'Apollo FX',
   eq3:            'EQ3',
   compressor:     'Compressor',
   reverb:         'Reverb',
@@ -798,6 +801,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
       {/* Controls */}
       <EffectLearnCtx.Provider value={effect.id}>
       <div style={{ padding: '8px 6px', flex: 1 }}>
+        {effect.type === 'helios'         && <HeliosDeviceBody       effect={effect} />}
         {effect.type === 'eq3'            && <Eq3Controls             effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'compressor'     && <CompressorControls      effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'limiter'        && <LimiterControls         effect={effect} trackId={trackId} returnId={returnId} />}
@@ -1178,6 +1182,22 @@ function AddMidiEffectButton({ trackId }: { trackId: string }) {
 
 // ── Main export ────────────────────────────────────────────────────────────────
 
+// Apollo-native device: compact face — the real editing surface is the
+// Apollo Rack card (open it from the chain header).
+function HeliosDeviceBody({ effect }: { effect: TrackEffect }) {
+  const p = effect.params as import('@/lib/daw-types').HeliosFxParams
+  const u = p.unit
+  return (
+    <div style={{ padding: '10px 10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ fontSize: 16, textAlign: 'center' }}>☀︎</div>
+      <div style={{ fontSize: 11, fontWeight: 700, textAlign: 'center', color: 'var(--text-primary)', textTransform: 'capitalize' }}>{u?.type ?? 'unit'}</div>
+      <div style={{ fontSize: 9, textAlign: 'center', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        Apollo-native device · mix {Math.round((u?.mix ?? 1) * 100)}%<br />edit via Apollo Rack ↗ in the chain header
+      </div>
+    </div>
+  )
+}
+
 export default function DeviceChain({ trackId }: { trackId: string }) {
   const { project } = useDaw()
   const track = project.tracks.find(t => t.id === trackId)
@@ -1187,6 +1207,7 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      <ApolloRackLauncher trackId={trackId} />
       {/* Audio FX row — Apollo-style plate: devices share edges (seams, not
           gutters), one rounded border around the whole chain */}
       <div style={{ display: 'flex', flexDirection: 'row', overflowX: 'auto', padding: 8, alignItems: 'flex-start', gap: 8 }}>
@@ -1214,6 +1235,60 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
         </div>
       )}
     </div>
+  )
+}
+
+// "Open in Apollo": hosts the track's FX chain inside the real Apollo Rack
+// card. Editing a device there converts it to an Apollo-native device
+// (helios wrapper); untouched devices keep their Beacon form.
+const ApolloCardLazy = nextDynamic(() => import('@/components/apps/apollo/ApolloCard'), { ssr: false })
+
+function ApolloRackLauncher({ trackId }: { trackId: string }) {
+  const { project, dispatch } = useDaw()
+  const [open, setOpen] = useState(false)
+  const [seed, setSeed] = useState<object | null>(null)
+  const track = project.tracks.find(t => t.id === trackId)
+  if (!track || track.effects.length === 0 || track.heliosFx === false) return null
+  const openRack = async () => {
+    const { translateChain } = await import('@/lib/apollo/daw-fx')
+    const { initPatch } = await import('@/lib/apollo/patch')
+    const units = translateChain(track.effects, project.tempo)
+    if (!units) return
+    const p = initPatch()
+    for (const o of p.oscs) o.enabled = false
+    p.sub.enabled = false; p.noise.enabled = false
+    p.matrix = []; p.fxMain = units; p.fxBus1 = []; p.fxBus2 = []
+    setSeed(p)
+    setOpen(true)
+  }
+  return (
+    <>
+      <div style={{ padding: '6px 8px 0', display: 'flex', justifyContent: 'flex-end' }}>
+        <button
+          onClick={() => { void openRack() }}
+          title="Open this chain in the Apollo Rack — full Apollo editing; edited devices become Apollo-native"
+          style={{
+            height: 22, padding: '0 10px', borderRadius: 5, cursor: 'pointer',
+            fontSize: 9, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase',
+            background: 'transparent', color: 'var(--accent-light)', border: '1px solid var(--border)',
+          }}
+        >Apollo Rack ↗</button>
+      </div>
+      {open && seed && (
+        <ApolloCardLazy
+          patch={seed as never}
+          fxOnly
+          title={`${track.name} — FX`}
+          onChange={(next: { fxMain: unknown[] }) => {
+            void import('@/lib/apollo/daw-fx').then(({ applyRackEdit }) => {
+              const eff = applyRackEdit(track.effects, next.fxMain as never)
+              dispatch({ type: 'SET_TRACK_EFFECTS', trackId, effects: eff })
+            })
+          }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   )
 }
 

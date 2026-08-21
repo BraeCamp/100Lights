@@ -118,14 +118,16 @@ function CardBody({ scope }: { scope: ApolloCardScope }) {
   )
 }
 
-export default function ApolloCard({ patch, onChange, scope: initialScope = 'all', title, onClose }: {
+export default function ApolloCard({ patch, onChange, scope: initialScope = 'all', title, onClose, fxOnly = false }: {
   patch: ApolloPatch
   onChange: (p: ApolloPatch) => void
   scope?: ApolloCardScope
   title?: string
   onClose: () => void
+  /** Track-chain hosting: lock the card to the Effects module (no scope tabs). */
+  fxOnly?: boolean
 }) {
-  const [scope, setScope] = useState<ApolloCardScope>(initialScope)
+  const [scope, setScope] = useState<ApolloCardScope>(fxOnly ? 'fx' : initialScope)
   useEffect(() => {
     // Capture phase + stopPropagation: Esc closes ONLY the card — it must not
     // leak into the host's own Escape handling (the DAW deselects tracks on
@@ -169,7 +171,7 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
             {title && <span style={{ fontWeight: 500, letterSpacing: 0.2, color: 'var(--text-muted, #8b93a0)', marginLeft: 10, fontSize: 12 }}>{title}</span>}
           </div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {APOLLO_CARD_SCOPES.map(s => (
+            {(fxOnly ? APOLLO_CARD_SCOPES.filter(sc => sc.id === 'fx') : APOLLO_CARD_SCOPES).map(s => (
               <button key={s.id} onClick={() => setScope(s.id)} style={{
                 fontSize: 10, fontWeight: 700, letterSpacing: 0.4, padding: '4px 9px', borderRadius: 999, cursor: 'pointer',
                 background: scope === s.id ? 'var(--accent, #4aa9ff)' : 'transparent',

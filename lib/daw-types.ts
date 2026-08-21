@@ -20,7 +20,7 @@ export type FollowAction = 'stop' | 'again' | 'next' | 'prev' | 'first' | 'last'
 
 // ── Effects ───────────────────────────────────────────────────────────────────
 
-export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo' | 'noisegate' | 'deesser' | 'chorus' | 'transientshaper' | 'multibandcomp' | 'limiter' | 'dyneq'
+export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo' | 'noisegate' | 'deesser' | 'chorus' | 'transientshaper' | 'multibandcomp' | 'limiter' | 'dyneq' | 'helios'
 
 export interface Eq3Params {
   enabled: boolean
@@ -160,7 +160,16 @@ export interface MultibandCompParams {
   highGain: number        // dB makeup (default 0)
 }
 
-export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams | NoiseGateParams | DeEsserParams | ChorusParams | TransientShaperParams | MultibandCompParams | LimiterParams | DynEqParams
+/** An Apollo FxUnit stored directly as a Beacon device — created when a chain
+ * is edited in the Apollo Rack card. Plays via the Helios path only (the
+ * legacy graph has no builder for it); DeviceChain shows a compact card with
+ * an "Edit in Apollo" affordance. `unit` is lib/apollo FxUnit-shaped. */
+export interface HeliosFxParams {
+  enabled: boolean
+  unit: { id: string; type: string; enabled: boolean; mix: number; params: Record<string, number>; chains?: unknown[][] }
+}
+
+export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams | NoiseGateParams | DeEsserParams | ChorusParams | TransientShaperParams | MultibandCompParams | LimiterParams | DynEqParams | HeliosFxParams
 
 export interface TrackEffect {
   id: string

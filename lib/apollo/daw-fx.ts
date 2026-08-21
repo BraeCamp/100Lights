@@ -19,7 +19,7 @@
 // compressors with strongly divergent per-band settings, and chains with
 // more than one sidechained compressor.
 
-import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, UtilityParams, ChorusParams, NoiseGateParams, DeEsserParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams, LfoParams } from '@/lib/daw-types'
+import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, UtilityParams, ChorusParams, NoiseGateParams, DeEsserParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams, LfoParams, HeliosFxParams } from '@/lib/daw-types'
 import { initPatch, SYNC_RATES, type ApolloPatch, type FxUnit, type FxType } from './patch'
 import { ApolloEngine } from './engine-client'
 
@@ -197,9 +197,57 @@ export function translateEffect(e: TrackEffect, tempo: number): FxUnit[] | null 
         phase: p.target === 'pan' ? 180 : 0,   // opposite = pan, in-phase = tremolo
       })]
     }
+    case 'helios': {
+      // an Apollo unit stored verbatim — pass it straight through
+      const p = e.params as HeliosFxParams
+      if (!p.unit) return null
+      return [{ ...(p.unit as FxUnit), enabled: on && p.unit.enabled !== false }]
+    }
     default:
       return null
   }
+}
+
+/**
+ * Track-chain ↔ Apollo Rack card adapter. Opening a chain in the card shows
+ * translateChain(effects); when the card writes back, each edited or new unit
+ * becomes a 'helios' wrapper device (editing in Apollo converts that device
+ * to an Apollo-native one), untouched devices stay in their Beacon form.
+ */
+export function applyRackEdit(effects: TrackEffect[], editedUnits: FxUnit[]): TrackEffect[] {
+  // unit-id → owning effect (translated ids are the effect id or id+suffix)
+  const owner = new Map<string, TrackEffect>()
+  const originalUnits = new Map<string, FxUnit>()
+  for (const e of effects) {
+    const units = translateEffect(e, 120) ?? []
+    for (const u of units) { owner.set(u.id, e); originalUnits.set(u.id, u) }
+  }
+  const out: TrackEffect[] = []
+  const consumed = new Set<string>()
+  for (const u of editedUnits) {
+    const src = owner.get(u.id)
+    const orig = originalUnits.get(u.id)
+    if (src && orig && JSON.stringify(u) === JSON.stringify(orig)) {
+      // untouched — keep the original Beacon device (once, even if it
+      // translated to several units: only emit when its FIRST unit passes)
+      if (!consumed.has(src.id)) { out.push(src); consumed.add(src.id) }
+    } else if (src && !consumed.has(src.id)) {
+      // edited — the device converts to Apollo-native wrapper(s)
+      consumed.add(src.id)
+      out.push({ id: src.id, type: 'helios', params: { enabled: true, unit: u } } as TrackEffect)
+    } else if (src) {
+      // additional unit of an already-consumed multi-unit device: if the
+      // device stayed Beacon-native its other units are implied; if it was
+      // converted, keep this sibling as its own wrapper when edited
+      if (!(orig && JSON.stringify(u) === JSON.stringify(orig))) {
+        out.push({ id: `${src.id}_${u.id}`, type: 'helios', params: { enabled: true, unit: u } } as TrackEffect)
+      }
+    } else {
+      // brand-new unit added in the card
+      out.push({ id: u.id, type: 'helios', params: { enabled: true, unit: u } } as TrackEffect)
+    }
+  }
+  return out
 }
 
 /** Whole chain, all-or-nothing. */
