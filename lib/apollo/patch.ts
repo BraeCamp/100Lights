@@ -27,7 +27,7 @@ export type FilterType =
   // Misc
   | 'ringMod' | 'sampHold' | 'downsample' | 'reverbFilter' | 'dj' | 'diffuser'
   // Serum 2 models (watched from the S2 Filters menu)
-  | 'acidLadder' | 'emsLadder' | 'mgDirty' | 'comb2' | 'expBPF'
+  | 'acidLadder' | 'emsLadder' | 'mgDirty' | 'comb2' | 'expBPF' | 'pz'
 
 export interface WarpSlot { mode: WarpMode; amount: number /* 0..1 */ }
 
@@ -121,7 +121,10 @@ export interface OscConfig {
   detune: number; blend: number; width: number // 0..1
   phase: number; rand: number // 0..1
   stereo: number // 0..1
-  keytrackPitch: boolean // false = const pitch
+  keytrackPitch: boolean
+  /** Keyboard range (Serum's OSC mapping): this osc only sounds for notes in [keyLo, keyHi]. */
+  keyLo?: number
+  keyHi?: number // false = const pitch
   unisonMode: UnisonMode
   dest: SourceDest
   filterBal: number // 0 = all F1, 1 = all F2 (when dest === 'both')
@@ -546,7 +549,7 @@ export const FX_DEFS: Record<FxType, { label: string; params: { key: string; lab
     { key: 't2', label: 'Type 2', min: 0, max: 2, default: 1 },
   ]},
   filter: { label: 'Filter', params: [
-    { key: 'type', label: 'Type', min: 0, max: 35, default: 1 }, // FILTER_TYPES index
+    { key: 'type', label: 'Type', min: 0, max: 36, default: 1 }, // FILTER_TYPES index
     { key: 'cutoff', label: 'Cutoff', min: 0, max: 1, default: 0.7 },
     { key: 'res', label: 'Res', min: 0, max: 1, default: 0.2 },
     { key: 'drive', label: 'Drive', min: 0, max: 1, default: 0 },
@@ -597,6 +600,7 @@ export const FILTER_TYPES: { id: FilterType; label: string; group: string }[] = 
   { id: 'acidLadder', label: 'Acid Ladder', group: 'Analog' }, { id: 'emsLadder', label: 'EMS Ladder', group: 'Analog' },
   { id: 'mgDirty', label: 'MG Dirty', group: 'Analog' },
   { id: 'comb2', label: 'Comb 2', group: 'Flanges' }, { id: 'expBPF', label: 'Exp BPF', group: 'Clean' },
+  { id: 'pz', label: 'PZ (Pole-Zero)', group: 'Multi' },
 ]
 
 export const WARP_MODES: { id: WarpMode; label: string }[] = [
@@ -621,6 +625,7 @@ export function defaultOsc(i: number): OscConfig {
     enabled: i === 0, engine: 'wavetable',
     level: 0.75, pan: 0, octave: 0, semi: 0, fine: 0,
     unison: 1, detune: 0.15, blend: 0.5, width: 1, phase: 0, rand: 1, stereo: 0.5,
+    keyLo: 0, keyHi: 127,
     keytrackPitch: true, unisonMode: 'classic', dest: 'f1', filterBal: 0, bus: 'main',
     wt: { tableId: 'basic-shapes', pos: 0, interp: 'smooth', warp1: defaultWarp(), warp2: defaultWarp(), fmSource: (i + 1) % 3 as 0 | 1 | 2, remapCurve: null, specWarp: { mode: 'off', amount: 0 } },
     smp: { sampleId: null, start: 0, end: 1, loopMode: 'off', loopStart: 0.25, loopEnd: 0.75, xfade: 0.01, rate: 1, keytrack: true, rootKey: 60, slices: [], sliceMap: 'off', warp1: defaultWarp(), warp2: defaultWarp() },

@@ -207,6 +207,20 @@ export default function OscPanel({ osc: oscProp, onOpenWt }: { osc?: number; onO
           onClick={() => ctx.update(p => { p.oscs[i].keytrackPitch = !p.oscs[i].keytrackPitch })} />
         <Sel width={82} title="Filter routing" value={osc.dest} options={DEST_OPTS} onChange={v => ctx.update(p => { p.oscs[i].dest = v as SourceDest })} />
         <Sel width={68} title="Output bus" value={osc.bus} options={BUS_OPTS} onChange={v => ctx.update(p => { p.oscs[i].bus = v as BusDest })} />
+        {/* keyboard range (Serum's OSC mapping): this osc only sounds inside it */}
+        <span data-learn="Key Range" title="Keyboard range — this oscillator only plays for notes between Lo and Hi (split keyboards, layered ranges)" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 8.5, fontWeight: 700, letterSpacing: 0.6, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+          Keys
+          <input
+            type="number" min={0} max={127} value={osc.keyLo ?? 0}
+            onChange={e => { const v = Math.max(0, Math.min(127, Number(e.target.value) || 0)); ctx.update(p => { p.oscs[i].keyLo = v }) }}
+            style={{ width: 40, height: 20, background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 5, fontSize: 10, padding: '0 4px' }}
+          />
+          <input
+            type="number" min={0} max={127} value={osc.keyHi ?? 127}
+            onChange={e => { const v = Math.max(0, Math.min(127, Number(e.target.value) || 127)); ctx.update(p => { p.oscs[i].keyHi = v }) }}
+            style={{ width: 40, height: 20, background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 5, fontSize: 10, padding: '0 4px' }}
+          />
+        </span>
       </div>
 
       {osc.engine === 'wavetable' && (

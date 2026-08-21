@@ -279,5 +279,25 @@ function rms(buf) { let s = 0; for (const v of buf) s += v * v; return Math.sqrt
     `pre ${pre.toFixed(3)} duck ${duck.toFixed(3)} post ${post.toFixed(3)}`)
 }
 
+// 12. PZ filter + per-osc key range (do-it-all batch 7)
+{
+  const mkF = (cut) => {
+    const f = fresh(pp => { pp.filters[0].enabled = true; pp.filters[0].type = 'pz'; pp.filters[0].cutoff = cut; pp.filters[0].res = 0.9; pp.filters[0].fat = 0; pp.filters[0].drive = 0 })
+    f.noteOn(45, 0.9, false); render(f, 30)
+    return render(f, 60).subarray(1280)
+  }
+  const lo = mkF(0.35), hi = mkF(0.75)
+  const ratio = b => bandEnergy(b, 440) / (bandEnergy(b, 3520) + 1e-9)
+  check('pz filter pole angle steers emphasis', rms(lo) > 0.02 && ratio(lo) > ratio(hi) * 2, `${ratio(lo).toFixed(1)} vs ${ratio(hi).toFixed(1)}`)
+
+  const kr = fresh(pp => { pp.oscs[0].keyLo = 60; pp.oscs[0].keyHi = 72; pp.filters[0].enabled = false })
+  kr.noteOn(45, 0.9, false); render(kr, 10)
+  const below = render(kr, 30)
+  kr.noteOff(45, false); render(kr, 200)
+  kr.noteOn(64, 0.9, false); render(kr, 10)
+  const inside = render(kr, 30)
+  check('per-osc key range gates notes', rms(below) < 0.001 && rms(inside) > 0.05, `below ${rms(below).toFixed(4)} inside ${rms(inside).toFixed(3)}`)
+}
+
 console.log(failures === 0 ? 'ALL FEATURE CHECKS PASS' : `${failures} FAILURES`)
 process.exit(failures ? 1 : 0)

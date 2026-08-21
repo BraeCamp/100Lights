@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-20-16 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-20-17 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -239,6 +239,7 @@ class VoiceFilter {
     // mini reverb-filter state
     this.rvDl = [new DelayLine(sr * 0.05), new DelayLine(sr * 0.06), new DelayLine(sr * 0.071), new DelayLine(sr * 0.083)]
     this.combLp = 0
+    this.pzX1 = 0; this.pzX2 = 0; this.pzY1 = 0; this.pzY2 = 0
   }
   reset() { this.svf1.reset(); this.svf2.reset(); this.svf3.reset(); this.svf4.reset(); this.ladder.reset(); this.ap1.fill(0); this.fbAP = 0; this.combLp = 0 }
   process(x, type, cutNorm, res, drive, fat) {
@@ -317,6 +318,25 @@ class VoiceFilter {
         const y = x + this.combLp * fb
         this.dl.write(y)
         return y * 0.65
+      }
+      case 'pz': {
+        // direct pole-zero biquad (Serum 2's PZ SVF, knob-driven):
+        //   cutoff = pole angle (frequency), res = pole radius (resonance),
+        //   fat = zero angle, drive = zero radius (notch depth/placement)
+        const thP = Math.PI * clamp(freq / (sr * 0.5), 0.001, 0.99)
+        const rP = 0.35 + clamp(res, 0, 1) * 0.63          // 0.35..0.98
+        const thZ = Math.PI * clamp(fat, 0, 1)
+        const rZ = clamp(drive, 0, 1)                       // 0 = no zeros
+        const a1 = -2 * rP * Math.cos(thP), a2 = rP * rP
+        const b1 = -2 * rZ * Math.cos(thZ), b2 = rZ * rZ
+        // normalize so unity-ish gain at DC or Nyquist (whichever is farther from the pole)
+        const gDc = Math.abs((1 + b1 + b2) / (1 + a1 + a2))
+        const gNy = Math.abs((1 - b1 + b2) / (1 - a1 + a2))
+        const g0 = 1 / Math.max(0.05, Math.max(gDc, gNy))
+        const y = (x * g0) + b1 * g0 * this.pzX1 + b2 * g0 * this.pzX2 - a1 * this.pzY1 - a2 * this.pzY2
+        this.pzX2 = this.pzX1; this.pzX1 = x
+        this.pzY2 = this.pzY1; this.pzY1 = isFinite(y) ? y : 0
+        return this.pzY1
       }
       case 'expBPF': {
         // steep resonant bandpass: two cascaded BP stages, tight k, exponential emphasis
@@ -2138,7 +2158,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
     this.pv = {}                   // base param values (path -> value), synced from UI
     this.monoVoice = null
     this.SYNC_BEATS = [32, 16, 8, 4, 2, 4 / 3, 1.5, 1, 2 / 3, 0.75, 0.5, 1 / 3, 0.375, 0.25, 1 / 6, 0.125, 0.0625]
-    this.FILTER_TYPE_IDS = ['lp6', 'lp12', 'lp18', 'lp24', 'hp6', 'hp12', 'hp24', 'bp12', 'bp24', 'notch12', 'peak12', 'multiLBH', 'multiLNH', 'morphSVF', 'ladder12', 'ladder24', 'germanLP', 'frenchLP', 'formant', 'combPlus', 'combMinus', 'flangePlus', 'flangeMinus', 'phasePlus', 'phaseMinus', 'ringMod', 'sampHold', 'downsample', 'reverbFilter', 'dj', 'diffuser', 'acidLadder', 'emsLadder', 'mgDirty', 'comb2', 'expBPF']
+    this.FILTER_TYPE_IDS = ['lp6', 'lp12', 'lp18', 'lp24', 'hp6', 'hp12', 'hp24', 'bp12', 'bp24', 'notch12', 'peak12', 'multiLBH', 'multiLNH', 'morphSVF', 'ladder12', 'ladder24', 'germanLP', 'frenchLP', 'formant', 'combPlus', 'combMinus', 'flangePlus', 'flangeMinus', 'phasePlus', 'phaseMinus', 'ringMod', 'sampHold', 'downsample', 'reverbFilter', 'dj', 'diffuser', 'acidLadder', 'emsLadder', 'mgDirty', 'comb2', 'expBPF', 'pz']
     this.port.onmessage = (e) => this.onMessage(e.data)
     // default table: saw
     const dt = new Float32Array(WT_LEN)
@@ -2761,6 +2781,9 @@ class ApolloProcessor extends AudioWorkletProcessor {
       if (!cfg.enabled) continue
       const sL = this.srcL, sR = this.srcR
       sL.fill(0, 0, n); sR.fill(0, 0, n)
+      // per-osc keyboard range (Serum OSC mapping): outside it, this osc is silent
+      const kcfg = patch.oscs[oi]
+      if (kcfg && ((kcfg.keyLo != null && v.note < kcfg.keyLo) || (kcfg.keyHi != null && v.note > kcfg.keyHi))) continue
       const alive = renderOscBlock(this, v, oi, patch, n, sL, sR, this.oscMono[oi])
       if (alive) anyAlive = true
       this.routeSource(cfg, sL, sR, n, f1L, f1R, f2L, f2R)
