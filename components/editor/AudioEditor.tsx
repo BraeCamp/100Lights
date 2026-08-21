@@ -456,12 +456,13 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
           data-apollo-follow={following ? '1' : '0'}
           title={following ? 'Following the selected track — click to pin to this one' : `Pinned to ${trackName} — click to follow the selection`}
           style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
             fontSize: 10, fontWeight: 700, letterSpacing: 0.4, padding: '4px 9px', borderRadius: 999, cursor: 'pointer',
             background: 'transparent',
             color: following ? 'var(--accent, #4aa9ff)' : 'var(--text-muted, #8b93a0)',
             border: `1px solid ${following ? 'var(--accent, #4aa9ff)' : 'var(--border, #262c35)'}`,
           }}
-        >{following ? '\u25c9 FOLLOWING' : '\u25c9 PINNED'}</button>
+        ><PinGlyph pinned={!following} />{following ? 'FOLLOWING' : 'PINNED'}</button>
       }
       onChange={onChange as never}
       onClose={onClose}
@@ -469,6 +470,21 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
   )
 }
 
+
+// Flat thumbtack, drawn as a single-weight stroke so it sits with Beacon's
+// other line icons — a glyph like ◉ renders as a beveled 3D dot and reads as
+// foreign next to them. Solid head when pinned, hollow when following.
+function PinGlyph({ pinned }: { pinned: boolean }) {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+      strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      style={{ flex: 'none' }}>
+      <path d="M5.6 2.2h4.8" />
+      <path d="M6.7 2.2v4.1L4.9 8.7h6.2L9.3 6.3V2.2Z" fill={pinned ? 'currentColor' : 'none'} />
+      <path d="M8 8.7V14" />
+    </svg>
+  )
+}
 
 // Retarget helper: kept as a component so the effect runs after render rather
 // than setting state during one.
