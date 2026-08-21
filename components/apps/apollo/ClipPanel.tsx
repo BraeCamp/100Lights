@@ -30,7 +30,8 @@ export default function ClipPanel() {
   const [snapIdx, setSnapIdx] = useState(2)
   const [localNotes, setLocalNotes] = useState<ClipNote[] | null>(null)
   const [overdub, setOverdub] = useState(false)
-  const [click, setClick] = useState(false)
+  // Click state lives in the patch (shared with the header transport)
+  const click = !!p.global.click
   const [autoLane, setAutoLane] = useState('macro1')
   const [renaming, setRenaming] = useState(-1)
   const dragRef = useRef<DragState>(null)
@@ -263,7 +264,13 @@ export default function ClipPanel() {
               ctx.engine.setTransport({ playing: !playing, bpm: p.global.bpm, beat: 0, click })
             }}
           />
-          <ToggleBtn on={click} label="Click" onClick={() => { setClick(!click); ctx.engine.setTransport({ click: !click }) }} />
+          <ToggleBtn on={click} label="Click" onClick={() => {
+            // Shared with the header transport — both write the patch so the
+            // two copies can never disagree.
+            const next = !click
+            ctx.update(d => { d.global.click = next })
+            ctx.engine.setTransport({ click: next })
+          }} />
           <span style={{ fontSize: 9, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', width: 46 }}>
             {playing ? `${(Math.floor(meters.beat / 4) + 1)}.${(Math.floor(meters.beat) % 4) + 1}` : '—'}
           </span>

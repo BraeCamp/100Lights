@@ -266,6 +266,9 @@ export interface GlobalConfig {
   pbRange: number // semitones
   masterGain: number // 0..1
   bpm: number
+  /** Metronome on/off. Lives in the patch so a session remembers whether the
+   *  click was running while the item was being developed. */
+  click?: boolean
   quality: 'draft' | 'good' | 'high' // high = 2x oversample
   voiceSpreadPan: number; voiceSpreadTune: number; voiceSpreadCutoff: number
   scaleRoot: number // 0..11
@@ -666,7 +669,7 @@ export function initPatch(): ApolloPatch {
     version: 1, name: 'Init', author: '', tags: [],
     global: {
       poly: 16, mode: 'poly', glide: 0, glideLegatoOnly: true, pbRange: 2,
-      masterGain: 0.8, bpm: 120, quality: 'good',
+      masterGain: 0.8, bpm: 120, click: false, quality: 'good',
       voiceSpreadPan: 0, voiceSpreadTune: 0, voiceSpreadCutoff: 0,
       scaleRoot: 0, scaleName: 'Minor', scaleLock: false, masterTune: 0, tuning: null,
       follower: { attack: 10, release: 200, gain: 1 },

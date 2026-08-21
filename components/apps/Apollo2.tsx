@@ -13,6 +13,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ApolloProvider, useApollo, useMeters, Knob, UI, Section, ToggleBtn } from '@/components/apps/apollo/ApolloContext'
+import TransportBar from './apollo/TransportBar'
 import PresetBar from '@/components/apps/apollo/PresetBar'
 import OscPanel from '@/components/apps/apollo/OscPanel'
 import SubNoisePanel from '@/components/apps/apollo/SubNoisePanel'
@@ -607,6 +608,7 @@ function ApolloInner() {
           ))}
         </div>
         <PresetBar />
+        <TransportBar />
         <div style={{ flex: 1 }} />
         <HeaderReadout />
         <div ref={sessionsRef} style={{ position: 'relative' }}>
