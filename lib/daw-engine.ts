@@ -10,6 +10,7 @@ import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
 import { translateInstrument } from './apollo/daw-synth'
+import { setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
@@ -1962,6 +1963,12 @@ export class DawEngine extends EventTarget {
       const [, effectId, paramKey] = parameter.split(':')
       const handle = this.effectsChains.get(trackId)?.handles.get(effectId)
       handle?.setParam(paramKey, value)
+      return
+    }
+    // Apollo instrument macros: 'macro:N' (0-7) — the patch's own performance knobs
+    if (parameter.startsWith('macro:')) {
+      const idx = Number(parameter.slice(6))
+      if (idx >= 0 && idx < 8) setApolloTrackMacro(this.trackNodes.get(trackId)?.midiInput, idx, value)
     }
   }
 

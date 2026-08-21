@@ -109,6 +109,14 @@ export async function preloadApolloInstrument(
 /** Transport stop: silence + drop every managed node for this context.
  *  (The DAW swaps per-track input buses on stop; nodes are recreated on the
  *  next play against the fresh bus.) */
+/** Set a macro (0-7) on the Apollo engine bound to a track destination —
+ * powers Beacon's macro automation lanes. No-op until the engine exists. */
+export function setApolloTrackMacro(dest: AudioNode | undefined, index: number, value: number): void {
+  if (!dest) return
+  const m = byDest.get(dest)
+  if (m?.isReady) m.engine.setMacro(index, value)
+}
+
 export function apolloStopAll(ctx: BaseAudioContext): void {
   const set = byCtx.get(ctx)
   if (!set) return

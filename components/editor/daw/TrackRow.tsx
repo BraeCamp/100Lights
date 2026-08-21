@@ -209,10 +209,16 @@ function AddAutoButton({ track }: { track: DawTrack }) {
   const dropRef = useRef<HTMLDivElement>(null)
 
   const existing = new Set(project.automationLanes.filter(l => l.trackId === track.id).map(l => l.parameter))
+  const apolloParams = track.instrument?.type === 'apollo' ? track.instrument.params as { macros?: number[]; macroNames?: string[] } : null
   const opts: { label: string; parameter: string; min: number; max: number; def: number }[] = [
     { label: 'Volume', parameter: 'volume', min: 0, max: 1, def: track.volume },
     { label: 'Pan',    parameter: 'pan',    min: -1, max: 1, def: track.pan },
     ...track.effects.map(e => ({ label: `${e.type.toUpperCase()} Wet`, parameter: `fx:${e.id}:wet`, min: 0, max: 1, def: 0.5 })),
+    // Apollo tracks: automate the patch's own 8 performance macros
+    ...(apolloParams ? [0, 1, 2, 3, 4, 5, 6, 7].map(i => ({
+      label: apolloParams.macroNames?.[i] || `Macro ${i + 1}`,
+      parameter: `macro:${i}`, min: 0, max: 1, def: apolloParams.macros?.[i] ?? 0,
+    })) : []),
   ].filter(o => !existing.has(o.parameter))
 
   useEffect(() => {
