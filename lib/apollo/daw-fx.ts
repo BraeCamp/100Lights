@@ -239,6 +239,44 @@ export interface HeliosChain {
  * Continuous edits stream as pv overrides (no state reset); structural edits
  * (enable/type/booleans) resend the translated patch.
  */
+/**
+ * The master glue bus on Helios: emulates the legacy master
+ * DynamicsCompressor (-6dB, 2.5:1, 3ms/250ms, knee 10) including WebAudio's
+ * hidden auto-makeup, on the crash-armored worklet. Same {input, output,
+ * ready, dispose} contract as track chains.
+ */
+export function buildHeliosMasterBus(ctx: BaseAudioContext): HeliosChain {
+  const units: FxUnit[] = [mkUnit('master_glue', 'compressor', true, 1, {
+    threshold: -6, ratio: 2.5, attack: 3, release: 250,
+    makeup: -(-6) * (1 - 1 / 2.5) / 2,   // ≈1.8dB — DynamicsCompressor auto-makeup
+    upward: 0, multiband: 0, loFreq: 0.25, hiFreq: 0.7, sidechain: 0,
+  })]
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const engine = new ApolloEngine()
+  let alive = true
+  const ready = new Promise<void>(resolve => {
+    const done = () => { engine.removeEventListener('fxModeAck', done); resolve() }
+    engine.addEventListener('fxModeAck', done)
+    setTimeout(resolve, 4000)
+    void engine.init({ ctx, destination: output, fxInput: true }).then(() => {
+      if (!alive) { resolve(); return }
+      engine.sendPatch(fxOnlyPatch(units))
+      engine.node?.port.postMessage({ type: 'fxMode', on: true })
+      if (engine.node) input.connect(engine.node)
+    }).catch(() => resolve())
+  })
+  return {
+    input, output, ready, handles: new Map(),
+    dispose() {
+      alive = false
+      try { input.disconnect() } catch { /* ok */ }
+      try { engine.node?.disconnect() } catch { /* ok */ }
+      try { output.disconnect() } catch { /* ok */ }
+    },
+  }
+}
+
 export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[], tempo: number): HeliosChain | null {
   const units = translateChain(effects, tempo)
   if (!units) return null

@@ -8,7 +8,7 @@ import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from
 import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
-import { buildHeliosFxChain } from './apollo/daw-fx'
+import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
 import { translateInstrument } from './apollo/daw-synth'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
@@ -112,6 +112,11 @@ export class DawEngine extends EventTarget {
   masterGain: GainNode
   masterAnalyser: AnalyserNode
   masterCompressor: DynamicsCompressorNode
+  /** Stable post-master-chain tap: captures/recorders/renders hook HERE, so
+   *  swapping the glue implementation (legacy comp ↔ Helios) can't orphan them. */
+  masterBusOut: GainNode
+  private _heliosMaster: HeliosChain | null = null
+  private _heliosMasterOn = true
   // Momentary "performance FX" inserted after the master gain — hold a pad to
   // sweep a filter / duck the mix, release to reset. Neutral by default.
   perfFilter!: BiquadFilterNode
@@ -235,11 +240,20 @@ export class DawEngine extends EventTarget {
     this.masterCompressor.ratio.value = 2.5
     this.masterCompressor.attack.value = 0.003
     this.masterCompressor.release.value = 0.25
-    this.masterCompressor.connect(this.ctx.destination)
+    this.masterBusOut = this.ctx.createGain()
+    this.masterCompressor.connect(this.masterBusOut)
+    this.masterBusOut.connect(this.ctx.destination)
 
     this.masterAnalyser = this.ctx.createAnalyser()
     this.masterAnalyser.fftSize = 256
     this.masterAnalyser.connect(this.masterCompressor)
+
+    // Master glue on Helios (Phase: master bus). The legacy DynamicsCompressor
+    // stays wired until the worklet ACKS, then the path switches — and
+    // setHeliosMaster(false) switches back instantly at runtime.
+    this._heliosMaster = buildHeliosMasterBus(this.ctx)
+    this._heliosMaster.output.connect(this.masterBusOut)
+    void this._heliosMaster.ready.then(() => this._applyMasterRoute())
 
     // Performance-FX insert: masterGain → perfFilter → perfGain → analyser.
     this.perfFilter = this.ctx.createBiquadFilter()
@@ -308,6 +322,20 @@ export class DawEngine extends EventTarget {
     if (this.heliosFxPref.get(trackId) === on) return
     this.heliosFxPref.set(trackId, on)
     this._chainSigs.delete(trackId)   // force a rebuild on next sync
+  }
+
+  private _applyMasterRoute() {
+    const hm = this._heliosMaster
+    try { this.masterAnalyser.disconnect(this.masterCompressor) } catch { /* not wired */ }
+    if (hm) { try { this.masterAnalyser.disconnect(hm.input) } catch { /* not wired */ } }
+    if (this._heliosMasterOn && hm) this.masterAnalyser.connect(hm.input)
+    else this.masterAnalyser.connect(this.masterCompressor)
+  }
+
+  /** Runtime switch between the Helios master glue and the legacy compressor. */
+  setHeliosMaster(on: boolean) {
+    this._heliosMasterOn = on
+    this._applyMasterRoute()
   }
 
   ensureTrack(id: string, effects?: DawTrack['effects']) {
@@ -3529,7 +3557,7 @@ export class DawEngine extends EventTarget {
     // Tap the master bus — captures everything the engine plays,
     // including any mic inputs already routed through track effects chains.
     this._captureNode  = this.ctx.createMediaStreamDestination()
-    this.masterCompressor.connect(this._captureNode)
+    this.masterBusOut.connect(this._captureNode)
     this._recChunks    = []
     this._recStartBeat = this.currentBeat
     const preferredMimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
@@ -3543,7 +3571,7 @@ export class DawEngine extends EventTarget {
     this.recordingPeaks = []
     const an = this.ctx.createAnalyser()
     an.fftSize = 2048
-    this.masterCompressor.connect(an)
+    this.masterBusOut.connect(an)
     this._recAnalyser = an
     const peakBuf = new Float32Array(an.fftSize)
     this._recPeakTimer = window.setInterval(() => {
@@ -3558,7 +3586,7 @@ export class DawEngine extends EventTarget {
 
   private _stopRecPeaks(): void {
     if (this._recPeakTimer !== null) { clearInterval(this._recPeakTimer); this._recPeakTimer = null }
-    if (this._recAnalyser) { try { this.masterCompressor.disconnect(this._recAnalyser) } catch { /* ok */ } this._recAnalyser = null }
+    if (this._recAnalyser) { try { this.masterBusOut.disconnect(this._recAnalyser) } catch { /* ok */ } this._recAnalyser = null }
   }
 
   async stopRecording(): Promise<Blob | null> {
@@ -3574,7 +3602,7 @@ export class DawEngine extends EventTarget {
         console.log('[rec] stopRecording onstop — chunks:', this._recChunks.length, 'blobSize:', blob.size, 'startBeat:', this._recStartBeat, 'endBeat:', endBeat, 'duration:', durationBeats)
         this._recChunks = []
         if (this._captureNode) {
-          try { this.masterCompressor.disconnect(this._captureNode) } catch { /* ok */ }
+          try { this.masterBusOut.disconnect(this._captureNode) } catch { /* ok */ }
           this._captureNode = null
         }
         this._mediaRecorder?.stream.getTracks().forEach(t => t.stop())
@@ -3667,7 +3695,7 @@ export class DawEngine extends EventTarget {
     // Helios FX chains initialize asynchronously (worklet + patch + ack) —
     // rendering before they confirm bakes a dry/silent chain into the bounce
     await Promise.all(
-      [...this.effectsChains.values(), ...this.returnEffectsChains.values()]
+      [...this.effectsChains.values(), ...this.returnEffectsChains.values(), ...(this._heliosMaster ? [this._heliosMaster] : [])]
         .map(c => (c as { ready?: Promise<void> }).ready)
         .filter(Boolean),
     )
@@ -3720,7 +3748,7 @@ export class DawEngine extends EventTarget {
       node.connect(proc); proc.connect(sink)
       caps.push({ name, node, proc, chunks })
     }
-    addCap('master', this.masterCompressor)
+    addCap('master', this.masterBusOut)
     if (opts.stems) {
       for (const t of this._tracks) {
         const nodes = this.trackNodes.get(t.id)
@@ -3784,7 +3812,7 @@ export class DawEngine extends EventTarget {
     if (this.isJamActive || this.ctx.state === 'closed') return
     this.isJamActive = true
     this._jamCaptureNode = this.ctx.createMediaStreamDestination()
-    this.masterCompressor.connect(this._jamCaptureNode)
+    this.masterBusOut.connect(this._jamCaptureNode)
     const preferredMimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
     this._jamMime = preferredMimes.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
     this._jamRecorder = new MediaRecorder(
@@ -3809,7 +3837,7 @@ export class DawEngine extends EventTarget {
     if (!this.isJamActive) return
     this.isJamActive = false
     if (this._jamCaptureNode) {
-      try { this.masterCompressor.disconnect(this._jamCaptureNode) } catch { /* ok */ }
+      try { this.masterBusOut.disconnect(this._jamCaptureNode) } catch { /* ok */ }
       this._jamCaptureNode = null
     }
     if (this._jamRecorder && this._jamRecorder.state !== 'inactive') {
