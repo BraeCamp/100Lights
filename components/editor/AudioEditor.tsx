@@ -1385,6 +1385,23 @@ export default function AudioEditor(props: AudioEditorProps) {
   const leftResize = useResizable({ key: 'left-panel', initial: 240, min: 180, max: 520, axis: 'x' })
   const bottomResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })
 
+  // Tab toggles Session <-> Arrangement. They are two views of ONE project, one
+  // keystroke apart (the Ableton model the rebuild follows) - the live view is
+  // not a separate app you navigate to. Podcast mode has no session view.
+  useEffect(() => {
+    function onTab(e: KeyboardEvent) {
+      if (e.key !== 'Tab') return
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
+      if (isPodcast) return
+      e.preventDefault()   // Tab would otherwise walk focus out of the studio
+      setView(v => (v === 'session' ? 'arrangement' : 'session'))
+    }
+    window.addEventListener('keydown', onTab)
+    return () => window.removeEventListener('keydown', onTab)
+  }, [isPodcast])
+
   // B toggles the sound library panel (Ableton-style browser shortcut)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

@@ -6,6 +6,7 @@ import { Plus, Square, Circle, ChevronRight, X } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
 import type { DawTrack, DawClip, LaunchQuantization, FollowAction, CrossfaderSide, Scene } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
+import { sessionCaptureToClips } from '@/lib/daw-session'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import Waveform from './Waveform'
@@ -836,8 +837,6 @@ export default function SessionView() {
   const [capturing, setCapturing]               = useState(false)
   const projectRef = useRef(project)
   projectRef.current = project
-  // captureMap tracks { startBeat } for each trackId currently playing a session clip
-  const captureMapRef = useRef<Map<string, { startBeat: number; clip: DawClip }>>(new Map())
 
   useEffect(() => { engine.launchQuantization = quantize }, [quantize, engine])
 
@@ -848,36 +847,34 @@ export default function SessionView() {
     return () => engine.removeEventListener('recording-complete', onDone)
   }, [engine])
 
-  // Session → Arrangement capture: stamp clips into arrangement as they play/stop
-  useEffect(() => {
-    function onSessionState(e: Event) {
-      if (!capturing) return
-      const { trackId, clipId, state } = (e as CustomEvent<{ trackId: string; clipId: string; state: string }>).detail
-      const proj = projectRef.current
-
-      if (state === 'playing') {
-        // Find the session clip
-        const clip = Object.values(proj.sessionGrid).flatMap(s => s ?? []).find(c => c?.id === clipId)
-        if (clip) captureMapRef.current.set(trackId, { startBeat: engine.currentBeat, clip })
-      } else if (state === 'idle') {
-        const entry = captureMapRef.current.get(trackId)
-        if (!entry) return
-        captureMapRef.current.delete(trackId)
-        const durationBeats = Math.max(0.25, engine.currentBeat - entry.startBeat)
-        if (isAudioClip(entry.clip)) {
-          const arrClip = makeAudioClip(trackId, entry.clip.name, entry.startBeat, durationBeats, {
-            audioUrl: entry.clip.audioUrl,
-            waveformPeaks: entry.clip.waveformPeaks,
-            color: entry.clip.color,
-            gain: entry.clip.gain,
-          })
-          dispatch({ type: 'ADD_CLIP', clip: arrClip })
-        }
-      }
+  // Session -> Arrangement capture. The engine logs each launched span against
+  // the transport's own beat grid (exact quantized launch beats, MIDI as well
+  // as audio, loop-aware), so toggling this just arms/disarms that log and
+  // materializes it. The previous hand-rolled version stamped clips at
+  // event-dispatch time and silently dropped every MIDI jam.
+  const toggleCapture = useCallback(() => {
+    if (!capturing) {
+      if (!engine.isPlaying) void engine.play()
+      engine.startSessionCapture()
+      setCapturing(true)
+      return
     }
-    engine.addEventListener('session-state', onSessionState)
-    return () => engine.removeEventListener('session-state', onSessionState)
+    const log = engine.stopSessionCapture()
+    setCapturing(false)
+    for (const clip of sessionCaptureToClips(log)) dispatch({ type: 'ADD_CLIP', clip })
   }, [capturing, engine, dispatch])
+
+  // Launch countdown — how many beats until the queued clips fire. Live
+  // performers count this out loud ("one two three four"), so it needs to be
+  // on screen, not implied by a blinking slot.
+  const [countdown, setCountdown] = useState<number | null>(null)
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const info = engine.getSessionLaunchInfo()
+      setCountdown(info.beatsRemaining === null ? null : Math.max(0, Math.ceil(info.beatsRemaining)))
+    }, 80)
+    return () => clearInterval(iv)
+  }, [engine])
 
   // Poll for any playing/queued session clips — drives "Back to Arr" button
   useEffect(() => {
@@ -1038,13 +1035,8 @@ export default function SessionView() {
 
         {/* Capture to Arrangement */}
         <button
-          onClick={() => {
-            const next = !capturing
-            setCapturing(next)
-            if (next && !engine.isPlaying) engine.play()
-            if (!next) captureMapRef.current.clear()
-          }}
-          title="Capture to Arrangement — stamps session clips into the arrangement timeline as you play them"
+          onClick={toggleCapture}
+          title="Capture to Arrangement — records what you launch onto the arrangement timeline; click again to stamp it in"
           data-help-id="capture-arrangement"
           style={{
             display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
@@ -1069,20 +1061,48 @@ export default function SessionView() {
           }}
         >OVERDUB</button>
 
-        {/* Back to arrangement */}
-        {anyPlaying && (
-          <button
-            onClick={stopAll}
-            title="Stop all session clips and return to arrangement"
-            data-help-id="stop-all"
+        {/* Launch countdown — beats until the queued clips fire */}
+        {countdown !== null && (
+          <div
+            data-session-countdown={countdown}
+            title="Beats until the queued clips launch"
             style={{
-              display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
-              borderRadius: 3, border: '1px solid #22c55e', cursor: 'pointer',
-              background: 'rgba(34,197,94,0.14)', color: '#22c55e',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              minWidth: 26, height: 20, padding: '0 6px', borderRadius: 3,
+              fontSize: 11, fontWeight: 800, fontVariantNumeric: 'tabular-nums',
+              background: 'var(--accent)', color: '#0b0d10',
             }}
-          >
-            <ChevronRight size={10} /> Back to Arr
-          </button>
+          >{countdown}</div>
+        )}
+
+        {/* Back to arrangement — hands the taken-over tracks back to their
+            arrangement clips (Ableton semantics), instead of stopping the
+            transport. Stop All remains for silencing the session. */}
+        {anyPlaying && (
+          <>
+            <button
+              onClick={() => { engine.stopAllSessionTracks({ quantized: true }); engine.backToArrangement(); setAnyPlaying(false) }}
+              title="Back to Arrangement — release the tracks the session took over"
+              data-help-id="back-to-arrangement"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
+                borderRadius: 3, border: '1px solid #22c55e', cursor: 'pointer',
+                background: 'rgba(34,197,94,0.14)', color: '#22c55e',
+              }}
+            >
+              <ChevronRight size={10} /> Back to Arr
+            </button>
+            <button
+              onClick={stopAll}
+              title="Stop all session clips"
+              data-help-id="stop-all"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
+                borderRadius: 3, border: '1px solid var(--border)', cursor: 'pointer',
+                background: 'var(--bg-card)', color: 'var(--text-muted)',
+              }}
+            >Stop All</button>
+          </>
         )}
       </div>
 
