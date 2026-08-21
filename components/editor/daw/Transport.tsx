@@ -964,8 +964,13 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       <button
         onClick={() => {
           const track = project.tracks.find(t => t.id === selectedTrackId) ?? project.tracks[0]
-          if (!track) return
-          setApolloRack({ trackId: track.id, seed: null, follow: true })
+          if (track) { setApolloRack({ trackId: track.id, seed: null, follow: true }); return }
+          // A new project has no tracks at all, and this is the first button a
+          // new user reaches for — it has to open something rather than sit
+          // there doing nothing. Give Apollo a track to live on.
+          const id = crypto.randomUUID()
+          dispatch({ type: 'ADD_TRACK', id, name: 'Apollo' })
+          setApolloRack({ trackId: id, seed: null, follow: true })
         }}
         data-help-id="open-apollo"
         data-open-apollo
