@@ -61,7 +61,7 @@ interface TransportProps {
 }
 
 export default function Transport({ onCommitName }: TransportProps = {}) {
-  const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink, loopToolArmed, setLoopToolArmed } = useDaw()
+  const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink, loopToolArmed, setLoopToolArmed, selectedTrackId, setApolloRack } = useDaw()
   // Editable project title shown in the toolbar (the DAW previously showed none).
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput]     = useState('')
@@ -955,6 +955,23 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           </button>
         )}
       </div>
+
+      <div style={divider} />
+
+      {/* Apollo — open the synth for whatever track is selected. The window is
+          non-modal and follows the selection, so you can leave it up and keep
+          picking sounds in Beacon. */}
+      <button
+        onClick={() => {
+          const track = project.tracks.find(t => t.id === selectedTrackId) ?? project.tracks[0]
+          if (!track) return
+          setApolloRack({ trackId: track.id, seed: null, follow: true })
+        }}
+        data-help-id="open-apollo"
+        data-open-apollo
+        title="Open Apollo for the selected track — it stays open while you work, and follows what you select"
+        style={{ ...base, width: 'auto', padding: '0 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.4 }}
+      >&#9788; APOLLO</button>
 
       <div style={divider} />
 

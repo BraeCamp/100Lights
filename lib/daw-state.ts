@@ -818,8 +818,11 @@ export interface DawContextValue {
   /** The open Apollo Rack window. It lives at the editor level, NOT inside the
    *  Devices panel that opens it — closing that panel must not tear the window
    *  down, since the whole point is to keep working in Beacon while it is up. */
-  apolloRack: { trackId: string; seed: unknown } | null
-  setApolloRack: (v: { trackId: string; seed: unknown } | null) => void
+  /** `seed: null` means "build it from the track on open". `follow` retargets
+   *  the window as the track selection changes, which is what makes it usable
+   *  as a left-open panel rather than a per-track dialog. */
+  apolloRack: { trackId: string; seed: unknown; follow?: boolean } | null
+  setApolloRack: (v: { trackId: string; seed: unknown; follow?: boolean } | null) => void
   selectedEffectIds: Set<string>
   setSelectedEffectIds: React.Dispatch<React.SetStateAction<Set<string>>>
   // Pad/voice MIDI card

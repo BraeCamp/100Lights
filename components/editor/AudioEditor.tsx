@@ -399,23 +399,82 @@ const DEFAULT_PODCAST_META: PodcastMeta = {
 // panel that opens it (and so it can be moved/resized over Beacon while you
 // keep working).
 const ApolloCardLazy = dynamic(() => import('@/components/apps/apollo/ApolloCard'), { ssr: false })
-function ApolloRackWindow({ trackId, seed, trackName, onChange, onClose }: {
+function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow, onChange, onClose }: {
   trackId: string
   seed: unknown
   trackName: string
+  following: boolean
+  onToggleFollow: () => void
   onChange: (next: { fxMain: unknown[] }) => void
   onClose: () => void
 }) {
+  // Opened from the transport there is no seed yet: build one from this
+  // track's FX chain. Rebuilt when the window retargets to another track.
+  //
+  // The patch is tagged with the track it was built for. ApolloCard snapshots
+  // its patch prop on mount, so rendering it with a patch belonging to the
+  // PREVIOUS track — which is what the first render after a retarget would do,
+  // before the async rebuild lands — would leave the old track's FX on screen
+  // for good. Nothing renders until the two agree.
+  const [built, setBuilt] = useState<{ forTrack: string; patch: unknown } | null>(
+    seed ? { forTrack: trackId, patch: seed } : null,
+  )
+  const { project } = useDaw()
+  useEffect(() => {
+    if (seed) { setBuilt({ forTrack: trackId, patch: seed }); return }
+    let cancelled = false
+    void (async () => {
+      const track = project.tracks.find(t => t.id === trackId)
+      const { translateChain } = await import('@/lib/apollo/daw-fx')
+      const { initPatch } = await import('@/lib/apollo/patch')
+      const p = initPatch()
+      for (const o of p.oscs) o.enabled = false
+      p.sub.enabled = false; p.noise.enabled = false
+      p.matrix = []
+      p.fxMain = (track?.effects?.length ? translateChain(track.effects, project.tempo) : []) ?? []
+      p.fxBus1 = []; p.fxBus2 = []
+      if (!cancelled) setBuilt({ forTrack: trackId, patch: p })
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackId, seed])
+
+  const patch = built?.forTrack === trackId ? built.patch : null
+  if (!patch) return null
   return (
     <ApolloCardLazy
       key={trackId}
-      patch={seed as never}
+      patch={patch as never}
       fxOnly
       title={`${trackName} — FX`}
+      headerExtra={
+        // Following means "always show the selected track". Pinning holds the
+        // window on one track so picking sounds elsewhere in Beacon can't yank
+        // an edit-in-progress away.
+        <button
+          onClick={onToggleFollow}
+          data-apollo-follow={following ? '1' : '0'}
+          title={following ? 'Following the selected track — click to pin to this one' : `Pinned to ${trackName} — click to follow the selection`}
+          style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: 0.4, padding: '4px 9px', borderRadius: 999, cursor: 'pointer',
+            background: 'transparent',
+            color: following ? 'var(--accent, #4aa9ff)' : 'var(--text-muted, #8b93a0)',
+            border: `1px solid ${following ? 'var(--accent, #4aa9ff)' : 'var(--border, #262c35)'}`,
+          }}
+        >{following ? '\u25c9 FOLLOWING' : '\u25c9 PINNED'}</button>
+      }
       onChange={onChange as never}
       onClose={onClose}
     />
   )
+}
+
+
+// Retarget helper: kept as a component so the effect runs after render rather
+// than setting state during one.
+function ApolloFollow({ trackId, onRetarget }: { trackId: string; onRetarget: (id: string) => void }) {
+  useEffect(() => { onRetarget(trackId) }, [trackId, onRetarget])
+  return null
 }
 
 export default function AudioEditor(props: AudioEditorProps) {
@@ -1387,7 +1446,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [soundPanel, setSoundPanel] = useState<{ x: number; y: number } | null>(null)
-  const [apolloRack, setApolloRack] = useState<{ trackId: string; seed: unknown } | null>(null)
+  const [apolloRack, setApolloRack] = useState<{ trackId: string; seed: unknown; follow?: boolean } | null>(null)
 
   // Dev console access to the multi-selection (window.__dawSelection)
   useEffect(() => {
@@ -2286,11 +2345,17 @@ export default function AudioEditor(props: AudioEditorProps) {
             {/* Active view */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
               {view === 'session' && <SessionView />}
+      {/* A following window retargets as the track selection changes. */}
+      {apolloRack?.follow && selectedTrackId && apolloRack.trackId !== selectedTrackId && (
+        <ApolloFollow trackId={selectedTrackId} onRetarget={id => setApolloRack({ trackId: id, seed: null, follow: true })} />
+      )}
       {apolloRack && (
         <ApolloRackWindow
           trackId={apolloRack.trackId}
           seed={apolloRack.seed}
           trackName={project.tracks.find(t => t.id === apolloRack.trackId)?.name ?? 'Track'}
+          following={!!apolloRack.follow}
+          onToggleFollow={() => setApolloRack({ ...apolloRack, follow: !apolloRack.follow })}
           onChange={next => {
             const track = projectRef.current.tracks.find(t => t.id === apolloRack.trackId)
             if (!track) return
