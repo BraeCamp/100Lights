@@ -7,6 +7,7 @@ import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
 import type { DawTrack, DawClip, LaunchQuantization, FollowAction, CrossfaderSide, Scene } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { sessionCaptureToClips } from '@/lib/daw-session'
+import { apHeader, apTitle, apControl, apSelect, apDivider, apReadout } from './apollo-chrome'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import Waveform from './Waveform'
@@ -1005,29 +1006,26 @@ export default function SessionView() {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', backgroundColor: 'var(--bg-base)', backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)', userSelect: 'none' }}>
 
       {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0 }}>
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em' }}>Q:</span>
+      <div style={{ ...apHeader, justifyContent: 'flex-start', gap: 6, flexShrink: 0 }}>
+        <span style={{ ...apTitle, color: 'var(--text-muted)' }}>Quantize</span>
         <select
           value={quantize}
           onChange={e => setQuantize(e.target.value as LaunchQuantization)}
           onClick={e => e.stopPropagation()}
-          style={{ fontSize: 9, background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 2px', outline: 'none', cursor: 'pointer' }}
+          style={{ ...apSelect, width: 76 }}
         >
           {quantOptions.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
         </select>
 
-        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+        <div style={apDivider} />
 
         {/* Session record */}
         <button
           onClick={handleSessionRecord}
           title={project.tracks.some(t => t.armed) ? 'Session Record (all armed tracks)' : 'Arm a track first'}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
-            borderRadius: 3, border: '1px solid var(--border)', cursor: 'pointer',
-            background: sessionRecording ? 'rgba(239,68,68,0.2)' : 'var(--bg-card)',
-            color: sessionRecording ? '#ef4444' : 'var(--text-muted)',
-          }}
+          style={sessionRecording
+            ? { ...apControl, background: 'rgba(239,68,68,0.18)', border: '1px solid #ef4444', color: '#ef4444' }
+            : apControl}
         >
           <Circle size={9} fill={sessionRecording ? '#ef4444' : 'transparent'} />
           REC
@@ -1038,12 +1036,9 @@ export default function SessionView() {
           onClick={toggleCapture}
           title="Capture to Arrangement — records what you launch onto the arrangement timeline; click again to stamp it in"
           data-help-id="capture-arrangement"
-          style={{
-            display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
-            borderRadius: 3, border: `1px solid ${capturing ? '#22c55e' : 'var(--border)'}`, cursor: 'pointer',
-            background: capturing ? 'rgba(34,197,94,0.18)' : 'var(--bg-card)',
-            color: capturing ? '#22c55e' : 'var(--text-muted)',
-          }}
+          style={capturing
+            ? { ...apControl, background: 'rgba(34,197,94,0.18)', border: '1px solid #22c55e', color: '#22c55e' }
+            : apControl}
         >
           <Circle size={9} fill={capturing ? '#22c55e' : 'transparent'} color={capturing ? '#22c55e' : 'currentColor'} />
           CAPTURE
@@ -1054,11 +1049,9 @@ export default function SessionView() {
           onClick={() => setOverdub(v => !v)}
           title="MIDI Overdub — layer MIDI input onto playing clips"
           data-help-id="midi-overdub"
-          style={{
-            padding: '3px 8px', fontSize: 10, borderRadius: 3, border: '1px solid var(--border)', cursor: 'pointer',
-            background: overdub ? 'rgba(168,85,247,0.2)' : 'var(--bg-card)',
-            color: overdub ? '#a855f7' : 'var(--text-muted)',
-          }}
+          style={overdub
+            ? { ...apControl, background: 'rgba(168,85,247,0.18)', border: '1px solid #a855f7', color: '#a855f7' }
+            : apControl}
         >OVERDUB</button>
 
         {/* Launch countdown — beats until the queued clips fire */}
@@ -1066,12 +1059,7 @@ export default function SessionView() {
           <div
             data-session-countdown={countdown}
             title="Beats until the queued clips launch"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              minWidth: 26, height: 20, padding: '0 6px', borderRadius: 3,
-              fontSize: 11, fontWeight: 800, fontVariantNumeric: 'tabular-nums',
-              background: 'var(--accent)', color: '#0b0d10',
-            }}
+            style={{ ...apReadout, justifyContent: 'center', minWidth: 26, background: 'var(--accent)', border: '1px solid var(--accent)', color: 'var(--accent-contrast)', fontWeight: 800 }}
           >{countdown}</div>
         )}
 
@@ -1084,11 +1072,7 @@ export default function SessionView() {
               onClick={() => { engine.stopAllSessionTracks({ quantized: true }); engine.backToArrangement(); setAnyPlaying(false) }}
               title="Back to Arrangement — release the tracks the session took over"
               data-help-id="back-to-arrangement"
-              style={{
-                display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
-                borderRadius: 3, border: '1px solid #22c55e', cursor: 'pointer',
-                background: 'rgba(34,197,94,0.14)', color: '#22c55e',
-              }}
+              style={{ ...apControl, background: 'rgba(34,197,94,0.14)', border: '1px solid #22c55e', color: '#22c55e' }}
             >
               <ChevronRight size={10} /> Back to Arr
             </button>
@@ -1096,11 +1080,7 @@ export default function SessionView() {
               onClick={stopAll}
               title="Stop all session clips"
               data-help-id="stop-all"
-              style={{
-                display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', fontSize: 10,
-                borderRadius: 3, border: '1px solid var(--border)', cursor: 'pointer',
-                background: 'var(--bg-card)', color: 'var(--text-muted)',
-              }}
+              style={apControl}
             >Stop All</button>
           </>
         )}

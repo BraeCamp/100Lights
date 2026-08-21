@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode, type Dispatch } from 'reac
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, Zap, RotateCcw } from 'lucide-react'
 import { TbMetronome } from 'react-icons/tb'
+import { apIcon, apIconOn, apDivider } from './apollo-chrome'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
 import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject, type DawAction } from '@/lib/daw-state'
@@ -587,37 +588,13 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
 
   // ── Style objects ───────────────────────────────────────────────────────────
 
-  const base: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-    width: 28,
-    height: 28,
-    flexShrink: 0,
-    padding: 0,
-  }
+  // Apollo grammar: 26px square, 5px radius, quiet until engaged.
+  const base: React.CSSProperties = { ...apIcon }
 
-  const active: React.CSSProperties = {
-    ...base,
-    background: 'var(--accent)',
-    border: '1px solid var(--accent)',
-    // Auto-contrast: the theme sets --accent-contrast to black on a light accent
-    // and white on a dark one, so a selected button's icon stays legible.
-    color: 'var(--accent-contrast)',
-  }
+  // Auto-contrast (--accent-contrast) keeps the icon legible on any accent.
+  const active: React.CSSProperties = { ...apIconOn }
 
-  const divider: React.CSSProperties = {
-    width: 1,
-    height: 28,
-    background: 'var(--border)',
-    flexShrink: 0,
-    margin: '0 2px',
-  }
+  const divider: React.CSSProperties = { ...apDivider }
 
   const monoDisplay: React.CSSProperties = {
     background: 'var(--bg-base)',

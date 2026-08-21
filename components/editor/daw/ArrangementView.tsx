@@ -395,7 +395,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
-export default function ArrangementView({ onGenerateMusic }: { onGenerateMusic?: () => void } = {}) {
+export default function ArrangementView() {
   const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, onSaveLocal, isSaving, dawDirty, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
   const isMobile = useIsMobile()
   // Meter map for bar-snapping: 'bar' snap honors time-signature changes. Falls
@@ -1946,14 +1946,6 @@ export default function ArrangementView({ onGenerateMusic }: { onGenerateMusic?:
               data-help-id="add-return"
               style={{ padding: '3px 6px', fontSize: 9, borderRadius: 3, border: '1px solid #7c5fa8', background: 'rgba(100,60,150,0.12)', color: 'var(--accent-light)', cursor: 'pointer', flexShrink: 0 }}
             >+Ret</button>
-            {onGenerateMusic && (
-              <button
-                onClick={onGenerateMusic}
-                title="Generate music with AI"
-                data-help-id="generate-music"
-                style={{ padding: '3px 6px', fontSize: 9, borderRadius: 3, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.14)', color: 'var(--accent-light)', cursor: 'pointer', flexShrink: 0 }}
-              >✨ AI</button>
-            )}
           </div>
         </div>
       </div>
