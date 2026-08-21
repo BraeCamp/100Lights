@@ -75,7 +75,17 @@ interface SessionSlot {
   source: AudioBufferSourceNode | null
   gainNode: GainNode | null
   startContextTime: number
+  launchBeat: number
   loopCount: number
+}
+
+/** One launched-clip span on the transport timeline, logged while a session
+ *  capture is armed. Materialize with sessionCaptureToClips (lib/daw-session). */
+export interface SessionCaptureEntry {
+  trackId: string
+  clip: DawClip
+  startBeat: number
+  endBeat: number | null
 }
 
 // Scheduled MIDI note identity key
@@ -154,16 +164,20 @@ export class DawEngine extends EventTarget {
   private schedulerHandle: ReturnType<typeof setInterval> | null = null
   private metronomeHandle: ReturnType<typeof setInterval> | null = null
 
-  // Session launch
-  private _sessionQueue      = new Map<string, { clip: AudioClip; launchCtxTime: number }>()
-  private _sessionMidiQueue  = new Map<string, { clip: MidiClip; launchCtxTime: number }>()
+  // Session launch — Ableton model: ONE transport. Launching a session clip
+  // starts the arrangement transport if it isn't running; every launch/stop is
+  // quantized against transport beats through the tempo map. A track with an
+  // active session slot is "taken over": its arrangement content is suppressed
+  // until backToArrangement() (or transport stop) releases it.
+  private _sessionQueue      = new Map<string, { clip: AudioClip; launchBeat: number; launchCtxTime: number }>()
+  private _sessionMidiQueue  = new Map<string, { clip: MidiClip; launchBeat: number; launchCtxTime: number }>()
+  private _sessionStopQueue  = new Map<string, { stopBeat: number; stopCtxTime: number }>()
   private _sessionSlots      = new Map<string, SessionSlot>()
-  private _sessionMidiSlots  = new Map<string, { clip: MidiClip; startCtxTime: number; intervalId: ReturnType<typeof setInterval> }>()
+  private _sessionMidiSlots  = new Map<string, { clip: MidiClip; launchBeat: number; startCtxTime: number; intervalId: ReturnType<typeof setInterval> }>()
+  private _sessionTakeover   = new Set<string>()
+  private _sessionCapture: SessionCaptureEntry[] | null = null
   launchQuantization: LaunchQuantization = 'bar'
 
-  // Session-only clock (runs independent of arrangement transport)
-  private _sessionClockStartCtxTime = 0
-  private _sessionClockRunning      = false
   private _sessionTickHandle: ReturnType<typeof setInterval> | null = null
 
   // MIDI scheduling
@@ -971,15 +985,11 @@ export class DawEngine extends EventTarget {
       // louder). Capturing beatNow under the OLD map and re-anchoring keeps the
       // playhead continuous across a tempo/marker edit.
       const beatNow = this.currentBeat
-      const sessionNow = this._sessionClockRunning ? this._sessionBeat() : null
       this.tempo = project.tempo
       this._tempoSegs = newSegs
       if (this.isPlaying) {
         this._startBeat = beatNow
         this._startCtxTime = this.ctx.currentTime
-      }
-      if (sessionNow !== null) {
-        this._sessionClockStartCtxTime = this.ctx.currentTime - sessionNow * (60 / this.tempo)
       }
     }
     this.loopEnabled  = project.loopEnabled
@@ -1079,40 +1089,34 @@ export class DawEngine extends EventTarget {
 
   // ── Session launch (quantized) ─────────────────────────────────────────────
 
-  private _nextQuantBeat(): number {
-    const now = this.currentBeat
-    const bpb = this._beatsPerBar
-    switch (this.launchQuantization) {
+  private _nextQuantBeat(q?: LaunchQuantization): number {
+    const now  = this.currentBeat
+    const bpb  = this._beatsPerBar
+    const EPS  = 1e-4  // sitting exactly on a boundary counts as that boundary
+    const quant = q ?? this.launchQuantization
+    switch (quant) {
       case 'none':  return now
-      case 'beat':  return Math.ceil(now)
-      case '2bar':  return Math.ceil(now / (bpb * 2)) * (bpb * 2)
-      case '4bar':  return Math.ceil(now / (bpb * 4)) * (bpb * 4)
+      case 'beat':  return Math.ceil(now - EPS)
+      case '2bar':  return Math.ceil(now / (bpb * 2) - EPS) * (bpb * 2)
+      case '4bar':  return Math.ceil(now / (bpb * 4) - EPS) * (bpb * 4)
       case 'bar':
-      default:      return Math.ceil(now / bpb) * bpb
+      default:      return Math.ceil(now / bpb - EPS) * bpb
     }
   }
 
-  // Beat position within the session clock (independent of arrangement transport)
-  private _sessionBeat(): number {
-    if (!this._sessionClockRunning) return 0
-    return (this.ctx.currentTime - this._sessionClockStartCtxTime) * (this.tempo / 60)
-  }
-
-  // Next quantized beat on the session clock, returns ctx time
-  private _nextSessionQuantCtxTime(q: LaunchQuantization): number {
-    if (!this._sessionClockRunning) return this.ctx.currentTime  // immediate
-    const now    = this._sessionBeat()
-    const bpb    = this._beatsPerBar
-    let nextBeat: number
-    switch (q) {
-      case 'none':  nextBeat = now; break
-      case 'beat':  nextBeat = Math.ceil(now); break
-      case '2bar':  nextBeat = Math.ceil(now / (bpb * 2)) * (bpb * 2); break
-      case '4bar':  nextBeat = Math.ceil(now / (bpb * 4)) * (bpb * 4); break
-      case 'bar':
-      default:      nextBeat = Math.ceil(now / bpb) * bpb; break
+  /** Ensure the shared transport is rolling (Ableton model: a clip launch starts
+   *  THE transport), then resolve the next quantize boundary on it. The first
+   *  launch from a stopped transport fires immediately — no empty count-in. */
+  private async _resolveLaunch(q?: LaunchQuantization): Promise<{ launchBeat: number; launchCtxTime: number }> {
+    if (!this.isPlaying) {
+      await this.play()
+      const launchBeat = this._startBeat
+      // play() anchors 30ms ahead; land the launch on the same anchor
+      return { launchBeat, launchCtxTime: this._startCtxTime }
     }
-    return this._sessionClockStartCtxTime + nextBeat * (60 / this.tempo)
+    const now        = this.currentBeat
+    const launchBeat = this._nextQuantBeat(q)
+    return { launchBeat, launchCtxTime: this._ctxTimeForBeat(launchBeat, now, this.ctx.currentTime) }
   }
 
   private _ensureSessionTicker() {
@@ -1131,22 +1135,115 @@ export class DawEngine extends EventTarget {
     const now = this.ctx.currentTime
     for (const [trackId, queued] of this._sessionQueue.entries()) {
       if (now + SCHEDULE_LOOKAHEAD >= queued.launchCtxTime) {
-        this._launchSessionSlot(trackId, queued.clip, queued.launchCtxTime)
+        this._launchSessionSlot(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat)
         this._sessionQueue.delete(trackId)
       }
     }
     for (const [trackId, queued] of this._sessionMidiQueue.entries()) {
       if (now + SCHEDULE_LOOKAHEAD >= queued.launchCtxTime) {
-        this._launchSessionMidiSlot(trackId, queued.clip, queued.launchCtxTime)
+        this._launchSessionMidiSlot(trackId, queued.clip, queued.launchCtxTime, queued.launchBeat)
         this._sessionMidiQueue.delete(trackId)
+      }
+    }
+    for (const [trackId, s] of this._sessionStopQueue.entries()) {
+      if (now + SCHEDULE_LOOKAHEAD >= s.stopCtxTime) {
+        const at = { atCtxTime: s.stopCtxTime, atBeat: s.stopBeat }
+        if (this._sessionSlots.has(trackId))     this._stopSessionTrack(trackId, at)
+        if (this._sessionMidiSlots.has(trackId)) this._stopSessionMidiTrack(trackId, at)
+        this._sessionStopQueue.delete(trackId)
       }
     }
     const hasActive = this._sessionQueue.size > 0 || this._sessionSlots.size > 0
                    || this._sessionMidiQueue.size > 0 || this._sessionMidiSlots.size > 0
-    if (!hasActive) {
-      this._stopSessionTicker()
-      this._sessionClockRunning = false
+                   || this._sessionStopQueue.size > 0
+    if (!hasActive) this._stopSessionTicker()
+  }
+
+  // ── Session takeover (a playing slot suppresses the track's arrangement) ──
+
+  /** Tracks currently owned by the session (arrangement content suppressed). */
+  get sessionTakeover(): string[] { return [...this._sessionTakeover] }
+
+  private _takeOverTrack(trackId: string, atCtxTime: number) {
+    if (!this._sessionTakeover.has(trackId)) {
+      this._sessionTakeover.add(trackId)
+      this.dispatchEvent(new CustomEvent('session-takeover', { detail: { tracks: this.sessionTakeover } }))
     }
+    // Silence arrangement audio already sounding/scheduled on this track at the
+    // launch boundary. MIDI notes inside the 150ms lookahead may still ring —
+    // accepted bleed; future ticks skip the track entirely.
+    const keep: ScheduledSource[] = []
+    for (const s of this.scheduledSources) {
+      const clip = this._clips.find(c => c.id === s.clipId)
+      if (!clip || clip.trackId !== trackId) { keep.push(s); continue }
+      try {
+        s.gainNode.gain.setTargetAtTime(0, atCtxTime, 0.008)
+        s.source.stop(atCtxTime + 0.06)
+      } catch { /* ok */ }
+    }
+    this.scheduledSources = keep
+  }
+
+  /** Release every session takeover: arrangement content resumes scheduling on
+   *  the next tick, mid-clip (the scheduler offsets into already-elapsed clips). */
+  backToArrangement() {
+    if (this._sessionTakeover.size === 0) return
+    this._sessionTakeover.clear()
+    // A takeover-released track re-schedules its arrangement audio from `now`;
+    // clear the per-clip dedup so suppressed clips are reconsidered.
+    this.dispatchEvent(new CustomEvent('session-takeover', { detail: { tracks: [] } }))
+  }
+
+  // ── Session capture (record a jam onto the arrangement timeline) ───────────
+
+  startSessionCapture() {
+    this._sessionCapture = []
+    // Anything already playing counts from "now" — the jam is captured from here.
+    const nowBeat = this.isPlaying ? this.currentBeat : this._startBeat
+    for (const [trackId, slot] of this._sessionSlots) {
+      this._sessionCapture.push({ trackId, clip: slot.clip, startBeat: nowBeat, endBeat: null })
+    }
+    for (const [trackId, slot] of this._sessionMidiSlots) {
+      this._sessionCapture.push({ trackId, clip: slot.clip, startBeat: nowBeat, endBeat: null })
+    }
+  }
+
+  get isSessionCapturing(): boolean { return this._sessionCapture !== null }
+
+  /** Close all open entries at the current beat and return the log. */
+  stopSessionCapture(): SessionCaptureEntry[] {
+    const log = this._sessionCapture ?? []
+    const nowBeat = this.isPlaying ? this.currentBeat : this._startBeat
+    for (const e of log) if (e.endBeat === null) e.endBeat = nowBeat
+    this._sessionCapture = null
+    return log
+  }
+
+  private _captureLaunch(trackId: string, clip: DawClip, startBeat: number) {
+    if (!this._sessionCapture) return
+    // A new launch on a track ends that track's open entry at the same boundary
+    for (const e of this._sessionCapture) {
+      if (e.trackId === trackId && e.endBeat === null) e.endBeat = startBeat
+    }
+    this._sessionCapture.push({ trackId, clip, startBeat, endBeat: null })
+  }
+
+  private _captureStop(trackId: string, endBeat: number) {
+    if (!this._sessionCapture) return
+    for (const e of this._sessionCapture) {
+      if (e.trackId === trackId && e.endBeat === null) e.endBeat = endBeat
+    }
+  }
+
+  // ── Countdown / queue introspection (for the launch UI) ────────────────────
+
+  getSessionLaunchInfo(): { queued: Array<{ trackId: string; clipId: string; launchBeat: number }>; nextBeat: number | null; beatsRemaining: number | null } {
+    const queued: Array<{ trackId: string; clipId: string; launchBeat: number }> = []
+    for (const [trackId, q] of this._sessionQueue)     queued.push({ trackId, clipId: q.clip.id, launchBeat: q.launchBeat })
+    for (const [trackId, q] of this._sessionMidiQueue) queued.push({ trackId, clipId: q.clip.id, launchBeat: q.launchBeat })
+    if (queued.length === 0) return { queued, nextBeat: null, beatsRemaining: null }
+    const nextBeat = Math.min(...queued.map(q => q.launchBeat))
+    return { queued, nextBeat, beatsRemaining: Math.max(0, nextBeat - this.currentBeat) }
   }
 
   async queueSession(trackId: string, clip: AudioClip, quantOverride?: LaunchQuantization) {
@@ -1159,52 +1256,47 @@ export class DawEngine extends EventTarget {
       return
     }
 
-    // Preload buffer
+    // Preload buffer BEFORE resolving the boundary — a slow decode must not
+    // push the launch past its quantize point.
     await this.loadClipBuffer(clip)
 
-    const q = quantOverride ?? this.launchQuantization
-    let launchCtxTime: number
-
-    if (this.isPlaying) {
-      // Quantize against the running arrangement transport
-      const savedQ = quantOverride ? this.launchQuantization : undefined
-      if (quantOverride) this.launchQuantization = quantOverride
-      const launchBeat = this._nextQuantBeat()
-      if (savedQ !== undefined) this.launchQuantization = savedQ
-      launchCtxTime = this.ctx.currentTime + this.beatsToSeconds(launchBeat - this.currentBeat)
-    } else if (this._sessionClockRunning) {
-      // Quantize against the running session clock
-      launchCtxTime = this._nextSessionQuantCtxTime(q)
-    } else {
-      // First clip — start session clock now and launch immediately
-      this._sessionClockStartCtxTime = this.ctx.currentTime
-      this._sessionClockRunning      = true
-      launchCtxTime                  = this.ctx.currentTime
-    }
+    const { launchBeat, launchCtxTime } = await this._resolveLaunch(quantOverride)
     this._announcePlayback()
 
-    this._sessionQueue.set(trackId, { clip, launchCtxTime })
+    this._sessionStopQueue.delete(trackId)
+    this._sessionQueue.set(trackId, { clip, launchBeat, launchCtxTime })
     this._ensureSessionTicker()
 
     this.dispatchEvent(new CustomEvent('session-state', {
-      detail: { trackId, clipId: clip.id, state: 'queued' },
+      detail: { trackId, clipId: clip.id, state: 'queued', launchBeat },
     }))
   }
 
-  stopSessionTrack(trackId: string) { this._stopSessionTrack(trackId) }
+  stopSessionTrack(trackId: string, opts?: { quantized?: boolean }) {
+    if (opts?.quantized && this.isPlaying) {
+      const stopBeat = this._nextQuantBeat()
+      const stopCtxTime = this._ctxTimeForBeat(stopBeat, this.currentBeat, this.ctx.currentTime)
+      this._sessionStopQueue.set(trackId, { stopBeat, stopCtxTime })
+      this._ensureSessionTicker()
+      return
+    }
+    this._stopSessionTrack(trackId)
+  }
 
-  private _stopSessionTrack(trackId: string) {
+  private _stopSessionTrack(trackId: string, at?: { atCtxTime: number; atBeat: number }) {
     const slot = this._sessionSlots.get(trackId)
+    const stopTime = at?.atCtxTime ?? this.ctx.currentTime
     if (slot) {
-      const now = this.ctx.currentTime
       if (slot.gainNode) {
-        slot.gainNode.gain.setTargetAtTime(0, now, 0.01)
+        slot.gainNode.gain.setTargetAtTime(0, stopTime, 0.01)
       }
+      const delayMs = Math.max(0, (stopTime - this.ctx.currentTime) * 1000) + 50
+      const { source, gainNode } = slot
       setTimeout(() => {
-        try { slot.source?.stop() } catch { /* ok */ }
-        slot.source?.disconnect()
-        slot.gainNode?.disconnect()
-      }, 50)
+        try { source?.stop() } catch { /* ok */ }
+        source?.disconnect()
+        gainNode?.disconnect()
+      }, delayMs)
       const clipId = slot.clip.id
       this._sessionSlots.delete(trackId)
       this.dispatchEvent(new CustomEvent('session-state', {
@@ -1212,14 +1304,19 @@ export class DawEngine extends EventTarget {
       }))
     }
     this._sessionQueue.delete(trackId)
+    this._captureStop(trackId, at?.atBeat ?? this.currentBeat)
+    // Takeover is NOT released — a stopped session track stays silent (Ableton
+    // semantics) until backToArrangement() or transport stop.
   }
 
-  private _launchSessionSlot(trackId: string, clip: AudioClip, launchCtxTime: number) {
+  private _launchSessionSlot(trackId: string, clip: AudioClip, launchCtxTime: number, launchBeat: number) {
     const buf = this.bufferCache.get(clip.id)
     if (!buf) return
 
     this.ensureTrack(trackId)
     const nodes = this.trackNodes.get(trackId)!
+    this._takeOverTrack(trackId, launchCtxTime)
+    this._captureLaunch(trackId, clip, launchBeat)
 
     // Stop any currently playing slot
     const existing = this._sessionSlots.get(trackId)
@@ -1254,6 +1351,7 @@ export class DawEngine extends EventTarget {
     const slot: SessionSlot = {
       clip, source, gainNode,
       startContextTime: startAt,
+      launchBeat,
       loopCount: 0,
     }
     this._sessionSlots.set(trackId, slot)
@@ -1283,8 +1381,58 @@ export class DawEngine extends EventTarget {
     }
     this._sessionQueue.clear()
     this._sessionMidiQueue.clear()
+    this._sessionStopQueue.clear()
     this._stopSessionTicker()
-    this._sessionClockRunning = false
+    // Transport stop releases every takeover (deviation from Ableton, where a
+    // taken-over track stays silent across stop; revisit when the session UI
+    // grows a Back-to-Arrangement affordance prominent enough to explain it).
+    if (this._sessionTakeover.size > 0) {
+      this._sessionTakeover.clear()
+      this.dispatchEvent(new CustomEvent('session-takeover', { detail: { tracks: [] } }))
+    }
+  }
+
+  /** Launch a scene row atomically: every clip in the row starts at ONE shared
+   *  quantize boundary; tracks whose slot in this row is empty get a quantized
+   *  stop at the same boundary (Ableton default stop-button semantics). */
+  async launchScene(entries: Array<{ trackId: string; clip: DawClip | null }>, quantOverride?: LaunchQuantization) {
+    if (this.ctx.state === 'suspended') await this.ctx.resume()
+
+    // Preload audio buffers first so decode time can't split the row
+    await Promise.all(entries.map(e => e.clip && isAudioClip(e.clip) ? this.loadClipBuffer(e.clip) : Promise.resolve()))
+
+    const { launchBeat, launchCtxTime } = await this._resolveLaunch(quantOverride)
+    this._announcePlayback()
+
+    for (const { trackId, clip } of entries) {
+      if (clip && isAudioClip(clip)) {
+        this._sessionStopQueue.delete(trackId)
+        this._sessionQueue.set(trackId, { clip, launchBeat, launchCtxTime })
+        this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId: clip.id, state: 'queued', launchBeat } }))
+      } else if (clip && isMidiClip(clip)) {
+        this._sessionStopQueue.delete(trackId)
+        this._sessionMidiQueue.set(trackId, { clip, launchBeat, launchCtxTime })
+        this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId: clip.id, state: 'queued', launchBeat } }))
+      } else if (this._sessionSlots.has(trackId) || this._sessionMidiSlots.has(trackId)) {
+        this._sessionStopQueue.set(trackId, { stopBeat: launchBeat, stopCtxTime: launchCtxTime })
+      }
+    }
+    this._ensureSessionTicker()
+  }
+
+  /** Stop every playing/queued session clip at the next quantize boundary
+   *  (or immediately when the transport is stopped). */
+  stopAllSessionTracks(opts?: { quantized?: boolean }) {
+    const ids = new Set([
+      ...this._sessionSlots.keys(), ...this._sessionMidiSlots.keys(),
+      ...this._sessionQueue.keys(), ...this._sessionMidiQueue.keys(),
+    ])
+    for (const trackId of ids) {
+      this._sessionQueue.delete(trackId)
+      this._sessionMidiQueue.delete(trackId)
+      this.stopSessionTrack(trackId, opts)
+      this.stopSessionMidiTrack(trackId, opts)
+    }
   }
 
   async queueSessionMidi(trackId: string, clip: MidiClip, quantOverride?: LaunchQuantization) {
@@ -1296,37 +1444,32 @@ export class DawEngine extends EventTarget {
       return
     }
 
-    const q = quantOverride ?? this.launchQuantization
-    let launchCtxTime: number
+    const { launchBeat, launchCtxTime } = await this._resolveLaunch(quantOverride)
+    this._announcePlayback()
 
-    if (this.isPlaying) {
-      const launchBeat = this._nextQuantBeat()
-      launchCtxTime = this.ctx.currentTime + this.beatsToSeconds(launchBeat - this.currentBeat)
-    } else if (this._sessionClockRunning) {
-      launchCtxTime = this._nextSessionQuantCtxTime(q)
-    } else {
-      this._sessionClockStartCtxTime = this.ctx.currentTime
-      this._sessionClockRunning      = true
-      launchCtxTime                  = this.ctx.currentTime
-    }
-
-    this._sessionMidiQueue.set(trackId, { clip, launchCtxTime })
+    this._sessionStopQueue.delete(trackId)
+    this._sessionMidiQueue.set(trackId, { clip, launchBeat, launchCtxTime })
     this._ensureSessionTicker()
-    this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId: clip.id, state: 'queued' } }))
+    this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId: clip.id, state: 'queued', launchBeat } }))
   }
 
-  private _stopSessionMidiTrack(trackId: string) {
+  private _stopSessionMidiTrack(trackId: string, at?: { atCtxTime: number; atBeat: number }) {
     const slot = this._sessionMidiSlots.get(trackId)
     if (slot) {
-      clearInterval(slot.intervalId)
+      const delayMs = at ? Math.max(0, (at.atCtxTime - this.ctx.currentTime) * 1000) : 0
       const clipId = slot.clip.id
-      this._sessionMidiSlots.delete(trackId)
-      this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId, state: 'idle' } }))
+      const finish = () => {
+        clearInterval(slot.intervalId)
+        this._sessionMidiSlots.delete(trackId)
+        this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId, state: 'idle' } }))
+      }
+      if (delayMs > 1) setTimeout(finish, delayMs); else finish()
     }
     this._sessionMidiQueue.delete(trackId)
+    this._captureStop(trackId, at?.atBeat ?? this.currentBeat)
   }
 
-  private _launchSessionMidiSlot(trackId: string, clip: MidiClip, launchCtxTime: number) {
+  private _launchSessionMidiSlot(trackId: string, clip: MidiClip, launchCtxTime: number, launchBeat: number) {
     const track = this._tracks.find(t => t.id === trackId)
     const nodes = this.trackNodes.get(trackId)
     if (!track || !nodes) return
@@ -1334,16 +1477,24 @@ export class DawEngine extends EventTarget {
     const existing = this._sessionMidiSlots.get(trackId)
     if (existing) { clearInterval(existing.intervalId); this._sessionMidiSlots.delete(trackId) }
 
+    this._takeOverTrack(trackId, launchCtxTime)
+    this._captureLaunch(trackId, clip, launchBeat)
+
     const clipDurBeats = clip.durationBeats || 4
-    const clipDurSec   = this.beatsToSeconds(clipDurBeats)
     const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
 
-    const scheduleLoop = (iterationStart: number) => {
+    // Beat-based iteration scheduling: each loop pass lands on the transport's
+    // beat grid THROUGH the tempo map, so session MIDI stays locked across
+    // mid-song tempo changes (ctx-seconds arithmetic drifts there).
+    const scheduleLoop = (iterationStartBeat: number) => {
+      const nowBeat = this.currentBeat
+      const ctxNow  = this.ctx.currentTime
       for (const note of processedNotes) {
         const rfx = this._resolveNoteFx(clip, note)
         const sustainSec = rfx.sustain ?? 0
-        const noteStartAt = iterationStart + this.beatsToSeconds(this._applySwing(note.startBeat))
-        const noteDur     = this.beatsToSeconds(note.durationBeats)
+        const noteAbsBeat = iterationStartBeat + this._applySwing(note.startBeat)
+        const noteStartAt = this._ctxTimeForBeat(noteAbsBeat, nowBeat, ctxNow)
+        const noteDur     = this._spanSeconds(noteAbsBeat, noteAbsBeat + note.durationBeats)
         if (noteStartAt < this.ctx.currentTime - 0.1) continue  // already past
         let noteDest: AudioNode = nodes.midiInput
         if (this._rollFxActive(rfx)) {
@@ -1394,7 +1545,7 @@ export class DawEngine extends EventTarget {
       }
     }
 
-    scheduleLoop(launchCtxTime)
+    scheduleLoop(launchBeat)
     // The initial call covers iteration 0; the interval schedules each later
     // loop exactly once. Without the `iteration > lastScheduled` guard, the
     // 25 ms interval re-scheduled the SAME iteration ~12× during each lookahead
@@ -1402,16 +1553,17 @@ export class DawEngine extends EventTarget {
     let lastScheduled = 0
     const intervalId = setInterval(() => {
       if (!this._sessionMidiSlots.has(trackId)) return
-      const elapsed   = this.ctx.currentTime - launchCtxTime
-      const iteration = Math.floor(elapsed / clipDurSec) + 1
-      const nextStart = launchCtxTime + iteration * clipDurSec
-      if (iteration > lastScheduled && nextStart - this.ctx.currentTime < SCHEDULE_LOOKAHEAD * 2) {
-        scheduleLoop(nextStart)
+      const elapsedBeats = this.currentBeat - launchBeat
+      const iteration    = Math.floor(elapsedBeats / clipDurBeats) + 1
+      const nextStartBeat = launchBeat + iteration * clipDurBeats
+      const nextStartCtx  = this._ctxTimeForBeat(nextStartBeat, this.currentBeat, this.ctx.currentTime)
+      if (iteration > lastScheduled && nextStartCtx - this.ctx.currentTime < SCHEDULE_LOOKAHEAD * 2) {
+        scheduleLoop(nextStartBeat)
         lastScheduled = iteration
       }
     }, SCHEDULER_INTERVAL)
 
-    this._sessionMidiSlots.set(trackId, { clip, startCtxTime: launchCtxTime, intervalId })
+    this._sessionMidiSlots.set(trackId, { clip, launchBeat, startCtxTime: launchCtxTime, intervalId })
     this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId: clip.id, state: 'playing' } }))
   }
 
@@ -1428,18 +1580,36 @@ export class DawEngine extends EventTarget {
     return 'idle'
   }
 
-  stopSessionMidiTrack(trackId: string) { this._stopSessionMidiTrack(trackId) }
+  stopSessionMidiTrack(trackId: string, opts?: { quantized?: boolean }) {
+    if (opts?.quantized && this.isPlaying && this._sessionMidiSlots.has(trackId)) {
+      const stopBeat = this._nextQuantBeat()
+      const stopCtxTime = this._ctxTimeForBeat(stopBeat, this.currentBeat, this.ctx.currentTime)
+      this._sessionStopQueue.set(trackId, { stopBeat, stopCtxTime })
+      this._ensureSessionTicker()
+      return
+    }
+    this._stopSessionMidiTrack(trackId)
+  }
 
-  // Returns 0..1 playback progress for a session slot
+  // Returns 0..1 playback progress for a session slot (audio or MIDI)
   getSessionProgress(trackId: string): number {
     const slot = this._sessionSlots.get(trackId)
-    if (!slot) return 0
-    const buf = this.bufferCache.get(slot.clip.id)
-    if (!buf) return 0
-    const elapsed  = this.ctx.currentTime - slot.startContextTime
-    const duration = buf.duration - slot.clip.trimStart - slot.clip.trimEnd
-    if (slot.clip.loopEnabled) return (elapsed % duration) / duration
-    return Math.min(1, elapsed / duration)
+    if (slot) {
+      const buf = this.bufferCache.get(slot.clip.id)
+      if (!buf) return 0
+      const elapsed  = this.ctx.currentTime - slot.startContextTime
+      const duration = buf.duration - slot.clip.trimStart - slot.clip.trimEnd
+      if (slot.clip.loopEnabled) return (elapsed % duration) / duration
+      return Math.min(1, elapsed / duration)
+    }
+    const midi = this._sessionMidiSlots.get(trackId)
+    if (midi) {
+      const durBeats = midi.clip.durationBeats || 4
+      const elapsedBeats = this.currentBeat - midi.launchBeat
+      if (elapsedBeats < 0) return 0
+      return (elapsedBeats % durBeats) / durBeats
+    }
+    return 0
   }
 
   // ── Preset buffer loading ─────────────────────────────────────────────────
@@ -1568,6 +1738,7 @@ export class DawEngine extends EventTarget {
     const seenOverlay: Array<{ trackId: string; startBeat: number; durationBeats: number; sig: string }> = []
 
     for (const clip of this._clips) {
+      if (this._sessionTakeover.has(clip.trackId)) continue  // session owns the track
       const sig = `${clip.r2Key ?? clip.libraryId ?? clip.audioUrl ?? clip.name}`
       const dup = seenOverlay.some(o =>
         o.trackId === clip.trackId && o.sig === sig &&
@@ -1600,6 +1771,7 @@ export class DawEngine extends EventTarget {
       const midiOverlayKey = `${clip.trackId}|${clip.startBeat.toFixed(4)}|${clip.durationBeats.toFixed(4)}|${clip.presetId ?? ''}|${clip.notes.length}|${clip.name}`
       if (seenMidiOverlay.has(midiOverlayKey)) continue
       seenMidiOverlay.add(midiOverlayKey)
+      if (this._sessionTakeover.has(clip.trackId)) continue  // session owns the track
       const track = this._tracks.find(t => t.id === clip.trackId)
       if (!track || track.mute) continue
       const nodes = this.trackNodes.get(clip.trackId)

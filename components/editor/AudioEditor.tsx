@@ -4,6 +4,7 @@ import { useState, useEffect, useReducer, useRef, useCallback, useMemo } from 'r
 import { createPortal } from 'react-dom'
 import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch } from '@/lib/daw-undo'
+import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip } from '@/lib/daw-types'
@@ -768,10 +769,12 @@ export default function AudioEditor(props: AudioEditorProps) {
       __parseMid?: (file: File) => Promise<unknown>
       __exportMid?: () => Promise<Blob>
       __sessionCapture?: (opts?: { sessionId?: string; enabled?: boolean }) => Promise<unknown>
+      __dawSessionCaptureToClips?: typeof sessionCaptureToClips
     }
     w.__dawDispatch = dispatch
     w.__dawSnapshot = () => ({ project: projectRef.current, history: buildLogRef.current })
     try { Object.defineProperty(w, '__dawEngine', { get: () => engineRef.current, configurable: true }) } catch { /* redefined */ }
+    w.__dawSessionCaptureToClips = sessionCaptureToClips
     // Dev-only "vision": a readable, at-a-glance view of what's actually happening in the studio as
     // it's driven — transport, the LIVE master output level (so audio flow is verifiable, not guessed),
     // and every track's instrument/FX/clips with real loop state + note counts. This is how an

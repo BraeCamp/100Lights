@@ -908,14 +908,16 @@ export default function SessionView() {
     if (scene.timeSignatureNum && scene.timeSignatureDen) {
       dispatch({ type: 'SET_TIME_SIG', num: scene.timeSignatureNum, den: scene.timeSignatureDen })
     }
-    await Promise.all(project.tracks.map(track => {
-      const clip = project.sessionGrid[track.id]?.[sceneIndex]
-      return clip && isAudioClip(clip) ? engine.queueSession(track.id, clip) : Promise.resolve()
-    }))
+    // Atomic row launch: every clip in the scene (MIDI included) fires at ONE
+    // shared quantize boundary; tracks with an empty slot get a quantized stop.
+    await engine.launchScene(project.tracks.map(track => ({
+      trackId: track.id,
+      clip: project.sessionGrid[track.id]?.[sceneIndex] ?? null,
+    })))
   }
 
   function stopAll() {
-    for (const t of project.tracks) engine.stopSessionTrack(t.id)
+    engine.stopAllSessionTracks({ quantized: true })
     setAnyPlaying(false)
     setSessionRecording(false)
   }
@@ -970,7 +972,7 @@ export default function SessionView() {
     }
     if (action === 'again') {
       const c = grid[fromSceneIndex]
-      if (c && isAudioClip(c)) await engine.queueSession(trackId, c)
+      if (c) await (isAudioClip(c) ? engine.queueSession(trackId, c) : engine.queueSessionMidi(trackId, c))
       return
     }
 
@@ -988,7 +990,7 @@ export default function SessionView() {
 
     if (targetIdx >= 0 && targetIdx < total) {
       const c = grid[targetIdx]
-      if (c && isAudioClip(c)) await engine.queueSession(trackId, c)
+      if (c) await (isAudioClip(c) ? engine.queueSession(trackId, c) : engine.queueSessionMidi(trackId, c))
     }
   }, [engine])
 
