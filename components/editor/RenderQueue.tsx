@@ -42,6 +42,22 @@ interface Props {
   inline?: boolean  // when true, renders without the modal backdrop
 }
 
+
+// Delivery presets — a preset does nothing magic: it fills the settings below.
+// The point is that a destination ("YouTube") is a thing people know, whereas
+// a quality/resolution pair is a thing they have to guess at.
+const DELIVERY_PRESETS: Array<{
+  id: string; label: string; hint: string
+  quality: ExportOptions['quality']; resolution: ExportOptions['resolution']
+}> = [
+  // Uploading a larger frame makes YouTube pick a better encoding ladder, so
+  // the same footage survives their compression looking cleaner.
+  { id: 'youtube', label: 'YouTube',  hint: 'high quality, 1080p — upload big, let YouTube compress', quality: 'high',   resolution: '1080p' },
+  { id: 'social',  label: 'Social',   hint: 'balanced 1080p for Instagram / TikTok',                  quality: 'medium', resolution: '1080p' },
+  { id: 'draft',   label: 'Draft',    hint: 'fast 720p for review copies',                            quality: 'web',    resolution: '720p'  },
+  { id: 'master',  label: 'Master',   hint: 'highest quality at the source resolution — keep this one', quality: 'high',  resolution: 'original' },
+]
+
 const QUALITIES: ExportOptions['quality'][] = ['high', 'medium', 'web']
 const RESOLUTIONS: ExportOptions['resolution'][] = ['original', '1080p', '720p', '480p']
 
@@ -230,6 +246,31 @@ export default function RenderQueue({ timelineItems, mediaItems, tracks = [], ad
           {/* Add job form */}
           <div className="rounded-lg p-3 flex flex-col gap-3" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
             <p className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>NEW JOB</p>
+
+            {/* Presets fill the settings below — pick a destination, not a codec */}
+            <div>
+              <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Preset</p>
+              <div className="flex gap-1 flex-wrap">
+                {DELIVERY_PRESETS.map(pre => {
+                  const active = draftQuality === pre.quality && draftRes === pre.resolution
+                  return (
+                    <button key={pre.id}
+                      data-delivery-preset={pre.id}
+                      onClick={() => { setDraftQuality(pre.quality); setDraftRes(pre.resolution) }}
+                      title={pre.hint}
+                      className="px-2 py-1 rounded text-xs"
+                      style={{
+                        background: active ? 'var(--accent)' : 'var(--bg-card)',
+                        border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                        color: active ? '#0b0d10' : 'var(--text-secondary)',
+                        fontWeight: active ? 700 : 400,
+                      }}>
+                      {pre.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
 
             <div className="flex gap-2">
               <div className="flex-1">

@@ -1,5 +1,9 @@
 # The Rebuild — build plan (2026-08-21)
 
+> **STATUS 2026-08-21 — batches 1–6 substantially delivered.** See the
+> "Delivered" section at the bottom for what shipped, what was already
+> present, and the three items deliberately left open.
+
 Scope, per Brae's directives: (1) video program completely recreated on
 the Resolve model keeping only a few pieces; (2) Beacon live/session
 view completely recreated on the Ableton Session model; (3) arrangement
@@ -168,3 +172,49 @@ is available.
   mobile gaps rather than silently diverging.
 - Nothing here needs Brae's external credentials; all batches are
   self-contained code work.
+
+
+---
+
+## Delivered (2026-08-21)
+
+| Batch | Commit | Outcome |
+|---|---|---|
+| B1a session engine | `3ca3d31` | Unified transport, takeover, atomic scene launch, countdown API, jam capture |
+| B1b pages shell | — | **Already existed**; audit only (Media page folded into B5) |
+| B2 color engine | `14d818b`, `7682cc3` | grade-gl node chain, two-level grades, Color page, viewer |
+| B3 session UI | `5c275c4` | Tab toggle, countdown display, engine-backed capture, back-to-arrangement |
+| B4 arrangement | `30d6036` | AI button removed, consolidate (Ctrl+J), automation override |
+| B5 trim suite | `f330877` | Slip + slide with clamping |
+| B5 media page | `f9ea399` | Bins, smart bins, logging metadata, hover-scrub, search |
+| B6 deliver | (this) | Delivery presets over the existing render queue |
+
+Total QA: 60+ checks across seven headless suites, all passing, several
+verified against real Pexels footage rather than synthetic frames.
+
+### Deliberately left open
+
+1. **Beacon-as-Fairlight** — embedding the Beacon mixer as the video
+   Audio page. The existing FairlightPage covers per-track faders/EQ;
+   the full Beacon surface on a video timeline needs the DAW-mix-link
+   work extended, which is its own batch rather than a fill-in.
+2. **CLAP similarity search in the Beacon browser** — the vector store
+   and query path exist (`lib/track-embeddings.ts`), but they only hold
+   Jamendo tracks. Pointing it at a user's own library needs the local
+   CLAP model run over their samples offline (`scripts/clap-embed.py`),
+   i.e. a batch job on Brae's machine, not a UI change.
+3. **Archive export with per-track audio** — Resolve writes one master
+   file carrying every timeline track as a separate audio stream. Our
+   exporter mixes down; per-stream output is real ffmpeg work.
+
+### Notes for whoever picks this up
+
+- Preview↔export parity is structural for color: both call
+  `lib/video-export/grade-gl`. Keep it that way — do not add a
+  preview-only shortcut.
+- The session engine owns launch timing. UI should ask it
+  (`getSessionLaunchInfo`, `sessionTakeover`) rather than track state
+  in parallel.
+- QA hooks now available: `__gradeGL`, `__video.setClip`,
+  `data-clip-id`, `data-media-item`, `data-delivery-preset`,
+  `data-session-countdown`.
