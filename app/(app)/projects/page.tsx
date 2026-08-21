@@ -67,6 +67,21 @@ const cloudHref = (r: { username: string | null; slug: string | null; id: string
     ? `/apollo?session=${r.id}`
     : projectPath(r.username, r.slug, r.id)
 
+const isApolloRow = (r: { modules?: string[] | null }) => r.modules?.length === 1 && r.modules[0] === 'apollo'
+
+/** Open an Apollo session as a Beacon track: fetch the session's patch, stash
+ *  the neutral seed, land in the studio. */
+async function openSessionInBeacon(id: string, name: string) {
+  try {
+    const res = await fetch(`/api/projects/${id}`)
+    if (!res.ok) return
+    const d = await res.json() as { apollo?: { patch?: object } }
+    if (!d?.apollo?.patch) return
+    sessionStorage.setItem('100lights-apollo-seed', JSON.stringify({ patch: d.apollo.patch, name }))
+    window.location.assign('/create?modules=audio&audioMode=music')
+  } catch { /* offline */ }
+}
+
 function formatDate(ms: number) {
   if (!ms) return ''
   return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -540,6 +555,14 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
                 </div>
               </a>
               <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(row.ts)}</span>
+              {isApolloRow(row) && (
+                <button
+                  onClick={(e) => { e.preventDefault(); void openSessionInBeacon(row.id, row.name) }}
+                  title="Open this session as an Apollo track in the Beacon studio"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg text-xs font-semibold"
+                  style={{ color: 'var(--accent-light)' }}
+                >Beacon ↗</button>
+              )}
               <button onClick={() => toggleStar(row.id)} title={row.starred ? 'Unstar' : 'Star'} className="p-1.5 rounded-lg" style={{ color: row.starred ? '#f59e0b' : 'var(--text-muted)' }}>
                 <Star size={14} fill={row.starred ? '#f59e0b' : 'none'} />
               </button>

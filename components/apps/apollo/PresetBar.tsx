@@ -195,6 +195,15 @@ export default function PresetBar() {
               padding: 8, display: 'flex', flexDirection: 'column', gap: 6,
             }}
           >
+            <ToggleBtn
+              on={false}
+              label="Send to Beacon ↗"
+              title="Open the studio with this patch on an Apollo track"
+              onClick={() => {
+                try { sessionStorage.setItem('100lights-apollo-seed', JSON.stringify({ patch: ctx.patch, name: ctx.patch.name || 'Apollo' })) } catch { /* private mode */ }
+                window.location.assign('/create?modules=audio&audioMode=music')
+              }}
+            />
             <ToggleBtn on={false} label="Export patch (.json)" onClick={() => { exportFile(); setFileOpen(false) }} />
             <ToggleBtn on={false} label="Import patch…" onClick={() => { fileRef.current?.click(); setFileOpen(false) }} />
             <div style={{ borderTop: '1px solid var(--border)' }} />

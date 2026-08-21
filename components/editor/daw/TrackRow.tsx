@@ -318,6 +318,31 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   onSelectionLoopCommit?: (region: { start: number; end: number }, blocks: number) => void
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, recording, audioMode, blinkIds, collabPeers, notifyLocked } = useDaw()
+
+  // Flatten: render THIS track solo through the offline path into an audio
+  // clip on a fresh track (sound-library backed, so it survives reload), then
+  // mute the original. The classic commit-the-sound workflow.
+  async function flattenTrackToAudio(trackId: string) {
+    const src = project.tracks.find(t => t.id === trackId)
+    if (!src) return
+    const clips = project.arrangementClips.filter(c => c.trackId === trackId)
+    if (!clips.length) return
+    const end = Math.ceil(Math.max(...clips.map(c => c.startBeat + c.durationBeats)))
+    const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
+    const solo = { ...project, tracks: project.tracks.map(t => ({ ...t, mute: t.id !== trackId })) }
+    const mix = await renderProjectAudioBlob(solo, { startBeat: 0, endBeat: end + 1 })
+    const { libraryAdd } = await import('@/lib/sound-library')
+    const libId = `flatten_${crypto.randomUUID()}`
+    await libraryAdd({ id: libId, name: `${src.name} (flattened)`, category: 'custom', audioBlob: mix.blob, duration: mix.durationSec, addedAt: new Date().toISOString() })
+    const newTrackId = crypto.randomUUID()
+    dispatch({ type: 'ADD_TRACK', id: newTrackId, name: `${src.name} (audio)` })
+    dispatch({ type: 'ADD_CLIP', clip: {
+      kind: 'audio', id: crypto.randomUUID(), trackId: newTrackId, name: `${src.name} (flattened)`,
+      startBeat: 0, durationBeats: end + 1, libraryId: libId, audioUrl: URL.createObjectURL(mix.blob),
+      gain: 1, loopEnabled: false, reverse: false, fadeIn: 0, fadeOut: 0, trimStart: 0, trimEnd: 0,
+    } })
+    dispatch({ type: 'UPDATE_TRACK', trackId, patch: { mute: true } })
+  }
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const isMobile  = useIsMobile()
   // Touch-sized M/S on a phone; the tiny desktop sizes are unusable there.
@@ -1185,6 +1210,15 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
             {/* Freeze / Bounce */}
             <div style={{ borderTop: '1px solid var(--border)', margin: '3px 0' }} />
+            {track.instrument && track.instrument.type !== 'none' && (
+              <button
+                onClick={() => { setTrackCtxMenu(null); void flattenTrackToAudio(track.id) }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              >
+                <span style={{ width: 14, textAlign: 'center' }}>⇊</span>
+                <span>Flatten to Audio</span>
+              </button>
+            )}
             <button onClick={() => { dispatch({ type: 'SET_TRACK_FROZEN', trackId: track.id, frozen: !frozen }); setTrackCtxMenu(null) }}
               style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: frozen ? '#60a5fa' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
               onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}

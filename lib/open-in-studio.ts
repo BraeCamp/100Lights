@@ -10,15 +10,30 @@ import {
 import { makeMidiClip } from './daw-state'
 
 const SEED_KEY = '100lights-studio-seed'
+// Apollo's "Send to Beacon": the synth stashes ONLY its patch JSON under this
+// key (no Beacon types on the Apollo side); the studio builds the track here.
+const APOLLO_SEED_KEY = '100lights-apollo-seed'
 
 /** Read + clear a pending seed. Called once when the studio mounts. */
 export function consumeStudioSeed(): DawProject | null {
   try {
     if (typeof sessionStorage === 'undefined') return null
     const s = sessionStorage.getItem(SEED_KEY)
-    if (!s) return null
-    sessionStorage.removeItem(SEED_KEY)
-    return JSON.parse(s) as DawProject
+    if (s) {
+      sessionStorage.removeItem(SEED_KEY)
+      return JSON.parse(s) as DawProject
+    }
+    const ap = sessionStorage.getItem(APOLLO_SEED_KEY)
+    if (ap) {
+      sessionStorage.removeItem(APOLLO_SEED_KEY)
+      const { patch, name } = JSON.parse(ap) as { patch: object; name?: string }
+      const project = defaultProject()
+      const track = makeTrack(name || 'Apollo', { type: 'apollo', params: patch } as TrackInstrument)
+      project.tracks = [track]
+      project.name = name ? `${name} — session` : 'Apollo session'
+      return project
+    }
+    return null
   } catch { return null }
 }
 
