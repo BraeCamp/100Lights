@@ -11,6 +11,7 @@ import { ShareCommunityDialog, saveUserRecipe } from '../SoundCreate'
 import { encodeWav } from '@/lib/wav-codec'
 import { RollSoundPanel } from './RollSettings'
 import { clampToViewport } from './menu-clamp'
+import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
 import Waveform from './Waveform'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -544,6 +545,16 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     shareItem,
   ] : [
     back('← Back'),
+    // Consolidate: print a looping clip's repetitions as real notes so a single
+    // repeat can be edited on its own (Ableton Ctrl+J).
+    ...(canConsolidate(clip as MidiClip) ? [{
+      label: 'Consolidate (print loop)',
+      fn: () => {
+        setCtxPos(null)
+        const flat = consolidateMidiClip(clip as MidiClip)
+        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: flat.notes, loopEnabled: false, loopLengthBeats: undefined } })
+      },
+    } as MenuItem] : []),
     { label: 'Export MIDI (.mid)', fn: () => {
       void import('@/lib/midi-file').then(({ writeMidiFile }) => {
         const m = clip as MidiClip

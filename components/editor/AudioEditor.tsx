@@ -4,10 +4,11 @@ import { useState, useEffect, useReducer, useRef, useCallback, useMemo } from 'r
 import { createPortal } from 'react-dom'
 import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch } from '@/lib/daw-undo'
+import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
-import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip } from '@/lib/daw-types'
+import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
@@ -1701,6 +1702,20 @@ export default function AudioEditor(props: AudioEditorProps) {
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyS') {
         e.preventDefault()
         handleSaveRef.current()
+      }
+
+      // ⌘/Ctrl+J — consolidate: print every selected looping MIDI clip's
+      // repetitions as real notes so single repeats become editable.
+      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyJ') {
+        const ids = selectedClipIdsRef.current
+        if (ids.size === 0) return
+        e.preventDefault()
+        for (const id of ids) {
+          const clip = projectRef.current.arrangementClips.find(c => c.id === id)
+          if (!clip || !isMidiClip(clip) || !canConsolidate(clip)) continue
+          const flat = consolidateMidiClip(clip)
+          dispatch({ type: 'UPDATE_CLIP', clipId: id, patch: { notes: flat.notes, loopEnabled: false, loopLengthBeats: undefined } })
+        }
       }
 
       // Escape deselects everything. Modals/dropdowns consume Escape first

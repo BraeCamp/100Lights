@@ -612,6 +612,11 @@ export interface AutomationLane {
   defaultValue: number
   points: AutomationPoint[]
   expanded: boolean
+  /** Ableton semantics: touching the control while automation is written
+   *  OVERRIDES the lane — playback stops following the curve (and the lane
+   *  draws grayed) until the user re-enables it. Purely a playback state;
+   *  the points are never destroyed. */
+  overridden?: boolean
 }
 
 // ── Tone EQ ───────────────────────────────────────────────────────────────────

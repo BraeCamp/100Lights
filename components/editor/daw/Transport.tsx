@@ -981,6 +981,19 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
 
       <div style={divider} />
 
+      {/* Re-enable automation — only visible while some lane is overridden by a
+          hand-moved control (Ableton's amber button). Clicking hands playback
+          back to the written curves. */}
+      {project.automationLanes.some(l => l.overridden) && (
+        <button
+          style={{ ...active, background: '#e0a03a', color: '#20160a' }}
+          onClick={() => dispatch({ type: 'REENABLE_ALL_AUTOMATION' })}
+          title="Automation was overridden by hand - click to follow the written curves again"
+        >
+          <RotateCcw size={14} />
+        </button>
+      )}
+
       {/* Metronome */}
       <button
         style={metronome ? active : base}

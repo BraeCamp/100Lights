@@ -10,7 +10,6 @@ import VideoPlayer from '@/components/editor/VideoPlayer'
 import AudioWaveform from '@/components/editor/AudioWaveform'
 import Timeline from '@/components/editor/Timeline'
 import MediaLibrary, { type StockClip } from '@/components/editor/MediaLibrary'
-import AiAssistant from '@/components/editor/AiAssistant'
 import type { GradeNode } from '@/lib/editor-types'
 import ColorPage, { type ColorStill } from '@/components/editor/ColorPage'
 import { getGradeGL } from '@/lib/video-export/grade-gl'
@@ -3552,7 +3551,6 @@ export default function VideoEditor({
 
   // ── AI assistant — maps the model's actions to the editor's REAL functions. Because it calls them
   // directly (not the dev-only window.__video hook), the assistant works in production. ────────────
-  const [aiOpen, setAiOpen] = useState(false)
   async function addStockByQuery(query: string, count = 4) {
     const n = Math.max(1, Math.min(8, count || 4))
     const r = await fetch(`/api/pexels-bg?order=random&limit=${n}${query ? `&q=${encodeURIComponent(query)}` : ''}`)
@@ -3567,26 +3565,6 @@ export default function VideoEditor({
     await handleFileImport(new File([blob], (url.split('/').pop() || 'audio').replace(/\?.*$/, ''), { type: 'audio/mpeg' }))
     for (let i = 0; i < 40; i++) { await new Promise(res => setTimeout(res, 400)); const a = mediaItemsRef.current.find(m => m.contentType === 'audio' && m.url); if (a) { await addMediaToTimeline(a); return } }
   }
-  function aiStateSummary() {
-    const items = timelineItemsRef.current
-    const vids = items.filter(i => i.contentType === 'video').length
-    const hasAudio = items.some(i => i.contentType === 'audio')
-    return `${items.length} timeline items (${vids} video${hasAudio ? ', an audio bed' : ', no audio yet'}); ${cameraTrackIds.length} camera track(s); project "${localProjectName || 'Untitled'}".`
-  }
-  async function execAiAction(action: { name: string; input: Record<string, unknown> }): Promise<string> {
-    const { name, input } = action
-    switch (name) {
-      case 'search_and_add_stock': { const n = await addStockByQuery(String(input.query ?? ''), Number(input.count) || 4); return `Added ${n} “${input.query}” clip${n === 1 ? '' : 's'}` }
-      case 'import_audio': { await importAudioUrl(String(input.url ?? '')); return 'Imported the audio track' }
-      case 'auto_edit': { const res = runAutoEdit({ barsPerCut: input.barsPerCut as number | undefined, transition: input.transition as AutoEditOptions['transition'], look: input.look as string | undefined }); return `Auto-edited — ${res?.cuts ?? 0} cuts` }
-      case 'apply_effect': { const ids = input.scope === 'selected' && selectedId ? [selectedId] : timelineItemsRef.current.filter(i => i.contentType === 'video').map(i => i.id); const n = applyEffect(String(input.effect) === 'none' ? null : String(input.effect), ids); return `Applied “${input.effect}” to ${n} clip${n === 1 ? '' : 's'}` }
-      case 'multicam': { const m = input.mode === 'speaker' ? await runSpeakerMulticam() : runMulticam(input.mode === 'loudest' ? 'audio' : 'roundrobin'); return `Multicam — ${(m as { switches?: number })?.switches ?? 0} switches` }
-      case 'rename_project': { setLocalProjectName(String(input.name ?? 'Untitled')); return `Renamed to “${input.name}”` }
-      case 'open_export': { setShowExport(true); return 'Opened export' }
-      default: return `(skipped unknown action: ${name})`
-    }
-  }
-
   // Temporarily unused: the Music-Visual toolbar button was removed pending a
   // re-wire into the new media-panel flow. Keep the function for that follow-up.
   function addMusicVizClip() {
@@ -4296,19 +4274,6 @@ export default function VideoEditor({
             style={{ color: '#0e0d12', background: 'var(--accent)', border: '1px solid var(--accent)', fontWeight: 700 }}
           >
             <Wand2 size={12} /> Auto-edit
-          </button>
-        )}
-
-        {/* AI assistant — describe what to make, it drives the editor */}
-        {activePage === 'edit' && (
-          <button
-            onClick={() => setAiOpen(o => !o)}
-            data-help-id="ai-assistant"
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs shrink-0"
-            title="AI assistant — describe what to make"
-            style={{ color: aiOpen ? '#0e0d12' : 'var(--text-secondary)', background: aiOpen ? 'var(--accent)' : 'var(--bg-card)', border: `1px solid ${aiOpen ? 'var(--accent)' : 'var(--border)'}`, fontWeight: 700 }}
-          >
-            <Sparkles size={12} /> AI
           </button>
         )}
 
@@ -5177,7 +5142,6 @@ export default function VideoEditor({
       </div>
 
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
-      {aiOpen && <AiAssistant module="video" stateSummary={aiStateSummary} execute={execAiAction} onClose={() => setAiOpen(false)} />}
 
       {importError && (
         <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 2500, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', color: '#f87171', padding: '9px 15px', borderRadius: 9, fontSize: 12.5, maxWidth: '90vw', boxShadow: '0 8px 30px rgba(0,0,0,0.4)' }}>

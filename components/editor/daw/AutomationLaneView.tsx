@@ -86,9 +86,11 @@ export default function AutomationLaneView({
       // Sort points by beat for correct curve drawing
       const sorted = [...lane.points].sort((a, b) => a.beat - b.beat)
 
-      // Automation curve
+      // Automation curve — grayed while the lane is OVERRIDDEN (a control was
+      // touched by hand): the curve is still there, it just isn't driving
+      // playback until automation is re-enabled.
       ctx.save()
-      ctx.strokeStyle = '#3d8fef'
+      ctx.strokeStyle = lane.overridden ? 'rgba(160,160,170,0.55)' : '#3d8fef'
       ctx.lineWidth = 1.5
       ctx.beginPath()
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
 import { createPortal } from 'react-dom'
 import { Plus, Headphones, X, Eraser, ChevronRight, ChevronDown, Circle, Settings, Snowflake, SlidersHorizontal, Music, Piano, Grid3x3, Group, Library, Code, Upload, Minimize2, Maximize2 } from 'lucide-react'
@@ -865,6 +865,17 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   // The native drag originates on the draggable header div even when the pointer
   // is on an inner control, so dragstart's own e.target is always the div and
   // can't tell. pointerdown DOES fire on the real target first, so we record
+  // Ableton semantics: moving a control that has WRITTEN automation overrides
+  // its lane — playback stops following the curve until the user re-enables it
+  // (Transport's "Re-enable automation"). Without this the fader visibly fights
+  // the curve and snaps back on the next tick.
+  const overrideLane = useCallback((parameter: string) => {
+    const lane = project.automationLanes.find(l => l.trackId === track.id && l.parameter === parameter)
+    if (lane && lane.points.length > 0 && !lane.overridden) {
+      dispatch({ type: 'SET_LANE_OVERRIDDEN', laneId: lane.id, overridden: true })
+    }
+  }, [project.automationLanes, track.id, dispatch])
+
   // there whether we're on a control and let the drag bow out. (Fixes the volume
   // slider grabbing the whole track instead of sliding.)
   const controlDownRef = useRef(false)
@@ -946,7 +957,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           {/* Group lane — a thin summary bar (no clips) */}
           <div style={{ flex: 1, height: GROUP_TRACK_HEIGHT, borderBottom: '1px solid var(--border)', background: `linear-gradient(90deg, ${track.color}18, transparent 40%)`, display: 'flex', alignItems: 'center', paddingLeft: 10 }}>
             <input type="range" min={0} max={1} step={0.01} value={track.volume}
-              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
+              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
               onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()} onDragStart={e => { e.preventDefault(); e.stopPropagation() }} draggable={false}
               className="cf-slider" style={{ width: 120, accentColor: track.color, height: 12, background: 'transparent' }} />
             <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 10 }}>{isFolded ? 'folded' : `${childCount} track${childCount === 1 ? '' : 's'}`}</span>
@@ -1114,7 +1125,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               )}
             </>)}
             <input type="range" min={0} max={1} step={0.01} value={track.volume}
-              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
+              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
               onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()} onDragStart={e => { e.preventDefault(); e.stopPropagation() }} draggable={false}
               className="cf-slider" style={{ flex: 1, accentColor: track.color, minWidth: 0, height: 12, background: 'transparent' }} />
             <AddAutoButton track={track} />

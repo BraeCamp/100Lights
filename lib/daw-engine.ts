@@ -2115,6 +2115,9 @@ export class DawEngine extends EventTarget {
     // ── Automation ───────────────────────────────────────────────────────
     for (const lane of this._automationLanes) {
       if (lane.points.length === 0) continue
+      // An overridden lane keeps its curve but stops driving the parameter —
+      // the user's manual value stands until they re-enable automation.
+      if (lane.overridden) continue
       const norm  = interpolateAutomation(lane, now)
       const value = lane.min + norm * (lane.max - lane.min)
       this._applyAutomation(lane.trackId, lane.parameter, value)

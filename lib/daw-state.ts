@@ -38,6 +38,8 @@ export type DawAction =
   // Session grid
   | { type: 'SET_SESSION_SLOT'; trackId: string; sceneIndex: number; clip: DawClip | null }
   // Scenes
+  | { type: 'SET_LANE_OVERRIDDEN'; laneId: string; overridden: boolean }
+  | { type: 'REENABLE_ALL_AUTOMATION' }
   | { type: 'ADD_SCENE'; id?: string }
   | { type: 'REMOVE_SCENE'; sceneIndex: number }
   | { type: 'UPDATE_SCENE'; sceneIndex: number; patch: Partial<Scene> }
@@ -345,6 +347,15 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       return { ...project, sessionGrid: { ...project.sessionGrid, [action.trackId]: row } }
     }
 
+    case 'SET_LANE_OVERRIDDEN': {
+      const automationLanes = project.automationLanes.map(l =>
+        l.id === action.laneId ? { ...l, overridden: action.overridden } : l)
+      return { ...project, automationLanes }
+    }
+    case 'REENABLE_ALL_AUTOMATION': {
+      if (!project.automationLanes.some(l => l.overridden)) return project
+      return { ...project, automationLanes: project.automationLanes.map(l => l.overridden ? { ...l, overridden: false } : l) }
+    }
     case 'ADD_SCENE': {
       const scene: Scene = { id: action.id ?? crypto.randomUUID(), name: `Scene ${project.scenes.length + 1}` }
       const grid = { ...project.sessionGrid }
