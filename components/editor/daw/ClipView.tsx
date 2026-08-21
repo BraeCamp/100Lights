@@ -580,6 +580,32 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     { separator: true },
     // Second block: Sound Settings, then Rename — then a divider.
     { label: soundMulti ? 'Sound Settings… (All Selected)' : 'Sound Settings…', fn: () => { if (!soundMulti) onSelect(); if (ctxPos) setSoundPanel({ x: ctxPos.x, y: ctxPos.y }) } },
+    ...(isMulti || isAudioClip(clip) ? [] : [
+      // Check the item out to Apollo: Apollo takes custody of the notes + sound,
+      // you develop it there against a running transport, and it comes home on
+      // check-in. Not live — one owner at a time (see lib/apollo/checkout).
+      {
+        label: 'Develop in Apollo \u2197',
+        fn: () => {
+          setCtxPos(null)
+          void (async () => {
+            const { buildCheckout, writeCheckout } = await import('@/lib/apollo/checkout')
+            const co = buildCheckout(project, clip as MidiClip)
+            if (!co) return
+            // Monitor-only copy of the track's FX so the item can be auditioned
+            // in context. Translated here because this is where the track is.
+            try {
+              const { translateChain } = await import('@/lib/apollo/daw-fx')
+              const track = project.tracks.find(t => t.id === clip.trackId)
+              const units = track?.effects?.length ? translateChain(track.effects, project.tempo) : null
+              co.monitorChain = units ?? null
+            } catch { co.monitorChain = null }
+            writeCheckout(co)
+            window.open('/apollo?checkout=1', '_blank')
+          })()
+        },
+      } as MenuItem,
+    ]),
     ...(isMulti ? [] : [{ label: 'Rename…', fn: () => { setNameDraft(clip.name); setRenaming(true) } }]),
     { separator: true },
     // Everything else lives below the second divider.

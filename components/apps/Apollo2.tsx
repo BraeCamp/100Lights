@@ -14,6 +14,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ApolloProvider, useApollo, useMeters, Knob, UI, Section, ToggleBtn } from '@/components/apps/apollo/ApolloContext'
 import TransportBar from './apollo/TransportBar'
+import CheckoutBar from './apollo/CheckoutBar'
 import PresetBar from '@/components/apps/apollo/PresetBar'
 import OscPanel from '@/components/apps/apollo/OscPanel'
 import SubNoisePanel from '@/components/apps/apollo/SubNoisePanel'
@@ -588,6 +589,9 @@ function ApolloInner() {
 
   return (
     <div style={{ minHeight: '100vh', background: UI.bg, color: UI.text, padding: '10px 14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* Custody bar — only present while an item is checked out from Beacon */}
+      <CheckoutBar />
+
       {/* header */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',

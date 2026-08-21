@@ -5,9 +5,10 @@ import { createPortal } from 'react-dom'
 import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch } from '@/lib/daw-undo'
 import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
+import { CHECKOUT_LS_KEY } from '@/lib/apollo/checkout'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
-import type { DawView, EditTarget, DawProject, DawTrack } from '@/lib/daw-types'
+import type { DawView, EditTarget, DawProject, DawTrack, ApolloInstrumentParams } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
@@ -1382,6 +1383,50 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [showAppearance, setShowAppearance] = useState(false)
   const leftResize = useResizable({ key: 'left-panel', initial: 240, min: 180, max: 520, axis: 'x' })
   const bottomResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })
+
+  // ── Apollo check-in ────────────────────────────────────────────────────────
+  // An item developed in standalone Apollo comes home here: its notes and its
+  // sound land back on the clip and track it left. Checked on mount and
+  // whenever this tab regains focus, since the work happened in another tab.
+  useEffect(() => {
+    let applied = false
+    async function absorb() {
+      if (applied) return
+      const { readCheckout, writeCheckout, notesFromApollo } = await import('@/lib/apollo/checkout')
+      const co = readCheckout()
+      if (!co || !co.returnedAt) return
+      const proj = projectRef.current
+      const clip = proj.arrangementClips.find(c => c.id === co.clipId)
+      if (!clip) return   // the clip was deleted while it was out — leave the record alone
+      applied = true
+      dispatch({ type: 'UPDATE_CLIP', clipId: co.clipId, patch: {
+        notes: notesFromApollo(co.notes),
+        durationBeats: Math.max(clip.durationBeats, co.lengthBeats),
+      } })
+      if (co.patch) {
+        dispatch({ type: 'SET_INSTRUMENT', trackId: co.trackId,
+          instrument: { type: 'apollo', params: co.patch as unknown as ApolloInstrumentParams } })
+      }
+      writeCheckout(null)   // custody released — the clip visibly updates
+    }
+    void absorb()
+    // The work happens in another tab, so listen for the cross-tab `storage`
+    // event the check-in write fires — that lands the item immediately, even
+    // with both tabs visible side by side. Focus and a slow poll are belt and
+    // braces for the cases storage events miss (same-tab writes, restores).
+    const retry = () => { applied = false; void absorb() }
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === CHECKOUT_LS_KEY) retry()
+    }
+    window.addEventListener('storage', onStorage)
+    window.addEventListener('focus', retry)
+    const poll = setInterval(retry, 4000)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('focus', retry)
+      clearInterval(poll)
+    }
+  }, [dispatch])
 
   // Tab toggles Session <-> Arrangement. They are two views of ONE project, one
   // keystroke apart (the Ableton model the rebuild follows) - the live view is
