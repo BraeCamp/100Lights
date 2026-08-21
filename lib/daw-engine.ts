@@ -308,9 +308,9 @@ export class DawEngine extends EventTarget {
   private _heliosSynthCache = new WeakMap<object, ApolloInstrumentParams | null>()
   private _resolveInstrument(track: DawTrack): TrackInstrument {
     const inst = track.instrument
-    if (!inst || (inst.type !== 'poly' && inst.type !== 'wavetable')) return inst
+    if (!inst || (inst.type !== 'poly' && inst.type !== 'wavetable' && inst.type !== 'fm')) return inst
     // poly translates faithfully (same primitives) → Helios by default.
-    // wavetable maps its table CONTENT approximately → explicit opt-in only.
+    // wavetable + fm map approximately (tables / PM-vs-FM) → explicit opt-in.
     if (inst.type === 'poly' ? track.heliosSynth === false : track.heliosSynth !== true) return inst
     let patch = this._heliosSynthCache.get(inst.params as object)
     if (patch === undefined) {

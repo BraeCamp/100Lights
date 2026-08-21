@@ -10,7 +10,7 @@
 // Project data never changes; translation happens at the audio layer and is
 // keyed by the params object's identity (SET_INSTRUMENT replaces the object).
 
-import type { TrackInstrument, PolyInstrumentParams, WavetableInstrumentParams } from '@/lib/daw-types'
+import type { TrackInstrument, PolyInstrumentParams, WavetableInstrumentParams, FmInstrumentParams } from '@/lib/daw-types'
 import { initPatch, type ApolloPatch, type FilterType, type ModSource, type ModRoute } from './patch'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -135,10 +135,46 @@ export function wavetableToApollo(p: WavetableInstrumentParams): ApolloPatch | n
   return out
 }
 
+/** Beacon 'fm' (2-op) → Apollo: carrier wavetable with the cross-osc FM warp,
+ * modulator = a silent sine osc pitched by modRatio (oscMono feeds the warp
+ * PRE-level, so level 0 modulates without sounding). Legacy runs true
+ * frequency modulation; Apollo's warp is phase modulation — spectrally
+ * equivalent for sine modulators, with the depth constant tuned by parity. */
+export function fmToApollo(p: FmInstrumentParams): ApolloPatch | null {
+  if (!(p.modRatio > 0)) return null
+  const out = base()
+  const car = out.oscs[0]
+  car.enabled = true
+  car.engine = 'wavetable'
+  car.wt.tableId = 'basic-shapes'
+  car.wt.pos = WAVE_POS[p.waveform] ?? 0
+  car.wt.interp = 'off'
+  car.level = 0.75
+  car.fine = clamp(p.detune ?? 0, -100, 100)
+  car.wt.warp1 = { mode: 'fm', amount: clamp((p.modDepth / p.modRatio) * 0.15, 0, 1) }
+  car.wt.fmSource = 1
+  car.dest = 'f1'
+  const mod = out.oscs[1]
+  mod.enabled = true
+  mod.engine = 'wavetable'
+  mod.wt.tableId = 'basic-shapes'
+  mod.wt.pos = 0            // sine frame
+  mod.wt.interp = 'off'
+  mod.level = 0             // silent in the mix; still feeds the FM warp
+  const st = 12 * Math.log2(p.modRatio)
+  mod.semi = clamp(Math.round(st), -36, 36)
+  mod.fine = clamp((st - Math.round(st)) * 100, -100, 100)
+  out.envs[0] = { ...out.envs[0], attack: clamp(p.attack, 0.001, 8), hold: 0, decay: clamp(p.decay, 0.001, 8), sustain: clamp(p.sustain, 0, 1), release: clamp(p.release, 0.001, 8) }
+  out.filters[0].enabled = false
+  out.name = 'FM (Helios)'
+  return out
+}
+
 /** Translate a legacy synth instrument; null = not translatable (or not a
  * legacy synth at all). Callers cache by params object identity. */
 export function translateInstrument(instr: TrackInstrument): ApolloPatch | null {
   if (instr.type === 'poly') return polyToApollo(instr.params as PolyInstrumentParams)
   if (instr.type === 'wavetable') return wavetableToApollo(instr.params as WavetableInstrumentParams)
+  if (instr.type === 'fm') return fmToApollo(instr.params as FmInstrumentParams)
   return null
 }

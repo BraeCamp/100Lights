@@ -996,7 +996,7 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
           {TYPE_BUTTONS.map(btn => (
             <TypeBtn key={btn.value} label={btn.label} active={instrType === btn.value} onClick={() => setType(btn.value)} />
           ))}
-          {(instrType === 'poly' || instrType === 'wavetable') && <HeliosSynthChip trackId={trackId} />}
+          {(instrType === 'poly' || instrType === 'wavetable' || instrType === 'fm') && <HeliosSynthChip trackId={trackId} />}
         </div>
       )}
 
