@@ -997,6 +997,7 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
             <TypeBtn key={btn.value} label={btn.label} active={instrType === btn.value} onClick={() => setType(btn.value)} />
           ))}
           {(instrType === 'poly' || instrType === 'wavetable' || instrType === 'fm') && <HeliosSynthChip trackId={trackId} />}
+          <OpenInApolloButton trackId={trackId} />
         </div>
       )}
 
@@ -1009,6 +1010,55 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
     </div>
   )
 })
+
+// The "plugin" affordance: open ANY convertible track in Apollo. Legacy synth
+// settings translate into a real Apollo patch, the instrument converts to
+// type 'apollo', and the full synth card opens above the studio — exactly the
+// open-a-plugin flow. Empty tracks get a fresh Init patch.
+function OpenInApolloButton({ trackId }: { trackId: string }) {
+  const { project, dispatch } = useDaw()
+  const [card, setCard] = useState(false)
+  const track = project.tracks.find(t => t.id === trackId)
+  if (!track) return null
+  const t2 = track.instrument?.type
+  const convertible = t2 === 'none' || t2 === 'poly' || t2 === 'wavetable' || t2 === 'fm' || !track.instrument
+  // stay mounted while the card is open — conversion flips the track to
+  // type 'apollo' mid-flight, and unmounting here would tear the card down
+  if (!convertible && !card) return null
+  const open = async () => {
+    const { translateInstrument } = await import('@/lib/apollo/daw-synth')
+    const { initPatch } = await import('@/lib/apollo/patch')
+    let patch = track.instrument ? translateInstrument(track.instrument) : null
+    if (!patch) patch = initPatch()
+    dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: patch as ApolloInstrumentParams } })
+    setCard(true)
+  }
+  const live = project.tracks.find(t3 => t3.id === trackId)
+  const params = live?.instrument?.type === 'apollo' ? live.instrument.params as ApolloInstrumentParams : null
+  return (
+    <>
+      <button
+        onClick={() => { void open() }}
+        title={t2 === 'none' || !track.instrument
+          ? 'Open Apollo on this track — the full synth, as a card above the studio'
+          : 'Convert this synth to Apollo (settings carry over) and open the full editor'}
+        style={{
+          height: 24, padding: '0 12px', borderRadius: 5, marginLeft: 6, cursor: 'pointer',
+          fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase',
+          background: 'var(--accent)', color: '#0b0d10', border: '1px solid var(--accent)',
+        }}
+      >☀︎ Open in Apollo</button>
+      {card && params && (
+        <ApolloCard
+          patch={params}
+          title={track.name}
+          onChange={next => dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: next } })}
+          onClose={() => setCard(false)}
+        />
+      )}
+    </>
+  )
+}
 
 // Legacy synths render on the Helios (Apollo) engine by default when their
 // settings translate; the chip drops a track back to the legacy voices.

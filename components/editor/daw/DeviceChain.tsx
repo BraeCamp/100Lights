@@ -1420,7 +1420,7 @@ function ApolloRackLauncher({ trackId }: { trackId: string }) {
   const [open, setOpen] = useState(false)
   const [seed, setSeed] = useState<object | null>(null)
   const track = project.tracks.find(t => t.id === trackId)
-  if (!track || track.effects.length === 0 || track.heliosFx === false) return null
+  if (!track || track.heliosFx === false) return null
   const openRack = async () => {
     const { translateChain } = await import('@/lib/apollo/daw-fx')
     const { initPatch } = await import('@/lib/apollo/patch')
@@ -1441,11 +1441,11 @@ function ApolloRackLauncher({ trackId }: { trackId: string }) {
           onClick={() => { void openRack() }}
           title="Open this chain in the Apollo Rack — full Apollo editing; edited devices become Apollo-native"
           style={{
-            height: 22, padding: '0 10px', borderRadius: 5, cursor: 'pointer',
+            height: 22, padding: '0 12px', borderRadius: 5, cursor: 'pointer',
             fontSize: 9, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase',
-            background: 'transparent', color: 'var(--accent-light)', border: '1px solid var(--border)',
+            background: 'var(--accent)', color: '#0b0d10', border: '1px solid var(--accent)',
           }}
-        >Apollo Rack ↗</button>
+        >☀︎ Apollo Rack</button>
       </div>
       {open && seed && (
         <ApolloCardLazy
