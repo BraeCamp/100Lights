@@ -60,10 +60,15 @@ including a full live jam. How working performers actually structure the grid:
 
 ## Corpus 2: Bound to Divide — Learn Ableton Live 12 FULL COURSE (8h38m)
 
-`~/video-watch/dt9SFEFe8ho/` — processing; full-product reference (Session
-+ Arrangement + devices + workflow). Notes to follow.
+`~/video-watch/dt9SFEFe8ho/` — watched; works almost entirely in
+Arrangement view, so its findings live in
+research/beacon-arrangement-ableton.md. The load-bearing fact for THIS
+document: **Tab toggles Session ↔ Arrangement — two views over the same
+tracks and project, one keystroke apart.** The Beacon live view must be
+built as that: a second view of the existing arrangement project, not a
+separate app surface.
 
 ## Corpus 3: Casey Faris — Introduction to DaVinci Resolve Full Course (5h11m)
 
-`~/video-watch/MCDVcQIA3UM/` — processing; foundation for the video-editor
-recreation (see research/video-editor-resolve.md, to follow).
+`~/video-watch/MCDVcQIA3UM/` — watched; foundation for the video-editor
+recreation: see research/video-editor-resolve.md.
