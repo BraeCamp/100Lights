@@ -22,7 +22,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 export default function DrawnGraphModal({
   title, subtitle, axis, points, onChange, onClose, onReset, onOff, offLabel = 'Remove',
   children, extra, curveHeight,
-  playheadT,
+  playheadT, onPreviewToggle, previewing,
 }: {
   title: string
   subtitle?: string
@@ -39,6 +39,10 @@ export default function DrawnGraphModal({
   /** Live playhead position mapped into the graph's x-axis (0..1), or null
    *  when the transport is outside the graph's span — drawn as a red line. */
   playheadT?: () => number | null
+  /** Loop the selected clip while the modal is open, so edits are audible as
+   *  you draw. Absent = no preview control (e.g. nothing selected to play). */
+  onPreviewToggle?: () => void
+  previewing?: boolean
 }) {
   // The card grows with the window (Brae 2026-08-18) — a big screen gets a big
   // canvas instead of the old fixed 528px.
@@ -95,6 +99,16 @@ export default function DrawnGraphModal({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 16px 14px', borderTop: '1px solid var(--border)' }}>
           {onOff && (
             <button onClick={onOff} style={{ ...ghost, color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' }}>{offLabel}</button>
+          )}
+          {onPreviewToggle && (
+            <button
+              onClick={onPreviewToggle}
+              data-graph-preview={previewing ? 'on' : 'off'}
+              title={previewing ? 'Stop the preview loop' : 'Loop the selected clip so you can hear the curve as you draw it'}
+              style={previewing
+                ? { ...ghost, border: `1px solid ${ACCENT}`, background: 'rgb(var(--accent-rgb) / 0.16)', color: ACCENT }
+                : ghost}
+            >{previewing ? '■ Stop' : '▶ Loop'}</button>
           )}
           <span style={{ flex: 1 }} />
           {onReset && <button onClick={onReset} style={ghost}>Reset</button>}

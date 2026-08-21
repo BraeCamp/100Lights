@@ -7,7 +7,7 @@
 // A "Tone" row offers per-instrument flavour presets (Guitar → Rock / Metal /
 // Punk …) — each just dials in an editable RollFx starting point.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Settings2, Play, ChevronDown, ChevronRight, ChevronLeft, Check, Copy, RotateCw, RotateCcw } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx, AutoPoint } from '@/lib/daw-types'
@@ -255,6 +255,37 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   const setMotionGraph = (graph: AutoPoint[]) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { fx: motion?.fx ?? {}, perNote: motion?.perNote, graph } } })
   const setMotionFx = (fx: RollFx | undefined) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { ...(motion ?? { graph: DEFAULT_MOTION }), fx: fx ?? {} } } })
   const setMotionPerNote = (perNote: boolean) => { if (motion) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: { ...motion, perNote } } }) }
+  // Loop-preview for the graph modals: play the selected clip on repeat so the
+  // curve can be heard while it is drawn. Uses the transport's own loop (so FX,
+  // instruments and the graph itself all apply exactly as they do in playback)
+  // and restores the previous loop settings on stop.
+  const [previewing, setPreviewing] = useState(false)
+  const prevLoopRef = useRef<{ enabled: boolean; start: number; end: number } | null>(null)
+  const previewClip = !multi ? clip : null
+  const stopPreview = useCallback(() => {
+    setPreviewing(false)
+    engine.stop()
+    const prev = prevLoopRef.current
+    if (prev) {
+      dispatch({ type: 'SET_LOOP', start: prev.start, end: prev.end })
+      dispatch({ type: 'SET_LOOP_ENABLED', enabled: prev.enabled })
+      prevLoopRef.current = null
+    }
+  }, [engine, dispatch])
+  const togglePreview = useCallback(() => {
+    if (previewing) { stopPreview(); return }
+    if (!previewClip) return
+    prevLoopRef.current = { enabled: project.loopEnabled, start: project.loopStart, end: project.loopEnd }
+    const start = previewClip.startBeat
+    const end = previewClip.startBeat + previewClip.durationBeats
+    dispatch({ type: 'SET_LOOP', start, end })
+    dispatch({ type: 'SET_LOOP_ENABLED', enabled: true })
+    setPreviewing(true)
+    void engine.play(start)
+  }, [previewing, previewClip, project.loopEnabled, project.loopStart, project.loopEnd, dispatch, engine, stopPreview])
+  // Closing the panel/modal must not leave the transport looping forever.
+  useEffect(() => () => { if (previewing) stopPreview() }, [previewing, stopPreview])
+
   const clearMotion = () => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { fxMotion: undefined } })
 
   // Per-field graph mode (a single FX slider ↔ a drawn curve). Switching either
@@ -687,6 +718,10 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           if (!clip.fxGraphs?.[key]) toggleFieldGraph(key, true)   // create then open
           setOpenGraph({ kind: 'field', key })
         } : undefined}
+        // Always available: a field already in graph mode must be able to get
+        // back to a slider even when graphs are switched off, or it is stuck.
+        onToggleGraph={supportsFx ? (key, on) => toggleFieldGraph(key, on) : undefined}
+        onGraphChange={supportsFx ? (key, pts) => setFieldGraph(key, pts) : undefined}
       />
 
       {/* When any FX slider is in graph mode, choose whether those graphs span
@@ -794,6 +829,8 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         const isFx = area === 'fxmotion'
         return (
           <DrawnGraphModal
+            onPreviewToggle={previewClip ? togglePreview : undefined}
+            previewing={previewing}
             title={def.short}
             subtitle={isFx ? 'A curve that morphs the chosen effects across the clip.' : undefined}
             axis={def.axis}
@@ -848,6 +885,8 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
 
       {openGraph?.kind === 'eq' && eqTrack && (
         <DrawnGraphModal
+          onPreviewToggle={previewClip ? togglePreview : undefined}
+          previewing={previewing}
           title="EQ"
           subtitle={eqMultiTrack ? `${trackIds.length} tracks · shared with the mixer` : 'Draw the curve — drag across to sketch, or a band up/down. Shared with the mixer strip.'}
           onClose={() => setOpenGraph(null)}

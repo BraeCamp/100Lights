@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import type { ClipEffect, ClipEffectType } from '@/lib/daw-types'
 import { makeEffectBar, activeBarFields } from '@/lib/effect-bar'
+import { isMidiClip } from '@/lib/daw-types'
 
 // Bars magnetize to clip edges on their track: a hand-drawn/dragged bar that
 // *looks* aligned but starts a few hundredths of a beat late misses a
@@ -210,6 +211,9 @@ function EffectRow({
         <div style={{ position: 'absolute', top: 0, bottom: 0, left: -scrollLeft, width: (viewEndBeat + 10) * beatW }}>
           {rowEffects.map(eff => {
             if (eff.startBeat + eff.durationBeats < viewStartBeat || eff.startBeat > viewEndBeat) return null
+            // Mirrors of a clip's own curves — shown so the lane and the Sound
+            // settings agree, but edited in the graph modal that owns them.
+            const fromClip = !!(eff as ClipEffect & { fromClip?: boolean }).fromClip
             const left  = eff.startBeat * beatW
             const width = Math.max(8, eff.durationBeats * beatW)
             const color = BAR_COLOR
@@ -221,12 +225,14 @@ function EffectRow({
                 data-effect-id={eff.id}
                 style={{
                   position: 'absolute', left, width, top: 3, bottom: 3,
-                  background: isExpanded ? `${color}50` : isSelected ? `${color}45` : `${color}30`,
-                  border: `1px solid ${isExpanded ? color : isSelected ? '#fff' : color + '99'}`,
-                  borderRadius: 3, overflow: 'hidden', cursor: 'grab', userSelect: 'none',
-                  boxShadow: isSelected ? `0 0 0 1px ${color}80` : undefined,
+                  background: fromClip ? `${color}1e` : isExpanded ? `${color}50` : isSelected ? `${color}45` : `${color}30`,
+                  border: fromClip ? `1px dashed ${color}88` : `1px solid ${isExpanded ? color : isSelected ? '#fff' : color + '99'}`,
+                  borderRadius: 3, overflow: 'hidden', cursor: fromClip ? 'default' : 'grab', userSelect: 'none',
+                  boxShadow: !fromClip && isSelected ? `0 0 0 1px ${color}80` : undefined,
                 }}
+                title={fromClip ? "This curve belongs to the clip — edit it in the clip's Sound settings" : undefined}
                 onMouseDown={e => {
+                  if (fromClip) return   // clip-owned: the graph modal edits it
                   if (e.button !== 0) return
                   e.stopPropagation()
                   onSelect(eff.id, e.shiftKey || e.altKey)
@@ -253,6 +259,7 @@ function EffectRow({
                 }}
                 onClick={e => {
                   e.stopPropagation()
+                  if (fromClip) return
                   if (clickTimer.current?.effectId === eff.id) return
                   const timer = setTimeout(() => {
                     clickTimer.current = null
@@ -262,10 +269,11 @@ function EffectRow({
                 }}
                 onDoubleClick={e => {
                   e.stopPropagation()
+                  if (fromClip) return
                   if (clickTimer.current) { clearTimeout(clickTimer.current.timer); clickTimer.current = null }
                   onEditTarget({ effect: eff, x: e.clientX, y: e.clientY })
                 }}
-                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onSelect(eff.id, false); onCtxMenu({ effect: eff, x: e.clientX, y: e.clientY }) }}
+                onContextMenu={e => { e.preventDefault(); e.stopPropagation(); if (fromClip) return; onSelect(eff.id, false); onCtxMenu({ effect: eff, x: e.clientX, y: e.clientY }) }}
               >
                 {/* The bar's automation graph */}
                 {eff.graph?.length ? (
@@ -323,7 +331,39 @@ export default function EffectLaneView({
   trackId, beatW, scrollLeft, viewWidth, onCopyEffects, onPasteEffects,
 }: { trackId: string; beatW: number; scrollLeft: number; viewWidth: number; onCopyEffects?: (ids: Set<string>) => void; onPasteEffects?: () => void }) {
   const { project, dispatch, selectedEffectIds, setSelectedEffectIds, setSelectedClipIds, setSelectedClipId } = useDaw()
-  const effects = (project.clipEffects ?? []).filter(e => e.trackId === trackId)
+  // The lane shows two things that must agree:
+  //   • standalone bars the user drew here (project.clipEffects), and
+  //   • the FX curves that live ON a clip (fxMotion / per-parameter fxGraphs),
+  //     drawn from the Sound settings graphs.
+  // The engine already merges both at render time (see daw-engine's
+  // `motion:`/`pg:` synthesised bars), but the lane used to show only the
+  // former — so drawing a curve in Sound settings changed the sound with no
+  // visible trace here. These mirrors are derived state: edit a graph and the
+  // bar updates on the next render, with no copy to keep in sync.
+  const ownBars = (project.clipEffects ?? []).filter(e => e.trackId === trackId)
+  const clipBars: ClipEffect[] = []
+  for (const clip of project.arrangementClips) {
+    if (clip.trackId !== trackId || !isMidiClip(clip)) continue
+    const mot = clip.fxMotion
+    if (mot && mot.graph.length >= 2 && activeBarFields(mot.fx).length > 0) {
+      clipBars.push({
+        id: `motion:${clip.id}`, trackId, startBeat: clip.startBeat,
+        durationBeats: clip.durationBeats, fx: mot.fx,
+        graph: mot.graph.map(g => ({ ...g, t: g.t * clip.durationBeats })),
+        fromClip: true,
+      } as ClipEffect & { fromClip: boolean })
+    }
+    for (const [key, pg] of Object.entries(clip.fxGraphs ?? {})) {
+      if (!pg || pg.graph.length < 2) continue
+      clipBars.push({
+        id: `pg:${clip.id}:${key}`, trackId, startBeat: clip.startBeat,
+        durationBeats: clip.durationBeats, fx: { [key]: 1 },
+        graph: pg.graph.map(g => ({ ...g, t: g.t * clip.durationBeats })),
+        fromClip: true,
+      } as ClipEffect & { fromClip: boolean })
+    }
+  }
+  const effects = [...ownBars, ...clipBars]
 
   const [numRows,          setNumRows]          = useState(1)
   // Never hide existing bars: a project can carry bars on higher rows, and the
