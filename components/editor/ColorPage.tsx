@@ -34,6 +34,8 @@ interface Props {
   grabFrame?: () => string | null
   /** Live scopes panel (already exists in the editor) rendered alongside. */
   scopes?: React.ReactNode
+  /** The program viewer — grading is viewer-first, so it sits above the scopes. */
+  viewer?: React.ReactNode
 }
 
 // ── Wheel control: a trackpad-style pad for r/g/b push + a master slider ─────
@@ -232,7 +234,7 @@ function NodeEditor({ node, onChange }: { node: GradeNode; onChange: (n: GradeNo
 
 export default function ColorPage({
   clips, activeClipId, onSelectClip, onClipNodesChange,
-  lookNodes, onLookNodesChange, stills, onStillsChange, grabFrame, scopes,
+  lookNodes, onLookNodesChange, stills, onStillsChange, grabFrame, scopes, viewer,
 }: Props) {
   const [level, setLevel] = useState<'clip' | 'look'>('clip')
   const [selNode, setSelNode] = useState(0)
@@ -336,9 +338,14 @@ export default function ColorPage({
           </div>
         </div>
 
-        {/* Right: scopes + stills gallery */}
+        {/* Right: viewer + scopes + stills gallery */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {viewer && (
+            <div style={{ flex: '2 1 0', minHeight: 0, minWidth: 0, position: 'relative', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#000' }}>
+              {viewer}
+            </div>
+          )}
+          <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', borderTop: viewer ? '1px solid var(--border)' : undefined }}>
             {scopes ?? <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Scopes appear here while a clip is loaded.</p>}
           </div>
           {stills.length > 0 && (

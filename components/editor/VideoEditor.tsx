@@ -4119,6 +4119,67 @@ export default function VideoEditor({
     })),
   ], [activePage, hasVideo, hasAudio])
 
+  // The viewer element, shared by the Edit layout and the Color page (Resolve
+  // puts the viewer front and centre while grading). Declared here — right
+  // before the render — so every handler/const it closes over is initialised.
+  const viewerNode = (
+    <VideoPlayer
+      src={effectiveUrl} contentType={effectiveContentType}
+      captions={effectiveCaptions} currentTime={currentTime}
+      timeOffset={clipTimeOffset} isPlaying={isPlaying}
+      adjustments={adjustments}
+      showOriginal={showOriginal}
+      clipLabel={viewerClip?.label}
+      onTimeUpdate={handleTimeUpdate}
+      onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
+      videoRef={videoRef}
+      onMediaError={handleMediaError}
+      preloadSrcs={mediaItems.map(m => m.url).filter((u): u is string => !!u)}
+      seekHints={seekHints}
+      clipTransform={clipTransform}
+      viewerZoom={viewerZoom}
+      onViewerZoomChange={setViewerZoom}
+      gizmo={gizmo}
+      onGizmoChange={(patch) => selectedItem && handleClipChange(selectedItem.id, patch)}
+      showSafeAreas={showSafeAreas}
+      projectAspect={projectAspect}
+      transition={viewerTransition}
+      underLayers={underLayers}
+      audioLayers={audioLayers}
+      musicViz={activeMusicViz}
+      captionStyle={captionStyle}
+      clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
+      overlays={activeOverlays(timelineItems, currentTime, viewerClip ? [viewerClip.look] : [])}
+      lutData={activeLut}
+      gradeNodes={activeGradeChain}
+      showVUMeter={showVUMeter}
+      frameBlendEnabled={frameBlendEnabled}
+      clipSpeed={rampSpeed}
+      motionBlurEnabled={motionBlurGlobal || (viewerClip?.motionBlurEnabled ?? false)}
+      currentClipSpeed={rampSpeed}
+      opticalFlowEnabled={opticalFlowEnabled}
+      perfMode={perfMode}
+      blendMode={viewerClip?.blendMode}
+      loopDuration={viewerLoopDuration}
+      clipInPoint={viewerClip?.inPoint ?? 0}
+      activeRemap={activeRemap}
+      titleOverlays={titleOverlays}
+      selectedTitleId={selectedItem?.contentType === 'title' ? selectedItem.id : null}
+      onTitleMove={(id, x, y) => handleClipChange(id, { titleOffsetX: x || undefined, titleOffsetY: y || undefined })}
+      onSeekRequest={handleSeek}
+      playbackRate={playbackRate}
+      onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}
+      activeFocusClip={activeFocusClip}
+      onSetFocusPoint={selectedDrawFocusItem ? handleSetFocusPoint : undefined}
+      onFocusRecordStart={handleFocusRecordStart}
+      onFocusRecordEnd={handleFocusRecordEnd}
+      isRecordingFocus={isRecordingFocus}
+      focusKeyframes={selectedDrawFocusItem?.focusKeyframes}
+      focusClipStartTime={selectedDrawFocusItem?.startTime}
+      onFocusKeyframeMove={selectedDrawFocusItem ? handleFocusKeyframeMove : undefined}
+    />
+  )
+
   return (
     <div data-editor="true" data-editor-kind="video" className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}
       // Drop an OS file anywhere in the editor (viewer, empty space) to import it.
@@ -4913,61 +4974,7 @@ export default function VideoEditor({
                 // Video tab (default)
                 <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                   <div className={showColorScopes ? 'flex-1 min-h-0' : 'flex-1 min-h-0'} style={{ flex: showColorScopes ? '1 1 0' : '1 1 auto' }}>
-                    <VideoPlayer
-                      src={effectiveUrl} contentType={effectiveContentType}
-                      captions={effectiveCaptions} currentTime={currentTime}
-                      timeOffset={clipTimeOffset} isPlaying={isPlaying}
-                      adjustments={adjustments}
-                      showOriginal={showOriginal}
-                      clipLabel={viewerClip?.label}
-                      onTimeUpdate={handleTimeUpdate}
-                      onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)}
-                      videoRef={videoRef}
-                      onMediaError={handleMediaError}
-                      preloadSrcs={mediaItems.map(m => m.url).filter((u): u is string => !!u)}
-                      seekHints={seekHints}
-                      clipTransform={clipTransform}
-                      viewerZoom={viewerZoom}
-                      onViewerZoomChange={setViewerZoom}
-                      gizmo={gizmo}
-                      onGizmoChange={(patch) => selectedItem && handleClipChange(selectedItem.id, patch)}
-                      showSafeAreas={showSafeAreas}
-                      projectAspect={projectAspect}
-                      transition={viewerTransition}
-                      underLayers={underLayers}
-                      audioLayers={audioLayers}
-                      musicViz={activeMusicViz}
-                      captionStyle={captionStyle}
-                      clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
-                      overlays={activeOverlays(timelineItems, currentTime, viewerClip ? [viewerClip.look] : [])}
-                      lutData={activeLut}
-                      gradeNodes={activeGradeChain}
-                      showVUMeter={showVUMeter}
-                      frameBlendEnabled={frameBlendEnabled}
-                      clipSpeed={rampSpeed}
-                      motionBlurEnabled={motionBlurGlobal || (viewerClip?.motionBlurEnabled ?? false)}
-                      currentClipSpeed={rampSpeed}
-                      opticalFlowEnabled={opticalFlowEnabled}
-                      perfMode={perfMode}
-                      blendMode={viewerClip?.blendMode}
-                      loopDuration={viewerLoopDuration}
-                      clipInPoint={viewerClip?.inPoint ?? 0}
-                      activeRemap={activeRemap}
-                      titleOverlays={titleOverlays}
-                      selectedTitleId={selectedItem?.contentType === 'title' ? selectedItem.id : null}
-                      onTitleMove={(id, x, y) => handleClipChange(id, { titleOffsetX: x || undefined, titleOffsetY: y || undefined })}
-                      onSeekRequest={handleSeek}
-                      playbackRate={playbackRate}
-                      onPlaybackRateChange={rate => { if (videoRef.current) videoRef.current.playbackRate = rate; setPlaybackRate(rate) }}
-                      activeFocusClip={activeFocusClip}
-                      onSetFocusPoint={selectedDrawFocusItem ? handleSetFocusPoint : undefined}
-                      onFocusRecordStart={handleFocusRecordStart}
-                      onFocusRecordEnd={handleFocusRecordEnd}
-                      isRecordingFocus={isRecordingFocus}
-                      focusKeyframes={selectedDrawFocusItem?.focusKeyframes}
-                      focusClipStartTime={selectedDrawFocusItem?.startTime}
-                      onFocusKeyframeMove={selectedDrawFocusItem ? handleFocusKeyframeMove : undefined}
-                    />
+                    {viewerNode}
                   </div>
                   {showColorScopes && !perfMode && (
                     <div style={{ height: 140, flexShrink: 0, borderTop: '1px solid var(--border)' }}>
@@ -5100,6 +5107,7 @@ export default function VideoEditor({
             if (!ctx) return null
             try { ctx.drawImage(v, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.7) } catch { return null }
           }}
+          viewer={viewerNode}
           scopes={<ColorScopes videoRef={videoRef} isPlaying={isPlaying} scope={colorScopesType} onScopeChange={setColorScopesType} />}
         />
       )}
