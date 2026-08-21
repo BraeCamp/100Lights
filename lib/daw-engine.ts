@@ -10,6 +10,7 @@ import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain } from './apollo/daw-fx'
 import { translateInstrument } from './apollo/daw-synth'
+import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
@@ -1962,25 +1963,11 @@ export class DawEngine extends EventTarget {
       } else if (fx.type === 'scale') {
         const p = fx.params as ScaleMidiParams
         if (!p.enabled) continue
-        const SCALES: Record<string, number[]> = {
-          'major':     [0,2,4,5,7,9,11],
-          'minor':     [0,2,3,5,7,8,10],
-          'penta-maj': [0,2,4,7,9],
-          'penta-min': [0,3,5,7,10],
-          'dorian':    [0,2,3,5,7,9,10],
-          'chromatic': [0,1,2,3,4,5,6,7,8,9,10,11],
-        }
-        const intervals = SCALES[p.scale] ?? SCALES.major
-        result = result.map(n => {
-          const pc      = ((n.pitch - p.root) % 12 + 12) % 12
-          const octave  = Math.floor((n.pitch - p.root) / 12)
-          let best = intervals[0], bestDist = 13
-          for (const iv of intervals) {
-            const d = Math.abs(pc - iv)
-            if (d < bestDist) { bestDist = d; best = iv }
-          }
-          return { ...n, pitch: p.root + octave * 12 + best }
-        })
+        // shared snap (lib/music-scales): same signed octave-wrap as Apollo's
+        // scale lock — the old inline version snapped a note just below the
+        // root DOWN the whole scale instead of up one semitone
+        const intervals = SCALE_INTERVALS[p.scale] ?? SCALE_INTERVALS.major
+        result = result.map(n => ({ ...n, pitch: snapToScale(n.pitch, p.root, intervals) }))
       } else if (fx.type === 'chord') {
         const p = fx.params as ChordMidiParams
         if (!p.enabled) continue
@@ -2008,18 +1995,9 @@ export class DawEngine extends EventTarget {
         const arpNotes: MidiNote[] = []
         let cursor = sorted[0]?.startBeat ?? 0
         for (const chord of chords) {
-          // Sort chord pitches by style
-          let pitches = chord.map(n => n.pitch)
-          if (p.style === 'down') pitches = [...pitches].reverse()
-          else if (p.style === 'updown') pitches = [...pitches, ...[...pitches].reverse().slice(1, -1)]
-          else if (p.style === 'random') pitches = [...pitches].sort(() => Math.random() - 0.5)
-
-          // Expand across octaves
-          const expanded: number[] = []
-          for (let oct = 0; oct < p.octaves; oct++) {
-            for (const pitch of pitches) expanded.push(pitch + oct * 12)
-          }
-          if (p.style === 'down') expanded.reverse()
+          // shared ordering (lib/music-scales) — Apollo's arp modes, with an
+          // unbiased shuffle (the old sort(() => random-0.5) was biased)
+          const expanded = arpeggiate(chord.map(n => n.pitch), p.style as ArpStyle, p.octaves)
 
           for (let i = 0; i < expanded.length; i++) {
             arpNotes.push({
