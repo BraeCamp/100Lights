@@ -13,6 +13,14 @@ const PROD_URL = 'https://100lights.com'
 const DEV_URL = 'http://localhost:3000'
 const APP_URL = isDev ? DEV_URL : PROD_URL
 
+// Apollo standalone: the same shell ships as a second product. Packaged
+// builds carry productName "Apollo" (electron-builder.apollo.js); in dev,
+// launch with APOLLO_APP=1. The only behavioral differences: home page is
+// the synth, the window opens at instrument size, and no compact-launcher
+// resizing.
+const IS_APOLLO = process.env.APOLLO_APP === '1' || app.name.toLowerCase() === 'apollo'
+const HOME_PATH = IS_APOLLO ? '/apollo' : '/launcher'
+
 // Domains allowed for in-app navigation.
 // Everything else opens in the system browser.
 const INTERNAL_HOSTS = new Set([
@@ -297,8 +305,15 @@ function openProjectWindow(url: string): void {
 async function createLauncherWindow(): Promise<void> {
   // Grant mic + camera permission to the app — required for getUserMedia in the renderer.
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    const allowed = ['media', 'microphone', 'camera', 'audioCapture', 'desktopCapture']
+    const allowed = ['media', 'microphone', 'camera', 'audioCapture', 'desktopCapture', 'midi', 'midiSysex']
     callback(allowed.includes(permission))
+  })
+
+  // WebMIDI permission checks are synchronous — without this handler,
+  // navigator.requestMIDIAccess() rejects even when the request handler
+  // would have allowed it. Hardware MIDI keyboards are core to Apollo.
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+    return ['media', 'microphone', 'camera', 'audioCapture', 'midi', 'midiSysex'].includes(permission)
   })
 
   // System-audio capture: intercept getDisplayMedia and answer with a screen
@@ -326,10 +341,10 @@ async function createLauncherWindow(): Promise<void> {
   })
 
   launcherWindow = new BrowserWindow({
-    width: 960,
-    height: 600,
-    minWidth: 720,
-    minHeight: 480,
+    width: IS_APOLLO ? 1500 : 960,
+    height: IS_APOLLO ? 980 : 600,
+    minWidth: IS_APOLLO ? 1200 : 720,
+    minHeight: IS_APOLLO ? 760 : 480,
     resizable: true,
     fullscreenable: true,
     center: true,
@@ -399,7 +414,7 @@ async function createLauncherWindow(): Promise<void> {
     }
 
     // Returning to launcher — restore compact size (stays resizable)
-    if (pathname === '/launcher') {
+    if (!IS_APOLLO && pathname === '/launcher') {
       launcherWindow!.setMinimumSize(720, 480)
       if (!launcherWindow!.isFullScreen()) {
         launcherWindow!.setSize(960, 600, true)
@@ -428,13 +443,13 @@ async function createLauncherWindow(): Promise<void> {
   })
 
   wireFullScreenEvents(launcherWindow)
-  attachOfflineHandler(launcherWindow, () => `${APP_URL}/launcher`)
+  attachOfflineHandler(launcherWindow, () => `${APP_URL}${HOME_PATH}`)
   // loadURL rejects when offline — did-fail-load above swaps in the offline page,
   // so don't let the rejection abort launcher setup (menu, updater)
-  await launcherWindow.loadURL(`${APP_URL}/launcher`).catch(err => {
+  await launcherWindow.loadURL(`${APP_URL}${HOME_PATH}`).catch(err => {
     log.warn('Launcher initial load failed (offline?)', String(err))
   })
-  log.info('Loaded launcher', `${APP_URL}/launcher`)
+  log.info('Loaded launcher', `${APP_URL}${HOME_PATH}`)
 }
 
 // Module-related IPC handlers live here (not ipc.ts) because they need direct

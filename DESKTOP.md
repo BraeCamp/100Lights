@@ -120,3 +120,19 @@ lib/electron.ts           — web-side helpers (isElectron, nativeOpenFile, etc.
 | FFmpeg.wasm | ✓ | ✓ (COOP/COEP set in session) |
 | Web Audio API | ✓ | ✓ |
 | Stripe checkout | ✓ | ✓ (opens system browser) |
+
+## Apollo standalone (second product from the same shell)
+
+The shell also builds **Apollo** — the synth as its own desktop app
+(appId `com.100lights.apollo`, loads `/apollo`, WebMIDI enabled,
+instrument-sized window, separate output dir + update channel):
+
+```bash
+cd electron
+npm run dev:apollo        # dev against localhost:3000
+npm run dist:apollo:mac   # → dist-electron-apollo/Apollo-*.dmg
+npm run dist:apollo:win   # → dist-electron-apollo/Apollo Setup *.exe
+```
+
+Icon goes in `build/icons/apollo.icns` / `.ico` / `.png`.
+Roadmap to the sellable VST version: see `plugin/PLAN.md`.
