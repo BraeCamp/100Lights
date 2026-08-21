@@ -12,7 +12,7 @@ import { MEDIA_ACCEPT, VIDEO_EXTS, AUDIO_EXTS, detectMediaKind } from './media-i
 import { loadFolder, verifyWritePermission, writeToFolder } from './local-folder'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
-import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle, TempoSeg, SceneTrack, GradeNode } from '@/lib/editor-types'
+import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle, TempoSeg, SceneTrack, GradeNode, SmartBin } from '@/lib/editor-types'
 
 export const CF_VERSION = 1
 export const CF_EXT     = '.cfproj'
@@ -166,6 +166,9 @@ export interface CfProjFile {
   adjustments: VideoAdjustments
   /** Timeline-level color grade ("the look"), applied after per-clip nodes. */
   lookNodes?: GradeNode[]
+  /** Media-page organisation: bin names, and the saved live filters. */
+  mediaBins?: string[]
+  smartBins?: SmartBin[]
   /** Project frame shape (preview stage + export dims). Absent = 16:9 (pre-aspect files). */
   aspect?: ProjectAspect
   /** Musical grid (BPM + downbeat offset) for beat snapping / cut-on-beat. */
@@ -201,6 +204,8 @@ export interface EditorSnapshot {
   timelineItems: TimelineItem[]
   adjustments: VideoAdjustments
   lookNodes?: GradeNode[]
+  mediaBins?: string[]
+  smartBins?: SmartBin[]
   aspect?: ProjectAspect
   beatGrid?: BeatGrid | null
   captionStyle?: CaptionStyle
@@ -305,6 +310,8 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
     })),
     adjustments: snap.adjustments,
     lookNodes: snap.lookNodes,
+    mediaBins: snap.mediaBins,
+    smartBins: snap.smartBins,
     aspect: snap.aspect,
     beatGrid: snap.beatGrid ?? null,
     captionStyle: snap.captionStyle,
@@ -340,6 +347,8 @@ export interface DeserializedProject {
   timelineItems: TimelineItem[]   // url = undefined means "offline"
   adjustments: VideoAdjustments
   lookNodes?: GradeNode[]
+  mediaBins?: string[]
+  smartBins?: SmartBin[]
   aspect: ProjectAspect
   beatGrid: BeatGrid | null
   captionStyle?: CaptionStyle
@@ -453,6 +462,8 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     timelineItems,
     adjustments:   file.adjustments,
     lookNodes:     file.lookNodes,
+    mediaBins:     file.mediaBins,
+    smartBins:     file.smartBins,
     aspect:        file.aspect ?? '16:9',
     beatGrid:      file.beatGrid ?? null,
     captionStyle:  file.captionStyle,

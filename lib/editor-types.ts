@@ -278,6 +278,27 @@ export interface MediaItem {
   uploadError?: string // the reason, when uploadStatus === 'error' (shown on hover)
   warn?: string        // non-fatal note (e.g. a video the browser can't preview/decode)
   peaks?: number[]     // audio waveform peak data (0–1 per band, 80 samples)
+  // ── Media-page organisation (Resolve's bins) ──
+  /** Bin this item lives in. Absent = the root pool. Dropping an OS folder
+   *  onto the bin list recreates its folder structure as bins. */
+  bin?: string
+  /** Free-form tags used for searching and for smart bins. */
+  keywords?: string[]
+  /** Logging metadata — the fields people actually fill in on a shoot. */
+  scene?: string
+  shotTake?: string
+  notes?: string
+}
+
+/** A smart bin is a saved live filter over the media pool, not a folder:
+ *  items matching the rule appear in it automatically. */
+export interface SmartBin {
+  id: string
+  name: string
+  /** Matches name/keywords/scene/notes, case-insensitive. */
+  query: string
+  /** Optional content-type narrowing. */
+  contentType?: ContentType | 'all'
 }
 
 // ── Color grading (Resolve model) ──────────────────────────────────────────

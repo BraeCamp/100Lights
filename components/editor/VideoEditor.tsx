@@ -12,6 +12,8 @@ import Timeline from '@/components/editor/Timeline'
 import MediaLibrary, { type StockClip } from '@/components/editor/MediaLibrary'
 import type { GradeNode } from '@/lib/editor-types'
 import ColorPage, { type ColorStill } from '@/components/editor/ColorPage'
+import MediaPage from '@/components/editor/MediaPage'
+import type { SmartBin } from '@/lib/editor-types'
 import { getGradeGL } from '@/lib/video-export/grade-gl'
 import ContextMenu from '@/components/editor/ContextMenu'
 import { LogoMark } from '@/components/Logo'
@@ -167,7 +169,7 @@ const MIN_RIGHT = 160; const MAX_RIGHT = 400
 const MIN_TL = 120;  const MAX_TL = 480
 const FRAME_DURATION = 1 / 30  // 30fps — matches the export pipeline (EXPORT_FPS)
 
-type EditorPage = 'edit' | 'color' | 'audio' | 'deliver'
+type EditorPage = 'media' | 'edit' | 'color' | 'audio' | 'deliver'
 export type EditorTool = 'select' | 'blade' | 'trim'
 
 interface Props {
@@ -494,7 +496,7 @@ export default function VideoEditor({
       videoLeftTab: 'media' as 'media' | 'auto' | null,
       viewportTab: 'video' as 'video' | 'audio',
     })
-    const pages: EditorPage[] = ['edit', 'color', 'audio', 'deliver']
+    const pages: EditorPage[] = ['media', 'edit', 'color', 'audio', 'deliver']
     return {
       activePage: pages.includes(w.activePage) ? w.activePage : 'edit',
       videoSidebarOpen: typeof w.videoSidebarOpen === 'boolean' ? w.videoSidebarOpen : true,
@@ -680,6 +682,8 @@ export default function VideoEditor({
   // in both the preview overlay and the export compositor.
   const [lookNodes, setLookNodes] = useState<GradeNode[]>([])
   const [colorStills, setColorStills] = useState<ColorStill[]>([])
+  const [mediaBins, setMediaBins] = useState<string[]>([])
+  const [smartBins, setSmartBins] = useState<SmartBin[]>([])
   const lookNodesRef = useRef<GradeNode[]>([])
   useEffect(() => { lookNodesRef.current = lookNodes }, [lookNodes])
 
@@ -1623,6 +1627,9 @@ export default function VideoEditor({
       const loadedAdj = loaded.adjustments ?? DEFAULT_ADJUSTMENTS
       setAdjustments(loadedAdj)
       adjustmentsRef.current = loadedAdj
+      setLookNodes(loaded.lookNodes ?? [])
+      setMediaBins(loaded.mediaBins ?? [])
+      setSmartBins(loaded.smartBins ?? [])
       resetHistory({ timelineItems: patchedItems, tracks: loadedTracks, adjustments: loadedAdj, captions: loaded.captions })
 
       // ── Recovery check ────────────────────────────────────────
@@ -3772,6 +3779,9 @@ export default function VideoEditor({
       tracks,
       timelineItems,
       adjustments,
+      lookNodes,
+      mediaBins,
+      smartBins,
       aspect: projectAspect,
       captionStyle,
       zoomLevel,
@@ -3827,6 +3837,9 @@ export default function VideoEditor({
     setChapters(loaded.chapters ?? [])
     setProjectAspect(loaded.aspect)
     setCaptionStyle(loaded.captionStyle ?? DEFAULT_CAPTION_STYLE)
+    setLookNodes(loaded.lookNodes ?? [])
+    setMediaBins(loaded.mediaBins ?? [])
+    setSmartBins(loaded.smartBins ?? [])
     const restoredAdj = loaded.adjustments ?? DEFAULT_ADJUSTMENTS
     setAdjustments(restoredAdj)
     adjustmentsRef.current = restoredAdj
@@ -4084,6 +4097,7 @@ export default function VideoEditor({
 
   // ── Page tab config ──────────────────────────────────────────
   const PAGES: { id: EditorPage; label: string; icon: React.ElementType }[] = [
+    { id: 'media',   label: 'Media',   icon: FolderOpen },
     { id: 'edit',    label: 'Edit',    icon: Film },
     ...(hasVideo ? [{ id: 'color'   as const, label: 'Color',   icon: Palette }] : []),
     ...(hasAudio ? [{ id: 'audio'   as const, label: 'Audio',   icon: Music   }] : []),
@@ -5068,6 +5082,19 @@ export default function VideoEditor({
         </>
       )}
 
+      {activePage === 'media' && (
+        <MediaPage
+          items={mediaItems}
+          selectedId={selectedMediaId}
+          onSelect={setSelectedMediaId}
+          onPatchItem={(id, patch) => setMediaItems(prev => prev.map(m => m.id === id ? { ...m, ...patch } : m))}
+          onAddToTimeline={addMediaToTimeline}
+          bins={mediaBins}
+          onBinsChange={setMediaBins}
+          smartBins={smartBins}
+          onSmartBinsChange={setSmartBins}
+        />
+      )}
       {activePage === 'color' && (
         <ColorPage
           clips={gradeableClips}
