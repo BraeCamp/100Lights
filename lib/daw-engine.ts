@@ -484,6 +484,13 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /** Live GR meters for a track's Helios chain (empty when legacy). Unit ids
+   * are the translated ids: the effect id, or effect id + suffix. */
+  getHeliosFxMeters(trackId: string): Record<string, number[]> {
+    const chain = this.effectsChains.get(trackId) as unknown as { meters?: () => Record<string, number[]> }
+    return chain?.meters?.() ?? {}
+  }
+
   getEffectHandle(trackId: string, effectId: string): EffectHandle | undefined {
     return this.effectsChains.get(trackId)?.handles.get(effectId)
   }

@@ -801,6 +801,10 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
       {/* Controls */}
       <EffectLearnCtx.Provider value={effect.id}>
       <div style={{ padding: '8px 6px', flex: 1 }}>
+        {(effect.type === 'filter' || effect.type === 'eq3') && <div style={{ padding: '6px 8px 0' }}><ResponseCurve effect={effect} /></div>}
+        {['compressor', 'noisegate', 'deesser', 'dyneq', 'multibandcomp', 'limiter'].includes(effect.type) && !returnId && (
+          <GrStrip trackId={trackId} effectId={effect.id} />
+        )}
         {effect.type === 'helios'         && <HeliosDeviceBody       effect={effect} />}
         {effect.type === 'eq3'            && <Eq3Controls             effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'compressor'     && <CompressorControls      effect={effect} trackId={trackId} returnId={returnId} />}
@@ -1182,6 +1186,99 @@ function AddMidiEffectButton({ trackId }: { trackId: string }) {
 
 // ── Main export ────────────────────────────────────────────────────────────────
 
+// Live gain-reduction strip for dynamics devices on the Helios path
+function GrStrip({ trackId, effectId }: { trackId: string; effectId: string }) {
+  const { engine } = useDaw()
+  const [gr, setGr] = useState<number | null>(null)
+  useEffect(() => {
+    let raf = 0
+    const tick = () => {
+      const m = (engine as unknown as { getHeliosFxMeters?: (id: string) => Record<string, number[]> })?.getHeliosFxMeters?.(trackId)
+      const vals = m?.[effectId] ?? m?.[`${effectId}_lim`]
+      setGr(vals && vals.length ? Math.min(...vals) : null)
+      raf = window.setTimeout(tick, 120)
+    }
+    tick()
+    return () => window.clearTimeout(raf)
+  }, [engine, trackId, effectId])
+  if (gr == null) return null
+  const pct = Math.min(100, Math.max(0, (-gr / 24) * 100))
+  return (
+    <div title={`Gain reduction: ${gr.toFixed(1)} dB`} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px 6px' }}>
+      <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: 0.6, color: 'var(--text-muted)' }}>GR</span>
+      <div style={{ flex: 1, height: 5, borderRadius: 3, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: pct > 60 ? '#e0a555' : 'var(--accent)', transition: 'width 100ms linear' }} />
+      </div>
+      <span style={{ fontSize: 8.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', minWidth: 34, textAlign: 'right' }}>{gr.toFixed(1)}dB</span>
+    </div>
+  )
+}
+
+// Frequency-response curve for filter/EQ devices (biquad math, standalone)
+function ResponseCurve({ effect }: { effect: TrackEffect }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const cv = ref.current
+    if (!cv) return
+    const g = cv.getContext('2d')
+    if (!g) return
+    const W = cv.width = 164 * 2, H = cv.height = 44 * 2
+    g.clearRect(0, 0, W, H)
+    const sr = 44100
+    // gather biquad stages from the device's settings
+    const stages: { type: string; f: number; q: number; gain: number }[] = []
+    if (effect.type === 'filter') {
+      const p = effect.params as FilterParams
+      stages.push({ type: p.type, f: p.frequency, q: p.q, gain: 0 })
+    } else if (effect.type === 'eq3') {
+      const p = effect.params as Eq3Params
+      stages.push({ type: 'lowshelf', f: p.lowFreq, q: 0.9, gain: p.lowGain })
+      stages.push({ type: 'peaking', f: p.midFreq, q: 1, gain: p.midGain })
+      stages.push({ type: 'highshelf', f: p.highFreq, q: 0.9, gain: p.highGain })
+    }
+    const mag = (freq: number) => {
+      let db = 0
+      for (const st2 of stages) {
+        const w0 = 2 * Math.PI * st2.f / sr, cw = Math.cos(w0), sw = Math.sin(w0)
+        const A = Math.pow(10, st2.gain / 40), alpha = sw / (2 * st2.q)
+        let b0 = 1, b1 = 0, b2 = 0, a0 = 1, a1 = 0, a2 = 0
+        if (st2.type === 'lowpass') { b0 = (1 - cw) / 2; b1 = 1 - cw; b2 = b0; a0 = 1 + alpha; a1 = -2 * cw; a2 = 1 - alpha }
+        else if (st2.type === 'highpass') { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = b0; a0 = 1 + alpha; a1 = -2 * cw; a2 = 1 - alpha }
+        else if (st2.type === 'bandpass') { b0 = alpha; b1 = 0; b2 = -alpha; a0 = 1 + alpha; a1 = -2 * cw; a2 = 1 - alpha }
+        else if (st2.type === 'notch') { b0 = 1; b1 = -2 * cw; b2 = 1; a0 = 1 + alpha; a1 = -2 * cw; a2 = 1 - alpha }
+        else if (st2.type === 'peaking') { b0 = 1 + alpha * A; b1 = -2 * cw; b2 = 1 - alpha * A; a0 = 1 + alpha / A; a1 = -2 * cw; a2 = 1 - alpha / A }
+        else if (st2.type === 'lowshelf' || st2.type === 'highshelf') {
+          const s2 = st2.type === 'lowshelf' ? 1 : -1
+          const beta = 2 * Math.sqrt(A) * alpha
+          b0 = A * ((A + 1) - s2 * (A - 1) * cw + beta); b1 = s2 * 2 * A * ((A - 1) - s2 * (A + 1) * cw); b2 = A * ((A + 1) - s2 * (A - 1) * cw - beta)
+          a0 = (A + 1) + s2 * (A - 1) * cw + beta; a1 = s2 * -2 * ((A - 1) + s2 * (A + 1) * cw); a2 = (A + 1) + s2 * (A - 1) * cw - beta
+        }
+        const w = 2 * Math.PI * freq / sr
+        const cos1 = Math.cos(w), cos2 = Math.cos(2 * w), sin1 = Math.sin(w), sin2 = Math.sin(2 * w)
+        const nr = b0 + b1 * cos1 + b2 * cos2, ni = -(b1 * sin1 + b2 * sin2)
+        const dr = a0 + a1 * cos1 + a2 * cos2, di = -(a1 * sin1 + a2 * sin2)
+        const num = Math.sqrt(nr * nr + ni * ni), den = Math.sqrt(dr * dr + di * di)
+        db += 20 * Math.log10(Math.max(1e-6, num / Math.max(1e-9, den)))
+      }
+      return db
+    }
+    g.strokeStyle = getComputedStyle(cv).getPropertyValue('--accent').trim() || '#4aa9ff'
+    g.lineWidth = 2.5
+    g.beginPath()
+    for (let x = 0; x < W; x++) {
+      const f = 20 * Math.pow(1000, x / W)
+      const db = Math.max(-24, Math.min(24, mag(f)))
+      const y = H / 2 - (db / 24) * (H / 2 - 4)
+      if (x === 0) g.moveTo(x, y); else g.lineTo(x, y)
+    }
+    g.stroke()
+    g.strokeStyle = 'rgba(128,140,160,0.25)'
+    g.lineWidth = 1
+    g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke()
+  }, [effect])
+  return <canvas ref={ref} style={{ width: '100%', height: 44, display: 'block', background: 'rgba(0,0,0,0.25)', borderRadius: 6, margin: '0 0 2px' }} />
+}
+
 // Apollo-native device: compact face — the real editing surface is the
 // Apollo Rack card (open it from the chain header).
 function HeliosDeviceBody({ effect }: { effect: TrackEffect }) {
@@ -1243,6 +1340,81 @@ export default function DeviceChain({ trackId }: { trackId: string }) {
 // (helios wrapper); untouched devices keep their Beacon form.
 const ApolloCardLazy = nextDynamic(() => import('@/components/apps/apollo/ApolloCard'), { ssr: false })
 
+// Shared rack presets: the SAME factory + saved racks as Apollo's Racks ▾
+// (apollo_fx_racks_v1). Loading a rack replaces the chain with Apollo-native
+// wrapper devices; Save stores the current chain's translation.
+function BeaconRacksMenu({ trackId }: { trackId: string }) {
+  const { project, dispatch } = useDaw()
+  const [open, setOpen] = useState(false)
+  const [saved, setSaved] = useState<{ name: string; units: { id: string; type: string; enabled: boolean; mix: number; params: Record<string, number> }[] }[]>([])
+  const menuRef = useRef<HTMLDivElement>(null)
+  const track = project.tracks.find(t => t.id === trackId)
+  useEffect(() => {
+    if (!open) return
+    try { setSaved(JSON.parse(localStorage.getItem('apollo_fx_racks_v1') || '[]')) } catch { setSaved([]) }
+    const onDown = (e: PointerEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false) }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [open])
+  if (!track) return null
+  const loadUnits = (units: { id: string; type: string; enabled: boolean; mix: number; params: Record<string, number> }[]) => {
+    const effects = units.map(u => ({
+      id: crypto.randomUUID(),
+      type: 'helios' as const,
+      params: { enabled: true, unit: { ...u, id: crypto.randomUUID() } },
+    }))
+    dispatch({ type: 'SET_TRACK_EFFECTS', trackId, effects: effects as never })
+    setOpen(false)
+  }
+  const item: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px', borderRadius: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 10.5 }
+  const head: React.CSSProperties = { fontSize: 8.5, fontWeight: 800, letterSpacing: 1, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '3px 8px 1px' }
+  return (
+    <div ref={menuRef} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Load a rack — the same factory and saved racks as Apollo's Effects page"
+        style={{ height: 22, padding: '0 10px', borderRadius: 5, cursor: 'pointer', fontSize: 9, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', background: open ? 'var(--accent)' : 'transparent', color: open ? '#0b0d10' : 'var(--text-muted)', border: '1px solid ' + (open ? 'var(--accent)' : 'var(--border)') }}
+      >Racks ▾</button>
+      {open && (
+        <div style={{ position: 'absolute', top: '110%', right: 0, zIndex: 260, minWidth: 190, maxHeight: 260, overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 5, boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+          <div style={head}>Factory racks</div>
+          <FactoryRackItems onPick={loadUnits} itemStyle={item} />
+          {saved.length > 0 && <div style={head}>Saved racks (Apollo)</div>}
+          {saved.map(r => (
+            <button key={r.name} style={item} onClick={() => loadUnits(r.units)}>{r.name}</button>
+          ))}
+          <div style={head}>This chain</div>
+          <button style={item} onClick={() => {
+            void import('@/lib/apollo/daw-fx').then(({ translateChain }) => {
+              const units = translateChain(track.effects, project.tempo)
+              if (!units) return
+              const name = window.prompt('Rack name:')?.trim()
+              if (!name) return
+              try {
+                const list = JSON.parse(localStorage.getItem('apollo_fx_racks_v1') || '[]') as { name: string }[]
+                const next = [...list.filter(x => x.name !== name), { name, units }]
+                localStorage.setItem('apollo_fx_racks_v1', JSON.stringify(next))
+                setSaved(next as never)
+              } catch { /* quota */ }
+            })
+          }}>Save as rack…</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FactoryRackItems({ onPick, itemStyle }: { onPick: (units: never) => void; itemStyle: React.CSSProperties }) {
+  const [racks, setRacks] = useState<{ name: string; make: () => unknown[] }[]>([])
+  useEffect(() => {
+    void import('@/components/apps/apollo/FxRack').then(m => {
+      const f = (m as unknown as { FACTORY_RACKS?: { name: string; make: () => unknown[] }[] }).FACTORY_RACKS
+      if (f) setRacks(f)
+    })
+  }, [])
+  return <>{racks.map(r => <button key={r.name} style={itemStyle} onClick={() => onPick(r.make() as never)}>{r.name}</button>)}</>
+}
+
 function ApolloRackLauncher({ trackId }: { trackId: string }) {
   const { project, dispatch } = useDaw()
   const [open, setOpen] = useState(false)
@@ -1263,7 +1435,8 @@ function ApolloRackLauncher({ trackId }: { trackId: string }) {
   }
   return (
     <>
-      <div style={{ padding: '6px 8px 0', display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{ padding: '6px 8px 0', display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+        <BeaconRacksMenu trackId={trackId} />
         <button
           onClick={() => { void openRack() }}
           title="Open this chain in the Apollo Rack — full Apollo editing; edited devices become Apollo-native"

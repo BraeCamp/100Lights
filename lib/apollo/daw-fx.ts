@@ -275,6 +275,8 @@ export interface HeliosChain {
   input: AudioNode
   output: AudioNode
   handles: Map<string, { setParam(key: string, value: number | string | boolean): void; dispose(): void; keyInput?: AudioNode }>
+  /** Live gain-reduction meters keyed by unit id (dB, negative = reducing). */
+  meters(): Record<string, number[]>
   dispose(): void
   /** Resolves once the worklet has ACKED patch + fx mode — offline bounces
    * MUST await this before startRendering (port delivery races the render). */
@@ -316,6 +318,7 @@ export function buildHeliosMasterBus(ctx: BaseAudioContext): HeliosChain {
   })
   return {
     input, output, ready, handles: new Map(),
+    meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
     dispose() {
       alive = false
       try { input.disconnect() } catch { /* ok */ }
@@ -385,6 +388,7 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
     output,
     handles,
     ready,
+    meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
     dispose() {
       alive = false
       try { input.disconnect() } catch { /* ok */ }

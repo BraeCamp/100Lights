@@ -447,7 +447,7 @@ const fxWith = (type: FxType, params: Record<string, number>, mix?: number): FxU
   if (mix != null) u.mix = mix
   return u
 }
-const FACTORY_RACKS: { name: string; make: () => FxUnit[] }[] = [
+export const FACTORY_RACKS: { name: string; make: () => FxUnit[] }[] = [
   { name: 'Echo Band Distortion', make: () => [
     fxWith('distortion', { drive: 0.55 }),
     fxWith('eq', { t1: 1, f1: 0.35, g1: 3, q1: 1.2, t2: 2, f2: 0.85, g2: -2, q2: 0.8 }),
