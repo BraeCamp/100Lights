@@ -13,7 +13,7 @@
 // that dispatches SET_INSTRUMENT on the track — and none of the standalone
 // app's autosave/session/deep-link machinery runs.
 
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ApolloProvider, useApollo, UI, Section } from './ApolloContext'
 import type { ApolloPatch } from '@/lib/apollo/patch'
@@ -146,32 +146,106 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
     window.addEventListener('keydown', onKey, { capture: true })
     return () => window.removeEventListener('keydown', onKey, { capture: true })
   }, [onClose])
+  // ── Floating window, not a modal ───────────────────────────────────────────
+  // The card used to be a modal: a full-screen backdrop that dimmed Beacon,
+  // swallowed clicks and closed on click-outside. That makes it impossible to
+  // work on the track while the rack is open. It is now a window you can move
+  // and resize, and only its own X (or Esc) closes it.
+  const wideDefault = scope === 'all' || scope === 'fx' || scope === 'osc' || scope === 'clip'
+  const [rect, setRect] = useState(() => {
+    const w = Math.min(wideDefault ? 1280 : 760, typeof window === 'undefined' ? 1000 : window.innerWidth - 40)
+    const h = typeof window === 'undefined' ? 700 : Math.min(820, window.innerHeight - 80)
+    const x = typeof window === 'undefined' ? 40 : Math.max(20, (window.innerWidth - w) / 2)
+    return { x, y: 48, w, h }
+  })
+  const dragRef = useRef<{ mode: string; sx: number; sy: number; r: typeof rect } | null>(null)
+
+  const onDragPointer = useCallback((e: React.PointerEvent, mode: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // Capture is an optimisation, not a requirement — the move/up listeners are
+    // on window. Some pointer sources (and synthetic events) throw here, and a
+    // throw used to abort the drag before it started.
+    try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId) } catch { /* not capturable */ }
+    dragRef.current = { mode, sx: e.clientX, sy: e.clientY, r: rect }
+  }, [rect])
+
+  useEffect(() => {
+    const MIN_W = 380, MIN_H = 220
+    function move(ev: PointerEvent) {
+      const d = dragRef.current
+      if (!d) return
+      const dx = ev.clientX - d.sx, dy = ev.clientY - d.sy
+      const r = { ...d.r }
+      if (d.mode === 'move') { r.x = d.r.x + dx; r.y = d.r.y + dy }
+      // Edges and corners: dragging a left/top edge moves the origin as well
+      // as resizing, so the opposite edge stays put.
+      if (d.mode.includes('e')) r.w = Math.max(MIN_W, d.r.w + dx)
+      if (d.mode.includes('s')) r.h = Math.max(MIN_H, d.r.h + dy)
+      if (d.mode.includes('w')) { const w = Math.max(MIN_W, d.r.w - dx); r.x = d.r.x + (d.r.w - w); r.w = w }
+      if (d.mode.includes('n')) { const h = Math.max(MIN_H, d.r.h - dy); r.y = d.r.y + (d.r.h - h); r.h = h }
+      // Keep a grab-able strip on screen so a window can always be recovered.
+      r.x = Math.min(Math.max(r.x, 40 - r.w), window.innerWidth - 60)
+      r.y = Math.min(Math.max(r.y, 0), window.innerHeight - 40)
+      setRect(r)
+    }
+    function up() { dragRef.current = null }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+  }, [])
+
+  // The eight resize handles, drawn just outside the content edges.
+  const GRAB = 7
+  const handle = (mode: string, style: React.CSSProperties, cursor: string) => (
+    <div
+      key={mode}
+      data-apollo-resize={mode}
+      onPointerDown={e => onDragPointer(e, mode)}
+      style={{ position: 'absolute', cursor, touchAction: 'none', zIndex: 10, ...style }}
+    />
+  )
+
   if (typeof document === 'undefined') return null
 
-  const wide = scope === 'all' || scope === 'fx' || scope === 'osc' || scope === 'clip'
   return createPortal(
     <div
-      onClick={onClose}
-      style={{ position: 'fixed', inset: 0, zIndex: 500, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '4vh 16px', overflowY: 'auto' }}
+      data-apollo-window
+      style={{
+        position: 'fixed', left: rect.x, top: rect.y, width: rect.w, height: rect.h,
+        zIndex: 500,
+        background: 'var(--bg-card, #0a0c0f)',
+        border: '1px solid var(--border, #262c35)',
+        borderRadius: 14,
+        boxShadow: '0 24px 70px rgba(0,0,0,0.6)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      }}
     >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: wide ? 'min(1280px, 96vw)' : 'min(760px, 96vw)',
-          maxHeight: '92vh', overflowY: 'auto',
-          background: 'var(--bg-card, #0a0c0f)',
-          border: '1px solid var(--border, #262c35)',
-          borderRadius: 14,
-          boxShadow: '0 24px 70px rgba(0,0,0,0.6)',
-          display: 'flex', flexDirection: 'column',
-        }}
-      >
-        {/* chrome header — the host app's theme, not Apollo's */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-          padding: '10px 14px', borderBottom: '1px solid var(--border, #262c35)',
-          position: 'sticky', top: 0, background: 'var(--bg-card, #0a0c0f)', zIndex: 5, borderRadius: '14px 14px 0 0',
-        }}>
+      {/* resize handles: every edge and corner */}
+      {handle('n',  { left: GRAB, right: GRAB, top: -GRAB / 2, height: GRAB }, 'ns-resize')}
+      {handle('s',  { left: GRAB, right: GRAB, bottom: -GRAB / 2, height: GRAB }, 'ns-resize')}
+      {handle('w',  { top: GRAB, bottom: GRAB, left: -GRAB / 2, width: GRAB }, 'ew-resize')}
+      {handle('e',  { top: GRAB, bottom: GRAB, right: -GRAB / 2, width: GRAB }, 'ew-resize')}
+      {handle('nw', { left: -GRAB / 2, top: -GRAB / 2, width: GRAB * 2, height: GRAB * 2 }, 'nwse-resize')}
+      {handle('ne', { right: -GRAB / 2, top: -GRAB / 2, width: GRAB * 2, height: GRAB * 2 }, 'nesw-resize')}
+      {handle('sw', { left: -GRAB / 2, bottom: -GRAB / 2, width: GRAB * 2, height: GRAB * 2 }, 'nesw-resize')}
+      {handle('se', { right: -GRAB / 2, bottom: -GRAB / 2, width: GRAB * 2, height: GRAB * 2 }, 'nwse-resize')}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        {/* chrome header — the host app's theme, not Apollo's. Doubles as the
+            window's drag handle; clicks on its controls are left alone. */}
+        <div
+          data-apollo-titlebar
+          onPointerDown={e => {
+            const el = e.target as HTMLElement
+            if (el.closest('button, input, select, textarea, a')) return
+            onDragPointer(e, 'move')
+          }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            padding: '10px 14px', borderBottom: '1px solid var(--border, #262c35)',
+            position: 'sticky', top: 0, background: 'var(--bg-card, #0a0c0f)', zIndex: 5, borderRadius: '14px 14px 0 0',
+            cursor: 'grab', touchAction: 'none', userSelect: 'none',
+          }}>
           <div style={{ fontSize: 13, fontWeight: 900, letterSpacing: 3, color: 'var(--text-primary, #dbe1e8)' }}>
             APOLLO
             {title && <span style={{ fontWeight: 500, letterSpacing: 0.2, color: 'var(--text-muted, #8b93a0)', marginLeft: 10, fontSize: 12 }}>{title}</span>}

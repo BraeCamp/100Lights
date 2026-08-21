@@ -815,6 +815,11 @@ export interface DawContextValue {
    *  panel follows the current clip selection, so it retargets on select. */
   soundPanel: { x: number; y: number } | null
   setSoundPanel: (p: { x: number; y: number } | null) => void
+  /** The open Apollo Rack window. It lives at the editor level, NOT inside the
+   *  Devices panel that opens it — closing that panel must not tear the window
+   *  down, since the whole point is to keep working in Beacon while it is up. */
+  apolloRack: { trackId: string; seed: unknown } | null
+  setApolloRack: (v: { trackId: string; seed: unknown } | null) => void
   selectedEffectIds: Set<string>
   setSelectedEffectIds: React.Dispatch<React.SetStateAction<Set<string>>>
   // Pad/voice MIDI card

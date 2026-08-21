@@ -394,6 +394,30 @@ const DEFAULT_PODCAST_META: PodcastMeta = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+
+// The Apollo Rack window, mounted by the editor so it outlives the Devices
+// panel that opens it (and so it can be moved/resized over Beacon while you
+// keep working).
+const ApolloCardLazy = dynamic(() => import('@/components/apps/apollo/ApolloCard'), { ssr: false })
+function ApolloRackWindow({ trackId, seed, trackName, onChange, onClose }: {
+  trackId: string
+  seed: unknown
+  trackName: string
+  onChange: (next: { fxMain: unknown[] }) => void
+  onClose: () => void
+}) {
+  return (
+    <ApolloCardLazy
+      key={trackId}
+      patch={seed as never}
+      fxOnly
+      title={`${trackName} — FX`}
+      onChange={onChange as never}
+      onClose={onClose}
+    />
+  )
+}
+
 export default function AudioEditor(props: AudioEditorProps) {
   const { initialTracks, onSave, onProjectNameCommit } = props
   const isPodcast = props.audioMode === 'podcast'
@@ -1363,6 +1387,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [soundPanel, setSoundPanel] = useState<{ x: number; y: number } | null>(null)
+  const [apolloRack, setApolloRack] = useState<{ trackId: string; seed: unknown } | null>(null)
 
   // Dev console access to the multi-selection (window.__dawSelection)
   useEffect(() => {
@@ -1816,6 +1841,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     selectedClipIds,
     setSelectedClipIds,
     soundPanel,
+    apolloRack,
+    setApolloRack,
     setSoundPanel,
     selectedEffectIds,
     setSelectedEffectIds,
@@ -2259,6 +2286,22 @@ export default function AudioEditor(props: AudioEditorProps) {
             {/* Active view */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
               {view === 'session' && <SessionView />}
+      {apolloRack && (
+        <ApolloRackWindow
+          trackId={apolloRack.trackId}
+          seed={apolloRack.seed}
+          trackName={project.tracks.find(t => t.id === apolloRack.trackId)?.name ?? 'Track'}
+          onChange={next => {
+            const track = projectRef.current.tracks.find(t => t.id === apolloRack.trackId)
+            if (!track) return
+            void import('@/lib/apollo/daw-fx').then(({ applyRackEdit }) => {
+              const eff = applyRackEdit(track.effects, next.fxMain as never)
+              dispatch({ type: 'SET_TRACK_EFFECTS', trackId: apolloRack.trackId, effects: eff })
+            })
+          }}
+          onClose={() => setApolloRack(null)}
+        />
+      )}
               {view === 'arrangement' && <ArrangementView />}
               {view === 'mixer' && <Mixer />}
             </div>

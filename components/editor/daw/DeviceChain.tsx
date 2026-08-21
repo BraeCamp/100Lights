@@ -1416,9 +1416,7 @@ function FactoryRackItems({ onPick, itemStyle }: { onPick: (units: never) => voi
 }
 
 function ApolloRackLauncher({ trackId }: { trackId: string }) {
-  const { project, dispatch } = useDaw()
-  const [open, setOpen] = useState(false)
-  const [seed, setSeed] = useState<object | null>(null)
+  const { project, setApolloRack } = useDaw()
   const track = project.tracks.find(t => t.id === trackId)
   if (!track || track.heliosFx === false) return null
   const openRack = async () => {
@@ -1430,8 +1428,8 @@ function ApolloRackLauncher({ trackId }: { trackId: string }) {
     for (const o of p.oscs) o.enabled = false
     p.sub.enabled = false; p.noise.enabled = false
     p.matrix = []; p.fxMain = units; p.fxBus1 = []; p.fxBus2 = []
-    setSeed(p)
-    setOpen(true)
+    // Hand it to the editor: the window must survive this panel closing.
+    setApolloRack({ trackId, seed: p })
   }
   return (
     <>
@@ -1447,20 +1445,6 @@ function ApolloRackLauncher({ trackId }: { trackId: string }) {
           }}
         >☀︎ Apollo Rack</button>
       </div>
-      {open && seed && (
-        <ApolloCardLazy
-          patch={seed as never}
-          fxOnly
-          title={`${track.name} — FX`}
-          onChange={(next: { fxMain: unknown[] }) => {
-            void import('@/lib/apollo/daw-fx').then(({ applyRackEdit }) => {
-              const eff = applyRackEdit(track.effects, next.fxMain as never)
-              dispatch({ type: 'SET_TRACK_EFFECTS', trackId, effects: eff })
-            })
-          }}
-          onClose={() => setOpen(false)}
-        />
-      )}
     </>
   )
 }
