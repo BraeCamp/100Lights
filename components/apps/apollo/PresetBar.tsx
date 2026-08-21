@@ -9,6 +9,7 @@ import { FACTORY_PRESETS } from '@/lib/apollo/presets'
 import { saveBounceToLibrary, getApolloSourceSample, overwriteLibrarySample } from '@/lib/apollo/sample-store'
 import { audioBufferToWav } from '@/lib/wav-encoder'
 import { shareAppItem, getCommunityItem, countDownload } from '@/lib/community'
+import { syncApolloPresets, pushApolloPreset } from '@/lib/apollo/preset-sync'
 
 const LS_PRESETS = 'apollo_presets_v1'
 
@@ -43,7 +44,11 @@ export default function PresetBar() {
   const [fileOpen, setFileOpen] = useState(false)
   const [userPresets, setUserPresets] = useState<UserPreset[]>([])
   const [installedMsg, setInstalledMsg] = useState('')
-  useEffect(() => { setUserPresets(loadUserPresets()) }, [])
+  useEffect(() => {
+    setUserPresets(loadUserPresets())
+    // signed in: merge the account's preset set in (silent no-op signed out)
+    void syncApolloPresets().then(merged => { if (merged) setUserPresets(merged) })
+  }, [])
   const fileRef = useRef<HTMLInputElement>(null)
   const fileMenuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -115,6 +120,7 @@ export default function PresetBar() {
     const next = [...userPresets.filter(u => u.name !== name), { name, json }]
     setUserPresets(next)
     try { localStorage.setItem(LS_PRESETS, JSON.stringify(next)) } catch { /* quota */ }
+    pushApolloPreset({ name, json })   // follows the account when signed in
   }
 
   const exportFile = () => {
