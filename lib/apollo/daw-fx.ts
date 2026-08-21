@@ -14,13 +14,12 @@
 //
 // A chain translates ONLY if every effect in it is supported — mixed chains
 // fall back to the legacy path wholesale (translateChain returns null), so a
-// chain never runs half-Helios/half-legacy. Unsupported today: sidechained
-// compressors (Helios has no external key input), custom reverb IRs,
-// noisegate / deesser / transientshaper / multibandcomp / limiter / dyneq /
-// autopan / fx-lfo (candidates for the Beacon-parity FX pack), and utility
-// channel mutes.
+// chain never runs half-Helios/half-legacy. Remaining fallbacks: custom
+// reverb IRs, utility channel mutes, fx-LFO targeting the filter, multiband
+// compressors with strongly divergent per-band settings, and chains with
+// more than one sidechained compressor.
 
-import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, UtilityParams, ChorusParams } from '@/lib/daw-types'
+import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, UtilityParams, ChorusParams, NoiseGateParams, DeEsserParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams, LfoParams } from '@/lib/daw-types'
 import { initPatch, SYNC_RATES, type ApolloPatch, type FxUnit, type FxType } from './patch'
 import { ApolloEngine } from './engine-client'
 
@@ -54,7 +53,6 @@ export function translateEffect(e: TrackEffect, tempo: number): FxUnit[] | null 
     }
     case 'compressor': {
       const p = e.params as CompressorParams
-      if (p.sidechainTrackId) return null
       // WebAudio's DynamicsCompressorNode applies AUTOMATIC makeup gain
       // (≈ -threshold·(1-1/ratio)/2); Apollo's compressor is honest. Emulate
       // the auto-makeup so translated chains keep the legacy loudness.
@@ -63,6 +61,7 @@ export function translateEffect(e: TrackEffect, tempo: number): FxUnit[] | null 
         threshold: clamp(p.threshold, -60, 0), ratio: clamp(p.ratio, 1, 20),
         attack: clamp(p.attack * 1000, 0.1, 200), release: clamp(p.release * 1000, 10, 2000),
         makeup: clamp(p.makeupGain + autoMakeup, 0, 24), upward: 0, multiband: 0, loFreq: 0.25, hiFreq: 0.7,
+        sidechain: p.sidechainTrackId ? 1 : 0,
       })]
     }
     case 'reverb': {
@@ -122,6 +121,82 @@ export function translateEffect(e: TrackEffect, tempo: number): FxUnit[] | null 
           ? { rate: clamp(p.rate, 0.05, 8), depth: clamp(p.depth, 0, 1), delay: 12, feedback: clamp(p.feedback, 0, 0.9), lpf: 1, voices: 3 }
           : { rate: clamp(p.rate, 0.05, 8), depth: clamp(p.depth, 0, 1), feedback: clamp(p.feedback, 0, 0.9) })]
     }
+    case 'noisegate': {
+      const p = e.params as NoiseGateParams
+      return [mkUnit(e.id, 'noisegate', on, 1, {
+        threshold: clamp(p.threshold, -80, 0), attack: clamp(p.attack * 1000, 0.1, 500),
+        hold: clamp(p.hold * 1000, 0, 500), release: clamp(p.release * 1000, 1, 2000),
+        reduction: clamp(-p.reduction, 0, 80),
+      })]
+    }
+    case 'deesser': {
+      const p = e.params as DeEsserParams
+      return [mkUnit(e.id, 'deesser', on, 1, {
+        freq: hzToNorm(p.frequency), bandwidth: clamp(p.bandwidth, 0.3, 3),
+        threshold: clamp(p.threshold, -60, 0), reduction: clamp(p.reduction, 0, 24),
+      })]
+    }
+    case 'transientshaper': {
+      const p = e.params as TransientShaperParams
+      return [mkUnit(e.id, 'transientshaper', on, 1, {
+        attack: clamp(p.attack, -12, 12), sustain: clamp(p.sustain, -12, 12), gain: clamp(p.gain, -6, 6),
+      })]
+    }
+    case 'multibandcomp': {
+      const p = e.params as MultibandCompParams
+      // Apollo's multiband shares one threshold/ratio — only translate when
+      // the bands are set alike (the common case); divergent bands stay legacy
+      const thSpread = Math.max(p.lowThreshold, p.midThreshold, p.highThreshold) - Math.min(p.lowThreshold, p.midThreshold, p.highThreshold)
+      const raSpread = Math.max(p.lowRatio, p.midRatio, p.highRatio) - Math.min(p.lowRatio, p.midRatio, p.highRatio)
+      if (thSpread > 3 || raSpread > 1.5) return null
+      const th = (p.lowThreshold + p.midThreshold + p.highThreshold) / 3
+      const ratio = (p.lowRatio + p.midRatio + p.highRatio) / 3
+      const mk2 = (p.lowGain + p.midGain + p.highGain) / 3
+      return [mkUnit(e.id, 'compressor', on, 1, {
+        threshold: clamp(th, -60, 0), ratio: clamp(ratio, 1, 20),
+        attack: 10, release: 150, makeup: clamp(mk2, 0, 24), upward: 0,
+        multiband: 1, loFreq: hzToNorm(p.lowMid), hiFreq: hzToNorm(p.midHigh), sidechain: 0,
+      })]
+    }
+    case 'limiter': {
+      const p = e.params as LimiterParams
+      // input drive + brickwall ≈ utility gain into a 20:1 fast compressor
+      return [
+        mkUnit(e.id, 'utility', on, 1, { gain: clamp(p.gainDb, 0, 24), pan: 0, width: 1 }),
+        mkUnit(`${e.id}_lim`, 'compressor', on, 1, {
+          threshold: clamp(p.ceilingDb - 0.5, -12.5, -0.5), ratio: 20,
+          attack: 0.1, release: clamp(p.release * 1000, 10, 1000),
+          makeup: 0, upward: 0, multiband: 0, loFreq: 0.25, hiFreq: 0.7, sidechain: 0,
+        }),
+      ]
+    }
+    case 'dyneq': {
+      const p = e.params as DynEqParams
+      return [mkUnit(e.id, 'dyneq', on, 1, {
+        freq: hzToNorm(p.freq), q: clamp(p.q, 0.3, 12),
+        threshold: clamp(p.thresholdDb, -60, 0), range: clamp(p.rangeDb, -18, 18),
+        attack: clamp(p.attack * 1000, 1, 500), release: clamp(p.release * 1000, 10, 1000),
+      })]
+    }
+    case 'autopan': {
+      const p = e.params as { enabled: boolean; rate: number; depth: number; waveform: string; phase: number }
+      return [mkUnit(e.id, 'autopan', on, 1, {
+        rate: clamp(p.rate, 0.01, 20), depth: clamp(p.depth, 0, 1),
+        wave: p.waveform === 'triangle' ? 1 : p.waveform === 'square' ? 2 : 0,
+        phase: clamp(p.phase ?? 180, 0, 360),
+      })]
+    }
+    case 'lfo': {
+      const p = e.params as LfoParams
+      // pan/volume LFO targets map onto the auto-pan unit; the filter target
+      // has no per-unit LFO in Apollo yet — stays legacy
+      if (p.target === 'filter') return null
+      return [mkUnit(e.id, 'autopan', on, 1, {
+        rate: clamp(p.rate, 0.01, 20), depth: clamp(p.depth, 0, 1),
+        wave: p.waveform === 'triangle' ? 1 : p.waveform === 'square' ? 2 : 0,
+        phase: p.target === 'pan' ? 180 : 0,   // opposite = pan, in-phase = tremolo
+      })]
+    }
     default:
       return null
   }
@@ -151,7 +226,7 @@ function fxOnlyPatch(units: FxUnit[]): ApolloPatch {
 export interface HeliosChain {
   input: AudioNode
   output: AudioNode
-  handles: Map<string, { setParam(key: string, value: number | string | boolean): void; dispose(): void }>
+  handles: Map<string, { setParam(key: string, value: number | string | boolean): void; dispose(): void; keyInput?: AudioNode }>
   dispose(): void
   /** Resolves once the worklet has ACKED patch + fx mode — offline bounces
    * MUST await this before startRendering (port delivery races the render). */
@@ -167,8 +242,12 @@ export interface HeliosChain {
 export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[], tempo: number): HeliosChain | null {
   const units = translateChain(effects, tempo)
   if (!units) return null
+  // at most ONE sidechained compressor per chain (single key input)
+  const scComps = effects.filter(e => e.type === 'compressor' && (e.params as CompressorParams).sidechainTrackId)
+  if (scComps.length > 1) return null
   const input = ctx.createGain()
   const output = ctx.createGain()
+  const keyInput = scComps.length ? ctx.createGain() : null
   const engine = new ApolloEngine()
   const current: TrackEffect[] = effects.map(e => ({ ...e, params: { ...(e.params as object) } as TrackEffect['params'] }))
   let alive = true
@@ -181,6 +260,7 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
       engine.sendPatch(fxOnlyPatch(units))
       engine.node?.port.postMessage({ type: 'fxMode', on: true })
       if (engine.node) input.connect(engine.node)
+      if (engine.node && keyInput) keyInput.connect(engine.node, 0, 1)
     }).catch(() => resolve()) /* worklet unavailable — silence; the legacy path is the upstream safety net */
   })
 
@@ -191,9 +271,10 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
       engine.node.port.postMessage({ type: 'fxMode', on: true })
     }
   }
-  const handles = new Map<string, { setParam(key: string, value: number | string | boolean): void; dispose(): void }>()
+  const handles = new Map<string, { setParam(key: string, value: number | string | boolean): void; dispose(): void; keyInput?: AudioNode }>()
   for (const e of current) {
     handles.set(e.id, {
+      keyInput: e.type === 'compressor' && (e.params as CompressorParams).sidechainTrackId && keyInput ? keyInput : undefined,
       setParam(key, value) {
         ;(e.params as unknown as Record<string, unknown>)[key] = value
         if (typeof value === 'number') {

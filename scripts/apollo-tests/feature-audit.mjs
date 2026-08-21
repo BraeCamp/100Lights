@@ -203,5 +203,81 @@ function rms(buf) { let s = 0; for (const v of buf) s += v * v; return Math.sqrt
   check('IR models are distinct', d89 / outs[8].length > 0.005, `mean diff ${(d89 / outs[8].length).toFixed(4)}`)
 }
 
+// 10. Beacon-parity FX pack (gate / de-esser / transients / dyn-eq / auto-pan)
+{
+  const mkP = (units, level = 1) => fresh(pp => { pp.oscs[0].level = 0.75 * level; pp.fxMain = units })
+  // gate: loud passes, quiet (below -40) is cut
+  const loud = mkP([{ id: 'g', type: 'noisegate', enabled: true, mix: 1, params: { threshold: -40, attack: 5, hold: 20, release: 80, reduction: 60 } }])
+  loud.noteOn(57, 0.9, false)
+  const loudBuf = render(loud, 60)
+  const quiet = mkP([{ id: 'g', type: 'noisegate', enabled: true, mix: 1, params: { threshold: -6, attack: 5, hold: 20, release: 80, reduction: 60 } }])
+  quiet.noteOn(57, 0.9, false)
+  const quietBuf = render(quiet, 60)
+  check('gate passes loud, cuts under-threshold', rms(loudBuf.subarray(2560)) > 0.05 && rms(quietBuf.subarray(2560)) < rms(loudBuf.subarray(2560)) * 0.3,
+    `${rms(loudBuf.subarray(2560)).toFixed(3)} vs ${rms(quietBuf.subarray(2560)).toFixed(3)}`)
+
+  // de-esser: cuts the 6k band on bright material
+  const dry = fresh(); dry.noteOn(57, 0.9, false)
+  const dryB = render(dry, 60)
+  const de = mkP([{ id: 'd', type: 'deesser', enabled: true, mix: 1, params: { freq: 0.82, bandwidth: 1, threshold: -50, reduction: 20 } }])
+  de.noteOn(57, 0.9, false)
+  const deB = render(de, 60)
+  // the unit's band centers at cutoffHz(0.82) ≈ 4.9 kHz — probe there
+  const sib = b => bandEnergy(b.subarray(2560), 4950) / (bandEnergy(b.subarray(2560), 220) + 1e-9)
+  check('de-esser reduces the sibilant band', sib(deB) < sib(dryB) * 0.8, `${sib(dryB).toFixed(3)} → ${sib(deB).toFixed(3)}`)
+
+  // transient shaper: +attack raises early rms vs late
+  const ts = mkP([{ id: 't', type: 'transientshaper', enabled: true, mix: 1, params: { attack: 10, sustain: -8, gain: 0 } }])
+  ts.noteOn(57, 0.9, false)
+  const tsB = render(ts, 80)
+  const ref2 = fresh(); ref2.noteOn(57, 0.9, false)
+  const refB = render(ref2, 80)
+  const shape = b => rms(b.subarray(0, 3000)) / (rms(b.subarray(6000)) + 1e-9)
+  check('transient shaper emphasizes the hit over the body', shape(tsB) > shape(refB) * 1.2, `${shape(refB).toFixed(2)} → ${shape(tsB).toFixed(2)}`)
+
+  // dyn EQ: negative range cuts a hot band
+  const dq = mkP([{ id: 'q', type: 'dyneq', enabled: true, mix: 1, params: { freq: 0.55, q: 2, threshold: -50, range: -18, attack: 5, release: 100 } }])
+  dq.noteOn(57, 0.9, false)
+  const dqB = render(dq, 60)
+  const at = (b, f) => bandEnergy(b.subarray(2560), f)
+  check('dyn EQ cuts its band when hot', at(dqB, 880) < at(refB, 880) * 0.85, `${at(refB, 880).toFixed(4)} → ${at(dqB, 880).toFixed(4)}`)
+
+  // auto-pan (phase 0 = tremolo): amplitude modulates over time
+  const ap = mkP([{ id: 'a', type: 'autopan', enabled: true, mix: 1, params: { rate: 6, depth: 1, wave: 0, phase: 0 } }])
+  ap.noteOn(57, 0.9, false)
+  const apB = render(ap, 80)
+  let mn = 1, mx = 0
+  for (let w = 20; w < 70; w++) { const r = rms(apB.subarray(w * 128, (w + 4) * 128)); mn = Math.min(mn, r); mx = Math.max(mx, r) }
+  check('auto-pan/tremolo modulates level', mx > mn * 2, `min ${mn.toFixed(3)} max ${mx.toFixed(3)}`)
+}
+
+// 11. sidechain key input ducks the chain signal
+{
+  const p = fresh(pp => {
+    pp.fxMain = [{ id: 'sc', type: 'compressor', enabled: true, mix: 1, params: { threshold: -30, ratio: 10, attack: 1, release: 60, makeup: 0, upward: 0, multiband: 0, loFreq: 0.25, hiFreq: 0.7, sidechain: 1 } }]
+  })
+  p.onMessage({ type: 'fxMode', on: true })
+  const out = new Float32Array(120 * 128)
+  let phase = 0
+  for (let b = 0; b < 120; b++) {
+    const IL = new Float32Array(128), IR = new Float32Array(128)
+    const KL = new Float32Array(128), KR = new Float32Array(128)
+    for (let i = 0; i < 128; i++) {
+      phase += 220 / 48000; if (phase >= 1) phase -= 1
+      IL[i] = Math.sin(phase * 2 * Math.PI) * 0.4; IR[i] = IL[i]
+      const keyOn = b >= 40 && b < 80   // key blasts in the middle third
+      KL[i] = keyOn ? 0.8 : 0; KR[i] = KL[i]
+    }
+    const L = new Float32Array(128), R = new Float32Array(128)
+    p.process([[IL, IR], [KL, KR]], [[L, R]])
+    out.set(L, b * 128)
+  }
+  const pre = rms(out.subarray(10 * 128, 35 * 128))
+  const duck = rms(out.subarray(50 * 128, 75 * 128))
+  const post = rms(out.subarray(95 * 128, 118 * 128))
+  check('sidechain key ducks the signal', duck < pre * 0.6 && post > duck * 1.4,
+    `pre ${pre.toFixed(3)} duck ${duck.toFixed(3)} post ${post.toFixed(3)}`)
+}
+
 console.log(failures === 0 ? 'ALL FEATURE CHECKS PASS' : `${failures} FAILURES`)
 process.exit(failures ? 1 : 0)

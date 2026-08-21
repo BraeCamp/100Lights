@@ -34,7 +34,7 @@ const BOOL_KEYS = new Set(['sync', 'pingpong', 'multiband', 'tape'])
 const TIME_KEYS = new Set(['timeL', 'timeR', 'time'])
 
 const SPLITTERS: FxType[] = ['splitLH', 'splitLMH', 'splitMS']
-const EFFECTS: FxType[] = ['hyper', 'distortion', 'echobode', 'chorus', 'flanger', 'phaser', 'delay', 'compressor', 'convolve', 'reverb', 'eq', 'filter', 'utility', 'octaver', 'bitcrush']
+const EFFECTS: FxType[] = ['hyper', 'distortion', 'echobode', 'chorus', 'flanger', 'phaser', 'delay', 'compressor', 'noisegate', 'deesser', 'transientshaper', 'dyneq', 'autopan', 'convolve', 'reverb', 'eq', 'filter', 'utility', 'octaver', 'bitcrush']
 
 function chainLabels(type: FxType): string[] {
   if (type === 'splitLH') return ['Low', 'High']

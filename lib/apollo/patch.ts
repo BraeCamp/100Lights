@@ -219,6 +219,7 @@ export type FxType =
   | 'hyper' | 'distortion' | 'echobode' | 'chorus' | 'flanger' | 'phaser'
   | 'delay' | 'compressor' | 'convolve' | 'reverb' | 'eq' | 'filter'
   | 'utility' | 'octaver' | 'bitcrush'
+  | 'noisegate' | 'deesser' | 'transientshaper' | 'dyneq' | 'autopan'
   | 'splitLH' | 'splitLMH' | 'splitMS'
 
 export interface FxUnit {
@@ -484,6 +485,39 @@ export const FX_DEFS: Record<FxType, { label: string; params: { key: string; lab
     { key: 'multiband', label: 'Multiband', min: 0, max: 1, default: 0 },
     { key: 'loFreq', label: 'Lo X', min: 0, max: 1, default: 0.25 },
     { key: 'hiFreq', label: 'Hi X', min: 0, max: 1, default: 0.7 },
+    { key: 'sidechain', label: 'Sidechain', min: 0, max: 1, default: 0 }, // host-fed key input (DAW)
+  ]},
+  noisegate: { label: 'Gate', params: [
+    { key: 'threshold', label: 'Thresh', min: -80, max: 0, default: -40 },
+    { key: 'attack', label: 'Attack', min: 0.1, max: 500, default: 10, curve: 'log' },
+    { key: 'hold', label: 'Hold', min: 0, max: 500, default: 50 },
+    { key: 'release', label: 'Release', min: 1, max: 2000, default: 200, curve: 'log' },
+    { key: 'reduction', label: 'Range', min: 0, max: 80, default: 60 },
+  ]},
+  deesser: { label: 'De-esser', params: [
+    { key: 'freq', label: 'Freq', min: 0.6, max: 1, default: 0.82 },
+    { key: 'bandwidth', label: 'Width', min: 0.3, max: 3, default: 1 },
+    { key: 'threshold', label: 'Thresh', min: -60, max: 0, default: -20 },
+    { key: 'reduction', label: 'Amount', min: 0, max: 24, default: 12 },
+  ]},
+  transientshaper: { label: 'Transients', params: [
+    { key: 'attack', label: 'Attack', min: -12, max: 12, default: 0 },
+    { key: 'sustain', label: 'Sustain', min: -12, max: 12, default: 0 },
+    { key: 'gain', label: 'Gain', min: -6, max: 6, default: 0 },
+  ]},
+  dyneq: { label: 'Dyn EQ', params: [
+    { key: 'freq', label: 'Freq', min: 0, max: 1, default: 0.5 },
+    { key: 'q', label: 'Q', min: 0.3, max: 12, default: 2, curve: 'log' },
+    { key: 'threshold', label: 'Thresh', min: -60, max: 0, default: -30 },
+    { key: 'range', label: 'Range', min: -18, max: 18, default: -6 },
+    { key: 'attack', label: 'Attack', min: 1, max: 500, default: 10, curve: 'log' },
+    { key: 'release', label: 'Release', min: 10, max: 1000, default: 150, curve: 'log' },
+  ]},
+  autopan: { label: 'Auto-Pan', params: [
+    { key: 'rate', label: 'Rate', min: 0.01, max: 20, default: 1, curve: 'log' },
+    { key: 'depth', label: 'Depth', min: 0, max: 1, default: 0.5 },
+    { key: 'wave', label: 'Wave', min: 0, max: 2, default: 0 }, // sine/tri/square
+    { key: 'phase', label: 'Phase', min: 0, max: 360, default: 180 },
   ]},
   convolve: { label: 'Convolve', params: [
     { key: 'ir', label: 'IR', min: 0, max: 10, default: 0 },

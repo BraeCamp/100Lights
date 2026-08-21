@@ -4,7 +4,7 @@
    matrix, three FX lanes with splitters, arp + clip sequencer.
    Plain JS: worklet-loaded. */
 /* eslint-disable */
-/* build 2026-08-20-15 — keep in sync with lib/apollo/engine-version.ts */
+/* build 2026-08-20-16 — keep in sync with lib/apollo/engine-version.ts */
 'use strict'
 
 const TWO_PI = Math.PI * 2
@@ -1320,6 +1320,12 @@ class FxState {
       case 'reverb': this.initReverb(sr); break
       case 'convolve': this.conv = null; this.irKey = ''; break
       case 'eq': this.bq = [new Biquad(), new Biquad(), new Biquad(), new Biquad()]; break
+      case 'noisegate': this.env = 0; this.g = 0; this.holdN = 0; break
+      case 'deesser': this.bpL = new SVF(); this.bpR = new SVF(); this.envG = 0; break
+      case 'transientshaper': this.envF = 0; this.envS = 0; break
+      case 'dyneq':
+        this.bqL = new Biquad(); this.bqR = new Biquad()
+        this.det = new SVF(); this.envDb = -90; this.lastG = 0; this.eqKey = ''; break
       case 'filter': this.vfL = new VoiceFilter(sr); this.vfR = new VoiceFilter(sr); break
       case 'hyper':
         this.taps = Array.from({ length: 8 }, () => new DelayLine(S * 0.05))
@@ -1537,9 +1543,15 @@ function processFxUnit(engine, unit, st, L, R, n) {
         return Math.min(24, (th - db) * (1 - 1 / ratio)) * upAmt
       }
       const mb = P('multiband', 0) > 0.5
+      // external sidechain key (fx-only host mode): the detector listens to
+      // the key input while the gain applies to the chain signal
+      const keyL = P('sidechain', 0) > 0.5 && engine._key && engine._key[0] ? engine._key[0] : null
+      const keyR = keyL && engine._key[1] ? engine._key[1] : keyL
       if (!mb) {
         for (let i = 0; i < n; i++) {
-          const inLvl = Math.max(Math.abs(L[i]), Math.abs(R[i]))
+          const inLvl = keyL
+            ? Math.max(Math.abs(keyL[i] || 0), Math.abs(keyR[i] || 0))
+            : Math.max(Math.abs(L[i]), Math.abs(R[i]))
           const db = 20 * Math.log10(inLvl + 1e-9)
           const over = db - th
           const targetGr = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
@@ -1574,6 +1586,115 @@ function processFxUnit(engine, unit, st, L, R, n) {
           L[i] = lerp(L[i], outL2 * makeup, mix); R[i] = lerp(R[i], outR2 * makeup, mix)
         }
         engine.fxGr[unit.id] = [st.bands[0].envG, st.bands[1].envG, st.bands[2].envG]
+      }
+      return
+    }
+    case 'noisegate': {
+      // downward expander with hold: detector env vs threshold; below it the
+      // gain glides to the reduction floor (never a hard mute click)
+      const th = P('threshold', -40)
+      const atkC = Math.exp(-1 / (Math.max(0.1, P('attack', 10)) * 0.001 * sr))
+      const relC = Math.exp(-1 / (Math.max(1, P('release', 200)) * 0.001 * sr))
+      const holdSamps = Math.max(0, P('hold', 50)) * 0.001 * sr
+      const floorLin = dbToLin(-Math.abs(P('reduction', 60)))
+      const detC = Math.exp(-1 / (0.002 * sr))
+      for (let i = 0; i < n; i++) {
+        const a = Math.max(Math.abs(L[i]), Math.abs(R[i]))
+        st.env = a > st.env ? a : st.env * detC + a * (1 - detC)
+        const open = 20 * Math.log10(st.env + 1e-9) > th
+        if (open) { st.holdN = holdSamps }
+        else if (st.holdN > 0) st.holdN--
+        const target = open || st.holdN > 0 ? 1 : floorLin
+        st.g = target > st.g ? atkC * st.g + (1 - atkC) * target : relC * st.g + (1 - relC) * target
+        L[i] = lerp(L[i], L[i] * st.g, mix); R[i] = lerp(R[i], R[i] * st.g, mix)
+      }
+      engine.fxGr[unit.id] = [20 * Math.log10(st.g + 1e-9)]
+      return
+    }
+    case 'deesser': {
+      // dynamic sibilance cut: detect a band, reduce ONLY that band when hot
+      const f = cutoffHz(clamp(P('freq', 0.82), 0, 1))
+      const q = clamp(2 / Math.max(0.3, P('bandwidth', 1)), 0.5, 8)
+      const th = P('threshold', -20)
+      const maxRed = Math.abs(P('reduction', 12))
+      const g = svfG(f, sr), k = 1 / q
+      const atk = Math.exp(-1 / (0.002 * sr)), rel = Math.exp(-1 / (0.05 * sr))
+      for (let i = 0; i < n; i++) {
+        st.bpL.process(L[i], g, k); st.bpR.process(R[i], g, k)
+        // SVF bp peaks at ~q gain with k=1/q — scale by k for unity at center
+        const bl = st.bpL.bp * k * q, br = st.bpR.bp * k * q
+        const db = 20 * Math.log10(Math.max(Math.abs(bl), Math.abs(br)) + 1e-9)
+        const over = db - th
+        const tg = over > 0 ? -Math.min(maxRed, over) : 0
+        st.envG = tg < st.envG ? atk * st.envG + (1 - atk) * tg : rel * st.envG + (1 - rel) * tg
+        const cut = 1 - dbToLin(st.envG)
+        L[i] = lerp(L[i], L[i] - bl * cut, mix); R[i] = lerp(R[i], R[i] - br * cut, mix)
+      }
+      engine.fxGr[unit.id] = [st.envG]
+      return
+    }
+    case 'transientshaper': {
+      // fast-vs-slow envelope split: transients get the Attack gain, the body
+      // gets the Sustain gain
+      const atkDb = clamp(P('attack', 0), -12, 12)
+      const susDb = clamp(P('sustain', 0), -12, 12)
+      const outG = dbToLin(clamp(P('gain', 0), -6, 6))
+      const fC = Math.exp(-1 / (0.001 * sr)), fR = Math.exp(-1 / (0.05 * sr))
+      const sC = Math.exp(-1 / (0.04 * sr)), sR = Math.exp(-1 / (0.3 * sr))
+      for (let i = 0; i < n; i++) {
+        const a = Math.max(Math.abs(L[i]), Math.abs(R[i]))
+        st.envF = a > st.envF ? fC * st.envF + (1 - fC) * a : fR * st.envF + (1 - fR) * a
+        st.envS = a > st.envS ? sC * st.envS + (1 - sC) * a : sR * st.envS + (1 - sR) * a
+        const t = clamp((st.envF - st.envS) / (st.envS + 1e-4), 0, 1)
+        const gDb = atkDb * t + susDb * (1 - t)
+        const g = dbToLin(gDb) * outG
+        L[i] = lerp(L[i], L[i] * g, mix); R[i] = lerp(R[i], R[i] * g, mix)
+      }
+      return
+    }
+    case 'dyneq': {
+      // one peak band whose gain follows the band's own level past threshold
+      const f = cutoffHz(clamp(P('freq', 0.5), 0, 1))
+      const q = clamp(P('q', 2), 0.3, 12)
+      const th = P('threshold', -30)
+      const range = clamp(P('range', -6), -18, 18)
+      const atk = Math.exp(-1 / (Math.max(1, P('attack', 10)) * 0.001 * sr))
+      const rel = Math.exp(-1 / (Math.max(5, P('release', 150)) * 0.001 * sr))
+      const g = svfG(f, sr), k = 1 / q
+      for (let i = 0; i < n; i++) {
+        st.det.process((L[i] + R[i]) * 0.5, g, k)
+        const db = 20 * Math.log10(Math.abs(st.det.bp * q) + 1e-9)
+        st.envDb = db > st.envDb ? atk * st.envDb + (1 - atk) * db : rel * st.envDb + (1 - rel) * db
+        // recompute the peak filter only when the applied gain moved >0.4 dB
+        const over = clamp((st.envDb - th) / 12, 0, 1)
+        const gain = range * over
+        if (Math.abs(gain - st.lastG) > 0.4) {
+          st.lastG = gain
+          st.bqL.peak(f, q, gain, sr); st.bqR.peak(f, q, gain, sr)
+        }
+        L[i] = lerp(L[i], st.bqL.process(L[i]), mix)
+        R[i] = lerp(R[i], st.bqR.process(R[i]), mix)
+      }
+      engine.fxGr[unit.id] = [st.lastG]
+      return
+    }
+    case 'autopan': {
+      // LFO pan (stereoPhase 180 = classic autopan) or tremolo (phase 0)
+      const rate = clamp(P('rate', 1), 0.01, 20)
+      const depth = clamp(P('depth', 0.5), 0, 1)
+      const wave = Math.round(P('wave', 0))
+      const phOff = (P('phase', 180) / 360)
+      const shape = (ph) => {
+        const x = ph - Math.floor(ph)
+        if (wave === 1) return 1 - 4 * Math.abs(x - 0.5)      // triangle
+        if (wave === 2) return x < 0.5 ? 1 : -1               // square
+        return Math.sin(x * TWO_PI)                            // sine
+      }
+      for (let i = 0; i < n; i++) {
+        st.phase += rate / sr
+        const gL = 1 - depth * (0.5 + 0.5 * shape(st.phase))
+        const gR = 1 - depth * (0.5 + 0.5 * shape(st.phase + phOff))
+        L[i] = lerp(L[i], L[i] * gL, mix); R[i] = lerp(R[i], R[i] * gR, mix)
       }
       return
     }
@@ -2969,6 +3090,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const OL = out[0], OR = out.length > 1 ? out[1] : out[0]
     if (!this.patch) return true
     this._inp = this.fxOnly && inputs && inputs[0] && inputs[0].length ? inputs[0] : null
+    this._key = this.fxOnly && inputs && inputs[1] && inputs[1].length ? inputs[1] : null
     const desired = this.fxOnly ? sampleRate : sampleRate * (this.patch.global.quality === 'high' ? 2 : 1)
     if (this.sr !== desired) this.reconfigure(desired)
     const n = OL.length
