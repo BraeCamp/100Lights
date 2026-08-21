@@ -326,6 +326,99 @@ export default function Timeline({
     window.addEventListener('pointerup', onUp)
   }
 
+  // ── Slip / slide (trim tool) ─────────────────────────────────
+  // Slip keeps the clip's timeline position and length and moves the source
+  // window inside it. Slide keeps the source window and moves the clip,
+  // trimming the neighbours so the sequence stays gapless — the two "invisible"
+  // trims that make fine editing fast in Resolve.
+  function startSlipSlide(e: React.PointerEvent, item: TimelineItem, mode: 'slip' | 'slide') {
+    e.stopPropagation()
+    e.preventDefault()
+
+    const capturedPps  = pps
+    const startClientX = e.clientX
+    const origStart    = item.startTime
+    const origIn       = item.inPoint
+    const origOut      = item.outPoint
+    const dur          = origOut - origIn
+    const srcDur       = mediaItems?.find(m => m.url === item.url)?.duration ?? 0
+
+    // Neighbours on the same track (slide trims them)
+    const sameTrack = items
+      .filter(i => i.trackId === item.trackId && i.id !== item.id)
+      .sort((a, b) => a.startTime - b.startTime)
+    const prev = [...sameTrack].reverse().find(i => i.startTime + (i.outPoint - i.inPoint) <= origStart + 0.001)
+    const next = sameTrack.find(i => i.startTime >= origStart + dur - 0.001)
+
+    setDraggingId(item.id)
+    onSelectItem(item.id)
+
+    let last: { start: number; inP: number; outP: number; prevOut?: number; nextIn?: number; nextStart?: number } | null = null
+
+    function onMove(ev: PointerEvent) {
+      const dt = (ev.clientX - startClientX) / capturedPps
+
+      if (mode === 'slip') {
+        // Both edges move together; clamp so the window stays inside the source
+        let d = dt
+        if (srcDur > 0) d = Math.max(-origIn, Math.min(d, srcDur - origOut))
+        const inP = origIn + d, outP = origOut + d
+        last = { start: origStart, inP, outP }
+        setDragChip({ x: ev.clientX, y: ev.clientY, text: `slip ${d >= 0 ? '+' : ''}${d.toFixed(2)}s` })
+        onTrimItem(item.id, 'in', inP, outP, origStart, false)
+        return
+      }
+
+      // SLIDE — how far the clip can travel before a neighbour runs out of
+      // source material (or disappears entirely).
+      let d = dt
+      if (prev) {
+        const prevSrc = mediaItems?.find(m => m.url === prev.url)?.duration ?? 0
+        const prevLen = prev.outPoint - prev.inPoint
+        const growRoom = prevSrc > 0 ? prevSrc - prev.outPoint : Infinity
+        d = Math.min(d, growRoom)
+        d = Math.max(d, -(prevLen - 0.1))
+      } else {
+        d = Math.max(d, -origStart)
+      }
+      if (next) {
+        const nextLen = next.outPoint - next.inPoint
+        d = Math.min(d, nextLen - 0.1)
+        d = Math.max(d, -next.inPoint)
+      }
+      const start = Math.max(0, origStart + d)
+      last = {
+        start, inP: origIn, outP: origOut,
+        prevOut: prev ? prev.outPoint + d : undefined,
+        nextIn:  next ? next.inPoint + d : undefined,
+        nextStart: next ? next.startTime + d : undefined,
+      }
+      setDragChip({ x: ev.clientX, y: ev.clientY, text: `slide ${d >= 0 ? '+' : ''}${d.toFixed(2)}s` })
+      onMoveItem(item.id, start, item.trackId, false)
+      if (prev && last.prevOut !== undefined) onTrimItem(prev.id, 'out', prev.inPoint, last.prevOut, prev.startTime, false)
+      if (next && last.nextIn !== undefined && last.nextStart !== undefined) onTrimItem(next.id, 'in', last.nextIn, next.outPoint, last.nextStart, false)
+    }
+
+    function onUp() {
+      setDraggingId(null)
+      setDragChip(null)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      if (!last) return
+      flagSettle(item.id)
+      if (mode === 'slip') {
+        onTrimItem(item.id, 'in', last.inP, last.outP, last.start, true)
+      } else {
+        onMoveItem(item.id, last.start, item.trackId, true)
+        if (prev && last.prevOut !== undefined) onTrimItem(prev.id, 'out', prev.inPoint, last.prevOut, prev.startTime, true)
+        if (next && last.nextIn !== undefined && last.nextStart !== undefined) onTrimItem(next.id, 'in', last.nextIn, next.outPoint, last.nextStart, true)
+      }
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   // ── Clip drag (select tool only) ─────────────────────────────
   function startDrag(
     e: React.PointerEvent,
@@ -333,6 +426,19 @@ export default function Timeline({
     item: TimelineItem,
   ) {
     if (activeTool === 'blade') return  // blade mode — handled at track row level
+
+    // Trim tool (Resolve's T): dragging the BODY of a clip slips or slides
+    // instead of moving it.
+    //   • upper half  → SLIP  — keep the clip where it is, scroll the source
+    //                          inside it (in/out move together)
+    //   • lower half  → SLIDE — move the clip and let the neighbours absorb it
+    //                          (previous clip's out and next clip's in follow)
+    if (activeTool === 'trim' && type === 'move') {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      const upperHalf = (e.clientY - rect.top) < rect.height / 2
+      startSlipSlide(e, item, upperHalf ? 'slip' : 'slide')
+      return
+    }
 
     e.stopPropagation()
     e.preventDefault()
@@ -967,6 +1073,7 @@ export default function Timeline({
                               userSelect: 'none', overflow: 'visible',
                               transition: dragging ? 'none' : 'box-shadow 0.1s',
                             }}
+                            data-clip-id={item.id}
                             onPointerDown={(e) => {
                               if (bladeCursor) { e.stopPropagation(); onSplitItem(item.id, bladeClickTime(e)); return }
                               if (e.shiftKey && onMultiSelect) {
@@ -1030,6 +1137,7 @@ export default function Timeline({
                               userSelect: 'none',
                               transition: dragging ? 'none' : 'box-shadow 0.1s',
                             }}
+                            data-clip-id={item.id}
                             onPointerDown={(e) => {
                               if (bladeCursor) {
                                 e.stopPropagation()

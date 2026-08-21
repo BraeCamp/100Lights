@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
-import { Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers, SwatchBook, FolderOpen, Clapperboard, Wand2, Sparkles } from 'lucide-react'
+import { MoveHorizontal, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers, SwatchBook, FolderOpen, Clapperboard, Wand2, Sparkles } from 'lucide-react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
 import VideoPlayer from '@/components/editor/VideoPlayer'
@@ -168,7 +168,7 @@ const MIN_TL = 120;  const MAX_TL = 480
 const FRAME_DURATION = 1 / 30  // 30fps — matches the export pipeline (EXPORT_FPS)
 
 type EditorPage = 'edit' | 'color' | 'audio' | 'deliver'
-export type EditorTool = 'select' | 'blade'
+export type EditorTool = 'select' | 'blade' | 'trim'
 
 interface Props {
   projectId?: string
@@ -1419,7 +1419,7 @@ export default function VideoEditor({
         media: mediaItemsRef.current.map(m => ({ id: m.id, name: m.name, contentType: m.contentType, duration: m.duration, uploadStatus: m.uploadStatus })),
         tracks: tracksRef.current.map(t => ({ id: t.id, type: t.type, label: t.label })),
         // Full timeline (each item's kind + track + look) so tests can assert precisely, plus a count.
-        items: timelineItemsRef.current.map(i => ({ id: i.id, contentType: i.contentType, trackId: i.trackId, startTime: i.startTime, dur: +(i.outPoint - i.inPoint).toFixed(2), look: i.look, spotlightTrackId: i.spotlightTrackId })),
+        items: timelineItemsRef.current.map(i => ({ id: i.id, contentType: i.contentType, trackId: i.trackId, startTime: i.startTime, dur: +(i.outPoint - i.inPoint).toFixed(2), inPoint: i.inPoint, outPoint: i.outPoint, look: i.look, spotlightTrackId: i.spotlightTrackId })),
         timelineItems: timelineItemsRef.current.length,
       }),
       setName: (n: string) => setLocalProjectName(n),
@@ -1429,6 +1429,10 @@ export default function VideoEditor({
       setCaptions: (c: Caption[]) => setCaptionsWithHistory(c),
       setCaptionStyle: (s: CaptionStyle) => setCaptionStyle(s),
       selectMedia: (id: string) => setSelectedMediaId(id),
+      // Patch a timeline clip directly — the same path the Inspector uses.
+      // Lets a test or agent set an exact in/out/position instead of trying to
+      // land a pixel-perfect drag.
+      setClip: (id: string, patch: Partial<TimelineItem>) => handleClipChange(id, patch),
       addTrack: (type: 'media' | 'video' | 'audio' = 'audio', id?: string) => {
         const tid = id ?? `${type[0]}${Date.now() % 100000}`
         setTracks(prev => prev.some(t => t.id === tid) ? prev : [...prev, { id: tid, label: type.toUpperCase(), type, height: 56 }])
@@ -1975,6 +1979,11 @@ export default function VideoEditor({
       if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         setActiveTool(t => t === 'blade' ? 'select' : 'blade')
+        return
+      }
+      if (e.code === 'KeyT' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault()
+        setActiveTool(t => t === 'trim' ? 'select' : 'trim')
         return
       }
       if (e.code === 'KeyA' || e.code === 'Escape') {
@@ -4378,6 +4387,18 @@ export default function VideoEditor({
               }}
             >
               <MousePointer2 size={11} />
+            </button>
+            <button
+              onClick={() => setActiveTool('trim')}
+              data-help-id="trim-tool"
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+              title="Trim tool (T) — drag a clip's upper half to slip the source inside it, lower half to slide it between its neighbours"
+              style={{
+                background: activeTool === 'trim' ? 'var(--accent)' : 'transparent',
+                color: activeTool === 'trim' ? '#fff' : 'var(--text-muted)',
+              }}
+            >
+              <MoveHorizontal size={11} />
             </button>
             <button
               onClick={() => setActiveTool('blade')}
