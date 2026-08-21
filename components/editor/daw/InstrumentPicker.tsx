@@ -992,10 +992,11 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
           placeholder="Instrument type"
         />
       ) : (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
           {TYPE_BUTTONS.map(btn => (
             <TypeBtn key={btn.value} label={btn.label} active={instrType === btn.value} onClick={() => setType(btn.value)} />
           ))}
+          {(instrType === 'poly' || instrType === 'wavetable') && <HeliosSynthChip trackId={trackId} />}
         </div>
       )}
 
@@ -1008,6 +1009,31 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
     </div>
   )
 })
+
+// Legacy synths render on the Helios (Apollo) engine by default when their
+// settings translate; the chip drops a track back to the legacy voices.
+function HeliosSynthChip({ trackId }: { trackId: string }) {
+  const { project, dispatch } = useDaw()
+  const track = project.tracks.find(t => t.id === trackId)
+  if (!track) return null
+  // poly defaults to Helios; wavetable is opt-in (approximate table mapping)
+  const on = track.instrument?.type === 'poly' ? track.heliosSynth !== false : track.heliosSynth === true
+  return (
+    <button
+      onClick={() => dispatch({ type: 'SET_TRACK_HELIOS_SYNTH', trackId, on: !on })}
+      title={on
+        ? 'Voices render on the Helios engine (Apollo) — click for the legacy synth voices'
+        : 'Voices render on the legacy synth — click for the Helios engine'}
+      style={{
+        height: 22, padding: '0 9px', borderRadius: 5, marginLeft: 4,
+        fontSize: 9, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', cursor: 'pointer',
+        background: on ? 'var(--accent)' : 'transparent',
+        color: on ? '#0b0d10' : 'var(--text-muted)',
+        border: '1px solid ' + (on ? 'var(--accent)' : 'var(--border)'),
+      }}
+    >{on ? 'Helios' : 'Legacy'}</button>
+  )
+}
 
 // ── Apollo (hybrid worklet synth) ──────────────────────────────────────────────
 // Compact panel: patch selection + handoff to the full Apollo editor at

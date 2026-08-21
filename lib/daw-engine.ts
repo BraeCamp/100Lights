@@ -1,6 +1,6 @@
 'use client'
 
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
 import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
@@ -9,6 +9,7 @@ import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain } from './apollo/daw-fx'
+import { translateInstrument } from './apollo/daw-synth'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
@@ -284,6 +285,24 @@ export class DawEngine extends EventTarget {
   // automatically). Kept engine-side so ensureTrack callers stay unchanged.
   private heliosFxPref = new Map<string, boolean>()
   private _fxSnapshots = new Map<string, DawTrack['effects']>()
+
+  // Legacy synths on Helios: poly/wavetable instruments translate to Apollo
+  // patches and play through the per-track Apollo engine path. Cached by the
+  // params OBJECT (SET_INSTRUMENT replaces it, invalidating naturally).
+  private _heliosSynthCache = new WeakMap<object, ApolloInstrumentParams | null>()
+  private _resolveInstrument(track: DawTrack): TrackInstrument {
+    const inst = track.instrument
+    if (!inst || (inst.type !== 'poly' && inst.type !== 'wavetable')) return inst
+    // poly translates faithfully (same primitives) → Helios by default.
+    // wavetable maps its table CONTENT approximately → explicit opt-in only.
+    if (inst.type === 'poly' ? track.heliosSynth === false : track.heliosSynth !== true) return inst
+    let patch = this._heliosSynthCache.get(inst.params as object)
+    if (patch === undefined) {
+      patch = translateInstrument(inst) as ApolloInstrumentParams | null
+      this._heliosSynthCache.set(inst.params as object, patch)
+    }
+    return patch ? { type: 'apollo', params: patch } : inst
+  }
   setHeliosFxPref(trackId: string, on: boolean) {
     if (this.heliosFxPref.get(trackId) === on) return
     this.heliosFxPref.set(trackId, on)
@@ -965,6 +984,11 @@ export class DawEngine extends EventTarget {
       if (track.instrument?.type === 'drum') void preloadDrumInstrument(this.ctx, track.instrument)
       if (track.instrument?.type === 'apollo') {
         void preloadApolloInstrument(this.ctx, this.trackNodes.get(track.id)?.midiInput, track.instrument.params as ApolloInstrumentParams)
+      } else if (track.instrument && (track.instrument.type === 'poly' || track.instrument.type === 'wavetable')) {
+        const resolved = this._resolveInstrument(track)
+        if (resolved.type === 'apollo') {
+          void preloadApolloInstrument(this.ctx, this.trackNodes.get(track.id)?.midiInput, resolved.params as ApolloInstrumentParams)
+        }
       }
       if (track.instrument?.type !== 'poly') continue
       const oscs = (track.instrument.params as PolyInstrumentParams).oscillators
@@ -1327,7 +1351,7 @@ export class DawEngine extends EventTarget {
             src.onended = () => { src.disconnect(); velGain.disconnect(); vibLfo?.disconnect() }
           }
         } else {
-          const h = playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, noteStartAt, noteDur + sustainSec)
+          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, noteStartAt, noteDur + sustainSec)
           this._choke(trackId, h, noteStartAt)
         }
       }
@@ -1868,7 +1892,7 @@ export class DawEngine extends EventTarget {
           // uses a sample resumes at the right phase instead of restarting when
           // the playhead enters mid-note.
           const noteOffsetSec = this.beatsToSeconds(alreadyBeats)
-          const h = playInstrumentNote(this.ctx, noteDest, track.instrument, note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec)
+          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec)
           this._choke(track.id, h, startAt)
         }
 
@@ -3618,10 +3642,12 @@ export class DawEngine extends EventTarget {
         const inst = track.instrument
         thunks.push(() => preloadDrumInstrument(this.ctx, inst))
       }
-      if (track.instrument?.type === 'apollo') {
+      const resolvedInst = this._resolveInstrument(track)
+      if (resolvedInst?.type === 'apollo') {
         // worklet module + patch + samples must be live before the offline
-        // scheduler's single pass posts absolute-time note events
-        const patch = track.instrument.params as ApolloInstrumentParams
+        // scheduler's single pass posts absolute-time note events — this
+        // covers real apollo instruments AND translated poly/wavetable ones
+        const patch = resolvedInst.params as ApolloInstrumentParams
         const dest = this.trackNodes.get(track.id)?.midiInput
         thunks.push(() => preloadApolloInstrument(this.ctx, dest, patch))
       }

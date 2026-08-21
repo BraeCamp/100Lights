@@ -646,6 +646,8 @@ export interface DawTrack {
   crossfader?: CrossfaderSide
   /** false = force the legacy WebAudio FX path for this track (Helios FX is the default when the chain translates) */
   heliosFx?: boolean
+  /** false = keep this track's legacy synth voices (Helios renders translatable poly/wavetable instruments by default) */
+  heliosSynth?: boolean
 }
 
 export interface ReturnTrack {
