@@ -11,6 +11,9 @@ import AudioWaveform from '@/components/editor/AudioWaveform'
 import Timeline from '@/components/editor/Timeline'
 import MediaLibrary, { type StockClip } from '@/components/editor/MediaLibrary'
 import AiAssistant from '@/components/editor/AiAssistant'
+import type { GradeNode } from '@/lib/editor-types'
+import ColorPage, { type ColorStill } from '@/components/editor/ColorPage'
+import { getGradeGL } from '@/lib/video-export/grade-gl'
 import ContextMenu from '@/components/editor/ContextMenu'
 import { LogoMark } from '@/components/Logo'
 import { useResizable, ResizeHandle } from '@/components/editor/daw/useResizable'
@@ -238,57 +241,6 @@ function HResizeHandle({ onDelta }: { onDelta: (dy: number) => void }) {
 }
 
 // ── Color page — full-size color panel ───────────────────────
-function ColorPage({
-  adjustments, onAdjustmentsChange,
-}: { adjustments: VideoAdjustments; onAdjustmentsChange: (a: VideoAdjustments) => void }) {
-  const isDefault = adjustments.brightness === 100 && adjustments.contrast === 100 &&
-    adjustments.saturation === 100 && adjustments.highlights === 0 &&
-    (adjustments.vignette ?? 0) === 0 && (adjustments.shadows ?? 0) === 0 &&
-    (adjustments.midtones ?? 0) === 0 && (adjustments.lift ?? 0) === 0 &&
-    (adjustments.gamma ?? 100) === 100 && (adjustments.gain ?? 100) === 100
-
-  function Slider({ label, value, min, max, unit, onChange }: {
-    label: string; value: number; min: number; max: number; unit?: string; onChange: (v: number) => void
-  }) {
-    const pct = ((value - min) / (max - min)) * 100
-    return (
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>{label}</span>
-          <span className="text-sm font-mono px-2 py-0.5 rounded" style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }}>{value}{unit ?? ''}</span>
-        </div>
-        <input type="range" className="cf-slider w-full" min={min} max={max} value={value} onChange={(e) => onChange(Number(e.target.value))}
-          style={{ height: 5, background: `linear-gradient(to right, var(--accent) ${pct}%, var(--border-light) ${pct}%)` }} />
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex-1 flex items-center justify-center overflow-auto p-8" style={{ background: 'var(--bg-base)' }}>
-      <div className="w-full max-w-2xl flex flex-col gap-8">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Color</h2>
-          {!isDefault && (
-            <button onClick={() => onAdjustmentsChange({ ...DEFAULT_ADJUSTMENTS })}
-              className="text-xs px-3 py-1.5 rounded" style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}>
-              Reset All
-            </button>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-6 p-6 rounded-xl" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-          <Slider label="Brightness" value={adjustments.brightness} min={0}    max={200} onChange={(v) => onAdjustmentsChange({ ...adjustments, brightness: v })} />
-          <Slider label="Contrast"   value={adjustments.contrast}   min={0}    max={200} onChange={(v) => onAdjustmentsChange({ ...adjustments, contrast: v })} />
-          <Slider label="Saturation" value={adjustments.saturation} min={0}    max={200} onChange={(v) => onAdjustmentsChange({ ...adjustments, saturation: v })} />
-          <Slider label="Highlights" value={adjustments.highlights} min={-100} max={100} onChange={(v) => onAdjustmentsChange({ ...adjustments, highlights: v })} />
-        </div>
-        <p className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>
-          Color wheels, tone curves, scopes &amp; LUT import — select a clip and open the <b>Color</b> tab in the Inspector.
-        </p>
-      </div>
-    </div>
-  )
-}
-
 function PlaceholderPage({ title, description }: { title: string; description: string }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-4" style={{ background: 'var(--bg-base)' }}>
@@ -725,6 +677,12 @@ export default function VideoEditor({
 
   // Color adjustments
   const [adjustments, setAdjustments] = useState<VideoAdjustments>(DEFAULT_ADJUSTMENTS)
+  // Timeline-level grade ("the look") — applied after every clip's own nodes,
+  // in both the preview overlay and the export compositor.
+  const [lookNodes, setLookNodes] = useState<GradeNode[]>([])
+  const [colorStills, setColorStills] = useState<ColorStill[]>([])
+  const lookNodesRef = useRef<GradeNode[]>([])
+  useEffect(() => { lookNodesRef.current = lookNodes }, [lookNodes])
 
   // Context menu
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null)
@@ -1109,6 +1067,16 @@ export default function VideoEditor({
   // LUT of the active clip — VideoPlayer renders it via a WebGL overlay canvas
   // (the old OffscreenCanvas loop burned CPU into an invisible buffer).
   const activeLut = viewerClip?.lutId ? (lutMap.get(viewerClip.lutId) ?? null) : null
+  // Render-order chain handed to the preview: this clip's nodes, then the look.
+  // Clips the Color page can grade: visual content, timeline order.
+  const gradeableClips = useMemo(
+    () => timelineItems
+      .filter(i => i.contentType === 'video' || i.contentType === 'image')
+      .sort((a, b) => a.startTime - b.startTime),
+    [timelineItems])
+  const activeGradeChain = useMemo(
+    () => [...(viewerClip?.gradeNodes ?? []), ...lookNodes],
+    [viewerClip?.gradeNodes, lookNodes])
 
   // ── Same-origin sources for pixel-reading features ─────────────────────────
   // Scopes, frame blend, optical flow and the LUT overlay all read frames back,
@@ -1441,6 +1409,10 @@ export default function VideoEditor({
       const mime = type === 'video' ? 'video/mp4' : type === 'audio' ? 'audio/mpeg' : (type || b.type)
       return new File([b], name || url.split('/').pop() || 'media', { type: mime })
     }
+    // Dev-only handle on the grade engine: lets QA/agents verify the shader
+    // math numerically (render a known color through a node chain and read the
+    // pixels back) instead of eyeballing the viewer.
+    ;(w as unknown as { __gradeGL?: unknown }).__gradeGL = getGradeGL
     w.__video = {
       // Reads from REFS (not the render closure) so it's always current — no stale reads for tests/agents.
       getState: () => ({
@@ -1571,7 +1543,7 @@ export default function VideoEditor({
         const { exportTimelineFidelity } = await import('@/lib/video-export')
         const blob = await exportTimelineFidelity({
           timelineItems, tracks, adjustments: adjustmentsRef.current, captions: captionsRef.current, captionStyle,
-          luts: lutMap, quality: opts.quality ?? 'high', resolution: opts.resolution ?? '1080p',
+          luts: lutMap, lookNodes: lookNodesRef.current, quality: opts.quality ?? 'high', resolution: opts.resolution ?? '1080p',
           aspect: opts.aspect ?? projectAspect, fast: opts.fast ?? true, range: null, watermark: watermarkRef.current,
           onProgress: (frac: number, msg?: string) => { try { console.log(`[export] ${Math.round(frac * 100)}% ${msg ?? ''}`) } catch { /* noop */ } },
         })
@@ -4887,6 +4859,7 @@ export default function VideoEditor({
                       clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
                       overlays={activeOverlays(timelineItems, currentTime, viewerClip ? [viewerClip.look] : [])}
                       lutData={activeLut}
+                      gradeNodes={activeGradeChain}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
                       clipSpeed={rampSpeed}
@@ -4968,6 +4941,7 @@ export default function VideoEditor({
                       clipGradeFilter={[viewerClip ? buildClipGradeFilter(viewerClip) : '', activeEffectCss(timelineItems, currentTime)].filter(Boolean).join(' ')}
                       overlays={activeOverlays(timelineItems, currentTime, viewerClip ? [viewerClip.look] : [])}
                       lutData={activeLut}
+                      gradeNodes={activeGradeChain}
                       showVUMeter={showVUMeter}
                       frameBlendEnabled={frameBlendEnabled}
                       clipSpeed={rampSpeed}
@@ -5102,7 +5076,32 @@ export default function VideoEditor({
       )}
 
       {activePage === 'color' && (
-        <ColorPage adjustments={adjustments} onAdjustmentsChange={setAdjustmentsWithHistory} />
+        <ColorPage
+          clips={gradeableClips}
+          activeClipId={viewerClip?.id ?? selectedId}
+          onSelectClip={id => {
+            setSelectedId(id)
+            // Move the playhead onto the clip — the viewer follows the playhead,
+            // and the Color page grades whatever the viewer shows.
+            const c = timelineItems.find(i => i.id === id)
+            if (c) setCurrentTime(c.startTime + 0.05)
+          }}
+          onClipNodesChange={(clipId, nodes) => handleClipChange(clipId, { gradeNodes: nodes })}
+          lookNodes={lookNodes}
+          onLookNodesChange={setLookNodes}
+          stills={colorStills}
+          onStillsChange={setColorStills}
+          grabFrame={() => {
+            const v = videoRef.current
+            if (!v || !v.videoWidth) return null
+            const c = document.createElement('canvas')
+            c.width = 216; c.height = 120
+            const ctx = c.getContext('2d')
+            if (!ctx) return null
+            try { ctx.drawImage(v, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.7) } catch { return null }
+          }}
+          scopes={<ColorScopes videoRef={videoRef} isPlaying={isPlaying} scope={colorScopesType} onScopeChange={setColorScopesType} />}
+        />
       )}
       {activePage === 'audio' && (
         <FairlightPage
@@ -5128,6 +5127,7 @@ export default function VideoEditor({
             captions={localCaptions}
             captionStyle={captionStyle}
             luts={lutMap}
+            lookNodes={lookNodes}
             projectName={localProjectName}
             inPoint={inPoint}
             outPoint={outPoint}
@@ -5298,6 +5298,7 @@ export default function VideoEditor({
           captions={localCaptions}
           captionStyle={captionStyle}
           luts={lutMap}
+            lookNodes={lookNodes}
           inPoint={inPoint}
           outPoint={outPoint}
           onClose={() => setShowExport(false)}
@@ -5315,6 +5316,7 @@ export default function VideoEditor({
           captions={localCaptions}
           captionStyle={captionStyle}
           luts={lutMap}
+            lookNodes={lookNodes}
           inPoint={inPoint}
           outPoint={outPoint}
           onClose={() => setShowRenderQueue(false)}

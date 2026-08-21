@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react'
 import { X, Download, Film, AlertCircle, CheckCircle2, Check, Share2 } from 'lucide-react'
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
+import type { GradeNode } from '@/lib/editor-types'
 import { exportTimelineFidelity, resDims, fastExportSupported } from '@/lib/video-export'
 import type { Caption } from '@/lib/types'
 import type { TimelineItem, MediaItem, Track, VideoAdjustments, ProjectAspect, CaptionStyle } from '@/lib/editor-types'
@@ -19,6 +20,7 @@ interface Props {
   captions?: Caption[]
   captionStyle?: CaptionStyle
   luts?: Map<string, LutData>
+  lookNodes?: GradeNode[]
   inPoint?: number | null
   outPoint?: number | null
   onClose: () => void
@@ -50,7 +52,7 @@ const RESOLUTIONS = [
   { id: '480p',     label: '480p' },
 ] as const
 
-export default function ExportModal({ projectName, timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions, captionStyle, luts, inPoint, outPoint, onClose }: Props) {
+export default function ExportModal({ projectName, timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions, captionStyle, luts, lookNodes, inPoint, outPoint, onClose }: Props) {
   const [quality, setQuality]         = useState<ExportOptions['quality']>('medium')
   const [resolution, setResolution]   = useState<ExportOptions['resolution']>('original')
   const [progress, setProgress]       = useState<ExportProgress | null>(null)
@@ -121,6 +123,7 @@ export default function ExportModal({ projectName, timelineItems, mediaItems, tr
         // Video → full-fidelity path: composites exactly what the preview shows,
         // with a real multitrack audio mix. Records in real time.
         blob = await exportTimelineFidelity({
+          lookNodes,
           timelineItems,
           tracks,
           adjustments,

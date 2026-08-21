@@ -186,6 +186,9 @@ export interface TimelineItem {
   spotlightTrackId?: string
   // LUT reference (id of a MediaItem with contentType === 'lut')
   lutId?: string
+  // Per-clip color grade: an ordered chain of correction nodes (Resolve model).
+  // Applied before the timeline-level look nodes and before any LUT.
+  gradeNodes?: GradeNode[]
   // Live DAW-mix link: this clip carries the project's bounced DAW arrangement
   // and is re-rendered (media swapped in place) whenever the audio changes.
   dawMixLinked?: boolean
@@ -275,6 +278,64 @@ export interface MediaItem {
   uploadError?: string // the reason, when uploadStatus === 'error' (shown on hover)
   warn?: string        // non-fatal note (e.g. a video the browser can't preview/decode)
   peaks?: number[]     // audio waveform peak data (0–1 per band, 80 samples)
+}
+
+// ── Color grading (Resolve model) ──────────────────────────────────────────
+// A grade is an ordered chain of correction nodes. Each node groups a full set
+// of primary corrections plus optional curves and a soft window that limits
+// where the node applies. Clip grades run first, then the timeline-level
+// "look" nodes, then any LUT — identical order in preview and export.
+
+/** One color wheel: rgb are per-channel pushes (-1..1), y is the master. */
+export interface GradeWheel { r: number; g: number; b: number; y: number }
+
+export interface GradeCurvePoint { x: number; y: number }  // both 0..1
+
+export interface GradeWindow {
+  shape: 'ellipse' | 'gradient'
+  cx: number; cy: number      // center, normalized 0..1
+  rx: number; ry: number      // ellipse radii (fraction of frame); gradient uses ry as span
+  angle: number               // radians
+  softness: number            // 0..1
+  invert: boolean
+}
+
+export interface GradeNode {
+  id: string
+  label?: string
+  enabled: boolean
+  lift: GradeWheel
+  gamma: GradeWheel
+  gain: GradeWheel
+  offset: GradeWheel
+  contrast: number    // 0..2, 1 = neutral
+  pivot: number       // 0..1, 0.435 = neutral default
+  temp: number        // -1..1, + = warmer
+  tint: number        // -1..1, + = magenta
+  saturation: number  // 0..2, 1 = neutral
+  /** Master brightness curve; identity when absent. Points sorted by x. */
+  lumaCurve?: GradeCurvePoint[]
+  /** Hue-vs-sat: x = hue 0..1 (red at 0), y = sat multiplier (0.5 = neutral ×1, 1 = ×2). */
+  hueSat?: GradeCurvePoint[]
+  window?: GradeWindow | null
+}
+
+const neutralWheel = (): GradeWheel => ({ r: 0, g: 0, b: 0, y: 0 })
+
+export function defaultGradeNode(label?: string): GradeNode {
+  return {
+    id: crypto.randomUUID(), label, enabled: true,
+    lift: neutralWheel(), gamma: neutralWheel(), gain: neutralWheel(), offset: neutralWheel(),
+    contrast: 1, pivot: 0.435, temp: 0, tint: 0, saturation: 1,
+  }
+}
+
+/** True when the node changes nothing (skippable at render time). */
+export function gradeNodeIsNeutral(n: GradeNode): boolean {
+  const w = (x: GradeWheel) => x.r === 0 && x.g === 0 && x.b === 0 && x.y === 0
+  return w(n.lift) && w(n.gamma) && w(n.gain) && w(n.offset) &&
+    n.contrast === 1 && n.temp === 0 && n.tint === 0 && n.saturation === 1 &&
+    (!n.lumaCurve || n.lumaCurve.length < 2) && (!n.hueSat || n.hueSat.length < 2)
 }
 
 export interface VideoAdjustments {

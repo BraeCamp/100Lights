@@ -65,6 +65,8 @@ import type { Caption } from '@/lib/types'
 import { captionWords } from '@/lib/captions'
 import type { LutData } from '@/lib/lut-parser'
 import { getLutGL } from './lut-gl'
+import { getGradeGL } from './grade-gl'
+import type { GradeNode } from '@/lib/editor-types'
 import { createMusicViz, DEFAULT_MUSIC_VIZ_FORMAT, type MusicVizRenderer } from '@/lib/music-viz'
 import { followPan } from '@/lib/focus-utils'
 import { manifestEnabled, pushManifestFrame } from './manifest'
@@ -89,6 +91,7 @@ export interface CompositorState {
   captions:     Caption[]
   captionStyle?: CaptionStyle
   luts?:        Map<string, LutData>   // parsed .cube LUTs keyed by MediaItem id (clip.lutId)
+  lookNodes?:   GradeNode[]            // timeline-level grade ("the look"), after per-clip nodes
   width:        number
   height:       number
   watermark?:   Watermark | null      // persistent branding overlay, drawn last
@@ -448,12 +451,19 @@ function drawVideoClip(
   const tf = computeClipTransform(clip, t, state.items)
   const rect = fitRect(vw, vh, W, H, clip.fitMode ?? 'contain')
 
-  // LUT: route the frame through the GPU applier first; the graded canvas
-  // stands in for the raw element. Skipped silently without WebGL2. Images skip LUT.
+  // Color pipeline, identical order to the live preview (VideoPlayer):
+  //   per-clip grade nodes → timeline look nodes → LUT.
+  // Each stage swaps in its output canvas for the next. Skipped silently
+  // without WebGL2; images run the grade too (only LUT is video-only).
   let source: CanvasImageSource = v
+  const gradeChain = [...(clip.gradeNodes ?? []), ...(state.lookNodes ?? [])]
+  if (gradeChain.length > 0) {
+    const g = getGradeGL()?.apply(source as TexImageSource, gradeChain, vw, vh)
+    if (g) source = g
+  }
   const lut = clip.lutId ? state.luts?.get(clip.lutId) : undefined
   if (lut && (v as HTMLVideoElement).videoWidth) {
-    const graded = getLutGL()?.apply(v as HTMLVideoElement, lut, vw, vh)
+    const graded = getLutGL()?.apply(source as TexImageSource, lut, vw, vh)
     if (graded) source = graded
   }
 

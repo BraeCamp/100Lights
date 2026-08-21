@@ -12,7 +12,10 @@ import { captionWords } from '@/lib/captions'
 import { r2CorsEligible } from '@/lib/media-cors'
 import { instantSpeed, sourceOffsetAt, sourceTimeAt } from '@/lib/video-export/speed'
 import { getLutGL } from '@/lib/video-export/lut-gl'
+import { getGradeGL } from '@/lib/video-export/grade-gl'
 import type { LutData } from '@/lib/lut-parser'
+import type { GradeNode } from '@/lib/editor-types'
+import { gradeNodeIsNeutral } from '@/lib/editor-types'
 
 const PREPLAY_LEAD = 0.5
 const WAVEFORM = [30, 55, 80, 45, 70, 90, 60, 40, 75, 85, 50, 65, 95, 70, 45, 80, 60, 35, 70, 90, 55, 80, 65, 40, 75, 95, 50, 65, 80, 55, 70, 40]
@@ -262,6 +265,8 @@ interface Props {
   overlays?: import('@/lib/video-effects').OverlayId[]
   /** Parsed LUT of the active clip — rendered via a WebGL overlay canvas. */
   lutData?: LutData | null
+  /** Per-clip grade nodes + timeline look nodes, in render order. */
+  gradeNodes?: GradeNode[]
   showVUMeter?: boolean
   onSeekRequest?: (t: number) => void   // called when user types a timecode
   frameBlendEnabled?: boolean
@@ -395,6 +400,7 @@ export default function VideoPlayer({
   clipGradeFilter = '',
   overlays = [],
   lutData = null,
+  gradeNodes,
   showVUMeter = false,
   onSeekRequest,
   frameBlendEnabled = false,
@@ -837,22 +843,39 @@ export default function VideoPlayer({
   // covering the raw element. Skipped while frame-blend / optical-flow own the
   // display (they already replace the video with their own canvases).
   const lutCanvasVisRef = useRef<HTMLCanvasElement>(null)
-  const lutActive = !!lutData && !!src && contentType === 'video' && !blendActive && !optFlowActive
+  // The GPU color overlay runs whenever EITHER a LUT or a non-neutral grade
+  // chain is present; both stages render in the same order as the export
+  // compositor (grade nodes → LUT), which is what keeps preview == export.
+  const activeGrade = useMemo(
+    () => (gradeNodes ?? []).filter(n => n.enabled && !gradeNodeIsNeutral(n)),
+    [gradeNodes])
+  const lutActive = (!!lutData || activeGrade.length > 0) && !!src && contentType === 'video' && !blendActive && !optFlowActive
   useEffect(() => {
     const canvas = lutCanvasVisRef.current
-    if (!lutActive || !canvas || !src || !lutData) return
+    if (!lutActive || !canvas || !src) return
     const video = poolRef.current.get(src)
     const ctx2d = canvas.getContext('2d')
-    const gl = getLutGL()
-    if (!video || !ctx2d || !gl) return
+    const lutGl = getLutGL()
+    const gradeGl = getGradeGL()
+    if (!video || !ctx2d) return
+    if (!lutGl && !gradeGl) return
     let rvfc: number | null = null
     let raf: number | null = null
     const render = () => {
       const vw = video.videoWidth, vh = video.videoHeight
       if (vw > 0 && vh > 0) {
         if (canvas.width !== vw || canvas.height !== vh) { canvas.width = vw; canvas.height = vh }
-        const graded = gl.apply(video, lutData, vw, vh)
-        if (graded) ctx2d.drawImage(graded, 0, 0)
+        let source: TexImageSource = video
+        if (activeGrade.length > 0) {
+          const g = gradeGl?.apply(source, activeGrade, vw, vh)
+          if (g) source = g
+        }
+        if (lutData) {
+          const graded = lutGl?.apply(source, lutData, vw, vh)
+          if (graded) source = graded
+        }
+        if (source !== video) ctx2d.drawImage(source as CanvasImageSource, 0, 0)
+        else ctx2d.drawImage(video, 0, 0)
       }
       schedule()
     }
@@ -867,7 +890,7 @@ export default function VideoPlayer({
       if (rvfc !== null) v.cancelVideoFrameCallback?.(rvfc)
       if (raf !== null) cancelAnimationFrame(raf)
     }
-  }, [lutActive, src, lutData])
+  }, [lutActive, src, lutData, activeGrade])
 
   const allSrcs = useMemo(() => {
     const s = new Set(preloadSrcs)

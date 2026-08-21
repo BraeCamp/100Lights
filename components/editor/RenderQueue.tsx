@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react'
 import { X, Film, Download, Trash2, Plus, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
 import { exportTimeline, type ExportOptions, type ExportProgress, type ExportClip } from '@/lib/exporter'
+import type { GradeNode } from '@/lib/editor-types'
 import { exportTimelineFidelity } from '@/lib/video-export'
 import type { Caption } from '@/lib/types'
 import type { TimelineItem, MediaItem, Track, VideoAdjustments, ProjectAspect, CaptionStyle } from '@/lib/editor-types'
@@ -33,6 +34,7 @@ interface Props {
   captions?: Caption[]
   captionStyle?: CaptionStyle
   luts?: Map<string, LutData>
+  lookNodes?: GradeNode[]
   projectName: string
   inPoint: number | null
   outPoint: number | null
@@ -83,7 +85,7 @@ function buildClips(
     })
 }
 
-export default function RenderQueue({ timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions = [], captionStyle, luts, projectName, inPoint, outPoint, onClose, inline }: Props) {
+export default function RenderQueue({ timelineItems, mediaItems, tracks = [], adjustments = DEFAULT_ADJUSTMENTS, aspect = '16:9', captions = [], captionStyle, luts, lookNodes, projectName, inPoint, outPoint, onClose, inline }: Props) {
   const [jobs, setJobs] = useState<RenderJob[]>([])
   const [draftQuality, setDraftQuality] = useState<ExportOptions['quality']>('medium')
   const [draftRes, setDraftRes] = useState<ExportOptions['resolution']>('original')
@@ -140,6 +142,7 @@ export default function RenderQueue({ timelineItems, mediaItems, tracks = [], ad
         // Deliver page bakes in grades/titles/captions/transitions identically.
         const useRange = job.inPoint != null && job.outPoint != null && job.outPoint > job.inPoint
         blob = await exportTimelineFidelity({
+          lookNodes,
           timelineItems,
           tracks,
           adjustments,

@@ -12,7 +12,7 @@ import { MEDIA_ACCEPT, VIDEO_EXTS, AUDIO_EXTS, detectMediaKind } from './media-i
 import { loadFolder, verifyWritePermission, writeToFolder } from './local-folder'
 import type { DawProject } from './daw-types'
 import type { Caption, ContentType, Output, ChapterMarker } from '@/lib/types'
-import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle, TempoSeg, SceneTrack } from '@/lib/editor-types'
+import type { TimelineItem, Track, VideoAdjustments, ModuleKey, ProjectAspect, BeatGrid, CaptionStyle, TempoSeg, SceneTrack, GradeNode } from '@/lib/editor-types'
 
 export const CF_VERSION = 1
 export const CF_EXT     = '.cfproj'
@@ -98,6 +98,7 @@ export interface SerializedClip {
   look?: string
   spotlightTrackId?: string
   lutId?: string
+  gradeNodes?: GradeNode[]
   // DAW-mix link
   dawMixLinked?: boolean
   dawMixStamp?: string
@@ -163,6 +164,8 @@ export interface CfProjFile {
   tracks: Track[]
   clips: SerializedClip[]
   adjustments: VideoAdjustments
+  /** Timeline-level color grade ("the look"), applied after per-clip nodes. */
+  lookNodes?: GradeNode[]
   /** Project frame shape (preview stage + export dims). Absent = 16:9 (pre-aspect files). */
   aspect?: ProjectAspect
   /** Musical grid (BPM + downbeat offset) for beat snapping / cut-on-beat. */
@@ -197,6 +200,7 @@ export interface EditorSnapshot {
   tracks: Track[]
   timelineItems: TimelineItem[]
   adjustments: VideoAdjustments
+  lookNodes?: GradeNode[]
   aspect?: ProjectAspect
   beatGrid?: BeatGrid | null
   captionStyle?: CaptionStyle
@@ -281,6 +285,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       look:             item.look,
       spotlightTrackId: item.spotlightTrackId,
       lutId:            item.lutId,
+      gradeNodes:       item.gradeNodes,
       dawMixLinked:     item.dawMixLinked,
       dawMixStamp:      item.dawMixStamp,
       dawMixTracks:     item.dawMixTracks,
@@ -299,6 +304,7 @@ export function serialize(snap: EditorSnapshot): CfProjFile {
       hypeDrops:        item.hypeDrops,
     })),
     adjustments: snap.adjustments,
+    lookNodes: snap.lookNodes,
     aspect: snap.aspect,
     beatGrid: snap.beatGrid ?? null,
     captionStyle: snap.captionStyle,
@@ -333,6 +339,7 @@ export interface DeserializedProject {
   tracks: Track[]
   timelineItems: TimelineItem[]   // url = undefined means "offline"
   adjustments: VideoAdjustments
+  lookNodes?: GradeNode[]
   aspect: ProjectAspect
   beatGrid: BeatGrid | null
   captionStyle?: CaptionStyle
@@ -445,6 +452,7 @@ export function deserialize(file: CfProjFile): DeserializedProject {
     tracks:        file.tracks,
     timelineItems,
     adjustments:   file.adjustments,
+    lookNodes:     file.lookNodes,
     aspect:        file.aspect ?? '16:9',
     beatGrid:      file.beatGrid ?? null,
     captionStyle:  file.captionStyle,
