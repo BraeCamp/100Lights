@@ -2,6 +2,7 @@
 
 import { memo, useCallback , useMemo } from 'react'
 import { Play, Mic, Circle, X } from 'lucide-react'
+import { useApolloMotion } from './ApolloMotion'
 import { useDaw } from '@/lib/daw-state'
 import { useState, useEffect } from 'react'
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
@@ -1015,6 +1016,71 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
 // settings translate into a real Apollo patch, the instrument converts to
 // type 'apollo', and the full synth card opens above the studio — exactly the
 // open-a-plugin flow. Empty tracks get a fresh Init patch.
+
+// Apollo hosted in Beacon with motion recording: loop the clip, arm record,
+// and every knob you move is captured as automation on this track. Playing
+// back drives the engine AND moves the knobs. Each captured parameter can be
+// reverted on its own.
+function ApolloCardWithMotion({ trackId, patch, title, onChange, onClose }: {
+  trackId: string
+  patch: ApolloInstrumentParams
+  title?: string
+  onChange: (p: ApolloInstrumentParams) => void
+  onClose: () => void
+}) {
+  const m = useApolloMotion(trackId)
+  const btn = (on: boolean, tone?: string): React.CSSProperties => ({
+    height: 22, padding: '0 9px', borderRadius: 5, cursor: 'pointer',
+    fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+    background: on ? (tone ?? 'var(--accent)') : 'transparent',
+    color: on ? '#0b0d10' : 'var(--text-muted, #8b93a0)',
+    border: `1px solid ${on ? (tone ?? 'var(--accent)') : 'var(--border, #262c35)'}`,
+  })
+  return (
+    <ApolloCard
+      patch={patch}
+      title={title}
+      onChange={onChange}
+      onClose={() => { if (m.looping) m.toggleLoop(); onClose() }}
+      onParamMove={m.onParamMove}
+      liveParams={m.live}
+      headerExtra={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <button
+            onClick={m.toggleLoop}
+            disabled={!m.canLoop}
+            data-apollo-loop={m.looping ? 'on' : 'off'}
+            title={m.canLoop ? 'Loop this track\u2019s clip so you can shape the sound over repeated passes' : 'Add a clip to this track to loop it'}
+            style={{ ...btn(m.looping), opacity: m.canLoop ? 1 : 0.4 }}
+          >{m.looping ? '\u25a0 Stop' : '\u25b6 Loop'}</button>
+          <button
+            onClick={m.toggleRecord}
+            data-apollo-record={m.recording ? 'on' : 'off'}
+            title="Record the moves you make here as automation on this track \u2014 each pass adds to the take"
+            style={btn(m.recording, '#ef4444')}
+          >{m.recording ? '\u25cf Recording' : '\u25cf Record'}</button>
+          {m.lanes.length > 0 && (
+            <>
+              <span style={{ fontSize: 9, color: 'var(--text-muted, #8b93a0)', letterSpacing: 0.4 }}>
+                {m.lanes.length} recorded
+              </span>
+              {m.lanes.map(l => (
+                <button key={l.id}
+                  onClick={() => m.revertParam(l.id)}
+                  data-apollo-revert={l.parameter}
+                  title={`Reset ${l.label} back to where it was before recording`}
+                  style={{ ...btn(false), textTransform: 'none', fontWeight: 600 }}
+                >{l.label} \u00d7</button>
+              ))}
+              <button onClick={m.revertAll} style={{ ...btn(false), textTransform: 'none' }}>Reset all</button>
+            </>
+          )}
+        </div>
+      }
+    />
+  )
+}
+
 function OpenInApolloButton({ trackId }: { trackId: string }) {
   const { project, dispatch } = useDaw()
   const [card, setCard] = useState(false)
@@ -1049,7 +1115,8 @@ function OpenInApolloButton({ trackId }: { trackId: string }) {
         }}
       >☀︎ Open in Apollo</button>
       {card && params && (
-        <ApolloCard
+        <ApolloCardWithMotion
+          trackId={trackId}
           patch={params}
           title={track.name}
           onChange={next => dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: next } })}

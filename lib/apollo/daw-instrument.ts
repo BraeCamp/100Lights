@@ -117,6 +117,15 @@ export function setApolloTrackMacro(dest: AudioNode | undefined, index: number, 
   if (m?.isReady) m.engine.setMacro(index, value)
 }
 
+/** Set ANY Apollo parameter by patch path on the engine bound to a track
+ *  destination — the playback half of Apollo motion recording. Paths are the
+ *  same ones the Apollo UI sends (e.g. 'f1.cutoff', 'fx.<id>.mix'). */
+export function setApolloTrackParam(dest: AudioNode | undefined, path: string, value: number): void {
+  if (!dest) return
+  const m = byDest.get(dest)
+  if (m?.isReady) m.engine.setParam(path, value)
+}
+
 export function apolloStopAll(ctx: BaseAudioContext): void {
   const set = byCtx.get(ctx)
   if (!set) return

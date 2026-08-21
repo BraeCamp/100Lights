@@ -79,7 +79,16 @@ const LS_KEY = 'apollo_current_patch_v1'
 // hooks) stay off so an open /apollo tab is never fought over.
 export interface ApolloEmbed { patch: ApolloPatch; onChange: (p: ApolloPatch) => void }
 
-export function ApolloProvider({ children, quickMod, embed }: { children: React.ReactNode; quickMod?: boolean; embed?: ApolloEmbed }) {
+export function ApolloProvider({ children, quickMod, embed, onParamMove, liveParams }: {
+  children: React.ReactNode
+  quickMod?: boolean
+  embed?: ApolloEmbed
+  /** Called for every parameter move made in the UI — the host records these
+   *  as automation (Apollo "motion recording"). */
+  onParamMove?: (path: string, value: number) => void
+  /** Values pushed in during playback: the knobs move to match the take. */
+  liveParams?: { path: string; value: number; stamp: number } | null
+}) {
   // Reset the palette every provider render, BEFORE children read UI.*.
   // Without this, prerendering leaks themes between pages: the /apollo/test*
   // skin pages call applyApolloTheme during SSR in the same Node process, and
@@ -91,6 +100,8 @@ export function ApolloProvider({ children, quickMod, embed }: { children: React.
   const patchRef = useRef<ApolloPatch | null>(null)
   const embedRef = useRef(embed)
   embedRef.current = embed
+  const onParamMoveRef = useRef(onParamMove)
+  onParamMoveRef.current = onParamMove
   if (!patchRef.current) patchRef.current = embed ? { ...initPatch(), ...JSON.parse(JSON.stringify(embed.patch)) } as ApolloPatch : initPatch()
   const [version, setVersion] = useState(0)
   // restore the autosaved patch after mount (avoids SSR hydration mismatch)
@@ -178,8 +189,31 @@ export function ApolloProvider({ children, quickMod, embed }: { children: React.
     if (gestureSnap.current == null) gestureSnap.current = JSON.stringify(p)
     setByPath(p, resolvePatchPath(path), value)
     if (engine.ready) engine.setParam(path, value)
+    // Motion recording: the host (Beacon) captures this move as automation.
+    // Reported BEFORE persist so a pass records exactly what was heard.
+    onParamMoveRef.current?.(path, value)
     persist()
   }, [engine, persist])
+
+  /** Apply a value coming FROM the host during playback: updates the patch and
+   *  the engine, re-renders so the knob visibly moves, but never records
+   *  (otherwise playback would overwrite the take it is playing) and never
+   *  touches undo history. */
+  const applyLiveParam = useCallback((path: string, value: number) => {
+    const p = patchRef.current as ApolloPatch
+    setByPath(p, resolvePatchPath(path), value)
+    if (engine.ready) engine.setParam(path, value)
+    setVersion(v => v + 1)
+  }, [engine])
+
+  // Host-driven playback: when a recorded lane fires, the value lands here and
+  // the corresponding knob moves on screen.
+  const liveStampRef = useRef(0)
+  useEffect(() => {
+    if (!liveParams || liveParams.stamp === liveStampRef.current) return
+    liveStampRef.current = liveParams.stamp
+    applyLiveParam(liveParams.path, liveParams.value)
+  }, [liveParams, applyLiveParam])
 
   const commit = useCallback(() => {
     if (gestureSnap.current != null) { pushHistory(gestureSnap.current); gestureSnap.current = null }
@@ -315,6 +349,16 @@ export function ApolloProvider({ children, quickMod, embed }: { children: React.
       })
       .catch(() => { restoring.current = false })
   }, [version, started, engine])
+
+  // Driving a control programmatically (automation/tests/agents). This one is
+  // installed for the EMBEDDED card too, because the card hosted in Beacon is
+  // exactly where motion recording needs to be driven from — it routes through
+  // the same setParam funnel a knob does, so a recorded take is identical.
+  useEffect(() => {
+    const w = window as unknown as Record<string, unknown>
+    w.__apolloSetParam = (path: string, value: number) => setParam(path, value)
+    return () => { delete w.__apolloSetParam }
+  }, [setParam])
 
   // programmatic hook for automation/tests (same convention as __dawDispatch)
   useEffect(() => {

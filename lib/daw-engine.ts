@@ -10,7 +10,7 @@ import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
 import { translateInstrument } from './apollo/daw-synth'
-import { setApolloTrackMacro } from './apollo/daw-instrument'
+import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
@@ -2138,6 +2138,13 @@ export class DawEngine extends EventTarget {
     }
     if (parameter === 'pan') {
       nodes.panner.pan.setTargetAtTime(value, t, 0.01)
+      return
+    }
+    // Apollo patch params: 'apollo:{patchPath}' — recorded by moving a knob in
+    // the Apollo card while the transport records; played back into the engine
+    // (and mirrored onto the card's knobs by the UI).
+    if (parameter.startsWith('apollo:')) {
+      setApolloTrackParam(nodes.midiInput, parameter.slice(7), value)
       return
     }
     // Effects params: 'fx:{effectId}:{paramKey}'

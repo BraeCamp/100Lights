@@ -118,7 +118,7 @@ function CardBody({ scope }: { scope: ApolloCardScope }) {
   )
 }
 
-export default function ApolloCard({ patch, onChange, scope: initialScope = 'all', title, onClose, fxOnly = false }: {
+export default function ApolloCard({ patch, onChange, scope: initialScope = 'all', title, onClose, fxOnly = false, onParamMove, liveParams, headerExtra }: {
   patch: ApolloPatch
   onChange: (p: ApolloPatch) => void
   scope?: ApolloCardScope
@@ -126,6 +126,12 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
   onClose: () => void
   /** Track-chain hosting: lock the card to the Effects module (no scope tabs). */
   fxOnly?: boolean
+  /** Motion recording: every knob move in the card is reported here. */
+  onParamMove?: (path: string, value: number) => void
+  /** Playback: values pushed in move the matching knobs on screen. */
+  liveParams?: { path: string; value: number; stamp: number } | null
+  /** Host controls rendered in the card header (record / loop / takes). */
+  headerExtra?: React.ReactNode
 }) {
   const [scope, setScope] = useState<ApolloCardScope>(fxOnly ? 'fx' : initialScope)
   useEffect(() => {
@@ -170,6 +176,7 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
             APOLLO
             {title && <span style={{ fontWeight: 500, letterSpacing: 0.2, color: 'var(--text-muted, #8b93a0)', marginLeft: 10, fontSize: 12 }}>{title}</span>}
           </div>
+          {headerExtra}
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {(fxOnly ? APOLLO_CARD_SCOPES.filter(sc => sc.id === 'fx') : APOLLO_CARD_SCOPES).map(s => (
               <button key={s.id} onClick={() => setScope(s.id)} style={{
@@ -184,7 +191,7 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
           <button onClick={onClose} title="Close (Esc)" style={{ background: 'none', border: 'none', color: 'var(--text-muted, #8b93a0)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 2 }}>✕</button>
         </div>
         <div style={{ padding: 12 }}>
-          <ApolloProvider quickMod embed={{ patch, onChange }}>
+          <ApolloProvider quickMod embed={{ patch, onChange }} onParamMove={onParamMove} liveParams={liveParams}>
             <CardBody scope={scope} />
           </ApolloProvider>
         </div>
