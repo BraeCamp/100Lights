@@ -500,6 +500,8 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
           onRevert={motion.revertParam}
           onRevertAll={motion.revertAll}
           onPatch={next => setOverride({ patch: next, stamp: Date.now() })}
+          patch={patch}
+          trackId={trackId}
         />
       }
       headerExtra={

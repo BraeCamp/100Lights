@@ -17,6 +17,7 @@ import { useDaw } from '@/lib/daw-state'
 import { isAudioClip, isMidiClip, type AudioClip, type MidiClip, type MidiNote } from '@/lib/daw-types'
 import { notesToApollo } from '@/lib/apollo/checkout'
 import { SAMPLE_ENGINES, clipSampleId, patchWithClipSource } from '@/lib/apollo/daw-sample'
+import { ApolloLfoBake } from './ApolloLfoBake'
 import { getApolloEngine } from '@/lib/apollo/engine-client'
 import type { ApolloPatch, ClipConfig, OscEngine } from '@/lib/apollo/patch'
 
@@ -262,7 +263,7 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
 /** The footer strip: the hosted item, its transport, and motion capture.
  *  Capture lives here rather than in the header because it only means anything
  *  while this clip is looping — the two controls belong together. */
-export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onToggleRecord, lanes, onRevert, onRevertAll, onPatch }: {
+export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onToggleRecord, lanes, onRevert, onRevertAll, onPatch, patch, trackId }: {
   item: ReturnType<typeof useApolloTrackItem>
   trackName: string
   canPlay: boolean
@@ -273,6 +274,9 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
   onRevertAll: () => void
   /** A patch the card must adopt (sending a clip rewrites osc 1). */
   onPatch: (p: unknown) => void
+  /** The live patch, for reading the LFO shapes out of. */
+  patch: unknown
+  trackId: string
 }) {
   const playable = canPlay && !!item.apolloClip
   const why = !item.clip ? `${trackName} has no MIDI clip to play`
@@ -351,6 +355,8 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
           ))}
         </div>
       )}
+
+      <ApolloLfoBake trackId={trackId} patch={patch as never} spanBeats={item.lengthBeats || 4} />
 
       {lanes.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
