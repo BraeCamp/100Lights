@@ -157,10 +157,17 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
   // and resize, and only its own X (or Esc) closes it.
   const wideDefault = scope === 'all' || scope === 'fx' || scope === 'osc' || scope === 'clip'
   const [rect, setRect] = useState(() => {
-    const w = Math.min(wideDefault ? 1280 : 760, typeof window === 'undefined' ? 1000 : window.innerWidth - 40)
-    const h = typeof window === 'undefined' ? 700 : Math.min(820, window.innerHeight - 80)
-    const x = typeof window === 'undefined' ? 40 : Math.max(20, (window.innerWidth - w) / 2)
-    return { x, y: 48, w, h }
+    // The full instrument is a dense layout — twelve modules across twelve
+    // columns. Sized to the viewport rather than a fixed 1280 so it does not
+    // read as a small panel dropped into a large screen; a single-scope view
+    // stays narrow because it has nothing to fill the width with.
+    const vw = typeof window === 'undefined' ? 1400 : window.innerWidth
+    const vh = typeof window === 'undefined' ? 900 : window.innerHeight
+    const want = scope === 'all' ? Math.max(1280, Math.round(vw * 0.86)) : wideDefault ? 1280 : 760
+    const w = Math.min(want, vw - 40)
+    const h = Math.min(scope === 'all' ? 920 : 820, vh - 70)
+    const x = Math.max(20, (vw - w) / 2)
+    return { x, y: 44, w, h }
   })
   const dragRef = useRef<{ mode: string; sx: number; sy: number; r: typeof rect } | null>(null)
 
@@ -181,13 +188,20 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
       if (!d) return
       const dx = ev.clientX - d.sx, dy = ev.clientY - d.sy
       const r = { ...d.r }
-      if (d.mode === 'move') { r.x = d.r.x + dx; r.y = d.r.y + dy }
-      // Edges and corners: dragging a left/top edge moves the origin as well
-      // as resizing, so the opposite edge stays put.
-      if (d.mode.includes('e')) r.w = Math.max(MIN_W, d.r.w + dx)
-      if (d.mode.includes('s')) r.h = Math.max(MIN_H, d.r.h + dy)
-      if (d.mode.includes('w')) { const w = Math.max(MIN_W, d.r.w - dx); r.x = d.r.x + (d.r.w - w); r.w = w }
-      if (d.mode.includes('n')) { const h = Math.max(MIN_H, d.r.h - dy); r.y = d.r.y + (d.r.h - h); r.h = h }
+      if (d.mode === 'move') {
+        r.x = d.r.x + dx
+        r.y = d.r.y + dy
+      } else {
+        // MUST be an else: the edge tests below are substring checks, and the
+        // word "move" contains an "e" — so a plain drag was also running the
+        // east-resize branch and stretching the right edge as the window moved.
+        // Edges and corners: dragging a left/top edge moves the origin as well
+        // as resizing, so the opposite edge stays put.
+        if (d.mode.includes('e')) r.w = Math.max(MIN_W, d.r.w + dx)
+        if (d.mode.includes('s')) r.h = Math.max(MIN_H, d.r.h + dy)
+        if (d.mode.includes('w')) { const w = Math.max(MIN_W, d.r.w - dx); r.x = d.r.x + (d.r.w - w); r.w = w }
+        if (d.mode.includes('n')) { const h = Math.max(MIN_H, d.r.h - dy); r.y = d.r.y + (d.r.h - h); r.h = h }
+      }
       // Keep a grab-able strip on screen so a window can always be recovered.
       r.x = Math.min(Math.max(r.x, 40 - r.w), window.innerWidth - 60)
       r.y = Math.min(Math.max(r.y, 0), window.innerHeight - 40)

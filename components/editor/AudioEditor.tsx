@@ -419,11 +419,11 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
   // before the async rebuild lands — would leave the old track's FX on screen
   // for good. Nothing renders until the two agree.
   const [built, setBuilt] = useState<{ forTrack: string; patch: unknown; hasVoice: boolean } | null>(
-    seed ? { forTrack: trackId, patch: seed, hasVoice: true } : null,
+    seed ? { forTrack: trackId, patch: seed, hasVoice: patchHasVoice(seed) } : null,
   )
-  const { project } = useDaw()
+  const { project, dispatch } = useDaw()
   useEffect(() => {
-    if (seed) { setBuilt({ forTrack: trackId, patch: seed, hasVoice: true }); return }
+    if (seed) { setBuilt({ forTrack: trackId, patch: seed, hasVoice: patchHasVoice(seed) }); return }
     let cancelled = false
     void (async () => {
       const track = project.tracks.find(t => t.id === trackId)
@@ -446,7 +446,7 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
       // Apollo should agree with the project about what key the song is in.
       const { patchWithProjectKey } = await import('@/lib/apollo/daw-sample')
       const keyed = patchWithProjectKey(p, project.key ?? 0, project.scale ?? 'major')
-      if (!cancelled) setBuilt({ forTrack: trackId, patch: keyed, hasVoice: !!voice })
+      if (!cancelled) setBuilt({ forTrack: trackId, patch: keyed, hasVoice: patchHasVoice(keyed) })
     })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -485,8 +485,10 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
     <ApolloCardLazy
       key={`${trackId}:${item.itemKey}:${override?.stamp ?? 0}`}
       patch={patch as never}
-      fxOnly
-      title={`${trackName} — FX`}
+      // Opened from a track's Devices panel the subject IS the effect chain, so
+      // start there; opened from the transport it is the whole instrument.
+      scope={seed ? 'fx' : 'all'}
+      title={trackName}
       onParamMove={motion.onParamMove}
       liveParams={motion.live}
       footer={
@@ -521,12 +523,51 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
           }}
         ><PinGlyph pinned={!following} />{following ? 'FOLLOWING' : 'PINNED'}</button>
       }
-      onChange={onChange as never}
+      onChange={(next: unknown) => {
+        onChange(next as { fxMain: unknown[] })
+        // The window shows the whole instrument now, so oscillator, filter,
+        // envelope and mod edits have to persist too — otherwise they sound
+        // while the window is open and vanish the moment it closes.
+        //
+        // Only for a track Apollo can actually voice. A sampled or builtin
+        // instrument has no Apollo equivalent, so the patch standing in for it
+        // is a silent placeholder, and writing that back would replace a
+        // working instrument with silence.
+        const track = project.tracks.find(t => t.id === trackId)
+        if (!built?.hasVoice && track?.instrument?.type !== 'apollo') return
+        const voice = JSON.parse(JSON.stringify(next)) as { fxMain: unknown[]; fxBus1: unknown[]; fxBus2: unknown[] }
+        // FX live on the track's own chain; keeping a copy here as well would
+        // process everything twice.
+        voice.fxMain = []; voice.fxBus1 = []; voice.fxBus2 = []
+        dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: voice } as never })
+      }}
       onClose={() => { item.stop(); onClose() }}
     />
   )
 }
 
+
+
+/**
+ * Does this patch actually make a sound on its own?
+ *
+ * The rack is reached two ways, and only one of them carries an instrument.
+ * Opened from a track's Devices panel the patch is an FX-only shell with every
+ * oscillator switched off, built purely to edit the effect chain. Treating that
+ * as a voice and saving it as the track's instrument replaces a working sound
+ * with silence — which is exactly what "I added some effects and it stopped
+ * producing audio" looks like from the outside. So this asks the patch rather
+ * than trusting where it came from.
+ */
+function patchHasVoice(patch: unknown): boolean {
+  const p = patch as {
+    oscs?: { enabled?: boolean }[]
+    sub?: { enabled?: boolean }
+    noise?: { enabled?: boolean }
+  } | null
+  if (!p) return false
+  return !!(p.oscs?.some(o => o?.enabled) || p.sub?.enabled || p.noise?.enabled)
+}
 
 // Flat thumbtack, drawn as a single-weight stroke so it sits with Beacon's
 // other line icons — a glyph like ◉ renders as a beveled 3D dot and reads as
