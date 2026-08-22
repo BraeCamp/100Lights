@@ -18,6 +18,7 @@ import { isAudioClip, isMidiClip, type AudioClip, type MidiClip, type MidiNote }
 import { notesToApollo } from '@/lib/apollo/checkout'
 import { SAMPLE_ENGINES, clipSampleId, patchWithClipSource } from '@/lib/apollo/daw-sample'
 import { ApolloLfoBake } from './ApolloLfoBake'
+import { chordFromNotes, printArp } from '@/lib/apollo/daw-arp'
 import { getApolloEngine } from '@/lib/apollo/engine-client'
 import type { ApolloPatch, ClipConfig, OscEngine } from '@/lib/apollo/patch'
 
@@ -358,6 +359,8 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
 
       <ApolloLfoBake trackId={trackId} patch={patch as never} spanBeats={item.lengthBeats || 4} />
 
+      <ApolloArpPrint trackId={trackId} patch={patch} item={item} trackName={trackName} />
+
       {lanes.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 9, letterSpacing: 0.4, color: 'var(--text-muted, #8b93a0)' }}>
@@ -371,6 +374,73 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
           <button onClick={onRevertAll} style={{ ...btn(false), textTransform: 'none' }}>Reset all</button>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Print Apollo's arpeggiator into a real Beacon clip.
+ *
+ *  The arp only exists while keys are held — nothing it plays is written down.
+ *  This runs the same algorithm over the chord already on the track and commits
+ *  the result as notes, so the pattern becomes something you can edit. */
+function ApolloArpPrint({ trackId, patch, item, trackName }: {
+  trackId: string
+  patch: unknown
+  item: ReturnType<typeof useApolloTrackItem>
+  trackName: string
+}) {
+  const { project, dispatch } = useDaw()
+  const [done, setDone] = useState<string | null>(null)
+  const p = patch as ApolloPatch | null
+  const arp = p?.arp
+  const chord = useMemo(() => chordFromNotes(item.notes.map(n => n.pitch)), [item.notes])
+  if (!p || !arp) return null
+
+  const span = Math.max(1, item.lengthBeats || 4)
+  const canPrint = chord.length > 0
+  const preview = canPrint ? printArp(p, chord, span).length : 0
+
+  const print = () => {
+    const notes = printArp(p, chord, span)
+    if (!notes.length) return
+    const startBeat = item.clip ? item.clip.startBeat : 0
+    dispatch({ type: 'ADD_CLIP', clip: {
+      kind: 'midi', id: crypto.randomUUID(), trackId,
+      name: `${trackName} arp`,
+      startBeat, durationBeats: span,
+      gain: 1, loopEnabled: false, reverse: false, fadeIn: 0, fadeOut: 0,
+      trimStart: 0, trimEnd: 0,
+      notes: notes.map(n => ({
+        id: crypto.randomUUID(), pitch: n.pitch, startBeat: n.startBeat,
+        durationBeats: n.durationBeats, velocity: Math.round(n.velocity * 127),
+      })),
+    } as never })
+    setDone(`${notes.length} notes printed`)
+    window.setTimeout(() => setDone(null), 2600)
+  }
+
+  return (
+    <div data-apollo-arpprint style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 9, letterSpacing: 0.4, color: 'var(--text-muted, #8b93a0)' }}>
+        {`ARP ${arp.on ? 'ON' : 'OFF'} \u00b7 ${arp.mode} \u00b7 ${arp.octaves} oct`}
+      </span>
+      <button
+        onClick={print}
+        disabled={!canPrint}
+        data-apollo-arp-print
+        data-apollo-arp-count={preview}
+        title={canPrint
+          ? `Run the arp over this track\u2019s chord and write ${preview} notes into a new clip you can edit`
+          : 'Add some notes to this track first \u2014 the arp needs a chord to run over'}
+        style={{
+          height: 22, padding: '0 9px', borderRadius: 5, flex: 'none',
+          fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+          background: 'transparent', color: 'var(--text-muted, #8b93a0)',
+          border: '1px solid var(--border, #262c35)',
+          cursor: canPrint ? 'pointer' : 'not-allowed', opacity: canPrint ? 1 : 0.4,
+        }}
+      >Print arp{canPrint ? ` (${preview})` : ''}</button>
+      {done && <span data-apollo-arp-done style={{ fontSize: 9, color: 'var(--accent, #4aa9ff)' }}>{done}</span>}
     </div>
   )
 }
