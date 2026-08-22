@@ -15,6 +15,7 @@ import {
   clearMidiBinding as clearSharedBinding, ensureMidiBindings, registerApplier,
   subscribeMidiBindings,
 } from '@/lib/midi-bindings'
+import { beaconPalette } from './beacon-palette'
 
 export interface ApolloCtxValue {
   patch: ApolloPatch
@@ -100,6 +101,16 @@ export function ApolloProvider({ children, quickMod, embed, onParamMove, livePar
   // HTML (the violet-knobs-on-/apollo bug). Skins re-apply inside their own
   // Inner components, which render after this — so they still work.
   Object.assign(UI, DEFAULT_UI)
+  // Hosted inside Beacon, Apollo wears Beacon's theme: same greys, same accent,
+  // so the window stops reading as a second program bolted into the first.
+  // Resolved from the live CSS variables (see beacon-palette) rather than left
+  // as var() strings, because Apollo's scopes and wavetables are canvas and a
+  // canvas cannot resolve a variable. Standalone /apollo reads no variables and
+  // keeps its own palette untouched.
+  if (embed && typeof window !== 'undefined') {
+    const themed = beaconPalette()
+    if (themed) Object.assign(UI, themed)
+  }
   const engine = useMemo(() => getApolloEngine(), [])
   const patchRef = useRef<ApolloPatch | null>(null)
   const embedRef = useRef(embed)
