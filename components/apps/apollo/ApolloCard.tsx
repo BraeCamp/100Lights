@@ -239,15 +239,21 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}
     >
-      {/* resize handles: every edge and corner */}
-      {handle('n',  { left: GRAB, right: GRAB, top: -GRAB / 2, height: GRAB }, 'ns-resize')}
-      {handle('s',  { left: GRAB, right: GRAB, bottom: -GRAB / 2, height: GRAB }, 'ns-resize')}
-      {handle('w',  { top: GRAB, bottom: GRAB, left: -GRAB / 2, width: GRAB }, 'ew-resize')}
-      {handle('e',  { top: GRAB, bottom: GRAB, right: -GRAB / 2, width: GRAB }, 'ew-resize')}
-      {handle('nw', { left: -GRAB / 2, top: -GRAB / 2, width: GRAB * 2, height: GRAB * 2 }, 'nwse-resize')}
-      {handle('ne', { right: -GRAB / 2, top: -GRAB / 2, width: GRAB * 2, height: GRAB * 2 }, 'nesw-resize')}
-      {handle('sw', { left: -GRAB / 2, bottom: -GRAB / 2, width: GRAB * 2, height: GRAB * 2 }, 'nesw-resize')}
-      {handle('se', { right: -GRAB / 2, bottom: -GRAB / 2, width: GRAB * 2, height: GRAB * 2 }, 'nwse-resize')}
+      {/* Resize handles: every edge and corner, and every one of them INSIDE
+          the frame. They used to straddle the border at -GRAB/2, but the window
+          is overflow:hidden, so the outer half was clipped away and the only
+          hittable part was the boundary pixel itself — resizing worked when a
+          test dispatched events straight at the element and was near-impossible
+          with an actual mouse. Sitting them inside costs the "grab just outside"
+          affordance and buys a target you can actually hit. */}
+      {handle('n',  { left: GRAB, right: GRAB, top: 0, height: GRAB }, 'ns-resize')}
+      {handle('s',  { left: GRAB, right: GRAB, bottom: 0, height: GRAB }, 'ns-resize')}
+      {handle('w',  { top: GRAB, bottom: GRAB, left: 0, width: GRAB }, 'ew-resize')}
+      {handle('e',  { top: GRAB, bottom: GRAB, right: 0, width: GRAB }, 'ew-resize')}
+      {handle('nw', { left: 0, top: 0, width: GRAB * 2, height: GRAB * 2 }, 'nwse-resize')}
+      {handle('ne', { right: 0, top: 0, width: GRAB * 2, height: GRAB * 2 }, 'nesw-resize')}
+      {handle('sw', { left: 0, bottom: 0, width: GRAB * 2, height: GRAB * 2 }, 'nesw-resize')}
+      {handle('se', { right: 0, bottom: 0, width: GRAB * 2, height: GRAB * 2 }, 'nwse-resize')}
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {/* chrome header — the host app's theme, not Apollo's. Doubles as the
             window's drag handle; clicks on its controls are left alone. */}
