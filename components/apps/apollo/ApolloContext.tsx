@@ -10,7 +10,11 @@ import {
 import { ApolloEngine, ApolloMeters, getApolloEngine } from '@/lib/apollo/engine-client'
 import { initApolloLibrary, restorePatchSamples, setApolloSourceSample } from '@/lib/apollo/sample-store'
 import { useUser } from '@clerk/nextjs'
-import { onMidiCC } from '@/lib/web-midi'
+import {
+  allMidiBindings, armMidiBinding, armedBinding, ccForBinding,
+  clearMidiBinding as clearSharedBinding, ensureMidiBindings, registerApplier,
+  subscribeMidiBindings,
+} from '@/lib/midi-bindings'
 
 export interface ApolloCtxValue {
   patch: ApolloPatch
@@ -251,39 +255,36 @@ export function ApolloProvider({ children, quickMod, embed, onParamMove, livePar
     }
   }, [engine])
 
-  // ---- MIDI learn: cc -> param path map, persisted per browser ----
-  const MIDI_MAP_KEY = 'apollo_midi_map_v1'
-  const midiMap = useRef<Record<number, string>>({})
+  // ---- MIDI learn ----
+  // The cc -> control mapping lives in lib/midi-bindings, shared with Beacon,
+  // so one controller is taught once and a CC can only ever drive one thing.
+  // Apollo registers each learned parameter path under the 'apollo:' namespace
+  // and supplies the applier; range resolution stays here because only Apollo
+  // knows what a patch path means.
   const [midiArmed, setMidiArmed] = useState<string | null>(null)
-  const midiArmedRef = useRef<string | null>(null)
-  useEffect(() => {
-    try { midiMap.current = JSON.parse(localStorage.getItem(MIDI_MAP_KEY) || '{}') as Record<number, string> } catch { /* fresh */ }
+  const armMidiLearn = useCallback((path: string) => {
+    armMidiBinding(`apollo:${path}`)
+    setMidiArmed(armedBinding() === `apollo:${path}` ? path : null)
   }, [])
-  const saveMidiMap = () => { try { localStorage.setItem(MIDI_MAP_KEY, JSON.stringify(midiMap.current)) } catch { /* quota */ } }
-  const armMidiLearn = useCallback((path: string) => { midiArmedRef.current = path; setMidiArmed(path) }, [])
   const clearMidiBinding = useCallback((path: string) => {
-    for (const cc of Object.keys(midiMap.current)) if (midiMap.current[Number(cc)] === path) delete midiMap.current[Number(cc)]
-    saveMidiMap()
+    clearSharedBinding(`apollo:${path}`)
     setVersion(v => v + 1)
   }, [])
-  const midiBindingFor = useCallback((path: string): number | null => {
-    for (const cc of Object.keys(midiMap.current)) if (midiMap.current[Number(cc)] === path) return Number(cc)
-    return null
-  }, [])
+  const midiBindingFor = useCallback((path: string): number | null => ccForBinding(`apollo:${path}`), [])
+  useEffect(() => subscribeMidiBindings(() => {
+    setMidiArmed(a => {
+      const arm = armedBinding()
+      const next = arm && arm.startsWith('apollo:') ? arm.slice(7) : null
+      return next === a ? a : next
+    })
+    setVersion(v => v + 1)
+  }), [])
   useEffect(() => {
+    ensureMidiBindings()
     let commitTimer: ReturnType<typeof setTimeout> | null = null
-    const off = onMidiCC(e => {
-      if (e.cc === 1 || e.cc === 64) return // reserved: mod wheel + sustain
-      if (midiArmedRef.current) {
-        midiMap.current[e.cc] = midiArmedRef.current
-        midiArmedRef.current = null
-        setMidiArmed(null)
-        saveMidiMap()
-        setVersion(v => v + 1)
-        return
-      }
-      const path = midiMap.current[e.cc]
-      if (!path) return
+    // One applier for every Apollo parameter: the registry hands us the path's
+    // normalised value and we map it through that parameter's own range.
+    const applyPath = (path: string, v01: number) => {
       let range: { min: number; max: number; curve?: string } | null = PARAM_MAP[path] || null
       if (!range && path.startsWith('fx.')) {
         // fx.<unitId>.<key> — find the unit in any lane to learn its range
@@ -306,13 +307,28 @@ export function ApolloProvider({ children, quickMod, embed, onParamMove, livePar
         }
       }
       if (!range) return
-      const t = e.value / 127
+      const t = v01
       const val = range.curve === 'log' && range.min > 0 ? range.min * Math.pow(range.max / range.min, t) : range.min + (range.max - range.min) * t
       setParam(path, val)
       if (commitTimer) clearTimeout(commitTimer)
       commitTimer = setTimeout(() => commit(), 250)
-    })
-    return () => { off(); if (commitTimer) clearTimeout(commitTimer) }
+    }
+    // Every bound apollo: path needs an applier registered. Paths are learned
+    // at runtime, so re-register whenever the set of bindings changes.
+    let offs: (() => void)[] = []
+    const wire = () => {
+      for (const off of offs) off()
+      offs = allMidiBindings()
+        .filter(b => b.id.startsWith('apollo:'))
+        .map(b => {
+          const path = b.id.slice(7)
+          const ref = { current: (v: number) => applyPath(path, v) }
+          return registerApplier(b.id, ref)
+        })
+    }
+    wire()
+    const offSub = subscribeMidiBindings(wire)
+    return () => { for (const off of offs) off(); offSub(); if (commitTimer) clearTimeout(commitTimer) }
   }, [setParam, commit])
 
   // Sound Library scoping + sample restoration: any patch (autosave, preset,
