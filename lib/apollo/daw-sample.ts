@@ -10,6 +10,7 @@
 // Pure patch surgery: loading the buffer into the engine is the caller's job
 // (it owns the engine), which keeps this testable and free of audio deps.
 
+import { tableFromAudio, tableToBase64 } from '@/lib/apollo/tables'
 import type { ApolloPatch, OscEngine } from '@/lib/apollo/patch'
 
 /** The engines that play a user sample. Wavetable and multisample are excluded:
@@ -62,6 +63,50 @@ export function patchWithClipSource(
  *  engine instead of growing a new one on every click. */
 export function clipSampleId(clipId: string): string {
   return `dawclip:${clipId}`
+}
+
+/**
+ * Build a wavetable from a Beacon audio clip and point oscillator 1 at it.
+ *
+ * Unlike the sample engines this needs no engine call and no library entry:
+ * user tables live inside the patch as base64 (patch.userTables), which the
+ * engine reads on send. So a wavetable made this way travels with the
+ * instrument and survives a reload with nothing else to restore.
+ *
+ * A wavetable is a different thing from a sample — the audio is chopped into
+ * single-cycle frames that the oscillator sweeps through, so what you get is
+ * the clip's evolving TIMBRE rather than its performance.
+ */
+export function patchWithClipWavetable(
+  patch: ApolloPatch,
+  tableId: string,
+  name: string,
+  samples: Float32Array,
+  opts: { frames?: number; oscIndex?: number } = {},
+): ApolloPatch {
+  const frames = Math.max(2, Math.min(256, opts.frames ?? 32))
+  const i = opts.oscIndex ?? 0
+  const data = tableFromAudio(samples, frames)
+  const next: ApolloPatch = JSON.parse(JSON.stringify(patch))
+  next.userTables = { ...(next.userTables ?? {}), [tableId]: { name, frames, data: tableToBase64(data) } }
+  const osc = next.oscs[i]
+  if (!osc) return next
+  osc.enabled = true
+  osc.engine = 'wavetable'
+  osc.level = osc.level > 0 ? osc.level : 0.8
+  osc.wt.tableId = tableId
+  osc.wt.pos = 0
+  const amp = next.envs?.[0]
+  if (amp && amp.attack === 0 && amp.decay === 0 && amp.sustain === 0 && amp.release === 0) {
+    amp.attack = 0.005; amp.decay = 0.2; amp.sustain = 1; amp.release = 0.25
+  }
+  return next
+}
+
+/** Wavetable ids are namespaced separately from samples: the same clip can be
+ *  both a sample source and a table without one overwriting the other. */
+export function clipTableId(clipId: string): string {
+  return `dawtable:${clipId}`
 }
 
 // ---------------------------------------------------------------------------

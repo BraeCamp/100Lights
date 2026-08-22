@@ -16,7 +16,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDaw } from '@/lib/daw-state'
 import { isAudioClip, isMidiClip, type AudioClip, type MidiClip, type MidiNote } from '@/lib/daw-types'
 import { notesToApollo } from '@/lib/apollo/checkout'
-import { SAMPLE_ENGINES, clipSampleId, patchWithClipSource } from '@/lib/apollo/daw-sample'
+import {
+  SAMPLE_ENGINES, clipSampleId, clipTableId, patchWithClipSource, patchWithClipWavetable,
+} from '@/lib/apollo/daw-sample'
 import { ApolloLfoBake } from './ApolloLfoBake'
 import { chordFromNotes, printArp } from '@/lib/apollo/daw-arp'
 import { getApolloEngine } from '@/lib/apollo/engine-client'
@@ -200,7 +202,10 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
    * Returns the patch the card should adopt, or null if the clip's audio could
    * not be decoded (a dead blob: URL after a reload, typically).
    */
-  const sendClipToApollo = useCallback(async (clip: AudioClip, oscEngine: OscEngine): Promise<ApolloPatch | null> => {
+  const sendClipToApollo = useCallback(async (
+    clip: AudioClip,
+    oscEngine: OscEngine | 'wavetable-from-audio',
+  ): Promise<ApolloPatch | null> => {
     const base = getPatch?.() as ApolloPatch | undefined
     if (!base) return null
     setLoading(clip.id)
@@ -208,6 +213,19 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
       await engine.init({ ctx: daw.ctx, destination: daw.masterGain, analyse: true })
       const buf = await daw.loadClipBuffer(clip)
       if (!buf) return null
+
+      // A wavetable is patch data, not a sample: no engine load, no library
+      // entry, nothing to restore later.
+      if (oscEngine === 'wavetable-from-audio') {
+        const table = patchWithClipWavetable(
+          base, clipTableId(clip.id), clip.name || 'Clip', new Float32Array(buf.getChannelData(0)),
+        )
+        engine.sendPatch(table)
+        const voiceT: ApolloPatch = JSON.parse(JSON.stringify(table))
+        voiceT.fxMain = []; voiceT.fxBus1 = []; voiceT.fxBus2 = []
+        dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: voiceT } as never })
+        return table
+      }
       const id = clipSampleId(clip.id)
       engine.loadSample(id, clip.name || 'Clip', buf)
       // Persist it into Apollo's sample library too. Beacon's per-track engine
@@ -335,7 +353,10 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
               ? `AUDIO: ${item.audioClips[0].name || 'clip'} \u2192`
               : `${item.audioClips.length} AUDIO CLIPS \u2014 FIRST \u2192`}
           </span>
-          {item.sampleEngines.map(se => (
+          {[...item.sampleEngines, {
+            id: 'wavetable-from-audio' as const, label: 'Wavetable',
+            blurb: 'Chop it into single-cycle frames and sweep through its timbre',
+          }].map(se => (
             <button
               key={se.id}
               data-apollo-send-clip={se.id}
