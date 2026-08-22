@@ -21,6 +21,7 @@ import {
 } from '@/lib/apollo/daw-sample'
 import { ApolloLfoBake } from './ApolloLfoBake'
 import { chordFromNotes, printArp } from '@/lib/apollo/daw-arp'
+import { SfzImportError, importSfzToPatch } from '@/lib/apollo/daw-sfz'
 import { getApolloEngine } from '@/lib/apollo/engine-client'
 import type { ApolloPatch, ClipConfig, OscEngine } from '@/lib/apollo/patch'
 
@@ -261,6 +262,34 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
     }
   }, [engine, daw, getPatch, dispatch, trackId])
 
+  const [sfzStatus, setSfzStatus] = useState<string | null>(null)
+
+  /** Load a sampled instrument (.sfz + its audio) onto this track. */
+  const importSfz = useCallback(async (files: File[]): Promise<ApolloPatch | null> => {
+    const base = getPatch?.() as ApolloPatch | undefined
+    if (!base) return null
+    setSfzStatus('Importing…')
+    try {
+      await engine.init({ ctx: daw.ctx, destination: daw.masterGain, analyse: true })
+      const res = await importSfzToPatch(base, files, engine)
+      engine.sendPatch(res.patch)
+      const voice: ApolloPatch = JSON.parse(JSON.stringify(res.patch))
+      voice.fxMain = []; voice.fxBus1 = []; voice.fxBus2 = []
+      dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: voice } as never })
+      setSfzStatus(
+        res.missing.length
+          ? `${res.name}: ${res.zones} zones, ${res.missing.length} missing audio file(s)`
+          : `${res.name}: ${res.zones} zones`,
+      )
+      window.setTimeout(() => setSfzStatus(null), 5000)
+      return res.patch
+    } catch (e) {
+      setSfzStatus(e instanceof SfzImportError ? e.message : 'SFZ import failed')
+      window.setTimeout(() => setSfzStatus(null), 5000)
+      return null
+    }
+  }, [engine, daw, getPatch, dispatch, trackId])
+
   const loopBeat = lengthBeats ? beat % lengthBeats : 0
   // ApolloProvider takes the host patch as a snapshot on mount and never reads
   // the prop again, so an item edited in Beacon while the window is open would
@@ -271,6 +300,7 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
   return {
     clip, notes, lengthBeats, apolloClip, playing, toggle, stop, itemKey,
     audioClips, sendClipToApollo, loadingClip: loading, sampleEngines: SAMPLE_ENGINES,
+    importSfz, sfzStatus,
     /** 0..1 across the strip. */
     playhead: playing && lengthBeats ? loopBeat / lengthBeats : null,
     /** Apollo's loop position mapped onto the arrangement timeline, so moves
@@ -381,6 +411,41 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
       <ApolloLfoBake trackId={trackId} patch={patch as never} spanBeats={item.lengthBeats || 4} />
 
       <ApolloArpPrint trackId={trackId} patch={patch} item={item} trackName={trackName} />
+
+      {/* SFZ is the common format for free sampled instruments, so this is the
+          shortest path from "I downloaded a piano" to "my track plays it". */}
+      <div data-apollo-sfz style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 9, letterSpacing: 0.4, color: 'var(--text-muted, #8b93a0)' }}>SAMPLED INSTRUMENT</span>
+        <label
+          data-apollo-sfz-label
+          title="Choose a .sfz together with its audio files — the track becomes that multisampled instrument"
+          style={{
+            height: 22, padding: '0 9px', borderRadius: 5, display: 'inline-flex', alignItems: 'center',
+            fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', cursor: 'pointer',
+            background: 'transparent', color: 'var(--text-muted, #8b93a0)',
+            border: '1px solid var(--border, #262c35)',
+          }}
+        >
+          Import SFZ
+          <input
+            type="file"
+            multiple
+            accept=".sfz,audio/*"
+            data-apollo-sfz-input
+            style={{ display: 'none' }}
+            onChange={async e => {
+              const files = Array.from(e.target.files ?? [])
+              e.target.value = ''
+              if (!files.length) return
+              const next = await item.importSfz(files)
+              if (next) onPatch(next)
+            }}
+          />
+        </label>
+        {item.sfzStatus && (
+          <span data-apollo-sfz-status style={{ fontSize: 9, color: 'var(--accent, #4aa9ff)' }}>{item.sfzStatus}</span>
+        )}
+      </div>
 
       {lanes.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
