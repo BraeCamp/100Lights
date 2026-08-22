@@ -59,7 +59,7 @@ const ALL_LAYOUT: { id: ApolloCardScope | 'scope'; cols: number }[] = [
   { id: 'global', cols: 12 },
 ]
 
-function CardBody({ scope }: { scope: ApolloCardScope }) {
+function CardBody({ scope, footer }: { scope: ApolloCardScope; footer?: React.ReactNode }) {
   const ctx = useApollo()
   // inventories sized by use, like the standalone shell
   let envUsed = 1
@@ -113,12 +113,13 @@ function CardBody({ scope }: { scope: ApolloCardScope }) {
       ) : (
         <div style={plate}>{render(scope)}</div>
       )}
+      {footer}
       <KeyboardStrip />
     </div>
   )
 }
 
-export default function ApolloCard({ patch, onChange, scope: initialScope = 'all', title, onClose, fxOnly = false, onParamMove, liveParams, headerExtra }: {
+export default function ApolloCard({ patch, onChange, scope: initialScope = 'all', title, onClose, fxOnly = false, onParamMove, liveParams, headerExtra, footer }: {
   patch: ApolloPatch
   onChange: (p: ApolloPatch) => void
   scope?: ApolloCardScope
@@ -132,6 +133,9 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
   liveParams?: { path: string; value: number; stamp: number } | null
   /** Host controls rendered in the card header (record / loop / takes). */
   headerExtra?: React.ReactNode
+  /** Host panel rendered at the foot of the card, above the keyboard — where
+   *  Beacon puts the hosted track's own clip. */
+  footer?: React.ReactNode
 }) {
   const [scope, setScope] = useState<ApolloCardScope>(fxOnly ? 'fx' : initialScope)
   useEffect(() => {
@@ -266,7 +270,7 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
         </div>
         <div style={{ padding: 12 }}>
           <ApolloProvider quickMod embed={{ patch, onChange }} onParamMove={onParamMove} liveParams={liveParams}>
-            <CardBody scope={scope} />
+            <CardBody scope={scope} footer={footer} />
           </ApolloProvider>
         </div>
       </div>

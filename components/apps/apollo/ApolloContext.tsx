@@ -720,6 +720,10 @@ export function Knob(props: KnobProps) {
       onDrop={droppable ? (e => { e.preventDefault(); setDragOver(false); if (ctx!.getModSource()) ctx!.assignMod(props.path!) }) : undefined}
       style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: size + 14, userSelect: 'none', position: 'relative' }}
       data-learn={props.label}
+      // Addressable by parameter path. data-learn carries a human label and is
+      // shared with tooltips on plain divs and buttons, so it cannot identify
+      // a knob; this can.
+      data-apollo-knob={props.path ?? ''}
       title={props.path ? `${props.label} — drag to change, double-click resets, right-click for MIDI${routes.length ? `; ring drag edits ${routes[0].source} amount` : ''}` : props.label}
       onContextMenu={props.path ? (e => { e.preventDefault(); setMenuOpen(o => !o) }) : undefined}
       onMouseEnter={() => { setHovered(true); readout(props.label, fmtFn(val)) }}

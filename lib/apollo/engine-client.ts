@@ -85,7 +85,7 @@ export class ApolloEngine extends EventTarget {
    * DAW-instrument mode passes an existing context + destination: the node
    * connects straight to the destination and no analyser is created.
    */
-  async init(opts?: { ctx?: BaseAudioContext; destination?: AudioNode; fxInput?: boolean }): Promise<void> {
+  async init(opts?: { ctx?: BaseAudioContext; destination?: AudioNode; fxInput?: boolean; analyse?: boolean }): Promise<void> {
     if (this.ready) return
     const external = !!opts?.ctx
     const ctx = (opts?.ctx as AudioContext) || new AudioContext({ latencyHint: 'interactive' })
@@ -103,7 +103,17 @@ export class ApolloEngine extends EventTarget {
     }
     this.node = node
     if (external) {
-      node.connect(opts?.destination || ctx.destination)
+      // Hosted in someone else's graph. `analyse` keeps the scope alive for a
+      // host that shows Apollo's UI (Beacon's rack window); the per-track
+      // instrument path leaves it off and connects straight through.
+      if (opts?.analyse) {
+        this.analyser = ctx.createAnalyser()
+        this.analyser.fftSize = 2048
+        node.connect(this.analyser)
+        this.analyser.connect(opts?.destination || ctx.destination)
+      } else {
+        node.connect(opts?.destination || ctx.destination)
+      }
     } else {
       this.master = ctx.createGain()
       this.analyser = ctx.createAnalyser()
@@ -406,8 +416,16 @@ export class ApolloEngine extends EventTarget {
   }
 }
 
-let singleton: ApolloEngine | null = null
+// Hung off globalThis, not a module-scoped variable. ApolloCard is loaded
+// through next/dynamic, so this module exists in both the main bundle and that
+// chunk — a module-scoped singleton gives each copy its OWN engine, and the
+// second one quietly builds a second AudioContext and worklet. Beacon then
+// sends transport to an engine nobody is listening to while the card plays on
+// the other. One key on globalThis is what actually makes it one engine.
+const ENGINE_KEY = '__apolloEngineSingleton'
+type EngineHost = typeof globalThis & { [ENGINE_KEY]?: ApolloEngine }
 export function getApolloEngine(): ApolloEngine {
-  if (!singleton) singleton = new ApolloEngine()
-  return singleton
+  const host = globalThis as EngineHost
+  if (!host[ENGINE_KEY]) host[ENGINE_KEY] = new ApolloEngine()
+  return host[ENGINE_KEY]
 }

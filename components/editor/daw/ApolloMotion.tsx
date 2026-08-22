@@ -24,7 +24,16 @@ export interface LiveParam { path: string; value: number; stamp: number }
 /** Points closer together than this are redundant for a knob sweep. */
 const MIN_BEAT_GAP = 1 / 24
 
-export function useApolloMotion(trackId: string) {
+export interface MotionOptions {
+  /** Where "now" comes from while capturing. Apollo plays the hosted item on
+   *  its OWN clock, so when that is running the beat must come from there and
+   *  be mapped onto the arrangement timeline — otherwise moves land wherever
+   *  Beacon's stopped playhead happens to sit. Returning null falls back to
+   *  the DAW transport, which is the original behaviour. */
+  beatSource?: () => number | null
+}
+
+export function useApolloMotion(trackId: string, opts: MotionOptions = {}) {
   const { project, dispatch, engine } = useDaw()
   const [recording, setRecording] = useState(false)
   const [looping, setLooping] = useState(false)
@@ -37,9 +46,12 @@ export function useApolloMotion(trackId: string) {
   const lanes = project.automationLanes.filter(l => l.trackId === trackId && l.parameter.startsWith('apollo:'))
 
   // ── Record: every knob move lands on its lane at the current beat ──
+  const beatSourceRef = useRef(opts.beatSource)
+  beatSourceRef.current = opts.beatSource
+
   const onParamMove = useCallback((path: string, value: number) => {
     if (!recording) return
-    const beat = engine.currentBeat
+    const beat = beatSourceRef.current?.() ?? engine.currentBeat
     const parameter = `apollo:${path}`
     const lane = project.automationLanes.find(l => l.trackId === trackId && l.parameter === parameter)
     // Thin the stream: a knob sweep fires far faster than the curve needs.
@@ -70,8 +82,9 @@ export function useApolloMotion(trackId: string) {
     if (recording || lanes.length === 0) return
     let raf = 0
     const tick = () => {
-      if (engine.isPlaying) {
-        const beat = engine.currentBeat
+      const hosted = beatSourceRef.current?.()
+      if (hosted != null || engine.isPlaying) {
+        const beat = hosted ?? engine.currentBeat
         for (const lane of lanes) {
           const pts = [...lane.points].sort((a, b) => a.beat - b.beat)
           if (!pts.length) continue

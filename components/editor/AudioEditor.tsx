@@ -13,6 +13,8 @@ import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrum
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
+import { useApolloTrackItem, ApolloTrackItemBar } from '@/components/editor/daw/ApolloTrackItem'
+import { useApolloMotion } from '@/components/editor/daw/ApolloMotion'
 import { consumeStudioSeed } from '@/lib/open-in-studio'
 import { readWorkspace, writeWorkspace } from '@/lib/editor-workspace'
 import { InspectorBridge } from './daw/InspectorBridge'
@@ -416,37 +418,79 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
   // PREVIOUS track — which is what the first render after a retarget would do,
   // before the async rebuild lands — would leave the old track's FX on screen
   // for good. Nothing renders until the two agree.
-  const [built, setBuilt] = useState<{ forTrack: string; patch: unknown } | null>(
-    seed ? { forTrack: trackId, patch: seed } : null,
+  const [built, setBuilt] = useState<{ forTrack: string; patch: unknown; hasVoice: boolean } | null>(
+    seed ? { forTrack: trackId, patch: seed, hasVoice: true } : null,
   )
   const { project } = useDaw()
   useEffect(() => {
-    if (seed) { setBuilt({ forTrack: trackId, patch: seed }); return }
+    if (seed) { setBuilt({ forTrack: trackId, patch: seed, hasVoice: true }); return }
     let cancelled = false
     void (async () => {
       const track = project.tracks.find(t => t.id === trackId)
       const { translateChain } = await import('@/lib/apollo/daw-fx')
+      const { translateInstrument } = await import('@/lib/apollo/daw-synth')
       const { initPatch } = await import('@/lib/apollo/patch')
-      const p = initPatch()
-      for (const o of p.oscs) o.enabled = false
-      p.sub.enabled = false; p.noise.enabled = false
-      p.matrix = []
+      // Take the track's instrument when Apollo can express it, so playing the
+      // hosted clip sounds like the track rather than like nothing. Sampled
+      // instruments have no Apollo equivalent — those fall back to the silent
+      // FX-only patch, and the footer disables play and says why.
+      const voice = track?.instrument ? translateInstrument(track.instrument) : null
+      const p = voice ?? initPatch()
+      if (!voice) {
+        for (const o of p.oscs) o.enabled = false
+        p.sub.enabled = false; p.noise.enabled = false
+        p.matrix = []
+      }
       p.fxMain = (track?.effects?.length ? translateChain(track.effects, project.tempo) : []) ?? []
       p.fxBus1 = []; p.fxBus2 = []
-      if (!cancelled) setBuilt({ forTrack: trackId, patch: p })
+      if (!cancelled) setBuilt({ forTrack: trackId, patch: p, hasVoice: !!voice })
     })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackId, seed])
 
-  const patch = built?.forTrack === trackId ? built.patch : null
+  const basePatch = built?.forTrack === trackId ? built.patch : null
+
+  // Mirror of the patch handed to the card, so the item can push it into the
+  // worklet on play (see useApolloTrackItem).
+  const patchRef = useRef<unknown>(null)
+  const item = useApolloTrackItem(trackId, () => patchRef.current)
+  // Capture times against whichever clock is running: Apollo's, while the
+  // hosted item is looping there, otherwise the DAW transport.
+  const motion = useApolloMotion(trackId, { beatSource: item.timelineBeat })
+
+  // Hand the clip to Apollo's own sequencer. It rides along on the patch and is
+  // never read back out — onChange only consumes fxMain — so it cannot leak
+  // into the track's effects.
+  const patch = useMemo(() => {
+    if (!basePatch) return null
+    if (!item.apolloClip) return basePatch
+    return { ...(basePatch as object), clips: [item.apolloClip], activeClip: 0, clipMode: true }
+  }, [basePatch, item.apolloClip])
+
+  patchRef.current = patch
+
   if (!patch) return null
   return (
     <ApolloCardLazy
-      key={trackId}
+      key={`${trackId}:${item.itemKey}`}
       patch={patch as never}
       fxOnly
       title={`${trackName} — FX`}
+      onParamMove={motion.onParamMove}
+      liveParams={motion.live}
+      footer={
+        <ApolloTrackItemBar
+          item={item}
+          trackName={trackName}
+          canPlay={!!built?.hasVoice}
+          recording={motion.recording}
+          onToggleRecord={motion.toggleRecord}
+          lanes={motion.lanes}
+          onRevert={motion.revertParam}
+          onRevertAll={motion.revertAll}
+        />
+      }
       headerExtra={
         // Following means "always show the selected track". Pinning holds the
         // window on one track so picking sounds elsewhere in Beacon can't yank
@@ -465,7 +509,7 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
         ><PinGlyph pinned={!following} />{following ? 'FOLLOWING' : 'PINNED'}</button>
       }
       onChange={onChange as never}
-      onClose={onClose}
+      onClose={() => { item.stop(); onClose() }}
     />
   )
 }
