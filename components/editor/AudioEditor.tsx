@@ -443,7 +443,10 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
       }
       p.fxMain = (track?.effects?.length ? translateChain(track.effects, project.tempo) : []) ?? []
       p.fxBus1 = []; p.fxBus2 = []
-      if (!cancelled) setBuilt({ forTrack: trackId, patch: p, hasVoice: !!voice })
+      // Apollo should agree with the project about what key the song is in.
+      const { patchWithProjectKey } = await import('@/lib/apollo/daw-sample')
+      const keyed = patchWithProjectKey(p, project.key ?? 0, project.scale ?? 'major')
+      if (!cancelled) setBuilt({ forTrack: trackId, patch: keyed, hasVoice: !!voice })
     })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -455,6 +458,12 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
   // worklet on play (see useApolloTrackItem).
   const patchRef = useRef<unknown>(null)
   const item = useApolloTrackItem(trackId, () => patchRef.current)
+  // A patch the card must ADOPT rather than merely see: loading a clip into an
+  // oscillator rewrites the patch, and ApolloProvider only reads its prop at
+  // mount, so the card is remounted on the stamp. Cleared when the window
+  // retargets, or the new track would inherit the old track's sample.
+  const [override, setOverride] = useState<{ patch: unknown; stamp: number } | null>(null)
+  useEffect(() => { setOverride(null) }, [trackId])
   // Capture times against whichever clock is running: Apollo's, while the
   // hosted item is looping there, otherwise the DAW transport.
   const motion = useApolloMotion(trackId, { beatSource: item.timelineBeat })
@@ -463,17 +472,18 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
   // never read back out — onChange only consumes fxMain — so it cannot leak
   // into the track's effects.
   const patch = useMemo(() => {
-    if (!basePatch) return null
-    if (!item.apolloClip) return basePatch
-    return { ...(basePatch as object), clips: [item.apolloClip], activeClip: 0, clipMode: true }
-  }, [basePatch, item.apolloClip])
+    const base = override?.patch ?? basePatch
+    if (!base) return null
+    if (!item.apolloClip) return base
+    return { ...(base as object), clips: [item.apolloClip], activeClip: 0, clipMode: true }
+  }, [basePatch, override, item.apolloClip])
 
   patchRef.current = patch
 
   if (!patch) return null
   return (
     <ApolloCardLazy
-      key={`${trackId}:${item.itemKey}`}
+      key={`${trackId}:${item.itemKey}:${override?.stamp ?? 0}`}
       patch={patch as never}
       fxOnly
       title={`${trackName} — FX`}
@@ -489,6 +499,7 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
           lanes={motion.lanes}
           onRevert={motion.revertParam}
           onRevertAll={motion.revertAll}
+          onPatch={next => setOverride({ patch: next, stamp: Date.now() })}
         />
       }
       headerExtra={

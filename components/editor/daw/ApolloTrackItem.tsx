@@ -14,10 +14,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDaw } from '@/lib/daw-state'
-import { isMidiClip, type MidiClip, type MidiNote } from '@/lib/daw-types'
+import { isAudioClip, isMidiClip, type AudioClip, type MidiClip, type MidiNote } from '@/lib/daw-types'
 import { notesToApollo } from '@/lib/apollo/checkout'
+import { SAMPLE_ENGINES, clipSampleId, patchWithClipSource } from '@/lib/apollo/daw-sample'
 import { getApolloEngine } from '@/lib/apollo/engine-client'
-import type { ApolloPatch, ClipConfig } from '@/lib/apollo/patch'
+import type { ApolloPatch, ClipConfig, OscEngine } from '@/lib/apollo/patch'
 
 /** Read-only note strip. Scales to the clip's own pitch range rather than the
  *  full 0..127, which is the only way a few-pixel-tall strip stays legible. */
@@ -100,7 +101,7 @@ export function trackItemClip(
 }
 
 export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
-  const { project, engine: daw } = useDaw()
+  const { project, engine: daw, dispatch } = useDaw()
   const [playing, setPlaying] = useState(false)
   const [beat, setBeat] = useState(0)
   const engine = useMemo(() => getApolloEngine(), [])
@@ -176,6 +177,70 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
   // Retargeting to another track must not keep playing the previous item.
   useEffect(() => { if (playingRef.current) stop() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [trackId])
 
+  // Audio on this track that Apollo could take as an oscillator source.
+  const audioClips = useMemo(
+    () => (project.arrangementClips as unknown[])
+      .filter((c): c is AudioClip => {
+        const cl = c as AudioClip
+        return cl.trackId === trackId && isAudioClip(cl as never)
+      })
+      .sort((a, b) => a.startBeat - b.startBeat),
+    [project.arrangementClips, trackId],
+  )
+
+  const [loading, setLoading] = useState<string | null>(null)
+
+  /**
+   * Hand a Beacon audio clip to Apollo as oscillator 1's source, and make that
+   * the TRACK's instrument — so the clip is playable from the piano roll in
+   * Beacon's own playback, not merely auditionable inside the Apollo window.
+   *
+   * Returns the patch the card should adopt, or null if the clip's audio could
+   * not be decoded (a dead blob: URL after a reload, typically).
+   */
+  const sendClipToApollo = useCallback(async (clip: AudioClip, oscEngine: OscEngine): Promise<ApolloPatch | null> => {
+    const base = getPatch?.() as ApolloPatch | undefined
+    if (!base) return null
+    setLoading(clip.id)
+    try {
+      await engine.init({ ctx: daw.ctx, destination: daw.masterGain, analyse: true })
+      const buf = await daw.loadClipBuffer(clip)
+      if (!buf) return null
+      const id = clipSampleId(clip.id)
+      engine.loadSample(id, clip.name || 'Clip', buf)
+      // Persist it into Apollo's sample library too. Beacon's per-track engine
+      // calls restorePatchSamples on load, and it can only restore what the
+      // library holds — without this the instrument survives a reload as a
+      // patch pointing at a sample that no longer exists, and plays silence.
+      const { persistApolloSample, persistApolloSpectral } = await import('@/lib/apollo/sample-store')
+      await persistApolloSample(id, clip.name || 'Clip', buf).catch(() => {})
+
+      // The spectral engine reads an FFT analysis, not the raw buffer — handed
+      // only a sample it renders pure silence. Analyse up front so the option
+      // is real rather than a button that does nothing.
+      if (oscEngine === 'spectral') {
+        const { analyzeSpectralInWorker } = await import('@/lib/apollo/spectral')
+        const mono = buf.getChannelData(0)
+        const an = await analyzeSpectralInWorker(new Float32Array(mono), buf.sampleRate)
+        engine.loadSpectralData(id, an)
+        await persistApolloSpectral(id, clip.name || 'Clip', an).catch(() => {})
+      }
+
+      const next = patchWithClipSource(base, id, oscEngine)
+      engine.sendPatch(next)
+
+      // The instrument gets the VOICE only — the track's own effect chain still
+      // applies downstream, and storing the FX here as well would process it
+      // twice.
+      const voice: ApolloPatch = JSON.parse(JSON.stringify(next))
+      voice.fxMain = []; voice.fxBus1 = []; voice.fxBus2 = []
+      dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: voice } as never })
+      return next
+    } finally {
+      setLoading(null)
+    }
+  }, [engine, daw, getPatch, dispatch, trackId])
+
   const loopBeat = lengthBeats ? beat % lengthBeats : 0
   // ApolloProvider takes the host patch as a snapshot on mount and never reads
   // the prop again, so an item edited in Beacon while the window is open would
@@ -185,6 +250,7 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
     : 'none'
   return {
     clip, notes, lengthBeats, apolloClip, playing, toggle, stop, itemKey,
+    audioClips, sendClipToApollo, loadingClip: loading, sampleEngines: SAMPLE_ENGINES,
     /** 0..1 across the strip. */
     playhead: playing && lengthBeats ? loopBeat / lengthBeats : null,
     /** Apollo's loop position mapped onto the arrangement timeline, so moves
@@ -196,7 +262,7 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
 /** The footer strip: the hosted item, its transport, and motion capture.
  *  Capture lives here rather than in the header because it only means anything
  *  while this clip is looping — the two controls belong together. */
-export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onToggleRecord, lanes, onRevert, onRevertAll }: {
+export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onToggleRecord, lanes, onRevert, onRevertAll, onPatch }: {
   item: ReturnType<typeof useApolloTrackItem>
   trackName: string
   canPlay: boolean
@@ -205,6 +271,8 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
   lanes: { id: string; label: string; parameter: string }[]
   onRevert: (laneId: string) => void
   onRevertAll: () => void
+  /** A patch the card must adopt (sending a clip rewrites osc 1). */
+  onPatch: (p: unknown) => void
 }) {
   const playable = canPlay && !!item.apolloClip
   const why = !item.clip ? `${trackName} has no MIDI clip to play`
@@ -251,6 +319,38 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
       </div>
 
       <NoteStrip notes={item.notes} lengthBeats={item.lengthBeats || 4} playhead={item.playhead} />
+
+      {/* Audio on this track can become Apollo's oscillator — the sampler,
+          granular and spectral engines all read one buffer, and Beacon has
+          never had a way to hand one over. */}
+      {item.audioClips.length > 0 && (
+        <div data-apollo-audiosource style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 9, letterSpacing: 0.4, color: 'var(--text-muted, #8b93a0)' }}>
+            {item.audioClips.length === 1
+              ? `AUDIO: ${item.audioClips[0].name || 'clip'} \u2192`
+              : `${item.audioClips.length} AUDIO CLIPS \u2014 FIRST \u2192`}
+          </span>
+          {item.sampleEngines.map(se => (
+            <button
+              key={se.id}
+              data-apollo-send-clip={se.id}
+              disabled={!!item.loadingClip}
+              title={`${se.blurb} \u2014 loads "${item.audioClips[0].name || 'clip'}" into Apollo as oscillator 1`}
+              onClick={async () => {
+                const next = await item.sendClipToApollo(item.audioClips[0], se.id)
+                if (next) onPatch(next)
+              }}
+              style={{
+                height: 22, padding: '0 9px', borderRadius: 5, flex: 'none',
+                fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+                background: 'transparent', color: 'var(--text-muted, #8b93a0)',
+                border: '1px solid var(--border, #262c35)',
+                cursor: item.loadingClip ? 'wait' : 'pointer', opacity: item.loadingClip ? 0.5 : 1,
+              }}
+            >{item.loadingClip === item.audioClips[0].id ? '\u2026' : se.label}</button>
+          ))}
+        </div>
+      )}
 
       {lanes.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
