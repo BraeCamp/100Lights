@@ -91,6 +91,10 @@ export function trackItemClip(
   arrangementClips: { trackId: string; startBeat: number }[],
   sessionGrid: Record<string, (unknown | null)[]>,
   trackId: string,
+  /** The clip the user has actually selected. It wins over position: a track
+   *  with four clips would otherwise always host the first one, so selecting
+   *  the third in the arrangement appeared to do nothing at all. */
+  preferClipId?: string | null,
 ): MidiClip | null {
   const arr = (arrangementClips as unknown[])
     .filter((c): c is MidiClip => {
@@ -98,7 +102,14 @@ export function trackItemClip(
       return cl.trackId === trackId && isMidiClip(cl as never)
     })
     .sort((a, b) => a.startBeat - b.startBeat)
+  if (preferClipId) {
+    const picked = arr.find(c => c.id === preferClipId)
+    if (picked) return picked
+  }
   if (arr.length) return arr[0]
+  for (const slot of sessionGrid[trackId] ?? []) {
+    if (preferClipId && slot && (slot as MidiClip).id === preferClipId && isMidiClip(slot as never)) return slot as MidiClip
+  }
   for (const slot of sessionGrid[trackId] ?? []) {
     if (slot && isMidiClip(slot as never)) return slot as MidiClip
   }
@@ -106,7 +117,7 @@ export function trackItemClip(
 }
 
 export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
-  const { project, engine: daw, dispatch } = useDaw()
+  const { project, engine: daw, dispatch, selectedClipId } = useDaw()
   const [playing, setPlaying] = useState(false)
   const [beat, setBeat] = useState(0)
   const engine = useMemo(() => getApolloEngine(), [])
@@ -114,8 +125,8 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
   playingRef.current = playing
 
   const clip = useMemo(
-    () => trackItemClip(project.arrangementClips as never, project.sessionGrid as never, trackId),
-    [project.arrangementClips, project.sessionGrid, trackId],
+    () => trackItemClip(project.arrangementClips as never, project.sessionGrid as never, trackId, selectedClipId),
+    [project.arrangementClips, project.sessionGrid, trackId, selectedClipId],
   )
 
   // A looping clip tiles its pattern, so the loop length is what repeats.
@@ -183,15 +194,18 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
   useEffect(() => { if (playingRef.current) stop() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [trackId])
 
   // Audio on this track that Apollo could take as an oscillator source.
-  const audioClips = useMemo(
-    () => (project.arrangementClips as unknown[])
+  const audioClips = useMemo(() => {
+    const list = (project.arrangementClips as unknown[])
       .filter((c): c is AudioClip => {
         const cl = c as AudioClip
         return cl.trackId === trackId && isAudioClip(cl as never)
       })
-      .sort((a, b) => a.startBeat - b.startBeat),
-    [project.arrangementClips, trackId],
-  )
+      .sort((a, b) => a.startBeat - b.startBeat)
+    // Selected first: every control here acts on audioClips[0], so without this
+    // picking the second take on a track still loaded the first.
+    const i = list.findIndex(c => c.id === selectedClipId)
+    return i > 0 ? [list[i], ...list.filter((_, n) => n !== i)] : list
+  }, [project.arrangementClips, trackId, selectedClipId])
 
   const [loading, setLoading] = useState<string | null>(null)
 
@@ -379,9 +393,11 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
       {item.audioClips.length > 0 && (
         <div data-apollo-audiosource style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 9, letterSpacing: 0.4, color: 'var(--text-muted, #8b93a0)' }}>
-            {item.audioClips.length === 1
-              ? `AUDIO: ${item.audioClips[0].name || 'clip'} \u2192`
-              : `${item.audioClips.length} AUDIO CLIPS \u2014 FIRST \u2192`}
+            {/* Name the take these buttons will actually load. The list is
+                ordered so the SELECTED clip is first, so saying "first" told
+                the user nothing about which of their takes was the subject. */}
+            {`AUDIO: ${item.audioClips[0].name || 'clip'}`}
+            {item.audioClips.length > 1 ? ` (of ${item.audioClips.length}) \u2192` : ' \u2192'}
           </span>
           {[...item.sampleEngines, {
             id: 'wavetable-from-audio' as const, label: 'Wavetable',

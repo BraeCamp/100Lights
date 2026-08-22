@@ -16,6 +16,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ApolloProvider, useApollo, UI, Section } from './ApolloContext'
+import { beaconThemeVars, useBeaconThemeVersion } from './beacon-palette'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import OscPanel from './OscPanel'
 import SubNoisePanel from './SubNoisePanel'
@@ -138,6 +139,9 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
   footer?: React.ReactNode
 }) {
   const [scope, setScope] = useState<ApolloCardScope>(fxOnly ? 'fx' : initialScope)
+  // Re-renders when the workshop customizer changes anything.
+  const themeVersion = useBeaconThemeVersion()
+  void themeVersion
   useEffect(() => {
     // Capture phase + stopPropagation: Esc closes ONLY the card — it must not
     // leak into the host's own Escape handling (the DAW deselects tracks on
@@ -230,6 +234,12 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
     <div
       data-apollo-window
       style={{
+        // The window is portalled to <body>, which is OUTSIDE the
+        // [data-editor] subtree the workshop theme is scoped to — so it
+        // inherits none of the user's palette. Mirroring the variables onto the
+        // window root gives its whole subtree the customized theme, and
+        // re-reads whenever the customizer changes anything.
+        ...beaconThemeVars(),
         position: 'fixed', left: rect.x, top: rect.y, width: rect.w, height: rect.h,
         zIndex: 500,
         background: 'var(--bg-card, #0a0c0f)',

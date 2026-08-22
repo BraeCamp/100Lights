@@ -1558,6 +1558,15 @@ export default function AudioEditor(props: AudioEditorProps) {
   const setSelectedTrackId  = useCallback((id: string | null) => { setSelectedTrackId_(id);  if (id) setSelectedReturnId_(null) }, [])
   const setSelectedReturnId = useCallback((id: string | null) => { setSelectedReturnId_(id); if (id) setSelectedTrackId_(null)  }, [])
   const [selectedClipId,  setSelectedClipId]  = useState<string | null>(null)
+  // Which track a following Apollo window should point at. A selected CLIP is
+  // the more specific thing to have clicked, so its track wins over the track
+  // selection — otherwise clicking an item in the arrangement moves nothing.
+  const followTrackId = useMemo(() => {
+    const clip = selectedClipId
+      ? project.arrangementClips.find(c => c.id === selectedClipId)
+      : null
+    return clip?.trackId ?? selectedTrackId
+  }, [selectedClipId, project.arrangementClips, selectedTrackId])
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [soundPanel, setSoundPanel] = useState<{ x: number; y: number } | null>(null)
   const [apolloRack, setApolloRack] = useState<{ trackId: string; seed: unknown; follow?: boolean } | null>(null)
@@ -2459,9 +2468,14 @@ export default function AudioEditor(props: AudioEditorProps) {
             {/* Active view */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
               {view === 'session' && <SessionView />}
-      {/* A following window retargets as the track selection changes. */}
-      {apolloRack?.follow && selectedTrackId && apolloRack.trackId !== selectedTrackId && (
-        <ApolloFollow trackId={selectedTrackId} onRetarget={id => setApolloRack({ trackId: id, seed: null, follow: true })} />
+      {/* A following window retargets as the selection changes — and clicking a
+          CLIP is a selection too. Selecting an item on another track has to
+          move Apollo to that track, or picking a clip in the arrangement looks
+          like it does nothing. The clip's own track wins over the track
+          selection, because the clip is the more specific thing to have
+          clicked. */}
+      {apolloRack?.follow && followTrackId && apolloRack.trackId !== followTrackId && (
+        <ApolloFollow trackId={followTrackId} onRetarget={id => setApolloRack({ trackId: id, seed: null, follow: true })} />
       )}
       {apolloRack && (
         <ApolloRackWindow
