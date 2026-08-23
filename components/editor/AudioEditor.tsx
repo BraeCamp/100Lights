@@ -464,6 +464,18 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
   // retargets, or the new track would inherit the old track's sample.
   const [override, setOverride] = useState<{ patch: unknown; stamp: number } | null>(null)
   useEffect(() => { setOverride(null) }, [trackId])
+  // Auto-load the selected item's samples once there is a patch to build on.
+  // Driven from here because `basePatch` arrives asynchronously and this effect
+  // re-runs when it does.
+  useEffect(() => {
+    if (!basePatch || override) return
+    let cancelled = false
+    void item.autoLoadPreset(basePatch as never).then(next => {
+      if (next && !cancelled) setOverride({ patch: next, stamp: Date.now() })
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basePatch, override, item.autoLoadPreset])
   // Capture times against whichever clock is running: Apollo's, while the
   // hosted item is looping there, otherwise the DAW transport.
   const motion = useApolloMotion(trackId, { beatSource: item.timelineBeat })
@@ -491,7 +503,7 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
       title={trackName}
       onParamMove={motion.onParamMove}
       liveParams={motion.live}
-      footer={
+      top={
         <ApolloTrackItemBar
           item={item}
           trackName={trackName}
@@ -534,12 +546,20 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
         // is a silent placeholder, and writing that back would replace a
         // working instrument with silence.
         const track = project.tracks.find(t => t.id === trackId)
-        if (!built?.hasVoice && track?.instrument?.type !== 'apollo') return
+        // Ask the patch on screen, not the one originally built: an auto-loaded
+        // preset gives the card a real voice even though the built patch had
+        // none, and its edits have to persist like any other.
+        if (!patchHasVoice(next) && !built?.hasVoice && track?.instrument?.type !== 'apollo') return
         const voice = JSON.parse(JSON.stringify(next)) as { fxMain: unknown[]; fxBus1: unknown[]; fxBus2: unknown[] }
         // FX live on the track's own chain; keeping a copy here as well would
         // process everything twice.
         voice.fxMain = []; voice.fxBus1 = []; voice.fxBus2 = []
         dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: voice } as never })
+        // An edit is the moment the sound genuinely moves to Apollo. Release
+        // the clips from Beacon's own sampler now — a clip's presetId overrides
+        // the track instrument, so leaving it set would have the preset play
+        // twice with Apollo shaping only half of it.
+        item.commitHandover()
       }}
       onClose={() => { item.stop(); onClose() }}
     />

@@ -60,7 +60,7 @@ const ALL_LAYOUT: { id: ApolloCardScope | 'scope'; cols: number }[] = [
   { id: 'global', cols: 12 },
 ]
 
-function CardBody({ scope, footer }: { scope: ApolloCardScope; footer?: React.ReactNode }) {
+function CardBody({ scope, footer, top }: { scope: ApolloCardScope; footer?: React.ReactNode; top?: React.ReactNode }) {
   const ctx = useApollo()
   // inventories sized by use, like the standalone shell
   let envUsed = 1
@@ -99,6 +99,7 @@ function CardBody({ scope, footer }: { scope: ApolloCardScope; footer?: React.Re
   } as React.CSSProperties
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {top}
       {scope === 'all' ? (
         <div style={{
           ...plate,
@@ -120,7 +121,10 @@ function CardBody({ scope, footer }: { scope: ApolloCardScope; footer?: React.Re
   )
 }
 
-export default function ApolloCard({ patch, onChange, scope: initialScope = 'all', title, onClose, fxOnly = false, onParamMove, liveParams, headerExtra, footer }: {
+/** Surviving window geometry — see the note where it is read. */
+let lastRect: { x: number; y: number; w: number; h: number } | null = null
+
+export default function ApolloCard({ patch, onChange, scope: initialScope = 'all', title, onClose, fxOnly = false, onParamMove, liveParams, headerExtra, footer, top }: {
   patch: ApolloPatch
   onChange: (p: ApolloPatch) => void
   scope?: ApolloCardScope
@@ -134,9 +138,12 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
   liveParams?: { path: string; value: number; stamp: number } | null
   /** Host controls rendered in the card header (record / loop / takes). */
   headerExtra?: React.ReactNode
-  /** Host panel rendered at the foot of the card, above the keyboard — where
-   *  Beacon puts the hosted track's own clip. */
+  /** Host panel rendered at the foot of the card, above the keyboard. */
   footer?: React.ReactNode
+  /** Host panel rendered at the TOP of the card, above every module — where
+   *  Beacon puts the hosted track item, because it is the subject of
+   *  everything below it rather than an afterthought under the keyboard. */
+  top?: React.ReactNode
 }) {
   const [scope, setScope] = useState<ApolloCardScope>(fxOnly ? 'fx' : initialScope)
   // Re-renders when the workshop customizer changes anything.
@@ -160,7 +167,7 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
   // work on the track while the rack is open. It is now a window you can move
   // and resize, and only its own X (or Esc) closes it.
   const wideDefault = scope === 'all' || scope === 'fx' || scope === 'osc' || scope === 'clip'
-  const [rect, setRect] = useState(() => {
+  const [rect, setRect] = useState(() => lastRect ?? (() => {
     // The full instrument is a dense layout — twelve modules across twelve
     // columns. Sized to the viewport rather than a fixed 1280 so it does not
     // read as a small panel dropped into a large screen; a single-scope view
@@ -172,7 +179,14 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
     const h = Math.min(scope === 'all' ? 920 : 820, vh - 70)
     const x = Math.max(20, (vw - w) / 2)
     return { x, y: 44, w, h }
-  })
+  })())
+  // Remember it across remounts. The host re-keys this card whenever the hosted
+  // item changes (ApolloProvider only reads its patch prop at mount, so a
+  // remount is how a new item reaches the synth) — and a remount would
+  // otherwise re-run the initialiser and snap a window you had carefully sized
+  // and placed back to its default. Module scope is right because there is one
+  // window: reopening it later should also land where you left it.
+  useEffect(() => { lastRect = rect }, [rect])
   const dragRef = useRef<{ mode: string; sx: number; sy: number; r: typeof rect } | null>(null)
 
   const onDragPointer = useCallback((e: React.PointerEvent, mode: string) => {
@@ -300,7 +314,7 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
         </div>
         <div style={{ padding: 12 }}>
           <ApolloProvider quickMod embed={{ patch, onChange }} onParamMove={onParamMove} liveParams={liveParams}>
-            <CardBody scope={scope} footer={footer} />
+            <CardBody scope={scope} footer={footer} top={top} />
           </ApolloProvider>
         </div>
       </div>

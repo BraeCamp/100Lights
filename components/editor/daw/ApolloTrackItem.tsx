@@ -291,6 +291,16 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
   }, [clip])
 
   /**
+   * Clips whose sound is about to move into Apollo.
+   *
+   * Auto-loading puts the preset's samples in the oscillator so you can shape
+   * them, but it does NOT rewrite the project — clicking around tracks must not
+   * mutate them. The handover happens on the first real edit, and this is what
+   * the host consults then to release the clips from Beacon's own sampler.
+   */
+  const pendingHandoverRef = useRef<{ presetId: string; clipIds: string[] } | null>(null)
+
+  /**
    * Pull the clip's preset into Apollo as a real multisampled instrument, so
    * its filters, envelopes, mod matrix and FX all apply to the sampled sound.
    */
@@ -356,6 +366,66 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
     }
   }, [engine, daw, getPatch, dispatch, trackId])
 
+  /**
+   * Put the selected item's samples into the oscillator automatically.
+   *
+   * Selecting a track item should mean Apollo is looking at THAT sound — the
+   * oscillator section showing the item's own samples, so a change there
+   * changes the item. Loading only builds a patch for the window; the project
+   * is untouched until an actual edit commits it, so browsing tracks with the
+   * window open stays free of side effects.
+   */
+  /**
+   * Put the selected item's samples into the oscillator.
+   *
+   * Selecting a track item should mean Apollo is looking at THAT sound, with
+   * the item's own samples in the oscillator, so a change there changes the
+   * item. This only builds a patch for the window — the project is untouched
+   * until an edit commits it, so browsing tracks with the window open stays
+   * free of side effects.
+   *
+   * Driven by the host rather than an effect in here, because the patch to
+   * build on arrives asynchronously: an effect that fired once on selection
+   * would run before the patch existed, and a one-shot guard would then never
+   * retry.
+   */
+  const autoRef = useRef<string>('')
+  const autoLoadPreset = useCallback(async (base: ApolloPatch): Promise<ApolloPatch | null> => {
+    const track = project.tracks.find(t => t.id === trackId)
+    // Already an Apollo instrument: its own patch is the truth, leave it alone.
+    if (!clipPreset || track?.instrument?.type === 'apollo') return null
+    const key = `${trackId}:${clipPreset.id}`
+    if (autoRef.current === key) return null
+    try {
+      await engine.init({ ctx: daw.ctx, destination: daw.masterGain, analyse: true })
+      const res = await presetToApolloPatch(base, clipPreset, engine)
+      // Claim the key only on success, so a failed or too-early attempt can be
+      // retried rather than silently disabling itself for this track.
+      autoRef.current = key
+      engine.sendPatch(res.patch)
+      pendingHandoverRef.current = {
+        presetId: clipPreset.id,
+        clipIds: (project.arrangementClips as unknown as { id: string; trackId: string; presetId?: string }[])
+          .filter(c => c.trackId === trackId && c.presetId === clipPreset.id).map(c => c.id),
+      }
+      return res.patch
+    } catch {
+      return null   // nothing playable in that folder — the button still explains
+    }
+  }, [clipPreset, trackId, project.tracks, project.arrangementClips, engine, daw])
+
+  /** Release the clips from Beacon's sampler — called by the host once an edit
+   *  has actually committed the instrument, so Apollo owns the sound instead of
+   *  doubling it. */
+  const commitHandover = useCallback(() => {
+    const pend = pendingHandoverRef.current
+    if (!pend) return
+    pendingHandoverRef.current = null
+    for (const id of pend.clipIds) {
+      dispatch({ type: 'UPDATE_CLIP', clipId: id, patch: { presetId: undefined } as never })
+    }
+  }, [dispatch])
+
   const loopBeat = lengthBeats ? beat % lengthBeats : 0
   // ApolloProvider takes the host patch as a snapshot on mount and never reads
   // the prop again, so an item edited in Beacon while the window is open would
@@ -368,6 +438,7 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
     audioClips, sendClipToApollo, loadingClip: loading, sampleEngines: SAMPLE_ENGINES,
     importSfz, sfzStatus,
     clipPreset, loadPresetIntoApollo, presetStatus,
+    commitHandover, autoLoadPreset,
     /** 0..1 across the strip. */
     playhead: playing && lengthBeats ? loopBeat / lengthBeats : null,
     /** Apollo's loop position mapped onto the arrangement timeline, so moves
