@@ -310,7 +310,11 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
     setPresetStatus('Loading samples…')
     try {
       await engine.init({ ctx: daw.ctx, destination: daw.masterGain, analyse: true })
-      const res = await presetToApolloPatch(base, clipPreset, engine)
+      const res = await presetToApolloPatch(base, clipPreset, engine, {
+        // Only the notes this item plays need real samples; the rest of the
+        // keyboard is covered by stretching the outer zones.
+        pitches: notes.map(nt => nt.pitch),
+      })
       engine.sendPatch(res.patch)
       const voice: ApolloPatch = JSON.parse(JSON.stringify(res.patch))
       voice.fxMain = []; voice.fxBus1 = []; voice.fxBus2 = []
@@ -398,7 +402,11 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
     if (autoRef.current === key) return null
     try {
       await engine.init({ ctx: daw.ctx, destination: daw.masterGain, analyse: true })
-      const res = await presetToApolloPatch(base, clipPreset, engine)
+      const res = await presetToApolloPatch(base, clipPreset, engine, {
+        // Only the notes this item plays need real samples; the rest of the
+        // keyboard is covered by stretching the outer zones.
+        pitches: notes.map(nt => nt.pitch),
+      })
       // Claim the key only on success, so a failed or too-early attempt can be
       // retried rather than silently disabling itself for this track.
       autoRef.current = key

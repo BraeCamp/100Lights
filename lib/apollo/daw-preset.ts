@@ -52,7 +52,7 @@ export async function presetToApolloPatch(
   patch: ApolloPatch,
   preset: { name: string; folder: string; loNote?: number; hiNote?: number },
   engine: ApolloEngine,
-  opts: { oscIndex?: number; maxZones?: number } = {},
+  opts: { oscIndex?: number; maxZones?: number; pitches?: number[] } = {},
 ): Promise<PresetImportResult> {
   const i = opts.oscIndex ?? 0
   const cap = opts.maxZones ?? 64
@@ -67,36 +67,58 @@ export async function presetToApolloPatch(
     .filter((x): x is { e: typeof inFolder[0]; pitch: number } => x.pitch != null)
     .sort((a, b) => a.pitch - b.pitch)
 
-  // A big instrument can hold a sample per semitone; every zone is a decode and
-  // a transfer to the worklet, so thin evenly rather than truncating the top.
-  const chosen = pitched.length > cap
-    ? pitched.filter((_, n) => n % Math.ceil(pitched.length / cap) === 0)
-    : pitched
-
-  const zones: MultisampleZone[] = []
-  let skipped = 0
-  for (let n = 0; n < chosen.length; n++) {
-    const { e, pitch } = chosen[n]
-    try {
-      if (!engine.samples.has(e.id)) {
-        const full = await libraryFulfill(e.id)
-        if (!full?.audioBlob) { skipped++; continue }
-        const buf = await blobToBuffer(full.audioBlob, engine)
-        if (!buf) { skipped++; continue }
-        engine.loadSample(e.id, e.name, buf)
-      }
-      const prev = chosen[n - 1]?.pitch
-      const next = chosen[n + 1]?.pitch
-      zones.push({
-        sampleId: e.id,
-        loKey: prev == null ? (preset.loNote ?? 0) : Math.floor((prev + pitch) / 2) + 1,
-        hiKey: next == null ? (preset.hiNote ?? 127) : Math.floor((pitch + next) / 2),
-        loVel: 0, hiVel: 127,
-        rootKey: pitch, tune: 0, gain: 0,
-        loopMode: 'off', loopStart: 0, loopEnd: 1,
-      })
-    } catch { skipped++ }
+  // Every zone is a decode and a transfer to the worklet, and a full sampled
+  // instrument can hold one per semitone — 37 of them took 6.6 seconds to open.
+  //
+  // When the caller knows which pitches the music actually uses, keep only the
+  // samples needed to cover that range (plus one either side, so bends and
+  // edits nearby still land on a real sample). Everything outside still plays:
+  // the outermost zones are stretched to 0 and 127 below, so a stray note is
+  // transposed from the nearest loaded sample rather than falling silent.
+  let candidates = pitched
+  if (opts.pitches?.length) {
+    const lo = Math.min(...opts.pitches)
+    const hi = Math.max(...opts.pitches)
+    const inRange = pitched.filter(x => x.pitch >= lo && x.pitch <= hi)
+    const below = pitched.filter(x => x.pitch < lo).slice(-1)
+    const above = pitched.filter(x => x.pitch > hi).slice(0, 1)
+    const near = [...below, ...inRange, ...above]
+    if (near.length) candidates = near
   }
+
+  // Still too many? Thin evenly rather than truncating the top.
+  const chosen = candidates.length > cap
+    ? candidates.filter((_, n) => n % Math.ceil(candidates.length / cap) === 0)
+    : candidates
+
+  // Fetch and decode every sample AT ONCE. These were awaited one at a time,
+  // which turned an instrument into as many serial round-trips as it had notes.
+  const loaded = await Promise.all(chosen.map(async ({ e, pitch }) => {
+    try {
+      if (engine.samples.has(e.id)) return { e, pitch, ok: true }
+      const full = await libraryFulfill(e.id)
+      if (!full?.audioBlob) return { e, pitch, ok: false }
+      const buf = await blobToBuffer(full.audioBlob, engine)
+      if (!buf) return { e, pitch, ok: false }
+      engine.loadSample(e.id, e.name, buf)
+      return { e, pitch, ok: true }
+    } catch { return { e, pitch, ok: false } }
+  }))
+
+  const usable = loaded.filter(x => x.ok)
+  const skipped = loaded.length - usable.length
+  const zones: MultisampleZone[] = usable.map(({ e, pitch }, n) => {
+    const prev = usable[n - 1]?.pitch
+    const next = usable[n + 1]?.pitch
+    return {
+      sampleId: e.id,
+      loKey: prev == null ? (preset.loNote ?? 0) : Math.floor((prev + pitch) / 2) + 1,
+      hiKey: next == null ? (preset.hiNote ?? 127) : Math.floor((pitch + next) / 2),
+      loVel: 0, hiVel: 127,
+      rootKey: pitch, tune: 0, gain: 0,
+      loopMode: 'off' as const, loopStart: 0, loopEnd: 1,
+    }
+  })
   if (!zones.length) throw new Error(`No playable samples found in "${preset.folder}"`)
 
   // The outermost zones cover everything past the sampled range, so a note
