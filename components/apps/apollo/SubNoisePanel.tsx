@@ -13,6 +13,12 @@ const DEST_OPTS = [
 
 // `only` (optional — Apollo 2's voice chain renders Sub and Noise as separate
 // chain segments): limit to one of the two strips.
+
+const NOTE_LABELS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+function noteLabel(n: number): string {
+  return `${NOTE_LABELS[((n % 12) + 12) % 12]}${Math.floor(n / 12) - 1}`
+}
+
 export default function SubNoisePanel({ only }: { only?: 'sub' | 'noise' } = {}) {
   const ctx = useApollo()
   const { sub, noise } = ctx.patch
@@ -27,6 +33,23 @@ export default function SubNoisePanel({ only }: { only?: 'sub' | 'noise' } = {})
             { value: 'sine', label: 'Sine' }, { value: 'triangle', label: 'Triangle' },
             { value: 'square', label: 'Square' }, { value: 'saw', label: 'Saw' },
           ]} onChange={v => ctx.update(p => { p.sub.shape = v as typeof sub.shape })} />
+          {/* Which note the sub follows. Per-note stacks a sub under every note
+              of a chord or piano roll, which triples the low end and makes the
+              limiter clamp the whole mix — audible as the sound cutting out. */}
+          <Sel width={86} value={sub.ref ?? 'lowest'} options={[
+            { value: 'lowest', label: 'Lowest note' },
+            { value: 'fixed', label: 'Fixed note' },
+            { value: 'each', label: 'Per note' },
+          ]} onChange={v => ctx.update(p => { p.sub.ref = v as 'each' | 'lowest' | 'fixed' })} />
+          {(sub.ref ?? 'lowest') === 'fixed' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 2 }} data-apollo-subref>
+              <button onClick={() => ctx.update(p => { p.sub.refNote = Math.max(0, (p.sub.refNote ?? 36) - 1) })} style={btn}>−</button>
+              <span style={{ fontSize: 10, minWidth: 30, textAlign: 'center', color: 'var(--text-muted, #8b93a0)' }}>
+                {noteLabel(sub.refNote ?? 36)}
+              </span>
+              <button onClick={() => ctx.update(p => { p.sub.refNote = Math.min(127, (p.sub.refNote ?? 36) + 1) })} style={btn}>+</button>
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <button onClick={() => ctx.update(p => { p.sub.octave = Math.max(-2, p.sub.octave - 1) })} style={btn}>−</button>
             <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 28, textAlign: 'center' }}>{sub.octave} oct</span>

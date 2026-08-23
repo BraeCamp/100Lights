@@ -2789,7 +2789,17 @@ class ApolloProcessor extends AudioWorkletProcessor {
       this.routeSource(cfg, sL, sR, n, f1L, f1R, f2L, f2R)
     }
     // sub
-    if (patch.sub.enabled) {
+    // One sub, not one per voice. 'each' keeps the old literal behaviour;
+    // otherwise only the voice holding the reference note renders it, so a
+    // chord or a piano roll does not stack a sub under every note and bury the
+    // low end (which the master limiter then clamps, sounding like a dropout).
+    // A patch saved before this option existed has no `ref`, and its author
+    // voiced it against per-note subs — qa-synth caught exactly that: the
+    // wavetable-strings preset lost its low end and its centroid jumped from
+    // 164Hz to 994Hz. So absent means 'each' (unchanged), while initPatch gives
+    // every NEW patch 'lowest'.
+    const subRef = patch.sub.ref || 'each'
+    if (patch.sub.enabled && (subRef === 'each' || this.subOwner === v)) {
       const sL = this.srcL, sR = this.srcR
       sL.fill(0, 0, n); sR.fill(0, 0, n)
       this.renderSub(v, patch.sub, n, sL, sR)
@@ -2942,7 +2952,12 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const pan = clamp(this.vp(v, 'sub.pan', cfg.pan), -1, 1)
     const pl = Math.cos((pan + 1) * Math.PI / 4) * level
     const pr = Math.sin((pan + 1) * Math.PI / 4) * level
-    const freq = v.curFreq * Math.pow(2, cfg.octave) * Math.pow(2, this.pitchBendSemis / 12)
+    // 'fixed' pins the sub to one note whatever is played; otherwise it
+    // tracks the voice that owns it.
+    const subBase = (cfg.ref === 'fixed' && cfg.refNote != null)
+      ? 440 * Math.pow(2, (cfg.refNote - 69) / 12)
+      : v.curFreq
+    const freq = subBase * Math.pow(2, cfg.octave) * Math.pow(2, this.pitchBendSemis / 12)
     const inc = freq / this.sr
     let ph = v.subPhase
     for (let i = 0; i < n; i++) {
@@ -3108,6 +3123,22 @@ class ApolloProcessor extends AudioWorkletProcessor {
     }
   }
 
+  /**
+   * The voice the sub follows this block: the lowest note sounding, preferring
+   * held voices over releasing ones so the sub does not jump onto a note that
+   * is fading out. Recomputed per block, so it tracks a moving bass line.
+   */
+  pickSubOwner() {
+    let best = null
+    for (const v of this.voices) {
+      if (!v.active) continue
+      if (!best) { best = v; continue }
+      if (v.gate !== best.gate) { if (v.gate) best = v; continue }
+      if (v.note < best.note) best = v
+    }
+    this.subOwner = best
+  }
+
   processInner(inputs, outputs) {
     const out = outputs[0]
     const OL = out[0], OR = out.length > 1 ? out[1] : out[0]
@@ -3183,6 +3214,8 @@ class ApolloProcessor extends AudioWorkletProcessor {
     } else {
       this.runSchedule(blockSec)
       this.stepSequencer(blockBeats)
+      // Decide which voice owns the sub before any voice renders one.
+      this.pickSubOwner()
       for (const v of this.voices) {
         if (!v.active) continue
         voiceCount++

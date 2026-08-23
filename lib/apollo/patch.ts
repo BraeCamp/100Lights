@@ -143,6 +143,20 @@ export interface SubConfig {
   level: number; pan: number
   direct: boolean // bypass filters + FX
   dest: SourceDest; filterBal: number; bus: BusDest
+  /**
+   * Which note the sub follows.
+   *
+   * 'each' is the literal per-voice behaviour: every note gets its own sub an
+   * octave down. On a chord or a piano roll that stacks — a triad becomes three
+   * subs, the low end triples, and the master limiter clamps down on
+   * everything, which sounds exactly like the audio cutting out.
+   *
+   * 'lowest' (the default) sounds ONE sub, following the lowest note playing,
+   * which is what a sub is musically for. 'fixed' pins it to `refNote`.
+   */
+  ref?: 'each' | 'lowest' | 'fixed'
+  /** MIDI note for ref: 'fixed'. */
+  refNote?: number
 }
 
 export interface NoiseConfig {
@@ -675,7 +689,7 @@ export function initPatch(): ApolloPatch {
       follower: { attack: 10, release: 200, gain: 1 },
     },
     oscs: [defaultOsc(0), defaultOsc(1), defaultOsc(2)],
-    sub: { enabled: false, shape: 'sine', octave: -1, level: 0.5, pan: 0, direct: false, dest: 'f1', filterBal: 0, bus: 'main' },
+    sub: { enabled: false, shape: 'sine', octave: -1, level: 0.5, pan: 0, direct: false, dest: 'f1', filterBal: 0, bus: 'main', ref: 'lowest', refNote: 36 },
     noise: { enabled: false, sampleId: null, level: 0.5, pan: 0, pitch: 0, keytrack: false, oneShot: false, phase: 0, rand: 1, dest: 'f1', filterBal: 0, bus: 'main' },
     filters: [
       { enabled: false, type: 'lp12', cutoff: 0.8, res: 0.15, drive: 0, fat: 0.5, mix: 1, pan: 0, keytrack: 0, bus: 'main' },
