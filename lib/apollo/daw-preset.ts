@@ -52,7 +52,7 @@ export async function presetToApolloPatch(
   patch: ApolloPatch,
   preset: { name: string; folder: string; loNote?: number; hiNote?: number },
   engine: ApolloEngine,
-  opts: { oscIndex?: number; maxZones?: number; pitches?: number[] } = {},
+  opts: { oscIndex?: number; maxZones?: number; pitches?: number[]; spacingSemis?: number } = {},
 ): Promise<PresetImportResult> {
   const i = opts.oscIndex ?? 0
   const cap = opts.maxZones ?? 64
@@ -86,10 +86,35 @@ export async function presetToApolloPatch(
     if (near.length) candidates = near
   }
 
+  // Keep a SMALL set and let Apollo retune between them.
+  //
+  // A preset folder holds one entry per semitone, because seeding explodes a
+  // soundfont that way: notes the soundfont has natively keep their mp3, and
+  // every other note is a pre-rendered resampled copy of its neighbour. Loading
+  // all of them decodes dozens of samples, most of which are already
+  // resamplings — and Apollo may then resample AGAIN when a played note does
+  // not sit exactly on a zone's root. Taking one sample every few semitones and
+  // letting the zone keytracking cover the gaps removes that second layer and
+  // most of the decoding.
+  //
+  // The spacing is what bounds the quality cost: at 3 semitones nothing is ever
+  // retuned by more than 1.5, which is well inside transparent for pitched
+  // material — and it is the same interval the source soundfonts are sampled at.
+  const spacing = Math.max(1, Math.round(opts.spacingSemis ?? 3))
+  const spaced: typeof candidates = []
+  for (const c of candidates) {
+    const last = spaced[spaced.length - 1]
+    if (!last || c.pitch - last.pitch >= spacing) spaced.push(c)
+  }
+  // Always keep the top of the range: without it the highest notes would be
+  // stretched up from whatever the last kept sample happened to be.
+  const top = candidates[candidates.length - 1]
+  if (top && spaced[spaced.length - 1] !== top) spaced.push(top)
+
   // Still too many? Thin evenly rather than truncating the top.
-  const chosen = candidates.length > cap
-    ? candidates.filter((_, n) => n % Math.ceil(candidates.length / cap) === 0)
-    : candidates
+  const chosen = spaced.length > cap
+    ? spaced.filter((_, n) => n % Math.ceil(spaced.length / cap) === 0)
+    : spaced
 
   // Fetch and decode every sample AT ONCE. These were awaited one at a time,
   // which turned an instrument into as many serial round-trips as it had notes.
