@@ -22,6 +22,8 @@ import {
 import { ApolloLfoBake } from './ApolloLfoBake'
 import { chordFromNotes, printArp } from '@/lib/apollo/daw-arp'
 import { SfzImportError, importSfzToPatch } from '@/lib/apollo/daw-sfz'
+import { presetToApolloPatch } from '@/lib/apollo/daw-preset'
+import { getPresets } from '@/lib/midi-presets'
 import { getApolloEngine } from '@/lib/apollo/engine-client'
 import type { ApolloPatch, ClipConfig, OscEngine } from '@/lib/apollo/patch'
 
@@ -277,6 +279,56 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
   }, [engine, daw, getPatch, dispatch, trackId])
 
   const [sfzStatus, setSfzStatus] = useState<string | null>(null)
+  const [presetStatus, setPresetStatus] = useState<string | null>(null)
+
+  /** The sampled preset the hosted clip plays, if any. This is what most
+   *  Beacon tracks actually sound like — a folder of per-note samples chosen
+   *  per clip, not a synth patch. */
+  const clipPreset = useMemo(() => {
+    const id = (clip as unknown as { presetId?: string } | null)?.presetId
+    if (!id) return null
+    try { return getPresets().find(pr => pr.id === id) ?? null } catch { return null }
+  }, [clip])
+
+  /**
+   * Pull the clip's preset into Apollo as a real multisampled instrument, so
+   * its filters, envelopes, mod matrix and FX all apply to the sampled sound.
+   */
+  const loadPresetIntoApollo = useCallback(async (): Promise<ApolloPatch | null> => {
+    const base = getPatch?.() as ApolloPatch | undefined
+    if (!base || !clipPreset) return null
+    setPresetStatus('Loading samples…')
+    try {
+      await engine.init({ ctx: daw.ctx, destination: daw.masterGain, analyse: true })
+      const res = await presetToApolloPatch(base, clipPreset, engine)
+      engine.sendPatch(res.patch)
+      const voice: ApolloPatch = JSON.parse(JSON.stringify(res.patch))
+      voice.fxMain = []; voice.fxBus1 = []; voice.fxBus2 = []
+      dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'apollo', params: voice } as never })
+
+      // Hand the sound OVER, rather than adding a second copy of it. A clip's
+      // presetId overrides the track instrument in the scheduler, so leaving it
+      // set means Beacon keeps voicing the preset from its own sampler while
+      // Apollo voices it too: the track plays twice, and Apollo's filters and
+      // envelopes only shape half of what you hear. Every clip on this track
+      // that used the preset now plays through Apollo instead.
+      const moved = (project.arrangementClips as unknown as { id: string; trackId: string; presetId?: string }[])
+        .filter(c => c.trackId === trackId && c.presetId === clipPreset.id)
+      for (const c of moved) {
+        dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { presetId: undefined } as never })
+      }
+
+      setPresetStatus(res.skipped
+        ? `${res.name}: ${res.zones} notes (${res.skipped} unreadable)`
+        : `${res.name}: ${res.zones} notes`)
+      window.setTimeout(() => setPresetStatus(null), 5000)
+      return res.patch
+    } catch (e) {
+      setPresetStatus(e instanceof Error ? e.message.slice(0, 80) : 'Could not load that preset')
+      window.setTimeout(() => setPresetStatus(null), 5000)
+      return null
+    }
+  }, [clipPreset, engine, daw, getPatch, dispatch, trackId, project.arrangementClips])
 
   /** Load a sampled instrument (.sfz + its audio) onto this track. */
   const importSfz = useCallback(async (files: File[]): Promise<ApolloPatch | null> => {
@@ -315,6 +367,7 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
     clip, notes, lengthBeats, apolloClip, playing, toggle, stop, itemKey,
     audioClips, sendClipToApollo, loadingClip: loading, sampleEngines: SAMPLE_ENGINES,
     importSfz, sfzStatus,
+    clipPreset, loadPresetIntoApollo, presetStatus,
     /** 0..1 across the strip. */
     playhead: playing && lengthBeats ? loopBeat / lengthBeats : null,
     /** Apollo's loop position mapped onto the arrangement timeline, so moves
@@ -427,6 +480,35 @@ export function ApolloTrackItemBar({ item, trackName, canPlay, recording, onTogg
       <ApolloLfoBake trackId={trackId} patch={patch as never} spanBeats={item.lengthBeats || 4} />
 
       <ApolloArpPrint trackId={trackId} patch={patch} item={item} trackName={trackName} />
+
+      {/* The clip's own sampled preset — for most tracks this IS the sound, and
+          until now Apollo had no way to voice it. */}
+      {/* Kept mounted while a status is showing: handing the preset over clears
+          the clip's presetId, which would otherwise unmount this row the instant
+          it succeeded and take the confirmation with it. */}
+      {(item.clipPreset || item.presetStatus) && (
+        <div data-apollo-preset style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 9, letterSpacing: 0.4, color: 'var(--text-muted, #8b93a0)' }}>
+            {item.clipPreset ? `PRESET: ${item.clipPreset.name} →` : 'PRESET → APOLLO'}
+          </span>
+          {item.clipPreset && <button
+            onClick={async () => { const next = await item.loadPresetIntoApollo(); if (next) onPatch(next) }}
+            disabled={!!item.presetStatus}
+            data-apollo-load-preset
+            title={`Load ${item.clipPreset.name}'s samples into Apollo so its filters, envelopes and effects shape the sound`}
+            style={{
+              height: 22, padding: '0 9px', borderRadius: 5, flex: 'none',
+              fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+              background: 'transparent', color: 'var(--text-muted, #8b93a0)',
+              border: '1px solid var(--border, #262c35)',
+              cursor: item.presetStatus ? 'wait' : 'pointer', opacity: item.presetStatus ? 0.5 : 1,
+            }}
+          >Open in Apollo</button>}
+          {item.presetStatus && (
+            <span data-apollo-preset-status style={{ fontSize: 9, color: 'var(--accent, #4aa9ff)' }}>{item.presetStatus}</span>
+          )}
+        </div>
+      )}
 
       {/* SFZ is the common format for free sampled instruments, so this is the
           shortest path from "I downloaded a piano" to "my track plays it". */}
