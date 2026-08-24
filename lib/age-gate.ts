@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { ensureSchema } from '@/lib/schema-version'
 
 // 13+ age gate (COPPA). The Privacy Policy already states the Service isn't for
 // under-13; this enforces it: every signed-in user confirms their birth date
@@ -6,9 +7,8 @@ import { sql } from '@/lib/db'
 // record so the block persists and so "we do not knowingly serve under-13" is
 // backed by an actual check.
 
-let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  await ensureSchema('user_age', 1, async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS user_age (
       user_id      TEXT        PRIMARY KEY,
@@ -17,7 +17,7 @@ async function ensure(): Promise<void> {
       confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `
-  ready = true
+  })
 }
 
 export interface AgeStatus {

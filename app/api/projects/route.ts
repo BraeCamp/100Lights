@@ -6,17 +6,17 @@ import { getSubscription, getPlanLimits } from '@/lib/subscription'
 import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
 import { slugify } from '@/lib/slugify'
 import { ensureSharingSchema } from '@/lib/project-access'
+import { ensureSchema } from '@/lib/schema-version'
 
-// Add slug + owner_username columns on first cold start (idempotent)
-let columnsReady = false
+// Schema for the projects table. Gated by a version stamp rather than a
+// per-process flag: this route is on the cloud-project path, so the three
+// ALTERs below were running on every cold start just to list somebody's songs.
 async function ensureSlugColumns() {
-  if (columnsReady) return
-  try {
+  await ensureSchema('projects.columns', 1, async () => {
     await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS slug TEXT`
     await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_username TEXT`
     await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS folder_id TEXT`
-  } catch { /* ignore */ }
-  columnsReady = true
+  })
 }
 
 async function uniqueSlug(userId: string, name: string, excludeId?: string): Promise<string> {

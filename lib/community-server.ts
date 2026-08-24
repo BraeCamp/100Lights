@@ -1,4 +1,5 @@
 import { sql } from './db'
+import { ensureSchema } from './schema-version'
 import { createHash } from 'node:crypto'
 
 // Server-side shared helpers for the community API routes.
@@ -19,7 +20,6 @@ export function communityHandle(userId: string, official: boolean): string {
   return 'u' + createHash('md5').update(userId).digest('hex').slice(0, 12)
 }
 
-let tablesReady = false
 /** Route ids come straight from the URL — reject non-UUIDs before they hit
  *  Postgres, which throws (500) instead of returning no rows. */
 /** Serialize an object for a <script type="application/ld+json"> block. JSON.stringify
@@ -44,11 +44,12 @@ export function isUuid(id: string): boolean {
  * /community", even though each caller already had a try/catch around its own
  * query and would happily have rendered an empty feed.
  *
- * `tablesReady` stays false on failure, so it retries once the database is back.
+ * The version lookup below also means the DDL runs once per deploy rather than
+ * once per cold start; a failure leaves it unstamped so the next one retries.
  */
 export async function ensureTables() {
-  if (tablesReady) return
-  try { await buildTables(); tablesReady = true } catch { /* unreachable DB — callers degrade */ }
+  // One small version lookup per cold start instead of 34 DDL round trips.
+  await ensureSchema('community', 1, buildTables)
 }
 
 async function buildTables() {

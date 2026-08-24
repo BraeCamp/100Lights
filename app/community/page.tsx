@@ -7,7 +7,9 @@ import CommunityClient from './CommunityClient'
 // crawlers, then hands them to the interactive client feed. Metadata lives in
 // layout.tsx. ISR keeps the server-rendered feed reasonably fresh.
 export const runtime = 'nodejs'
-export const revalidate = 300
+// One regeneration an hour, not one every five minutes. The feed is not
+// changing that fast, and each rebuild is a database read you pay compute for.
+export const revalidate = 3600
 
 export default async function CommunityPage() {
   const initialItems = (await getInitialCommunityItems(30)) as unknown as CommunityItem[]
