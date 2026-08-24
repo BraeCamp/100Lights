@@ -1193,6 +1193,9 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     selectApolloSample(entry.id, sampleDisplayName(entry))
   }, [])
 
+  // Bumped when deferred seeding finishes, so the entry list is re-read.
+  const [seedRound, setSeedRound] = useState(0)
+
   useEffect(() => {
     // Seed only once identity is settled — seeding before Clerk resolves
     // raced the per-user db/guard namespace and duplicated the built-in
@@ -1204,7 +1207,14 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     // than during mount, keeping first paint/interaction jank-free. Seeding is
     // idempotent + gated, and playback renders on demand, so a brief delay is
     // safe. Cancel on unmount so a fast open/close doesn't leave a stray task.
-    const kick = () => { seedDefaultSamples().catch(() => {}) }
+    // Re-read once seeding finishes. The panel reads the library on mount, and
+    // seeding is deliberately deferred to idle AFTER that — so on a first visit
+    // the read returns nothing and, with no second read, the library stayed
+    // empty ("0 items") no matter how long you waited. On localhost seeding wins
+    // that race and it looked fine; on production it loses, which is why the
+    // library appeared to have nothing in it while IndexedDB held thousands of
+    // entries.
+    const kick = () => { seedDefaultSamples().then(() => setSeedRound(n => n + 1)).catch(() => {}) }
     let idleHandle: number | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
     if (typeof window.requestIdleCallback === 'function') {
@@ -1363,7 +1373,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     setEntries(all.sort((a, b) => b.addedAt.localeCompare(a.addedAt)))
   }, [])
 
-  useEffect(() => { load() }, [load, user?.id])
+  useEffect(() => { load() }, [load, user?.id, seedRound])
 
   // Track whether any library entry is currently being dragged (to show unfiled drop zone)
   useEffect(() => {

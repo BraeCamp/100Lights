@@ -760,18 +760,7 @@ export async function seedDefaultSamples(): Promise<void> {
   dedupLibrary().catch(() => {})
 
   if (localStorage.getItem(sk(SEEDED_KEY))) {
-    seedKeyboardNotes().catch(() => {})
-    seedDarkwave().catch(() => {})
-    seedStrings().catch(() => {})
-    seedPercussion().catch(() => {})
-    seedDarkKit().catch(() => {})
-    seedFx().catch(() => {})
-    seedArp().catch(() => {})
-    seedBass().catch(() => {})
-    seedBrass().catch(() => {})
-    seedWind().catch(() => {})
-    seedRealInstruments().catch(() => {})
-    seedAiInstruments().catch(() => {})
+    await runFamilySeeders([seedDarkKit])
     return
   }
 
@@ -792,17 +781,26 @@ export async function seedDefaultSamples(): Promise<void> {
   }
 
   localStorage.setItem(sk(SEEDED_KEY), '1')
-  seedKeyboardNotes().catch(() => {})
-  seedDarkwave().catch(() => {})
-  seedStrings().catch(() => {})
-  seedPercussion().catch(() => {})
-  seedFx().catch(() => {})
-  seedArp().catch(() => {})
-  seedBass().catch(() => {})
-  seedBrass().catch(() => {})
-  seedWind().catch(() => {})
-  seedRealInstruments().catch(() => {})
-  seedAiInstruments().catch(() => {})
+  await runFamilySeeders()
+}
+
+/** The per-family seeders. Each is idempotent behind its own localStorage guard,
+ *  so running them on every load is cheap.
+ *
+ *  These used to be fired WITHOUT being awaited, which made seedDefaultSamples()
+ *  resolve long before the library actually had anything in it. The Sound Library
+ *  panel reads once on mount and seeding is deferred to idle after that, so on a
+ *  first visit the panel found an empty store and — with nothing to tell it the
+ *  writes had landed — showed "0 items" indefinitely while IndexedDB filled up
+ *  with thousands of entries behind it. allSettled keeps the old behaviour of
+ *  letting one family fail without taking the others down. */
+async function runFamilySeeders(extra: (() => Promise<void>)[] = []): Promise<void> {
+  await Promise.allSettled([
+    seedKeyboardNotes(), seedDarkwave(), seedStrings(), seedPercussion(),
+    seedFx(), seedArp(), seedBass(), seedBrass(), seedWind(),
+    seedRealInstruments(), seedAiInstruments(),
+    ...extra.map(fn => fn()),
+  ])
 }
 
 // ── Individual seed functions ─────────────────────────────────────────────────
