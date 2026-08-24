@@ -2343,8 +2343,11 @@ export default function AudioEditor(props: AudioEditorProps) {
               </button>
             </div>
 
-            {/* Collapsible panel */}
-            <div style={{
+            {/* Collapsible panel. Tagged so a floating window (the Apollo card)
+                can open clear of it instead of landing on top of the Sound
+                Library — with the card centred, picking a sample was physically
+                unreachable. */}
+            <div data-editor-dock={sidebarOpen ? 'left' : undefined} style={{
               width: sidebarOpen ? leftResize.size : 0,
               flexShrink: 0,
               overflow: 'hidden',

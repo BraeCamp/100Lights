@@ -109,7 +109,8 @@ export default function SamplePicker({ oscIndex, target }: { oscIndex: number; t
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-      <div style={{ fontSize: 10, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }} title={currentName}>
+      <div data-apollo-sample-slot={target} data-apollo-sample-id={currentId || ''}
+        style={{ fontSize: 10, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }} title={currentName}>
         {currentName}
       </div>
       {currentId && (

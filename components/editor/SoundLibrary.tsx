@@ -14,6 +14,9 @@ import {
 import { detectMediaKind } from '@/lib/media-import'
 import { useMediaDrop } from '@/lib/use-media-drop'
 import { useUser } from '@clerk/nextjs'
+// Beacon may import lib/apollo (never the reverse): selecting a sound here is
+// what an open Apollo card listens for to fill its sample slot.
+import { selectApolloSample, sampleDisplayName } from '@/lib/apollo/sample-store'
 
 let _recipeCtx: AudioContext | null = null
 // Drum-lane key → synth voice, for auditioning patterns in the library.
@@ -61,6 +64,7 @@ function colorFor(cat: string) { return CAT_COLORS[cat] ?? '#94a3b8' }
 // ── Entry row ─────────────────────────────────────────────────────────────────
 function EntryRow({
   entry, folders, onDelete, onRename, onCategoryChange, onFolderChange, onFulfilled, onPick,
+  selected, onSelect,
 }: {
   entry: LibraryEntry
   folders: string[]
@@ -70,6 +74,8 @@ function EntryRow({
   onFolderChange: (id: string, folder: string | undefined) => void
   onFulfilled?: (e: LibraryEntry) => void
   onPick?: (e: LibraryEntry) => void
+  selected?: boolean
+  onSelect?: (e: LibraryEntry) => void
 }) {
   const [editing, setEditing]         = useState(false)
   const [draft, setDraft]             = useState(entry.name)
@@ -77,6 +83,10 @@ function EntryRow({
   const [folderOpen, setFolderOpen]   = useState(false)
   const [fulfilling, setFulfilling]   = useState(false)
   const [sharing,    setSharing]      = useState(false)
+  // A sound that can't be rendered or decoded used to fail completely silently:
+  // ensurePcm() returns, playFrom() finds no buffer and returns too, so clicking
+  // play did nothing and said nothing. Show it instead.
+  const [loadErr,    setLoadErr]      = useState('')
   const folderRef = useRef<HTMLDivElement>(null)
 
   // Waveform / scrub refs
@@ -93,26 +103,34 @@ function EntryRow({
 
   async function ensurePcm() {
     if (pcmRef.current) return
+    setLoadErr('')
     let blob = entry.audioBlob
     if (!blob) {
-      if (!entry.renderSpec && !entry.communityRef) return
+      if (!entry.renderSpec && !entry.communityRef) { setLoadErr('no audio'); return }
       setFulfilling(true)
       try {
         const fulfilled = await libraryFulfill(entry.id)
-        if (!fulfilled?.audioBlob) return
+        if (!fulfilled?.audioBlob) { setLoadErr("couldn't render"); return }
         blob = fulfilled.audioBlob
         onFulfilled?.(fulfilled)
       } finally {
         setFulfilling(false)
       }
     }
-    const ab  = await blob.arrayBuffer()
-    const ctx = new AudioContext()
-    const buf = await ctx.decodeAudioData(ab)
-    bufRef.current = buf
-    pcmRef.current = buf.getChannelData(0)
-    ctxRef.current = ctx
-    drawWave()
+    try {
+      const ab  = await blob.arrayBuffer()
+      // Reuse this row's context across plays; a new AudioContext per preview
+      // leaks them, and browsers cap how many a page may open.
+      const ctx = ctxRef.current ?? new AudioContext()
+      const buf = await ctx.decodeAudioData(ab)
+      bufRef.current = buf
+      pcmRef.current = buf.getChannelData(0)
+      ctxRef.current = ctx
+      if (ctx.state === 'suspended') await ctx.resume()
+      drawWave()
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message.slice(0, 40) : "couldn't decode")
+    }
   }
 
   function drawWave(playFrac?: number) {
@@ -263,7 +281,23 @@ function EntryRow({
         setTimeout(() => document.body.removeChild(ghost), 0)
       }}
       data-entry-id={entry.id}
-      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderLeft: `2px solid ${color}`, margin: '2px 0', cursor: 'grab', userSelect: 'none' }}
+      data-selected={selected ? 'true' : undefined}
+      // Clicking the row selects the sound and previews it. Before this the row
+      // had no click handler at all: the only way to hear anything was the 20px
+      // play button, and there was no way to "select" a sound — which is why
+      // Apollo could never be told which one you meant.
+      onClick={e => {
+        // Let the row's own controls (play, rename, folder, share, Use, ☀️) win.
+        if ((e.target as HTMLElement).closest('button, a, input, canvas')) return
+        onSelect?.(entry)
+        if (!playing) ensurePcm().then(() => playFrom(0))
+      }}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px',
+        borderLeft: `2px solid ${selected ? 'var(--accent)' : color}`,
+        background: selected ? 'rgb(var(--accent-rgb) / 0.13)' : undefined,
+        margin: '2px 0', cursor: 'grab', userSelect: 'none',
+      }}
     >
       {/* Name */}
       <div style={{ minWidth: 0, maxWidth: 100, flexShrink: 0 }}>
@@ -290,7 +324,9 @@ function EntryRow({
       {/* Waveform canvas — fills remaining space, click to seek, drag to scrub */}
       {!entry.audioBlob ? (
         <div style={{ flex: 1, minWidth: 60, height: 28, borderRadius: 4, background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{fulfilling ? 'Rendering…' : '↓ click ▶ to render'}</span>
+          <span style={{ fontSize: 9, color: loadErr ? '#f87171' : 'var(--text-muted)' }}>
+            {fulfilling ? 'Rendering…' : loadErr || 'click to play'}
+          </span>
         </div>
       ) : (
         <canvas
@@ -1149,6 +1185,14 @@ const FOLDERS_KEY = 'sound-library-folders'
 export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean; onPick?: (entry: LibraryEntry) => void }) {
   const { user, isLoaded } = useUser()
 
+  // The selected sound. Selecting is what hands a sample to an open Apollo —
+  // the card is listening for exactly this, and picks it up in its sample slot.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const handleSelect = useCallback((entry: LibraryEntry) => {
+    setSelectedId(entry.id)
+    selectApolloSample(entry.id, sampleDisplayName(entry))
+  }, [])
+
   useEffect(() => {
     // Seed only once identity is settled — seeding before Clerk resolves
     // raced the per-user db/guard namespace and duplicated the built-in
@@ -1606,6 +1650,8 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       onFolderChange={handleFolderChange}
       onFulfilled={fulfilled => setEntries(prev => prev.map(e => e.id === fulfilled.id ? fulfilled : e))}
       onPick={onPick}
+      selected={selectedId === entry.id}
+      onSelect={handleSelect}
     />
   )
 

@@ -8,7 +8,7 @@ import {
   resolvePatchPath, uid,
 } from '@/lib/apollo/patch'
 import { ApolloEngine, ApolloMeters, getApolloEngine } from '@/lib/apollo/engine-client'
-import { initApolloLibrary, restorePatchSamples, setApolloSourceSample } from '@/lib/apollo/sample-store'
+import { initApolloLibrary, restorePatchSamples, setApolloSourceSample, onApolloSampleSelect } from '@/lib/apollo/sample-store'
 import { useUser } from '@clerk/nextjs'
 import {
   allMidiBindings, armMidiBinding, armedBinding, ccForBinding,
@@ -370,6 +370,27 @@ export function ApolloProvider({ children, quickMod, embed, onParamMove, livePar
     setVersion(v => v + 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  // Beacon: selecting a sound in the Sound Library drops it into osc 1's sample
+  // slot — the same thing /apollo?librarySample=… does for the standalone app,
+  // which the embedded card skips because deep links belong to the standalone.
+  // Without this, picking a sample in Beacon while Apollo was open did nothing.
+  //
+  // The audio itself is fulfilled by the restore effect below: `update` bumps
+  // `version`, that effect re-runs and pulls the blob out of the library. If the
+  // engine has not been started yet the restore is a no-op, so kick `start()`
+  // too — its deps include `started`, so it runs again once audio is live.
+  useEffect(() => onApolloSampleSelect(({ id, name }) => {
+    setApolloSourceSample(id, name)
+    update(p => {
+      const osc = p.oscs[0]
+      osc.enabled = true
+      osc.engine = 'sample'
+      osc.smp.sampleId = id
+      if (!p.name || p.name === 'Init') p.name = name
+    })
+    void start()
+  }), [update, start])
+
   const restoring = useRef(false)
   useEffect(() => {
     if (!started || restoring.current) return

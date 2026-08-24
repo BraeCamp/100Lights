@@ -174,10 +174,16 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
     // stays narrow because it has nothing to fill the width with.
     const vw = typeof window === 'undefined' ? 1400 : window.innerWidth
     const vh = typeof window === 'undefined' ? 900 : window.innerHeight
+    // Never open on top of the host's docked left panel. Centring the window put
+    // it straight over Beacon's Sound Library, so selecting a sample to send to
+    // this very synth was unreachable — the click landed on the card.
+    const dock = typeof document === 'undefined' ? null : document.querySelector('[data-editor-dock="left"]')
+    const dockRight = dock ? Math.round(dock.getBoundingClientRect().right) : 0
+    const avoid = dockRight > 0 ? dockRight + 12 : 20
     const want = scope === 'all' ? Math.max(1280, Math.round(vw * 0.86)) : wideDefault ? 1280 : 760
-    const w = Math.min(want, vw - 40)
+    const w = Math.min(want, vw - avoid - 20)
     const h = Math.min(scope === 'all' ? 920 : 820, vh - 70)
-    const x = Math.max(20, (vw - w) / 2)
+    const x = Math.max(avoid, (vw - w) / 2)
     return { x, y: 44, w, h }
   })())
   // Remember it across remounts. The host re-keys this card whenever the hosted
@@ -187,6 +193,26 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
   // and placed back to its default. Module scope is right because there is one
   // window: reopening it later should also land where you left it.
   useEffect(() => { lastRect = rect }, [rect])
+
+  // The dock can also open AFTER the window — open Apollo, then go looking for a
+  // sample — which would leave the card sitting over the Sound Library again.
+  // Slide clear when that happens. Only fires when the dock itself opens or
+  // closes, so it never fights a window the user has deliberately placed.
+  useEffect(() => {
+    const settle = () => window.setTimeout(() => {
+      const dock = document.querySelector('[data-editor-dock="left"]')
+      if (!dock) return
+      const right = Math.round(dock.getBoundingClientRect().right)
+      if (right <= 0) return
+      setRect(r => r.x >= right + 8 ? r : {
+        ...r, x: right + 12, w: Math.min(r.w, Math.max(360, window.innerWidth - right - 24)),
+      })
+    }, 220)   // the dock animates its width; measure once it has settled
+    const mo = new MutationObserver(settle)
+    mo.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['data-editor-dock'] })
+    settle()
+    return () => mo.disconnect()
+  }, [])
   const dragRef = useRef<{ mode: string; sx: number; sy: number; r: typeof rect } | null>(null)
 
   const onDragPointer = useCallback((e: React.PointerEvent, mode: string) => {

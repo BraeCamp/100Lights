@@ -123,6 +123,42 @@ let sourceSample: { id: string; name: string } | null = null
 export function setApolloSourceSample(id: string, name: string): void { sourceSample = { id, name } }
 export function getApolloSourceSample(): { id: string; name: string } | null { return sourceSample }
 
+// ── Beacon → Apollo sample selection ────────────────────────────────────────
+// Picking a sound in Beacon's Sound Library should drop it into Apollo's sample
+// slot exactly as if it had been chosen in the picker — the standalone app has
+// done this since /apollo?librarySample=… existed, but the card hosted inside
+// Beacon deliberately ignores deep links, so selecting a sound there did
+// nothing at all.
+//
+// This lives here rather than in a Beacon module because the dependency only
+// runs one way: Beacon may import lib/apollo, never the reverse. Beacon
+// publishes the selection, the Apollo card subscribes.
+
+export interface ApolloSampleSelection { id: string; name: string }
+type SelectionListener = (sel: ApolloSampleSelection) => void
+
+let selection: ApolloSampleSelection | null = null
+const selectionListeners = new Set<SelectionListener>()
+
+/** Beacon: the user picked this library sound; hand it to any open Apollo. */
+export function selectApolloSample(id: string, name: string): void {
+  selection = { id, name }
+  for (const fn of selectionListeners) {
+    try { fn(selection) } catch { /* one bad listener must not block the rest */ }
+  }
+}
+
+/** Apollo: run `fn` whenever Beacon publishes a new selection. Returns an
+ *  unsubscribe. Only selections made AFTER subscribing fire — opening Apollo
+ *  should not retroactively replace the patch you were already working on. */
+export function onApolloSampleSelect(fn: SelectionListener): () => void {
+  selectionListeners.add(fn)
+  return () => { selectionListeners.delete(fn) }
+}
+
+/** The most recent selection, for UI that wants to show what is armed. */
+export function getApolloSampleSelection(): ApolloSampleSelection | null { return selection }
+
 /** Overwrite an existing library entry's audio in place (keeps its identity —
  *  name/folder/tags — so every project referencing it hears the new take). */
 export async function overwriteLibrarySample(id: string, buffer: AudioBuffer): Promise<boolean> {
