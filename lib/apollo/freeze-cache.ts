@@ -109,6 +109,15 @@ export function requestCombine(stamp: string, clip: MidiClip, patch: ApolloPatch
     run: async () => {
       try {
         const buf = await renderApolloClip(clip, patch, bpm)
+        // Never cache a silent render. A combined buffer REPLACES live playback,
+        // so an empty one turns a clip that merely strained the CPU into one that
+        // makes no sound at all — strictly worse. Treat it as a failure and let
+        // the clip keep playing live. (Offline Apollo renders currently come back
+        // empty most of the time; this is the guard, not the fix.)
+        let peak = 0
+        const d = buf.getChannelData(0)
+        for (let i = 0; i < d.length; i += 256) { const v = Math.abs(d[i]); if (v > peak) peak = v }
+        if (peak < 1e-4) throw new Error('render was silent')
         buffers.set(stamp, buf)
         evictIfNeeded()
       } catch (e) {
