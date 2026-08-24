@@ -121,19 +121,12 @@ async function drain(): Promise<void> {
  */
 export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!groups.length) return
-  // ONE job for the whole project. Rendering a context per clip, or even per
-  // track, hits the browser's audio-context ceiling and everything past the
-  // first couple comes back silent — so every Apollo track goes through a single
-  // offline pass together.
-  const pending = groups.flatMap(g => g.clips
+  const wanted = groups.flatMap(g => g.clips
     .filter(c => c.notes.length > 0)
-    .map(c => combinedStamp(c, g.patch, bpm))
-    .filter(k => !buffers.has(k) && (failures.get(k) ?? 0) < 2))
-  if (!pending.length) return
+    .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
+  const missing = () => wanted.filter(w => !buffers.has(w.key))
+  if (!missing().length) return
 
-  // A STABLE key: keying on the pending count meant the key changed as buffers
-  // landed, so the scheduler could queue a second whole-project render on top of
-  // the one already running. Only one ever needs to be in flight.
   const jobKey = 'project-combine'
   if (inFlight.has(jobKey)) return
   inFlight.add(jobKey)
@@ -141,33 +134,37 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
     stamp: jobKey,
     run: async () => {
       try {
-        const rendered = await renderApolloProject(groups, bpm)
-        let kept = 0
-        for (const g of groups) {
-          for (const c of g.clips) {
-            if (!c.notes.length) continue
-            const key = combinedStamp(c, g.patch, bpm)
-            const buf = rendered.get(c.id)
-            if (!buf) { failures.set(key, (failures.get(key) ?? 0) + 1); continue }
+        // Renders of Apollo instruments are NOT deterministic: the same project
+        // rendered three times gave peaks of 0.202, 0 and 0.0657, with no error
+        // anywhere. One pass typically lands 22 of 23 clips. So run it again for
+        // whatever is still missing and keep the good ones — the union across a
+        // few attempts covers everything, and a clip that never renders simply
+        // keeps playing live.
+        for (let attempt = 0; attempt < 4 && missing().length; attempt++) {
+          const before = missing().length
+          const rendered = await renderApolloProject(groups, bpm)
+          for (const w of wanted) {
+            if (buffers.has(w.key)) continue
+            const buf = rendered.get(w.clip.id)
+            if (!buf) continue
             // Never cache a silent render: a combined buffer REPLACES live
             // playback, so an empty one turns a clip that merely strained the
             // CPU into one that makes no sound at all.
             let peak = 0
             const d = buf.getChannelData(0)
             for (let i = 0; i < d.length; i += 256) { const v = Math.abs(d[i]); if (v > peak) peak = v }
-            if (peak < 1e-4) { failures.set(key, (failures.get(key) ?? 0) + 1); continue }
-            buffers.set(key, buf); kept++
+            if (peak < 1e-4) continue
+            buffers.set(w.key, buf)
           }
+          evictIfNeeded()
+          // Stop when a pass stops helping. The first pass usually lands nearly
+          // everything; grinding out the last stubborn clip cost ~45s of extra
+          // rendering at load for one clip that plays live perfectly well.
+          if (missing().length >= before) break
         }
-        if (!kept) lastError = 'project rendered, but every clip came back silent'
-        evictIfNeeded()
+        const left = missing().length
+        lastError = left ? `${left} of ${wanted.length} clips would not render after 4 attempts` : null
       } catch (e) {
-        for (const g of groups) {
-          for (const c of g.clips) {
-            const key = combinedStamp(c, g.patch, bpm)
-            failures.set(key, (failures.get(key) ?? 0) + 1)
-          }
-        }
         lastError = e instanceof Error ? e.message : String(e)
       } finally {
         inFlight.delete(jobKey)

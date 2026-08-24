@@ -1027,6 +1027,13 @@ export class DawEngine extends EventTarget {
       }
     }
     this._tracks      = project.tracks
+    // Start combining Apollo tracks NOW, on load — not on the first playback
+    // tick. Combining needs main-thread time, and playing several live synths is
+    // exactly when there is none, so triggering it from the scheduler meant it
+    // could never finish: the song stayed on the live path and stayed
+    // unplayable. Must come AFTER _tracks is assigned above. Skipped for offline
+    // contexts, which render the real synth path and must stay reproducible.
+    if (!('startRendering' in this.ctx)) this._requestCombineAll()
     // Pre-warm sample-oscillator buffers for poly instruments — same reason as
     // preset buffers: a lazily-loaded sample would miss its first note.
     setApolloCtxTempo(this.ctx, project.tempo)
@@ -1716,6 +1723,25 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /** Every Apollo track with notes, as render groups. */
+  private _apolloGroups() {
+    return this._tracks
+      .map(t => ({ trackId: t.id, inst: this._resolveInstrument(t) }))
+      .filter(x => x.inst?.type === 'apollo')
+      .map(x => ({
+        trackId: x.trackId,
+        patch: x.inst.params as unknown as ApolloPatch,
+        clips: this._midiClips.filter(c => c.trackId === x.trackId && c.notes.length > 0),
+      }))
+      .filter(g => g.clips.length > 0)
+  }
+
+  /** Kick off combining for the whole project (called on load). */
+  private _requestCombineAll(): void {
+    const groups = this._apolloGroups()
+    if (groups.length) requestCombine(this.tempo, groups)
+  }
+
   /**
    * Play an Apollo clip as one combined buffer, if a render of it exists.
    *
@@ -1755,16 +1781,7 @@ export class DawEngine extends EventTarget {
       // Hand over EVERY Apollo track, not just this clip's: they render in one
       // offline pass together, because a browser will not give us a fresh audio
       // context per clip and the extras come back silent.
-      const groups = this._tracks
-        .map(t => ({ trackId: t.id, inst: this._resolveInstrument(t) }))
-        .filter(x => x.inst?.type === 'apollo')
-        .map(x => ({
-          trackId: x.trackId,
-          patch: x.inst.params as unknown as ApolloPatch,
-          clips: this._midiClips.filter(c => c.trackId === x.trackId && c.notes.length > 0),
-        }))
-        .filter(g => g.clips.length > 0)
-      requestCombine(this.tempo, groups)
+      requestCombine(this.tempo, this._apolloGroups())
       return false
     }
 
