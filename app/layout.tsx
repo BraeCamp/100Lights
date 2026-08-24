@@ -6,7 +6,6 @@ import { dark } from "@clerk/themes"
 import { PostHogProvider } from "@/components/PostHogProvider"
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar"
 import ReferralCapture from "@/components/ReferralCapture"
-import AgeGate from "@/components/AgeGate"
 import AnnouncementBanner from "@/components/AnnouncementBanner"
 import CommandK from "@/components/site/CommandK"
 import { HideOnEmbed } from "@/components/HideOnEmbed"
@@ -88,7 +87,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <PostHogProvider />
             </Suspense>
             <ReferralCapture />
-            <AgeGate />
           </HideOnEmbed>
           {children}
           <HideOnEmbed>

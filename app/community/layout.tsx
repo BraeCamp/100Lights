@@ -3,6 +3,7 @@ import { UserButton } from '@clerk/nextjs'
 import type { Metadata } from 'next'
 import NotificationBell from '@/components/NotificationBell'
 import { LogoMark } from '@/components/Logo'
+import AgeGate from '@/components/AgeGate'
 
 export const metadata: Metadata = {
   title: 'Community — Free Sounds, Samples & Chord Recipes',
@@ -43,6 +44,12 @@ export default function CommunityLayout({ children }: { children: React.ReactNod
         </div>
       </header>
       <main id="main" style={{ flex: 1, minHeight: 0 }}>{children}</main>
+      {/* The age check belongs HERE and nowhere else. The Community is the part
+          of 100Lights where people publish to and see each other; making your own
+          music in the studio does not need to know how old you are, and asking
+          on every page turned a compliance checkbox into a toll gate on the
+          whole product. */}
+      <AgeGate />
     </div>
   )
 }
