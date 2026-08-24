@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend, ChevronDown, Music, Grid3x3, X, Cloud, HardDrive, Folder, Check, MessageSquare, RectangleHorizontal, MoreHorizontal, Download } from 'lucide-react'
+import { onCenterOnBeat } from '@/lib/daw-view'
 import { useDaw, makeMidiClip, makeAudioClip } from '@/lib/daw-state'
 import { highlightHelpTargets } from './HelpButton'
 import { isMidiClip, isAudioClip, TRACK_COLORS, clipLockedBy } from '@/lib/daw-types'
@@ -498,6 +499,16 @@ export default function ArrangementView() {
   const [morphError, setMorphError] = useState('')
   const outerRef    = useRef<HTMLDivElement>(null)
   const laneRef     = useRef<HTMLDivElement>(null)
+
+  // Scrubbing from the transport brings the view with it: seeking without
+  // moving the view leaves the playhead off-screen, so the scrub bar looks like
+  // it does nothing — you drag it and the part of the song on screen never
+  // changes. Centre the beat instead. (lib/daw-view)
+  useEffect(() => onCenterOnBeat(beat => {
+    const lane = laneRef.current
+    const visible = Math.max(120, (lane?.clientWidth ?? window.innerWidth) - hdrW)
+    setScrollLeft(Math.max(MIN_SCROLL, beat * beatW - visible / 2))
+  }), [beatW, hdrW])
   const playheadRef = useRef<HTMLDivElement>(null)
   const rafRef      = useRef<number | undefined>(undefined)
   const [viewWidth, setViewWidth] = useState(800)
@@ -1783,7 +1794,18 @@ export default function ArrangementView() {
             }
             return
           }
-          if (e.target !== e.currentTarget) { laneGesture.current = null; return }
+          // Scroll from anywhere that is not a control or a movable thing.
+          //
+          // This used to require the touch to land on the lane container ITSELF
+          // (e.target === e.currentTarget), so a finger on a track row, on the
+          // lane background, or on the empty space below the last track hit a
+          // child element and the gesture was thrown away — the timeline simply
+          // would not scroll anywhere except a few bare pixels. Everything that
+          // genuinely needs the touch (buttons, fields, clips you can drag)
+          // opts out by being one of these; the rest of the surface scrolls.
+          if ((e.target as HTMLElement).closest?.(
+            'button, a, input, select, textarea, [role="button"], [data-clip-id], [contenteditable="true"]',
+          )) { laneGesture.current = null; return }
           const t = e.touches[0]
           laneGesture.current = { mode: 'pan', locked: null, startX: t.clientX, startY: t.clientY, startSL: scrollLeft, startST: lane.scrollTop }
         }) : undefined}

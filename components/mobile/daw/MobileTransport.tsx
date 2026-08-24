@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Repeat, Music2, Zap } from 'lucide-react'
+import { centerOnBeat } from '@/lib/daw-view'
 import { useDaw, useDawPlayhead } from '@/lib/daw-state'
 import type { DawEngine } from '@/lib/daw-engine'
 
@@ -60,6 +61,9 @@ function ScrubBar({ engine, position, setPosition, end, sig }: {
     const frac = Math.max(0, Math.min(1, (clientX - r.left) / r.width))
     const beat = frac * end
     engine.seek(beat); setPosition(beat)
+    // Bring the timeline with it, so the playhead you are dragging stays in
+    // view rather than scrubbing somewhere off screen.
+    centerOnBeat(beat)
   }
   const frac = end > 0 ? Math.max(0, Math.min(1, position / end)) : 0
   const bars = Math.max(1, Math.round(end / sig))
