@@ -1732,6 +1732,12 @@ export class DawEngine extends EventTarget {
     windowEnd: number,
     contextNow: number,
   ): boolean {
+    // NEVER substitute a combined buffer in an offline render. Combining exists
+    // to spare the real-time audio thread, and a bounce has no such pressure —
+    // but it does have to be reproducible. Letting a render use whatever happened
+    // to be cached made exports differ run to run, which is worse than slow and
+    // makes any measurement of them meaningless.
+    if (this._renderNow != null) return false
     const inst = this._resolveInstrument(track)
     if (inst?.type !== 'apollo') return false
     // Drawn groove and volume curves are applied per note, so a combined render
@@ -3109,7 +3115,16 @@ export class DawEngine extends EventTarget {
       if (effContextStart > _startAt + 1e-4) {
         try { param.setValueAtTime(map(0), _startAt) } catch { /* ok */ }
       }
-      try { param.setValueCurveAtTime(curve, effContextStart, durSec) } catch { /* overlapping curve */ }
+      let scheduled = true
+      try { param.setValueCurveAtTime(curve, effContextStart, durSec) } catch { scheduled = false }
+      if (!scheduled) {
+        // The curve did not take (an overlap, a zero-length region, a time
+        // already gone). Leaving the param alone is NOT neutral: the node sits
+        // at its construction default, and a lowpass biquad defaults to 350Hz —
+        // which does not "do nothing", it silences whatever passes through it.
+        // An effect that cannot be scheduled must become transparent instead.
+        try { param.value = map(0) } catch { /* param is read-only mid-render */ }
+      }
     }
     const has = (k: keyof typeof fx) => fieldIsSet(k, fx[k] as number | undefined)
     const F = FX_FIELD_BY_KEY

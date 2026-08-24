@@ -104,6 +104,14 @@ export async function preloadApolloInstrument(
   while (!m.isReady && Date.now() - start < 8000) {
     await new Promise(r => setTimeout(r, 25))
   }
+  if (!m.isReady) {
+    // Giving up here is not harmless: the notes for this track were queued
+    // against an engine that never came up, so they are dropped and the track is
+    // simply ABSENT from the render — with no error anywhere. That is how a
+    // bounce loses a whole part and still reports success.
+    console.warn(`[apollo] instrument "${patch.name || 'patch'}" was not ready after 8s — ` +
+      'its notes will be missing from this render')
+  }
 }
 
 /** Transport stop: silence + drop every managed node for this context.
