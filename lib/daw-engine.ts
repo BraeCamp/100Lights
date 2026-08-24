@@ -3954,15 +3954,51 @@ export class DawEngine extends EventTarget {
 
     this.seek(start)
     await this.play(start)
-    await new Promise<void>(res => {
-      const tick = () => { if (!this.isPlaying || this.currentBeat >= end) res(); else setTimeout(tick, 30) }
-      tick()
-    })
-    await new Promise(r => setTimeout(r, Math.round(tail * 1000)))
+
+    // This capture is real time, so the wait is as long as the music. Two things
+    // can stop it finishing: the transport never advancing (a context that never
+    // resumed, or an audio thread so overloaded it stops producing), and an
+    // `end` the playhead cannot reach. Both used to hang forever with no output
+    // — a bounce that cannot finish has to SAY so, because from the outside it
+    // looks exactly like a slow one. (Found the hard way: a project with eight
+    // synth tracks sat for 25 minutes on a 1:51 render before anyone knew.)
+    const expectedSec = this.beatsToSeconds(Math.max(0, end - start)) + tail
+    const budgetMs    = Math.max(30_000, (expectedSec + 20) * 3000)
+    const STALL_MS    = 15_000
+    let renderError: Error | null = null
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const t0 = Date.now()
+        let lastBeat = this.currentBeat
+        let lastMoved = t0
+        const tick = () => {
+          if (!this.isPlaying || this.currentBeat >= end) return resolve()
+          const now = Date.now()
+          if (this.currentBeat > lastBeat + 1e-4) { lastBeat = this.currentBeat; lastMoved = now }
+          if (now - lastMoved > STALL_MS) {
+            return reject(new Error(
+              `renderWav stalled: the transport sat at beat ${lastBeat.toFixed(2)} of ${end.toFixed(2)} for ` +
+              `${Math.round(STALL_MS / 1000)}s. The audio thread is probably overloaded — fewer tracks, ` +
+              `fewer simultaneous voices (unison counts multiply), or render a shorter range.`))
+          }
+          if (now - t0 > budgetMs) {
+            return reject(new Error(
+              `renderWav timed out after ${Math.round((now - t0) / 1000)}s (expected about ${Math.round(expectedSec)}s). ` +
+              `Reached beat ${this.currentBeat.toFixed(2)} of ${end.toFixed(2)}.`))
+          }
+          setTimeout(tick, 30)
+        }
+        tick()
+      })
+      await new Promise(r => setTimeout(r, Math.round(tail * 1000)))
+    } catch (e) {
+      renderError = e instanceof Error ? e : new Error(String(e))
+    }
     this.stop()
 
     for (const c of caps) { try { c.node.disconnect(c.proc) } catch { /* ok */ } c.proc.onaudioprocess = null; try { c.proc.disconnect() } catch { /* ok */ } }
     try { sink.disconnect() } catch { /* ok */ }
+    if (renderError) throw renderError   // cleaned up first, so the engine stays usable
 
     const b64 = (buf: ArrayBuffer): string => {
       const bytes = new Uint8Array(buf); let s = ''

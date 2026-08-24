@@ -42,39 +42,86 @@ globalThis.AudioWorkletProcessor = class { constructor() { this.port = { postMes
 globalThis.registerProcessor = (_name, cls) => { globalThis.__cls = cls }
 await import(new URL('../public/apollo/engine.js', import.meta.url).href)
 
-const { initPatch, PARAMS, FX_DEFS } = await import(new URL('../lib/apollo/patch.ts', import.meta.url).href)
-const { generateFactoryTable, buildTableMips } = await import(new URL('../lib/apollo/tables.ts', import.meta.url).href)
-// presets.ts uses the '@/' path alias (fine for the app, opaque to Node) —
-// rewrite the import to an absolute file URL in a temp copy and load that.
-const { FACTORY_PRESETS } = await (async () => {
+// The app's '@/' path alias is opaque to Node, so any module using it has to be
+// loaded from a temp copy with the alias rewritten to an absolute file URL.
+// This used to special-case presets.ts only, and broke the day patch.ts itself
+// grew an alias import ('@/lib/scale-constants'): the CLI died before parsing a
+// single argument. Rewrite generically instead, and keep ONE instance of
+// patch.ts so presets.ts shares its initPatch/uid rather than getting a second.
+const tmpModules = []
+let tmpDir = null
+async function loadAliased(rel, { header = '', substitutions = [] } = {}) {
   const os = await import('node:os')
-  const src = readFileSync(path.join(ROOT, 'lib/apollo/presets.ts'), 'utf8')
-    .replace(/import \{[^}]+\} from '@\/lib\/apollo\/patch'/,
-      `import { initPatch, defaultFx, uid } from ${JSON.stringify(new URL('../lib/apollo/patch.ts', import.meta.url).href)}\ntype ApolloPatch = any\ntype ModSource = any`)
-  const tmp = path.join(os.tmpdir(), `apollo-presets-${Date.now()}.ts`)
-  writeFileSync(tmp, src)
-  try { return await import(new URL(`file://${tmp}`).href) }
-  finally { const { unlinkSync } = await import('node:fs'); try { unlinkSync(tmp) } catch { /* leave it */ } }
-})()
+  const { mkdtempSync } = await import('node:fs')
+  if (!tmpDir) {
+    tmpDir = mkdtempSync(path.join(os.tmpdir(), 'apollo-cli-'))
+    // Marks the temp dir as ESM. Without it Node prints a
+    // MODULE_TYPELESS_PACKAGE_JSON warning for every .ts it reparses, which is
+    // several lines of noise in front of every render's actual output.
+    writeFileSync(path.join(tmpDir, 'package.json'), '{"type":"module"}')
+  }
+  let src = readFileSync(path.join(ROOT, rel), 'utf8')
+  for (const [pattern, replacement] of substitutions) src = src.replace(pattern, replacement)
+  // Copy aliased dependencies in beside this module so they share the temp
+  // package.json instead of being pulled from the repo by absolute path.
+  src = src.replace(/from '@\/([^']+)'/g, (_m, p) => {
+    const base = p.split('/').pop()
+    writeFileSync(path.join(tmpDir, base + '.ts'), readFileSync(path.join(ROOT, p + '.ts'), 'utf8'))
+    return `from './${base}.ts'`
+  })
+  const tmp = path.join(tmpDir, `${path.basename(rel, '.ts')}.ts`)
+  writeFileSync(tmp, header ? `${header}\n${src}` : src)
+  tmpModules.push(tmp)
+  return import(new URL(`file://${tmp}`).href)
+}
+
+const patchMod = await loadAliased('lib/apollo/patch.ts')
+const { initPatch, PARAMS, FX_DEFS } = patchMod
+const patchUrl = new URL(`file://${tmpModules[0]}`).href
+const { generateFactoryTable, buildTableMips } = await loadAliased('lib/apollo/tables.ts')
+const { FACTORY_PRESETS } = await loadAliased('lib/apollo/presets.ts', {
+  // Types are erased, so stub the type-only names the file imports alongside them.
+  header: 'type ApolloPatch = any\ntype ModSource = any',
+  substitutions: [[/import \{[^}]+\} from '@\/lib\/apollo\/patch'/,
+    `import { initPatch, defaultFx, uid } from ${JSON.stringify(patchUrl)}`]],
+})
+process.on('exit', async () => {
+  const { unlinkSync } = await import('node:fs')
+  for (const f of tmpModules) { try { unlinkSync(f) } catch { /* leave it */ } }
+})
 
 // ── Args ────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2)
 const flags = { set: [], sample: [] }
+const KNOWN = ['--list-presets', '--json', '--clip', '--preset', '--patch', '--set', '--notes',
+  '--notes-json', '--seconds', '--bpm', '--sample', '--out']
 for (let i = 0; i < argv.length; i++) {
-  const a = argv[i]
+  // Accept BOTH `--flag value` and `--flag=value`. Every other script in this
+  // repo takes the `=` form, so only accepting spaces here meant a perfectly
+  // reasonable invocation died on "Unknown arg" with the value glued to the
+  // name — easy to stare straight past.
+  let a = argv[i]
+  let inline = null
+  const eq = a.indexOf('=')
+  if (a.startsWith('--') && eq > 0) { inline = a.slice(eq + 1); a = a.slice(0, eq) }
+  const value = () => (inline !== null ? inline : argv[++i])
+
   if (a === '--list-presets') flags.listPresets = true
   else if (a === '--json') flags.json = true
   else if (a === '--clip') flags.clip = true
-  else if (a === '--preset') flags.preset = argv[++i]
-  else if (a === '--patch') flags.patch = argv[++i]
-  else if (a === '--set') flags.set.push(argv[++i])
-  else if (a === '--notes') flags.notes = argv[++i]
-  else if (a === '--notes-json') flags.notesJson = argv[++i]
-  else if (a === '--seconds') flags.seconds = parseFloat(argv[++i])
-  else if (a === '--bpm') flags.bpm = parseFloat(argv[++i])
-  else if (a === '--sample') flags.sample.push(argv[++i])
-  else if (a === '--out') flags.out = argv[++i]
-  else { console.error('Unknown arg:', a); process.exit(2) }
+  else if (a === '--preset') flags.preset = value()
+  else if (a === '--patch') flags.patch = value()
+  else if (a === '--set') flags.set.push(value())
+  else if (a === '--notes') flags.notes = value()
+  else if (a === '--notes-json') flags.notesJson = value()
+  else if (a === '--seconds') flags.seconds = parseFloat(value())
+  else if (a === '--bpm') flags.bpm = parseFloat(value())
+  else if (a === '--sample') flags.sample.push(value())
+  else if (a === '--out') flags.out = value()
+  else {
+    console.error(`Unknown arg: ${a}\nKnown flags: ${KNOWN.join(' ')}`)
+    process.exit(2)
+  }
 }
 
 if (flags.listPresets) {
