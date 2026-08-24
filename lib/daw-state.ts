@@ -7,6 +7,7 @@ import type {
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
   ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
 } from './daw-types'
+import { fatPatch } from './apollo/patch-diff'
 import type { MidiPreset } from './midi-presets'
 import type { PodcastMeta } from './project-serializer'
 import {
@@ -1056,12 +1057,22 @@ export function makeMidiClip(
 // Ensure projects loaded from disk have all required fields
 export function migrateProject(raw: Partial<DawProject>): DawProject {
   const base = defaultProject()
-  const tracks = normalizeGroups((raw.tracks ?? []).map(t => ({
-    ...t,
-    effects:    t.effects    ?? [],
-    instrument: t.instrument ?? defaultTrackInstrument(t.type),
-    height:     t.height     ?? DEFAULT_TRACK_HEIGHT,
-  })))
+  const tracks = normalizeGroups((raw.tracks ?? []).map(t => {
+    const instrument = t.instrument ?? defaultTrackInstrument(t.type)
+    return {
+      ...t,
+      effects:    t.effects ?? [],
+      // Apollo patches are stored as what differs from Init (see
+      // lib/apollo/patch-diff) — about a tenth the size. Expand once here, on
+      // the single path every project load goes through, so nothing downstream
+      // has to know. A patch that is already complete passes through unchanged,
+      // so projects saved before this still load.
+      instrument: instrument.type === 'apollo'
+        ? { ...instrument, params: fatPatch(instrument.params) as unknown as typeof instrument.params }
+        : instrument,
+      height:     t.height ?? DEFAULT_TRACK_HEIGHT,
+    }
+  }))
   return {
     ...base,
     ...raw,

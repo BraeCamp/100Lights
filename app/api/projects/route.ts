@@ -7,6 +7,7 @@ import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
 import { slugify } from '@/lib/slugify'
 import { ensureSharingSchema } from '@/lib/project-access'
 import { ensureSchema } from '@/lib/schema-version'
+import { slimPatch } from '@/lib/apollo/patch-diff'
 
 // Schema for the projects table. Gated by a version stamp rather than a
 // per-process flag: this route is on the cloud-project path, so the three
@@ -17,6 +18,25 @@ async function ensureSlugColumns() {
     await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_username TEXT`
     await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS folder_id TEXT`
   })
+}
+
+// Apollo patches serialise to ~9.4KB each even for a plain sine, almost all of
+// it default values — seven tracks was 67KB of a 128KB project. Stored as a
+// diff from Init they are ~0.6KB. The editor expands them again on load
+// (migrateProject), and a patch that is already complete round-trips unchanged,
+// so projects saved before this keep working.
+function slimApolloPatches(p: CfProjFile): CfProjFile {
+  const dp = p.dawProject
+  if (!dp?.tracks?.length) return p
+  return {
+    ...p,
+    dawProject: {
+      ...dp,
+      tracks: dp.tracks.map(t => t.instrument?.type === 'apollo'
+        ? { ...t, instrument: { ...t.instrument, params: slimPatch(t.instrument.params as never) as never } }
+        : t),
+    },
+  }
 }
 
 async function uniqueSlug(userId: string, name: string, excludeId?: string): Promise<string> {
@@ -164,7 +184,7 @@ export async function POST(req: Request) {
 
   await ensureSlugColumns()
 
-  const project: CfProjFile = { ...body, userId }
+  const project: CfProjFile = slimApolloPatches({ ...body, userId })
   const savedAt = new Date().toISOString()
 
   // Generate slug (only used if the project doesn't have one yet)
