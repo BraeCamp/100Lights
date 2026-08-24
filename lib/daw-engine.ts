@@ -16,6 +16,7 @@ import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
 import { combined, combinedStamp, requestCombine } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
+import { fatPatch } from './apollo/patch-diff'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
@@ -323,8 +324,27 @@ export class DawEngine extends EventTarget {
   // patches and play through the per-track Apollo engine path. Cached by the
   // params OBJECT (SET_INSTRUMENT replaces it, invalidating naturally).
   private _heliosSynthCache = new WeakMap<object, ApolloInstrumentParams | null>()
+  /** Slim patches expanded once per params object, then cached. */
+  private _fatPatchCache = new WeakMap<object, ApolloInstrumentParams>()
   private _resolveInstrument(track: DawTrack): TrackInstrument {
     const inst = track.instrument
+    if (inst?.type === 'apollo') {
+      // Expand HERE, at the point of use, not only on the project-load path.
+      // Patches are stored as a diff from Init to keep projects small, and
+      // hydrating in migrateProject alone was too fragile: a cloud project
+      // loads through ProjectEditor, which never calls it, so the engine got a
+      // patch with no oscillators — silent, and cheap enough that it did not
+      // even feel slow. Every consumer (playback, preload, combining) comes
+      // through this method, so doing it here covers all of them. A patch that
+      // is already complete round-trips unchanged.
+      const key = inst.params as object
+      let fat = this._fatPatchCache.get(key)
+      if (!fat) {
+        fat = fatPatch(inst.params) as unknown as ApolloInstrumentParams
+        this._fatPatchCache.set(key, fat)
+      }
+      return { type: 'apollo', params: fat }
+    }
     if (!inst || (inst.type !== 'poly' && inst.type !== 'wavetable' && inst.type !== 'fm')) return inst
     // poly translates faithfully (same primitives) → Helios by default.
     // wavetable + fm map approximately (tables / PM-vs-FM) → explicit opt-in.
