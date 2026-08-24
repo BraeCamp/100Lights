@@ -36,7 +36,7 @@ type ExportFormat  = 'webm' | 'wav' | 'stems' | 'midi'
 
 const KEY_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const keyLabel = (key: unknown, scale: unknown) => `${typeof key === 'number' ? KEY_NAMES[key % 12] ?? 'C' : key} ${scale}`
-type StatusMessage = 'recording' | 'converting' | 'normalizing' | 'done'
+type StatusMessage = 'recording' | 'rendering' | 'converting' | 'normalizing' | 'done'
 
 function slugify(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || ''
@@ -227,6 +227,8 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
     }, 100)
   }
 
+  const [producedExt, setProducedExt] = useState<string | null>(null)
+
   async function startExport() {
     if (format === 'midi') {
       // Instant — no render pass. Serialize notes + tempo/meter to a .mid.
@@ -241,19 +243,37 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
       return
     }
     if (format === 'stems') { await startStemExport(); return }
-    setPhase('recording')
-    setStatusMessage('recording')
-    setProgress(0)
-    engine.seek(0)
-    // The pass must reach the end — with looping on, it never would
-    engine.setLoopEnabled(false)
-    await engine.startRecording()
-    engine.play()
+    // Render OFFLINE rather than recording playback.
+    //
+    // This used to press play and capture the output with a MediaRecorder, so
+    // exporting a three-minute song took three minutes of listening to it —
+    // and any hiccup on the audio thread went into the file, because a
+    // real-time capture records whatever actually came out. The mix is data;
+    // it does not need to be performed to be written down. An OfflineAudioContext
+    // renders as fast as the CPU allows and is deterministic.
+    //
+    // ⚠ Not yet safe for Apollo synth tracks. On a seven-track Apollo project the
+    // offline render silently drops the Pad: its intro renders as digital
+    // silence and the section where only pad and choir play comes back 93% sub.
+    // That predates the combining work and is not a warm-up race
+    // (preloadApolloInstrument does wait for readiness). Until it is understood,
+    // those projects keep the slow-but-correct capture: an export missing a
+    // whole track is far worse than one that takes a while.
+    const hasApollo = project.tracks.some(t => t.instrument?.type === 'apollo')
 
-    ivRef.current = setInterval(() => {
-      const beat = engine.currentBeat
-      setProgress(Math.min(0.99, beat / endBeat))
-      if (beat >= endBeat) {
+    if (hasApollo) {
+      // The slow, correct path. Capture a real playback pass.
+      setPhase('recording')
+      setStatusMessage('recording')
+      setProgress(0)
+      engine.seek(0)
+      engine.setLoopEnabled(false)   // the pass must reach the end; looping never would
+      await engine.startRecording()
+      engine.play()
+      ivRef.current = setInterval(() => {
+        const beat = engine.currentBeat
+        setProgress(Math.min(0.99, beat / endBeat))
+        if (beat < endBeat) return
         clearInterval(ivRef.current!)
         ivRef.current = null
         engine.stop()
@@ -261,37 +281,72 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
           if (!blob) { setPhase('error'); return }
           try {
             let finalBlob: Blob
-
             if (format === 'wav') {
               setStatusMessage('converting')
-              const audioBuffer = await blobToAudioBuffer(blob)
-
-              let finalBuffer = audioBuffer
+              let finalBuffer = await blobToAudioBuffer(blob)
               if (normalize && audioMode === 'podcast') {
                 setStatusMessage('normalizing')
-                finalBuffer = await normalizeAudioBuffer(audioBuffer)
+                finalBuffer = await normalizeAudioBuffer(finalBuffer)
               }
               finalBuffer = await resampleBuffer(finalBuffer, sampleRate)
-
               finalBlob = audioBufferToWav(finalBuffer)
             } else {
               finalBlob = blob
             }
-
             finalBlobRef.current = finalBlob
+            setProducedExt(format === 'wav' ? 'wav' : 'webm')
             setDownloadUrl(URL.createObjectURL(finalBlob))
             setProgress(1)
             setStatusMessage('done')
             setPhase('done')
-          } catch (_err: unknown) {
-            setPhase('error')
-          }
+          } catch { setPhase('error') }
         })
+      }, 100)
+      return
+    }
+
+    setPhase('recording')
+    setStatusMessage('rendering')
+    setProgress(0.05)
+    try {
+      const { renderProjectAudioBlob } = await import('@/lib/song-video/render-audio')
+      const mix = await renderProjectAudioBlob(project, { startBeat: 0, endBeat })
+      setProgress(0.8)
+
+      let finalBlob: Blob
+      if (format === 'wav') {
+        setStatusMessage('converting')
+        let finalBuffer = await blobToAudioBuffer(mix.blob)
+        if (normalize && audioMode === 'podcast') {
+          setStatusMessage('normalizing')
+          finalBuffer = await normalizeAudioBuffer(finalBuffer)
+        }
+        finalBuffer = await resampleBuffer(finalBuffer, sampleRate)
+        finalBlob = audioBufferToWav(finalBuffer)
+      } else {
+        finalBlob = mix.blob
       }
-    }, 100)
+
+      finalBlobRef.current = finalBlob
+      setProducedExt(format === 'wav' ? 'wav'
+        : finalBlob.type.includes('mp4') ? 'm4a'
+        : finalBlob.type.includes('wav') ? 'wav' : 'audio')
+      setDownloadUrl(URL.createObjectURL(finalBlob))
+      setProgress(1)
+      setStatusMessage('done')
+      setPhase('done')
+    } catch {
+      setPhase('error')
+    }
   }
 
-  const ext = format === 'stems' ? 'zip' : format === 'wav' ? 'wav' : format === 'midi' ? 'mid' : 'webm'
+  // The compressed mixdown is whatever the offline encoder produced (AAC-in-MP4
+  // where the browser has an encoder, WAV otherwise) — naming it .webm would be
+  // a lie about the file's contents.
+  const ext = format === 'stems' ? 'zip'
+    : format === 'midi' ? 'mid'
+    : format === 'wav' ? 'wav'
+    : (producedExt ?? 'm4a')
 
   // Filename: slug from podcast metadata or project name
   const filename = (() => {
@@ -316,6 +371,7 @@ export default function AudioExportModal({ onClose, audioMode, podcastMeta, defa
 
   const statusLabel: Record<StatusMessage, string> = {
     recording:   'Recording… do not close this window',
+    rendering:   'Rendering the mix…',
     converting:  'Converting to WAV…',
     normalizing: 'Normalizing for podcast delivery…',
     done:        'Done',
@@ -386,7 +442,7 @@ style={{
                       <button
                         key={f}
                         onClick={() => locked
-                          ? showUpgrade('WAV and stem exports are a Pro feature. Free exports a high-quality WebM/Opus mixdown — upgrade for lossless masters and per-track stems.')
+                          ? showUpgrade('WAV and stem exports are a Pro feature. Free exports a high-quality compressed mixdown — upgrade for lossless masters and per-track stems.')
                           : setFormat(f)}
                         title={locked ? 'Pro feature' : undefined}
                         style={{
@@ -400,7 +456,7 @@ style={{
                         }}
                       >
                         {locked && <Lock size={10} />}
-                        {f === 'webm' ? 'WebM / Opus' : f === 'wav' ? 'WAV (lossless)' : f === 'stems' ? 'Stems (zip of WAVs)' : 'MIDI (.mid)'}
+                        {f === 'webm' ? 'Compressed (M4A)' : f === 'wav' ? 'WAV (lossless)' : f === 'stems' ? 'Stems (zip of WAVs)' : 'MIDI (.mid)'}
                       </button>
                     )
                   })}
@@ -460,7 +516,7 @@ style={{
               <button
                 onClick={() => {
                   if ((format === 'wav' || format === 'stems') && !isPro && !saveTarget) {
-                    showUpgrade('WAV and stem exports are a Pro feature. Free exports a high-quality WebM/Opus mixdown — upgrade for lossless masters and per-track stems.')
+                    showUpgrade('WAV and stem exports are a Pro feature. Free exports a high-quality compressed mixdown — upgrade for lossless masters and per-track stems.')
                     return
                   }
                   void startExport()
@@ -489,7 +545,7 @@ style={{
                   background: statusMessage === 'normalizing' ? '#f97316'
                     : statusMessage !== 'recording' ? '#22c55e'
                     : 'var(--accent)',
-                  width: statusMessage === 'recording' ? `${Math.round(progress * 100)}%` : '100%',
+                  width: statusMessage === 'recording' || statusMessage === 'rendering' ? `${Math.round(progress * 100)}%` : '100%',
                   transition: 'width 0.1s linear',
                 }} />
               </div>
@@ -579,7 +635,7 @@ style={{
               <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.5 }}>
                 {format === 'wav'
                   ? `Exported as 16-bit PCM WAV.${normalize && isPodcast ? ' Normalized to approximate -16 LUFS.' : ''}`
-                  : 'Exported as WebM/Opus. For MP3, re-encode with any converter.'}
+                  : 'Exported as a compressed mixdown. For MP3, re-encode with any converter.'}
               </p>
 
               {/* Share the finished mix to the community feed (music mode) */}
