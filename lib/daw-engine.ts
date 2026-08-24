@@ -324,6 +324,12 @@ export class DawEngine extends EventTarget {
   // patches and play through the per-track Apollo engine path. Cached by the
   // params OBJECT (SET_INSTRUMENT replaces it, invalidating naturally).
   private _heliosSynthCache = new WeakMap<object, ApolloInstrumentParams | null>()
+  /** Clips already playing LIVE in this pass. A combined render that lands
+   *  mid-playback must not take over a clip whose notes are already scheduled
+   *  and ringing — the buffer would play on top of them, the same music twice.
+   *  Cleared whenever the transport restarts, so the next pass uses buffers. */
+  private _liveScheduledClips = new Set<string>()
+
   /** Slim patches expanded once per params object, then cached. */
   private _fatPatchCache = new WeakMap<object, ApolloInstrumentParams>()
   private _resolveInstrument(track: DawTrack): TrackInstrument {
@@ -961,7 +967,7 @@ export class DawEngine extends EventTarget {
     this._startCtxTime = this.ctx.currentTime + 0.03
     this.isPlaying = true
     this._nextMetronomeBeat = Math.ceil(this._startBeat)
-    this._noteKeyVersion++; this._scheduledNoteKeys.clear()
+    this._noteKeyVersion++; this._scheduledNoteKeys.clear(); this._liveScheduledClips.clear()
     this._startScheduler()
     this.startJamBuffer()
     this._announcePlayback()
@@ -975,7 +981,7 @@ export class DawEngine extends EventTarget {
     this._killAllSources()
     this._stopAllSessionSlots()
     this._clearClipFxChains()   // release the shared reverb/delay graphs (frees CPU while paused)
-    this._noteKeyVersion++; this._scheduledNoteKeys.clear()
+    this._noteKeyVersion++; this._scheduledNoteKeys.clear(); this._liveScheduledClips.clear()
     this._unisonCache.clear()
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: false, beat: this._startBeat } }))
   }
@@ -987,7 +993,7 @@ export class DawEngine extends EventTarget {
     if (wasPlaying) {
       this._startCtxTime = this.ctx.currentTime
       this._nextMetronomeBeat = Math.ceil(beat)
-      this._noteKeyVersion++; this._scheduledNoteKeys.clear()
+      this._noteKeyVersion++; this._scheduledNoteKeys.clear(); this._liveScheduledClips.clear()
       this._startScheduler()
     }
     this.dispatchEvent(new CustomEvent('seek', { detail: { beat } }))
@@ -1786,6 +1792,9 @@ export class DawEngine extends EventTarget {
     if (this._renderNow != null) return false
     const inst = this._resolveInstrument(track)
     if (inst?.type !== 'apollo') return false
+    // Already playing live in this pass — leave it alone until the transport
+    // restarts, or the buffer doubles what is already sounding.
+    if (this._liveScheduledClips.has(clip.id)) return false
     // Drawn groove and volume curves are applied per note, so a combined render
     // would silently lose them. Those clips keep playing live.
     if (clip.groove?.length || clip.volGraph?.length) return false
@@ -1802,6 +1811,11 @@ export class DawEngine extends EventTarget {
       // offline pass together, because a browser will not give us a fresh audio
       // context per clip and the extras come back silent.
       requestCombine(this.tempo, this._apolloGroups())
+      // This clip is about to be scheduled note-by-note; remember that, so a
+      // render finishing seconds from now does not start a second copy on top.
+      if (clip.startBeat <= windowEnd && clip.startBeat + clip.durationBeats >= now) {
+        this._liveScheduledClips.add(clip.id)
+      }
       return false
     }
 
@@ -1836,7 +1850,7 @@ export class DawEngine extends EventTarget {
     // Loop wraparound (live only)
     if (!offline && this.loopEnabled && this.currentBeat >= this.loopEnd) {
       this._killAllSources()
-      this._noteKeyVersion++; this._scheduledNoteKeys.clear()
+      this._noteKeyVersion++; this._scheduledNoteKeys.clear(); this._liveScheduledClips.clear()
       this._startBeat    = this.loopStart
       this._startCtxTime = this.ctx.currentTime + 0.03   // same headroom as play() — don't chop the loop-start hit
       this._nextMetronomeBeat = Math.ceil(this.loopStart)

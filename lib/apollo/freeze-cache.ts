@@ -23,6 +23,12 @@
 import type { MidiClip } from '@/lib/daw-types'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { renderApolloProject, freezeStamp, type TrackRenderGroup } from '@/lib/apollo/daw-freeze'
+import { loadCombined, saveCombined } from '@/lib/apollo/combine-store'
+
+// AudioBuffers are not tied to the context that allocated them, so one
+// throwaway context is enough to rebuild what was stored.
+let allocCtx: OfflineAudioContext | null = null
+const alloc = () => (allocCtx ??= new OfflineAudioContext(2, 1, 48000))
 
 /** Rendered audio, keyed by everything that decides how it sounds. */
 const buffers = new Map<string, AudioBuffer>()
@@ -33,6 +39,27 @@ const failures = new Map<string, number>()
 /** Why the most recent combine failed — a swallowed error is indistinguishable
  *  from "not ready yet", since both fall back to live playback. */
 let lastError: string | null = null
+const timings = { diskMs: 0, renderMs: 0, fromDisk: 0, attempts: 0 }
+
+// Clips that would not render, remembered ACROSS sessions.
+//
+// One clip of Filament's 23 never comes back with audio. Without this, every
+// page load pulled the other 22 off disk in 290ms and then spent 25 SECONDS
+// re-rendering the whole project chasing that one — which is the entire cost of
+// a reload. It plays live perfectly well; stop grinding for it.
+const BAD_KEY = 'apollo-combine-unrenderable'
+function knownBad(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(BAD_KEY) ?? '[]') as string[]) } catch { return new Set() }
+}
+function rememberBad(stamps: string[]): void {
+  if (!stamps.length) return
+  try {
+    const all = knownBad()
+    for (const s of stamps) all.add(s)
+    // Keep it bounded; these are only an optimisation.
+    localStorage.setItem(BAD_KEY, JSON.stringify([...all].slice(-200)))
+  } catch { /* private mode */ }
+}
 
 type Job = { stamp: string; run: () => Promise<void> }
 const queue: Job[] = []
@@ -140,8 +167,29 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // whatever is still missing and keep the good ones — the union across a
         // few attempts covers everything, and a clip that never renders simply
         // keeps playing live.
-        for (let attempt = 0; attempt < 4 && missing().length; attempt++) {
-          const before = missing().length
+        // Anything rendered in a PREVIOUS session comes off disk instead of
+        // being re-rendered. This is the difference between a reload costing a
+        // minute of synthesis and costing nothing: the work is deterministic
+        // over data that has not changed.
+        const tDisk = Date.now()
+        let fromDisk = 0
+        for (const w of missing()) {
+          const stored = await loadCombined(w.key, alloc())
+          if (stored) { buffers.set(w.key, stored); fromDisk++ }
+        }
+        timings.diskMs = Date.now() - tDisk
+        timings.fromDisk = fromDisk
+        timings.renderMs = 0
+        timings.attempts = 0
+
+        // Anything already known not to render is left to play live rather than
+        // re-attempted on every page load.
+        const bad = knownBad()
+        const renderable = () => missing().filter(w => !bad.has(w.key))
+        const tRender = Date.now()
+        for (let attempt = 0; attempt < 4 && renderable().length; attempt++) {
+          timings.attempts++
+          const before = renderable().length
           const rendered = await renderApolloProject(groups, bpm)
           for (const w of wanted) {
             if (buffers.has(w.key)) continue
@@ -155,15 +203,19 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
             for (let i = 0; i < d.length; i += 256) { const v = Math.abs(d[i]); if (v > peak) peak = v }
             if (peak < 1e-4) continue
             buffers.set(w.key, buf)
+            void saveCombined(w.key, buf)   // keep it for the next page load
           }
           evictIfNeeded()
           // Stop when a pass stops helping. The first pass usually lands nearly
           // everything; grinding out the last stubborn clip cost ~45s of extra
           // rendering at load for one clip that plays live perfectly well.
-          if (missing().length >= before) break
+          if (renderable().length >= before) break
         }
+        timings.renderMs = Date.now() - tRender
+        const stubborn = renderable().map(w => w.key)
+        rememberBad(stubborn)     // do not chase these again next time
         const left = missing().length
-        lastError = left ? `${left} of ${wanted.length} clips would not render after 4 attempts` : null
+        lastError = left ? `${left} of ${wanted.length} clips play live (would not render)` : null
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e)
       } finally {
@@ -181,7 +233,7 @@ export function clearCombined(): void {
 
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
-export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[] } {
+export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; diskMs: number; renderMs: number; fromDisk: number; attempts: number } {
   // Peak of each cached render: a buffer that exists but is silent looks
   // identical to a working one from the outside, and silently-empty renders are
   // exactly the failure mode this cache can hide.
@@ -192,7 +244,7 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
     for (let i = 0; i < d.length; i += 512) p = Math.max(p, Math.abs(d[i]))
     peaks.push(+p.toFixed(4))
   }
-  return { ready: buffers.size, inFlight: inFlight.size, queued: queue.length, failed: [...failures], lastError, peaks }
+  return { ready: buffers.size, inFlight: inFlight.size, queued: queue.length, failed: [...failures], lastError, peaks, ...timings }
 }
 if (typeof window !== 'undefined') {
   (window as unknown as { __combineStats?: typeof combineStats }).__combineStats = combineStats
