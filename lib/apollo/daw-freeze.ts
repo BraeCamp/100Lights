@@ -140,17 +140,32 @@ export async function renderApolloProject(
   live.forEach((g, i) => {
     const full = perTrack[i]
     if (!full) return
-    for (const c of g.clips) {
-      if (!c.notes.length) continue
+    // Clips in playback order, so each one knows where the next begins.
+    const ordered = g.clips.filter(c => c.notes.length > 0).sort((a, b) => a.startBeat - b.startBeat)
+    ordered.forEach((c, ci) => {
+      // The tail exists to catch releases and FX ringing past the last note. But
+      // this is a slice of a CONTINUOUS render, so a tail that runs into the
+      // next clip contains that clip's audio too — and both get played, summing
+      // the overlap on every clip boundary. Back-to-back clips (an eight-bar
+      // section followed by the next) made that every boundary in the song,
+      // which is what the static was. Stop at the next clip: its own slice
+      // already carries the ring-out from this one.
+      const next = ordered[ci + 1]
+      const tailBeats = next
+        ? Math.max(0, next.startBeat - (c.startBeat + c.durationBeats))
+        : tailSec / spb
       const from = Math.max(0, Math.floor(c.startBeat * spb * sr))
-      const len = Math.min(full.length - from, Math.ceil((c.durationBeats * spb + tailSec) * sr))
-      if (len <= 0) continue
+      const len = Math.min(
+        full.length - from,
+        Math.ceil((c.durationBeats + Math.min(tailBeats, tailSec / spb)) * spb * sr),
+      )
+      if (len <= 0) return
       const slice = cutter.createBuffer(2, len, sr)
       for (let ch = 0; ch < 2; ch++) {
         slice.getChannelData(ch).set(full.getChannelData(ch).subarray(from, from + len))
       }
       out.set(c.id, slice)
-    }
+    })
   })
   return out
 }

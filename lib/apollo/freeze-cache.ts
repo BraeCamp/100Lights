@@ -38,13 +38,24 @@ type Job = { stamp: string; run: () => Promise<void> }
 const queue: Job[] = []
 let draining = false
 
-/** The cache has to hold a WHOLE song, not a few clips of one. Filament is 23
- *  clips of about 21s each — some 480s of audio — and a 180s cap meant buffers
- *  were evicted as fast as they were made, including ones about to be played, so
- *  the ready count sat at 7 forever and playback never actually used them.
- *  Ten minutes of stereo float at 48k is ~230MB, which is the real cost of not
- *  running seven synths at once. */
-const MAX_FRAMES = 48_000 * 600
+/** How much rendered audio to keep.
+ *
+ *  The cache has to hold a WHOLE song, not a few clips of one: Filament is 23
+ *  clips of about 21s each, and a 180s cap meant buffers were evicted as fast as
+ *  they were made — including ones about to be played.
+ *
+ *  But this is stereo float at 48k, so 600s is ~230MB, and a phone will simply
+ *  reload the tab rather than hand that over. Scale it to the device: a small
+ *  budget still helps (the clips near the playhead stay combined) and never
+ *  costs the page. */
+function maxFrames(): number {
+  if (typeof navigator === 'undefined') return 48_000 * 600
+  const nav = navigator as Navigator & { deviceMemory?: number }
+  const gb = nav.deviceMemory ?? (/Android|iPhone|iPad|iPod/i.test(nav.userAgent) ? 2 : 8)
+  const seconds = gb <= 2 ? 60 : gb <= 4 ? 120 : gb <= 8 ? 300 : 600
+  return 48_000 * seconds
+}
+const MAX_FRAMES = maxFrames()
 
 export function combinedStamp(clip: MidiClip, patch: ApolloPatch, bpm: number): string {
   // The clip id is in the key so two clips that happen to hold identical notes
