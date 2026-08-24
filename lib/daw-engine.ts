@@ -14,6 +14,8 @@ import { translateInstrument } from './apollo/daw-synth'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
+import { combined, combinedStamp, requestCombine } from './apollo/freeze-cache'
+import type { ApolloPatch } from './apollo/patch'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
@@ -1028,9 +1030,18 @@ export class DawEngine extends EventTarget {
     // Pre-warm sample-oscillator buffers for poly instruments — same reason as
     // preset buffers: a lazily-loaded sample would miss its first note.
     setApolloCtxTempo(this.ctx, project.tempo)
+    // Uncombined synths load SEPARATELY, not up front: a project with several
+    // Apollo tracks was building every one of them at load time, which is a
+    // large fixed cost paid before a single note plays and a big part of why a
+    // seven-track piece opened silent. Past a couple of tracks, let them be
+    // created on demand instead (playApolloNote does it lazily) — combined
+    // playback means most are never needed.
+    const apolloCount = project.tracks.filter(t => this._resolveInstrument(t)?.type === 'apollo').length
+    const warmApollo  = apolloCount <= 2
     for (const track of project.tracks) {
       if (track.instrument?.type === 'drum') void preloadDrumInstrument(this.ctx, track.instrument)
-      if (track.instrument?.type === 'apollo') {
+      if (!warmApollo && this._resolveInstrument(track)?.type === 'apollo') { /* lazy */ }
+      else if (track.instrument?.type === 'apollo') {
         void preloadApolloInstrument(this.ctx, this.trackNodes.get(track.id)?.midiInput, track.instrument.params as ApolloInstrumentParams)
       } else if (track.instrument && (track.instrument.type === 'poly' || track.instrument.type === 'wavetable')) {
         const resolved = this._resolveInstrument(track)
@@ -1705,6 +1716,60 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /**
+   * Play an Apollo clip as one combined buffer, if a render of it exists.
+   *
+   * Returns true when the clip has been dealt with and its notes should be
+   * skipped. On a miss it returns false — the clip plays live exactly as before
+   * — and asks for a render in the background, so the cost is paid once, off the
+   * audio path, and every later pass is a single buffer.
+   */
+  private _tryScheduleCombined(
+    clip: MidiClip,
+    track: DawTrack,
+    nodes: { midiInput: AudioNode },
+    now: number,
+    windowEnd: number,
+    contextNow: number,
+  ): boolean {
+    const inst = this._resolveInstrument(track)
+    if (inst?.type !== 'apollo') return false
+    // Drawn groove and volume curves are applied per note, so a combined render
+    // would silently lose them. Those clips keep playing live.
+    if (clip.groove?.length || clip.volGraph?.length) return false
+
+    const patch = inst.params as unknown as ApolloPatch
+    const stamp = combinedStamp(clip, patch, this.tempo)
+    const buf = combined(stamp)
+    if (!buf) {
+      // Not ready (or the notes/patch just changed, so the stamp moved) — ask
+      // for it and let this pass play live.
+      requestCombine(stamp, clip, patch, this.tempo)
+      return false
+    }
+
+    if (clip.startBeat > windowEnd || clip.startBeat + clip.durationBeats < now) return true
+    const key = `combined|${stamp}` as unknown as NoteKey
+    if (this._scheduledNoteKeys.has(key)) return true
+
+    // Entering a clip mid-way (a seek, or the playhead already inside it) starts
+    // the buffer at the matching offset rather than from the top.
+    const fromBeat  = Math.max(now, clip.startBeat)
+    const offsetSec = this.beatsToSeconds(fromBeat - clip.startBeat)
+    if (offsetSec >= buf.duration) return true
+
+    const src  = this.ctx.createBufferSource()
+    const gain = this.ctx.createGain()
+    src.buffer = buf
+    src.connect(gain)
+    gain.connect(nodes.midiInput)     // same destination as notes: track FX, volume and pan all still apply
+    src.start(this._ctxTimeForBeat(fromBeat, now, contextNow), offsetSec)
+    this._registerMidiVoice(src, gain)
+    src.onended = () => { try { src.disconnect(); gain.disconnect() } catch { /* already gone */ } }
+    this._scheduledNoteKeys.add(key)
+    return true
+  }
+
   private _tick() {
     if (!this.isPlaying) return
     // Offline render: read the virtual clock + a full-window lookahead so this one
@@ -1776,6 +1841,12 @@ export class DawEngine extends EventTarget {
       if (!track || track.mute) continue
       const nodes = this.trackNodes.get(clip.trackId)
       if (!nodes) continue
+
+      // An Apollo clip plays as ONE combined buffer once its render is ready,
+      // instead of a synth voice per note. Handled here means the per-note work
+      // below is skipped entirely, which is the whole point: a seven-synth
+      // project is unplayable live, and the same music as seven buffers is not.
+      if (this._tryScheduleCombined(clip, track, nodes, now, now + aheadBeats, contextNow)) continue
 
       const artic = this._clipArtic(clip)
       // Groove (micro-timing per bar position) + drawn volume automation — sample
