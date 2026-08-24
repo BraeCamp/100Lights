@@ -33,8 +33,25 @@ export function isUuid(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 }
 
+/**
+ * Make sure the community schema exists.
+ *
+ * This must never throw. It is called at the TOP of five server components, all
+ * of which are prerendered (they set `revalidate`), so an exception here does
+ * not degrade a page — it fails the whole production BUILD. That is exactly what
+ * happened when the database went over its quota: every call site raised
+ * NeonDbError 402 and the deploy died on "Error occurred prerendering page
+ * /community", even though each caller already had a try/catch around its own
+ * query and would happily have rendered an empty feed.
+ *
+ * `tablesReady` stays false on failure, so it retries once the database is back.
+ */
 export async function ensureTables() {
   if (tablesReady) return
+  try { await buildTables(); tablesReady = true } catch { /* unreachable DB — callers degrade */ }
+}
+
+async function buildTables() {
   await sql`
     CREATE TABLE IF NOT EXISTS community_items (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -176,7 +193,6 @@ export async function ensureTables() {
     WHERE author_username IS NULL`
   await sql`CREATE INDEX IF NOT EXISTS community_items_username_idx ON community_items (author_username)`
   await sql`CREATE INDEX IF NOT EXISTS community_collections_username_idx ON community_collections (author_username)`
-  tablesReady = true
 }
 
 // Per-user write limits applied in 'large' mode. Small communities stay
@@ -259,8 +275,8 @@ export async function reactionMaps(itemIds: string[], userId: string | null): Pr
 // votes/reactions), newest first. Gives crawlers real feed content and internal
 // links to every item page instead of an empty client-loaded list.
 export async function getInitialCommunityItems(limit = 30) {
-  await ensureTables()
   try {
+    await ensureTables()
     const rows = await sql`SELECT * FROM community_items WHERE removed_at IS NULL ORDER BY created_at DESC LIMIT ${limit}`
     return rows.map(r => rowToItem(r, null, new Set<string>(), new Map(), new Map()))
   } catch { return [] }
