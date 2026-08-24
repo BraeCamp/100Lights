@@ -1743,8 +1743,22 @@ export class DawEngine extends EventTarget {
     const buf = combined(stamp)
     if (!buf) {
       // Not ready (or the notes/patch just changed, so the stamp moved) — ask
-      // for it and let this pass play live.
-      requestCombine(stamp, clip, patch, this.tempo)
+      // for it and let this pass play live. The whole track goes in one request:
+      // it renders in a single offline pass, which is what stopped most of the
+      // renders coming back silent.
+      // Hand over EVERY Apollo track, not just this clip's: they render in one
+      // offline pass together, because a browser will not give us a fresh audio
+      // context per clip and the extras come back silent.
+      const groups = this._tracks
+        .map(t => ({ trackId: t.id, inst: this._resolveInstrument(t) }))
+        .filter(x => x.inst?.type === 'apollo')
+        .map(x => ({
+          trackId: x.trackId,
+          patch: x.inst.params as unknown as ApolloPatch,
+          clips: this._midiClips.filter(c => c.trackId === x.trackId && c.notes.length > 0),
+        }))
+        .filter(g => g.clips.length > 0)
+      requestCombine(this.tempo, groups)
       return false
     }
 

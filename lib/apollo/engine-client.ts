@@ -403,6 +403,84 @@ export class ApolloEngine extends EventTarget {
     if (patch.clipMode || patch.arp.on) post({ type: 'transport', playing: true, bpm: patch.global.bpm })
     return octx.startRendering()
   }
+
+  /**
+   * Render SEVERAL patches at once, each to its own stereo pair, in ONE
+   * OfflineAudioContext.
+   *
+   * A browser only allows a couple of audio contexts to exist at a time, and
+   * renderToBuffer builds one per call: back to back, the first one or two
+   * produce audio and the rest come back silent — which looks like a broken
+   * patch and is really a resource ceiling. (Measured on a seven-track project:
+   * exactly two tracks rendered, whichever two got there first, no matter how
+   * far apart the calls were spaced.)
+   *
+   * So: one context, one worklet node per patch, and a merger that keeps each
+   * patch on its own channel pair so they can be pulled apart afterwards
+   * instead of arriving pre-mixed.
+   */
+  async renderManyToBuffer(
+    items: { patch: ApolloPatch; notes: { t: number; dur: number; note: number; vel: number }[] }[],
+    seconds: number,
+  ): Promise<AudioBuffer[]> {
+    if (!items.length) return []
+    const sr = this.ctx?.sampleRate || 48000
+    const frames = Math.ceil(seconds * sr)
+    const octx = new OfflineAudioContext(items.length * 2, frames, sr)
+    await octx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
+    const merger = octx.createChannelMerger(items.length * 2)
+    merger.connect(octx.destination)
+
+    items.forEach(({ patch, notes }, idx) => {
+      const node = new AudioWorkletNode(octx, 'apollo-engine',
+        { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
+      const splitter = octx.createChannelSplitter(2)
+      node.connect(splitter)
+      splitter.connect(merger, 0, idx * 2)
+      splitter.connect(merger, 1, idx * 2 + 1)
+      const post = (msg: unknown) => node.port.postMessage(msg)
+
+      const ranges: Record<string, [number, number]> = {}
+      for (const p of PARAMS) ranges[p.path] = [p.min, p.max]
+      collectFxRanges(patch.fxMain, ranges)
+      collectFxRanges(patch.fxBus1, ranges)
+      collectFxRanges(patch.fxBus2, ranges)
+      post({ type: 'ranges', ranges })
+
+      for (const id of new Set(patch.oscs.map(o => o.wt.tableId))) {
+        const user = patch.userTables?.[id]
+        const built = user ? userTableWithMips(user.data, user.frames) : factoryTableWithMips(id)
+        if (built) post({ type: 'table', id, ...copyBuilt(built) })
+      }
+      for (const [id, smp] of this.samples) {
+        post({ type: 'sample', id, sr: smp.sr, len: smp.len, l: new Float32Array(smp.l), r: smp.r ? new Float32Array(smp.r) : null })
+        const an = this.spectralCache.get(id)
+        if (an) post({ type: 'spectral', id, frames: an.frames, bins: an.bins, hop: an.hop, sr: an.sr, mags: new Float32Array(an.mags), phases: new Float32Array(an.phases), onsets: new Uint8Array(an.onsets) })
+      }
+      patch.lfos.forEach((lfo, i) => {
+        post({ type: 'lfoLut', index: i, main: lfoLutFromPoints(lfo.points), y: lfo.mode === 'path' ? lfoLutFromPoints(lfo.pathPoints) : null })
+      })
+      for (const row of patch.matrix) if (row.curve?.length) post({ type: 'remapLut', rowId: row.id, lut: lfoLutFromPoints(row.curve) })
+      post({ type: 'patch', patch })
+
+      const events: { t: number; type: string; note: number; vel?: number }[] = []
+      for (const n of notes) {
+        events.push({ t: n.t, type: 'noteOn', note: n.note, vel: n.vel })
+        events.push({ t: n.t + n.dur, type: 'noteOff', note: n.note })
+      }
+      post({ type: 'schedule', events })
+      if (patch.clipMode || patch.arp.on) post({ type: 'transport', playing: true, bpm: patch.global.bpm })
+    })
+
+    const rendered = await octx.startRendering()
+    // Pull each patch back out of its own channel pair.
+    return items.map((_, idx) => {
+      const buf = new OfflineAudioContext(2, frames, sr).createBuffer(2, frames, sr)
+      buf.getChannelData(0).set(rendered.getChannelData(idx * 2))
+      buf.getChannelData(1).set(rendered.getChannelData(idx * 2 + 1))
+      return buf
+    })
+  }
 }
 
 // Hung off globalThis, not a module-scoped variable. ApolloCard is loaded

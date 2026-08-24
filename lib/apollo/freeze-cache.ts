@@ -22,7 +22,7 @@
 
 import type { MidiClip } from '@/lib/daw-types'
 import type { ApolloPatch } from '@/lib/apollo/patch'
-import { renderApolloClip, freezeStamp } from '@/lib/apollo/daw-freeze'
+import { renderApolloProject, freezeStamp, type TrackRenderGroup } from '@/lib/apollo/daw-freeze'
 
 /** Rendered audio, keyed by everything that decides how it sounds. */
 const buffers = new Map<string, AudioBuffer>()
@@ -84,6 +84,13 @@ function idle(): Promise<void> {
   })
 }
 
+/** Each render builds an OfflineAudioContext and registers the worklet module in
+ *  it. Back-to-back, the first succeeds and later ones come back silent, which
+ *  is resource exhaustion rather than anything about the patches — the contexts
+ *  are finished but not yet reclaimed. Leave a gap between them. */
+const RENDER_GAP_MS = 1500
+const gap = () => new Promise<void>(r => setTimeout(r, RENDER_GAP_MS))
+
 async function drain(): Promise<void> {
   if (draining) return
   draining = true
@@ -92,6 +99,7 @@ async function drain(): Promise<void> {
       const job = queue.shift()!
       await idle()          // never compete with playback for the main thread
       await job.run()
+      await gap()           // let the offline context be reclaimed before the next
     }
   } finally { draining = false }
 }
@@ -100,31 +108,58 @@ async function drain(): Promise<void> {
  * Ask for this clip to be combined. Cheap and idempotent — safe to call from
  * the scheduler on every pass; it returns immediately unless there is new work.
  */
-export function requestCombine(stamp: string, clip: MidiClip, patch: ApolloPatch, bpm: number): void {
-  if (buffers.has(stamp) || inFlight.has(stamp)) return
-  if ((failures.get(stamp) ?? 0) >= 2) return
-  inFlight.add(stamp)
+export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
+  if (!groups.length) return
+  // ONE job for the whole project. Rendering a context per clip, or even per
+  // track, hits the browser's audio-context ceiling and everything past the
+  // first couple comes back silent — so every Apollo track goes through a single
+  // offline pass together.
+  const pending = groups.flatMap(g => g.clips
+    .filter(c => c.notes.length > 0)
+    .map(c => combinedStamp(c, g.patch, bpm))
+    .filter(k => !buffers.has(k) && (failures.get(k) ?? 0) < 2))
+  if (!pending.length) return
+
+  // A STABLE key: keying on the pending count meant the key changed as buffers
+  // landed, so the scheduler could queue a second whole-project render on top of
+  // the one already running. Only one ever needs to be in flight.
+  const jobKey = 'project-combine'
+  if (inFlight.has(jobKey)) return
+  inFlight.add(jobKey)
   queue.push({
-    stamp,
+    stamp: jobKey,
     run: async () => {
       try {
-        const buf = await renderApolloClip(clip, patch, bpm)
-        // Never cache a silent render. A combined buffer REPLACES live playback,
-        // so an empty one turns a clip that merely strained the CPU into one that
-        // makes no sound at all — strictly worse. Treat it as a failure and let
-        // the clip keep playing live. (Offline Apollo renders currently come back
-        // empty most of the time; this is the guard, not the fix.)
-        let peak = 0
-        const d = buf.getChannelData(0)
-        for (let i = 0; i < d.length; i += 256) { const v = Math.abs(d[i]); if (v > peak) peak = v }
-        if (peak < 1e-4) throw new Error('render was silent')
-        buffers.set(stamp, buf)
+        const rendered = await renderApolloProject(groups, bpm)
+        let kept = 0
+        for (const g of groups) {
+          for (const c of g.clips) {
+            if (!c.notes.length) continue
+            const key = combinedStamp(c, g.patch, bpm)
+            const buf = rendered.get(c.id)
+            if (!buf) { failures.set(key, (failures.get(key) ?? 0) + 1); continue }
+            // Never cache a silent render: a combined buffer REPLACES live
+            // playback, so an empty one turns a clip that merely strained the
+            // CPU into one that makes no sound at all.
+            let peak = 0
+            const d = buf.getChannelData(0)
+            for (let i = 0; i < d.length; i += 256) { const v = Math.abs(d[i]); if (v > peak) peak = v }
+            if (peak < 1e-4) { failures.set(key, (failures.get(key) ?? 0) + 1); continue }
+            buffers.set(key, buf); kept++
+          }
+        }
+        if (!kept) lastError = 'project rendered, but every clip came back silent'
         evictIfNeeded()
       } catch (e) {
-        failures.set(stamp, (failures.get(stamp) ?? 0) + 1)
+        for (const g of groups) {
+          for (const c of g.clips) {
+            const key = combinedStamp(c, g.patch, bpm)
+            failures.set(key, (failures.get(key) ?? 0) + 1)
+          }
+        }
         lastError = e instanceof Error ? e.message : String(e)
       } finally {
-        inFlight.delete(stamp)
+        inFlight.delete(jobKey)
       }
     },
   })

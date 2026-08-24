@@ -93,6 +93,127 @@ export async function renderApolloClip(
   return engine.renderToBuffer(patch, notes, seconds)
 }
 
+/** One Apollo track's worth of work: its patch and the clips to render. */
+export interface TrackRenderGroup { trackId: string; patch: ApolloPatch; clips: MidiClip[] }
+
+/**
+ * Render EVERY Apollo track of a project in ONE offline pass and cut the result
+ * into per-clip buffers.
+ *
+ * This has to be one pass. A browser only keeps a couple of audio contexts
+ * alive, so rendering a context per clip — or even per track — means the first
+ * one or two produce audio and the rest come back silent. Measured on a
+ * seven-track project: exactly two tracks ever rendered, whichever got there
+ * first, however far apart the calls were spaced. renderManyToBuffer puts every
+ * patch in a single context on its own channel pair instead.
+ */
+export async function renderApolloProject(
+  groups: TrackRenderGroup[],
+  bpm: number,
+  { tailSec = 2 }: { tailSec?: number } = {},
+): Promise<Map<string, AudioBuffer>> {
+  const out = new Map<string, AudioBuffer>()
+  const live = groups.filter(g => g.clips.some(c => c.notes.length > 0))
+  if (!live.length) return out
+
+  const spb = 60 / bpm
+  // A shared origin of beat 0 keeps every track on the same timeline, so a clip
+  // slice lands at the same place regardless of which track it came from.
+  const lastBeat = Math.max(...live.flatMap(g => g.clips.map(c => c.startBeat + c.durationBeats)))
+  const seconds = lastBeat * spb + tailSec
+
+  const items = live.map(g => ({
+    patch: g.patch,
+    notes: g.clips.flatMap(c => c.notes.map(n => ({
+      t: (c.startBeat + n.startBeat) * spb,
+      dur: Math.max(0.02, n.durationBeats * spb),
+      note: n.pitch,
+      vel: Math.max(0.05, (n.velocity ?? 100) / 127),
+    }))),
+  }))
+
+  const engine = new ApolloEngine()
+  const perTrack = await engine.renderManyToBuffer(items, seconds)
+
+  const sr = perTrack[0]?.sampleRate ?? 48000
+  const cutter = new OfflineAudioContext(2, 1, sr)
+  live.forEach((g, i) => {
+    const full = perTrack[i]
+    if (!full) return
+    for (const c of g.clips) {
+      if (!c.notes.length) continue
+      const from = Math.max(0, Math.floor(c.startBeat * spb * sr))
+      const len = Math.min(full.length - from, Math.ceil((c.durationBeats * spb + tailSec) * sr))
+      if (len <= 0) continue
+      const slice = cutter.createBuffer(2, len, sr)
+      for (let ch = 0; ch < 2; ch++) {
+        slice.getChannelData(ch).set(full.getChannelData(ch).subarray(from, from + len))
+      }
+      out.set(c.id, slice)
+    }
+  })
+  return out
+}
+
+/**
+ * Render EVERY clip of one track in a single offline pass, then cut the result
+ * into per-clip buffers.
+ *
+ * Rendering clip-by-clip builds one OfflineAudioContext per clip and registers
+ * the worklet module again each time. Twenty-three of those in quick succession
+ * mostly came back silent — and how many survived varied run to run (1, then 7,
+ * then 3), which is resource exhaustion rather than anything about the patches.
+ * One context per track is seven instead of twenty-three, and the slices cost no
+ * more memory than the per-clip renders did.
+ */
+export async function renderApolloTrack(
+  clips: MidiClip[],
+  patch: ApolloPatch,
+  bpm: number,
+  { tailSec = 2 }: { tailSec?: number } = {},
+): Promise<Map<string, AudioBuffer>> {
+  const out = new Map<string, AudioBuffer>()
+  const withNotes = clips.filter(c => c.notes.length > 0)
+  if (!withNotes.length) return out
+
+  const spb = 60 / bpm
+  const firstBeat = Math.min(...withNotes.map(c => c.startBeat))
+  const lastBeat = Math.max(...withNotes.map(c => c.startBeat + c.durationBeats))
+
+  // Every note of every clip, placed on the track's own timeline.
+  const notes: { t: number; dur: number; note: number; vel: number }[] = []
+  for (const c of withNotes) {
+    for (const n of c.notes) {
+      notes.push({
+        t: (c.startBeat + n.startBeat - firstBeat) * spb,
+        dur: Math.max(0.02, n.durationBeats * spb),
+        note: n.pitch,
+        vel: Math.max(0.05, (n.velocity ?? 100) / 127),
+      })
+    }
+  }
+  const seconds = (lastBeat - firstBeat) * spb + tailSec
+  const engine = new ApolloEngine()
+  const full = await engine.renderToBuffer(patch, notes, seconds)
+
+  // Cut each clip out, keeping a tail so releases and FX are not clipped off.
+  const sr = full.sampleRate
+  const ctx = new OfflineAudioContext(full.numberOfChannels, 1, sr)
+  for (const c of withNotes) {
+    const startSec = (c.startBeat - firstBeat) * spb
+    const lenSec = c.durationBeats * spb + tailSec
+    const from = Math.max(0, Math.floor(startSec * sr))
+    const len = Math.min(full.length - from, Math.ceil(lenSec * sr))
+    if (len <= 0) continue
+    const slice = ctx.createBuffer(full.numberOfChannels, len, sr)
+    for (let ch = 0; ch < full.numberOfChannels; ch++) {
+      slice.getChannelData(ch).set(full.getChannelData(ch).subarray(from, from + len))
+    }
+    out.set(c.id, slice)
+  }
+  return out
+}
+
 /**
  * Freeze every Apollo MIDI clip in a project.
  *
