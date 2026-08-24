@@ -35,6 +35,7 @@ const SECONDS = flag('seconds', null) ? Math.max(3, Math.min(180, Number(flag('s
 const URL = flag('url', 'http://localhost:3001')
 const TITLE = flag('title', null)              // override the project name shown in the studio
 const KEEP = has('keep')
+const OFFLINE = has('offline')   // opt-in fast render; see the note at the bounce
 const OPEN = has('open')
 const log = (...a) => console.log(...a)
 const titleCase = s => s.replace(/\b\w/g, c => c.toUpperCase())
@@ -94,7 +95,7 @@ const sliceBeats = SECONDS ? Math.min(endBeat, (SECONDS * bpm) / 60) : endBeat
 const approxSec = (sliceBeats * 60 / bpm)
 
 // ── 3 · Headless studio: load the song, bounce with the REAL samples ──────────
-log(`▸ bouncing ${approxSec.toFixed(0)}s through the studio engine (realtime — hang tight)…`)
+log(`▸ bouncing ${approxSec.toFixed(0)}s through the studio engine…`)
 const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] })
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await ctx.addInitScript(() => { try { localStorage.setItem('100lights-ui-tier', 'full') } catch { /* private mode */ } })
@@ -104,14 +105,38 @@ try {
   await page.goto(`${URL}/new?modules=audio`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => typeof window.__dawDispatch === 'function', null, { timeout: 30000 })
   await page.waitForTimeout(800)                 // let the sound library seed
+  await page.evaluate(want => { window.__WANT_OFFLINE = want }, OFFLINE)
   await page.evaluate(p => window.__dawDispatch({ type: 'LOAD_PROJECT', project: p }), dawProject)
   await page.waitForTimeout(1000)
   await page.keyboard.press('Escape').catch(() => {})
-  const wav = await page.evaluate(async (endB) => {
-    const r = await window.__dawRenderWav({ startBeat: 0, endBeat: endB, tailSec: 1.0 })
-    return r ? { master: r.master, sampleRate: r.sampleRate, durationSec: r.durationSec } : null
+  // --offline uses the OfflineAudioContext render, which goes as fast as the CPU
+  // allows rather than taking as long as the music (2:05 of audio rendered in 42s
+  // wall clock, browser startup included, against ~3min realtime).
+  //
+  // It is OPT-IN because it is not yet trustworthy for synth-heavy projects: on a
+  // seven-track Apollo piece it silently dropped the Pad track entirely — the
+  // pad-only intro rendered as digital silence while the other six Apollo tracks
+  // came through. The engine's renderOffline does await _preloadAll(), so this is
+  // something subtler than "worklets were not warm", and until it is understood a
+  // fast render that quietly loses a track is worse than a slow correct one.
+  const mix = await page.evaluate(async (endB) => {
+    if (!window.__WANT_OFFLINE) return null
+    if (typeof window.__dawRenderOffline !== 'function') return null
+    try {
+      const r = await window.__dawRenderOffline({ startBeat: 0, endBeat: endB })
+      return r?.base64 ? { base64: r.base64, type: r.type, durationSec: r.durationSec } : null
+    } catch (e) { return { error: String((e && e.message) || e) } }
   }, sliceBeats)
-  if (!wav) throw new Error('__dawRenderWav returned nothing')
+  if (mix?.error) log(`  (offline render failed: ${mix.error} — falling back to realtime)`)
+  let wav = null
+  if (!mix?.base64) {
+    log('▸ realtime capture (slower; offline path unavailable)…')
+    wav = await page.evaluate(async (endB) => {
+      const r = await window.__dawRenderWav({ startBeat: 0, endBeat: endB, tailSec: 1.0 })
+      return r ? { master: r.master, sampleRate: r.sampleRate, durationSec: r.durationSec } : null
+    }, sliceBeats)
+    if (!wav) throw new Error('neither __dawRenderOffline nor __dawRenderWav returned anything')
+  }
 
   // ── 4 · Write the file(s) ────────────────────────────────────────────────────
   const outDir = join(homedir(), 'Desktop', '100lights-ai-renders')
@@ -133,7 +158,29 @@ try {
   } else {
     writeFileSync(projPath, cfprojRaw)
   }
-  writeFileSync(wavPath, Buffer.from(wav.master, 'base64'))
+  if (wav) {
+    // A real-time capture can come back SHORT without failing: the transport
+    // clock keeps advancing on wall time, so it reaches the end and reports
+    // success, but under CPU load the ScriptProcessor stops getting callbacks
+    // and simply misses audio. A seven-synth project produced a 12MB file where
+    // 44MB was expected — a third of the song silently absent, with a tick and a
+    // success message. Catch it here rather than shipping a truncated bounce.
+    const expected = wav.durationSec ?? 0
+    const captured = Buffer.from(wav.master, 'base64').length / (wav.sampleRate * 2 * 2 || 1)
+    if (expected > 1 && captured < expected * 0.9) {
+      throw new Error(
+        `realtime capture came back short: ${captured.toFixed(1)}s of an expected ${expected.toFixed(1)}s. ` +
+        `The audio thread could not keep up — freeze the synth tracks (window.__dawFreezeApollo) or render fewer at once.`)
+    }
+    writeFileSync(wavPath, Buffer.from(wav.master, 'base64'))
+  } else {
+    // The offline path encodes to AAC/mp4 where the browser can, so normalise to
+    // WAV — everything downstream (analysis, mastering) expects a wav here.
+    const encPath = wavPath.replace(/\.wav$/i, '') + (String(mix.type).includes('mp4') ? '.m4a' : '.src.wav')
+    writeFileSync(encPath, Buffer.from(mix.base64, 'base64'))
+    execFileSync('ffmpeg', ['-y', '-i', encPath, wavPath], { stdio: 'ignore' })
+    rmSync(encPath, { force: true })
+  }
   try {
     execFileSync('ffmpeg', ['-y', '-i', wavPath, '-codec:a', 'libmp3lame', '-q:a', '2', mp3Path], { stdio: 'ignore' })
     if (!KEEP) rmSync(wavPath, { force: true })

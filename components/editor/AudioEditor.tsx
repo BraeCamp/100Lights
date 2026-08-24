@@ -991,6 +991,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       __dawInspect?: () => unknown
       __dawRenderWav?: (opts?: Parameters<DawEngine['renderWav']>[0]) => Promise<unknown>
       __dawRenderOffline?: (opts?: { startBeat?: number; endBeat?: number }) => Promise<unknown>
+      __dawFreezeApollo?: () => Promise<unknown>
       __parseMid?: (file: File) => Promise<unknown>
       __exportMid?: () => Promise<Blob>
       __sessionCapture?: (opts?: { sessionId?: string; enabled?: boolean }) => Promise<unknown>
@@ -1056,6 +1057,22 @@ export default function AudioEditor(props: AudioEditorProps) {
       let s = ''; const CH = 0x8000
       for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CH)))
       return { base64: btoa(s), type: mix.blob.type, durationSec: mix.durationSec, bytes: bytes.length }
+    }
+    // Freeze every Apollo track: render each synth clip once, offline, and swap
+    // it for an audio clip playing that render. A project with several Apollo
+    // tracks is several full synths running at once, which is enough to stop the
+    // audio thread keeping up — the project opens and you cannot hear it. A
+    // frozen clip is one buffer with no voices to allocate, which is the
+    // cheapest thing the engine can play. The notes and the patch ride along on
+    // the clip, so it can be thawed back and edited.
+    w.__dawFreezeApollo = async () => {
+      const { freezeApolloProject } = await import('@/lib/apollo/daw-freeze')
+      const frozen = await freezeApolloProject(projectRef.current, {
+        onProgress: (done, total, name) => console.log(`[freeze] ${done}/${total} ${name}`),
+      })
+      dispatch({ type: 'LOAD_PROJECT', project: frozen })
+      const froze = frozen.arrangementClips.filter(c => c.kind === 'audio').length
+      return { clips: frozen.arrangementClips.length, audioClips: froze }
     }
     // Dev-only: exercise the MIDI importer in isolation (returns {project, report}).
     w.__parseMid = (file) => import('@/lib/midi-import').then(m => m.parseMidiFile(file))
