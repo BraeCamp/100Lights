@@ -159,7 +159,12 @@ function render(cf, label, tmp) {
   writeFileSync(join(OUT_DIR, `${safe(label)}.cfproj`), JSON.stringify(cf))
   if (has('no-audio')) { console.log(`  ✓ ${join(OUT_DIR, safe(label) + '.cfproj')} (cfproj only — --no-audio)`); return }
   console.log(`▸ rendering "${label}"…`)
-  execFileSync('node', ['scripts/hear-ai.mjs', `--project=${cfPath}`, `--out=${join(OUT_DIR, safe(label) + '.mp3')}`], { cwd: ROOT, stdio: 'inherit' })
+  // Pass --url through: hear-ai defaults to :3001, so rendering was impossible
+  // against a dev server on any other port.
+  const hearArgs = ['scripts/hear-ai.mjs', `--project=${cfPath}`, `--out=${join(OUT_DIR, safe(label) + '.mp3')}`]
+  const urlFlag = flag('url', null)
+  if (urlFlag) hearArgs.push(`--url=${urlFlag}`)
+  execFileSync('node', hearArgs, { cwd: ROOT, stdio: 'inherit' })
   console.log(`  ✓ ${join(OUT_DIR, safe(label) + '.mp3')} (+ .cfproj)`)
 }
 
