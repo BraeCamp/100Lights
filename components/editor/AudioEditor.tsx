@@ -12,7 +12,7 @@ import type { DawView, EditTarget, DawProject, DawTrack, ApolloInstrumentParams 
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
-import { DawContext, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
+import { DawContext, DawPlayheadProvider, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
 import { useApolloTrackItem, ApolloTrackItemBar } from '@/components/editor/daw/ApolloTrackItem'
 import { useApolloMotion } from '@/components/editor/daw/ApolloMotion'
 import { consumeStudioSeed } from '@/lib/open-in-studio'
@@ -86,6 +86,13 @@ export interface AudioEditorProps {
 }
 
 // ── Lazy view imports ─────────────────────────────────────────────────────────
+
+/** window.__daw* console/automation hooks. On in development; a production build
+ *  can opt in with NEXT_PUBLIC_DAW_HOOKS=1, which is how a prod bundle gets
+ *  profiled or driven headlessly — dev-mode React is several times slower than
+ *  what ships, so measuring only the dev server measures the wrong program.
+ *  Off by default in production. */
+const DAW_HOOKS = process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DAW_HOOKS === '1'
 
 const EpisodePanel = dynamic(() => import('./daw/EpisodePanel'), { ssr: false })
 const SessionView = dynamic(() => import('./daw/SessionView'), { ssr: false })
@@ -887,7 +894,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   useEffect(() => {
     engineForRender.setPresets(combinePresets(project.presets))
     // Dev console access to the live engine (window.__daw)
-    if (process.env.NODE_ENV === 'development') {
+    if (DAW_HOOKS) {
       (window as unknown as { __daw?: DawEngine }).__daw = engineRef.current ?? undefined
     }
   }, [engineForRender, project.presets])
@@ -977,7 +984,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   // session can be driven and recorded (the History capture mode then replays
   // what actually happened — edits and refinements included).
   useEffect(() => {
-    if (process.env.NODE_ENV !== 'development') return
+    if (!DAW_HOOKS) return
     const w = window as unknown as {
       __dawDispatch?: typeof dispatch
       __dawSnapshot?: () => { project: DawProject; history: NonNullable<DawProject['history']> }
@@ -1285,7 +1292,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [])
   const [playing, setPlaying] = useState(false)
   const [recording, setRecording] = useState(false)
-  const [position, setPositionState] = useState(0)
+  // The playhead lives in DawPlayheadProvider, not here — state in this
+  // component re-renders the whole editor. Only seeks touch this counter, and
+  // those are user-initiated and rare.
+  const [seekNonce, setSeekNonce] = useState(0)
   const [metronome, setMetronome] = useState(false)
 
   useEffect(() => {
@@ -1496,28 +1506,14 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   }, [engineForRender]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // RAF loop: update positionBeatRef every frame, flush to state every ~100ms.
-  // Only runs while the transport is playing — when stopped, the playhead only
-  // moves via explicit seeks (setPosition), so the loop would be pure waste.
+  // Imperative playhead read for things that need it without re-rendering
+  // (export ranges, keyboard nudges). The visible playhead comes from
+  // DawPlayheadProvider.
   const positionBeatRef = useRef(0)
   useEffect(() => {
-    if (!playing) {
-      // One final flush so the paused playhead reflects the stop position.
-      positionBeatRef.current = engineRef.current!.currentBeat
-      setPositionState(positionBeatRef.current)
-      return
-    }
-    let lastFlush = 0
-    let raf: number
-
-    function frame(now: number) {
-      positionBeatRef.current = engineRef.current!.currentBeat
-      if (now - lastFlush > 100) {
-        setPositionState(positionBeatRef.current)
-        lastFlush = now
-      }
-      raf = requestAnimationFrame(frame)
-    }
+    if (!playing) { positionBeatRef.current = engineRef.current?.currentBeat ?? 0; return }
+    let raf = 0
+    const frame = () => { positionBeatRef.current = engineRef.current?.currentBeat ?? 0; raf = requestAnimationFrame(frame) }
     raf = requestAnimationFrame(frame)
     return () => cancelAnimationFrame(raf)
   }, [playing])
@@ -1525,7 +1521,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const setPosition = useCallback((b: number) => {
     engineRef.current!.seek(b)
     positionBeatRef.current = b
-    setPositionState(b)
+    setSeekNonce(n => n + 1)   // nudges the playhead provider to re-read
   }, [])
 
   // ── UI state ────────────────────────────────────────────────────────────────
@@ -1593,7 +1589,7 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   // Dev console access to the multi-selection (window.__dawSelection)
   useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
+    if (DAW_HOOKS) {
       (window as unknown as { __dawSelection?: string[] }).__dawSelection = [...selectedClipIds]
     }
   })
@@ -2050,7 +2046,6 @@ export default function AudioEditor(props: AudioEditorProps) {
     setSelectedEffectIds,
     playing,
     recording,
-    position,
     setPosition,
     metronome,
     setMetronome,
@@ -2082,7 +2077,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     engineForRender,
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     selectedEffectIds,
-    playing, recording, position, setPosition, metronome, showPads,
+    playing, recording, setPosition, metronome, showPads,
     expandedPianoRollClipId, expandedStepSeqClipId, loopToolArmed, onSave, isSaving, dawDirty, podcastMeta, blinkIds, triggerBlink,
     collabPeers, notifyLocked, pendingMerge, props.isGuest, resumeExport,
   ])
@@ -2107,6 +2102,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   // ── Render ───────────────────────────────────────────────────────────────────
   const editorContent = (
     <DawContext.Provider value={contextValue}>
+      {/* The playhead rides its own context: it changes ten times a second,
+          and anything in contextValue rebuilds that object and re-renders every
+          consumer in the editor. */}
+      <DawPlayheadProvider engine={engineForRender} playing={playing} seekNonce={seekNonce}>
       <div
         data-editor="true"
         data-editor-kind="audio"
@@ -2668,6 +2667,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           )}
         </div>
       )}
+      </DawPlayheadProvider>
     </DawContext.Provider>
   )
 

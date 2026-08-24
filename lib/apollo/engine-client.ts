@@ -4,7 +4,7 @@
 // computes LFO/remap LUTs, and exposes note/transport/param APIs to the UI.
 
 import { ApolloPatch, FxUnit, LfoPoint, PARAMS, FX_DEFS } from '@/lib/apollo/patch'
-import { generateFactoryTable, tableFromBase64, buildTableMips } from '@/lib/apollo/tables'
+import { buildTableMips, factoryTableWithMips, userTableWithMips, copyBuilt } from '@/lib/apollo/tables'
 import { analyzeSpectralInWorker, SpectralAnalysis } from '@/lib/apollo/spectral'
 import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
 
@@ -193,21 +193,15 @@ export class ApolloEngine extends EventTarget {
 
   ensureTable(tableId: string, patch?: ApolloPatch): void {
     if (this.tablesSent.has(tableId)) return
-    let frames = 0
-    let data: Float32Array | null = null
+    // Built once per page and shared across engines — see tables.ts. Every synth
+    // track owns an engine, and they all send their patch on the same tick when
+    // playback starts, so this used to be N identical FFT builds in a row.
     const user = patch?.userTables?.[tableId]
-    if (user) {
-      data = tableFromBase64(user.data)
-      frames = user.frames
-    } else {
-      const t = generateFactoryTable(tableId)
-      if (t) { data = t.data; frames = t.frames }
-    }
-    if (!data) return
+    const built = user ? userTableWithMips(user.data, user.frames) : factoryTableWithMips(tableId)
+    if (!built) return
     this.tablesSent.add(tableId)
-    const copy = new Float32Array(data) // keep original for UI drawing
-    const mips = buildTableMips(data, frames)
-    this.post({ type: 'table', id: tableId, frames, data: copy, mips }, [copy.buffer, mips.buffer])
+    const { frames, data, mips } = copyBuilt(built)   // postMessage transfers these
+    this.post({ type: 'table', id: tableId, frames, data, mips }, [data.buffer, mips.buffer])
   }
 
   sendTable(tableId: string, frames: number, data: Float32Array): void {
@@ -386,13 +380,8 @@ export class ApolloEngine extends EventTarget {
     const tableIds = new Set(patch.oscs.map(o => o.wt.tableId))
     for (const id of tableIds) {
       const user = patch.userTables?.[id]
-      if (user) {
-        const d = tableFromBase64(user.data)
-        post({ type: 'table', id, frames: user.frames, data: d, mips: buildTableMips(d, user.frames) })
-      } else {
-        const t = generateFactoryTable(id)
-        if (t) post({ type: 'table', id, frames: t.frames, data: t.data, mips: buildTableMips(t.data, t.frames) })
-      }
+      const built = user ? userTableWithMips(user.data, user.frames) : factoryTableWithMips(id)
+      if (built) post({ type: 'table', id, ...copyBuilt(built) })
     }
     // samples + spectral
     for (const [id, smp] of this.samples) {

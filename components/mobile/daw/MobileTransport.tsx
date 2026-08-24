@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Repeat, Music2, Zap } from 'lucide-react'
-import { useDaw } from '@/lib/daw-state'
+import { useDaw, useDawPlayhead } from '@/lib/daw-state'
 import type { DawEngine } from '@/lib/daw-engine'
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -86,7 +86,8 @@ function ScrubBar({ engine, position, setPosition, end, sig }: {
 }
 
 export function MobileTransport() {
-  const { engine, playing, position, project, dispatch, metronome, setMetronome, setPosition, undo, redo, canUndo, canRedo } = useDaw()
+  const { engine, playing, project, dispatch, metronome, setMetronome, setPosition, undo, redo, canUndo, canRedo } = useDaw()
+  const position = useDawPlayhead()
   const [settings, setSettings] = useState(false)
   const [fxOpen, setFxOpen] = useState(false)
   const taps = useRef<number[]>([])

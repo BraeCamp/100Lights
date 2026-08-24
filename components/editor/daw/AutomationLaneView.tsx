@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState } from 'react'
 import { Pencil } from 'lucide-react'
-import { useDaw } from '@/lib/daw-state'
+import { useDaw, useDawPlayhead } from '@/lib/daw-state'
 import type { AutomationLane, AutomationPoint } from '@/lib/daw-types'
 
 interface AutomationLaneViewProps {
@@ -18,7 +18,8 @@ export default function AutomationLaneView({
   viewStartBeat,
   height,
 }: AutomationLaneViewProps) {
-  const { dispatch, playing, position } = useDaw()
+  const { dispatch, playing } = useDaw()
+  const position = useDawPlayhead()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafIdRef = useRef<number | null>(null)
   // drawRef always holds the latest draw closure so RAF / ResizeObserver

@@ -346,6 +346,53 @@ export function buildTableMips(data: Float32Array, frames: number): Float32Array
   return out
 }
 
+/** Cache of built tables, keyed by what determines the result: a factory id, or
+ *  the base64 of a user table.
+ *
+ *  buildTableMips is MIP_LEVELS forward+inverse FFTs per frame. One engine
+ *  paying that once is fine; the DAW gives every synth track its own engine, and
+ *  they all spin up on the same tick when you press play, each rebuilding the
+ *  identical table from the identical id. That showed up as a single ~80ms block
+ *  on the main thread at the start of playback. The output is a pure function of
+ *  the key, so it only ever has to be built once per page. */
+const tableCache = new Map<string, BuiltTable>()
+const TABLE_CACHE_MAX = 24   // tables are ~1MB each with mips; don't grow forever
+
+export interface BuiltTable { frames: number; data: Float32Array; mips: Float32Array }
+
+function cacheBuilt(key: string, build: () => BuiltTable | null): BuiltTable | null {
+  const hit = tableCache.get(key)
+  if (hit) return hit
+  const built = build()
+  if (!built) return null
+  if (tableCache.size >= TABLE_CACHE_MAX) tableCache.delete(tableCache.keys().next().value!)
+  tableCache.set(key, built)
+  return built
+}
+
+/** A factory table plus its mips, built at most once per page. */
+export function factoryTableWithMips(id: string): BuiltTable | null {
+  return cacheBuilt('f:' + id, () => {
+    const t = generateFactoryTable(id)
+    return t ? { frames: t.frames, data: t.data, mips: buildTableMips(t.data, t.frames) } : null
+  })
+}
+
+/** A patch-embedded user table plus its mips. Keyed by the base64 itself, so two
+ *  engines loading the same patch share the work. */
+export function userTableWithMips(b64: string, frames: number): BuiltTable | null {
+  return cacheBuilt('u:' + b64, () => {
+    const data = tableFromBase64(b64)
+    return { frames, data, mips: buildTableMips(data, frames) }
+  })
+}
+
+/** Cached entries are handed to postMessage, which transfers (neuters) the
+ *  buffers — so every caller gets its own copy and the cache keeps the original. */
+export function copyBuilt(t: BuiltTable): { frames: number; data: Float32Array; mips: Float32Array } {
+  return { frames: t.frames, data: new Float32Array(t.data), mips: new Float32Array(t.mips) }
+}
+
 // base64 helpers for embedding user tables in patches
 export function tableToBase64(data: Float32Array): string {
   const u8 = new Uint8Array(data.buffer, data.byteOffset, data.byteLength)

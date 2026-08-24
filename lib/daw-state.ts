@@ -855,7 +855,10 @@ export interface DawContextValue {
   // Transport (live)
   playing: boolean
   recording: boolean
-  position: number  // beats — updates via RAF
+  // NB: the playhead is NOT here. It moves ten times a second, and anything in
+  // this object rebuilds it, invalidating every useDaw() consumer in the editor
+  // — every track row, clip and note. Read it from useDawPlayhead() instead,
+  // which only re-renders whoever actually asked for it.
   setPosition: (b: number) => void
   metronome: boolean
   setMetronome: (on: boolean) => void
@@ -873,6 +876,61 @@ export interface DawContextValue {
 }
 
 export const DawContext = createContext<DawContextValue | null>(null)
+
+/**
+ * The transport position, on its own channel.
+ *
+ * Kept out of DawContextValue deliberately. It updates ~10x a second while
+ * playing, and when it lived in the main context every flush built a new
+ * context object and re-rendered the entire editor tree — a CPU profile put a
+ * quarter of the main thread in React rendering during playback, against 0.6%
+ * for actual audio work. Exactly one component needs the number.
+ */
+export const DawPlayheadContext = createContext<number>(0)
+
+/**
+ * Owns the playhead state so the editor does not.
+ *
+ * The position used to be useState inside AudioEditor. Moving it into a child
+ * context did nothing, because the flush still re-rendered AudioEditor — and
+ * therefore every component under it. A profile during playback put 22% of the
+ * main thread in React, led by SoundLibrary at 6.3%, which has nothing to do
+ * with playback at all.
+ *
+ * Children arrive as a prop, so they are the same elements across this
+ * component's re-renders and React skips them. Only actual useDawPlayhead()
+ * consumers re-render as the playhead moves.
+ */
+export function DawPlayheadProvider(
+  { engine, playing, seekNonce, children }:
+  { engine: { currentBeat: number } | null; playing: boolean; seekNonce: number; children: React.ReactNode },
+) {
+  const [position, setPosition] = useState(0)
+  useEffect(() => {
+    if (!engine) return
+    if (!playing) {
+      // Stopped: one flush so the parked playhead is right, then no loop.
+      setPosition(engine.currentBeat)
+      return
+    }
+    let raf = 0
+    let lastFlush = 0
+    const frame = (now: number) => {
+      // Flushed at ~10Hz, not per frame: the playhead only has to look smooth,
+      // and every flush is a render for whoever reads it.
+      if (now - lastFlush > 100) { setPosition(engine.currentBeat); lastFlush = now }
+      raf = requestAnimationFrame(frame)
+    }
+    raf = requestAnimationFrame(frame)
+    return () => cancelAnimationFrame(raf)
+  }, [engine, playing, seekNonce])
+  return React.createElement(DawPlayheadContext.Provider, { value: position }, children)
+}
+
+/** Transport position in beats. Re-renders only the caller. */
+export function useDawPlayhead(): number {
+  return useContext(DawPlayheadContext)
+}
 
 export function useDaw(): DawContextValue {
   const ctx = useContext(DawContext)
