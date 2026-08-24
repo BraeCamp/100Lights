@@ -9,6 +9,7 @@
  * libraryFulfill(). This makes the first load instant.
  */
 
+import { resampleBySemitones } from './audio-resample'
 import { ROOT_NOTES } from './scale-constants'
 import { libraryAdd, libraryGetAll, libraryDelete, libraryGetById, getLibraryUserId } from './sound-library'
 import type { LibraryEntry, RenderSpec } from './sound-library'
@@ -207,16 +208,8 @@ export async function importSoundfontToLibrary(
         tags,
       })
     } else {
-      const srcBuf     = await decodeSource(nearestMidi)
-      const rate       = Math.pow(2, semitones / 12)
-      const shiftedDur = srcBuf.duration / rate
-      const ctx        = new OfflineAudioContext(2, Math.ceil(shiftedDur * SR), SR)
-      const src        = ctx.createBufferSource()
-      src.buffer       = srcBuf
-      src.detune.value = semitones * 100
-      src.connect(ctx.destination)
-      src.start(0)
-      const finalBuf   = await ctx.startRendering()
+      const srcBuf   = await decodeSource(nearestMidi)
+      const finalBuf = await resampleBySemitones(srcBuf, semitones, { sampleRate: SR, channels: 2 })
       entries.push({
         id:         crypto.randomUUID(),
         name,
@@ -282,15 +275,10 @@ export async function renderSoundfont(
 
   const sourceBuf = await sharedDecodeCtx().decodeAudioData(bytes.buffer)
 
-  const SR  = 44100
-  const dur = sourceBuf.duration
-  const ctx = new OfflineAudioContext(2, Math.ceil(dur * SR), SR)
-  const src = ctx.createBufferSource()
-  src.buffer = sourceBuf
-  if (semitones !== 0) src.detune.value = semitones * 100
-  src.connect(ctx.destination)
-  src.start(0)
-  const rendered = await ctx.startRendering()
+  // NB: this used to size the render at the SOURCE duration, which cut the tail
+  // off any note pitched down from its nearest soundfont sample. The shared
+  // helper sizes by rate.
+  const rendered = await resampleBySemitones(sourceBuf, semitones, { sampleRate: 44100, channels: 2 })
 
   // Soundfont samples are recorded conservatively — ~15 dB below the
   // synth-rendered library, so sampled instruments (piano, strings, …) came out

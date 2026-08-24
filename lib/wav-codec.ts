@@ -202,3 +202,48 @@ export function decodeAudioAny(ab: ArrayBuffer): DecodedWav {
     (bytes[8] === 0x41 && bytes[9] === 0x49)   // AI (AIFF or AIFC)
   return isAiff ? decodeAiff(ab) : decodeWav(ab)
 }
+
+
+// ── 16-bit PCM ───────────────────────────────────────────────────────────────
+// encodeWav above writes 32-bit float, which is right for round-tripping audio
+// without loss but is not what you hand to an <audio> element. Both depths live
+// here now; there were four hand-written RIFF writers across the codebase and
+// the differences between them were bit depth and input type, not intent.
+
+/** Interleaved 16-bit PCM — universally playable. */
+export function encodeWavPcm16(channels: Float32Array[], sampleRate: number): ArrayBuffer {
+  const numCh = channels.length || 1
+  const numFrames = channels[0]?.length ?? 0
+  const blockAlign = numCh * 2
+  const dataLen = numFrames * blockAlign
+  const buf = new ArrayBuffer(44 + dataLen)
+  const dv = new DataView(buf)
+  const ws = (off: number, str: string) => { for (let i = 0; i < str.length; i++) dv.setUint8(off + i, str.charCodeAt(i)) }
+  ws(0, 'RIFF'); dv.setUint32(4, 36 + dataLen, true); ws(8, 'WAVE')
+  ws(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, numCh, true)
+  dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate * blockAlign, true)
+  dv.setUint16(32, blockAlign, true); dv.setUint16(34, 16, true)
+  ws(36, 'data'); dv.setUint32(40, dataLen, true)
+  let off = 44
+  for (let f = 0; f < numFrames; f++) {
+    for (let ch = 0; ch < numCh; ch++) {
+      let v = channels[ch][f]
+      v = v < -1 ? -1 : v > 1 ? 1 : v
+      // Asymmetric scaling: -1 maps to -32768 and +1 to 32767, so full-scale
+      // negatives are not clipped a bit early.
+      dv.setInt16(off, v < 0 ? v * 0x8000 : v * 0x7fff, true)
+      off += 2
+    }
+  }
+  return buf
+}
+
+/** Pull an AudioBuffer's channels out without copying intent. */
+export function channelsOf(buffer: AudioBuffer): Float32Array[] {
+  return Array.from({ length: buffer.numberOfChannels }, (_, c) => buffer.getChannelData(c))
+}
+
+/** AudioBuffer -> 16-bit PCM WAV Blob. */
+export function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
+  return new Blob([encodeWavPcm16(channelsOf(buffer), buffer.sampleRate)], { type: 'audio/wav' })
+}
