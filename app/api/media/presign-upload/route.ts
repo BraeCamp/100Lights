@@ -1,3 +1,4 @@
+import { testUserId } from '@/lib/api-user'
 import { auth } from '@clerk/nextjs/server'
 import { presignUpload } from '@/lib/r2'
 import { sql } from '@/lib/db'
@@ -20,9 +21,7 @@ async function ensureUploadLog() {
 export async function POST(req: Request) {
   const { userId: clerkId } = await auth()
   // DEV_OPEN test collaborators (mirrors /api/liveblocks-auth) — dev builds only
-  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production'
-    ? req.headers.get('x-test-user')
-    : null
+  const testUser = testUserId(req)
   const userId = clerkId ?? (testUser ? `test-${testUser}` : null)
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 

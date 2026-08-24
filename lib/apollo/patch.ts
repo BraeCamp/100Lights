@@ -1,3 +1,4 @@
+import { SCALE_INTERVALS } from '@/lib/scale-constants'
 // Apollo — the 100Lights hybrid synth (Helios engine). Patch schema + parameter registry.
 // The patch is one JSON document; the engine worklet consumes it whole.
 
@@ -332,13 +333,23 @@ export const SYNC_RATES = [
   { label: '1/32', beats: 0.125 }, { label: '1/64', beats: 0.0625 },
 ]
 
+// Apollo's scale names are DISPLAY strings and are persisted inside patches as
+// global.scaleName, so they cannot be renamed to the canonical ids without
+// breaking every saved patch. The names stay; only the intervals are shared, so
+// there is one place a scale is actually defined.
 export const SCALES: Record<string, number[]> = {
-  Major: [0, 2, 4, 5, 7, 9, 11], Minor: [0, 2, 3, 5, 7, 8, 10],
-  Dorian: [0, 2, 3, 5, 7, 9, 10], Phrygian: [0, 1, 3, 5, 7, 8, 10],
-  Lydian: [0, 2, 4, 6, 7, 9, 11], Mixolydian: [0, 2, 4, 5, 7, 9, 10],
-  'Harmonic Minor': [0, 2, 3, 5, 7, 8, 11], 'Melodic Minor': [0, 2, 3, 5, 7, 9, 11],
-  'Pentatonic Maj': [0, 2, 4, 7, 9], 'Pentatonic Min': [0, 3, 5, 7, 10],
-  Blues: [0, 3, 5, 6, 7, 10], Chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  Major: SCALE_INTERVALS.major,
+  Minor: SCALE_INTERVALS.minor,
+  Dorian: SCALE_INTERVALS.dorian,
+  Phrygian: SCALE_INTERVALS.phrygian,
+  Lydian: SCALE_INTERVALS.lydian,
+  Mixolydian: SCALE_INTERVALS.mixolydian,
+  'Harmonic Minor': SCALE_INTERVALS['harmonic-minor'],
+  'Melodic Minor': SCALE_INTERVALS['melodic-minor'],
+  'Pentatonic Maj': SCALE_INTERVALS['pentatonic-major'],
+  'Pentatonic Min': SCALE_INTERVALS['pentatonic-minor'],
+  Blues: SCALE_INTERVALS.blues,
+  Chromatic: SCALE_INTERVALS.chromatic,
 }
 
 // ---------------------------------------------------------------------------

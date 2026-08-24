@@ -6,15 +6,14 @@
 // scoped to the Clerk userId, upsert on POST, delete on DELETE. The payload is the
 // app's own restore data (small JSON — a beat grid, a caption list), stored as JSONB.
 
+import { onceSchema } from '@/lib/api-schema'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 
 const MAX_ROWS_PER_USER = 500          // safety cap; the client also caps its local list
 const MAX_DATA_BYTES = 400_000         // skip syncing pathologically large payloads
 
-let schemaReady = false
-async function ensureSchema() {
-  if (schemaReady) return
+const ensureSchema = onceSchema(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS app_history (
       id         TEXT PRIMARY KEY,
@@ -27,8 +26,7 @@ async function ensureSchema() {
     )
   `
   await sql`CREATE INDEX IF NOT EXISTS app_history_user_slug_idx ON app_history (user_id, app_slug)`
-  schemaReady = true
-}
+})
 
 // GET /api/app-history?slug=beatmaker — list this account's saved work for one app.
 export async function GET(req: Request) {

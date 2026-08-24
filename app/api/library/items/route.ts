@@ -7,14 +7,13 @@
 // and pulls missing ones on sign-in, so a preset/kit/pattern made on one device
 // shows up in the same account on another.
 
+import { onceSchema } from '@/lib/api-schema'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 
 const TYPES = ['preset', 'kit', 'pattern'] as const
 
-let schemaReady = false
-async function ensureSchema() {
-  if (schemaReady) return
+const ensureSchema = onceSchema(async () => {
   // PK is (user_id, id): ids can be deterministic across users (community imports
   // use `community-<itemId>`), so they're only unique WITHIN an account.
   await sql`
@@ -38,8 +37,7 @@ async function ensureSchema() {
     }
   } catch { /* already composite, or a concurrent migration won the race */ }
   await sql`CREATE INDEX IF NOT EXISTS user_library_items_user_idx ON user_library_items (user_id, type)`
-  schemaReady = true
-}
+})
 
 // GET /api/library/items — all of the current user's synced preset/kit/pattern items
 export async function GET() {

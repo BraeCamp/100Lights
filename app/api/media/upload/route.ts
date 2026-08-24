@@ -1,3 +1,4 @@
+import { testUserId } from '@/lib/api-user'
 import { auth } from '@clerk/nextjs/server'
 import { putObject } from '@/lib/r2'
 import { sql } from '@/lib/db'
@@ -26,7 +27,7 @@ const EXT_OK = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.mp3',
 export async function POST(req: Request) {
   const { userId: clerkId } = await auth()
   // DEV_OPEN test user (dev builds only) — headless tools upload via the x-test-user header. Inert in prod.
-  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production' ? req.headers.get('x-test-user') : null
+  const testUser = testUserId(req)
   const userId = clerkId ?? (testUser ? `test-${testUser}` : null)
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 

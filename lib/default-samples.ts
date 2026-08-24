@@ -9,6 +9,7 @@
  * libraryFulfill(). This makes the first load instant.
  */
 
+import { ROOT_NOTES } from './scale-constants'
 import { libraryAdd, libraryGetAll, libraryDelete, libraryGetById, getLibraryUserId } from './sound-library'
 import type { LibraryEntry, RenderSpec } from './sound-library'
 import { playDrumHit }     from './drum-samples'
@@ -99,7 +100,8 @@ function toWavBlob(buf: AudioBuffer): Blob {
 // ── Soundfont helpers ─────────────────────────────────────────────────────────
 
 const SF_NOTE_NAMES  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B']
-const SF_NOTE_SHARP  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+// Same twelve names everything else uses — see lib/scale-constants.
+const SF_NOTE_SHARP = ROOT_NOTES
 const sfCache        = new Map<string, Record<string, string>>()
 
 // One shared, reused AudioContext for decodeAudioData. Creating a fresh
@@ -344,7 +346,7 @@ export async function renderPresetAtPitch(spec: RenderSpec, pitch: number): Prom
 
 // ── Note tag helpers ──────────────────────────────────────────────────────────
 
-const NOTE_LETTERS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+const NOTE_LETTERS = ROOT_NOTES
 
 function midiNoteName(midi: number): string {
   return `${NOTE_LETTERS[midi % 12]}${Math.floor(midi / 12) - 1}`

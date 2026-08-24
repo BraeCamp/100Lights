@@ -1,13 +1,10 @@
+import { testUserId as testUser } from '@/lib/api-user'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 
 export const runtime = 'nodejs'
 
-function testUser(req: Request): string | null {
-  return process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production'
-    ? req.headers.get('x-test-user')
-    : null
-}
+
 
 async function requireOwner(projectId: string, userId: string | null): Promise<boolean> {
   if (!userId) return false

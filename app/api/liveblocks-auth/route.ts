@@ -1,3 +1,4 @@
+import { testUserId } from '@/lib/api-user'
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { Liveblocks } from '@liveblocks/node'
 
@@ -16,9 +17,7 @@ export async function POST(request: Request) {
   // DEV_OPEN=1 (headless testing, mirrors middleware.ts): allow synthetic
   // collaborators via x-test-user so multi-client tests can join rooms
   // without two Clerk sessions. Never active in production builds.
-  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production'
-    ? request.headers.get('x-test-user')
-    : null
+  const testUser = testUserId(request)
 
   if (!userId && !testUser) return new Response('Unauthorized', { status: 401 })
 

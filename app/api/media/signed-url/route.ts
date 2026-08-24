@@ -1,12 +1,11 @@
+import { testUserId } from '@/lib/api-user'
 import { auth } from '@clerk/nextjs/server'
 import { presignDownload } from '@/lib/r2'
 
 export async function GET(req: Request) {
   const { userId } = await auth()
   // DEV_OPEN test collaborators (mirrors /api/liveblocks-auth) — dev builds only
-  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production'
-    ? req.headers.get('x-test-user')
-    : null
+  const testUser = testUserId(req)
   if (!userId && !testUser) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const key = new URL(req.url).searchParams.get('key')

@@ -1,5 +1,6 @@
 'use client'
 
+import { midiToNoteName } from './scale-constants'
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
 import { isAudioClip, isMidiClip } from './daw-types'
 import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
@@ -1633,8 +1634,7 @@ export class DawEngine extends EventTarget {
         if (!preset) { this._presetBufCache.set(key, null); return }
 
         const entries = await libraryGetAll()
-        const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
-        const noteName = `${NOTE_NAMES[pitch % 12]}${Math.floor(pitch / 12) - 1}`
+        const noteName = midiToNoteName(pitch)
         const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
         const exact    = inFolder.find(e => e.name === noteName)
         const entry    = exact ?? inFolder.reduce<typeof inFolder[0] | null>((best, e) => {

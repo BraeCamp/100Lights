@@ -11,14 +11,13 @@
 // /api/media/presign-upload, then registered here by metadata. Reading back is
 // metadata only — the client resolves the blob through /api/media/signed-url.
 
+import { onceSchema } from '@/lib/api-schema'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { getSubscription } from '@/lib/subscription'
 import { entitlements } from '@/lib/entitlements'
 
-let schemaReady = false
-async function ensureSchema() {
-  if (schemaReady) return
+const ensureSchema = onceSchema(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS user_sounds (
       id           TEXT PRIMARY KEY,
@@ -37,8 +36,7 @@ async function ensureSchema() {
     )
   `
   await sql`CREATE INDEX IF NOT EXISTS user_sounds_user_idx ON user_sounds (user_id)`
-  schemaReady = true
-}
+})
 
 // GET /api/library — list the current user's synced sounds (metadata only)
 export async function GET() {

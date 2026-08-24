@@ -1,3 +1,4 @@
+import { testUserId } from '@/lib/api-user'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 
@@ -15,7 +16,7 @@ export interface LibraryMediaItem {
 // act as a fixed user via the x-test-user header. Double-gated on NODE_ENV, so it's inert in production.
 function devUserId(req: Request, clerkId: string | null): string | null {
   if (clerkId) return clerkId
-  const t = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production' ? req.headers.get('x-test-user') : null
+  const t = testUserId(req)
   return t ? `test-${t}` : null
 }
 

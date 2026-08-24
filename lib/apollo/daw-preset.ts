@@ -15,22 +15,15 @@
 // reload for free: restorePatchSamples already fulfils samples by library id,
 // so nothing has to be copied or persisted a second time.
 
+import { noteNameToMidi } from '@/lib/scale-constants'
 import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import type { ApolloEngine } from '@/lib/apollo/engine-client'
 import type { ApolloPatch, MultisampleZone } from '@/lib/apollo/patch'
 
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-
-/** "F#3" → 54. The inverse of the engine's own naming, so the two agree about
- *  which sample is which note. Returns null for anything not a note name. */
-export function pitchFromNoteName(name: string): number | null {
-  const m = /^([A-G]#?)(-?\d+)$/.exec(name.trim())
-  if (!m) return null
-  const i = NOTE_NAMES.indexOf(m[1].toUpperCase())
-  if (i < 0) return null
-  return i + (Number(m[2]) + 1) * 12
-}
+/** "F#3" -> 54. Re-exported from the canonical pitch module so sample naming
+ *  here can never drift from the naming everything else uses. */
+export const pitchFromNoteName = noteNameToMidi
 
 export interface PresetImportResult {
   patch: ApolloPatch

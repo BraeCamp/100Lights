@@ -1,3 +1,5 @@
+import { onceSchema } from '@/lib/api-schema'
+import { testUserId } from '@/lib/api-user'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 
@@ -5,9 +7,7 @@ import { sql } from '@/lib/db'
 // fast/offline source of truth on each device; this table makes saved patches
 // follow the account across devices and browsers. Rows are tiny JSON patches.
 
-let ready = false
-async function ensureSchema() {
-  if (ready) return
+const ensureSchema = onceSchema(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS apollo_presets (
       user_id    TEXT NOT NULL,
@@ -17,15 +17,13 @@ async function ensureSchema() {
       PRIMARY KEY (user_id, name)
     )
   `
-  ready = true
-}
+})
 
+// Identity comes from lib/api-user now. This route used to prefix the test
+// header with "test-", so a headless user's presets were keyed differently from
+// their projects; it now matches every other route.
 function uid(req: Request, clerkId: string | null): string | null {
-  if (clerkId) return clerkId
-  // dev-only test collaborator (mirrors the community routes)
-  return process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production'
-    ? (req.headers.get('x-test-user') && `test-${req.headers.get('x-test-user')}`)
-    : null
+  return clerkId ?? testUserId(req)
 }
 
 export async function GET(req: Request) {

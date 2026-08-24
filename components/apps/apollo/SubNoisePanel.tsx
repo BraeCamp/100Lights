@@ -1,6 +1,7 @@
 'use client'
 // Sub oscillator + noise sampler strips.
 
+import { midiToNoteName } from '@/lib/scale-constants'
 import React from 'react'
 import { useApollo, Knob, Sel, Section, ToggleBtn } from './ApolloContext'
 import SamplePicker from './SamplePicker'
@@ -14,10 +15,7 @@ const DEST_OPTS = [
 // `only` (optional — Apollo 2's voice chain renders Sub and Noise as separate
 // chain segments): limit to one of the two strips.
 
-const NOTE_LABELS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-function noteLabel(n: number): string {
-  return `${NOTE_LABELS[((n % 12) + 12) % 12]}${Math.floor(n / 12) - 1}`
-}
+const noteLabel = midiToNoteName
 
 export default function SubNoisePanel({ only }: { only?: 'sub' | 'noise' } = {}) {
   const ctx = useApollo()

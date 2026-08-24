@@ -1,3 +1,12 @@
+// The one place pitch is defined: scale intervals, note names, and the
+// conversions between MIDI numbers, note names and frequencies.
+//
+// These had drifted into a dozen private copies — scale tables in ten files
+// (including Apollo's patch.ts and a third copy inlined in the worklet), note
+// name arrays in twelve, and 440 * 2^((n-69)/12) written out twenty-two times.
+// Duplicated pitch maths is quietly dangerous: two modules that disagree about
+// what F#3 means produce a bug nobody can hear until it is in a render.
+
 export type ScaleType =
   | 'chromatic' | 'major' | 'minor' | 'pentatonic-major' | 'pentatonic-minor'
   | 'dorian' | 'phrygian' | 'lydian' | 'mixolydian' | 'locrian'
@@ -56,4 +65,51 @@ export function snapToScale(midiNote: number, root: RootNote, scale: ScaleType):
     if (isNoteInScale(midiNote + d, root, scale)) return midiNote + d
   }
   return midiNote
+}
+
+// ── Naming and frequency ─────────────────────────────────────────────────────
+// Beside the scales because it is the same domain, duplicated by the same
+// modules.
+
+/** Concert-A reference. Change here, not in a call site. */
+export const A4_HZ = 440
+export const A4_MIDI = 69
+
+/** MIDI note -> frequency in Hz. */
+export function midiToFreq(midi: number, a4 = A4_HZ): number {
+  return a4 * Math.pow(2, (midi - A4_MIDI) / 12)
+}
+
+/** Frequency in Hz -> (fractional) MIDI note. */
+export function freqToMidi(hz: number, a4 = A4_HZ): number {
+  return A4_MIDI + 12 * Math.log2(Math.max(1e-9, hz) / a4)
+}
+
+/**
+ * MIDI note -> name with octave, e.g. 54 -> "F#3".
+ *
+ * Octave numbering is the one the sound library and the engine already use
+ * (C4 = 60). Two conventions in one codebase would mean samples named an
+ * octave away from the note that plays them.
+ */
+export function midiToNoteName(midi: number): string {
+  return ROOT_NOTES[((midi % 12) + 12) % 12] + String(Math.floor(midi / 12) - 1)
+}
+
+/** "F#3" -> 54, or null when it is not a note name. The exact inverse of
+ *  midiToNoteName, so a round trip is lossless. Flats are accepted on input. */
+export function noteNameToMidi(name: string): number | null {
+  const m = /^([A-Ga-g])(#|b)?(-?\d+)$/.exec(name.trim())
+  if (!m) return null
+  const natural = (ROOT_NOTES as readonly string[]).indexOf(m[1].toUpperCase())
+  if (natural < 0) return null
+  let idx = natural
+  if (m[2] === '#') idx = (natural + 1) % 12
+  else if (m[2] === 'b') idx = (natural + 11) % 12
+  return idx + (Number(m[3]) + 1) * 12
+}
+
+/** Playback-rate ratio for retuning a sample by a number of semitones. */
+export function semitoneRatio(semitones: number): number {
+  return Math.pow(2, semitones / 12)
 }

@@ -1,3 +1,4 @@
+import { testUserId } from '@/lib/api-user'
 import { auth } from '@clerk/nextjs/server'
 import { CREDITS_ENABLED, CREDIT_COSTS, getCredits, spendCredits } from '@/lib/credits'
 import { aiCreditsForTokens } from '@/lib/credit-tiers'
@@ -13,7 +14,7 @@ export const maxDuration = 90
 export async function POST(req: Request) {
   const { userId: clerkId } = await auth()
   // DEV_OPEN test user (dev builds only) — lets headless tools exercise the assistant. Inert in prod.
-  const testUser = process.env.DEV_OPEN === '1' && process.env.NODE_ENV !== 'production' ? req.headers.get('x-test-user') : null
+  const testUser = testUserId(req)
   const userId = clerkId ?? (testUser ? `test-${testUser}` : null)
   if (!userId) return Response.json({ error: 'Sign in to use the AI assistant.' }, { status: 401 })
   if (!process.env.ANTHROPIC_API_KEY) return Response.json({ error: 'The AI assistant is not configured (ANTHROPIC_API_KEY).' }, { status: 501 })
