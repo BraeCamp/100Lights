@@ -327,7 +327,13 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         if (renderable().length) {
           timings.attempts++
           const rest = renderable()
-          const rendered = await renderApolloProject(groups, bpm)
+          // Only the tracks that still owe a clip, each rendered whole. A warm
+          // load missing five clips was re-synthesising all seven tracks to get
+          // them; now it touches only the tracks those five live on. Cold, every
+          // track owes something, so this is identical to rendering everything.
+          const rendered = await renderApolloProject(groups, bpm, {
+            tracksWith: new Set(rest.map(w => w.clip.id)),
+          })
           await keep(rendered, rest)
           timings.batches++
         }

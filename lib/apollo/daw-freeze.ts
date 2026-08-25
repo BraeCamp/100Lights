@@ -125,18 +125,46 @@ export interface TrackRenderGroup { trackId: string; patch: ApolloPatch; clips: 
 export async function renderApolloProject(
   groups: TrackRenderGroup[],
   bpm: number,
-  { tailSec = 2, only }: { tailSec?: number; only?: Set<string> } = {},
+  { tailSec = 2, only, tracksWith }: { tailSec?: number; only?: Set<string>; tracksWith?: Set<string> } = {},
 ): Promise<Map<string, AudioBuffer>> {
   const out = new Map<string, AudioBuffer>()
-  // `only` renders a SUBSET of clips — used to do the part of the song you are
-  // about to hear first. Rendering all of a seven-track two-minute piece before
-  // anything is playable took 113 seconds on production; in batches, the first
-  // one lands in a few seconds and the rest fill in behind you.
-  const scoped = only
-    ? groups.map(g => ({ ...g, clips: g.clips.filter(c => only.has(c.id)) }))
-    : groups
+  // Two ways to render less than everything.
+  //
+  // `only` renders a SUBSET OF CLIPS — for the opening, where the point is to
+  // get the first seconds playable without synthesising the whole song.
+  //
+  // `tracksWith` renders WHOLE TRACKS, chosen by which ones still owe a clip.
+  // That is what the main pass wants: on a warm load five missing clips used to
+  // cost a full render of all seven tracks — 905 seconds of synthesis for a
+  // 129-second song — because the pass was unscoped. Keeping each chosen track
+  // WHOLE (rather than filtering to the missing clips) means tails and clip
+  // neighbours are exactly as they'd be in a full render, so this is a pure
+  // saving with nothing traded for it.
+  const scoped = tracksWith
+    ? groups.filter(g => g.clips.some(c => tracksWith.has(c.id)))
+    : only
+      ? groups.map(g => ({ ...g, clips: g.clips.filter(c => only.has(c.id)) }))
+      : groups
   const live = scoped.filter(g => g.clips.some(c => c.notes.length > 0))
   if (!live.length) return out
+
+  // Where each clip's neighbour REALLY is, from the unscoped project.
+  //
+  // The tail below stops at the next clip so a slice can't carry the following
+  // clip's audio. Under `only` the scoped group holds just the wanted clips, so
+  // "next" was the next WANTED clip — and in a real song the opening clips are
+  // butt-joined to their successors (measured: gap 0.00s on all four of Iced's
+  // opening clips). Every one of them was getting a 2-second tail full of the
+  // next clip's audio, and both played. That is the overlap static, on exactly
+  // the clips a listener hears first.
+  const realNext = new Map<string, number>()
+  for (const g of groups) {
+    const ordered = g.clips.filter(c => c.notes.length > 0).sort((a, b) => a.startBeat - b.startBeat)
+    ordered.forEach((c, i) => {
+      const n = ordered[i + 1]
+      if (n) realNext.set(c.id, n.startBeat)
+    })
+  }
 
   const spb = 60 / bpm
   // A shared origin keeps every track on the same timeline, so a clip slice
@@ -183,9 +211,11 @@ export async function renderApolloProject(
       // section followed by the next) made that every boundary in the song,
       // which is what the static was. Stop at the next clip: its own slice
       // already carries the ring-out from this one.
-      const next = ordered[ci + 1]
-      const tailBeats = next
-        ? Math.max(0, next.startBeat - (c.startBeat + c.durationBeats))
+      // The next clip on this track in the REAL project, not just within this
+      // render's scope — see realNext above.
+      const nextStart = realNext.get(c.id) ?? (ordered[ci + 1]?.startBeat)
+      const tailBeats = nextStart !== undefined
+        ? Math.max(0, nextStart - (c.startBeat + c.durationBeats))
         : tailSec / spb
       const from = Math.max(0, Math.floor((c.startBeat - firstBeat) * spb * sr))
       const len = Math.min(
