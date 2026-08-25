@@ -39,7 +39,7 @@ const failures = new Map<string, number>()
 /** Why the most recent combine failed — a swallowed error is indistinguishable
  *  from "not ready yet", since both fall back to live playback. */
 let lastError: string | null = null
-const timings = { diskMs: 0, renderMs: 0, fromDisk: 0, attempts: 0 }
+const timings = { diskMs: 0, renderMs: 0, fromDisk: 0, attempts: 0, batches: 0 }
 
 // Clips that would not render, remembered ACROSS sessions.
 //
@@ -146,6 +146,24 @@ async function drain(): Promise<void> {
  * Ask for this clip to be combined. Cheap and idempotent — safe to call from
  * the scheduler on every pass; it returns immediately unless there is new work.
  */
+
+/** Store the good renders from one batch; a silent one is not cached, because a
+ *  combined buffer REPLACES live playback and an empty one is worse than slow. */
+function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip; key: string }[]): void {
+  for (const w of batch) {
+    if (buffers.has(w.key)) continue
+    const buf = rendered.get(w.clip.id)
+    if (!buf) continue
+    let peak = 0
+    const d = buf.getChannelData(0)
+    for (let i = 0; i < d.length; i += 256) { const v = Math.abs(d[i]); if (v > peak) peak = v }
+    if (peak < 1e-4) continue
+    buffers.set(w.key, buf)
+    void saveCombined(w.key, buf)   // keep it for the next page load
+  }
+  evictIfNeeded()
+}
+
 export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!groups.length) return
   const wanted = groups.flatMap(g => g.clips
@@ -187,29 +205,39 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         const bad = knownBad()
         const renderable = () => missing().filter(w => !bad.has(w.key))
         const tRender = Date.now()
-        for (let attempt = 0; attempt < 4 && renderable().length; attempt++) {
+        // Render in BATCHES, earliest first, instead of the whole song before
+        // anything is usable. On production the all-at-once pass took 113
+        // seconds — nearly two minutes of the song running on the expensive
+        // live path. A batch is a few seconds, and playback can use each one the
+        // moment it lands, so the opening is playable almost immediately and the
+        // rest fills in behind you.
+        const BATCH = 6
+        for (let attempt = 0; attempt < 2 && renderable().length; attempt++) {
           timings.attempts++
           const before = renderable().length
-          const rendered = await renderApolloProject(groups, bpm)
-          for (const w of wanted) {
-            if (buffers.has(w.key)) continue
-            const buf = rendered.get(w.clip.id)
-            if (!buf) continue
-            // Never cache a silent render: a combined buffer REPLACES live
-            // playback, so an empty one turns a clip that merely strained the
-            // CPU into one that makes no sound at all.
-            let peak = 0
-            const d = buf.getChannelData(0)
-            for (let i = 0; i < d.length; i += 256) { const v = Math.abs(d[i]); if (v > peak) peak = v }
-            if (peak < 1e-4) continue
-            buffers.set(w.key, buf)
-            void saveCombined(w.key, buf)   // keep it for the next page load
+          const queueOrder = [...renderable()].sort((a, b) => a.clip.startBeat - b.clip.startBeat)
+          for (let i = 0; i < queueOrder.length; i += BATCH) {
+            const batch = queueOrder.slice(i, i + BATCH)
+            const only = new Set(batch.map(w => w.clip.id))
+            const rendered = await renderApolloProject(groups, bpm, { only })
+            keep(rendered, batch)
+            timings.batches++
+            await gap()   // let the audio thread breathe between batches
           }
-          evictIfNeeded()
-          // Stop when a pass stops helping. The first pass usually lands nearly
-          // everything; grinding out the last stubborn clip cost ~45s of extra
-          // rendering at load for one clip that plays live perfectly well.
           if (renderable().length >= before) break
+        }
+        // Batches make the opening playable in seconds, but each one is its own
+        // offline context and the browser only keeps a couple alive — so some
+        // come back empty and coverage suffers (14 of 23 in testing, against 22
+        // for a single whole-project pass). Now that playback is already usable,
+        // finish with one whole-project render to fill in what the batches
+        // missed. Slow, but nobody is waiting on it any more.
+        if (renderable().length) {
+          await gap()
+          const rest = renderable()
+          const rendered = await renderApolloProject(groups, bpm)
+          keep(rendered, rest)
+          timings.batches++
         }
         timings.renderMs = Date.now() - tRender
         const stubborn = renderable().map(w => w.key)
@@ -233,7 +261,7 @@ export function clearCombined(): void {
 
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
-export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; diskMs: number; renderMs: number; fromDisk: number; attempts: number } {
+export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
   // Peak of each cached render: a buffer that exists but is silent looks
   // identical to a working one from the outside, and silently-empty renders are
   // exactly the failure mode this cache can hide.

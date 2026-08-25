@@ -110,22 +110,32 @@ export interface TrackRenderGroup { trackId: string; patch: ApolloPatch; clips: 
 export async function renderApolloProject(
   groups: TrackRenderGroup[],
   bpm: number,
-  { tailSec = 2 }: { tailSec?: number } = {},
+  { tailSec = 2, only }: { tailSec?: number; only?: Set<string> } = {},
 ): Promise<Map<string, AudioBuffer>> {
   const out = new Map<string, AudioBuffer>()
-  const live = groups.filter(g => g.clips.some(c => c.notes.length > 0))
+  // `only` renders a SUBSET of clips — used to do the part of the song you are
+  // about to hear first. Rendering all of a seven-track two-minute piece before
+  // anything is playable took 113 seconds on production; in batches, the first
+  // one lands in a few seconds and the rest fill in behind you.
+  const scoped = only
+    ? groups.map(g => ({ ...g, clips: g.clips.filter(c => only.has(c.id)) }))
+    : groups
+  const live = scoped.filter(g => g.clips.some(c => c.notes.length > 0))
   if (!live.length) return out
 
   const spb = 60 / bpm
-  // A shared origin of beat 0 keeps every track on the same timeline, so a clip
-  // slice lands at the same place regardless of which track it came from.
+  // A shared origin keeps every track on the same timeline, so a clip slice
+  // lands in the same place whichever track it came from. For a BATCH the
+  // origin moves to the batch's own start — otherwise rendering the last eight
+  // bars would still render the whole song up to them and save nothing.
+  const firstBeat = Math.min(...live.flatMap(g => g.clips.map(c => c.startBeat)))
   const lastBeat = Math.max(...live.flatMap(g => g.clips.map(c => c.startBeat + c.durationBeats)))
-  const seconds = lastBeat * spb + tailSec
+  const seconds = (lastBeat - firstBeat) * spb + tailSec
 
   const items = live.map(g => ({
     patch: g.patch,
     notes: g.clips.flatMap(c => c.notes.map(n => ({
-      t: (c.startBeat + n.startBeat) * spb,
+      t: (c.startBeat - firstBeat + n.startBeat) * spb,
       dur: Math.max(0.02, n.durationBeats * spb),
       note: n.pitch,
       vel: Math.max(0.05, (n.velocity ?? 100) / 127),
@@ -154,7 +164,7 @@ export async function renderApolloProject(
       const tailBeats = next
         ? Math.max(0, next.startBeat - (c.startBeat + c.durationBeats))
         : tailSec / spb
-      const from = Math.max(0, Math.floor(c.startBeat * spb * sr))
+      const from = Math.max(0, Math.floor((c.startBeat - firstBeat) * spb * sr))
       const len = Math.min(
         full.length - from,
         Math.ceil((c.durationBeats + Math.min(tailBeats, tailSec / spb)) * spb * sr),
