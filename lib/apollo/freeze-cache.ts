@@ -172,6 +172,7 @@ function idle(): Promise<void> {
 const RENDER_GAP_MS = 1500
 const gap = () => new Promise<void>(r => setTimeout(r, RENDER_GAP_MS))
 
+
 async function drain(): Promise<void> {
   if (draining) return
   draining = true
@@ -257,34 +258,44 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // live path. A batch is a few seconds, and playback can use each one the
         // moment it lands, so the opening is playable almost immediately and the
         // rest fills in behind you.
-        const BATCH = 6
-        for (let attempt = 0; attempt < 2 && renderable().length; attempt++) {
+        // ONE small opening batch so playback starts immediately, then ONE
+        // whole-project pass. Not ten batches — that strategy was upside down.
+        //
+        // Measured on Winter Drift (31 clips, 7 tracks, 1:50):
+        //   ten batches + a full pass   128s, 21 of 31 landed
+        //   a single full pass           17s, 26 of 31 landed
+        //
+        // Every render builds an offline context that is not reclaimed promptly,
+        // so passes DEGRADE as they pile up: timed back to back, the first took
+        // 17s and landed 26, the second 14s and landed 13, the third 90s and
+        // still 13. Each extra pass was buying less and costing more. Fewer,
+        // bigger renders are faster AND more complete — the batching was
+        // manufacturing the very exhaustion it was working around.
+        const OPENING = 4
+        const byTime = [...renderable()].sort((a, b) => a.clip.startBeat - b.clip.startBeat)
+        const opening = byTime.slice(0, OPENING)
+        if (opening.length) {
           timings.attempts++
-          const before = renderable().length
-          const queueOrder = [...renderable()].sort((a, b) => a.clip.startBeat - b.clip.startBeat)
-          for (let i = 0; i < queueOrder.length; i += BATCH) {
-            const batch = queueOrder.slice(i, i + BATCH)
-            const only = new Set(batch.map(w => w.clip.id))
-            const rendered = await renderApolloProject(groups, bpm, { only })
-            keep(rendered, batch)
-            timings.batches++
-            await gap()   // let the audio thread breathe between batches
-          }
-          if (renderable().length >= before) break
-        }
-        // Batches make the opening playable in seconds, but each one is its own
-        // offline context and the browser only keeps a couple alive — so some
-        // come back empty and coverage suffers (14 of 23 in testing, against 22
-        // for a single whole-project pass). Now that playback is already usable,
-        // finish with one whole-project render to fill in what the batches
-        // missed. Slow, but nobody is waiting on it any more.
-        if (renderable().length) {
+          const rendered = await renderApolloProject(groups, bpm, { only: new Set(opening.map(w => w.clip.id)) })
+          keep(rendered, opening)
+          timings.batches++
           await gap()
+        }
+        // The whole project, once. This is the pass that does the real work.
+        if (renderable().length) {
+          timings.attempts++
           const rest = renderable()
           const rendered = await renderApolloProject(groups, bpm)
           keep(rendered, rest)
           timings.batches++
         }
+        // And that is where this session stops. There is deliberately NO retry
+        // pass: a retry renders into the same exhausted state that caused the
+        // miss, and measured, it cost 30s to add almost nothing (a third pass
+        // back-to-back took 90s and landed none). What it missed is a strike,
+        // not a loss — next session pulls everything already rendered off disk
+        // for free and spends its one pass on the remainder, so coverage climbs
+        // across loads without any single load grinding for it.
         timings.renderMs = Date.now() - tRender
         const stubborn = renderable().map(w => w.key)
         rememberBad(stubborn)     // do not chase these again next time

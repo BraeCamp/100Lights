@@ -1762,6 +1762,9 @@ export class DawEngine extends EventTarget {
       .filter(g => g.clips.length > 0)
   }
 
+  /** The Apollo render groups, for benchmarking the render strategy from a test. */
+  apolloGroupsForBench() { return this._apolloGroups() }
+
   /** Kick off combining for the whole project (called on load). */
   private _requestCombineAll(): void {
     const groups = this._apolloGroups()

@@ -1090,6 +1090,11 @@ export default function AudioEditor(props: AudioEditorProps) {
       const froze = frozen.arrangementClips.filter(c => c.kind === 'audio').length
       return { clips: frozen.arrangementClips.length, audioClips: froze }
     }
+    // Dev-only: the raw render entry, so a benchmark can time ONE whole-project
+    // pass against the batched strategy without going through the cache.
+    void import('@/lib/apollo/daw-freeze').then(m => {
+      (w as unknown as { __apolloFreezeModule?: unknown }).__apolloFreezeModule = m
+    }).catch(() => {})
     // Dev-only: exercise the MIDI importer in isolation (returns {project, report}).
     w.__parseMid = (file) => import('@/lib/midi-import').then(m => m.parseMidiFile(file))
     // Dev-only: export the current project as a .mid blob (round-trip testing).
