@@ -111,10 +111,23 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
     for (const t of tracks) {
       const notes = sec.parts?.[t.key]
       if (!notes || !notes.length) continue      // a track that sits out has no clip here
+      // Drop a note that lands on the same pitch at the same instant as one
+      // already there. Two identical hits do not sound twice as loud, they phase
+      // against each other and come out as one slightly wrong note — and it
+      // happens by accident, when a random sixteenth fill lands on a beat that
+      // already has a hit. check-notes.mjs found exactly that in Winter Drift:
+      // two C4 hats together at beat 163.5. Keeping the LOUDER of the two.
+      const bySlot = new Map()
+      for (const n of notes) {
+        const startBeat = +Math.max(0, n.startBeat).toFixed(4)
+        const slot = `${n.pitch}@${startBeat.toFixed(3)}`
+        const prev = bySlot.get(slot)
+        if (!prev || (n.velocity ?? 0) > (prev.velocity ?? 0)) bySlot.set(slot, { ...n, startBeat })
+      }
       clips.push({
         kind: 'midi', id: uid(), trackId: t.id, name: `${t.name} · ${sec.name}`,
         startBeat: beat, durationBeats: len,
-        notes: notes.map(n => ({ ...n, startBeat: +Math.max(0, n.startBeat).toFixed(4) })),
+        notes: [...bySlot.values()].sort((a, b) => a.startBeat - b.startBeat),
         isDrumClip: !!t.isDrum, presetId: t.presetId ?? null,
         rollFx: sec.rollFx?.[t.key] ?? t.rollFx ?? {},
       })

@@ -1358,6 +1358,40 @@ export default function AudioEditor(props: AudioEditorProps) {
     engineForRender.updateProject(project)
   }, [project, engineForRender])
 
+  // Notice if the transport is running and nothing is coming out. Brae hit this
+  // and it could not be reproduced; rather than guess, capture the state at the
+  // moment it happens. `expectedNow` is what keeps it honest — this component
+  // knows where the notes are, so a rest or a fade-out never looks like a fault.
+  useEffect(() => {
+    let cancelled = false
+    let stop: (() => void) | null = null
+    void import('@/lib/apollo/silence-watchdog').then(({ startSilenceWatchdog, stopSilenceWatchdog }) => {
+      if (cancelled) { stopSilenceWatchdog(); return }
+      stop = stopSilenceWatchdog
+      startSilenceWatchdog(
+        () => engineRef.current as unknown as ReturnType<Parameters<typeof startSilenceWatchdog>[0]>,
+        (beat) => {
+          // Is any clip supposed to be sounding here?
+          const p = projectRef.current
+          return (p.arrangementClips ?? []).some(c =>
+            c.startBeat <= beat && c.startBeat + (c.durationBeats ?? 0) > beat &&
+            (!('notes' in c) || ((c as { notes?: unknown[] }).notes?.length ?? 0) > 0))
+        },
+        () => {
+          const p = projectRef.current
+          return {
+            tracks: p.tracks.length,
+            muted: p.tracks.filter(t => t.mute).map(t => t.name),
+            soloed: p.tracks.filter(t => t.solo).map(t => t.name),
+            masterVolume: p.masterVolume,
+            combine: (window as unknown as { __combineStats?: () => unknown }).__combineStats?.(),
+          }
+        },
+      )
+    }).catch(() => {})
+    return () => { cancelled = true; stop?.() }
+  }, [])
+
   useEffect(() => {
     return () => { engineRef.current?.dispose() }
   }, [])
