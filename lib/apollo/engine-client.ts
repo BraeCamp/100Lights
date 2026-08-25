@@ -436,9 +436,11 @@ export class ApolloEngine extends EventTarget {
     const merger = octx.createChannelMerger(items.length * 2)
     merger.connect(octx.destination)
 
+    const nodes: AudioWorkletNode[] = []
     items.forEach(({ patch, notes }, idx) => {
       const node = new AudioWorkletNode(octx, 'apollo-engine',
         { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
+      nodes.push(node)
       const splitter = octx.createChannelSplitter(2)
       node.connect(splitter)
       splitter.connect(merger, 0, idx * 2)
@@ -476,6 +478,40 @@ export class ApolloEngine extends EventTarget {
       post({ type: 'schedule', events })
       if (patch.clipMode || patch.arp.on) post({ type: 'transport', playing: true, bpm: patch.global.bpm })
     })
+
+    // Wait until every node says it has everything before rendering a sample.
+    //
+    // This is the fix for silent renders, and it turns out they were never about
+    // "running out of offline contexts" at all. startRendering() does not wait
+    // for the port: setup goes over an ASYNCHRONOUS MessagePort, and rendering
+    // can begin before a processor has been told which patch to play or which
+    // notes to play — so it renders exactly what it knows, which is nothing.
+    //
+    // The evidence: Iced's Pad failed in the seven-track render but combined
+    // perfectly (4 of 4) as the only track in the project. It is the LAST node
+    // set up, so it is the one whose messages are most likely to still be in
+    // flight. Inserting a blunt 250ms delay before rendering fixed the Pad — and
+    // moved the failure to the four clips of the OPENING batch, the first render
+    // on the page, where setup is slowest. A delay just relocates the race.
+    //
+    // Messages are delivered in order, so a reply to a ping posted after the
+    // patch and the schedule proves both arrived. The timeout is a safety net,
+    // not the mechanism: an engine too old to answer (or a node that dies) falls
+    // back to the previous behaviour rather than hanging the combine forever.
+    await Promise.all(nodes.map((node, idx) => new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, 4000)
+      const onMsg = (e: MessageEvent) => {
+        const d = e.data as { type?: string; id?: number }
+        if (d?.type === 'ready' && d.id === idx) {
+          clearTimeout(timer)
+          node.port.removeEventListener('message', onMsg)
+          resolve()
+        }
+      }
+      node.port.addEventListener('message', onMsg)
+      node.port.start()
+      node.port.postMessage({ type: 'ping', id: idx })
+    })))
 
     // The merged render goes back as-is: item N is on channels N*2 and N*2+1.
     //

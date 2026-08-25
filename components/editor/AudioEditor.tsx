@@ -1098,6 +1098,11 @@ export default function AudioEditor(props: AudioEditorProps) {
     void import('@/lib/apollo/daw-freeze').then(m => {
       (w as unknown as { __apolloFreezeModule?: unknown }).__apolloFreezeModule = m
     }).catch(() => {})
+    // Dev-only: the combine cache itself, so a diagnostic can ask WHICH clips
+    // are missing rather than just how many.
+    void import('@/lib/apollo/freeze-cache').then(m => {
+      (w as unknown as { __combineCacheModule?: unknown }).__combineCacheModule = m
+    }).catch(() => {})
     // Dev-only: exercise the MIDI importer in isolation (returns {project, report}).
     w.__parseMid = (file) => import('@/lib/midi-import').then(m => m.parseMidiFile(file))
     // Dev-only: export the current project as a .mid blob (round-trip testing).

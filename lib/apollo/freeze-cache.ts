@@ -118,14 +118,41 @@ let draining = false
  *  reload the tab rather than hand that over. Scale it to the device: a small
  *  budget still helps (the clips near the playhead stay combined) and never
  *  costs the page. */
-function maxFrames(): number {
+function deviceCeiling(): number {
   if (typeof navigator === 'undefined') return 48_000 * 600
   const nav = navigator as Navigator & { deviceMemory?: number }
   const gb = nav.deviceMemory ?? (/Android|iPhone|iPad|iPod/i.test(nav.userAgent) ? 2 : 8)
-  const seconds = gb <= 2 ? 60 : gb <= 4 ? 120 : gb <= 8 ? 300 : 600
+  // Stereo float at 48k is ~384KB per second, so 600s is ~230MB. Roughly 1.5% of
+  // RAM at each tier, which a tab can hold without being reloaded under it.
+  const seconds = gb <= 2 ? 60 : gb <= 4 ? 120 : gb <= 8 ? 300 : gb <= 16 ? 1200 : 2400
   return 48_000 * seconds
 }
-const MAX_FRAMES = maxFrames()
+const DEVICE_CEILING = deviceCeiling()
+
+/** How much rendered audio the CURRENT project actually needs, once known. */
+let projectFrames = 0
+/** The live budget: enough for this project, never more than the device allows. */
+let MAX_FRAMES = DEVICE_CEILING
+
+/**
+ * Size the cache to the song.
+ *
+ * A fixed budget is the wrong shape for this. Iced is 2:09 but SEVEN tracks, so
+ * its combined audio is about 684 seconds — a seven-track song needs seven times
+ * its own length. Against the old flat 600s ceiling that meant the cache filled
+ * and evicted five clips of a song that had rendered perfectly, and because
+ * eviction took the OLDEST first, the five it threw away were the opening of the
+ * song: the part you hear on every single play. They then played live forever
+ * and reported themselves as "would not render", which is not what happened.
+ *
+ * So ask for what the project needs and take it if the device can carry it.
+ * Nothing changes on a small device except that it still keeps what it can.
+ */
+function setProjectNeed(frames: number): void {
+  projectFrames = frames
+  // A little headroom so re-rendering one clip can't immediately evict another.
+  MAX_FRAMES = Math.min(DEVICE_CEILING, Math.max(48_000 * 60, Math.ceil(frames * 1.1)))
+}
 
 export function combinedStamp(clip: MidiClip, patch: ApolloPatch, bpm: number): string {
   // The clip id is in the key so two clips that happen to hold identical notes
@@ -255,6 +282,10 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   const wanted = groups.flatMap(g => g.clips
     .filter(c => c.notes.length > 0)
     .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
+  // Size the cache to this song before rendering into it, or it evicts the
+  // opening of the song to make room for the end of it.
+  const spb = 60 / bpm
+  setProjectNeed(wanted.reduce((n, w) => n + Math.ceil(w.clip.durationBeats * spb * 48_000), 0))
   const missing = () => wanted.filter(w => !buffers.has(w.key))
   if (!missing().length) return
 
@@ -347,8 +378,15 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         timings.renderMs = Date.now() - tRender
         const stubborn = renderable().map(w => w.key)
         rememberBad(stubborn)     // do not chase these again next time
+        // Say which it was. "Would not render" was reported for clips that had
+        // rendered perfectly and were then evicted, and that wrong label cost
+        // real time chasing a rendering bug that did not exist.
         const left = missing().length
-        lastError = left ? `${left} of ${wanted.length} clips play live (would not render)` : null
+        const atCeiling = MAX_FRAMES >= DEVICE_CEILING && projectFrames > DEVICE_CEILING
+        lastError = !left ? null
+          : atCeiling
+            ? `${left} of ${wanted.length} clips play live (song needs ${(projectFrames / 48_000) | 0}s of cache, device allows ${(DEVICE_CEILING / 48_000) | 0}s)`
+            : `${left} of ${wanted.length} clips play live (would not render)`
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e)
       } finally {
@@ -366,7 +404,7 @@ export function clearCombined(): void {
 
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
-export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
+export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
   // Peak of each cached render: a buffer that exists but is silent looks
   // identical to a working one from the outside, and silently-empty renders are
   // exactly the failure mode this cache can hide.
@@ -387,6 +425,11 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
     // exactly the same from out here.
     striking: struck.filter(n => n < STRIKES_TO_GIVE_UP).length,
     givenUp: struck.filter(n => n >= STRIKES_TO_GIVE_UP).length,
+    // Held vs allowed. A clip that rendered fine and was then evicted is
+    // indistinguishable from one that never rendered, from the outside — both
+    // just play live — so make the budget visible.
+    frames: [...buffers.values()].reduce((n, b) => n + b.length, 0),
+    maxFrames: MAX_FRAMES,
     ...timings,
   }
 }

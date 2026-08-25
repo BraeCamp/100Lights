@@ -2196,6 +2196,15 @@ class ApolloProcessor extends AudioWorkletProcessor {
 
   onMessageInner(m) {
     switch (m.type) {
+      // "Have you received everything I sent?" Port messages are delivered in
+      // order, so a reply to a ping posted AFTER the patch and the schedule
+      // proves the patch and the schedule arrived. An offline render asks this
+      // before it starts, because startRendering() does not wait for the port:
+      // send a patch and render immediately and the processor can begin before
+      // it knows what to play, which comes back as silence.
+      case 'ping':
+        try { this.port.postMessage({ type: 'ready', id: m.id }) } catch { /* gone */ }
+        return
       case 'patch': {
         this.patch = m.patch
         this.bpm = m.patch.global.bpm

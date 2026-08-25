@@ -69,11 +69,49 @@ export async function loadCombined(stamp: string, ctx: BaseAudioContext): Promis
   } catch { return null }
 }
 
-/** Persist one render. Best-effort: a full disk must not break playback. */
+// One worker for the whole session. Created lazily, because most pages never
+// combine anything and a worker that is never used should never be spawned.
+let writer: Worker | null = null
+let writerFailed = false
+function getWriter(): Worker | null {
+  if (writer || writerFailed) return writer
+  try {
+    writer = new Worker(new URL('./combine-store.worker.ts', import.meta.url))
+    writer.onerror = () => { writerFailed = true; writer = null }
+  } catch { writerFailed = true }
+  return writer
+}
+
+/**
+ * Persist one render. Best-effort: a full disk must not break playback.
+ *
+ * The conversion and the write happen in a worker. They used to happen here, on
+ * the main thread, immediately after a render and possibly while the user was
+ * listening — about 340ms per combine on Iced, spent entirely on behalf of the
+ * NEXT page load. The samples are TRANSFERRED rather than copied, so handing
+ * them over costs nothing; they are copied out of the AudioBuffer first because
+ * an AudioBuffer's own arrays cannot be detached.
+ *
+ * If the worker can't be created (older bundlers, strict CSP), this falls back
+ * to doing the work inline — slower, but a stored clip is better than none.
+ */
 export async function saveCombined(stamp: string, buf: AudioBuffer): Promise<void> {
+  const chCount = Math.min(2, buf.numberOfChannels)
+  const w = getWriter()
+  if (w) {
+    try {
+      const channels: Float32Array[] = []
+      for (let ch = 0; ch < chCount; ch++) channels.push(new Float32Array(buf.getChannelData(ch)))
+      w.postMessage(
+        { stamp, sampleRate: buf.sampleRate, length: buf.length, channels },
+        channels.map(c => c.buffer),
+      )
+      return
+    } catch { /* fall through to the inline path */ }
+  }
   try {
     const channels: ArrayBuffer[] = []
-    for (let ch = 0; ch < Math.min(2, buf.numberOfChannels); ch++) channels.push(toPcm16(buf.getChannelData(ch)))
+    for (let ch = 0; ch < chCount; ch++) channels.push(toPcm16(buf.getChannelData(ch)))
     const db = await openDb()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite')
