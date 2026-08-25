@@ -69,11 +69,43 @@ function hash(s: string): string {
   return (h >>> 0).toString(36)
 }
 
+// Hashing a stamp is not cheap, and the scheduler asks for one CONSTANTLY.
+//
+// combinedStamp runs on every scheduler pass for every Apollo clip — it is how
+// playback finds the buffer to play. Each call was walking every note in the
+// clip to build a string, hashing it, then running JSON.stringify over the
+// ENTIRE Apollo patch (a fat patch is ~9.4KB) and hashing that too. Profiled on
+// Iced, that came to 35% of all main-thread work during playback of an
+// ALREADY-COMBINED song: 348ms in hash and 280ms in freezeStamp out of 1,966ms.
+// The song was finished; the work was pure overhead, repeated forever.
+//
+// Both halves are memoised on object identity. The reducer never mutates a notes
+// array or a patch in place — it maps to new ones — so a change always produces
+// a new object and therefore a new hash. WeakMaps mean nothing is retained after
+// an edit drops the old object.
+const notesHashCache = new WeakMap<object, string>()
+const patchHashCache = new WeakMap<object, string>()
+
+function notesHash(notes: MidiClip['notes']): string {
+  const cached = notesHashCache.get(notes as unknown as object)
+  if (cached !== undefined) return cached
+  const h = hash(notes.map(x => `${x.pitch}:${x.startBeat}:${x.durationBeats}:${x.velocity}`).join(','))
+  notesHashCache.set(notes as unknown as object, h)
+  return h
+}
+
+function patchHash(patch: ApolloPatch): string {
+  const cached = patchHashCache.get(patch as unknown as object)
+  if (cached !== undefined) return cached
+  const h = hash(JSON.stringify(patch))
+  patchHashCache.set(patch as unknown as object, h)
+  return h
+}
+
 /** The identity of a render: change the notes, the patch or the tempo and this
  *  changes, which is what tells a cached freeze it is stale. */
 export function freezeStamp(notes: MidiClip['notes'], patch: ApolloPatch, bpm: number): string {
-  const n = notes.map(x => `${x.pitch}:${x.startBeat}:${x.durationBeats}:${x.velocity}`).join(',')
-  return `${hash(n)}-${hash(JSON.stringify(patch))}-${bpm}`
+  return `${notesHash(notes)}-${patchHash(patch)}-${bpm}`
 }
 
 /** True when this clip's frozen audio no longer matches its source. */
@@ -186,9 +218,12 @@ export async function renderApolloProject(
   }))
 
   const engine = new ApolloEngine()
-  const perTrack = await engine.renderManyToBuffer(items, seconds)
+  // One merged buffer, track i on channels i*2 and i*2+1. Slices are cut
+  // straight out of it — see renderManyToBuffer for why it isn't split first.
+  const merged = await engine.renderManyToBuffer(items, seconds)
+  if (!merged) return out
 
-  const sr = perTrack[0]?.sampleRate ?? 48000
+  const sr = merged.sampleRate
   const cutter = new OfflineAudioContext(2, 1, sr)
   // Cutting is a lot of memcpy — every track's full render copied out again,
   // clip by clip, which for a seven-track two-minute song is tens of millions of
@@ -199,8 +234,9 @@ export async function renderApolloProject(
   for (let i = 0; i < live.length; i++) {
     const g = live[i]
     if (i > 0) await breathe()
-    const full = perTrack[i]
-    if (!full) continue
+    // This track's two channels within the merged render.
+    const chL = merged.getChannelData(i * 2)
+    const chR = merged.numberOfChannels > i * 2 + 1 ? merged.getChannelData(i * 2 + 1) : chL
     // Clips in playback order, so each one knows where the next begins.
     const ordered = g.clips.filter(c => c.notes.length > 0).sort((a, b) => a.startBeat - b.startBeat)
     ordered.forEach((c, ci) => {
@@ -219,14 +255,13 @@ export async function renderApolloProject(
         : tailSec / spb
       const from = Math.max(0, Math.floor((c.startBeat - firstBeat) * spb * sr))
       const len = Math.min(
-        full.length - from,
+        merged.length - from,
         Math.ceil((c.durationBeats + Math.min(tailBeats, tailSec / spb)) * spb * sr),
       )
       if (len <= 0) return
       const slice = cutter.createBuffer(2, len, sr)
-      for (let ch = 0; ch < 2; ch++) {
-        slice.getChannelData(ch).set(full.getChannelData(ch).subarray(from, from + len))
-      }
+      slice.getChannelData(0).set(chL.subarray(from, from + len))
+      slice.getChannelData(1).set(chR.subarray(from, from + len))
       out.set(c.id, slice)
     })
   }

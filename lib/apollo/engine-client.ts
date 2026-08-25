@@ -419,11 +419,16 @@ export class ApolloEngine extends EventTarget {
    * patch on its own channel pair so they can be pulled apart afterwards
    * instead of arriving pre-mixed.
    */
+  /**
+   * Render every patch in ONE offline context and hand back the merged result.
+   * Item `i` occupies channels `i*2` (left) and `i*2+1` (right) — see the note
+   * at the return for why this is not split into per-item buffers.
+   */
   async renderManyToBuffer(
     items: { patch: ApolloPatch; notes: { t: number; dur: number; note: number; vel: number }[] }[],
     seconds: number,
-  ): Promise<AudioBuffer[]> {
-    if (!items.length) return []
+  ): Promise<AudioBuffer | null> {
+    if (!items.length) return null
     const sr = this.ctx?.sampleRate || 48000
     const frames = Math.ceil(seconds * sr)
     const octx = new OfflineAudioContext(items.length * 2, frames, sr)
@@ -472,14 +477,16 @@ export class ApolloEngine extends EventTarget {
       if (patch.clipMode || patch.arp.on) post({ type: 'transport', playing: true, bpm: patch.global.bpm })
     })
 
-    const rendered = await octx.startRendering()
-    // Pull each patch back out of its own channel pair.
-    return items.map((_, idx) => {
-      const buf = new OfflineAudioContext(2, frames, sr).createBuffer(2, frames, sr)
-      buf.getChannelData(0).set(rendered.getChannelData(idx * 2))
-      buf.getChannelData(1).set(rendered.getChannelData(idx * 2 + 1))
-      return buf
-    })
+    // The merged render goes back as-is: item N is on channels N*2 and N*2+1.
+    //
+    // This used to de-interleave into one AudioBuffer per item, which meant
+    // copying the whole song for every track — and the only consumer then copied
+    // it AGAIN, clip by clip, to cut its slices. Two full passes over every
+    // sample when one will do. Profiled on Iced, the de-interleave alone was
+    // 339ms and the largest long task in the combine phase; the copy the caller
+    // actually needs is the second one, so this one just goes away, along with
+    // seven full-length buffer allocations per pass.
+    return octx.startRendering()
   }
 }
 
