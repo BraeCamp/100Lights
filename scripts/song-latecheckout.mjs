@@ -99,8 +99,13 @@ const fromGroove = (ch, voices, { pattern = GROOVE, octave = 0, vel = 0, last = 
 // ── The parts that are not the groove ───────────────────────────────────────
 // The pad holds the whole stack under everything as glue, an octave down so it
 // sits beneath the keyboards rather than among them.
+// The note stops just short of the bar line. Held for the FULL bar, humanising
+// pushes it a few milliseconds past, so bar N is still gated when bar N+1 starts
+// and the pad asks for seven notes at once instead of four — 21 voices against a
+// limit of 16, which is stealing, which is stuttering. The 2.6s release still
+// carries it across the join, so it sounds continuous and costs four voices.
 const padBar = (ch, velocity = 26) =>
-  ch.stack.map((p, i) => N(p - 12, 0 + jitter(8), BPB, vary(velocity - i * 2, 4)))
+  ch.stack.map((p, i) => N(p - 12, 0 + jitter(8), BPB - 0.2, vary(velocity - i * 2, 4)))
 
 const subBar = (ch, secondBar, velocity = 88) =>
   secondBar ? [] : [N(ch.sub, 0 + jitter(6), BPB * 1.35, vary(velocity, 4))]

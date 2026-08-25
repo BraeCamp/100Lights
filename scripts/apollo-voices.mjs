@@ -141,10 +141,23 @@ export const bass = () => patch('Bass', p => {
 
 /** Wide, slow pad: two detuned tables, a slow filter LFO, chorus + reverb. */
 export const pad = () => patch('Pad', p => {
-  osc(p, 0, { level: 0.48, enabled: true, unison: 4, detune: 0.34, width: 1, stereo: 0.85, pan: -0.15 })
+  // THREE voices per note, not seven.
+  //
+  // At unison 4 + 3 this pad cost 7 voices per note, and a pad plays chords: a
+  // four-note chord was 28 voices against Apollo's limit of 16, reaching 56 once
+  // consecutive bars overlapped through the 2.6s release. Past 16 the allocator
+  // steals ACTIVE voices — notes cut off mid-sustain — which is audible as
+  // stuttering and is what "it's freezing at the beginning" was, in a section
+  // where the pad plays with almost nothing else and nothing is combined yet.
+  //
+  // A released voice being stolen is fine; the allocator takes those first and
+  // they are already fading. Staying under 16 ACTIVE is the whole trick. Three
+  // voices per note puts a four-note chord at 12. The width lost to fewer unison
+  // voices is bought back with wider detune and full stereo spread.
+  osc(p, 0, { level: 0.48, enabled: true, unison: 2, detune: 0.46, width: 1, stereo: 0.95, pan: -0.15 })
   p.oscs[0].wt.tableId = 'pwm'
   p.oscs[0].wt.pos = 0.35
-  osc(p, 1, { level: 0.32, enabled: true, unison: 3, detune: 0.28, width: 1, stereo: 0.8, pan: 0.18, fine: 6 })
+  osc(p, 1, { level: 0.32, enabled: true, unison: 1, detune: 0.28, width: 1, stereo: 0.9, pan: 0.18, fine: 6 })
   p.oscs[1].wt.tableId = 'analog-saws'
   p.oscs[1].wt.pos = 0.55
   env(p, 0, { attack: 1.2, decay: 1.1, sustain: 0.7, release: 2.6, aCurve: -0.2 })
@@ -212,7 +225,9 @@ export const harpsi = () => patch('Harpsichord', p => {
 
 /** Bowed ensemble — slow on, wide, for the baroque chord writing. */
 export const strings = () => patch('Strings', p => {
-  osc(p, 0, { level: 0.6, enabled: true, unison: 3, detune: 0.28, width: 1, stereo: 0.8, pan: -0.1 })
+  // Two voices, not three: strings play CHORDS, and at 5 voices per note a
+  // four-note chord was 20 against a limit of 16. Wider detune keeps the size.
+  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.38, width: 1, stereo: 0.9, pan: -0.1 })
   p.oscs[0].wt.tableId = 'analog-saws'
   p.oscs[0].wt.pos = 0.4
   osc(p, 1, { level: 0.34, enabled: true, unison: 2, detune: 0.2, width: 1, stereo: 0.7, pan: 0.12, fine: 5 })

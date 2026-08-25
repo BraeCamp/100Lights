@@ -82,7 +82,9 @@ const keysBar = (ch, pattern = STAB) => {
   return out
 }
 const padBar = (ch, velocity = 34, octave = 0) =>
-  ch.voicing.map(p => N(p + octave, 0, BPB, vary(velocity, 4)))
+  // Stops short of the bar line so consecutive bars are not both gated — see
+  // the note in song-undertow. Four notes at once, not eight.
+  ch.voicing.map(p => N(p + octave, 0, BPB - 0.2, vary(velocity, 4)))
 
 // ── Drums: four on the floor ────────────────────────────────────────────────
 const KICK = 24, CLAP = 48, HAT = 60

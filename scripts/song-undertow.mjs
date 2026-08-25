@@ -72,7 +72,7 @@ const bassBar = (ch, { pattern = FIGURE } = {}) =>
   pattern.map(([tone, b, d, v]) => N(ch.tones[tone], b + jitter(9), d, vary(v, 8)))
 
 const subBar = (ch, secondBar, velocity = 92) =>
-  secondBar ? [] : [N(ch.sub, 0.5 + jitter(5), BPB * 2 - 0.8, vary(velocity, 4))]
+  secondBar ? [] : [N(ch.sub, 0.5 + jitter(5), BPB * 1.4, vary(velocity, 4))]
 
 // ── The two voices that trade sides ─────────────────────────────────────────
 // They alternate bars: the EP answers the organ, never together. That is what
@@ -89,8 +89,14 @@ const chordBar = (ch, pattern, { spread = 0.010, drop = 3 } = {}) => {
   return out
 }
 
+// Stops just short of the bar line. Held for the FULL bar, humanising pushes it
+// a few milliseconds past, so bar N is still sounding when bar N+1 starts — the
+// pad asked for EIGHT notes at once instead of four, which at the old 7-voice
+// pad was 56 voices against a limit of 16. Past 16 Apollo steals active notes,
+// cutting sustains off mid-note: audible as stuttering. The long release still
+// carries the pad across the join.
 const padBar = (ch, velocity = 30) =>
-  ch.voicing.map((p, i) => N(p - 12 + (i === 0 ? 0 : 0), 0 + jitter(6), BPB, vary(velocity - i * 2, 4)))
+  ch.voicing.map((p, i) => N(p - 12, 0 + jitter(6), BPB - 0.2, vary(velocity - i * 2, 4)))
 
 // ── Drums: half-time ────────────────────────────────────────────────────────
 const KICK = 24, RIM = 48, HAT = 60
@@ -141,7 +147,7 @@ export function build() {
       instrument: { type: 'apollo', params: snare() } },
     { key: 'hats',  id: uid(), name: 'Hats',  presetId: null, volume: 0.13, pan: 0.22, color: '#bae6fd',
       instrument: { type: 'apollo', params: hatDual() } },
-    { key: 'sub',   id: uid(), name: 'Sub',   presetId: null, volume: 0.54, color: '#22d3ee',
+    { key: 'sub',   id: uid(), name: 'Sub',   presetId: null, volume: 0.16, color: '#22d3ee',
       instrument: { type: 'apollo', params: subBass() } },
     { key: 'bass',  id: uid(), name: 'Bass',  presetId: null, volume: 0.38, color: '#2dd4bf',
       instrument: { type: 'apollo', params: bassVoice() } },
@@ -296,7 +302,7 @@ export function build() {
     // even a phone speaker can reproduce them, and the ear infers the missing
     // fundamental from them. This is what "the sub isn't making sound" needed:
     // not more level (it was already the loudest track) but something audible.
-    bar('sub', 0, W(56), { drive: 0.34 }, [[0, 1], [W(56), 1]], 5),
+    bar('sub', 0, W(56), { drive: 0.18 }, [[0, 1], [W(56), 1]], 5),
 
     // ── SPACE ───────────────────────────────────────────────────────────────
     // Dub throws: delay swells at the seams, never running through a section.
