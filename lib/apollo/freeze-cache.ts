@@ -129,6 +129,29 @@ function deviceCeiling(): number {
 }
 const DEVICE_CEILING = deviceCeiling()
 
+/**
+ * How much a SINGLE render pass may allocate.
+ *
+ * Separate from the cache ceiling above, and it has to be: the cache is what we
+ * hold, this is the transient spike while rendering, and it is the spike that
+ * kills a phone. iOS reclaims a tab well below the numbers a laptop shrugs at,
+ * and it does it by reloading the page — which is what "the page keeps
+ * reloading after a few seconds of the song" was.
+ */
+export function renderBudgetBytes(): number {
+  if (typeof navigator === 'undefined') return 64 * 1024 * 1024
+  const nav = navigator as Navigator & { deviceMemory?: number }
+  const mobile = /Android|iPhone|iPad|iPod/i.test(nav.userAgent)
+  const gb = nav.deviceMemory ?? (mobile ? 2 : 8)
+  // 12MB is roughly one track of a 30-second window — small enough that a phone
+  // never sees a spike it cannot absorb, and combining still finishes, just in
+  // more passes. More passes is a fine trade for the tab staying alive.
+  if (mobile || gb <= 2) return 12 * 1024 * 1024
+  if (gb <= 4) return 24 * 1024 * 1024
+  if (gb <= 8) return 48 * 1024 * 1024
+  return 96 * 1024 * 1024
+}
+
 /** How much rendered audio the CURRENT project actually needs, once known. */
 let projectFrames = 0
 /** The live budget: enough for this project, never more than the device allows. */
@@ -359,7 +382,30 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // 21 of 31 clips against 26 for one big pass; that was the message-port
         // race, and with the ping/ready handshake a small render is now as
         // reliable as a large one.
-        const WINDOW_CLIPS = 4
+        // A window is sized by the MEMORY it implies, not by a clip count.
+        //
+        // Counting clips was wrong and it cost Brae a working phone: renderMany
+        // ToBuffer allocates one buffer of (tracks x 2 channels x span), and a
+        // window is chosen in urgency order, so four clips that happen to sit
+        // far apart span the song between them. Measured on Undertow, four clips
+        // meant a 70 MB allocation, and a badly shaped window reached 119 MB.
+        // Desktop shrugs; iOS kills the tab, which is exactly the "page keeps
+        // reloading after a few seconds" report.
+        //
+        // So: take clips in urgency order and stop before the implied buffer
+        // crosses a device-sized budget. Always take at least one, or a song
+        // whose single clip exceeds the budget would never render at all.
+        const budgetBytes = renderBudgetBytes()
+        const spb2 = 60 / bpm
+
+        /** What renderManyToBuffer will allocate for this set of clips. */
+        const impliedBytes = (set: { clip: MidiClip }[]): number => {
+          if (!set.length) return 0
+          const first = Math.min(...set.map(w => w.clip.startBeat))
+          const last = Math.max(...set.map(w => w.clip.startBeat + w.clip.durationBeats))
+          const tracks = new Set(set.map(w => groups.find(g => g.clips.some(c => c.id === w.clip.id))?.trackId)).size || 1
+          return tracks * 2 * ((last - first) * spb2 + 2) * 48_000 * 4
+        }
 
         /** Clips ordered by how soon the playhead reaches them. */
         const byUrgency = () => {
@@ -375,7 +421,14 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         }
 
         while (renderable().length) {
-          const window = byUrgency().slice(0, WINDOW_CLIPS)
+          const queue2 = byUrgency()
+          const window: typeof queue2 = []
+          for (const w of queue2) {
+            if (window.length && impliedBytes([...window, w]) > budgetBytes) break
+            window.push(w)
+            // Even inside budget, keep windows small enough to stay responsive.
+            if (window.length >= 4) break
+          }
           if (!window.length) break
           timings.attempts++
           const before = buffers.size

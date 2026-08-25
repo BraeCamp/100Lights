@@ -9,7 +9,7 @@ import { CHECKOUT_LS_KEY } from '@/lib/apollo/checkout'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack, ApolloInstrumentParams } from '@/lib/daw-types'
-import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip, POLY_PRESETS } from '@/lib/daw-types'
+import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, DawPlayheadProvider, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
@@ -2267,12 +2267,10 @@ export default function AudioEditor(props: AudioEditorProps) {
       id: `audio.track.select.${t.id}`, group: 'Track', label: `Select ${t.name}`,
       keywords: 'go to focus track', run: () => setSelectedTrackId(t.id),
     })),
-    // Every built-in instrument preset, by name, applied to the selected track.
-    ...(paletteTrack && !props.readOnly ? Object.keys(POLY_PRESETS).map(nm => ({
-      id: `audio.sound.poly.${nm}`, group: 'Sound', label: `Sound: ${nm}`,
-      keywords: `instrument preset patch synth poly ${paletteTrack.name}`,
-      run: () => dispatch({ type: 'SET_INSTRUMENT', trackId: paletteTrack.id, instrument: { type: 'poly', params: POLY_PRESETS[nm] } as never }),
-    })) : []),
+    // NOT one command per preset. That worked at 52 of them and stops working
+    // the moment the library grows — a palette whose results are mostly one kind
+    // of thing has stopped being a palette. Presets belong in a browser that can
+    // page, preview and categorise; the palette's job is to get you TO it.
   ], [project.tracks, selectedTrackId, paletteTrack, props.readOnly, dispatch, setApolloRack, setSelectedTrackId])
 
   // ── Render ───────────────────────────────────────────────────────────────────
