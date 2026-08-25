@@ -192,6 +192,76 @@ export const organ = () => patch('Organ', p => {
   p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
 })
 
+
+// ── Added for the baroque-phonk and disco-pop pieces ───────────────────────
+
+/** Plucked and bright, harpsichord-leaning: fast decay, no sustain to speak of. */
+export const harpsi = () => patch('Harpsichord', p => {
+  osc(p, 0, { level: 0.7, enabled: true, unison: 2, detune: 0.1, width: 0.5 })
+  p.oscs[0].wt.tableId = 'bells'
+  p.oscs[0].wt.pos = 0.5
+  osc(p, 1, { level: 0.25, enabled: true })
+  p.oscs[1].wt.tableId = 'analog-saws'
+  p.oscs[1].wt.pos = 0.2
+  env(p, 0, { attack: 0.001, decay: 0.45, sustain: 0.05, release: 0.25, dCurve: -0.6 })
+  env(p, 1, { attack: 0.001, decay: 0.12, sustain: 0, release: 0.06 })
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.22))
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.70, res: 0.15, keytrack: 0.3 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
+})
+
+/** Bowed ensemble — slow on, wide, for the baroque chord writing. */
+export const strings = () => patch('Strings', p => {
+  osc(p, 0, { level: 0.6, enabled: true, unison: 3, detune: 0.28, width: 1, stereo: 0.8, pan: -0.1 })
+  p.oscs[0].wt.tableId = 'analog-saws'
+  p.oscs[0].wt.pos = 0.4
+  osc(p, 1, { level: 0.34, enabled: true, unison: 2, detune: 0.2, width: 1, stereo: 0.7, pan: 0.12, fine: 5 })
+  p.oscs[1].wt.tableId = 'pwm'
+  p.oscs[1].wt.pos = 0.3
+  env(p, 0, { attack: 0.25, decay: 0.8, sustain: 0.72, release: 1.2 })
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.55, res: 0.08, keytrack: 0.2 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.35 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.34 }))
+})
+
+/** The phonk cowbell: pitched metal, bandpassed, gone in a moment. */
+export const cowbell = () => patch('Cowbell', p => {
+  osc(p, 0, { level: 0.9, enabled: true, unison: 2, detune: 0.3, width: 0.6 })
+  p.oscs[0].wt.tableId = 'metallic'
+  env(p, 0, { attack: 0.0005, decay: 0.16, sustain: 0, release: 0.06, dCurve: -0.5 })
+  filt(p, 0, { enabled: true, type: 'bp12', cutoff: 0.68, res: 0.5, drive: 0.3 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', {}, { mix: 0.25 }))
+})
+
+/** Funk bass: short, resonant, with a filter pluck on every note. */
+export const funkBass = () => patch('Funk Bass', p => {
+  osc(p, 0, { level: 0.85, enabled: true, unison: 2, detune: 0.12, width: 0.5 })
+  p.oscs[0].wt.tableId = 'analog-saws'
+  p.oscs[0].wt.pos = 0.25
+  osc(p, 1, { level: 0.3, enabled: true, octave: -1 })
+  p.oscs[1].wt.tableId = 'basic-shapes'
+  p.oscs[1].wt.pos = 0
+  env(p, 0, { attack: 0.004, decay: 0.18, sustain: 0.35, release: 0.1 })
+  env(p, 1, { attack: 0.002, decay: 0.10, sustain: 0, release: 0.05 })
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.30))
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.40, res: 0.45, drive: 0.3, keytrack: 0.35 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'compressor'))
+})
+
+/** Round electric-piano-ish keys for the disco chords. */
+export const warmEp = () => patch('Warm Keys', p => {
+  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.08, width: 0.4 })
+  p.oscs[0].wt.tableId = 'basic-shapes'
+  p.oscs[0].wt.pos = 0.12
+  osc(p, 1, { level: 0.3, enabled: true })
+  p.oscs[1].wt.tableId = 'organ'
+  p.oscs[1].wt.pos = 0.25
+  env(p, 0, { attack: 0.004, decay: 0.9, sustain: 0.25, release: 0.5, dCurve: -0.45 })
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.6, res: 0.1, keytrack: 0.25 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.3 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.22 }))
+})
+
 export const VOICES = {
   kick:   { build: kick,                 notes: '24:0:0.4',        seconds: 1.2 },
   snare:  { build: snare,                notes: '48:0:0.25',       seconds: 1.0 },
@@ -206,6 +276,11 @@ export const VOICES = {
   keys:   { build: keys,                 notes: '60:0:0.6,64:0:0.6,67:0:0.6', seconds: 2.5 },
   choir:  { build: choirish,             notes: '60:0:2.5,67:0:2.5', seconds: 4.0 },
   organ:  { build: organ,                notes: '55:0:1,59:0:1,62:0:1', seconds: 2.5 },
+  harpsi: { build: harpsi,               notes: '62:0:0.5,65:0.25:0.5,69:0.5:0.6', seconds: 2.0 },
+  strings:{ build: strings,              notes: '50:0:2.5,57:0:2.5,62:0:2.5', seconds: 4.0 },
+  cowbell:{ build: cowbell,              notes: '72:0:0.1',        seconds: 0.8 },
+  funkbas:{ build: funkBass,             notes: '45:0:0.3,52:0.5:0.3', seconds: 1.6 },
+  warmep: { build: warmEp,               notes: '57:0:1,61:0:1,64:0:1', seconds: 2.5 },
 }
 
 if (process.argv.includes('--audit')) {
