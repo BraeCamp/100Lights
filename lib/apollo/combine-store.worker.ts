@@ -46,17 +46,28 @@ const toPcm16 = (f: Float32Array): ArrayBuffer => {
   return out.buffer
 }
 
+// ONE connection for the session, not one per clip.
+//
+// Opening and closing the database per write is the slow part of this job, and a
+// whole song arrives as forty messages in a row. With a connection per clip the
+// queue drained so slowly that closing the tab lost most of it — measured, a
+// second load of Undertow found only 5 of its 39 clips on disk and re-rendered
+// the rest, which defeats the entire point of persisting them.
+let dbPromise: Promise<IDBDatabase> | null = null
+const db = () => (dbPromise ??= openDb())
+
 self.onmessage = async (e: MessageEvent<SaveMessage>) => {
   const { stamp, sampleRate, length, channels } = e.data
   try {
     const pcm = channels.map(toPcm16)
-    const db = await openDb()
+    const conn = await db()
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite')
+      const tx = conn.transaction(STORE, 'readwrite')
       tx.objectStore(STORE).put({ stamp, sampleRate, length, channels: pcm, savedAt: Date.now() })
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
-    db.close()
-  } catch { /* quota, private mode, or no IndexedDB — the memory cache still works */ }
+  } catch {
+    dbPromise = null   // a broken connection must not poison every later write
+  }
 }
