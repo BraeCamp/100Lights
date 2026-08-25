@@ -11,6 +11,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCommands, type Command } from '@/lib/commands'
+import { rankCommands } from '@/lib/command-palette'
 
 export default function CommandPalette() {
   const commands = useCommands()
@@ -47,13 +48,15 @@ export default function CommandPalette() {
   }, [open])
 
   // ── Filter (label + keywords, respecting `when`) ──────────
+  // Ranked, not merely filtered. A plain substring match returns everything
+  // that contains the letters in registry order, so typing "mix" could put
+  // "Toggle audio mixdown" above "Switch to Mixer view" purely because it was
+  // registered first. rankCommands orders by how confident the match is — exact
+  // label, then prefix, then word start, then anywhere, then loose subsequence —
+  // so the obvious answer is the one under the cursor when you press Enter.
   const filtered = useMemo<Command[]>(() => {
-    const term = q.trim().toLowerCase()
-    return commands.filter(c => {
-      if (c.when && !c.when()) return false
-      if (!term) return true
-      return `${c.label} ${c.keywords ?? ''}`.toLowerCase().includes(term)
-    })
+    const available = commands.filter(c => !c.when || c.when())
+    return rankCommands(available, q)
   }, [commands, q])
 
   // Keep the highlight in range as the list shrinks.
@@ -143,6 +146,7 @@ export default function CommandPalette() {
                 return (
                   <button
                     key={cmd.id}
+                    data-palette-item={index}
                     onMouseMove={() => setActive(index)}
                     onClick={() => run(cmd)}
                     style={{

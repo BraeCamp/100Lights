@@ -9,7 +9,7 @@ import { CHECKOUT_LS_KEY } from '@/lib/apollo/checkout'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack, ApolloInstrumentParams } from '@/lib/daw-types'
-import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip } from '@/lib/daw-types'
+import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip, POLY_PRESETS } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, DawPlayheadProvider, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
@@ -2214,7 +2214,53 @@ export default function AudioEditor(props: AudioEditorProps) {
       when: () => !isPodcast,
       run: () => { setSidebarOpen(true); setLeftTab('library') },
     },
-  ], [view, isPodcast, props.onSave, props.readOnly])
+    { id: 'audio.transport.play', group: 'Audio', label: 'Play / stop', keywords: 'start begin pause space transport',
+      shortcut: 'Space', run: () => { const e = engineRef.current; if (!e) return; if (e.isPlaying) e.stop(); else void e.play() } },
+    { id: 'audio.transport.top', group: 'Audio', label: 'Go to start', keywords: 'beginning rewind home transport',
+      run: () => engineRef.current?.seek(0) },
+    { id: 'audio.track.add', group: 'Audio', label: 'Add track', keywords: 'new create track',
+      when: () => !props.readOnly,
+      run: () => dispatch({ type: 'ADD_TRACK', id: crypto.randomUUID(), name: `Track ${projectRef.current.tracks.length + 1}` }) },
+  ], [view, isPodcast, props.onSave, props.readOnly, dispatch])
+
+  // ── Sounds and tracks, by name ───────────────────────────────────────────────
+  //
+  // This is the half of the palette that was missing, and it is the half Brae
+  // asked for: the studio registered five commands, none of which had anything
+  // to do with MAKING a sound. Changing an instrument meant knowing which panel
+  // holds instruments, opening it, and scrolling. Now you type its name.
+  //
+  // Registered separately from the block above because it depends on the current
+  // selection — the commands name the track they will act on, so "Solo Bass"
+  // reads as an answer rather than "Solo selected track" reading as a question.
+  const paletteTrack = useMemo(
+    () => project.tracks.find(t => t.id === selectedTrackId) ?? project.tracks[0] ?? null,
+    [project.tracks, selectedTrackId],
+  )
+  useRegisterCommands([
+    ...(paletteTrack ? [
+      { id: 'audio.track.mute', group: 'Track', label: `${paletteTrack.mute ? 'Unmute' : 'Mute'} ${paletteTrack.name}`,
+        keywords: 'silence track', when: () => !props.readOnly,
+        run: () => dispatch({ type: 'UPDATE_TRACK', trackId: paletteTrack.id, patch: { mute: !paletteTrack.mute } }) },
+      { id: 'audio.track.solo', group: 'Track', label: `${paletteTrack.solo ? 'Unsolo' : 'Solo'} ${paletteTrack.name}`,
+        keywords: 'isolate alone track', when: () => !props.readOnly,
+        run: () => dispatch({ type: 'UPDATE_TRACK', trackId: paletteTrack.id, patch: { solo: !paletteTrack.solo } }) },
+      { id: 'audio.track.apollo', group: 'Sound', label: `Edit ${paletteTrack.name} in Apollo`,
+        keywords: 'synth patch rack instrument sound design edit',
+        run: () => setApolloRack({ trackId: paletteTrack.id, seed: null, follow: true }) },
+    ] : []),
+    // Jump straight to a track instead of finding it in a long list.
+    ...project.tracks.filter(t => t.id !== selectedTrackId).map(t => ({
+      id: `audio.track.select.${t.id}`, group: 'Track', label: `Select ${t.name}`,
+      keywords: 'go to focus track', run: () => setSelectedTrackId(t.id),
+    })),
+    // Every built-in instrument preset, by name, applied to the selected track.
+    ...(paletteTrack && !props.readOnly ? Object.keys(POLY_PRESETS).map(nm => ({
+      id: `audio.sound.poly.${nm}`, group: 'Sound', label: `Sound: ${nm}`,
+      keywords: `instrument preset patch synth poly ${paletteTrack.name}`,
+      run: () => dispatch({ type: 'SET_INSTRUMENT', trackId: paletteTrack.id, instrument: { type: 'poly', params: POLY_PRESETS[nm] } as never }),
+    })) : []),
+  ], [project.tracks, selectedTrackId, paletteTrack, props.readOnly, dispatch, setApolloRack, setSelectedTrackId])
 
   // ── Render ───────────────────────────────────────────────────────────────────
   const editorContent = (

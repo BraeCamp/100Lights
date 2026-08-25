@@ -14,6 +14,7 @@
   },
   "files": [
     "lib/media-handoff.ts",
-    "lib/note-ids.ts"
+    "lib/note-ids.ts",
+    "lib/command-palette.ts"
   ]
 }
