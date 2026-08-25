@@ -1,0 +1,19 @@
+{
+  "//": "Build for the plain-node unit tests (scripts/*.test.mjs). Kept separate from tsconfig.json because these compile to CommonJS so a .mjs test can require() them, and because they need the @/* alias — lib/daw-types pulls in apollo/patch, which imports through it.",
+  "compilerOptions": {
+    "outDir": ".test-build",
+    "rootDir": "lib",
+    "target": "es2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./*"] }
+  },
+  "files": [
+    "lib/media-handoff.ts",
+    "lib/note-ids.ts"
+  ]
+}

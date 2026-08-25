@@ -8,6 +8,7 @@ import { slugify } from '@/lib/slugify'
 import { ensureSharingSchema } from '@/lib/project-access'
 import { ensureSchema } from '@/lib/schema-version'
 import { slimPatch } from '@/lib/apollo/patch-diff'
+import { stripNoteIds } from '@/lib/note-ids'
 
 // Schema for the projects table. Gated by a version stamp rather than a
 // per-process flag: this route is on the cloud-project path, so the three
@@ -37,6 +38,16 @@ function slimApolloPatches(p: CfProjFile): CfProjFile {
         : t),
     },
   }
+}
+
+/** Note ids are runtime identity, never referenced by anything stored, and they
+ *  are the single largest thing in a project — 25% of Winter Drift, and random,
+ *  so they defeat compression. Dropping them takes it from 36.1 KB to 11.3 KB
+ *  brotli. migrateProject puts them back on the way in. */
+function dropNoteIds(p: CfProjFile): CfProjFile {
+  const dp = p.dawProject
+  if (!dp) return p
+  return { ...p, dawProject: stripNoteIds(dp) }
 }
 
 async function uniqueSlug(userId: string, name: string, excludeId?: string): Promise<string> {
@@ -184,7 +195,7 @@ export async function POST(req: Request) {
 
   await ensureSlugColumns()
 
-  const project: CfProjFile = slimApolloPatches({ ...body, userId })
+  const project: CfProjFile = dropNoteIds(slimApolloPatches({ ...body, userId }))
   const savedAt = new Date().toISOString()
 
   // Generate slug (only used if the project doesn't have one yet)

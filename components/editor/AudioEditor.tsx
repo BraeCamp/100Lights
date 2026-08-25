@@ -626,7 +626,10 @@ export default function AudioEditor(props: AudioEditorProps) {
 
   const initialProject = useMemo(
     () => {
-      if (props.initialDawProject) return props.initialDawProject
+      // Through migrateProject like every other entry point. This one used to
+      // bypass it, which is how a cloud-loaded project could arrive with slim
+      // Apollo patches — and now, with no note ids at all.
+      if (props.initialDawProject) return migrateProject(props.initialDawProject)
       if (initialTracks?.length) return buildInitialProject(initialTracks)
       if (isPodcast) return buildPodcastProject()
       // A reader carried something over from an article — seed the timeline with it.

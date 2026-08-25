@@ -8,6 +8,7 @@ import type {
   ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
 } from './daw-types'
 import { fatPatch } from './apollo/patch-diff'
+import { restoreNoteIds } from './note-ids'
 import type { MidiPreset } from './midi-presets'
 import type { PodcastMeta } from './project-serializer'
 import {
@@ -633,7 +634,13 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     }
 
     case 'LOAD_PROJECT': {
-      const p = action.project
+      // Note ids come back HERE and not only in migrateProject, because this is
+      // the one gate every project must pass to become state. migrateProject is
+      // supposed to be that gate and its own comment claims it is, but a project
+      // handed in as initialDawProject skipped it for a long time — which is
+      // exactly how slim Apollo patches once reached the editor unexpanded.
+      // Restoring here is a no-op scan when the ids are already present.
+      const p = restoreNoteIds(action.project)
       return {
         ...p,
         tracks:          normalizeGroups(p.tracks ?? []),
@@ -1073,10 +1080,16 @@ export function migrateProject(raw: Partial<DawProject>): DawProject {
       height:     t.height ?? DEFAULT_TRACK_HEIGHT,
     }
   }))
+  // Note ids are stripped for storage (see lib/note-ids — they are 25% of a
+  // project and don't compress). Put them back before anything downstream tries
+  // to address a note.
+  const withIds = restoreNoteIds({ ...base, ...raw, tracks } as DawProject)
   return {
     ...base,
     ...raw,
     tracks,
+    arrangementClips: withIds.arrangementClips,
+    sessionGrid:      withIds.sessionGrid,
     clipEffects:     (raw.clipEffects ?? []).map(legacyToBar),
     automationLanes: raw.automationLanes ?? [],
     returnTracks:    raw.returnTracks    ?? [],
