@@ -20,15 +20,32 @@ import { sql } from '@/lib/db'
 // skipped on deploys where the old version is already stamped.
 
 let ensured = new Map<string, number>()
+let loaded: Promise<void> | null = null
 
-async function readVersion(name: string): Promise<number | null> {
-  try {
-    const rows = await sql`SELECT version FROM schema_version WHERE name = ${name}`
-    return rows.length ? Number(rows[0].version) : null
-  } catch {
-    // The bookkeeping table itself is missing (or the database is unreachable).
-    return null
-  }
+/**
+ * Read the whole stamp table ONCE per process, not once per module.
+ *
+ * The first version of this asked `WHERE name = $1` per module, which is right
+ * when one module checks in but wrong at scale: a request that touches eight
+ * schema-gated modules paid eight round trips to learn eight numbers that fit
+ * in one row set. The table has one short row per module — a few dozen — so
+ * fetching all of it costs the same as fetching one, and every module after the
+ * first is then free.
+ *
+ * A failure here is not cached: `loaded` is cleared so the next caller retries
+ * rather than inheriting an empty map for the life of the process and rebuilding
+ * every schema it asks about.
+ */
+function loadAll(): Promise<void> {
+  loaded ??= (async () => {
+    try {
+      const rows = await sql`SELECT name, version FROM schema_version`
+      for (const r of rows) ensured.set(String(r.name), Number(r.version))
+    } catch {
+      loaded = null   // table missing or database unreachable — try again later
+    }
+  })()
+  return loaded
 }
 
 /**
@@ -43,7 +60,8 @@ async function readVersion(name: string): Promise<number | null> {
 export async function ensureSchema(name: string, version: number, build: () => Promise<void>): Promise<void> {
   if (ensured.get(name) === version) return
   try {
-    if (await readVersion(name) === version) { ensured.set(name, version); return }
+    await loadAll()
+    if (ensured.get(name) === version) return
     await build()
     await sql`
       CREATE TABLE IF NOT EXISTS schema_version (
@@ -63,4 +81,4 @@ export async function ensureSchema(name: string, version: number, build: () => P
 }
 
 /** Tests / local resets. */
-export function forgetSchemaCache(): void { ensured = new Map() }
+export function forgetSchemaCache(): void { ensured = new Map(); loaded = null }

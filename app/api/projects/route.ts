@@ -6,20 +6,14 @@ import { getSubscription, getPlanLimits } from '@/lib/subscription'
 import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
 import { slugify } from '@/lib/slugify'
 import { ensureSharingSchema } from '@/lib/project-access'
-import { ensureSchema } from '@/lib/schema-version'
+import { ensureProjectColumns } from '@/lib/project-columns'
 import { slimPatch } from '@/lib/apollo/patch-diff'
 import { stripNoteIds } from '@/lib/note-ids'
 
-// Schema for the projects table. Gated by a version stamp rather than a
-// per-process flag: this route is on the cloud-project path, so the three
-// ALTERs below were running on every cold start just to list somebody's songs.
-async function ensureSlugColumns() {
-  await ensureSchema('projects.columns', 1, async () => {
-    await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS slug TEXT`
-    await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_username TEXT`
-    await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS folder_id TEXT`
-  })
-}
+// Schema for the projects table lives in lib/project-columns — the [id] route
+// needs the same columns, and a second copy of the DDL here would drift from it
+// the moment the version is bumped.
+const ensureSlugColumns = ensureProjectColumns
 
 // Apollo patches serialise to ~9.4KB each even for a plain sine, almost all of
 // it default values — seven tracks was 67KB of a 128KB project. Stored as a

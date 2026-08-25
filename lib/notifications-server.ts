@@ -1,13 +1,13 @@
 import { sql } from './db'
+import { ensureSchema } from './schema-version'
 
 // Lightweight in-app notifications — the retention loop for the community's
 // social layer (comments today; extendable to replies/reactions later). Email
 // delivery is intentionally NOT here: no transactional email provider is wired
 // yet. When one is added, call it from `notify()` behind an env check.
 
-let ready = false
 export async function ensureNotifications() {
-  if (ready) return
+  await ensureSchema('notifications', 1, async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS notifications (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -21,7 +21,7 @@ export async function ensureNotifications() {
     )
   `
   await sql`CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications (user_id, created_at DESC)`
-  ready = true
+  })
 }
 
 /** Record a notification for a user. Best-effort — never blocks the action that

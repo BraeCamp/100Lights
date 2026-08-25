@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { ensureSchema } from '@/lib/schema-version'
 import { PLANS } from '@/lib/stripe'
 import { getCodeGrantUntil } from '@/lib/codes'
 
@@ -9,13 +10,17 @@ export type Plan = 'free' | 'pro'
 // change, and webhook bumps). Added nullable + default (no table rewrite),
 // then existing rows are backfilled to their `updated_at` — the best available
 // proxy for pre-migration signups; new rows get NOW() via the default.
-let subSchemaReady = false
+// This is the worst of the cold-start schema checks, because the third statement
+// is not a catalog question at all — it is a scan and a write over the whole
+// subscriptions table, run again on every cold start to backfill rows that were
+// already backfilled the first time. Behind a version stamp it happens once per
+// deploy instead. Bump the version if the backfill ever needs to run again.
 export async function ensureSubscriptionsSchema() {
-  if (subSchemaReady) return
-  await sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ`
-  await sql`ALTER TABLE subscriptions ALTER COLUMN created_at SET DEFAULT NOW()`
-  await sql`UPDATE subscriptions SET created_at = updated_at WHERE created_at IS NULL`
-  subSchemaReady = true
+  await ensureSchema('subscriptions', 1, async () => {
+    await sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ`
+    await sql`ALTER TABLE subscriptions ALTER COLUMN created_at SET DEFAULT NOW()`
+    await sql`UPDATE subscriptions SET created_at = updated_at WHERE created_at IS NULL`
+  })
 }
 
 export interface Subscription {

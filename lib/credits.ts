@@ -13,6 +13,7 @@ import { sql } from '@/lib/db'
 // The tier / cost / top-up numbers live in the isomorphic ./credit-tiers (client + server share the
 // SAME values). Re-exported here for existing importers. All paid tiers grant "Pro" feature access;
 // they differ only in the monthly credit allotment. (Scale/Business removed — consumer tiers only.)
+import { ensureSchema } from './schema-version'
 import { CREDIT_TIERS, CREDIT_COSTS, CREDIT_TOPUPS } from './credit-tiers'
 import type { CreditTier } from './credit-tiers'
 export { CREDIT_TIERS, CREDIT_COSTS, CREDIT_TOPUPS }
@@ -43,9 +44,8 @@ export const FREE_TRANSCRIBE_SECONDS = 5 * 60
  *  today. Flip CREDITS_ENABLED=true only after the Stripe products/prices + tier grants are live. */
 export const CREDITS_ENABLED = process.env.CREDITS_ENABLED === 'true'
 
-let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  await ensureSchema('credits', 1, async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS user_credits (
       user_id              TEXT PRIMARY KEY,
@@ -71,7 +71,7 @@ async function ensure(): Promise<void> {
       grant_key  TEXT PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`
-  ready = true
+  })
 }
 
 /**

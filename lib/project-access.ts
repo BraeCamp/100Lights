@@ -1,5 +1,6 @@
 import { sql } from './db'
 import { getSubscription } from './subscription'
+import { ensureSchema } from './schema-version'
 
 // Project sharing model:
 // - visibility 'private' (default): owner + explicitly added members only
@@ -17,40 +18,42 @@ export function asMemberRole(r: unknown): MemberRole {
   return r === 'owner' ? 'owner' : r === 'edit' ? 'edit' : 'view'
 }
 
-let ready = false
+// Six DDL statements on the project-listing path — they ran on every cold start
+// just to show somebody their own songs. Gated by a version stamp instead; bump
+// the number when the statements below change.
 export async function ensureSharingSchema() {
-  if (ready) return
-  await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private'`
-  await sql`
-    CREATE TABLE IF NOT EXISTS project_members (
-      project_id UUID NOT NULL,
-      email TEXT NOT NULL,
-      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (project_id, email)
-    )
-  `
-  // Per-member permission. New members default to 'view'; the owner elevates
-  // them to edit/owner (which the member's own Pro plan then unlocks).
-  await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'view'`
-  await sql`ALTER TABLE project_members ALTER COLUMN role SET DEFAULT 'view'`
-  // Members are invited by email but bound to their Clerk user_id on first
-  // access, so the grant survives an email change.
-  await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS user_id TEXT`
-  // Proposed edits from collaborators (view or edit role) the owner can accept
-  // or reject. `data` is a full serialized project (CfProjFile) snapshot.
-  await sql`
-    CREATE TABLE IF NOT EXISTS project_suggestions (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      project_id UUID NOT NULL,
-      author_id TEXT NOT NULL,
-      author_name TEXT NOT NULL DEFAULT 'A collaborator',
-      note TEXT NOT NULL DEFAULT '',
-      data JSONB NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `
-  ready = true
+  await ensureSchema('project-access', 1, async () => {
+    await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private'`
+    await sql`
+      CREATE TABLE IF NOT EXISTS project_members (
+        project_id UUID NOT NULL,
+        email TEXT NOT NULL,
+        added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (project_id, email)
+      )
+    `
+    // Per-member permission. New members default to 'view'; the owner elevates
+    // them to edit/owner (which the member's own Pro plan then unlocks).
+    await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'view'`
+    await sql`ALTER TABLE project_members ALTER COLUMN role SET DEFAULT 'view'`
+    // Members are invited by email but bound to their Clerk user_id on first
+    // access, so the grant survives an email change.
+    await sql`ALTER TABLE project_members ADD COLUMN IF NOT EXISTS user_id TEXT`
+    // Proposed edits from collaborators (view or edit role) the owner can accept
+    // or reject. `data` is a full serialized project (CfProjFile) snapshot.
+    await sql`
+      CREATE TABLE IF NOT EXISTS project_suggestions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID NOT NULL,
+        author_id TEXT NOT NULL,
+        author_name TEXT NOT NULL DEFAULT 'A collaborator',
+        note TEXT NOT NULL DEFAULT '',
+        data JSONB NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+  })
 }
 
 async function isPro(userId: string | null): Promise<boolean> {

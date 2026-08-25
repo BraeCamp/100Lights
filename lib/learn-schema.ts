@@ -1,11 +1,10 @@
 import { sql } from './db'
+import { ensureSchema } from './schema-version'
 
 // One place that owns the learn_articles shape, so the articles route and the
 // schedule route can't drift on it.
-let ready = false
-
 export async function ensureLearnSchema() {
-  if (ready) return
+  await ensureSchema('learn', 1, async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS learn_articles (
       slug        TEXT PRIMARY KEY,
@@ -42,7 +41,7 @@ export async function ensureLearnSchema() {
       updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `
-  ready = true
+  })
 }
 
 /** Articles keep 7 days in the trash before permanent deletion. */

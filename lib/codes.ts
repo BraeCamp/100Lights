@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { ensureSchema } from '@/lib/schema-version'
 import crypto from 'crypto'
 
 // ── Redemption codes ──────────────────────────────────────────────────────
@@ -44,9 +45,8 @@ export type RedeemFailReason =
 const MAX_PROMO_HORIZON_DAYS = 400
 
 // ── Table provisioning (lazy, idempotent — mirrors the codebase convention) ─
-let tablesReady = false
 export async function ensureCodeTables(): Promise<void> {
-  if (tablesReady) return
+  await ensureSchema('codes', 1, async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS redemption_codes (
       code            TEXT        PRIMARY KEY,
@@ -73,7 +73,7 @@ export async function ensureCodeTables(): Promise<void> {
   `
   await sql`CREATE INDEX IF NOT EXISTS code_redemptions_user_idx ON code_redemptions (user_id)`
   await sql`CREATE INDEX IF NOT EXISTS code_redemptions_user_kind_idx ON code_redemptions (user_id, kind)`
-  tablesReady = true
+  })
 }
 
 /** Codes are case-insensitive and whitespace-insensitive; stored uppercase. */

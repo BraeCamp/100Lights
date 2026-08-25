@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto'
 import { sql } from '@/lib/db'
 import { ensureCodeTables, normalizeCode } from '@/lib/codes'
+import { ensureSchema } from '@/lib/schema-version'
 import { getProPrice } from '@/lib/stripe'
 import { encryptField, fieldEncryptionAvailable } from '@/lib/crypto-field'
 
@@ -76,10 +77,13 @@ const DEFAULT_COMMISSION_PCT = 20
 /** The current "Founding Affiliate" beta offer — used when approving applicants. */
 export const BETA_TERMS = { commissionPct: 30, commissionMonths: 12, perkDays: 30 }
 
-let ready = false
+// The largest schema block in the codebase — 25 statements, all of which ran on
+// every cold start that touched an affiliate link. ensureCodeTables stays
+// OUTSIDE the stamp: it is its own module with its own version, and affiliates
+// reference redemption_codes + code_redemptions.
 export async function ensureAffiliateTables(): Promise<void> {
-  if (ready) return
-  await ensureCodeTables() // affiliates reference redemption_codes + code_redemptions
+  await ensureCodeTables()
+  await ensureSchema('affiliates', 1, async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS affiliates (
       code              TEXT        PRIMARY KEY,
@@ -161,7 +165,7 @@ export async function ensureAffiliateTables(): Promise<void> {
   await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS connect_requirements TEXT`
   await sql`ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS connect_updated_at TIMESTAMPTZ`
   await sql`CREATE INDEX IF NOT EXISTS affiliates_stripe_account_idx ON affiliates (stripe_account_id) WHERE stripe_account_id IS NOT NULL`
-  ready = true
+  })
 }
 
 /** Outstanding balance for one affiliate (accrued − paid), in USD. */

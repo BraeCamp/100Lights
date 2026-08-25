@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { ensureSchema } from '@/lib/schema-version'
 
 // Per-account "articles read" — the server side of learning-path progress.
 // Guests use localStorage only (components/learn/usePathProgress.ts); once
@@ -6,19 +7,18 @@ import { sql } from '@/lib/db'
 // follows the account across devices. Best-effort throughout: a missing table
 // or transient error never breaks a page (progress is non-critical UI state).
 
-let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
-  await sql`
-    CREATE TABLE IF NOT EXISTS article_reads (
-      user_id  TEXT        NOT NULL,
-      slug     TEXT        NOT NULL,
-      read_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (user_id, slug)
-    )
-  `
-  await sql`CREATE INDEX IF NOT EXISTS article_reads_user_idx ON article_reads (user_id)`
-  ready = true
+  await ensureSchema('reading-progress', 1, async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS article_reads (
+        user_id  TEXT        NOT NULL,
+        slug     TEXT        NOT NULL,
+        read_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, slug)
+      )
+    `
+    await sql`CREATE INDEX IF NOT EXISTS article_reads_user_idx ON article_reads (user_id)`
+  })
 }
 
 export async function getReads(userId: string): Promise<string[]> {

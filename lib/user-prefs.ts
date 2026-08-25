@@ -5,17 +5,17 @@
 // Lazy self-creating table (mirrors lib/credits.ts / lib/age-gate.ts). Reads fail soft to the default
 // (participating; opt_out = false).
 import { sql } from '@/lib/db'
+import { ensureSchema } from '@/lib/schema-version'
 
-let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
-  await sql`
-    CREATE TABLE IF NOT EXISTS user_prefs (
-      user_id           TEXT PRIMARY KEY,
-      ai_corpus_opt_out BOOLEAN NOT NULL DEFAULT false,
-      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`
-  ready = true
+  await ensureSchema('user-prefs', 1, async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS user_prefs (
+        user_id           TEXT PRIMARY KEY,
+        ai_corpus_opt_out BOOLEAN NOT NULL DEFAULT false,
+        updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`
+  })
 }
 
 export interface AiPrefs { corpusOptOut: boolean }
