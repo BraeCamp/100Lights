@@ -6,9 +6,8 @@ import { createPortal } from 'react-dom'
 import { Plus, Headphones, X, Eraser, ChevronRight, ChevronDown, Circle, Settings, Snowflake, SlidersHorizontal, Music, Piano, Grid3x3, Group, Library, Code, Upload, Minimize2, Maximize2 } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
 import { useIsMobile } from '@/lib/use-is-mobile'
-import { uploadRecordingBlob } from '@/lib/record-upload'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
-import { decodeAiff, encodeWav } from '@/lib/wav-codec'
+import { importAudioFile } from '@/lib/daw-audio-import'
 import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip, TRACK_COLORS, COLLAPSED_TRACK_HEIGHT, GROUP_TRACK_HEIGHT, clipLockedBy } from '@/lib/daw-types'
 import { useWorkshopThemeOptional } from '../WorkshopThemeProvider'
@@ -599,6 +598,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
   async function handleDrop(e: React.DragEvent) {
     e.preventDefault()
+    // This lane owns the drop: the editor root also accepts audio files (→ a new
+    // track), and without this the file would land twice — once here at the beat
+    // you aimed at, once again as a track of its own.
+    e.stopPropagation()
     const rect  = e.currentTarget.getBoundingClientRect()
     const beatX = (e.clientX - rect.left + scrollLeft) / beatW
     // .mid files dropped from the desktop become MIDI clips
@@ -751,69 +754,13 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     }
   }
 
-  // Bring an external media file onto this track as an audio clip. Audio files
-  // (wav/mp3/m4a/ogg/flac/aiff) keep their original bytes; VIDEO files
-  // (mp4/mov/webm…) have their audio track decoded, re-encoded to WAV, and the
-  // video discarded. Shared by the "Upload" picker and desktop file drop.
+  // Bring an external media file onto THIS track as an audio clip. The decode
+  // itself lives in lib/daw-audio-import so the dashboard picker and a drop on
+  // empty arrangement space run the same code — see that file for what each
+  // format becomes. Here we only add "select what landed".
   async function importMediaFile(file: File, beat: number) {
-    const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
-    const isVideo = file.type.startsWith('video/') || /^(mp4|mov|m4v|webm|mkv|avi|ogv)$/.test(ext)
-    let ab: ArrayBuffer
-    try { ab = await file.arrayBuffer() } catch { return }
-    let uploadBlob: Blob
-    let blobUrl: string
-
-    if (isVideo) {
-      // Keep only the audio: decode the container's audio track → WAV.
-      let decoded: AudioBuffer
-      try {
-        decoded = await engine.ctx.decodeAudioData(ab.slice(0))
-      } catch {
-        window.alert(`Couldn't extract audio from “${file.name}”. Try an MP4/WebM, or convert it to an audio file first.`)
-        return
-      }
-      const channels: Float32Array[] = []
-      for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c))
-      const wav = encodeWav(channels, decoded.sampleRate)
-      ab = wav
-      uploadBlob = new Blob([wav], { type: 'audio/wav' })
-      blobUrl = URL.createObjectURL(uploadBlob)
-    } else if (ext === 'aif' || ext === 'aiff') {
-      try {
-        const { channels, sampleRate } = decodeAiff(ab)
-        const wav = encodeWav(channels, sampleRate)
-        ab = wav
-        uploadBlob = new Blob([wav], { type: 'audio/wav' })
-        blobUrl = URL.createObjectURL(uploadBlob)
-      } catch {
-        console.error('Could not decode AIFF file:', file.name)
-        return
-      }
-    } else {
-      // Common audio: keep the original bytes, but preserve the real mimetype so
-      // the durable copy (uploadRecordingBlob) gets the correct file extension.
-      // Some drag sources give an empty file.type — derive it from the extension
-      // rather than blindly guessing mp3 (which mislabels ogg/flac/wav).
-      const EXT_MIME: Record<string, string> = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac', wav: 'audio/wav' }
-      uploadBlob = new Blob([ab], { type: file.type || EXT_MIME[ext] || 'audio/mpeg' })
-      blobUrl = URL.createObjectURL(file)
-    }
-
-    const clip = makeAudioClip(track.id, file.name.replace(/\.[^.]+$/, ''), beat, 8, { audioUrl: blobUrl })
-    dispatch({ type: 'ADD_CLIP', clip })
-    // Imported files have no library entry — upload so the clip survives reloads.
-    void uploadRecordingBlob(uploadBlob, clip.id).then(key => {
-      if (key) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { r2Key: key } })
-    })
-    try {
-      const buf = await engine.loadBufferFromArrayBuffer(clip.id, ab)
-      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
-      setSelectedClipId(clip.id)
-    } catch {
-      dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
-      URL.revokeObjectURL(blobUrl)  // clip is gone — don't leak its blob URL
-      window.alert(`Couldn't read the audio in “${file.name}”.`)
-    }
+    const clipId = await importAudioFile(file, { trackId: track.id, beat, engine, dispatch })
+    if (clipId) setSelectedClipId(clipId)
   }
 
   function importFileAtBeat(beat: number) {

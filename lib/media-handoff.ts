@@ -1,7 +1,12 @@
-// Hand media files off to the video editor across a navigation. The All Projects
-// / dashboard "Open / Import Files" flow lets a user pick raw video/audio (not
+// Hand media files off to a studio across a navigation. The All Projects /
+// dashboard "Open / Import Files" flow lets a user pick raw video/audio (not
 // just .cfproj projects); those Files can't ride a URL, so we stash the blobs in
 // IndexedDB, navigate to the editor, and it drains them on mount.
+//
+// Which studio is decided by what was picked (see destinationFor) — audio opens
+// Beacon, picture opens the video editor. Both drain the same store.
+
+import { detectMediaKind } from './media-import'
 
 const DB_NAME = 'cf-media-handoff'
 const STORE = 'pending'
@@ -48,8 +53,21 @@ export async function takePendingMedia(): Promise<File[]> {
   } finally { db.close() }
 }
 
-/** Stash the media and open it in a fresh video project. */
+/**
+ * Stash the media and open it in a fresh project — in the studio that MATCHES
+ * what was picked. An all-audio selection opens Beacon, so importing a song
+ * from the dashboard lands you in the music studio with it on a track; anything
+ * with picture in it still opens the video editor.
+ */
 export async function openMediaInStudio(files: File[]): Promise<void> {
   await stashPendingMedia(files)
-  window.location.assign('/create?modules=video&importMedia=1')
+  window.location.assign(destinationFor(files))
+}
+
+/** Where a picked set of media belongs. Exported for tests. */
+export function destinationFor(files: File[]): string {
+  const allAudio = files.length > 0 && files.every(f => detectMediaKind(f) === 'audio')
+  return allAudio
+    ? '/create?modules=audio&audioMode=music&importMedia=1'
+    : '/create?modules=video&importMedia=1'
 }

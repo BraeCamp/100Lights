@@ -31,6 +31,8 @@ import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import { openProjectsFromFile } from '@/lib/project-serializer'
 import { openMediaInStudio } from '@/lib/media-handoff'
+import { useMediaDrop } from '@/lib/use-media-drop'
+import { detectMediaKind } from '@/lib/media-import'
 import type { Caption } from '@/lib/types'
 import { captureAudioInput } from '@/lib/audio-capture'
 import { monitorFxParams } from '@/lib/daw-engine'
@@ -742,12 +744,26 @@ export default function AudioEditor(props: AudioEditorProps) {
   useEffect(() => { requireAccountRef.current = requireAccount })
 
   // Open / Import Files — pick a project (.cfproj / Firefly .zip) to open, or raw
-  // media which opens a fresh video project seeded with it. Opening navigates
-  // (loads via the /projects/<id> route), so flush + confirm if there are edits.
+  // media. Opening a PROJECT navigates (loads via the /projects/<id> route), so
+  // flush + confirm if there are edits.
+  //
+  // Audio, though, imports straight into the project already open — one track
+  // per file, no navigation. It used to hand off to a fresh project instead,
+  // which threw away whatever you were working on to make room for the file you
+  // wanted to add to it. Video still hands off, since Beacon can't show picture.
   async function handleOpenImport() {
     const read = await openProjectsFromFile().catch(() => null)
     if (!read) return
-    if (read.media.length) { await openMediaInStudio(read.media); return }
+    if (read.media.length) {
+      const engine = engineRef.current
+      if (engine && read.media.every(f => detectMediaKind(f) === 'audio')) {
+        const { importAudioFiles } = await import('@/lib/daw-audio-import')
+        await importAudioFiles(read.media, { engine, dispatch })
+        return
+      }
+      await openMediaInStudio(read.media)
+      return
+    }
     const proj = read.projects[0]
     if (!proj) { if (read.errors.length) window.alert(read.errors[0]); return }
     if (dawDirty && !window.confirm('Open a different project? Unsaved changes to the current one will be lost.')) return
@@ -1129,6 +1145,43 @@ export default function AudioEditor(props: AudioEditorProps) {
       } catch { /* deep-link is best-effort */ }
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On mount: drain audio handed off from the dashboard / All Projects
+  // ("Open / Import Files" with a raw audio file → ?importMedia=1). Each file
+  // gets its own track, named after it. takePendingMedia atomically reads AND
+  // clears the store, so a StrictMode double-invoke can't import twice.
+  const mediaImportRan = useRef(false)
+  useEffect(() => {
+    if (mediaImportRan.current) return
+    mediaImportRan.current = true
+    if (!new URLSearchParams(window.location.search).get('importMedia')) return
+    void (async () => {
+      try {
+        const { takePendingMedia } = await import('@/lib/media-handoff')
+        const files = await takePendingMedia()
+        if (!files.length) return
+        const engine = engineRef.current
+        if (!engine) return
+        const { importAudioFiles } = await import('@/lib/daw-audio-import')
+        await importAudioFiles(files, { engine, dispatch })
+      } catch { /* handoff is best-effort */ }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Drop an audio file anywhere on Beacon and it becomes a track. Without this
+  // the browser handles the drop itself and NAVIGATES AWAY from the studio, so
+  // this is as much a guard as a feature. Track lanes have their own drop
+  // handler that places the clip at the beat you aimed at; it stops propagation,
+  // so this only ever sees drops on empty space.
+  const importDroppedFiles = useCallback((files: File[]) => {
+    if (props.readOnly) return
+    const engine = engineRef.current
+    if (!engine) return
+    void import('@/lib/daw-audio-import').then(({ importAudioFiles }) =>
+      importAudioFiles(files, { engine, dispatch }),
+    ).catch(() => {})
+  }, [props.readOnly, dispatch])
+  const { isOver: draggingAudioOver, dropProps: audioDropProps } = useMediaDrop(importDroppedFiles, { accept: ['audio', 'video'] })
 
   // Fix-a-clip deep-link: /new?importAudio=<url>&importName=<label> drops an
   // external audio file onto a fresh track so it can be edited. Used by the
@@ -2126,6 +2179,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       <div
         data-editor="true"
         data-editor-kind="audio"
+        {...audioDropProps}
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -2134,8 +2188,23 @@ export default function AudioEditor(props: AudioEditorProps) {
           backgroundImage: 'var(--workshop-pattern, none)',
           backgroundSize: 'var(--workshop-pattern-size, auto)',
           overflow: 'hidden',
+          position: 'relative',
         }}
       >
+        {draggingAudioOver && !props.readOnly && (
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 900, pointerEvents: 'none',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'color-mix(in srgb, var(--bg-base) 70%, transparent)',
+              border: '2px dashed var(--accent)',
+            }}
+          >
+            <div style={{ padding: '14px 22px', borderRadius: 10, background: 'var(--bg-elevated, var(--bg-base))', border: '1px solid var(--accent)', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+              Drop to add as a track
+            </div>
+          </div>
+        )}
         {showAppearance && <AppearancePanel onClose={() => setShowAppearance(false)} editorKind="audio" />}
         {props.projectId && <SessionRecap projectId={props.projectId} />}
         {/* Pre-save Share: saves the project, then CollabInvite opens */}
