@@ -192,27 +192,33 @@ function idle(): Promise<void> {
   })
 }
 
-// Combining competes with the thing it exists to serve.
+// Where the listener is. Rendering follows this rather than the song's start.
 //
-// Measured on Iced while the transport was running: the AUDIO never suffered —
-// real time held at 0.999x with no stalls, because playback lives on the audio
-// thread — but the interface dropped to 38fps with 723ms frozen frames, because
-// cutting and storing renders is main-thread work. That is the "not smooth".
-//
-// So the heavy whole-project pass waits for the transport to stop. The opening
-// batch is NOT deferred: it is small, and it is what makes the start of the song
-// play combined rather than live. And the wait has a ceiling — someone who
-// starts a long song and listens all the way through should still end up with a
-// combined project, so after PLAYING_GRACE_MS the pass goes ahead anyway and
-// simply yields as it works.
-let playing = false
-export function setCombinePaused(v: boolean): void { playing = v }
-
-const PLAYING_GRACE_MS = 30_000
-async function waitForQuiet(): Promise<void> {
-  const until = Date.now() + PLAYING_GRACE_MS
-  while (playing && Date.now() < until) await new Promise(r => setTimeout(r, 500))
+// This replaces a "wait until the transport stops" rule. That rule existed
+// because combining while playing dropped the interface to 38fps with 723ms
+// frozen frames — but the real problem there was rendering the WHOLE project in
+// one uninterruptible pass, not rendering during playback as such. A window is
+// small, and the work is yielded through, so it can run while you listen. Which
+// it must: rendering ahead of the playhead is the entire point.
+let playheadBeat = 0
+export function setPlayhead(beat: number): void {
+  if (Number.isFinite(beat)) playheadBeat = beat
 }
+
+/**
+ * Whether anyone is listening right now. This does NOT stop the work — the
+ * whole point is to render while you play — it decides how hard to push.
+ *
+ * The gap between windows was one number, and it was doing two jobs: letting
+ * offline contexts be reclaimed, and leaving the interface room to draw.
+ * Shortening it from 1500ms to 350ms took Iced's cold combine from 39.7s to
+ * 31.5s and took the worst frame during playback from 81ms to 488ms. Those are
+ * different situations and they want different answers: when nobody is
+ * listening, go fast; when someone is, stay out of the way. Total time barely
+ * matters any more, because the first sound arrives in half a second either way.
+ */
+let transportPlaying = false
+export function setTransportPlaying(v: boolean): void { transportPlaying = v }
 
 /** Hand the main thread back between pieces of a long job. scheduler.yield()
  *  resumes at the front of the queue after a frame, so splitting work up doesn't
@@ -228,8 +234,10 @@ function breathe(): Promise<void> {
  *  it. Back-to-back, the first succeeds and later ones come back silent, which
  *  is resource exhaustion rather than anything about the patches — the contexts
  *  are finished but not yet reclaimed. Leave a gap between them. */
-const RENDER_GAP_MS = 1500
-const gap = () => new Promise<void>(r => setTimeout(r, RENDER_GAP_MS))
+const RENDER_GAP_IDLE_MS = 350     // nobody listening — get it done
+const RENDER_GAP_PLAYING_MS = 1500 // someone listening — leave room to draw
+const gap = () => new Promise<void>(r =>
+  setTimeout(r, transportPlaying ? RENDER_GAP_PLAYING_MS : RENDER_GAP_IDLE_MS))
 
 
 async function drain(): Promise<void> {
@@ -322,6 +330,64 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         const bad = knownBad()
         const renderable = () => missing().filter(w => !bad.has(w.key))
         const tRender = Date.now()
+
+        // ── Render in a WINDOW that follows the playhead ────────────────────
+        //
+        // The old shape was "one opening batch, then the whole project". That
+        // renders the end of a song before anyone has heard the middle, and it
+        // means the first thing you do after pressing play is a minute of work
+        // for audio that is two minutes away.
+        //
+        // Instead: always render what is about to be HEARD. Clips are ordered by
+        // how soon the playhead reaches them, nearest first, and taken a window
+        // at a time. At load the playhead is at 0, so this naturally renders the
+        // opening first — the old opening batch falls out of the ordering rather
+        // than being a special case. Press play and the window moves with you;
+        // seek somewhere else and the next window re-sorts around where you
+        // landed, because the ordering is recomputed every pass.
+        //
+        // Whether this can outrun playback is the whole question, and it can:
+        // Undertow renders ~16 clip-seconds per second of wall time, while
+        // playing one second of an 8-track song consumes 8. Two times headroom,
+        // so the buffer grows while you listen. If a heavy patch or a slow
+        // machine ever drops that below 1x you simply hear the live synth for a
+        // moment, which is exactly what happens today — the failure mode is the
+        // current behaviour, not a broken one.
+        //
+        // Small windows only became viable once renders stopped coming back
+        // silent. Batching was abandoned before because ten small passes landed
+        // 21 of 31 clips against 26 for one big pass; that was the message-port
+        // race, and with the ping/ready handshake a small render is now as
+        // reliable as a large one.
+        const WINDOW_CLIPS = 4
+
+        /** Clips ordered by how soon the playhead reaches them. */
+        const byUrgency = () => {
+          const head = playheadBeat
+          return [...renderable()].sort((a, b) => {
+            // Anything the playhead has already passed goes last: it is only
+            // wanted if the user scrolls back, and by then it can be fetched.
+            const da = a.clip.startBeat + a.clip.durationBeats < head ? Infinity : Math.abs(a.clip.startBeat - head)
+            const db = b.clip.startBeat + b.clip.durationBeats < head ? Infinity : Math.abs(b.clip.startBeat - head)
+            if (da !== db) return da - db
+            return a.clip.startBeat - b.clip.startBeat
+          })
+        }
+
+        while (renderable().length) {
+          const window = byUrgency().slice(0, WINDOW_CLIPS)
+          if (!window.length) break
+          timings.attempts++
+          const before = buffers.size
+          const rendered = await renderApolloProject(groups, bpm, {
+            only: new Set(window.map(w => w.clip.id)),
+          })
+          await keep(rendered, window)
+          timings.batches++
+          // A window that lands nothing would loop forever on the same clips.
+          if (buffers.size === before) { rememberBad(window.map(w => w.key)); break }
+          await gap()
+        }
         // Render in BATCHES, earliest first, instead of the whole song before
         // anything is usable. On production the all-at-once pass took 113
         // seconds — nearly two minutes of the song running on the expensive
@@ -341,40 +407,6 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // still 13. Each extra pass was buying less and costing more. Fewer,
         // bigger renders are faster AND more complete — the batching was
         // manufacturing the very exhaustion it was working around.
-        const OPENING = 4
-        const byTime = [...renderable()].sort((a, b) => a.clip.startBeat - b.clip.startBeat)
-        const opening = byTime.slice(0, OPENING)
-        if (opening.length) {
-          timings.attempts++
-          const rendered = await renderApolloProject(groups, bpm, { only: new Set(opening.map(w => w.clip.id)) })
-          await keep(rendered, opening)
-          timings.batches++
-          await gap()
-        }
-        // The whole project, once. This is the pass that does the real work —
-        // and the one that makes the interface stutter if it runs while you are
-        // listening, so it waits for the transport (with a ceiling; see above).
-        await waitForQuiet()
-        if (renderable().length) {
-          timings.attempts++
-          const rest = renderable()
-          // Only the tracks that still owe a clip, each rendered whole. A warm
-          // load missing five clips was re-synthesising all seven tracks to get
-          // them; now it touches only the tracks those five live on. Cold, every
-          // track owes something, so this is identical to rendering everything.
-          const rendered = await renderApolloProject(groups, bpm, {
-            tracksWith: new Set(rest.map(w => w.clip.id)),
-          })
-          await keep(rendered, rest)
-          timings.batches++
-        }
-        // And that is where this session stops. There is deliberately NO retry
-        // pass: a retry renders into the same exhausted state that caused the
-        // miss, and measured, it cost 30s to add almost nothing (a third pass
-        // back-to-back took 90s and landed none). What it missed is a strike,
-        // not a loss — next session pulls everything already rendered off disk
-        // for free and spends its one pass on the remainder, so coverage climbs
-        // across loads without any single load grinding for it.
         timings.renderMs = Date.now() - tRender
         const stubborn = renderable().map(w => w.key)
         rememberBad(stubborn)     // do not chase these again next time

@@ -86,7 +86,12 @@ function hash(s: string): string {
 const notesHashCache = new WeakMap<object, string>()
 const patchHashCache = new WeakMap<object, string>()
 
+// Both memos fall back to hashing directly when handed something a WeakMap
+// cannot key on. A stamp is on the scheduling path, and a thrown TypeError there
+// stops playback finding ANY buffer — a missing patch should degrade to a slower
+// stamp, not to silence.
 function notesHash(notes: MidiClip['notes']): string {
+  if (!notes || typeof notes !== 'object') return hash(String(notes))
   const cached = notesHashCache.get(notes as unknown as object)
   if (cached !== undefined) return cached
   const h = hash(notes.map(x => `${x.pitch}:${x.startBeat}:${x.durationBeats}:${x.velocity}`).join(','))
@@ -95,6 +100,7 @@ function notesHash(notes: MidiClip['notes']): string {
 }
 
 function patchHash(patch: ApolloPatch): string {
+  if (!patch || typeof patch !== 'object') return hash(String(patch))
   const cached = patchHashCache.get(patch as unknown as object)
   if (cached !== undefined) return cached
   const h = hash(JSON.stringify(patch))

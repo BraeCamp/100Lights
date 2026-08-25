@@ -14,7 +14,7 @@ import { translateInstrument } from './apollo/daw-synth'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
-import { combined, combinedStamp, requestCombine, setCombinePaused } from './apollo/freeze-cache'
+import { combined, combinedStamp, requestCombine, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
 import { fatPatch } from './apollo/patch-diff'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
@@ -966,9 +966,9 @@ export class DawEngine extends EventTarget {
     // (the "first hit is quieter" bug). 30 ms is imperceptible on Play.
     this._startCtxTime = this.ctx.currentTime + 0.03
     this.isPlaying = true
-    // Combining is main-thread work; hold the heavy pass while the user is
-    // actually listening so the interface stays at frame rate.
-    setCombinePaused(true)
+    // Tell the combiner where we are, so it renders what is about to be heard
+    // rather than the start of the song.
+    setPlayhead(this._startBeat); setTransportPlaying(true)
     this._nextMetronomeBeat = Math.ceil(this._startBeat)
     this._noteKeyVersion++; this._scheduledNoteKeys.clear(); this._liveScheduledClips.clear()
     this._startScheduler()
@@ -980,7 +980,7 @@ export class DawEngine extends EventTarget {
   stop() {
     this._startBeat = this.currentBeat  // preserve position (pause, not rewind)
     this.isPlaying = false
-    setCombinePaused(false)   // the thread is free again — finish combining
+    setPlayhead(this._startBeat); setTransportPlaying(false)   // stopped here; keep filling in from this point
     this._stopScheduler()
     this._killAllSources()
     this._stopAllSessionSlots()
@@ -1000,6 +1000,9 @@ export class DawEngine extends EventTarget {
       this._noteKeyVersion++; this._scheduledNoteKeys.clear(); this._liveScheduledClips.clear()
       this._startScheduler()
     }
+    // A seek is the strongest possible hint about what to render next: the next
+    // window re-sorts around wherever this landed.
+    setPlayhead(beat)
     this.dispatchEvent(new CustomEvent('seek', { detail: { beat } }))
   }
 
@@ -1743,7 +1746,13 @@ export class DawEngine extends EventTarget {
 
   private _startScheduler() {
     if (this.schedulerHandle !== null) return
-    this.schedulerHandle = setInterval(() => this._tick(), SCHEDULER_INTERVAL)
+    this.schedulerHandle = setInterval(() => {
+      // The combiner renders a window around wherever this is, so it has to
+      // follow playback rather than only being set at play and stop. It is a
+      // single assignment on a timer that already runs.
+      setPlayhead(this.currentBeat)
+      this._tick()
+    }, SCHEDULER_INTERVAL)
   }
 
   private _stopScheduler() {
