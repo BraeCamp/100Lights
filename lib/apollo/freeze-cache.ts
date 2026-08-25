@@ -165,6 +165,38 @@ function idle(): Promise<void> {
   })
 }
 
+// Combining competes with the thing it exists to serve.
+//
+// Measured on Iced while the transport was running: the AUDIO never suffered —
+// real time held at 0.999x with no stalls, because playback lives on the audio
+// thread — but the interface dropped to 38fps with 723ms frozen frames, because
+// cutting and storing renders is main-thread work. That is the "not smooth".
+//
+// So the heavy whole-project pass waits for the transport to stop. The opening
+// batch is NOT deferred: it is small, and it is what makes the start of the song
+// play combined rather than live. And the wait has a ceiling — someone who
+// starts a long song and listens all the way through should still end up with a
+// combined project, so after PLAYING_GRACE_MS the pass goes ahead anyway and
+// simply yields as it works.
+let playing = false
+export function setCombinePaused(v: boolean): void { playing = v }
+
+const PLAYING_GRACE_MS = 30_000
+async function waitForQuiet(): Promise<void> {
+  const until = Date.now() + PLAYING_GRACE_MS
+  while (playing && Date.now() < until) await new Promise(r => setTimeout(r, 500))
+}
+
+/** Hand the main thread back between pieces of a long job. scheduler.yield()
+ *  resumes at the front of the queue after a frame, so splitting work up doesn't
+ *  send it to the back behind everything else. */
+type Scheduler = { yield?: () => Promise<void> }
+function breathe(): Promise<void> {
+  const s = (globalThis as { scheduler?: Scheduler }).scheduler
+  if (typeof s?.yield === 'function') return s.yield()
+  return new Promise<void>(r => setTimeout(r, 0))
+}
+
 /** Each render builds an OfflineAudioContext and registers the worklet module in
  *  it. Back-to-back, the first succeeds and later ones come back silent, which
  *  is resource exhaustion rather than anything about the patches — the contexts
@@ -193,7 +225,7 @@ async function drain(): Promise<void> {
 
 /** Store the good renders from one batch; a silent one is not cached, because a
  *  combined buffer REPLACES live playback and an empty one is worse than slow. */
-function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip; key: string }[]): void {
+async function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip; key: string }[]): Promise<void> {
   const landed: string[] = []
   for (const w of batch) {
     if (buffers.has(w.key)) continue
@@ -205,7 +237,14 @@ function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip; key: 
     if (peak < 1e-4) continue
     buffers.set(w.key, buf)
     landed.push(w.key)
-    void saveCombined(w.key, buf)   // keep it for the next page load
+    // A clip becomes playable the moment it is in `buffers`; persisting it is
+    // for the NEXT page load and nobody is waiting on it. saveCombined converts
+    // both channels to Int16 synchronously before its first await, so firing
+    // twenty-five of them in a tight loop is twenty-five conversions in one
+    // task. Yield between clips: the song stays combined just as fast, the
+    // interface just gets a turn in between.
+    void saveCombined(w.key, buf)
+    await breathe()
   }
   forgiveBad(landed)   // it rendered, so any earlier strike was contention
   evictIfNeeded()
@@ -277,16 +316,19 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         if (opening.length) {
           timings.attempts++
           const rendered = await renderApolloProject(groups, bpm, { only: new Set(opening.map(w => w.clip.id)) })
-          keep(rendered, opening)
+          await keep(rendered, opening)
           timings.batches++
           await gap()
         }
-        // The whole project, once. This is the pass that does the real work.
+        // The whole project, once. This is the pass that does the real work —
+        // and the one that makes the interface stutter if it runs while you are
+        // listening, so it waits for the transport (with a ceiling; see above).
+        await waitForQuiet()
         if (renderable().length) {
           timings.attempts++
           const rest = renderable()
           const rendered = await renderApolloProject(groups, bpm)
-          keep(rendered, rest)
+          await keep(rendered, rest)
           timings.batches++
         }
         // And that is where this session stops. There is deliberately NO retry

@@ -47,6 +47,21 @@ export type FrozenClip = AudioClip & { frozenFrom?: FrozenSource }
 
 const isMidi = (c: DawClip): c is MidiClip => c.kind === 'midi'
 
+/**
+ * Hand the main thread back for a moment.
+ *
+ * `scheduler.yield()` resumes this work at the FRONT of the queue once the
+ * browser has done a frame, so breaking a long job into pieces doesn't push it
+ * to the back behind everything else. setTimeout is the fallback; it yields just
+ * as well, it is only less fair about resuming.
+ */
+type Scheduler = { yield?: () => Promise<void> }
+function breathe(): Promise<void> {
+  const s = (globalThis as { scheduler?: Scheduler }).scheduler
+  if (typeof s?.yield === 'function') return s.yield()
+  return new Promise<void>(r => setTimeout(r, 0))
+}
+
 /** Cheap stable hash — enough to notice a roll or a patch changing. */
 function hash(s: string): string {
   let h = 0x811c9dc5
@@ -147,9 +162,17 @@ export async function renderApolloProject(
 
   const sr = perTrack[0]?.sampleRate ?? 48000
   const cutter = new OfflineAudioContext(2, 1, sr)
-  live.forEach((g, i) => {
+  // Cutting is a lot of memcpy — every track's full render copied out again,
+  // clip by clip, which for a seven-track two-minute song is tens of millions of
+  // samples. Done in one synchronous pass it froze the UI for 723ms while the
+  // song was playing: the audio thread never missed a beat, but the playhead and
+  // the whole interface stopped dead. Yield between TRACKS so the longest
+  // uninterrupted block is one track's worth of copying, not the entire song's.
+  for (let i = 0; i < live.length; i++) {
+    const g = live[i]
+    if (i > 0) await breathe()
     const full = perTrack[i]
-    if (!full) return
+    if (!full) continue
     // Clips in playback order, so each one knows where the next begins.
     const ordered = g.clips.filter(c => c.notes.length > 0).sort((a, b) => a.startBeat - b.startBeat)
     ordered.forEach((c, ci) => {
@@ -176,7 +199,7 @@ export async function renderApolloProject(
       }
       out.set(c.id, slice)
     })
-  })
+  }
   return out
 }
 

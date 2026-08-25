@@ -14,7 +14,7 @@ import { translateInstrument } from './apollo/daw-synth'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
-import { combined, combinedStamp, requestCombine } from './apollo/freeze-cache'
+import { combined, combinedStamp, requestCombine, setCombinePaused } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
 import { fatPatch } from './apollo/patch-diff'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
@@ -966,6 +966,9 @@ export class DawEngine extends EventTarget {
     // (the "first hit is quieter" bug). 30 ms is imperceptible on Play.
     this._startCtxTime = this.ctx.currentTime + 0.03
     this.isPlaying = true
+    // Combining is main-thread work; hold the heavy pass while the user is
+    // actually listening so the interface stays at frame rate.
+    setCombinePaused(true)
     this._nextMetronomeBeat = Math.ceil(this._startBeat)
     this._noteKeyVersion++; this._scheduledNoteKeys.clear(); this._liveScheduledClips.clear()
     this._startScheduler()
@@ -977,6 +980,7 @@ export class DawEngine extends EventTarget {
   stop() {
     this._startBeat = this.currentBeat  // preserve position (pause, not rewind)
     this.isPlaying = false
+    setCombinePaused(false)   // the thread is free again — finish combining
     this._stopScheduler()
     this._killAllSources()
     this._stopAllSessionSlots()
