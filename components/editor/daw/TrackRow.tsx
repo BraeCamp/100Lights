@@ -8,6 +8,8 @@ import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-sta
 import { useIsMobile } from '@/lib/use-is-mobile'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { importAudioFile } from '@/lib/daw-audio-import'
+import { useUITierOptional } from '../UITierProvider'
+import { DENSITY_ROW_SCALE } from '@/lib/ui-density'
 import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip, TRACK_COLORS, COLLAPSED_TRACK_HEIGHT, GROUP_TRACK_HEIGHT, clipLockedBy } from '@/lib/daw-types'
 import { useWorkshopThemeOptional } from '../WorkshopThemeProvider'
@@ -350,6 +352,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   }
   const clips     = project.arrangementClips.filter(c => c.trackId === track.id)
   const isMobile  = useIsMobile()
+  // Optional: TrackRow also renders in surfaces without the tier provider.
+  const density   = useUITierOptional()?.density ?? 'comfortable'
   // Touch-sized M/S on a phone; the tiny desktop sizes are unusable there.
   const msBtn = isMobile
     ? { fontSize: 13, width: 38, height: 36, borderRadius: 8 }
@@ -804,7 +808,16 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   const leftPad = isIndented ? 24 : 8  // 16px extra indent for grouped tracks
   // Effective row height: groups + collapsed tracks are thin. On a phone, use a
   // compact fixed height so more tracks fit (the head is just name + M/S there).
-  const rowH = isGroup ? GROUP_TRACK_HEIGHT : (collapsed ? COLLAPSED_TRACK_HEIGHT : (isMobile ? 50 : track.height))
+  // Density scales the row for DISPLAY only. track.height stays exactly as the
+  // user set it — a view preference must not rewrite the project, or switching
+  // to compact on a laptop would silently resize their song for everyone else.
+  // This is the same override the mobile branch below already does, and it is
+  // the only place a row height is decided: ArrangementView computes none of its
+  // own, so the header and the clip lane cannot drift apart.
+  const rowH = isGroup ? GROUP_TRACK_HEIGHT
+    : collapsed ? COLLAPSED_TRACK_HEIGHT
+    : isMobile ? 50
+    : Math.max(46, Math.round(track.height * DENSITY_ROW_SCALE[density]))
   const childCount = isGroup ? project.tracks.filter(t => t.groupId === track.id).length : 0
 
   // ── Drag-to-reorder (native HTML5 drag on the track head) ────────────────

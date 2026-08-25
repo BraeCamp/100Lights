@@ -39,6 +39,8 @@ import { monitorFxParams } from '@/lib/daw-engine'
 import type { AudioInputSource } from '@/lib/audio-capture'
 import Transport from './daw/Transport'
 import UITierSwitcher from './daw/UITierSwitcher'
+import { useUITierOptional } from './UITierProvider'
+import { UI_DENSITIES, DENSITY_INFO } from '@/lib/ui-density'
 import { useResizable, ResizeHandle } from './daw/useResizable'
 import HelpButton from './daw/HelpButton'
 import { InspectButton } from './daw/InspectMode'
@@ -623,6 +625,10 @@ function ApolloFollow({ trackId, onRetarget }: { trackId: string; onRetarget: (i
 export default function AudioEditor(props: AudioEditorProps) {
   const { initialTracks, onSave, onProjectNameCommit } = props
   const isPodcast = props.audioMode === 'podcast'
+  // Optional: the editor also renders in places without the tier provider.
+  const uiTier = useUITierOptional()
+  const density = uiTier?.density ?? 'comfortable'
+  const setDensity = uiTier?.setDensity ?? (() => {})
 
   const initialProject = useMemo(
     () => {
@@ -2221,7 +2227,14 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.track.add', group: 'Audio', label: 'Add track', keywords: 'new create track',
       when: () => !props.readOnly,
       run: () => dispatch({ type: 'ADD_TRACK', id: crypto.randomUUID(), name: `Track ${projectRef.current.tracks.length + 1}` }) },
-  ], [view, isPodcast, props.onSave, props.readOnly, dispatch])
+    // Density lives in the palette rather than as another toolbar button —
+    // adding a control to save space would be a strange way to save space.
+    ...UI_DENSITIES.filter(d => d !== density).map(d => ({
+      id: `audio.density.${d}`, group: 'View', label: `Interface: ${DENSITY_INFO[d].label}`,
+      keywords: `density spacing compact smaller bigger room ${DENSITY_INFO[d].blurb}`,
+      run: () => setDensity(d),
+    })),
+  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity])
 
   // ── Sounds and tracks, by name ───────────────────────────────────────────────
   //

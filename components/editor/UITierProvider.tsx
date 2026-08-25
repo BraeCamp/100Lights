@@ -14,6 +14,7 @@ import {
   type UITier, UI_TIERS, TIER_INFO, tierAtLeast, isUITier, tierVisibilityCss,
 } from '@/lib/ui-tiers'
 import { GRAPHS_LS_KEY } from '@/lib/draw-graphs'
+import { densityCss, isUIDensity, type UIDensity } from '@/lib/ui-density'
 
 const LS_KEY = '100lights-ui-tier'
 
@@ -28,6 +29,11 @@ interface UITierCtx {
    *  Off by default so the Sound panel stays uncluttered until asked for. */
   graphs: boolean
   setGraphs: (on: boolean) => void
+  /** How much ROOM the chrome takes. Orthogonal to the tier: tiers decide which
+   *  controls exist, density decides how much space they occupy. Every control
+   *  stays present at every density. */
+  density: UIDensity
+  setDensity: (d: UIDensity) => void
 }
 
 const Ctx = createContext<UITierCtx | null>(null)
@@ -56,12 +62,23 @@ function readLocalGraphs(): boolean {
   try { return localStorage.getItem(GRAPHS_LS_KEY) === 'on' } catch { return false }
 }
 
+const DENSITY_LS_KEY = '100lights-ui-density'
+
+function readLocalDensity(): UIDensity {
+  if (typeof window === 'undefined') return 'comfortable'
+  try {
+    const v = localStorage.getItem(DENSITY_LS_KEY)
+    return isUIDensity(v) ? v : 'comfortable'
+  } catch { return 'comfortable' }
+}
+
 export function UITierProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn, isLoaded } = useUser()
   const initial = readLocal()
   const [tier, setTierState] = useState<UITier>(initial ?? 'intermediate')
   const [chosen, setChosen] = useState<boolean>(initial !== null)
   const [graphs, setGraphsState] = useState<boolean>(readLocalGraphs)
+  const [density, setDensityState] = useState<UIDensity>(readLocalDensity)
   // ready = we know enough to decide whether to show the first-run prompt
   // (after Clerk load + any account reconcile). Prevents a modal flash for
   // users who already chose on another device.
@@ -75,7 +92,10 @@ export function UITierProvider({ children }: { children: React.ReactNode }) {
     if (!el || !el.isConnected) {
       el = el ?? document.createElement('style')
       el.id = 'ui-tiers'
-      el.textContent = tierVisibilityCss()
+      // Density rides along in the same stylesheet: both are static, both are
+      // keyed off a data attribute on the wrapper below, and neither unmounts
+      // anything when it changes.
+      el.textContent = `${tierVisibilityCss()}\n${densityCss()}`
       document.head.appendChild(el)
       styleRef.current = el
     }
@@ -142,11 +162,16 @@ export function UITierProvider({ children }: { children: React.ReactNode }) {
     }).catch(() => {})
   }, [isSignedIn])
 
+  const setDensity = useCallback((d: UIDensity) => {
+    setDensityState(d)
+    try { localStorage.setItem(DENSITY_LS_KEY, d) } catch { /* ignore */ }
+  }, [])
+
   const atLeast = useCallback((t: UITier) => tierAtLeast(tier, t), [tier])
 
   return (
-    <Ctx.Provider value={{ tier, setTier, chosen, atLeast, graphs, setGraphs }}>
-      <div data-ui-tier={tier} data-ui-graphs={graphs ? 'on' : 'off'} style={{ display: 'contents' }}>{children}</div>
+    <Ctx.Provider value={{ tier, setTier, chosen, atLeast, graphs, setGraphs, density, setDensity }}>
+      <div data-ui-tier={tier} data-ui-graphs={graphs ? 'on' : 'off'} data-ui-density={density} style={{ display: 'contents' }}>{children}</div>
       {ready && !chosen && (
         <UITierFirstRun onChoose={(t) => {
           setTier(t)
