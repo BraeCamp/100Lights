@@ -1849,10 +1849,51 @@ export class DawEngine extends EventTarget {
     const gain = this.ctx.createGain()
     src.buffer = buf
     src.connect(gain)
-    gain.connect(nodes.midiInput)     // same destination as notes: track FX, volume and pan all still apply
-    src.start(this._ctxTimeForBeat(fromBeat, now, contextNow), offsetSec)
+    const startAt = this._ctxTimeForBeat(fromBeat, now, contextNow)
+
+    // FX-lane bars still apply. A combined clip is a clip.
+    //
+    // This is the bug that made a song sound different once it finished
+    // combining. Clip effects were applied in exactly two places — per NOTE on
+    // the live MIDI path, and per CLIP for audio clips — and a combined buffer
+    // went through neither, so every pan walk, filter sweep and drive bar on an
+    // Apollo track was silently discarded the moment the render landed. Measured
+    // on Undertow's sub, whose drive bar puts harmonics into 120–300Hz: 13.0% of
+    // its energy live, 2.8% combined. The guard above already refuses to combine
+    // clips with groove or volGraph for exactly this reason; clip effects were
+    // missed. Rather than refuse (which would stop most real songs combining at
+    // all, since the FX lane is where the music lives), build the same chain the
+    // audio-clip path builds and pass the buffer through it.
+    let last: AudioNode = gain
+    const extraNodes: AudioNode[] = []
+    const extraOscs: OscillatorNode[] = []
+    const bars = this._clipEffects.filter(e =>
+      e.trackId === clip.trackId && e.type !== 'pitch' &&
+      e.startBeat < clip.startBeat + clip.durationBeats &&
+      e.startBeat + e.durationBeats > clip.startBeat
+    )
+    for (const eff of bars) {
+      const effContextStart  = this._ctxTimeForBeat(Math.max(now, eff.startBeat), now, contextNow)
+      const effSeekOffsetSec = Math.max(0, this._spanSeconds(eff.startBeat, now))
+      try {
+        const r = eff.fx
+          ? this._buildEffectBar(eff, last, startAt, effContextStart, effSeekOffsetSec)
+          : this._buildClipEffect(eff, last, startAt, effContextStart, effSeekOffsetSec)
+        last = r.output
+        extraNodes.push(...r.extraNodes)
+        extraOscs.push(...r.extraOscs)
+      } catch { /* a bad bar must not silence the clip — carry on unprocessed */ }
+    }
+    last.connect(nodes.midiInput)     // track FX, volume and pan apply after this
+    src.start(startAt, offsetSec)
     this._registerMidiVoice(src, gain)
-    src.onended = () => { try { src.disconnect(); gain.disconnect() } catch { /* already gone */ } }
+    src.onended = () => {
+      try {
+        src.disconnect(); gain.disconnect()
+        for (const n of extraNodes) n.disconnect()
+        for (const o of extraOscs) { try { o.stop() } catch { /* already stopped */ } o.disconnect() }
+      } catch { /* already gone */ }
+    }
     this._scheduledNoteKeys.add(key)
     return true
   }

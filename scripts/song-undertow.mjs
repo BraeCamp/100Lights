@@ -47,7 +47,12 @@ const { jitter, vary, chance } = feel(rand, BPM)
 // Rootless upper voicings; the root lives in the bass and the sub an octave down.
 const Cm9   = { name: 'Cm9',    voicing: [63, 67, 70, 74], bass: 48, sub: 36, tones: [48, 55, 51] }
 const Ab9   = { name: 'A♭maj9', voicing: [60, 63, 67, 70], bass: 44, sub: 32, tones: [44, 51, 48] }
-const Eb9   = { name: 'E♭maj9', voicing: [67, 70, 74, 77], bass: 39, sub: 27, tones: [39, 46, 43] }
+// E♭'s sub sits an octave UP from where the descending contour wants it. At MIDI
+// 27 it is 38.9Hz, which no laptop speaker and few headphones reproduce at all —
+// measured, the Sub track put 48% of its energy below 60Hz and NOTHING above
+// 300Hz, so it was the loudest track in the mix and inaudible. Keeping the sub
+// line inside one octave (52–78Hz) is standard practice for exactly this reason.
+const Eb9   = { name: 'E♭maj9', voicing: [67, 70, 74, 77], bass: 39, sub: 39, tones: [39, 46, 43] }
 const Bb9   = { name: 'B♭9sus', voicing: [62, 65, 70, 72], bass: 46, sub: 34, tones: [46, 53, 51] }
 
 const LOOP = [Cm9, Cm9, Ab9, Ab9, Eb9, Eb9, Bb9, Bb9]
@@ -282,6 +287,16 @@ export function build() {
     bar('ep',    at['Wide B'], W(12), { gain: 1.12 }, [[0, 0.4], [W(4), 1], [W(12), 1]], 4),
     bar('organ', at['Wide B'], W(12), { gain: 1.12 }, [[0, 0.4], [W(4), 1], [W(12), 1]], 4),
     bar('bass',  at['Wide B'], W(12), { gain: 1.10, drive: 0.05 }, [[0, 0.3], [W(4), 1], [W(12), 1]], 4),
+
+    // ── MAKING THE SUB TRANSLATE ────────────────────────────────────────────
+    // Drive across the whole song, because a pure low sine does not survive
+    // small speakers. Measured, the Sub track had 48% of its energy under 60Hz
+    // and none at all above 300Hz — loud on paper, silent on a laptop. Drive
+    // adds harmonics at 2x and 3x the fundamental, which land at 100–230Hz where
+    // even a phone speaker can reproduce them, and the ear infers the missing
+    // fundamental from them. This is what "the sub isn't making sound" needed:
+    // not more level (it was already the loudest track) but something audible.
+    bar('sub', 0, W(56), { drive: 0.34 }, [[0, 1], [W(56), 1]], 5),
 
     // ── SPACE ───────────────────────────────────────────────────────────────
     // Dub throws: delay swells at the seams, never running through a section.
