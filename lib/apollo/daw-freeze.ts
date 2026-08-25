@@ -209,9 +209,37 @@ export async function renderApolloProject(
   // lands in the same place whichever track it came from. For a BATCH the
   // origin moves to the batch's own start — otherwise rendering the last eight
   // bars would still render the whole song up to them and save nothing.
-  const firstBeat = Math.min(...live.flatMap(g => g.clips.map(c => c.startBeat)))
-  const lastBeat = Math.max(...live.flatMap(g => g.clips.map(c => c.startBeat + c.durationBeats)))
-  const seconds = (lastBeat - firstBeat) * spb + tailSec
+  //
+  // The span is taken from the NOTES, not the clip boundaries, because silence
+  // is not free. A synth with nothing sounding still runs its process loop and
+  // its whole FX chain every block, so rendering an empty bar costs nearly what
+  // rendering a busy one does. Measured on Undertow: the Rim track has notes
+  // sounding for 7% of its clips and still took 5,283ms of a 33s render — almost
+  // all of it reverb ticking over behind silence. Hats are 12% occupied, Kick
+  // 13%. Trimming to where the music actually is skips that.
+  //
+  // Clips still start where they start: a clip whose notes begin late keeps its
+  // leading silence, it just isn't synthesised. The slice loop below pads it
+  // instead, which costs one memset rather than seconds of DSP.
+  const clipFirst = Math.min(...live.flatMap(g => g.clips.map(c => c.startBeat)))
+  const clipLast = Math.max(...live.flatMap(g => g.clips.map(c => c.startBeat + c.durationBeats)))
+  const noteStarts = live.flatMap(g => g.clips.flatMap(c => c.notes.map(n => c.startBeat + n.startBeat)))
+  const noteEnds = live.flatMap(g => g.clips.flatMap(c => c.notes.map(n => c.startBeat + n.startBeat + n.durationBeats)))
+  // A small pre-roll so the first note never sits exactly at sample zero, and
+  // clamped so trimming can never widen the span it was given.
+  const PREROLL_BEATS = 0.125
+  const firstBeat = noteStarts.length
+    ? Math.max(clipFirst, Math.min(...noteStarts) - PREROLL_BEATS)
+    : clipFirst
+  // Only the START is trimmed. Trimming the END too looked equally free and was
+  // not: a clip's slice is as long as the CLIP, so shortening the render below
+  // that leaves the tail of the slice unfilled, and the cut lands mid-decay. The
+  // combined-vs-live check caught it immediately — the Kick lost 15 points of low
+  // end and grew 8.6% of energy above 2kHz out of nowhere, which is the spectrum
+  // of a click, not of a kick drum.
+  const lastBeat = clipLast
+  void noteEnds
+  const seconds = Math.max(0.05, (lastBeat - firstBeat) * spb + tailSec)
 
   const items = live.map(g => ({
     patch: g.patch,
@@ -259,15 +287,22 @@ export async function renderApolloProject(
       const tailBeats = nextStart !== undefined
         ? Math.max(0, nextStart - (c.startBeat + c.durationBeats))
         : tailSec / spb
-      const from = Math.max(0, Math.floor((c.startBeat - firstBeat) * spb * sr))
-      const len = Math.min(
-        merged.length - from,
-        Math.ceil((c.durationBeats + Math.min(tailBeats, tailSec / spb)) * spb * sr),
-      )
+      // `from` can now be NEGATIVE: the render starts at the first note, and a
+      // clip may begin before that. Those beats are silence by definition, so
+      // the slice keeps its full length and the rendered audio is written at the
+      // matching offset inside it — the head stays zeroed. Without this the clip
+      // would keep its length but have its audio slide earlier, which is the
+      // kind of bug that sounds like "the timing drifted".
+      const from = Math.floor((c.startBeat - firstBeat) * spb * sr)
+      const len = Math.ceil((c.durationBeats + Math.min(tailBeats, tailSec / spb)) * spb * sr)
       if (len <= 0) return
+      const srcStart = Math.max(0, from)
+      const dstStart = Math.max(0, -from)
+      const n = Math.min(len - dstStart, merged.length - srcStart)
+      if (n <= 0) return
       const slice = cutter.createBuffer(2, len, sr)
-      slice.getChannelData(0).set(chL.subarray(from, from + len))
-      slice.getChannelData(1).set(chR.subarray(from, from + len))
+      slice.getChannelData(0).set(chL.subarray(srcStart, srcStart + n), dstStart)
+      slice.getChannelData(1).set(chR.subarray(srcStart, srcStart + n), dstStart)
       out.set(c.id, slice)
     })
   }
