@@ -41,24 +41,67 @@ const failures = new Map<string, number>()
 let lastError: string | null = null
 const timings = { diskMs: 0, renderMs: 0, fromDisk: 0, attempts: 0, batches: 0 }
 
-// Clips that would not render, remembered ACROSS sessions.
+// Clips that would not render, remembered ACROSS sessions — as STRIKES, not a
+// verdict on the first miss.
 //
-// One clip of Filament's 23 never comes back with audio. Without this, every
-// page load pulled the other 22 off disk in 290ms and then spent 25 SECONDS
-// re-rendering the whole project chasing that one — which is the entire cost of
-// a reload. It plays live perfectly well; stop grinding for it.
-const BAD_KEY = 'apollo-combine-unrenderable'
-function knownBad(): Set<string> {
-  try { return new Set(JSON.parse(localStorage.getItem(BAD_KEY) ?? '[]') as string[]) } catch { return new Set() }
+// The original version condemned a clip the first time a session ended without
+// it, which was right for the case it was written for: ONE clip of Filament's 23
+// never comes back with audio, and chasing it cost 25 seconds on every reload.
+//
+// But it was reading a non-deterministic failure as a permanent property. A miss
+// usually means the offline contexts ran out mid-batch — the same reason
+// RENDER_GAP_MS exists — not that the clip is unrenderable. Winter Drift came
+// out of one cold load with 10 of its 31 clips condemned FOREVER on that
+// browser, none of which have groove or volGraph and all of which render fine
+// with room to breathe. Those 10 then play live on every future load, which is
+// the lag that never goes away.
+//
+// So: a miss is a strike. Give up only on a clip that has missed in three
+// separate sessions — contention won't reproduce that reliably, a genuinely
+// silent clip will. A clip that does render has its record cleared.
+const STRIKE_KEY = 'apollo-combine-strikes'
+const LEGACY_BAD_KEY = 'apollo-combine-unrenderable'
+const STRIKES_TO_GIVE_UP = 3
+const MAX_TRACKED = 300
+
+type Strikes = Record<string, number>
+
+function strikes(): Strikes {
+  try {
+    const s = JSON.parse(localStorage.getItem(STRIKE_KEY) ?? '{}') as Strikes
+    return s && typeof s === 'object' ? s : {}
+  } catch { return {} }
 }
+
+function writeStrikes(s: Strikes): void {
+  try {
+    const entries = Object.entries(s)
+    localStorage.setItem(STRIKE_KEY, JSON.stringify(Object.fromEntries(entries.slice(-MAX_TRACKED))))
+    // The old one-strike list is a verdict we no longer trust — drop it so
+    // anyone carrying false condemnations gets them back.
+    localStorage.removeItem(LEGACY_BAD_KEY)
+  } catch { /* private mode */ }
+}
+
+function knownBad(): Set<string> {
+  const s = strikes()
+  return new Set(Object.keys(s).filter(k => (s[k] ?? 0) >= STRIKES_TO_GIVE_UP))
+}
+
 function rememberBad(stamps: string[]): void {
   if (!stamps.length) return
-  try {
-    const all = knownBad()
-    for (const s of stamps) all.add(s)
-    // Keep it bounded; these are only an optimisation.
-    localStorage.setItem(BAD_KEY, JSON.stringify([...all].slice(-200)))
-  } catch { /* private mode */ }
+  const s = strikes()
+  for (const k of stamps) s[k] = (s[k] ?? 0) + 1
+  writeStrikes(s)
+}
+
+/** It rendered — so it was never the clip's fault. Clear its record. */
+function forgiveBad(stamps: string[]): void {
+  if (!stamps.length) return
+  const s = strikes()
+  let changed = false
+  for (const k of stamps) if (k in s) { delete s[k]; changed = true }
+  if (changed) writeStrikes(s)
 }
 
 type Job = { stamp: string; run: () => Promise<void> }
@@ -150,6 +193,7 @@ async function drain(): Promise<void> {
 /** Store the good renders from one batch; a silent one is not cached, because a
  *  combined buffer REPLACES live playback and an empty one is worse than slow. */
 function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip; key: string }[]): void {
+  const landed: string[] = []
   for (const w of batch) {
     if (buffers.has(w.key)) continue
     const buf = rendered.get(w.clip.id)
@@ -159,8 +203,10 @@ function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip; key: 
     for (let i = 0; i < d.length; i += 256) { const v = Math.abs(d[i]); if (v > peak) peak = v }
     if (peak < 1e-4) continue
     buffers.set(w.key, buf)
+    landed.push(w.key)
     void saveCombined(w.key, buf)   // keep it for the next page load
   }
+  forgiveBad(landed)   // it rendered, so any earlier strike was contention
   evictIfNeeded()
 }
 
@@ -261,7 +307,7 @@ export function clearCombined(): void {
 
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
-export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
+export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
   // Peak of each cached render: a buffer that exists but is silent looks
   // identical to a working one from the outside, and silently-empty renders are
   // exactly the failure mode this cache can hide.
@@ -272,7 +318,18 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
     for (let i = 0; i < d.length; i += 512) p = Math.max(p, Math.abs(d[i]))
     peaks.push(+p.toFixed(4))
   }
-  return { ready: buffers.size, inFlight: inFlight.size, queued: queue.length, failed: [...failures], lastError, peaks, ...timings }
+  const s = strikes()
+  const struck = Object.values(s)
+  return {
+    ready: buffers.size, inFlight: inFlight.size, queued: queue.length,
+    failed: [...failures], lastError, peaks,
+    // Strikes are the difference between "missed once, will retry" and "given
+    // up on" — without them a retry-forever bug and a condemn-forever bug look
+    // exactly the same from out here.
+    striking: struck.filter(n => n < STRIKES_TO_GIVE_UP).length,
+    givenUp: struck.filter(n => n >= STRIKES_TO_GIVE_UP).length,
+    ...timings,
+  }
 }
 if (typeof window !== 'undefined') {
   (window as unknown as { __combineStats?: typeof combineStats }).__combineStats = combineStats
