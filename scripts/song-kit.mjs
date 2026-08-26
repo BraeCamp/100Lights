@@ -131,7 +131,14 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
       clips.push({
         kind: 'midi', id: uid(), trackId: t.id, name: `${t.name} · ${sec.name}`,
         startBeat: beat, durationBeats: len,
-        notes: [...bySlot.values()].sort((a, b) => a.startBeat - b.startBeat),
+        // Written WITHOUT note ids. A note's id is runtime identity, not musical
+        // data: `restoreNoteIds` in lib/note-ids.ts re-derives them by index on
+        // load, so the stored form does not need them — and they are 17-22% of a
+        // song file and, being random, do not compress. This is the app's own
+        // convention (lib/note-ids.ts, npm run test:noteids); the authoring path
+        // simply was not following it.
+        notes: [...bySlot.values()].sort((a, b) => a.startBeat - b.startBeat)
+          .map(({ id, ...rest }) => rest),
         isDrumClip: !!t.isDrum, presetId: t.presetId ?? null,
         rollFx: sec.rollFx?.[t.key] ?? t.rollFx ?? {},
       })

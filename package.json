@@ -60,7 +60,8 @@
     "test:craft": "node scripts/craft.test.mjs",
     "test:features": "node scripts/audio-features.test.mjs",
     "probe": "node --experimental-strip-types scripts/apollo-probe.mjs",
-    "master": "node scripts/master.mjs"
+    "master": "node scripts/master.mjs",
+    "size": "node scripts/project-size.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1067.0",

@@ -354,6 +354,55 @@ unison-3 chord voices (`pad`, `strings`) are the slowest at 0.8x. A dense
 eight-track song renders around real time rather than in fifteen seconds. Check
 `voiceCost` before putting a wide unison on something that plays chords.
 
+## File size
+
+`npm run size -- <song.cfproj>` breaks a project file down by where its bytes
+go. It exists because a song file was 886 KB of which 667 KB was one wavetable
+nobody was reading, and nothing made that visible.
+
+**How this compares to Ableton.** An `.als` is gzipped XML containing **no
+audio** — samples are referenced by path into the project folder beside it. A big
+Ableton *project* reaches hundreds of megabytes because of that folder; the .als
+itself is usually well under a megabyte. Our `.cfproj` is the .als equivalent,
+and on the authored path it is now smaller than a typical one. Two differences
+remain, one cosmetic and one structural:
+
+| | Ableton `.als` | our `.cfproj` |
+|---|---|---|
+| container | gzipped XML | **uncompressed** JSON |
+| audio | referenced by path | **inlined as base64** on the ElevenLabs path |
+| authored song | — | 154–222 KB (gzips to ~50 KB) |
+| ElevenLabs song | — | **10.8 MB, 100% of it inlined audio** |
+
+**Fixed, with the audio proved bit-identical (same MD5) either side:**
+
+- The noise wavetable shipped **64 frames and no voice ever read past frame 0**,
+  because nothing modulates `wt.pos`. 683 KB → 43 KB. If you want real noise
+  rather than one periodic frame, modulate `wt.pos` and raise `frames`
+  deliberately, knowing it costs ~11 KB each.
+- Note ids are no longer written. `restoreNoteIds` (lib/note-ids.ts) re-derives
+  them by index on load, so the stored form never needed them — this is the
+  app's own convention and the authoring path simply was not following it.
+  Another 45 KB, and because the ids were random they did not compress either.
+
+Together: **886 KB → 222 KB**, and gzip now buys 4.5x rather than 1.6x, because
+what remained was no longer incompressible base64.
+
+**Still open, and both need app work rather than script work:**
+
+1. **Stop inlining audio.** A 10.8 MB ElevenLabs project is 100% base64 audio —
+   this is the one place we are structurally heavier than Ableton rather than
+   just untidy, and base64 is 33% larger than the bytes it carries. Referencing
+   media the way `.als` does would take those files to a few KB each. There is
+   already a rescue script (`shrink-cfproj.mjs`) for the symptom.
+2. **Gzip the container**, as `.als` does. Our JSON gzips 4.5x. The reader would
+   need to sniff the gzip magic bytes and keep accepting plain JSON.
+
+**And the 879 MB nobody meant to keep:** that is the WAV renders in
+`~/Desktop/100lights-ai-renders`, not project files. Each two-minute bounce is
+~50 MB of 24-bit/48k audio, and they are regenerable in a couple of minutes from
+the `.cfproj`. The MP3 masters beside them are ~3 MB.
+
 ## Open
 
 - **Seed real multisamples into the Sound Library** so a sampled instrument can
