@@ -30,6 +30,12 @@ interface KnobProps {
   label?: string
   /** Draw the arc out from the centre — for pan, and anything else ±. */
   bipolar?: boolean
+  /** When several things are selected and they DISAGREE, the span they cover,
+   *  as 0..1 of the range. Drawn as a dim arc behind the value, so "these are
+   *  all different" survives the move from slider to knob — the slider showed
+   *  it as a coloured band along the track, and dropping it would have made a
+   *  multi-selection silently look like a single value. */
+  spread?: [number, number] | null
   /** Replaces the default hover text. Several controls that became knobs had a
    *  sentence explaining what they do, and that is worth more than "drag to
    *  change" which the shape already tells you. */
@@ -52,6 +58,7 @@ export default function Knob({
   color = 'var(--accent)',
   label,
   bipolar,
+  spread,
   title,
   onChange,
   onCommit,
@@ -135,6 +142,12 @@ export default function Knob({
             "empty", and it follows the theme rather than pinning a grey. */}
         <path d={arc(A0, A0 + SWEEP, r)} stroke="var(--border)" strokeWidth={3.5} fill="none" strokeLinecap="round" />
         <path d={arc(A0, A0 + SWEEP, r)} stroke={color} strokeWidth={3.5} fill="none" strokeLinecap="round" opacity={0.18} />
+        {/* The spread of a multi-selection, behind everything else. */}
+        {spread && Math.abs(spread[1] - spread[0]) > 0.005 && (
+          <path
+            d={arc(A0 + Math.min(spread[0], spread[1]) * SWEEP, A0 + Math.max(spread[0], spread[1]) * SWEEP, r)}
+            stroke="#f59e0b" strokeWidth={3.5} fill="none" strokeLinecap="round" opacity={0.55} />
+        )}
         {bipolar
           ? <path
               d={norm >= 0.5 ? arc(A0 + 0.5 * SWEEP, angle, r) : arc(angle, A0 + 0.5 * SWEEP, r)}
