@@ -2864,8 +2864,13 @@ export default function AudioEditor(props: AudioEditorProps) {
                 background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
                 color: 'var(--text-muted)', letterSpacing: '0.02em',
               }}>
+                {/* Say what is actually happening. "Loading paused while you
+                    play" was written when playback really did stop the work —
+                    it no longer does: while playing, the studio renders a short
+                    way ahead of the playhead and leaves the rest alone, so the
+                    honest word is "ahead", not "paused". */}
                 {playing
-                  ? `Loading paused while you play — ${loadProgress.done}/${loadProgress.total}`
+                  ? `Loading ahead of the playhead — ${loadProgress.done}/${loadProgress.total}`
                   : loadProgress.phase === 'head'
                     ? 'Getting the sound ready…'
                     : `Loading the rest of the song — ${loadProgress.done}/${loadProgress.total}`}
