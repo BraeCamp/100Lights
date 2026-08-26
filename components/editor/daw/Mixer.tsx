@@ -424,16 +424,23 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
             style={{ width: '100%', accentColor: color, height: 22 }} />
         </div>
       )}
+      {/* Pan is a knob on the desktop, as it is in Apollo — bipolar, so the arc
+          grows out of centre and "how far off centre" is visible at a glance
+          rather than having to be read off a slider position. Mobile keeps the
+          slider above: a 30px knob is not a touch target. */}
       {!isMaster && !isMobile && track && (
         <div style={{ width: '100%' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, fontWeight: 700, marginBottom: 1, lineHeight: 1 }}>
             <span style={{ color: 'var(--text-muted)', letterSpacing: '0.06em' }}>PAN</span>
             <span style={{ color: pan ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{panLabel}</span>
           </div>
-          <input type="range" min={-1} max={1} step={0.02} value={pan}
-            onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
-            onDoubleClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: 0 } }); engine.setTrackPan(track.id, 0) }}
-            style={{ width: '100%', accentColor: color, height: 13 }} />
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <Knob
+              value={pan} min={-1} max={1} defaultValue={0} size={30} bipolar color={color}
+              onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
+              format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)}
+            />
+          </div>
         </div>
       )}
 

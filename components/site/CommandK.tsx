@@ -48,6 +48,14 @@ export default function CommandK() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        // Not while a studio is open. The editors have their own ⌘K, and both
+        // handlers sit on window, so the shortcut was opening BOTH: the studio
+        // palette at z-3000 and this sheet at z-400 behind it. Dismissing the
+        // palette left this one covering the whole studio, swallowing every
+        // click on the track underneath — which reads as the studio freezing.
+        // It went unnoticed while the studio palette was nearly empty; making
+        // it useful made this an every-⌘K problem.
+        if (document.querySelector('[data-editor="true"]')) return
         e.preventDefault()
         setOpen(o => !o); setQ(''); setSel(0)
       } else if (e.key === 'Escape') {

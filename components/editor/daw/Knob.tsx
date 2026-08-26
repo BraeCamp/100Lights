@@ -1,6 +1,24 @@
 'use client'
 
-import { useEffect, useRef, useCallback } from 'react'
+// Beacon's rotary control, drawn in Apollo's visual language.
+//
+// The two studios had drifted into different hands: Apollo's knobs are SVG with
+// a 270° arc, a flat face and a needle, while Beacon's were canvas with a 300°
+// arc, a centre dot and no pointer at all — plus hardcoded greys that ignored
+// the workshop theme, so a knob stayed the same colour whatever the studio was
+// set to. Moving between the two felt like moving between two products.
+//
+// This is Apollo's geometry exactly (a0 -135°, sweep 270°, r = size/2 - 3, face
+// at r - 4.5, needle from 0.25 to (r-7)) with Apollo's behaviour — drag
+// vertically, shift for fine, double-click to reset, and the label giving way to
+// the value while you are touching it. What is deliberately NOT copied is
+// Apollo's modulation ring, quick-mod button and patch-path binding: those need
+// Apollo's patch context, and a knob in Beacon has no matrix to route.
+//
+// The colours come from CSS variables rather than Apollo's literal hexes, so the
+// knobs follow the workshop theme instead of pinning the studio to one palette.
+
+import { useRef, useState, useCallback } from 'react'
 
 interface KnobProps {
   value: number
@@ -10,14 +28,16 @@ interface KnobProps {
   size?: number
   color?: string
   label?: string
+  /** Draw the arc out from the centre — for pan, and anything else ±. */
+  bipolar?: boolean
   onChange: (v: number) => void
   onCommit?: (v: number) => void
   format?: (v: number) => string
 }
 
-const START_ANGLE = (225 * Math.PI) / 180
-const END_ANGLE   = (-45 * Math.PI) / 180
-const SWEEP       = 300 * (Math.PI / 180)
+// Apollo's geometry, to the degree.
+const A0 = -135
+const SWEEP = 270
 
 export default function Knob({
   value,
@@ -27,110 +47,105 @@ export default function Knob({
   size = 32,
   color = 'var(--accent)',
   label,
+  bipolar,
   onChange,
   onCommit,
   format,
 }: KnobProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const dragRef   = useRef<{ startY: number; startVal: number } | null>(null)
+  const dragRef = useRef<{ y: number; v: number } | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const [hovered, setHovered] = useState(false)
 
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const dpr = window.devicePixelRatio || 1
-    const ctx = canvas.getContext('2d')!
-    const W = size, H = size
-    ctx.clearRect(0, 0, W * dpr, H * dpr)
-    ctx.save()
-    ctx.scale(dpr, dpr)
+  const norm = max === min ? 0 : Math.min(1, Math.max(0, (value - min) / (max - min)))
+  const angle = A0 + norm * SWEEP
+  const r = size / 2 - 3
+  const cx = size / 2, cy = size / 2
 
-    const cx = W / 2, cy = H / 2
-    const r  = W / 2 - 3
+  const arc = (from: number, to: number, radius: number) => {
+    const s = ((from - 90) * Math.PI) / 180, e = ((to - 90) * Math.PI) / 180
+    const x1 = cx + radius * Math.cos(s), y1 = cy + radius * Math.sin(s)
+    const x2 = cx + radius * Math.cos(e), y2 = cy + radius * Math.sin(e)
+    return `M ${x1} ${y1} A ${radius} ${radius} 0 ${Math.abs(to - from) > 180 ? 1 : 0} 1 ${x2} ${y2}`
+  }
 
-    // Background track
-    ctx.beginPath()
-    ctx.arc(cx, cy, r, START_ANGLE, START_ANGLE - SWEEP, true)
-    ctx.strokeStyle = '#1a1a1a'
-    ctx.lineWidth = 3
-    ctx.lineCap = 'round'
-    ctx.stroke()
+  const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.button === 2) return
+    e.preventDefault()
+    // Capture on the SVG itself, not on e.target: the inner arc path is
+    // replaced on every redraw, which silently drops the capture and leaves the
+    // knob stuck "held" after the mouse is released.
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* synthetic event in tests */ }
+    dragRef.current = { y: e.clientY, v: value }
+    setDragging(true)
+  }, [value])
 
-    // Value arc
-    const norm = (value - min) / (max - min)
-    const endA = START_ANGLE - norm * SWEEP
-    ctx.beginPath()
-    ctx.arc(cx, cy, r, START_ANGLE, endA, true)
-    ctx.strokeStyle = color.startsWith('var(') ? '#3d8fef' : color
-    ctx.lineWidth = 3
-    ctx.stroke()
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    const d = dragRef.current
+    if (!d) return
+    // Shift is the fine adjustment — five times slower, which is the difference
+    // between setting a filter roughly and setting it exactly.
+    const perPixel = (e.shiftKey ? 0.002 : 0.01) * (max - min)
+    onChange(Math.min(max, Math.max(min, d.v + (d.y - e.clientY) * perPixel)))
+  }, [min, max, onChange])
 
-    // Center dot
-    ctx.beginPath()
-    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2)
-    ctx.fillStyle = '#888'
-    ctx.fill()
+  const onPointerUp = useCallback(() => {
+    if (!dragRef.current) return
+    dragRef.current = null
+    setDragging(false)
+    onCommit?.(value)
+  }, [value, onCommit])
 
-    ctx.restore()
-  }, [value, min, max, color, size])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const dpr = window.devicePixelRatio || 1
-    canvas.width  = size * dpr
-    canvas.height = size * dpr
-    canvas.style.width  = `${size}px`
-    canvas.style.height = `${size}px`
-    draw()
-  }, [size, draw])
-
-  useEffect(() => { draw() }, [draw])
-
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.detail === 2) {
-      onChange(defaultValue)
-      onCommit?.(defaultValue)
-      return
-    }
-    dragRef.current = { startY: e.clientY, startVal: value }
-
-    function onMove(ev: MouseEvent) {
-      if (!dragRef.current) return
-      const sensitivity = ev.shiftKey ? 0.002 : 0.01
-      const delta = (dragRef.current.startY - ev.clientY) * sensitivity * (max - min)
-      const next  = Math.max(min, Math.min(max, dragRef.current.startVal + delta))
-      onChange(next)
-    }
-    function onUp(ev: MouseEvent) {
-      if (!dragRef.current) return
-      const sensitivity = ev.shiftKey ? 0.002 : 0.01
-      const delta = (dragRef.current.startY - ev.clientY) * sensitivity * (max - min)
-      const next  = Math.max(min, Math.min(max, dragRef.current.startVal + delta))
-      onCommit?.(next)
-      dragRef.current = null
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-  }, [value, min, max, defaultValue, onChange, onCommit])
-
-  const tooltip = format ? format(value) : `${Math.round(value * 100) / 100}`
+  const shown = format ? format(value) : String(Math.round(value * 100) / 100)
+  const live = hovered || dragging
 
   return (
     <div
-      style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 2, userSelect: 'none' }}
-      title={tooltip}
+      style={{
+        display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+        width: size + 14, userSelect: 'none',
+      }}
+      title={label ? `${label} — drag to change, double-click resets` : shown}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
-      <canvas
-        ref={canvasRef}
-        onMouseDown={onMouseDown}
-        style={{ cursor: 'ns-resize', display: 'block' }}
-      />
+      <svg
+        width={size} height={size}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onLostPointerCapture={onPointerUp}
+        onDoubleClick={() => { onChange(defaultValue); onCommit?.(defaultValue) }}
+        // touchAction:none or a drag on a tablet scrolls the panel instead of
+        // turning the knob.
+        style={{ cursor: 'ns-resize', touchAction: 'none', display: 'block' }}
+      >
+        <path d={arc(A0, A0 + SWEEP, r)} stroke="var(--border)" strokeWidth={3} fill="none" strokeLinecap="round" />
+        {bipolar
+          ? <path
+              d={norm >= 0.5 ? arc(A0 + 0.5 * SWEEP, angle, r) : arc(angle, A0 + 0.5 * SWEEP, r)}
+              stroke={color} strokeWidth={3} fill="none" strokeLinecap="round" />
+          : <path d={arc(A0, angle, r)} stroke={color} strokeWidth={3} fill="none" strokeLinecap="round" />}
+        {/* Flat face — Apollo dropped the gradient and bevel, so this does too. */}
+        <circle cx={cx} cy={cy} r={Math.max(1, r - 4.5)} fill="var(--bg-surface, #252c36)" />
+        <line
+          x1={cx + (r - 12) * Math.cos(((angle - 90) * Math.PI) / 180) * 0.25}
+          y1={cy + (r - 12) * Math.sin(((angle - 90) * Math.PI) / 180) * 0.25}
+          x2={cx + (r - 7) * Math.cos(((angle - 90) * Math.PI) / 180)}
+          y2={cy + (r - 7) * Math.sin(((angle - 90) * Math.PI) / 180)}
+          stroke="var(--text-primary)" strokeWidth={1.8} strokeLinecap="round"
+        />
+      </svg>
       {label && (
-        <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.06em', lineHeight: 1 }}>
-          {label}
-        </span>
+        // One line, not two: the label rests there and the VALUE takes its place
+        // only while you are on the knob. Two lines would cost twice the height
+        // in a rack that is mostly knobs.
+        <span style={{
+          fontSize: 8.5, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase',
+          color: live ? 'var(--text-primary)' : 'var(--text-muted)',
+          fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+          whiteSpace: 'nowrap', maxWidth: size + 14, overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>{live ? shown : label}</span>
       )}
     </div>
   )

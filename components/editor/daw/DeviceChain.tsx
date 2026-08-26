@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, createContext, useContext } from 'react'
 import nextDynamic from 'next/dynamic'
 import { createPortal } from 'react-dom'
+import Knob from './Knob'
 import { X } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useMidiLearn } from '@/lib/midi-learn'
@@ -78,17 +79,49 @@ function RangeCtrl({ value, min, max, step = 0.01, onChange }: {
   const learnId = eid && label ? `${eid}:${label}` : ''
   // A CC (0..1) maps across the control's own range.
   const midi = useMidiLearn(learnId, v01 => onChange(min + v01 * (max - min)))
+
+  // Double-click resets a ± control to its neutral centre — flat EQ, no pan,
+  // zero gain. For a one-directional control there is no such obvious home, so
+  // it resets to where it already is: doing nothing beats guessing and undoing
+  // somebody's setting.
+  const dflt = min < 0 && max > 0 ? 0 : value
+  // Steps are the parameter's own: dB and Hz want whole numbers, a 0..1 mix
+  // wants two decimals.
+  const fmt = (v: number) => (max - min > 200 ? v.toFixed(0)
+    : max - min > 20 ? v.toFixed(1)
+    : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2))
   return (
     <div style={{ position: 'relative' }} onContextMenu={learnId ? e => { e.preventDefault(); midi.arm() } : undefined}
       title={!learnId ? undefined : midi.armed ? 'Move a knob/fader to bind it…' : midi.cc != null ? `Bound to CC ${midi.cc} — right-click to rebind` : 'Right-click to MIDI-learn a knob'}>
-      <input
-        type="range"
-        min={min} max={max} step={step} value={value}
-        style={{ width: '100%', accentColor: midi.armed ? '#f59e0b' : midi.cc != null ? '#22c55e' : 'var(--accent)', cursor: 'pointer', display: 'block' }}
-        onChange={e => { e.stopPropagation(); onChange(parseFloat(e.target.value)) }}
-        onKeyDown={e => e.stopPropagation()}
+      {/* A knob, in Apollo's style, rather than a slider.
+          Every effect parameter in the whole rack comes through here, so this
+          one control is the entire device chain — and a rack of horizontal
+          sliders was both unlike Apollo and worse per pixel: a slider needs
+          width to be precise, a knob does not, so the same panel fits more
+          parameters and each is easier to set.
+          The MIDI-learn colouring rides on the arc, keeping armed/bound legible
+          exactly where it was on the slider's accent. */}
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        onPointerDown={e => e.stopPropagation()}
         onClick={e => e.stopPropagation()}
-      />
+      >
+        <Knob
+          value={value} min={min} max={max}
+          defaultValue={dflt}
+          size={30}
+          bipolar={min < 0 && max > 0}
+          color={midi.armed ? '#f59e0b' : midi.cc != null ? '#22c55e' : 'var(--accent)'}
+          onChange={onChange}
+        />
+        {/* The row already carries the name on the left, so the knob does not
+            repeat it — it gets the NUMBER instead, which the slider never
+            showed at all. Tabular figures so it stops twitching as it counts. */}
+        <span style={{
+          fontSize: 9.5, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums',
+          minWidth: 34, lineHeight: 1,
+        }}>{fmt(value)}</span>
+      </div>
       {(midi.armed || midi.cc != null) && (
         <button onClick={e => { e.stopPropagation(); midi.armed ? midi.arm() : midi.clear() }}
           title={midi.armed ? 'Cancel learning' : 'Unbind'}
