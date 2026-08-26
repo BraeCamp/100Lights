@@ -17,13 +17,37 @@ const { initPatch, FX_DEFS, tableToBase64 } = A
 
 const NOISE = noiseTable(tableToBase64, 20260824)
 
+// Per-voice loudness trims, measured by scripts/voice-calibrate.mjs.
+//
+// These patches were each designed alone, and their intrinsic output levels
+// ended up more than 10 dB apart — which meant a track fader did not mean the
+// same thing on two instruments, and every song hand-compensated for it blind.
+// In "Coriander" that put the kick 9 dB underneath the electric piano and the
+// snare out of the mix entirely, with the faders already pushed the wrong way.
+//
+// With every voice normalised to the same perceived loudness, a fader is a
+// musical decision again. Missing entries simply mean "not calibrated yet".
+import LEVELS from './voice-levels.json' with { type: 'json' }
+
 /** Start from Init and apply an edit function — every voice is a full patch. */
 function patch(name, fn) {
   const p = initPatch()
   p.name = name
   p.global.masterGain = 0.8
   fn(p)
+  const trim = LEVELS[TRIM_KEY[name] ?? '']
+  if (trim) p.global.masterGain = Math.min(1, p.global.masterGain * trim)
   return p
+}
+
+/** patch() knows a voice by its display name; the trims are keyed by the name
+ *  used in VOICES. One table rather than renaming either. */
+const TRIM_KEY = {
+  Kick: 'kick', Snare: 'snare', Hat: 'hat', 'Open Hat': 'openhat', Hats: 'hatShut',
+  Tick: 'tick', Sub: 'sub', Bass: 'bass', Pad: 'pad', Keys: 'keys', Choir: 'choir',
+  Organ: 'organ', Harpsichord: 'harpsi', Strings: 'strings', Cowbell: 'cowbell',
+  'Funk Bass': 'funkbas', 'Warm Keys': 'warmep', Pluck: 'pluck', Glass: 'glass',
+  'Tine Keys': 'tine', Picked: 'picked', 'Air Pad': 'airpad',
 }
 const osc = (p, i, cfg) => Object.assign(p.oscs[i], cfg)
 const env = (p, i, cfg) => Object.assign(p.envs[i], cfg)
@@ -346,9 +370,9 @@ export const tine = () => patch('Tine Keys', p => {
   osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.05, width: 0.4 })
   p.oscs[0].wt.tableId = 'basic-shapes'
   p.oscs[0].wt.pos = 0.1
-  osc(p, 1, { level: 0.34, enabled: true, octave: 2, fine: 6 })
+  osc(p, 1, { level: 0.19, enabled: true, octave: 2, fine: 6 })
   p.oscs[1].wt.tableId = 'bells'
-  p.oscs[1].wt.pos = 0.7
+  p.oscs[1].wt.pos = 0.55
   env(p, 0, { attack: 0.003, decay: 1.0, sustain: 0.22, release: 0.55, dCurve: -0.45 })
   env(p, 1, { attack: 0.001, decay: 0.34, sustain: 0, release: 0.12 })
   p.matrix.push(mod('env2', 'osc1.level', 0.22))

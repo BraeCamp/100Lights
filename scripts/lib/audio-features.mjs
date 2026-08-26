@@ -206,10 +206,29 @@ export function loudness(l, r, sr) {
     }
   }
 
-  // The arrangement's own dynamics, ungated: how far the song actually travels
-  // between its quietest and loudest passages. LRA deliberately ignores quiet
-  // passages; for judging whether a song breathes, they are the point.
-  const stAll = stMs.map(lk).filter(v => v > -70).sort((a, b) => a - b)
+  // The arrangement's own dynamics: how far the song travels between its
+  // quietest and loudest passages. LRA deliberately ignores quiet passages; for
+  // judging whether a song breathes, they are the point.
+  //
+  // But the ENDS have to come off first, and this nearly produced a completely
+  // wrong conclusion. Measured whole, the reference set appeared to move 26 dB
+  // against our 13, which read as "our arrangements are flat". Trimming two
+  // seconds from each end collapsed it: the one reference track of comparable
+  // length to ours went from 22.6 dB to 6.9. The corpus is mostly 30-40 second
+  // clips, and what was being measured was their fade-ins.
+  //
+  // So: drop leading and trailing blocks that sit far below the integrated
+  // loudness. A genuinely quiet section in the MIDDLE still counts, because that
+  // is the thing worth measuring.
+  const stLk = stMs.map(lk)
+  // 40 dB down, not 25. At 25 the trim also ate a genuinely quiet INTRO, which
+  // is real dynamics and the opposite of what should be discarded. Only actual
+  // silence and fades sit this far under.
+  const floor = Math.max(lk(mean) - 40, -65)
+  let a = 0, b = stLk.length - 1
+  while (a < b && stLk[a] < floor) a++
+  while (b > a && stLk[b] < floor) b--
+  const stAll = stLk.slice(a, b + 1).filter(v => v > -70).sort((x, y) => x - y)
   const p = q => stAll[Math.min(stAll.length - 1, Math.floor(q * (stAll.length - 1)))]
 
   return {

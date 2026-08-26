@@ -71,7 +71,7 @@
     18.56
   ],
   "dynamicRangeDb": [
-    17.32,
+    15.96,
     null
   ],
   "correlation": [
@@ -86,7 +86,7 @@
   "medians": {
     "lufs": -13.05,
     "crestDb": 14.6,
-    "dynamicRangeDb": 26.12,
+    "dynamicRangeDb": 20.41,
     "centroidHz": 381,
     "correlation": 0.843,
     "bands": {

@@ -99,11 +99,22 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
         : 'The mix is weighted high; check the low end is actually present.', mix.centroidHz)
 
   // ── Movement ──────────────────────────────────────────────────────────────
+  //
+  // Crest and loudness are the two measurements that a MASTER changes and a
+  // bounce has not had yet. The reference set is released music: it has been
+  // levelled and limited, so its crest is lower by construction. Comparing an
+  // unmastered bounce against it and calling the difference a fault is an
+  // apples-to-oranges warning, and it fires on every correctly-made bounce.
+  // Band balance and centroid are level-independent and stay full warnings.
+  const unmastered = mix.lufs < -22
   if (outside(mix.crestDb, target.crestDb))
-    add('warn', 'dynamics', `crest factor ${mix.crestDb} dB`,
+    add(unmastered && mix.crestDb > target.crestDb[1] ? 'note' : 'warn', 'dynamics',
+      `crest factor ${mix.crestDb} dB${unmastered ? ' (bounce is unmastered — expected to run high)' : ''}`,
       mix.crestDb < target.crestDb[0]
         ? 'Squashed — transients are not getting through. Back off compression or drive.'
-        : 'Very peaky: a few transients tower over everything. Usually one loud percussive layer.', mix.crestDb)
+        : unmastered
+          ? 'Probably fine: the reference is mastered and this is not. Worth a look only if one percussive layer is towering over the rest — check the stem table.'
+          : 'Very peaky: a few transients tower over everything. Usually one loud percussive layer.', mix.crestDb)
   if (mix.dynamicRangeDb != null && mix.dynamicRangeDb < target.dynamicRangeDb[0])
     add('warn', 'arrangement', `the song only moves ${mix.dynamicRangeDb} dB from quietest to loudest passage`,
       'This is the "constant density" problem: every section is as busy as every other. Strip a section back to two layers and let the next one arrive.', mix.dynamicRangeDb)
@@ -145,11 +156,24 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
   }
 
   // ── Arrangement ───────────────────────────────────────────────────────────
-  for (const r of sym.arrangement) {
-    if ((r.churn ?? 0) > target.maxSectionChurn)
-      add('warn', 'arrangement', `${r.churn} layers change at once entering "${r.name}" (bar ${r.startBar})`,
-        `Add and remove one layer at a time. Entering: ${(r.entering ?? []).join(', ') || 'none'}. Leaving: ${(r.leaving ?? []).join(', ') || 'none'}.`, r.churn)
-  }
+  // ENTRANCES only. Several layers arriving together is the sound of a loop
+  // being switched on; several LEAVING together is a drop-out, which is one of
+  // the strongest gestures an arrangement has. Counting them the same way told
+  // a strip-back section it was broken for doing the thing it existed to do.
+  sym.arrangement.forEach((r, i) => {
+    if (i === 0) return                       // everything "arrives" at bar 1; that is the song starting
+    const entering = (r.entering ?? []).length
+    if (entering <= target.maxSectionChurn) return
+    // Exempt the return from a drop-out: the band coming back together is the
+    // release the drop set up, not a loop being switched on.
+    const prev = sym.arrangement[i - 1], before = sym.arrangement[i - 2]
+    if (prev && before && prev.layers.length < before.layers.length) return
+    add('warn', 'arrangement', `${entering} layers arrive at once entering "${r.name}" (bar ${r.startBar})`,
+      `Stagger them — bring one in a phrase early so the section builds instead of switching on. Arriving: ${(r.entering ?? []).join(', ')}.`, entering)
+  })
+  const emptied = sym.arrangement.find(r => (r.layers ?? []).length === 0)
+  if (emptied) add('note', 'arrangement', `"${emptied.name}" has nothing playing`,
+    'A silent section is usually a mistake in the layer schedule rather than a rest.')
   if (sym.arrangement.length < target.minSections)
     add('warn', 'arrangement', `only ${sym.arrangement.length} sections`,
       'A two-minute piece wants somewhere to go: an intro, a build, a peak, a strip-back, a return, an outro.', sym.arrangement.length)
@@ -178,6 +202,42 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
       if (under > 26 && !s.silent)
         add('note', 'mix', `"${s.track}" sits ${under.toFixed(0)} dB under the loudest layer`,
           'Either it is inaudible in context, or it is doing nothing and should come out.', +under.toFixed(1))
+    }
+
+    // Where the parts should sit relative to the whole mix. These are measured
+    // numbers rather than an opinion: eight engineers mixing the same eight
+    // songs, from De Man's QMUL thesis, in LU relative to the full mix. They are
+    // a sanity check on the arrangement's balance, not a prescription — a track
+    // with no vocal and a bass-led hook will and should differ.
+    const RELATIVE_LU = { bass: -9.5, kick: -13.2, snare: -16.8, drums: -12.7 }
+    const roleOf = name => {
+      const n = name.toLowerCase()
+      if (/\bsub|bass\b/.test(n)) return 'bass'
+      if (/kick/.test(n)) return 'kick'
+      if (/snare|clap|snap/.test(n)) return 'snare'
+      if (/hat|perc|rim|tom|ride|cymbal|tick/.test(n)) return 'drums'
+      return null
+    }
+    // Measured against the SUM OF THE STEMS, not against the finished mix, and
+    // by RMS rather than gated loudness. Two errors made the first version of
+    // this nonsense: the mix has already had the master fader applied, so every
+    // stem read ~10 dB hotter than it is; and BS.1770 gating discards the bars
+    // where a sparse part is silent, so a kick playing a third of the time read
+    // as loud as the whole record.
+    const sumPower = stems.filter(s => !s.silent).reduce((a, s) => a + Math.pow(10, s.rmsDb / 10), 0)
+    const sumDb = 10 * Math.log10(Math.max(1e-12, sumPower))
+    for (const s of stems) {
+      const role = roleOf(s.track)
+      if (!role || s.silent || s.rmsDb == null) continue
+      const rel = s.rmsDb - sumDb
+      const want = RELATIVE_LU[role]
+      const off = rel - want
+      if (Math.abs(off) > 7)
+        add('note', 'mix', `"${s.track}" sits ${rel.toFixed(1)} dB under the summed layers (reference mixes average ${want})`,
+          off < 0
+            ? `It is ${Math.abs(off).toFixed(0)} dB quieter than the reference balance — bring it up, or accept that this part is background.`
+            : `It is ${off.toFixed(0)} dB louder than the reference balance, which usually means it is eating the headroom everything else needs.`,
+          +rel.toFixed(1))
     }
   }
 
