@@ -13,7 +13,10 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { LivePitchDetector, LivePitchResult } from '@/lib/pitch-detector'
-import { captureAudioInput, listAudioInputDevices, type AudioDevice } from '@/lib/audio-capture'
+import {
+  captureAudioInput, listAudioInputDevices, resolveSystemAudioRoute, systemAudioSetup,
+  type AudioDevice, type SystemAudioRoute,
+} from '@/lib/audio-capture'
 
 const C = {
   border: 'var(--border)', text: 'var(--text-primary)', muted: 'var(--text-muted)',
@@ -51,8 +54,11 @@ export default function StandaloneTuner() {
   const detectorRef = useRef<LivePitchDetector | null>(null)
 
   useEffect(() => () => { detectorRef.current?.stop() }, [])
+  const [route, setRoute] = useState<SystemAudioRoute | null>(null)
+  const [setupOpen, setSetupOpen] = useState(false)
   useEffect(() => {
     listAudioInputDevices(true).then(d => { setDevices(d); setLoadingDevs(false) }).catch(() => setLoadingDevs(false))
+    resolveSystemAudioRoute().then(setRoute).catch(() => {})
   }, [])
 
   async function startListening(source = inputSource) {
@@ -156,7 +162,22 @@ export default function StandaloneTuner() {
   const noteOctave = result?.noteName.match(/(-?\d+)$/)?.[1] ?? ''
   const centsLabel = !result ? '' : result.cents === 0 ? '0¢' : result.cents > 0 ? `+${result.cents}¢` : `${result.cents}¢`
 
-  const allSources: Array<{ id: string; label: string }> = [...devices, { id: 'system', label: 'Computer Audio' }]
+  // "Computer Audio" means three different things depending on the machine, and
+  // one of them takes over your screen. Say which one you are about to get.
+  const systemHint =
+    route?.kind === 'loopback'   ? `via ${route.deviceLabel} — no screen sharing` :
+    route?.kind === 'desktop-app'? 'captured by the desktop app — no screen sharing' :
+    route?.kind === 'screen-share' ? (route.tabAudioOnly
+      ? 'needs a tab share — set up below to skip that'
+      : 'needs a screen share — set up below to skip that') : ''
+
+  const allSources: Array<{ id: string; label: string; hint?: string }> = [
+    ...devices.map(d => ({
+      id: d.id, label: d.label,
+      hint: d.kind === 'loopback' ? 'what your computer is playing' : undefined,
+    })),
+    { id: 'system', label: 'Computer Audio', hint: systemHint },
+  ]
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 16, padding: '16px 16px 20px', background: 'var(--bg-card)', maxWidth: 360, margin: '0 auto' }}>
@@ -208,7 +229,10 @@ export default function StandaloneTuner() {
                   color: inputSource === src.id ? 'var(--accent-light)' : C.muted,
                 }}>
                   <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, border: `1.5px solid ${inputSource === src.id ? 'var(--accent)' : '#555'}`, background: inputSource === src.id ? 'var(--accent)' : 'transparent' }} />
-                  <span style={{ fontSize: 12, fontWeight: inputSource === src.id ? 600 : 400 }}>{src.label}</span>
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 12, fontWeight: inputSource === src.id ? 600 : 400 }}>{src.label}</span>
+                    {src.hint && <span style={{ fontSize: 10, color: C.muted, opacity: 0.85 }}>{src.hint}</span>}
+                  </span>
                 </button>
               ))
             ) : (
@@ -222,6 +246,39 @@ export default function StandaloneTuner() {
               </button>
             )}
           </div>
+
+          {/* The way out of screen sharing — shown exactly when it applies:
+              you have asked for computer audio and this machine has no loopback
+              device, so the browser will otherwise put a picker in your way. */}
+          {inputSource === 'system' && route?.kind === 'screen-share' && (
+            <div style={{ width: '100%', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', background: 'var(--bg-base)' }}>
+              <button onClick={() => setSetupOpen(o => !o)} style={{
+                display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: 'none',
+                border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent-light)', textAlign: 'left',
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 600 }}>Record computer audio without sharing your screen</span>
+                <span style={{ marginLeft: 'auto', fontSize: 10, color: C.muted }}>{setupOpen ? '▴' : '▾'}</span>
+              </button>
+              {setupOpen && (() => {
+                const setup = systemAudioSetup()
+                return (
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {setup.install && (
+                      <code style={{
+                        fontSize: 11, padding: '5px 8px', borderRadius: 5, userSelect: 'all',
+                        background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)',
+                      }}>{setup.install}</code>
+                    )}
+                    <ol style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {setup.steps.map((s, i) => (
+                        <li key={i} style={{ fontSize: 10.5, color: C.muted, lineHeight: 1.45 }}>{s}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )
+              })()}
+            </div>
+          )}
 
           {micError && <div style={{ fontSize: 11, color: C.red, textAlign: 'center' }}>{micError}</div>}
           {!listening ? (

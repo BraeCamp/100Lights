@@ -17,6 +17,7 @@
     "lib/note-ids.ts",
     "lib/command-palette.ts",
     "lib/daw-splice.ts",
-    "lib/daw-effect-catalog.ts"
+    "lib/daw-effect-catalog.ts",
+    "lib/audio-capture.ts"
   ]
 }
