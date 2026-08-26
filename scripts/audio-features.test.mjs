@@ -81,6 +81,58 @@ console.log('\ntrue peak')
   const tp = db(truePeak(s, s, SR)), sp = levels(s, s).peakDb
   ok('true peak is at least sample peak', tp >= sp - 0.01, `tp=${tp.toFixed(2)} sp=${sp.toFixed(2)}`)
   ok('true peak catches an inter-sample over', tp > sp - 0.5)
+
+  // truePeak only looks near the loudest samples, because oversampling every
+  // sample of a two-minute file took longer than rendering the song. That is a
+  // SPEED change that must not change the answer, so it is checked against the
+  // exhaustive search it replaced — including a signal built to defeat the gate.
+  const exhaustive = (l, r) => {
+    const OS = 4, TAPS = 32, HALF = TAPS / 2
+    const filt = []
+    for (let p = 0; p < OS; p++) {
+      const h = new Float32Array(TAPS)
+      for (let t = 0; t < TAPS; t++) {
+        const x = t - HALF + 1 - p / OS
+        const si = x === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x)
+        h[t] = si * (0.5 - 0.5 * Math.cos(2 * Math.PI * (t + 0.5) / TAPS))
+      }
+      filt.push(h)
+    }
+    let peak = 0
+    for (const ch of [l, r]) {
+      for (let i = HALF; i < ch.length - HALF; i++) {
+        for (let p = 0; p < OS; p++) {
+          let acc = 0
+          const h = filt[p]
+          for (let t = 0; t < TAPS; t++) acc += ch[i - HALF + t] * h[t]
+          const a = Math.abs(acc)
+          if (a > peak) peak = a
+        }
+      }
+    }
+    return peak
+  }
+
+  const same = (name, sig) => {
+    const g = db(truePeak(sig, sig, SR)), e = db(exhaustive(sig, sig))
+    ok(name, g >= e - 0.001 && g - e < 0.05, `gated ${g.toFixed(3)} vs exhaustive ${e.toFixed(3)}`)
+  }
+  same('gated search agrees on a plain tone', sine(1000, 0.3, 0.8))
+  same('gated search agrees on noise', noise(0.3, 0.8, 5))
+
+  // The adversarial case: a LOUD isolated spike sets the gate high, and a
+  // quieter passage elsewhere carries the real inter-sample overshoot. A sine at
+  // a quarter of the sample rate, phased so every sample lands at 0.707 of the
+  // true peak, is the worst case there is — about 3 dB of overshoot.
+  {
+    const n = SR / 2
+    const sig = new Float32Array(n)
+    for (let i = 0; i < n; i++) sig[i] = 0.5 * Math.sin(2 * Math.PI * (SR / 4) * i / SR + Math.PI / 4)
+    sig[100] = 0.8                                   // a louder lone sample, to raise the gate
+    const g = db(truePeak(sig, sig, SR)), e = db(exhaustive(sig, sig))
+    ok('a loud spike does not hide an overshoot elsewhere', Math.abs(g - e) < 0.01,
+      `gated ${g.toFixed(3)} vs exhaustive ${e.toFixed(3)}`)
+  }
 }
 
 console.log('\nloudness')

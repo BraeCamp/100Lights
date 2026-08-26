@@ -242,12 +242,30 @@ export function loudness(l, r, sr) {
 /**
  * True peak, 4x oversampled with a windowed-sinc interpolator.
  *
- * Only near the loudest samples. Oversampling every sample of a two-minute
- * stereo file is about 1.6 billion multiply-adds and took longer than rendering
- * the song did — it was the single slowest thing in the whole loop. An
- * inter-sample peak cannot exceed its neighbouring samples by more than a couple
- * of dB, so anything more than 3 dB below the sample peak cannot become the true
- * peak, and there is no need to look there.
+ * Oversampling every sample of a two-minute stereo file is about 1.6 billion
+ * multiply-adds and took longer than rendering the song did — it was the single
+ * slowest thing in the whole loop. So most of it is skipped, but skipped with a
+ * PROOF rather than a guess.
+ *
+ * The first attempt skipped anything more than a few dB below the loudest
+ * sample in the file, reasoning that an inter-sample peak cannot exceed its
+ * neighbours by more than about 3 dB. The bound is real but it is LOCAL, and the
+ * gate was GLOBAL: one loud isolated sample raises the threshold across the
+ * whole file and hides a quieter passage that is carrying the actual overshoot.
+ * A test built to do exactly that caught it under-reporting by 0.65 dB — in the
+ * dangerous direction, since a true peak reported too low says there is headroom
+ * that is not there.
+ *
+ * What is used instead is an exact bound. The interpolated value at any point is
+ * a dot product with the filter, so it cannot exceed `sum(|h|)` times the
+ * largest sample in the window it reads. Take block maxima, and any block whose
+ * bound falls under the best peak found so far cannot contain a better one and
+ * is skipped outright. That is arithmetic, not a heuristic: the answer is
+ * identical to the exhaustive search, and on real mixes it still skips nearly
+ * everything.
+ *
+ * It reports a number and never touches the audio — nothing in the render path
+ * calls it.
  */
 export function truePeak(l, r, sr) {
   const OS = 4, TAPS = 32, HALF = TAPS / 2
@@ -261,21 +279,45 @@ export function truePeak(l, r, sr) {
     }
     filt.push(h)
   }
-  let samplePeak = 0
-  for (const ch of [l, r]) for (let i = 0; i < ch.length; i++) { const a = Math.abs(ch[i]); if (a > samplePeak) samplePeak = a }
-  if (samplePeak === 0) return 0
-  const gate = samplePeak * 0.708           // 3 dB down
+  // The largest gain any of the phases can apply to a windowed set of samples.
+  let L1 = 0
+  for (const h of filt) {
+    let s = 0
+    for (let t = 0; t < TAPS; t++) s += Math.abs(h[t])
+    if (s > L1) L1 = s
+  }
 
-  let peak = samplePeak
+  let peak = 0
+  for (const ch of [l, r]) for (let i = 0; i < ch.length; i++) { const a = Math.abs(ch[i]); if (a > peak) peak = a }
+  if (peak === 0) return 0
+
+  const B = 64
   for (const ch of [l, r]) {
-    for (let i = HALF; i < ch.length - HALF; i++) {
-      if (Math.abs(ch[i]) < gate) continue
-      for (let p = 0; p < OS; p++) {
-        let acc = 0
-        const h = filt[p]
-        for (let t = 0; t < TAPS; t++) acc += ch[i - HALF + t] * h[t]
-        const a = Math.abs(acc)
-        if (a > peak) peak = a
+    const nb = Math.ceil(ch.length / B)
+    const blockMax = new Float32Array(nb)
+    for (let i = 0; i < ch.length; i++) {
+      const a = Math.abs(ch[i]), b = (i / B) | 0
+      if (a > blockMax[b]) blockMax[b] = a
+    }
+    for (let b = 0; b < nb; b++) {
+      // A sample in this block reads up to HALF either side, so it can reach the
+      // neighbouring blocks.
+      const reach = Math.ceil(HALF / B)
+      let local = 0
+      for (let k = b - reach; k <= b + reach; k++) {
+        if (k < 0 || k >= nb) continue
+        if (blockMax[k] > local) local = blockMax[k]
+      }
+      if (L1 * local <= peak) continue           // provably cannot beat what we have
+      const lo = Math.max(HALF, b * B), hi = Math.min(ch.length - HALF, (b + 1) * B)
+      for (let i = lo; i < hi; i++) {
+        for (let p = 0; p < OS; p++) {
+          let acc = 0
+          const h = filt[p]
+          for (let t = 0; t < TAPS; t++) acc += ch[i - HALF + t] * h[t]
+          const a = Math.abs(acc)
+          if (a > peak) peak = a
+        }
       }
     }
   }
