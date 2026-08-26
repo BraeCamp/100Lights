@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { useRegisterCommands } from '@/lib/commands'
 import { X, ZoomIn, ZoomOut, ChevronsUpDown, ChevronsDownUp, Play } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useVoiceMap, VoiceMapTrace, VoiceMapControls } from './VoiceMapKit'
@@ -1018,15 +1019,168 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     setTool('edit')
   }
 
-  function quantizeSelection() {
-    for (const n of clip.notes) {
-      if (!selectedNotes.has(n.id)) continue
-      const snapped = snapBeat(n.startBeat)
-      if (snapped !== n.startBeat) {
-        dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { startBeat: snapped } })
-      }
-    }
+  // ── Note tools ──────────────────────────────────────────────────────────────
+  //
+  // The piano roll had a real editing vocabulary and almost no words for it:
+  // select-all, copy, cut, paste, duplicate, nudge and transpose were reachable
+  // ONLY by keystroke, none of them written down anywhere in the interface.
+  // Quantise is the exception and shows the subtler failure — there IS a button
+  // labelled Quantize, but it sits greyed out until you have selected notes, so
+  // the one state in which you go looking for it is the state in which it looks
+  // unavailable. From the palette it now quantises the whole clip instead.
+  //
+  // Everything below acts on the SELECTED notes, or on the whole clip when
+  // nothing is selected. That fallback matters: from the palette you have
+  // usually just typed a word, not made a selection, and "Quantise" doing
+  // nothing because you had not first dragged a marquee is the kind of silence
+  // that reads as a bug.
+  const targetNotes = () => (selectedNotes.size ? clip.notes.filter(n => selectedNotes.has(n.id)) : clip.notes)
+
+  function patchNotes(fn: (n: MidiNote, i: number) => Partial<MidiNote> | null) {
+    const notes = targetNotes()
+    notes.forEach((n, i) => {
+      const patch = fn(n, i)
+      if (patch) dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch })
+    })
   }
+
+  /** Quantise start times to the current grid — and lengths too, so a run of
+   *  notes lands flush instead of snapping to the grid while keeping ragged
+   *  ends. Drum clips keep their lengths; a snare's length is meaningless. */
+  function quantizeNotes(strength = 1) {
+    patchNotes(n => {
+      const snapped = snapBeat(n.startBeat)
+      const startBeat = n.startBeat + (snapped - n.startBeat) * strength
+      const patch: Partial<MidiNote> = { startBeat: Math.max(0, startBeat) }
+      if (!isDrum && strength === 1) patch.durationBeats = Math.max(quant, snapBeat(n.durationBeats) || quant)
+      return patch
+    })
+  }
+
+  /** Push notes off the grid by a small random amount, in both time and
+   *  velocity. A perfectly quantised part is the single clearest tell that
+   *  music was typed rather than played. Deliberately subtle: ±18ms is about
+   *  the spread of a competent player, and it scales with tempo so it stays
+   *  ±18ms rather than ±a fixed fraction of a beat. */
+  function humanize() {
+    const msToBeats = (ms: number) => (ms / 1000) * (project.tempo / 60)
+    const spread = msToBeats(18)
+    patchNotes(n => ({
+      startBeat: Math.max(0, n.startBeat + (Math.random() * 2 - 1) * spread),
+      velocity: Math.max(0.15, Math.min(1, (n.velocity ?? 0.8) + (Math.random() * 2 - 1) * 0.09)),
+    }))
+  }
+
+  /** Stretch every note to touch the next one that starts after it, so a line
+   *  is joined rather than a row of separate blips. Notes with nothing after
+   *  them are left alone. */
+  function legato() {
+    const notes = [...targetNotes()].sort((a, b) => a.startBeat - b.startBeat)
+    notes.forEach(n => {
+      const next = notes.find(m => m.startBeat > n.startBeat + 1e-6)
+      if (!next) return
+      const durationBeats = next.startBeat - n.startBeat
+      if (durationBeats > 0.01 && Math.abs(durationBeats - n.durationBeats) > 1e-6) {
+        dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { durationBeats } })
+      }
+    })
+  }
+
+  function transpose(semitones: number) {
+    if (isDrum) return
+    patchNotes(n => ({ pitch: Math.max(0, Math.min(127, n.pitch + semitones)) }))
+  }
+
+  function scaleVelocity(mult: number) {
+    patchNotes(n => ({ velocity: Math.max(0.05, Math.min(1, (n.velocity ?? 0.8) * mult)) }))
+  }
+
+  function scaleLength(mult: number) {
+    patchNotes(n => ({ durationBeats: Math.max(0.0625, n.durationBeats * mult) }))
+  }
+
+  /** Pull every out-of-key note to the nearest note that IS in key. Uses the
+   *  project's key and scale — the same pair the roll already shades the rows
+   *  with, so what this does matches what you can already see. */
+  function fitToScale() {
+    if (isDrum) return
+    patchNotes(n => {
+      if (inScalePitches.has(n.pitch % 12)) return null
+      for (let d = 1; d <= 6; d++) {
+        if (inScalePitches.has((n.pitch - d + 120) % 12)) return { pitch: n.pitch - d }
+        if (inScalePitches.has((n.pitch + d) % 12)) return { pitch: n.pitch + d }
+      }
+      return null
+    })
+  }
+
+  const rollScope = selectedNotes.size ? `${selectedNotes.size} selected notes` : 'every note in this clip'
+  useRegisterCommands([
+    { id: 'roll.quantize', group: 'Notes', label: `Quantise ${rollScope} to the grid`,
+      keywords: 'snap align tighten timing grid straighten on beat q', shortcut: 'Q',
+      run: () => quantizeNotes(1) },
+    { id: 'roll.quantize.half', group: 'Notes', label: `Half-quantise ${rollScope} (keep some feel)`,
+      keywords: 'snap partial strength loose groove timing halfway',
+      run: () => quantizeNotes(0.5) },
+    { id: 'roll.humanize', group: 'Notes', label: `Humanise ${rollScope}`,
+      keywords: 'loosen feel random natural played not typed timing velocity groove',
+      run: humanize },
+    { id: 'roll.legato', group: 'Notes', label: `Join ${rollScope} end to end (legato)`,
+      keywords: 'legato connect smooth slur sustain fill gaps length',
+      run: legato },
+    { id: 'roll.fitScale', group: 'Notes', label: `Pull ${rollScope} into key`,
+      keywords: 'scale key fix wrong notes tune correct in key',
+      when: () => !isDrum, run: fitToScale },
+    { id: 'roll.octaveUp', group: 'Notes', label: `Move ${rollScope} up an octave`,
+      keywords: 'transpose octave higher pitch up 12', shortcut: '⇧↑',
+      when: () => !isDrum, run: () => transpose(12) },
+    { id: 'roll.octaveDown', group: 'Notes', label: `Move ${rollScope} down an octave`,
+      keywords: 'transpose octave lower pitch down 12', shortcut: '⇧↓',
+      when: () => !isDrum, run: () => transpose(-12) },
+    { id: 'roll.semitoneUp', group: 'Notes', label: `Move ${rollScope} up a semitone`,
+      keywords: 'transpose pitch up half step sharp', shortcut: '↑',
+      when: () => !isDrum, run: () => transpose(1) },
+    { id: 'roll.semitoneDown', group: 'Notes', label: `Move ${rollScope} down a semitone`,
+      keywords: 'transpose pitch down half step flat', shortcut: '↓',
+      when: () => !isDrum, run: () => transpose(-1) },
+    { id: 'roll.louder', group: 'Notes', label: `Play ${rollScope} harder`,
+      keywords: 'velocity louder accent stronger dynamics up',
+      run: () => scaleVelocity(1.15) },
+    { id: 'roll.softer', group: 'Notes', label: `Play ${rollScope} softer`,
+      keywords: 'velocity quieter gentler dynamics down',
+      run: () => scaleVelocity(0.87) },
+    { id: 'roll.longer', group: 'Notes', label: `Make ${rollScope} twice as long`,
+      keywords: 'length duration double stretch longer sustain',
+      run: () => scaleLength(2) },
+    { id: 'roll.shorter', group: 'Notes', label: `Make ${rollScope} half as long`,
+      keywords: 'length duration halve shorten staccato shorter tighter',
+      run: () => scaleLength(0.5) },
+    { id: 'roll.selectAll', group: 'Notes', label: 'Select every note in this clip',
+      keywords: 'all everything notes select', shortcut: '⌘A',
+      run: () => setSelectedNotes(new Set(clip.notes.map(n => n.id))) },
+    { id: 'roll.deselect', group: 'Notes', label: 'Deselect the notes',
+      keywords: 'none clear selection escape', shortcut: 'Esc',
+      when: () => selectedNotes.size > 0, run: () => setSelectedNotes(new Set()) },
+    { id: 'roll.delete', group: 'Notes', label: `Delete ${selectedNotes.size} selected notes`,
+      keywords: 'remove erase notes clear', shortcut: '⌫',
+      when: () => selectedNotes.size > 0,
+      run: () => {
+        selectedNotes.forEach(id => dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: id }))
+        setSelectedNotes(new Set())
+      } },
+    { id: 'roll.duplicate', group: 'Notes', label: `Duplicate ${selectedNotes.size} selected notes`,
+      keywords: 'copy repeat again notes double', shortcut: '⌘D',
+      when: () => selectedNotes.size > 0,
+      run: () => {
+        const sel = clip.notes.filter(n => selectedNotes.has(n.id))
+        if (!sel.length) return
+        const span = Math.max(...sel.map(n => n.startBeat + n.durationBeats)) - Math.min(...sel.map(n => n.startBeat))
+        pasteNotes(sel, Math.min(...sel.map(n => n.startBeat)) + span)
+      } },
+    { id: 'roll.close', group: 'Notes', label: 'Close the piano roll',
+      keywords: 'hide dismiss done back arrangement',
+      run: () => { setExpandedPianoRollClipId?.(null); setEditTarget?.(null) } },
+  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const meta = e.metaKey || e.ctrlKey
@@ -1079,7 +1233,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       return
     }
     if (e.key === 'q' && !meta && selectedNotes.size > 0) {
-      quantizeSelection()
+      quantizeNotes(1)
       e.preventDefault(); e.stopPropagation()
       return
     }
@@ -1291,7 +1445,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           <button
-            onClick={quantizeSelection}
+            onClick={() => quantizeNotes(1)}
             disabled={selectedNotes.size === 0}
             title={selectedNotes.size ? `Snap ${selectedNotes.size} selected note${selectedNotes.size === 1 ? '' : 's'} to the ${QUANT_LABELS[quant]} grid (Q)` : 'Select notes to quantize (Q)'}
             style={{ ...prBtn, fontSize: 9, padding: '2px 6px', opacity: selectedNotes.size ? 1 : 0.4, cursor: selectedNotes.size ? 'pointer' : 'default' }}

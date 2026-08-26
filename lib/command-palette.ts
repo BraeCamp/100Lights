@@ -44,15 +44,53 @@ export function scoreCommand(cmd: Rankable, query: string): number {
   // Subsequence: every character in order, anywhere. Cheap fuzzy matching that
   // rewards matches packed close together, so "arr" prefers "Arrangement" over
   // a label where a, r and r happen to be scattered across three words.
-  let i = 0, gaps = 0, last = -1
-  for (const ch of q) {
-    const at = hay.indexOf(ch, i)
-    if (at === -1) return -1
-    if (last >= 0) gaps += at - last - 1
-    last = at
-    i = at + 1
+  // Several words typed together mean "all of these", matched independently —
+  // "rename clip" should find "Rename the clip under the playhead" even though
+  // those two words never sit next to each other. Confining the fuzzy match to
+  // one word (below) is right for abbreviations and wrong here, so a multi-word
+  // query is scored as every term having to land somewhere.
+  const terms = q.split(/\s+/).filter(Boolean)
+  if (terms.length > 1) {
+    let total = 0
+    for (const t of terms) {
+      if (new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(hay)) total += 100
+      else if (hay.includes(t)) total += 60
+      else return -1
+    }
+    return Math.max(1, 500 + total - label.length)
   }
-  return Math.max(1, 400 - gaps)
+
+  // ...but WITHIN A SINGLE WORD, and starting at that word's first letter.
+  //
+  // Letting a subsequence wander across the whole haystack is what made this
+  // matcher lie. Every command carries a long keyword list, so given enough
+  // text almost any word can be spelled out of almost any command — and the
+  // longer the query the easier that gets, which is exactly backwards. Live,
+  // "humanise" returned "Change the studio's colours", "vocoder" found "Play
+  // harder" (v-o-c from "velocity", o-d-e-r from "louder"), and "autotune"
+  // found "Draw volume automation". Each answer was confident and wrong, which
+  // is worse than an empty list: it teaches people the palette doesn't
+  // understand them, and they stop typing.
+  //
+  // Confining it to one word matches what abbreviating actually is — "wvtb" is
+  // a squeezed "wavetable", not letters gathered from four different words.
+  // Queries that genuinely span words ("mute bass") are already handled above,
+  // as a substring of the label.
+  let best = -1
+  for (const word of hay.split(/[^a-z0-9]+/)) {
+    if (word.length < q.length || word[0] !== q[0]) continue
+    let i = 0, gaps = 0, ok = true
+    for (const ch of q) {
+      const at = word.indexOf(ch, i)
+      if (at === -1) { ok = false; break }
+      if (i > 0) gaps += at - i
+      i = at + 1
+    }
+    if (ok) best = Math.max(best, 400 - gaps)
+  }
+  if (best < 0) return -1
+
+  return Math.max(1, best)
 }
 
 /** Rank commands for a query, best first, dropping non-matches. */

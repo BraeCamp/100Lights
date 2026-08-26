@@ -222,7 +222,87 @@ function clipVoiceSeconds(clip: MidiClip, patch: ApolloPatch, spb: number): numb
  * machine. With nobody listening there is no deadline, only responsiveness.
  */
 function renderTimeBudgetMs(): number {
-  return transportPlaying ? 1500 : 5000
+  // Three paces, not two.
+  //
+  // Playing: stay ahead of the playhead — that is a deadline, and the window has
+  // to be big enough to make progress against it.
+  //
+  // Idle but the user is TOUCHING something: the smallest windows we do. They
+  // are dragging a clip or turning a knob and every millisecond of main thread
+  // we take is felt directly. Rendering ahead is worth nothing if it makes the
+  // thing they are doing right now feel bad.
+  //
+  // Idle and untouched: work properly. This is the case that used to be missing
+  // — combining began the moment a project loaded and went at full tilt whether
+  // or not anyone was interacting, which is lag before you have even pressed
+  // play.
+  if (transportPlaying) return 1500
+  return userIsBusy() ? 400 : 5000
+}
+
+/** Has the user touched anything very recently? */
+const BUSY_WINDOW_MS = 1800
+let lastInputAt = 0
+export function noteUserInput(): void { lastInputAt = Date.now() }
+function userIsBusy(): boolean { return Date.now() - lastInputAt < BUSY_WINDOW_MS }
+
+if (typeof window !== 'undefined') {
+  // Passive listeners on the capture phase: this only ever reads a clock, and
+  // must never be the reason an interaction feels slow.
+  for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel'] as const) {
+    window.addEventListener(ev, noteUserInput, { capture: true, passive: true })
+  }
+}
+
+/**
+ * How heavy is this project — and should it just be baked?
+ *
+ * "How big" has an exact answer here, and it is not clip count or file size: it
+ * is the same cost model the windows use. Total voice-seconds plus the span the
+ * FX run over, priced at what this machine has been observed to manage. That
+ * gives a number in SECONDS — roughly how long it takes to render the whole song
+ * — which is the only figure that actually predicts whether combining can keep
+ * up or whether the listener spends the first minute on the live synth path.
+ *
+ * Returns the estimate and a recommendation. Anything a machine can render in a
+ * few seconds needs no ceremony; a project that takes a minute is one where the
+ * live path is going to be felt, and freezing is what a real DAW would do.
+ */
+export function projectRenderEstimate(bpm: number, groups: TrackRenderGroup[]): {
+  seconds: number
+  clips: number
+  shouldFreeze: boolean
+} {
+  const spb = 60 / bpm
+  let voiceSec = 0, clips = 0
+  let first = Infinity, last = -Infinity
+  for (const g of groups) {
+    for (const c of g.clips) {
+      if (!c.notes.length) continue
+      clips++
+      voiceSec += clipVoiceSeconds(c, g.patch, spb)
+      first = Math.min(first, c.startBeat)
+      last = Math.max(last, c.startBeat + c.durationBeats)
+    }
+  }
+  if (!clips) return { seconds: 0, clips: 0, shouldFreeze: false }
+  const span = Math.max(0, (last - first) * spb)
+  const rate = msPerUnit || initialMsPerUnit()
+  const seconds = ((voiceSec + SPAN_WEIGHT * span) * rate) / 1000
+  // Where to draw the line was a guess at 25s, and the guess was wrong in the
+  // most specific way possible: Undertow — the song Brae reported as slow, the
+  // one this whole thread of work exists because of — prices at 22.8s on this
+  // machine and so did not qualify. A threshold that excludes the motivating
+  // example is not a threshold, it is a coincidence.
+  //
+  // 15s is the line now. Rendering the song takes that long BEFORE the listener
+  // hears the end of it, so anything above it means a stretch of the song plays
+  // on the live synth path, which is the stuttering. Below it, combining catches
+  // up while nobody is listening for it. The figure is in seconds-on-THIS-machine
+  // — msPerUnit is calibrated from real renders here — so a slower laptop crosses
+  // the line on smaller songs, which is the correct behaviour rather than a
+  // fixed clip count pretending every machine is the same.
+  return { seconds, clips, shouldFreeze: seconds > 15 }
 }
 
 /**
@@ -364,7 +444,12 @@ function breathe(): Promise<void> {
 const gap = (lastRenderMs = 0) => {
   const ms = transportPlaying
     ? Math.min(1500, Math.max(180, lastRenderMs * 0.6))
-    : Math.min(350, Math.max(80, lastRenderMs * 0.25))
+    // Rest LONGER while the user is interacting than while they are not: the
+    // point of rendering ahead is that it is invisible, and it stops being
+    // invisible the moment it competes with a drag.
+    : userIsBusy()
+      ? Math.min(2000, Math.max(400, lastRenderMs * 1.5))
+      : Math.min(350, Math.max(80, lastRenderMs * 0.25))
   return new Promise<void>(r => setTimeout(r, ms))
 }
 

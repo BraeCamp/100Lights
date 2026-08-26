@@ -1,6 +1,7 @@
 'use client'
 
 import { uploadRecordingBlob } from '@/lib/record-upload'
+import { useRegisterCommands } from '@/lib/commands'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
 import { useEffect, useRef, useState, type ReactNode, type Dispatch } from 'react'
 import { createPortal } from 'react-dom'
@@ -506,6 +507,73 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     dispatch({ type: 'SET_MASTER_VOLUME', volume: parseFloat(e.target.value) })
     engine.setMasterVolume(parseFloat(e.target.value))
   }
+
+  // ── Palette commands owned by the transport ─────────────────────────────────
+  //
+  // These are registered HERE rather than centrally in AudioEditor because each
+  // one needs something only this component has. Recording is a flow — mic
+  // permission, count-in, the guards that blink at the arm button you forgot —
+  // and a second copy of it in the palette would be a second copy that drifts
+  // out of step. Looping has to disarm the loop tool as well as clear the flag.
+  // The rule this follows: if the palette cannot reach an action without
+  // reimplementing it, the component that owns the action registers it.
+  useRegisterCommands([
+    { id: 'transport.record', group: 'Transport', label: recording ? 'Stop recording' : 'Record a take',
+      keywords: 'mic input arm capture take microphone sing play in overdub',
+      run: () => { void handleRecord() } },
+    { id: 'transport.loop', group: 'Transport', label: project.loopEnabled ? 'Turn looping off' : 'Turn looping on',
+      keywords: 'cycle repeat region brace loop',
+      run: handleLoopToggle },
+    { id: 'transport.loopAll', group: 'Transport', label: 'Loop the whole song',
+      keywords: 'cycle everything full span entire repeat',
+      when: () => project.arrangementClips.length > 0,
+      run: handleLoopFullSpan },
+    // Count-in is four unlabelled number buttons inside the record setup box —
+    // you cannot find it unless you are already recording.
+    ...[0, 1, 2].filter(b => b !== countInBars).map(b => ({
+      id: `transport.countin.${b}`, group: 'Transport',
+      label: b === 0 ? 'No count-in before recording' : `Count in ${b} bar${b > 1 ? 's' : ''} before recording`,
+      keywords: 'countin count in lead pre roll click bars metronome record',
+      run: () => setCountInBars(b),
+    })),
+    // Tempo goes through applyTempo because a project with tempo markers must
+    // retempo the segment under the playhead, not stamp one global BPM over a
+    // map somebody built deliberately. Swing has to reach the live engine too —
+    // dispatching alone stores the value and changes nothing you can hear.
+    { id: 'transport.tempo', group: 'Project', label: `Change the tempo (now ${project.tempo} BPM)`,
+      keywords: 'bpm tempo speed faster slower pace',
+      run: () => {
+        const v = window.prompt('Tempo in BPM', String(project.tempo))
+        const n = v ? Number(v) : NaN
+        if (Number.isFinite(n) && n >= 20 && n <= 300) applyTempo(n)
+      } },
+    { id: 'transport.swing', group: 'Project', label: `Change the swing (now ${Math.round((project.swing ?? 0) * 100)}%)`,
+      keywords: 'swing groove shuffle feel laid back timing straight',
+      run: () => {
+        const v = window.prompt('Swing, 0 to 50%', String(Math.round((project.swing ?? 0) * 100)))
+        const n = v ? Number(v) : NaN
+        if (!Number.isFinite(n) || n < 0 || n > 50) return
+        const swing = n / 100
+        dispatch({ type: 'SET_SWING', swing })
+        engine.swing = swing
+      } },
+    // Master volume, like swing, has to reach the engine as well as the project.
+    { id: 'transport.master', group: 'Project', label: `Set the master volume (now ${Math.round((project.masterVolume ?? 1) * 100)}%)`,
+      keywords: 'master volume output level overall loudness main',
+      run: () => {
+        const v = window.prompt('Master volume, 0 to 100%', String(Math.round((project.masterVolume ?? 1) * 100)))
+        const n = v ? Number(v) : NaN
+        if (!Number.isFinite(n) || n < 0 || n > 100) return
+        dispatch({ type: 'SET_MASTER_VOLUME', volume: n / 100 })
+        engine.setMasterVolume(n / 100)
+      } },
+    { id: 'transport.screenrec', group: 'Share', label: 'Record the screen',
+      keywords: 'capture video clip screencast demo share timelapse',
+      run: () => { setRecorderMode('screen'); setShowRecorder(true) } },
+    { id: 'transport.historyrec', group: 'Share', label: 'Record how this project gets built',
+      keywords: 'history timelapse replay capture session process',
+      run: () => { setRecorderMode('history'); setShowRecorder(true) } },
+  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, countInBars, loopToolArmed])
 
   // ── Music-only handlers ─────────────────────────────────────────────────────
 

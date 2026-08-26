@@ -408,6 +408,35 @@ export async function freezeApolloProject(
     trackId, patch, clips: targets.filter(c => c.trackId === trackId),
   })).filter(g => g.clips.length)
 
+  // Where the time goes, kept because "freezing is slow" is not actionable and
+  // "the library writes took 9 of the 11 seconds" is. Baking runs while someone
+  // is trying to work, so the number that matters is not how long it takes but
+  // how long it holds the main thread at a stretch.
+  const timing = { renderMs: 0, saveMs: 0, worstBlockMs: 0 }
+  const block = async <T>(phase: 'renderMs' | 'saveMs', fn: () => Promise<T>): Promise<T> => {
+    const t = performance.now()
+    try { return await fn() } finally {
+      const d = performance.now() - t
+      timing[phase] += d
+      if (d > timing.worstBlockMs) timing.worstBlockMs = d
+    }
+  }
+
+  // Four clips per render call. One was tried and is worse on both counts.
+  //
+  // Measured on Undertow, freezing all 39 clips:
+  //
+  //                        total render   worst single block   worst frame stall
+  //     4 clips per call         66.0s              11.3s               10.3s
+  //     1 clip  per call        123.1s              13.3s                5.6s
+  //
+  // Chrome renders an OfflineAudioContext carrying JS worklets on the MAIN
+  // THREAD, so the stall is not scheduling around the render — the stall IS the
+  // render, and nothing yields inside it. Going to one clip per call nearly
+  // doubled the total work (each context pays its own setup and worklet
+  // handshake) and did not bound the block either: a single long pad clip on a
+  // heavy patch took 13.3s by itself. Smaller batches cannot fix this; the
+  // render has to leave the main thread. Four is the efficient setting.
   const BATCH = 4
   const ordered = [...targets].sort((a, b) => a.startBeat - b.startBeat)
   const rendered = new Map<string, AudioBuffer>()
@@ -415,9 +444,9 @@ export async function freezeApolloProject(
     const batch = ordered.slice(i, i + BATCH)
     onProgress?.(done, targets.length, batch[0]?.name || 'rendering')
     try {
-      const out = await renderApolloProject(groups, project.tempo, {
+      const out = await block('renderMs', () => renderApolloProject(groups, project.tempo, {
         tailSec, only: new Set(batch.map(c => c.id)),
-      })
+      }))
       for (const [id, buf] of out) if (!rendered.has(id)) rendered.set(id, buf)
     } catch { /* this batch stays unfrozen; the clips keep playing live */ }
     done += batch.length
@@ -440,7 +469,7 @@ export async function freezeApolloProject(
       if (peak < 1e-4) throw new Error('silent render')
       // Into the Sound Library, so it survives a reload and shows up as a real
       // sound the user owns — not a blob URL that dies with the session.
-      const libraryId = await saveBounceToLibrary(`${clip.name || 'Apollo clip'} (frozen)`, buffer)
+      const libraryId = await block('saveMs', () => saveBounceToLibrary(`${clip.name || 'Apollo clip'} (frozen)`, buffer))
       const frozen: FrozenClip = {
         kind: 'audio',
         id: clip.id,
@@ -466,8 +495,21 @@ export async function freezeApolloProject(
       // never silent, which is the wrong way to fail.
     }
     done++
+    // Encoding a bounce and writing it to the library is a long synchronous
+    // stretch, and thirty-nine of them back to back is thirty-nine of those with
+    // nothing in between. Yielding here is what lets the studio paint a frame
+    // between clips — measured, this is the difference between baking in the
+    // background and the tab appearing to hang.
+    await breathe()
   }
   onProgress?.(done, targets.length, 'done')
+  ;(globalThis as unknown as { __freezeTiming?: unknown }).__freezeTiming = {
+    ...timing,
+    renderMs: Math.round(timing.renderMs),
+    saveMs: Math.round(timing.saveMs),
+    worstBlockMs: Math.round(timing.worstBlockMs),
+    clips: targets.length,
+  }
   return { ...project, arrangementClips: clips }
 }
 

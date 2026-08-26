@@ -1,6 +1,7 @@
 'use client'
 
 import { uploadRecordingBlob } from '@/lib/record-upload'
+import { useRegisterCommands } from '@/lib/commands'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Plus, Square, Circle, ChevronRight, X } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip } from '@/lib/daw-state'
@@ -919,6 +920,18 @@ export default function SessionView() {
     setAnyPlaying(false)
     setSessionRecording(false)
   }
+
+  // Session commands are registered here because stopping has to settle local
+  // playing/recording state as well as tell the engine — dispatching from a
+  // central list would stop the sound and leave the buttons lit.
+  useRegisterCommands([
+    { id: 'session.stopAll', group: 'Session', label: 'Stop all clips',
+      keywords: 'stop all clips silence panic halt everything session',
+      run: stopAll },
+    { id: 'session.addScene', group: 'Session', label: 'Add a scene',
+      keywords: 'scene row new add launch section',
+      run: () => dispatch({ type: 'ADD_SCENE' }) },
+  ], [dispatch])
 
   async function handleSessionRecord() {
     if (!project.tracks.some(t => t.armed)) return

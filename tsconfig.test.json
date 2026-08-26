@@ -15,6 +15,8 @@
   "files": [
     "lib/media-handoff.ts",
     "lib/note-ids.ts",
-    "lib/command-palette.ts"
+    "lib/command-palette.ts",
+    "lib/daw-splice.ts",
+    "lib/daw-effect-catalog.ts"
   ]
 }

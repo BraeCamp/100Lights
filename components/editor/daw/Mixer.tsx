@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useMemo } from 'react'
+import { useRegisterCommands } from '@/lib/commands'
 import { createPortal } from 'react-dom'
 import { Circle, SlidersHorizontal, X, Pencil, Disc } from 'lucide-react'
 import { useDaw, useEnginePlaying } from '@/lib/daw-state'
@@ -841,6 +842,15 @@ export default function Mixer() {
     }
     dispatch({ type: 'ADD_RETURN_TRACK', track: rt })
   }
+
+  // A return track is the thing you need when two tracks should share one
+  // reverb, and until now the only way to make one was to already be looking at
+  // the mixer and to recognise a small + at the end of the strips.
+  useRegisterCommands([
+    { id: 'mixer.addReturn', group: 'Mixing', label: 'Add a return track',
+      keywords: 'return send aux bus shared reverb delay effects routing',
+      run: addReturnTrack },
+  ], [project.returnTracks.length, dispatch])
 
   return (
     <div data-testid="mixer" style={{ display: 'flex', flex: 1, minHeight: 0, background: 'var(--bg-base)', overflow: 'hidden' }}>

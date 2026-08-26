@@ -63,6 +63,20 @@ const all = rankCommands(COMMANDS, '')
 console.log(`${all.length === COMMANDS.length ? 'PASS' : 'FAIL'} empty query returns all ${all.length}`)
 if (all.length !== COMMANDS.length) failures++
 
+// A real word that no command implements must return NOTHING, not the nearest
+// coincidence. Every command carries a long keyword list, so a subsequence
+// matcher with no tightness limit can spell almost any word out of almost any
+// command — and the longer the word, the easier that gets, which is backwards.
+// Live, this had "humanise" returning "Change the studio's colours". An
+// unrelated confident answer is worse than an empty list: it teaches people the
+// palette does not understand them, and they stop typing.
+for (const word of ['humanise', 'legato', 'sidechain', 'crossfade', 'automation']) {
+  const hits = rankCommands(COMMANDS, word)
+  const pass = hits.length === 0
+  if (!pass) failures++
+  console.log(`${pass ? 'PASS' : 'FAIL'} "${word}" matches nothing rather than guessing${pass ? '' : `  → got "${hits[0].label}"`}`)
+}
+
 // Nonsense matches nothing rather than returning a bad guess.
 const none = rankCommands(COMMANDS, 'zzzqqq')
 console.log(`${none.length === 0 ? 'PASS' : 'FAIL'} nonsense returns nothing (${none.length})`)

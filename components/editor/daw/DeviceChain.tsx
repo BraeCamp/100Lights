@@ -18,6 +18,7 @@ import {
   defaultNoiseGate, defaultDeEsser, defaultChorus, defaultTransientShaper, defaultMultibandComp, defaultLimiter, defaultDynEq,
   voiceChainEffects,
 } from '@/lib/daw-types'
+import { ADD_OPTIONS, makeDefaultParams } from '@/lib/daw-effect-catalog'
 
 // ── Label map ──────────────────────────────────────────────────────────────────
 
@@ -850,48 +851,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
 
 // ── Add device button + dropdown ───────────────────────────────────────────────
 
-const ADD_OPTIONS: { type: EffectType; label: string }[] = [
-  { type: 'eq3',            label: 'EQ3' },
-  { type: 'compressor',     label: 'Compressor' },
-  { type: 'reverb',         label: 'Reverb' },
-  { type: 'delay',          label: 'Delay' },
-  { type: 'filter',         label: 'Filter' },
-  { type: 'saturator',      label: 'Saturator' },
-  { type: 'redux',          label: 'Redux (Bit Crush)' },
-  { type: 'autopan',        label: 'Auto Pan' },
-  { type: 'utility',        label: 'Utility' },
-  { type: 'lfo',            label: 'LFO' },
-  { type: 'noisegate',      label: 'Noise Gate' },
-  { type: 'deesser',        label: 'De-esser' },
-  { type: 'chorus',         label: 'Chorus/Flanger' },
-  { type: 'transientshaper',label: 'Transient Shaper' },
-  { type: 'multibandcomp',  label: 'Multiband Comp' },
-  { type: 'limiter',        label: 'Limiter' },
-  { type: 'dyneq',          label: 'Dynamic EQ' },
-]
 
-function makeDefaultParams(type: EffectType) {
-  switch (type) {
-    case 'eq3':            return defaultEq3()
-    case 'compressor':     return defaultCompressor()
-    case 'reverb':         return defaultReverb()
-    case 'delay':          return defaultDelay()
-    case 'filter':         return defaultFilter()
-    case 'saturator':      return defaultSaturator()
-    case 'redux':          return defaultRedux()
-    case 'autopan':        return defaultAutoPan()
-    case 'utility':        return defaultUtility()
-    case 'lfo':            return defaultLfo()
-    case 'noisegate':      return defaultNoiseGate()
-    case 'deesser':        return defaultDeEsser()
-    case 'chorus':         return defaultChorus()
-    case 'transientshaper':return defaultTransientShaper()
-    case 'multibandcomp':  return defaultMultibandComp()
-    case 'limiter':        return defaultLimiter()
-    case 'dyneq':          return defaultDynEq()
-    default:               return defaultEq3()
-  }
-}
 
 function VoiceChainButton({ trackId }: { trackId: string }) {
   const { dispatch, project } = useDaw()

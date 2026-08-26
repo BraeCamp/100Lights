@@ -5,10 +5,12 @@ import { createPortal } from 'react-dom'
 import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch } from '@/lib/daw-undo'
 import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
+import { spliceClipAt } from '@/lib/daw-splice'
+import { ADD_OPTIONS, makeDefaultParams as makeDefaultEffectParams } from '@/lib/daw-effect-catalog'
 import { CHECKOUT_LS_KEY } from '@/lib/apollo/checkout'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
-import type { DawView, EditTarget, DawProject, DawTrack, ApolloInstrumentParams } from '@/lib/daw-types'
+import type { DawView, EditTarget, DawProject, DawTrack, DawClip, AudioClip, ApolloInstrumentParams } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
@@ -928,6 +930,149 @@ export default function AudioEditor(props: AudioEditorProps) {
 
 
   useEffect(() => { projectRef.current = project }, [project])
+
+  // Freeze heavy projects by default.
+  //
+  // "How big is the project" has an exact answer: the same cost model the render
+  // windows use, which prices a song in seconds-to-render on THIS machine. Under
+  // ~25s the live path is a brief moment nobody notices while combining catches
+  // up. Over it, the live synth is the experience — which is what Undertow was.
+  //
+  // Runs once per project, only when nothing is frozen yet, and only when the
+  // user can undo it (not read-only). It is announced in the status pill and
+  // "Unfreeze" is one command away, because a project quietly rewriting its own
+  // clips would be alarming even when it is right.
+  // What there is to bake, read from the PROJECT rather than from the engine.
+  //
+  // The first version asked the engine, once, in an effect keyed on "the project
+  // loaded" — and that is two separate races. The engine doesn't know about the
+  // tracks at that instant; it syncs about 183ms later. And `projectLoaded`
+  // starts out TRUE for a project with no cloud id, so the effect fired at mount,
+  // before there was an engine OR a project. Either way it saw nothing, returned,
+  // and never looked again, because its dependencies never changed a second time.
+  // The feature was complete, typechecked, registered — and had never once run.
+  //
+  // Project state has no such timing: when the clips are there, they are there.
+  const apolloGroups = useMemo(() => {
+    const byTrack = new Map<string, ApolloInstrumentParams>()
+    for (const t of project.tracks) {
+      if (t.instrument?.type === 'apollo') byTrack.set(t.id, t.instrument.params as ApolloInstrumentParams)
+    }
+    if (!byTrack.size) return []
+    return [...byTrack].map(([trackId, patch]) => ({
+      trackId,
+      patch: patch as unknown as Parameters<typeof import('@/lib/apollo/freeze-cache').projectRenderEstimate>[1][number]['patch'],
+      clips: project.arrangementClips.filter(
+        (c): c is Extract<DawClip, { kind: 'midi' }> => c.kind === 'midi' && c.trackId === trackId && c.notes.length > 0),
+    })).filter(g => g.clips.length > 0)
+  }, [project.tracks, project.arrangementClips])
+
+  // Baking on load is OFF, and this is the measurement that decided it.
+  //
+  // Freezing all of Undertow takes 66s of rendering, and Chrome runs an
+  // OfflineAudioContext carrying JS worklets on the MAIN THREAD. So the render
+  // is not something you can schedule around — while it runs, nothing paints:
+  //
+  //     frame rate during load    40.8/s   (against 59.9/s when it does not run)
+  //     stalls over one second    9
+  //     worst single stall        11.3s
+  //
+  // A studio that locks for eleven seconds on open is the exact complaint that
+  // started this work, moved from playback to load time. Batching cannot fix it
+  // either — one clip per call still blocked 13.3s on a single long pad clip and
+  // nearly doubled the total work (see BATCH in daw-freeze).
+  //
+  // So freezing stays something you ASK for, where you chose it, expect the
+  // wait, and watch a progress pill. Everything below is finished and correct
+  // and switches on with one line — once rendering happens off the main thread,
+  // which means running Helios as plain DSP in a Worker rather than as a
+  // worklet inside an OfflineAudioContext. That is the real fix and it is a
+  // separate piece of work.
+  const AUTO_FREEZE_ON_LOAD = false
+
+  const autoFroze = useRef(false)
+  useEffect(() => {
+    if (!AUTO_FREEZE_ON_LOAD) return
+    if (autoFroze.current || props.readOnly || isPodcast) return
+    if (!apolloGroups.length) return          // nothing to bake YET — look again when there is
+    autoFroze.current = true
+    const groups = apolloGroups
+    let cancelled = false
+    void (async () => {
+      const { projectRenderEstimate } = await import('@/lib/apollo/freeze-cache')
+      const est = projectRenderEstimate(projectRef.current.tempo, groups)
+      // Record the decision. Whether a project bakes itself is invisible from
+      // the outside — it either happens or nothing happens — and "nothing
+      // happened" is the same observation whether the estimate came in under
+      // the bar or the whole thing silently failed. Those needed telling apart:
+      // this feature spent a day looking broken when it had simply never run.
+      ;(window as unknown as { __autoFreeze?: unknown }).__autoFreeze = {
+        groups: groups.length, clips: est.clips,
+        seconds: Math.round(est.seconds * 10) / 10, shouldFreeze: est.shouldFreeze,
+      }
+      if (cancelled || !est.shouldFreeze) return
+      const { freezeApolloProject } = await import('@/lib/apollo/daw-freeze')
+      setFreezing(`Baking ${est.clips} clips so this plays smoothly…`)
+      try {
+        const frozen = await freezeApolloProject(projectRef.current, {
+          onProgress: (d, total) => { if (!cancelled) setFreezing(`Baking ${d}/${total}…`) },
+        })
+        if (cancelled) return
+        const baked = frozen.arrangementClips.filter(c => c.kind === 'audio' && 'frozenFrom' in c).length
+        if (baked) {
+          rawDispatch({ type: 'LOAD_PROJECT', project: migrateProject(frozen) })
+          setFreezing(`Baked ${baked} clips — edit a sound to unbake it`)
+        } else {
+          setFreezing(null)
+        }
+      } catch { setFreezing(null) }
+      setTimeout(() => { if (!cancelled) setFreezing(null) }, 4000)
+    })()
+    return () => { cancelled = true }
+  }, [apolloGroups, props.readOnly, isPodcast])
+
+  // A frozen clip whose source has changed goes back to being editable.
+  //
+  // Freezing stores a rendered copy and keeps the notes and patch beside it, so
+  // the audio is a CACHE and the notes are the truth. When the truth changes —
+  // you edit the track's Apollo patch, or the tempo moves — the cache is simply
+  // wrong, and the frozen clip would go on playing the old sound with nothing to
+  // tell you. That gap is the reason freezing could not be automatic: silently
+  // wrong is worse than slow.
+  //
+  // Thawing rather than warning, because thawing is what you wanted anyway: the
+  // clip becomes a synth clip again, plays the patch you just edited, and can be
+  // frozen once you are happy. The stamp comparison is cheap — both halves are
+  // memoised on object identity — so this can sit on every project change.
+  useEffect(() => {
+    const frozen = project.arrangementClips.filter(
+      c => c.kind === 'audio' && 'frozenFrom' in c && (c as { frozenFrom?: unknown }).frozenFrom)
+    if (!frozen.length) return
+    let cancelled = false
+    void import('@/lib/apollo/daw-freeze').then(({ isFreezeStale, thawClip }) => {
+      if (cancelled) return
+      const stale: string[] = []
+      for (const c of frozen) {
+        const track = project.tracks.find(t => t.id === c.trackId)
+        const patch = track?.instrument?.type === 'apollo'
+          ? (track.instrument.params as unknown as Parameters<typeof isFreezeStale>[1])
+          : null
+        if (!patch) continue
+        if (isFreezeStale(c as Parameters<typeof isFreezeStale>[0], patch, project.tempo)) stale.push(c.id)
+      }
+      if (!stale.length || cancelled) return
+      const ids = new Set(stale)
+      rawDispatch({
+        type: 'LOAD_PROJECT',
+        project: migrateProject({
+          ...projectRef.current,
+          arrangementClips: projectRef.current.arrangementClips.map(c =>
+            ids.has(c.id) ? (thawClip(c as Parameters<typeof thawClip>[0]) ?? c) : c),
+        }),
+      })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [project.arrangementClips, project.tracks, project.tempo])
 
   const readOnlyRef = useRef(!!props.readOnly)
   useEffect(() => { readOnlyRef.current = !!props.readOnly }, [props.readOnly])
@@ -2002,6 +2147,31 @@ export default function AudioEditor(props: AudioEditorProps) {
     } finally { setSubmittingSuggestion(false) }
   }
 
+  // Undo and redo used to exist ONLY as two branches inside the keydown handler
+  // below, which meant they were reachable by ⌘Z and by nothing else — not the
+  // palette, not a menu, not a button. Lifted out so there is one implementation
+  // with more than one way in. Both revert only the popped action's own
+  // footprint (computed against CURRENT state, so a collaborator's concurrent
+  // edits survive) and broadcast the patch so the room follows along instead of
+  // self-healing the undo away.
+  const doUndo = useCallback(() => {
+    const entry = historyRef.current.pop()
+    if (!entry) return
+    redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
+    const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, projectRef.current, entry.action) }
+    rawDispatch(patchAction)
+    if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+  }, [rawDispatch])
+
+  const doRedo = useCallback(() => {
+    const entry = redoRef.current.pop()
+    if (!entry) return
+    historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
+    const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, projectRef.current, entry.action) }
+    rawDispatch(patchAction)
+    if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+  }, [rawDispatch])
+
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement
@@ -2058,34 +2228,12 @@ export default function AudioEditor(props: AudioEditorProps) {
         return
       }
 
-      // Undo/redo revert only the popped action's own footprint (computed
-      // against CURRENT state, so collaborators' concurrent edits survive)
-      // and broadcast the patch so the room follows instead of self-healing
-      // the undo away.
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) {
-        e.preventDefault()
-        const entry = historyRef.current.pop()
-        if (entry) {
-          redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
-          const patch = computeRevertPatch(entry.before, projectRef.current, entry.action)
-          const patchAction: DawAction = { type: 'PATCH_PROJECT', patch }
-          rawDispatch(patchAction)
-          if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
-        }
-        return
+        e.preventDefault(); doUndo(); return
       }
 
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && e.shiftKey) {
-        e.preventDefault()
-        const entry = redoRef.current.pop()
-        if (entry) {
-          historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
-          const patch = computeRevertPatch(entry.before, projectRef.current, entry.action)
-          const patchAction: DawAction = { type: 'PATCH_PROJECT', patch }
-          rawDispatch(patchAction)
-          if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
-        }
-        return
+        e.preventDefault(); doRedo(); return
       }
 
       if (e.code === 'Delete' || e.code === 'Backspace') {
@@ -2140,7 +2288,7 @@ export default function AudioEditor(props: AudioEditorProps) {
 
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [setPosition])
+  }, [setPosition, doUndo, doRedo])
 
   // ── Context value ────────────────────────────────────────────────────────────
   const contextValue = useMemo(() => ({
@@ -2316,6 +2464,342 @@ export default function AudioEditor(props: AudioEditorProps) {
     // of thing has stopped being a palette. Presets belong in a browser that can
     // page, preview and categorise; the palette's job is to get you TO it.
   ], [project.tracks, selectedTrackId, paletteTrack, props.readOnly, dispatch, setApolloRack, setSelectedTrackId])
+
+  // ── The rest of the studio ───────────────────────────────────────────────────
+  //
+  // Everything below already worked. None of it was findable.
+  //
+  // I audited this DAW by grepping for identifier names I had invented, decided
+  // seven standard features were missing, and was wrong about six of them:
+  // splitting a clip is here and is called "Splice at Playhead"; quantise is an
+  // unlabelled Q inside the piano roll; reverse is a checkbox in the Inspector;
+  // LUFS metering is in the master strip. Freeze had been implemented for months
+  // and surfaced only because Brae asked for it by name. The mistake I made is
+  // the same one a user makes — if you don't already know the word, the feature
+  // is not there.
+  //
+  // So: scripts/capability-inventory.mjs reads every labelled control in the
+  // studio and reports what ⌘K cannot reach. It found 52 of 1065. This block is
+  // the answer to that number. Nothing here is a new capability; each command is
+  // a second door onto an action that had exactly one, usually an unlabelled
+  // keystroke or an item three levels into a context menu.
+  // Which clip a clip command acts on.
+  //
+  // The obvious answer — the selected one — makes every clip command DISAPPEAR
+  // when nothing is selected, which is how you arrive at the palette most of the
+  // time: you typed a word, you did not first go and click something. That is
+  // the same trap as the Quantize button that greys out exactly when you go
+  // looking for it, so it falls back to the clip under the playhead: unambiguous
+  // (there is only one per track), visible on screen, and the thing a person
+  // means by "this clip" when they haven't clicked anything.
+  //
+  // Every label names the clip it will act on — "Split Hats · Tide at the
+  // playhead" — so the fallback is stated rather than assumed.
+  // Resolved when the command RUNS, not on every render: the playhead moves ten
+  // times a second, and a memo that depends on it would re-run this — and every
+  // command label built from it — at that rate. That is the exact cost the
+  // separate playhead context exists to avoid.
+  const clipTargetRef = useRef<() => DawClip | null>(() => null)
+  clipTargetRef.current = () => {
+    const p = projectRef.current
+    const byId = p.arrangementClips.find(c => c.id === selectedClipIdRef.current)
+    if (byId) return byId
+    const beat = engineRef.current?.currentBeat ?? 0
+    const under = p.arrangementClips.filter(c => beat >= c.startBeat && beat < c.startBeat + c.durationBeats)
+    // Prefer one on the selected track, so a playhead crossing a stack of tracks
+    // still resolves to the one being worked on.
+    return under.find(c => c.trackId === selectedTrackId) ?? under[0] ?? null
+  }
+  const clipTarget = () => clipTargetRef.current()
+
+  // Only the SELECTED clip names the commands. When nothing is selected the
+  // labels say "the clip at the playhead" — which is what will actually happen,
+  // said out loud, rather than a clip name chosen behind the user's back.
+  const paletteClip = useMemo(
+    () => project.arrangementClips.find(c => c.id === selectedClipId) ?? null,
+    [project.arrangementClips, selectedClipId],
+  )
+  const anyClips = project.arrangementClips.length > 0
+  const paletteAudioClip = paletteClip?.kind === 'audio' ? paletteClip : null
+  // Named when something is selected, described when it isn't. "at the playhead"
+  // is left off here because several labels already end in it — "Split the clip
+  // at the playhead at the playhead" is what happens when you forget that.
+  const clipLabel = paletteClip ? (paletteClip.name || 'clip') : 'the clip under the playhead'
+  const editable = !props.readOnly
+  /** Run `fn` against whichever clip the command should act on, if there is one. */
+  const withClip = (fn: (c: DawClip) => void) => { const c = clipTarget(); if (c) fn(c) }
+  const withAudioClip = (fn: (c: AudioClip) => void) => {
+    const c = clipTarget()
+    if (c?.kind === 'audio') fn(c)
+    else { setFreezing('That only works on an audio clip'); setTimeout(() => setFreezing(null), 2200) }
+  }
+
+  useRegisterCommands([
+    // ── Transport ────────────────────────────────────────────────────────────
+    // Recording is NOT registered here. It is a whole flow — mic permission,
+    // count-in, arm checks, the blinks that point you at the button you forgot —
+    // and it lives in Transport. A second copy of it in the palette would be a
+    // second copy that drifts. Transport registers its own command instead,
+    // which is the rule for anything the palette cannot reach without
+    // reimplementing it.
+    // Same for the loop toggle: turning looping off also has to disarm the loop
+    // tool, and only Transport knows that. Registered there.
+    { id: 'audio.transport.loopClip', group: 'Transport', label: 'Loop over the selected clip',
+      keywords: 'cycle region set loop brace', when: () => editable && !!paletteClip,
+      run: () => {
+        if (!paletteClip) return
+        dispatch({ type: 'SET_LOOP', start: paletteClip.startBeat, end: paletteClip.startBeat + paletteClip.durationBeats })
+        dispatch({ type: 'SET_LOOP_ENABLED', enabled: true })
+      } },
+    { id: 'audio.transport.metronome', group: 'Transport', label: `${metronome ? 'Turn off' : 'Turn on'} the metronome`,
+      keywords: 'click count in tempo beat', run: () => setMetronome(m => !m) },
+    { id: 'audio.transport.end', group: 'Transport', label: 'Go to the end of the song',
+      keywords: 'last final jump forward', run: () => {
+        const p = projectRef.current
+        setPosition(p.arrangementClips.reduce((m, c) => Math.max(m, c.startBeat + c.durationBeats), 0))
+      } },
+    { id: 'audio.transport.toClip', group: 'Transport', label: 'Go to the selected clip',
+      keywords: 'jump locate playhead', when: () => !!paletteClip,
+      run: () => paletteClip && setPosition(paletteClip.startBeat) },
+
+    // ── Edit ─────────────────────────────────────────────────────────────────
+    { id: 'audio.edit.undo', group: 'Edit', label: 'Undo', keywords: 'revert back mistake step',
+      shortcut: '⌘Z', when: () => editable, run: doUndo },
+    { id: 'audio.edit.redo', group: 'Edit', label: 'Redo', keywords: 'forward again reapply',
+      shortcut: '⇧⌘Z', when: () => editable, run: doRedo },
+    { id: 'audio.edit.selectAll', group: 'Edit', label: 'Select every clip', keywords: 'all everything',
+      run: () => setSelectedClipIds(new Set(projectRef.current.arrangementClips.map(c => c.id))) },
+    { id: 'audio.edit.deselect', group: 'Edit', label: 'Deselect everything', keywords: 'none clear selection',
+      run: () => { setSelectedClipIds(new Set()); setSelectedClipId(null) } },
+    { id: 'audio.edit.deleteClip', group: 'Edit', label: `Delete ${clipLabel}`,
+      keywords: 'remove erase clip', shortcut: '⌫', when: () => editable && anyClips,
+      run: () => {
+        const ids = selectedClipIds.size ? [...selectedClipIds] : (clipTarget() ? [clipTarget()!.id] : [])
+        ids.forEach(id => dispatch({ type: 'REMOVE_CLIP', clipId: id }))
+        setSelectedClipIds(new Set()); setSelectedClipId(null)
+      } },
+    { id: 'audio.edit.duplicateClip', group: 'Edit', label: `Duplicate ${clipLabel}`,
+      keywords: 'copy repeat again clip', shortcut: '⌘D', when: () => editable && anyClips,
+      run: () => withClip(c => {
+        const copy: DawClip = { ...structuredClone(c), id: crypto.randomUUID(), startBeat: c.startBeat + c.durationBeats }
+        dispatch({ type: 'ADD_CLIP', clip: copy })
+        setSelectedClipId(copy.id)
+      }) },
+    { id: 'audio.edit.splice', group: 'Edit', label: paletteClip ? `Split ${clipLabel} at the playhead` : 'Split the clip under the playhead in two',
+      keywords: 'splice split cut divide separate scissors chop in two',
+      when: () => editable && anyClips,
+      run: () => withClip(c => {
+        const e = engineRef.current
+        if (!e) return
+        const cut = spliceClipAt(c, e.currentBeat, b => e.beatsToSeconds(b))
+        // The playhead has to be strictly INSIDE the clip. Say so rather than
+        // doing nothing, or it reads as the command being broken.
+        if (!cut) { setFreezing('Put the playhead inside a clip to split it'); setTimeout(() => setFreezing(null), 2600); return }
+        dispatch({ type: 'REMOVE_CLIP', clipId: cut.removeId })
+        for (const half of cut.add) dispatch({ type: 'ADD_CLIP', clip: half })
+        setSelectedClipId(cut.add[0].id)
+      }) },
+    { id: 'audio.edit.renameClip', group: 'Edit', label: `Rename ${clipLabel}`,
+      keywords: 'name title label clip', when: () => editable && anyClips,
+      run: () => withClip(c => {
+        const name = window.prompt('Clip name', c.name || '')
+        if (name != null) dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { name } })
+      }) },
+
+    // ── Clip shaping (all of this lived only in the Inspector) ───────────────
+    { id: 'audio.clip.reverse', group: 'Clip', label: `${paletteAudioClip?.reverse ? 'Un-reverse' : 'Reverse'} ${clipLabel}`,
+      keywords: 'backwards flip audio reversed', when: () => editable && anyClips,
+      run: () => withAudioClip(c => dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { reverse: !c.reverse } })) },
+    { id: 'audio.clip.fadeIn', group: 'Clip', label: `Fade in ${clipLabel}`,
+      keywords: 'ramp up attack smooth start', when: () => editable && anyClips,
+      run: () => withAudioClip(c => dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { fadeIn: c.fadeIn > 0 ? 0 : 0.25 } })) },
+    { id: 'audio.clip.fadeOut', group: 'Clip', label: `Fade out ${clipLabel}`,
+      keywords: 'ramp down release smooth end', when: () => editable && anyClips,
+      run: () => withAudioClip(c => dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { fadeOut: c.fadeOut > 0 ? 0 : 0.25 } })) },
+    // Consolidate flattens a looped MIDI clip's repeats into real notes, so the
+    // pattern can be edited bar by bar. It existed only as a context-menu item
+    // on clips that happen to qualify — invisible until you right-click the
+    // right clip.
+    { id: 'audio.clip.consolidate', group: 'Clip', label: `Flatten ${clipLabel}’s loop into real notes`,
+      keywords: 'consolidate unloop expand repeats flatten bake pattern',
+      when: () => editable && anyClips,
+      run: () => withClip(c => {
+        if (c.kind !== 'midi' || !canConsolidate(c)) {
+          setFreezing('That only works on a looping synth clip'); setTimeout(() => setFreezing(null), 2400); return
+        }
+        dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: consolidateMidiClip(c) })
+      }) },
+    // clip.gain is a LINEAR multiplier — the engine assigns it straight to a
+    // GainNode — so a step is a RATIO, not an addition. 1.122 is +1 dB; adding
+    // 1 would have been +6 dB and a clamp at 12 would have been +21.
+    { id: 'audio.clip.louder', group: 'Clip', label: `Turn ${clipLabel} up 1 dB`,
+      keywords: 'gain volume boost level louder up', when: () => editable && anyClips,
+      run: () => withAudioClip(c => dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { gain: Math.min(4, (c.gain ?? 1) * 1.122) } })) },
+    { id: 'audio.clip.quieter', group: 'Clip', label: `Turn ${clipLabel} down 1 dB`,
+      keywords: 'gain volume cut level attenuate quieter down', when: () => editable && anyClips,
+      run: () => withAudioClip(c => dispatch({ type: 'UPDATE_CLIP', clipId: c.id, patch: { gain: Math.max(0.02, (c.gain ?? 1) / 1.122) } })) },
+    // Normalise — the one thing on the expected-capability list that genuinely
+    // did not exist. It reads the clip's actual samples (only the part inside
+    // the trim, since that is all you hear) and sets the gain so the loudest
+    // peak lands just under full scale. Peak rather than loudness on purpose:
+    // this is the "why is this clip so much quieter than the others" tool, and
+    // it must never push a clip into clipping.
+    { id: 'audio.clip.normalize', group: 'Clip', label: `Normalise ${clipLabel}`,
+      keywords: 'normalise normalize level match loudness peak volume boost quiet too low',
+      when: () => editable && anyClips,
+      run: () => withAudioClip(clip => { void (async () => {
+        const e = engineRef.current
+        if (!e) return
+        const buf = await e.loadClipBuffer(clip)
+        if (!buf) { setFreezing('Could not read that clip’s audio'); setTimeout(() => setFreezing(null), 2600); return }
+        // Only scan what actually plays — a clip trimmed past a loud transient
+        // should normalise to what you HEAR, not to the part cut off screen.
+        const from = Math.floor((clip.trimStart ?? 0) * buf.sampleRate)
+        const to = Math.min(buf.length, Math.ceil((buf.duration - (clip.trimEnd ?? 0)) * buf.sampleRate))
+        let peak = 0
+        for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+          const d = buf.getChannelData(ch)
+          for (let i = from; i < to; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a }
+        }
+        if (peak < 1e-5) { setFreezing('That clip is silent'); setTimeout(() => setFreezing(null), 2600); return }
+        const gain = Math.min(8, 0.97 / peak)
+        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { gain } })
+        const db = 20 * Math.log10(gain / (clip.gain || 1))
+        setFreezing(`Normalised — ${db >= 0 ? '+' : ''}${db.toFixed(1)} dB`)
+        setTimeout(() => setFreezing(null), 2600)
+      })() }) },
+    { id: 'audio.clip.roll', group: 'Clip', label: `Open ${clipLabel} in the piano roll`,
+      keywords: 'notes midi edit draw pitches piano roll', when: () => anyClips,
+      run: () => withClip(c => {
+        if (c.kind !== 'midi') { setFreezing('Only synth clips have notes to edit'); setTimeout(() => setFreezing(null), 2400); return }
+        setExpandedPianoRollClipId(c.id)
+      }) },
+
+    // ── Track ────────────────────────────────────────────────────────────────
+    ...(paletteTrack ? [
+      { id: 'audio.track.duplicate', group: 'Track', label: `Duplicate ${paletteTrack.name}`,
+        keywords: 'copy clone track', when: () => editable,
+        run: () => dispatch({ type: 'DUPLICATE_TRACK', trackId: paletteTrack.id, seed: crypto.randomUUID() }) },
+      { id: 'audio.track.remove', group: 'Track', label: `Delete ${paletteTrack.name}`,
+        keywords: 'remove track erase', when: () => editable,
+        run: () => { if (window.confirm(`Delete "${paletteTrack.name}" and its clips?`)) dispatch({ type: 'REMOVE_TRACK', trackId: paletteTrack.id }) } },
+      { id: 'audio.track.rename', group: 'Track', label: `Rename ${paletteTrack.name}`,
+        keywords: 'name title label track', when: () => editable,
+        run: () => {
+          const name = window.prompt('Track name', paletteTrack.name)
+          if (name) dispatch({ type: 'UPDATE_TRACK', trackId: paletteTrack.id, patch: { name } })
+        } },
+      { id: 'audio.track.arm', group: 'Track', label: `${paletteTrack.armed ? 'Disarm' : 'Arm'} ${paletteTrack.name} for recording`,
+        keywords: 'record input enable ready', when: () => editable,
+        run: () => dispatch({ type: 'UPDATE_TRACK', trackId: paletteTrack.id, patch: { armed: !paletteTrack.armed } }) },
+      { id: 'audio.track.soloClear', group: 'Track', label: 'Clear all solos',
+        keywords: 'unsolo everything reset listen', when: () => editable && projectRef.current.tracks.some(t => t.solo),
+        run: () => projectRef.current.tracks.filter(t => t.solo).forEach(t => dispatch({ type: 'UPDATE_TRACK', trackId: t.id, patch: { solo: false } })) },
+      { id: 'audio.track.unmuteAll', group: 'Track', label: 'Unmute every track',
+        keywords: 'clear mutes hear everything reset', when: () => editable && projectRef.current.tracks.some(t => t.mute),
+        run: () => projectRef.current.tracks.filter(t => t.mute).forEach(t => dispatch({ type: 'UPDATE_TRACK', trackId: t.id, patch: { mute: false } })) },
+    ] : []),
+
+    // ── Project ──────────────────────────────────────────────────────────────
+    // Tempo and swing are NOT here either. Tempo has to respect the tempo map
+    // (a song with tempo markers must retempo one segment, not the whole
+    // project) and swing has to be pushed to the live engine as well as stored,
+    // or you change it and hear nothing. Both live in Transport and are
+    // registered there.
+    { id: 'audio.project.timesig', group: 'Project', label: 'Change the time signature',
+      keywords: 'meter bar beats 3/4 4/4 6/8 waltz', when: () => editable,
+      run: () => {
+        const v = window.prompt('Time signature, like 4/4', `${project.timeSignatureNum ?? 4}/${project.timeSignatureDen ?? 4}`)
+        const m = v?.match(/^\s*(\d+)\s*\/\s*(\d+)\s*$/)
+        if (m) dispatch({ type: 'SET_TIME_SIG', num: Number(m[1]), den: Number(m[2]) })
+      } },
+    { id: 'audio.project.rename', group: 'Project', label: 'Rename this project',
+      keywords: 'title name song', when: () => editable,
+      run: () => {
+        const name = window.prompt('Project name', project.name || '')
+        if (name) dispatch({ type: 'SET_PROJECT_NAME', name })
+      } },
+    { id: 'audio.project.marker', group: 'Project', label: 'Drop a marker at the playhead',
+      keywords: 'cue locator flag bookmark position', when: () => editable,
+      run: () => {
+        const beat = Math.round(engineRef.current?.currentBeat ?? 0)
+        const name = window.prompt('Marker name', `Marker ${(projectRef.current.cueMarkers?.length ?? 0) + 1}`)
+        if (name) dispatch({ type: 'ADD_CUE_MARKER', marker: { id: crypto.randomUUID(), beat, name } })
+      } },
+    { id: 'audio.project.section', group: 'Project', label: 'Start a new section here',
+      keywords: 'verse chorus bridge intro arrangement structure', when: () => editable,
+      run: () => {
+        const beat = Math.round(engineRef.current?.currentBeat ?? 0)
+        const name = window.prompt('Section name (Verse, Chorus, …)', 'Section')
+        if (name) dispatch({ type: 'ADD_SECTION', section: { id: crypto.randomUUID(), beat, name, color: '#6aa6ff' } })
+      } },
+
+    // ── Effects, by name ─────────────────────────────────────────────────────
+    //
+    // One command per effect type. This is the opposite call to the one made for
+    // instrument presets, which were deliberately NOT enumerated — that list
+    // grows without limit and would swamp everything else in the palette. The
+    // effect list is seventeen and grows about once a year, and "reverb" is
+    // precisely the word someone types when they want a reverb.
+    ...(paletteTrack ? ADD_OPTIONS.map(opt => ({
+      id: `audio.fx.${opt.type}`, group: 'Effects',
+      label: `Add ${opt.label} to ${paletteTrack.name}`,
+      keywords: `effect device fx insert add ${opt.type} ${opt.label}`,
+      when: () => editable,
+      run: () => dispatch({
+        type: 'ADD_EFFECT', trackId: paletteTrack.id,
+        effect: { id: crypto.randomUUID(), type: opt.type, params: makeDefaultEffectParams(opt.type) },
+      }),
+    })) : []),
+
+    // Automation: a volume curve drawn across the whole song. The lane exists in
+    // the data model and in the mixer strip's graph, but nothing named it.
+    ...(paletteTrack ? [{
+      id: 'audio.track.automation', group: 'Track',
+      label: `Draw volume automation on ${paletteTrack.name}`,
+      keywords: 'automation lane curve volume fade ride envelope draw over time',
+      when: () => editable && !project.automationLanes?.some(l => l.trackId === paletteTrack.id && l.parameter === 'volume'),
+      run: () => dispatch({
+        type: 'ADD_AUTOMATION_LANE',
+        lane: {
+          id: crypto.randomUUID(), trackId: paletteTrack.id, parameter: 'volume', label: 'Volume',
+          min: 0, max: 1, defaultValue: Math.min(1, paletteTrack.volume ?? 0.8),
+          points: [], expanded: true,
+        },
+      }),
+    }] : []),
+
+    // Importing audio was drag-and-drop ONLY — there was no button, no menu item
+    // and no file picker anywhere in the studio. If you didn't happen to try
+    // dragging a file onto the window, the feature did not exist for you.
+    { id: 'audio.import', group: 'Audio', label: 'Import an audio file',
+      keywords: 'import add open load wav mp3 sample file drag drop bring in upload',
+      when: () => editable,
+      run: () => {
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = 'audio/*,video/*'
+        input.multiple = true
+        input.onchange = () => { if (input.files?.length) importDroppedFiles([...input.files]) }
+        input.click()
+      } },
+
+    // ── View ─────────────────────────────────────────────────────────────────
+    { id: 'audio.view.pads', group: 'View', label: `${showPads ? 'Hide' : 'Show'} the pads`,
+      keywords: 'drums beat step sequencer trigger play', when: () => !isPodcast,
+      run: () => setShowPads(s => !s) },
+    { id: 'audio.view.sidebar', group: 'View', label: 'Hide the sidebar',
+      keywords: 'collapse panel wider room space', when: () => sidebarOpen,
+      run: () => setSidebarOpen(false) },
+    { id: 'audio.view.appearance', group: 'View', label: 'Change the studio’s colours',
+      keywords: 'theme appearance skin look pattern customise', run: () => setShowAppearance(true) },
+  ], [
+    project.tempo, project.swing, project.name,
+    project.arrangementClips, paletteClip, paletteAudioClip, paletteTrack, clipLabel, editable, project.timeSignatureNum, project.timeSignatureDen,
+    selectedClipIds, metronome, showPads, sidebarOpen, isPodcast, dispatch, doUndo, doRedo,
+    setPosition, setMetronome, setSelectedClipId, setSelectedClipIds, setExpandedPianoRollClipId,
+    setShowPads, setSidebarOpen, setShowAppearance,
+  ])
 
   // ── Render ───────────────────────────────────────────────────────────────────
   const editorContent = (

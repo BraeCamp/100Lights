@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
+import { spliceClipAt } from '@/lib/daw-splice'
 import { createPortal } from 'react-dom'
 import { Plus, Headphones, X, Eraser, ChevronRight, ChevronDown, Circle, Settings, Snowflake, SlidersHorizontal, Music, Piano, Grid3x3, Group, Library, Code, Upload, Minimize2, Maximize2 } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
@@ -1708,50 +1709,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   onIsolate={beat => setIsolateTgt(beat)}
                   onSplice={() => {
                     if (frozen) return
-                    const playhead = engine.currentBeat
-                    if (playhead <= clip.startBeat || playhead >= clip.startBeat + clip.durationBeats) return
-                    const beatOffset = playhead - clip.startBeat
-                    if (isAudioClip(clip) && clip.bufferDuration) {
-                      const bufDur    = clip.bufferDuration
-                      const nativeDur = bufDur - clip.trimStart - clip.trimEnd
-                      const frac      = beatOffset / clip.durationBeats
-                      // Warped clips stretch audio to fill durationBeats — use frac of nativeDur.
-                      // Unwarped clips play at native speed — use actual elapsed seconds.
-                      const splitSec  = clip.warpEnabled
-                        ? (clip.trimStart ?? 0) + frac * nativeDur
-                        : (clip.trimStart ?? 0) + engine.beatsToSeconds(beatOffset)
-                      const leftClip  = { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, trimEnd: Math.max(0, bufDur - splitSec) }
-                      const rightClip = { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, trimStart: splitSec }
-                      dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
-                      dispatch({ type: 'ADD_CLIP', clip: leftClip })
-                      dispatch({ type: 'ADD_CLIP', clip: rightClip })
-                    } else if (!isAudioClip(clip)) {
-                      // Looped clips: materialize the repeats first so both
-                      // halves keep the audible pattern instead of splitting
-                      // the raw (single) pattern.
-                      let notes = clip.notes
-                      if (clip.loopEnabled && clip.loopLengthBeats) {
-                        const L = clip.loopLengthBeats
-                        notes = []
-                        for (let k = 0; k * L < clip.durationBeats; k++) {
-                          for (const n of clip.notes) {
-                            const start = k * L + n.startBeat
-                            if (start >= clip.durationBeats) continue
-                            notes.push({ ...n, id: crypto.randomUUID(), startBeat: start, durationBeats: Math.min(n.durationBeats, clip.durationBeats - start) })
-                          }
-                        }
-                      }
-                      // MIDI: notes before splice go left (truncated if they span), notes at/after go right
-                      const leftNotes  = notes.filter(n => n.startBeat < beatOffset).map(n => ({ ...n, durationBeats: Math.min(n.durationBeats, beatOffset - n.startBeat) }))
-                      const rightNotes = notes.filter(n => n.startBeat >= beatOffset).map(n => ({ ...n, id: crypto.randomUUID(), startBeat: n.startBeat - beatOffset }))
-                      dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })
-                      // Each half's loop unit is its OWN length (the splice
-                      // boundary), so turning loop on later repeats the spliced
-                      // segment — not the note pattern rounded up to a whole bar,
-                      // which would snap the loop back to the un-spliced size.
-                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), durationBeats: beatOffset, notes: leftNotes, loopEnabled: false, loopLengthBeats: beatOffset } })
-                      dispatch({ type: 'ADD_CLIP', clip: { ...clip, id: crypto.randomUUID(), startBeat: playhead, durationBeats: clip.durationBeats - beatOffset, notes: rightNotes, loopEnabled: false, loopLengthBeats: clip.durationBeats - beatOffset } })
-                    }
+                    const cut = spliceClipAt(clip, engine.currentBeat, b => engine.beatsToSeconds(b))
+                    if (!cut) return
+                    dispatch({ type: 'REMOVE_CLIP', clipId: cut.removeId })
+                    for (const half of cut.add) dispatch({ type: 'ADD_CLIP', clip: half })
                   }}
                   onDelete={() => dispatch({ type: 'REMOVE_CLIP', clipId: clip.id })}
                   onCopy={() => onCopyClips?.(selectedClipIds.has(clip.id) ? selectedClipIds : new Set([clip.id]))}
