@@ -377,6 +377,46 @@ export function combined(stamp: string): AudioBuffer | null {
   return b
 }
 
+/**
+ * The most recent render for this CLIP, even if the sound has since changed.
+ *
+ * Brae: "we still have the option of loading procedurally… it should save the
+ * baked audio so that it can play again from that spot without a problem…
+ * can we add audio on top as things are added, and apply inverse audio to
+ * remove things?"
+ *
+ * Adding and subtracting renders is the right instinct and does not survive
+ * contact with this signal path. Summing a new note into an existing buffer only
+ * reproduces the real thing if everything downstream of the sum is LINEAR — and
+ * Apollo's is not. The ladder filter saturates through tanh, the drive stage is
+ * a waveshaper, and the FX chain compresses. Add a voice and the nonlinear
+ * stages see a different signal, so the correct output is not the old output
+ * plus the new note in isolation. Subtracting to remove a note is the same
+ * problem and worse: it would leave the residue of everything the nonlinearity
+ * did differently, which is audible as a ghost of the note you deleted.
+ *
+ * But the PROBLEM behind the idea is real, and this fixes it. Changing a sound
+ * changes the stamp of every clip on that track at once, and each of those clips
+ * then had no cached audio — so they fell back to live synthesis, which is the
+ * expensive path, which is the stutter. Meanwhile a perfectly good render of
+ * that clip was still sitting in the cache under its old key.
+ *
+ * So: on a miss, hand back the previous render for the same clip. You hear the
+ * old sound on the far side of the song for a few seconds while the new one is
+ * built, instead of hearing the studio struggle. The clips near the playhead are
+ * re-rendered first, so the one you are actually listening to updates almost at
+ * once — the stale audio only ever covers the parts you have not reached yet.
+ */
+export function combinedStale(clipId: string): AudioBuffer | null {
+  // Keys are `${clipId}|${hash}`, and Map keeps insertion order, so the LAST
+  // match is the most recently rendered version of this clip.
+  let found: AudioBuffer | null = null
+  for (const [key, buf] of buffers) {
+    if (key.startsWith(clipId + '|')) found = buf
+  }
+  return found
+}
+
 /** True while anything is still being combined — useful for a UI hint. */
 export function combining(): boolean { return inFlight.size > 0 || queue.length > 0 }
 
