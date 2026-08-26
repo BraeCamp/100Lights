@@ -76,6 +76,42 @@ const tempo = ML.estimateTempo(mix.mono, mix.sr)
 const ch = ML.chroma(mix.mono, mix.sr)
 const key = ML.estimateKey(ch)
 
+/**
+ * The chord progression, as roman numerals in the detected key.
+ *
+ * Read from the HARMONIC stem where there is one — chords estimated off a full
+ * mix are fighting a bass line, a snare and a voice for the same chroma bins,
+ * and the answer degrades accordingly. Confidence is reported rather than hidden
+ * because this is the least reliable thing here: a wrong key makes every numeral
+ * wrong at once, so a low `keyConfidence` should discredit this whole field.
+ */
+function progression(sig, sr, keyRoot, keyMode, bpm) {
+  const barSec = (60 / bpm) * 4
+  const win = Math.max(1, Math.round(barSec * sr))
+  const out = []
+  for (let s = 0; s + win <= sig.length; s += win) {
+    const c = ML.chroma(sig.subarray(s, s + win), sr)
+    const est = ML.estimateChord(c, keyRoot, keyMode)
+    if (est) out.push({ t: +(s / sr).toFixed(1), roman: est.roman, name: est.rootName + (est.quality === 'minor' ? 'm' : ''), confidence: +(est.confidence ?? 0).toFixed(2) })
+  }
+  if (!out.length) return null
+  // The repeating unit: the shortest cycle that explains the sequence.
+  const romans = out.map(x => x.roman)
+  let loop = romans.slice(0, Math.min(8, romans.length))
+  for (const n of [2, 4, 8]) {
+    if (romans.length < n * 2) continue
+    const cand = romans.slice(0, n)
+    let hits = 0, tries = 0
+    for (let i = 0; i + n <= romans.length; i += n) { tries++; if (romans.slice(i, i + n).join() === cand.join()) hits++ }
+    if (tries >= 2 && hits / tries >= 0.5) { loop = cand; break }
+  }
+  return {
+    loop,
+    meanConfidence: +(out.reduce((a, b) => a + b.confidence, 0) / out.length).toFixed(2),
+    perBar: out.slice(0, 32),
+  }
+}
+
 // ── Groove, from isolated drums where onsets are actually trustworthy ────────
 function groove(sig, sr, bpm) {
   const beat = 60 / bpm
@@ -131,6 +167,10 @@ function arc(l, r, sr) {
   return { env, sections: bounds.length + 1, boundariesSec: bounds, quietDb: +p(0.05).toFixed(1), loudDb: +p(0.95).toFixed(1) }
 }
 
+// Chords off the harmonic stem where there is one, the full mix otherwise.
+const harmonicSig = hasStems && stems.other ? stems.other.mono : mix.mono
+const prog = progression(harmonicSig, mix.sr, key.root, key.mode, tempo.bpm)
+
 const inst = instrumental()
 const full = analyze(mix.l, mix.r, mix.sr, { withTruePeak: true, withBandStereo: true })
 const instA = inst ? analyze(inst.l, inst.r, inst.sr, { withTruePeak: false, withBandStereo: false }) : null
@@ -152,6 +192,7 @@ const out = {
   seconds: +(mix.frames / mix.sr).toFixed(1),
   tempo: tempo.bpm, tempoConfidence: tempo.confidence,
   key: `${NOTE[key.root]} ${key.mode}`, keyConfidence: +(key.confidence ?? 0).toFixed(2),
+  progression: prog,
   mix: full, instrumental: instA, groove: g, arrangement: shape, balance,
 }
 
@@ -159,6 +200,10 @@ if (asJson) { console.log(JSON.stringify(out, null, 2)); process.exit(0) }
 
 console.log(`\n${out.file}`)
 console.log(`  ${out.seconds}s · ${out.tempo} BPM (conf ${out.tempoConfidence}) · ${out.key} (conf ${out.keyConfidence})`)
+if (prog) {
+  console.log(`  loop: ${prog.loop.join(' – ')}   (chord confidence ${prog.meanConfidence}${out.keyConfidence < 0.55 ? ', KEY IS SHAKY so treat the numerals as unreliable' : ''})`)
+}
+
 console.log(`\nMIX      ${full.lufs} LUFS · true peak ${full.truePeakDb} dBTP · crest ${full.crestDb} · ` +
   `range ${full.dynamicRangeDb} dB · correlation ${full.correlation}`)
 const band = (label, b) => console.log(`  ${label.padEnd(13)}` +

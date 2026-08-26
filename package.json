@@ -63,7 +63,8 @@
     "master": "node scripts/master.mjs",
     "size": "node scripts/project-size.mjs",
     "study": "node scripts/study.mjs",
-    "style": "node scripts/build-style.mjs"
+    "style": "node scripts/build-style.mjs",
+    "artists": "node scripts/compare-artists.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1067.0",

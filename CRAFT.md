@@ -239,7 +239,64 @@ sidechain pump, motif transforms. `npm run test:craft` proves them.
 
 ---
 
-## 10. Where this is thin
+## 10. A worked example — how "i'd ruin it again" was decided
+
+Included because a document like this is easy to agree with and hard to use, and
+because two of the decisions below were wrong in a way that is worth seeing.
+
+### Before a note was written
+
+Every one of these came out of `styles/artemas.json` rather than out of taste:
+
+| decision | from | chosen |
+|---|---|---|
+| which shape | five records, five shapes (§7) | **driving**, the 132–152 family — because the half-time shape is what "Cold Signal" already did, and the point of a range is to pick different points in it |
+| tempo | 95–152 | **148** |
+| key | all five minor, flat keys | **B♭ minor** |
+| what carries it | bass is loudest in all five (−2.4…−6.5 dB) | bass gets the hook and the loudest fader |
+| the midrange | instrumental mid 4.3%, highMid 4.3% | left open — harmony as short stabs, not pads |
+| harmony level | −5.2…−20 dB; −8.5 on this shape | aimed ~10 dB under the bass |
+| travel | 3–15.6 dB, median 7.5 | ~8 dB — so the dynamic scale is 0.72–1.0, not the 0.42–1.0 used before |
+| swing | 49.5–50.0% | none |
+| sections | 2–9, median 3 | 6 |
+
+The progression (i–♭VII–♭VI–♭VII, rootless, three notes) and the one device — a
+bass whose sync opens on every note — are the parts the profile did *not*
+decide. That is the correct division of labour.
+
+### Then eight measured passes
+
+| pass | change | result |
+|---|---|---|
+| 1 | as written above | bass 5.5%, lowMid 37%, **mid 22%** |
+| 2 | keys up an octave, pad down and darker, standing filters | mid 22% → 17% |
+| 3 | swapped the formant pad for the plain dark one | mid → 10% |
+| 4 | bass lowpass to 260 Hz | mid → 2.8%, but bass still 7% |
+| 5 | **trimmed the bass's octave-down oscillator** | bass 7.4% → **3.8% — worse.** Reverted |
+| 6 | **dropped the sub, pushed the bass up** | lowMid → **63% — much worse.** Reverted |
+| 7 | bass osc 2 moved to unison with the fundamental | bass **5% → 18.7%** ✓ |
+| 8 | trimmed the bass fader | one marginal warning; shipped |
+
+**Pass 1 is the one to notice.** The song's whole premise was leaving the singer's
+octave open, and the formant pad was sitting at a 487 Hz centroid with 70% of its
+energy in the mid band. Intent does not survive contact with a patch you did not
+measure.
+
+**Passes 5 and 6 are the other one.** The bass band read almost empty while the
+low mids filled up, and *no fader fixed it* — turning the bass up moved both
+together, twice, in the wrong direction. The cause was sound design: a sync'd saw
+through a resonant ladder has a weak fundamental, and `growlBass`'s second
+oscillator is a sine an octave DOWN, doubling the sub instead of giving the note
+a body. Moving it to unison with the fundamental fixed in one pass what two
+mixing passes had made worse.
+
+That is the argument for the loop. Not that it writes anything — it does not —
+but that it catches the difference between a mixing problem and a synthesis
+problem, which by ear takes far longer and by guessing takes forever.
+
+---
+
+## 11. Where this is thin
 
 - **One artist, five records.** It is a profile of Artemas, labelled dark-pop. It
   needs other artists before the name is honest.
