@@ -129,13 +129,109 @@ function deviceCeiling(): number {
 }
 const DEVICE_CEILING = deviceCeiling()
 
+// ── How long a window will take, and how fast this machine is ───────────────
+//
+// Sizing a window by CLIP COUNT assumes every clip costs the same, and clips do
+// not: measured across Undertow's tracks, four clips of hats render in 1.9s and
+// four clips of pad take 19.4s. Same count, ten times the work — which is Brae's
+// "dense moments lag the playhead", exactly.
+//
+// What does predict it is VOICE-SECONDS: for each note, how many voices the
+// patch spends on it times how long it is held. Correlation against measured
+// render time across eight tracks:
+//
+//   note count      0.375     (i.e. almost nothing)
+//   note-seconds    0.956
+//   voice-seconds   0.972
+//
+// And it is computable from the project — the patch is right there, so the cost
+// of a window is knowable before rendering it.
+//
+// The machine's speed is LEARNED rather than benchmarked. A separate background
+// speed test would measure something other than this workload, cost CPU exactly
+// when we are trying not to spend it, and be stale by the time it mattered. We
+// already do the precise work we want to predict, several times a song, so every
+// render is a free calibration sample — and one that tracks thermal throttling
+// and other tabs as they happen. hardwareConcurrency is used only as the guess
+// for the very first window, before there is anything to learn from.
+// Voice-seconds alone is NOT enough, and getting that wrong froze a frame for
+// 14.7 seconds. A synth with nothing sounding still runs its FX every block, so
+// a window of cheap clips spread across the song costs real time while scoring
+// as almost free — Rim has 29 voice-seconds and took 5,283ms. The span has to be
+// in the estimate. Fitting ms against (voiceSeconds + K x spanSeconds) over the
+// eight measured tracks:
+//
+//   K=0   (voice-seconds only)   error 118%
+//   K=3                          error  53%
+//   K=7                          error  44%
+//
+// So one span-second costs about what seven voice-seconds do, and the two
+// together predict well enough to size a window by.
+const SPAN_WEIGHT = 7
+let msPerUnit = 0
+let renderSamples = 0
+
+function initialMsPerUnit(): number {
+  if (typeof navigator === 'undefined') return 5
+  const cores = navigator.hardwareConcurrency ?? 4
+  // ~3.4 ms/unit measured on this desktop; scale by cores and stay pessimistic,
+  // because guessing FAST is what makes a window overshoot its deadline.
+  return Math.max(2, Math.min(40, 3.4 * (8 / Math.max(1, cores)) * 1.8))
+}
+
+/** Fold one finished render into the running estimate. */
+function learnRenderCost(units: number, ms: number): void {
+  if (units <= 0 || ms <= 0) return
+  const observed = ms / units
+  // Exponential moving average, quick to adapt at first and steadier later.
+  const weight = renderSamples < 3 ? 0.6 : 0.25
+  msPerUnit = msPerUnit
+    ? msPerUnit * (1 - weight) + observed * weight
+    : observed
+  renderSamples++
+}
+
+/** Voices this patch spends per note — unison per enabled oscillator. */
+function voiceCost(patch: ApolloPatch | undefined): number {
+  const p = patch as unknown as {
+    oscs?: { enabled?: boolean; unison?: number }[]
+    sub?: { enabled?: boolean }
+    noise?: { enabled?: boolean }
+  } | undefined
+  let n = 0
+  for (const o of p?.oscs ?? []) if (o.enabled) n += Math.max(1, o.unison ?? 1)
+  if (p?.sub?.enabled) n += 1
+  if (p?.noise?.enabled) n += 1
+  return Math.max(1, n)
+}
+
+/** How much synthesis this clip represents, in voice-seconds. */
+function clipVoiceSeconds(clip: MidiClip, patch: ApolloPatch, spb: number): number {
+  const per = voiceCost(patch)
+  let held = 0
+  for (const n of clip.notes) held += n.durationBeats * spb
+  return per * held
+}
+
+/**
+ * How long a window may take to render.
+ *
+ * While the transport runs this is the thing that decides whether the renderer
+ * stays ahead of the listener: a window that takes longer than the music it
+ * covers loses ground. Kept well under that so there is margin on a busy
+ * machine. With nobody listening there is no deadline, only responsiveness.
+ */
+function renderTimeBudgetMs(): number {
+  return transportPlaying ? 1500 : 5000
+}
+
 /**
  * How much a SINGLE render pass may allocate.
  *
- * Separate from the cache ceiling above, and it has to be: the cache is what we
- * hold, this is the transient spike while rendering, and it is the spike that
- * kills a phone. iOS reclaims a tab well below the numbers a laptop shrugs at,
- * and it does it by reloading the page — which is what "the page keeps
+ * Separate from the cache ceiling above, and from the time budget: the cache is
+ * what we HOLD, this is the transient spike while rendering, and it is the spike
+ * that kills a phone. iOS reclaims a tab well below the numbers a laptop shrugs
+ * at, and it does it by reloading the page — which is what "the page keeps
  * reloading after a few seconds of the song" was.
  */
 export function renderBudgetBytes(): number {
@@ -257,10 +353,20 @@ function breathe(): Promise<void> {
  *  it. Back-to-back, the first succeeds and later ones come back silent, which
  *  is resource exhaustion rather than anything about the patches — the contexts
  *  are finished but not yet reclaimed. Leave a gap between them. */
-const RENDER_GAP_IDLE_MS = 350     // nobody listening — get it done
-const RENDER_GAP_PLAYING_MS = 1500 // someone listening — leave room to draw
-const gap = () => new Promise<void>(r =>
-  setTimeout(r, transportPlaying ? RENDER_GAP_PLAYING_MS : RENDER_GAP_IDLE_MS))
+// Rest in PROPORTION to the work just done, not a flat amount.
+//
+// A flat 1500ms was right when windows were a fixed four clips. Now that they
+// are sized by predicted cost they are often one clip, and a fixed gap starts to
+// dominate: twenty-five small windows spent 37 of 45 seconds simply waiting, and
+// the renderer fell behind a playhead it had previously stayed ahead of. A short
+// render has not built up much of a debt to the interface, so it should not pay
+// a long one back.
+const gap = (lastRenderMs = 0) => {
+  const ms = transportPlaying
+    ? Math.min(1500, Math.max(180, lastRenderMs * 0.6))
+    : Math.min(350, Math.max(80, lastRenderMs * 0.25))
+  return new Promise<void>(r => setTimeout(r, ms))
+}
 
 
 async function drain(): Promise<void> {
@@ -407,6 +513,18 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           return tracks * 2 * ((last - first) * spb2 + 2) * 48_000 * 4
         }
 
+        /** The span a set of clips forces the renderer to cover, in seconds. */
+        const spanSeconds = (set: { clip: MidiClip }[]): number => {
+          if (!set.length) return 0
+          const first = Math.min(...set.map(w => w.clip.startBeat))
+          const last = Math.max(...set.map(w => w.clip.startBeat + w.clip.durationBeats))
+          return (last - first) * spb2 + 2
+        }
+
+        /** Predicted render time: the synthesis plus the span it runs FX over. */
+        const estimateMs = (set: { clip: MidiClip }[], voiceSec: number): number =>
+          (voiceSec + SPAN_WEIGHT * spanSeconds(set)) * msPerUnit
+
         /** Clips ordered by how soon the playhead reaches them. */
         const byUrgency = () => {
           const head = playheadBeat
@@ -420,26 +538,48 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           })
         }
 
+        if (!msPerUnit) msPerUnit = initialMsPerUnit()
+
         while (renderable().length) {
           const queue2 = byUrgency()
           const window: typeof queue2 = []
+          let windowVoiceSec = 0
+          const timeBudget = renderTimeBudgetMs()
           for (const w of queue2) {
-            if (window.length && impliedBytes([...window, w]) > budgetBytes) break
+            const vs = clipVoiceSeconds(w.clip, w.patch, spb2)
+            // TWO independent limits, because they guard different failures.
+            // Bytes is memory: exceed it and a phone reloads the tab. Time is
+            // the deadline: exceed it and the render falls behind the playhead,
+            // which is what made dense passages lag. A window has to satisfy
+            // both, and neither one implies the other — a long quiet clip is
+            // big and cheap, a short dense chord is small and expensive.
+            if (window.length) {
+              if (impliedBytes([...window, w]) > budgetBytes) break
+              if (estimateMs([...window, w], windowVoiceSec + vs) > timeBudget) break
+            }
             window.push(w)
-            // Even inside budget, keep windows small enough to stay responsive.
+            windowVoiceSec += vs
+            // A hard ceiling regardless: many tiny clips in one pass still make
+            // one long slice-and-store on the main thread.
             if (window.length >= 4) break
           }
           if (!window.length) break
           timings.attempts++
           const before = buffers.size
+          const tWin = Date.now()
           const rendered = await renderApolloProject(groups, bpm, {
             only: new Set(window.map(w => w.clip.id)),
           })
+          // Every render is a calibration sample. This is why there is no
+          // separate speed test: the work we want to predict is the work we just
+          // did, so measuring it is both free and exactly on-target — and it
+          // keeps tracking the machine as it throttles or gets busy.
+          learnRenderCost(windowVoiceSec + SPAN_WEIGHT * spanSeconds(window), Date.now() - tWin)
           await keep(rendered, window)
           timings.batches++
           // A window that lands nothing would loop forever on the same clips.
           if (buffers.size === before) { rememberBad(window.map(w => w.key)); break }
-          await gap()
+          await gap(Date.now() - tWin)
         }
         // Render in BATCHES, earliest first, instead of the whole song before
         // anything is usable. On production the all-at-once pass took 113
@@ -489,7 +629,7 @@ export function clearCombined(): void {
 
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
-export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
+export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
   // Peak of each cached render: a buffer that exists but is silent looks
   // identical to a working one from the outside, and silently-empty renders are
   // exactly the failure mode this cache can hide.
@@ -509,6 +649,9 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
     // up on" — without them a retry-forever bug and a condemn-forever bug look
     // exactly the same from out here.
     striking: struck.filter(n => n < STRIKES_TO_GIVE_UP).length,
+    // What the cost model currently believes about this machine.
+    msPerUnit: +msPerUnit.toFixed(2),
+    renderSamples,
     givenUp: struck.filter(n => n >= STRIKES_TO_GIVE_UP).length,
     // Held vs allowed. A clip that rendered fine and was then evicted is
     // indistinguishable from one that never rendered, from the outside — both
