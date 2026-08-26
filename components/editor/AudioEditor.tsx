@@ -734,6 +734,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   // user edit, cleared once the local snapshot lands — same transient semantics
   // as the video editor's isDirty.
   const [dawDirty, setDawDirty] = useState(false)
+  /** Progress text while baking synth tracks to audio; null when not freezing. */
+  const [freezing, setFreezing] = useState<string | null>(null)
   const dirtyReadyRef = useRef(false)   // skip the first post-load settle
   // Offline sync (Phase C): a pending 3-way merge whose conflicts need resolving.
   const [pendingMerge, setPendingMerge] = useState<{ merged: DawProject; conflicts: MergeConflict[] } | null>(null)
@@ -2227,6 +2229,48 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.track.add', group: 'Audio', label: 'Add track', keywords: 'new create track',
       when: () => !props.readOnly,
       run: () => dispatch({ type: 'ADD_TRACK', id: crypto.randomUUID(), name: `Track ${projectRef.current.tracks.length + 1}` }) },
+    // ── Bake the synth into audio ───────────────────────────────────────────
+    // The permanent version of what combining does temporarily. Combining
+    // re-renders in every browser that opens the song; freezing renders ONCE and
+    // stores the audio in the project, so from then on there is no synthesis at
+    // all — just audio clips, the cheapest thing the engine can play.
+    //
+    // Reversible on purpose: the notes and the patch ride along on each frozen
+    // clip, so Unfreeze puts the piano roll back exactly.
+    {
+      id: 'audio.freeze', group: 'Sound', label: 'Freeze synth tracks to audio (faster playback)',
+      keywords: 'bake render bounce commit apollo performance speed lag',
+      when: () => !props.readOnly && projectRef.current.tracks.some(t => t.instrument?.type === 'apollo'),
+      run: () => { void (async () => {
+        const { freezeApolloProject } = await import('@/lib/apollo/daw-freeze')
+        setFreezing('Freezing…')
+        try {
+          const frozen = await freezeApolloProject(projectRef.current, {
+            onProgress: (d, total) => setFreezing(`Freezing ${d}/${total}…`),
+          })
+          const baked = frozen.arrangementClips.filter(c => c.kind === 'audio' && 'frozenFrom' in c).length
+          rawDispatch({ type: 'LOAD_PROJECT', project: migrateProject(frozen) })
+          setFreezing(baked ? `Froze ${baked} clips` : 'Nothing could be frozen')
+        } catch {
+          setFreezing('Freeze failed')
+        }
+        setTimeout(() => setFreezing(null), 2600)
+      })() },
+    },
+    {
+      id: 'audio.thaw', group: 'Sound', label: 'Unfreeze — back to editable synth clips',
+      keywords: 'thaw unbake restore midi notes edit apollo',
+      when: () => !props.readOnly && projectRef.current.arrangementClips.some(c => c.kind === 'audio' && 'frozenFrom' in c),
+      run: () => { void (async () => {
+        const { thawClip } = await import('@/lib/apollo/daw-freeze')
+        const p = projectRef.current
+        const clips = p.arrangementClips.map(c => {
+          if (c.kind !== 'audio' || !('frozenFrom' in c)) return c
+          return thawClip(c as Parameters<typeof thawClip>[0]) ?? c
+        })
+        rawDispatch({ type: 'LOAD_PROJECT', project: migrateProject({ ...p, arrangementClips: clips }) })
+      })() },
+    },
     // Density lives in the palette rather than as another toolbar button —
     // adding a control to save space would be a strange way to save space.
     ...UI_DENSITIES.filter(d => d !== density).map(d => ({
@@ -2295,6 +2339,21 @@ export default function AudioEditor(props: AudioEditorProps) {
           position: 'relative',
         }}
       >
+        {/* Freezing renders the whole song, which takes a while — say so, or it
+            looks like the studio has hung. */}
+        {freezing && (
+          <div
+            data-ui-el="freeze-status"
+            style={{
+              position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 950,
+              padding: '7px 16px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+              background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--accent)',
+              color: 'var(--text-primary)', boxShadow: '0 8px 24px rgba(0,0,0,0.35)', pointerEvents: 'none',
+            }}
+          >
+            {freezing}
+          </div>
+        )}
         {draggingAudioOver && !props.readOnly && (
           <div
             style={{

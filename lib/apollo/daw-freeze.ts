@@ -394,11 +394,50 @@ export async function freezeApolloProject(
 
   const clips: DawClip[] = [...project.arrangementClips]
   let done = 0
+
+  // Render everything through the SAME path the combine cache uses, in small
+  // batches, rather than one OfflineAudioContext per clip.
+  //
+  // Per-clip contexts are what made renders come back silent — a browser keeps
+  // only a couple alive, and this loop would ask for one per clip, 39 times for
+  // Undertow. That mattered less when a silent render just meant a clip played
+  // live; here it would BAKE the silence into the project permanently, which is
+  // the worst possible way for this to fail. renderApolloProject waits for each
+  // worklet to acknowledge its patch before rendering a sample.
+  const groups: TrackRenderGroup[] = [...apolloTracks.entries()].map(([trackId, patch]) => ({
+    trackId, patch, clips: targets.filter(c => c.trackId === trackId),
+  })).filter(g => g.clips.length)
+
+  const BATCH = 4
+  const ordered = [...targets].sort((a, b) => a.startBeat - b.startBeat)
+  const rendered = new Map<string, AudioBuffer>()
+  for (let i = 0; i < ordered.length; i += BATCH) {
+    const batch = ordered.slice(i, i + BATCH)
+    onProgress?.(done, targets.length, batch[0]?.name || 'rendering')
+    try {
+      const out = await renderApolloProject(groups, project.tempo, {
+        tailSec, only: new Set(batch.map(c => c.id)),
+      })
+      for (const [id, buf] of out) if (!rendered.has(id)) rendered.set(id, buf)
+    } catch { /* this batch stays unfrozen; the clips keep playing live */ }
+    done += batch.length
+    await breathe()
+  }
+
+  done = 0
   for (const clip of targets) {
     const patch = apolloTracks.get(clip.trackId)!
     onProgress?.(done, targets.length, clip.name || clip.id)
     try {
-      const buffer = await renderApolloClip(clip, patch, project.tempo, { tailSec })
+      const buffer = rendered.get(clip.id)
+      // Never bake silence. A clip that came back empty stays a synth clip —
+      // worse for CPU, but recoverable, and the user can freeze again. A silent
+      // audio clip in a saved project is not recoverable by anyone.
+      if (!buffer) throw new Error('no render')
+      let peak = 0
+      const d = buffer.getChannelData(0)
+      for (let s = 0; s < d.length; s += 256) { const v = Math.abs(d[s]); if (v > peak) peak = v }
+      if (peak < 1e-4) throw new Error('silent render')
       // Into the Sound Library, so it survives a reload and shows up as a real
       // sound the user owns — not a blob URL that dies with the session.
       const libraryId = await saveBounceToLibrary(`${clip.name || 'Apollo clip'} (frozen)`, buffer)
