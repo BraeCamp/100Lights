@@ -124,7 +124,7 @@ export const subBass = () => patch('Sub', p => {
 
 /** The moving bass: detuned saws with weight underneath and a filter pluck. */
 export const bass = () => patch('Bass', p => {
-  osc(p, 0, { level: 0.85, enabled: true, unison: 2, detune: 0.22, width: 0.6 })
+  osc(p, 0, { level: 0.85, enabled: true, unison: 3, detune: 0.20, width: 0.6 })
   p.oscs[0].wt.tableId = 'analog-saws'
   p.oscs[0].wt.pos = 0.3
   osc(p, 1, { level: 0.26, enabled: true, octave: -1 })
@@ -154,10 +154,10 @@ export const pad = () => patch('Pad', p => {
   // they are already fading. Staying under 16 ACTIVE is the whole trick. Three
   // voices per note puts a four-note chord at 12. The width lost to fewer unison
   // voices is bought back with wider detune and full stereo spread.
-  osc(p, 0, { level: 0.48, enabled: true, unison: 2, detune: 0.46, width: 1, stereo: 0.95, pan: -0.15 })
+  osc(p, 0, { level: 0.48, enabled: true, unison: 2, detune: 0.05, width: 1, stereo: 0.95, pan: -0.15 })
   p.oscs[0].wt.tableId = 'pwm'
   p.oscs[0].wt.pos = 0.35
-  osc(p, 1, { level: 0.32, enabled: true, unison: 1, detune: 0.28, width: 1, stereo: 0.9, pan: 0.18, fine: 6 })
+  osc(p, 1, { level: 0.32, enabled: true, unison: 1, detune: 0.28, width: 1, stereo: 0.9, pan: 0.18, fine: 9 })
   p.oscs[1].wt.tableId = 'analog-saws'
   p.oscs[1].wt.pos = 0.55
   env(p, 0, { attack: 1.2, decay: 1.1, sustain: 0.7, release: 2.6, aCurve: -0.2 })
@@ -170,7 +170,7 @@ export const pad = () => patch('Pad', p => {
 
 /** Short bell-ish keys for stabs and arps. */
 export const keys = () => patch('Keys', p => {
-  osc(p, 0, { level: 0.55, enabled: true, unison: 2, detune: 0.12, width: 0.5 })
+  osc(p, 0, { level: 0.55, enabled: true, unison: 3, detune: 0.12, width: 0.5 })
   p.oscs[0].wt.tableId = 'bells'
   p.oscs[0].wt.pos = 0.38
   osc(p, 1, { level: 0.18, enabled: true, octave: -1 })
@@ -210,7 +210,7 @@ export const organ = () => patch('Organ', p => {
 
 /** Plucked and bright, harpsichord-leaning: fast decay, no sustain to speak of. */
 export const harpsi = () => patch('Harpsichord', p => {
-  osc(p, 0, { level: 0.7, enabled: true, unison: 2, detune: 0.1, width: 0.5 })
+  osc(p, 0, { level: 0.7, enabled: true, unison: 3, detune: 0.10, width: 0.5 })
   p.oscs[0].wt.tableId = 'bells'
   p.oscs[0].wt.pos = 0.5
   osc(p, 1, { level: 0.25, enabled: true })
@@ -227,10 +227,10 @@ export const harpsi = () => patch('Harpsichord', p => {
 export const strings = () => patch('Strings', p => {
   // Two voices, not three: strings play CHORDS, and at 5 voices per note a
   // four-note chord was 20 against a limit of 16. Wider detune keeps the size.
-  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.38, width: 1, stereo: 0.9, pan: -0.1 })
+  osc(p, 0, { level: 0.6, enabled: true, unison: 3, detune: 0.20, width: 1, stereo: 0.9, pan: -0.1 })
   p.oscs[0].wt.tableId = 'analog-saws'
   p.oscs[0].wt.pos = 0.4
-  osc(p, 1, { level: 0.34, enabled: true, unison: 2, detune: 0.2, width: 1, stereo: 0.7, pan: 0.12, fine: 5 })
+  osc(p, 1, { level: 0.34, enabled: true, unison: 1, detune: 0.2, width: 1, stereo: 0.7, pan: 0.12, fine: 7 })
   p.oscs[1].wt.tableId = 'pwm'
   p.oscs[1].wt.pos = 0.3
   env(p, 0, { attack: 0.25, decay: 0.8, sustain: 0.72, release: 1.2 })
@@ -250,7 +250,7 @@ export const cowbell = () => patch('Cowbell', p => {
 
 /** Funk bass: short, resonant, with a filter pluck on every note. */
 export const funkBass = () => patch('Funk Bass', p => {
-  osc(p, 0, { level: 0.85, enabled: true, unison: 2, detune: 0.12, width: 0.5 })
+  osc(p, 0, { level: 0.85, enabled: true, unison: 3, detune: 0.12, width: 0.5 })
   p.oscs[0].wt.tableId = 'analog-saws'
   p.oscs[0].wt.pos = 0.25
   osc(p, 1, { level: 0.3, enabled: true, octave: -1 })
@@ -265,7 +265,7 @@ export const funkBass = () => patch('Funk Bass', p => {
 
 /** Round electric-piano-ish keys for the disco chords. */
 export const warmEp = () => patch('Warm Keys', p => {
-  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.08, width: 0.4 })
+  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.05, width: 0.4 })
   p.oscs[0].wt.tableId = 'basic-shapes'
   p.oscs[0].wt.pos = 0.12
   osc(p, 1, { level: 0.3, enabled: true })
@@ -275,6 +275,119 @@ export const warmEp = () => patch('Warm Keys', p => {
   filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.6, res: 0.1, keytrack: 0.25 })
   p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.3 }))
   p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.22 }))
+})
+
+// ── Brightness ──────────────────────────────────────────────────────────────
+// Added after `scripts/voice-audit.mjs` put the problem in a table: eight of
+// these eighteen voices put most of their energy in 120–400 Hz, and NOT ONE
+// pitched voice reached presence (2.5–5 kHz) or above. Everything from 900 Hz
+// up was hi-hats.
+//
+// That is the measured gap against real music: our songs carry 1.5% of their
+// energy between 900 Hz and 5 kHz where the ElevenLabs reference set carries
+// 5.4%. It is also, from the other side, the register clash the note analysis
+// keeps finding — when every harmony instrument occupies the same octave and a
+// half, they mask each other and no fader fixes it.
+//
+// The instinct is to open every filter, and that is wrong: it makes a thin,
+// harsh palette instead of a dark one, and the dark voices are dark on purpose.
+// What real instruments have in that region is mostly the ATTACK — the pick,
+// the hammer, the stick — a few tens of milliseconds of bright noise over a
+// body that stays warm. So these voices are built that way, and the dark ones
+// are left alone.
+
+/**
+ * A short bright attack layer on osc C — the pick, hammer or stick.
+ *
+ * Level starts at zero and is driven by env 3, so the transient exists only for
+ * its decay and never colours the sustain. `keytrack:false` makes it the same
+ * click at every pitch, which is what a stick or a fret noise is; a struck bar
+ * or a bell tine should track.
+ */
+function transient(p, { level = 0.45, decay = 0.035, table = 'metallic', pos = 0.5, keytrack = true, octave = 1 } = {}) {
+  osc(p, 2, { enabled: true, engine: 'wavetable', level: 0, keytrackPitch: keytrack, octave })
+  p.oscs[2].wt.tableId = table
+  p.oscs[2].wt.pos = pos
+  env(p, 2, { attack: 0.0004, decay, sustain: 0, release: 0.02, dCurve: -0.6 })
+  p.matrix.push(mod('env3', 'osc2.level', level))
+}
+
+/** Plucked and forward — the voice that carries definition in a busy bar. */
+export const pluck = () => patch('Pluck', p => {
+  osc(p, 0, { level: 0.62, enabled: true, unison: 3, detune: 0.12, width: 0.8, stereo: 0.5 })
+  p.oscs[0].wt.tableId = 'analog-saws'
+  p.oscs[0].wt.pos = 0.62
+  osc(p, 1, { level: 0.22, enabled: true, octave: 1, fine: 4 })
+  p.oscs[1].wt.tableId = 'bells'
+  p.oscs[1].wt.pos = 0.55
+  env(p, 0, { attack: 0.001, decay: 0.55, sustain: 0.06, release: 0.32, dCurve: -0.55 })
+  env(p, 1, { attack: 0.001, decay: 0.22, sustain: 0, release: 0.1 })
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.30))
+  transient(p, { level: 0.32, decay: 0.028, table: 'metallic', pos: 0.6, keytrack: false })
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.88, res: 0.16, keytrack: 0.5 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.18 }))
+})
+
+/** Struck glass — high accents, and the only voice that reaches brilliance. */
+export const glass = () => patch('Glass', p => {
+  osc(p, 0, { level: 0.55, enabled: true, octave: 1, unison: 3, detune: 0.08, width: 0.7, stereo: 0.6 })
+  p.oscs[0].wt.tableId = 'bells'
+  p.oscs[0].wt.pos = 0.85
+  osc(p, 1, { level: 0.3, enabled: true, octave: 2, fine: 7 })
+  p.oscs[1].wt.tableId = 'metallic'
+  p.oscs[1].wt.pos = 0.4
+  env(p, 0, { attack: 0.0008, decay: 1.6, sustain: 0.02, release: 0.9, dCurve: -0.7 })
+  filt(p, 0, { enabled: true, type: 'hp12', cutoff: 0.22, res: 0.05 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.34 }))
+})
+
+/** Electric piano with a real tine: warm body, bright bark on the attack. */
+export const tine = () => patch('Tine Keys', p => {
+  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.05, width: 0.4 })
+  p.oscs[0].wt.tableId = 'basic-shapes'
+  p.oscs[0].wt.pos = 0.1
+  osc(p, 1, { level: 0.34, enabled: true, octave: 2, fine: 6 })
+  p.oscs[1].wt.tableId = 'bells'
+  p.oscs[1].wt.pos = 0.7
+  env(p, 0, { attack: 0.003, decay: 1.0, sustain: 0.22, release: 0.55, dCurve: -0.45 })
+  env(p, 1, { attack: 0.001, decay: 0.34, sustain: 0, release: 0.12 })
+  p.matrix.push(mod('env2', 'osc1.level', 0.22))
+  transient(p, { level: 0.26, decay: 0.02, table: 'metallic', pos: 0.35, keytrack: true, octave: 2 })
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.82, res: 0.08, keytrack: 0.3 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.28 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
+})
+
+/** Picked string — fret noise on the front, mid-forward body. */
+export const picked = () => patch('Picked', p => {
+  osc(p, 0, { level: 0.7, enabled: true, unison: 3, detune: 0.1, width: 0.7, stereo: 0.45 })
+  p.oscs[0].wt.tableId = 'harmonic-sweep'
+  p.oscs[0].wt.pos = 0.45
+  osc(p, 1, { level: 0.2, enabled: true, fine: -5 })
+  p.oscs[1].wt.tableId = 'analog-saws'
+  p.oscs[1].wt.pos = 0.7
+  env(p, 0, { attack: 0.002, decay: 0.7, sustain: 0.1, release: 0.35, dCurve: -0.5 })
+  env(p, 1, { attack: 0.001, decay: 0.18, sustain: 0, release: 0.08 })
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.26))
+  transient(p, { level: 0.38, decay: 0.022, table: 'digital-glitch', pos: 0.3, keytrack: false })
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.8, res: 0.2, keytrack: 0.45 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
+})
+
+/** A pad that has a top: the warm bed, plus a quiet octave of air above it. */
+export const airPad = () => patch('Air Pad', p => {
+  osc(p, 0, { level: 0.46, enabled: true, unison: 2, detune: 0.05, width: 1, stereo: 0.95, pan: -0.15 })
+  p.oscs[0].wt.tableId = 'pwm'
+  p.oscs[0].wt.pos = 0.35
+  osc(p, 1, { level: 0.2, enabled: true, octave: 1, fine: 9, width: 1, stereo: 0.9, pan: 0.2 })
+  p.oscs[1].wt.tableId = 'harmonic-sweep'
+  p.oscs[1].wt.pos = 0.6
+  env(p, 0, { attack: 1.0, decay: 1.2, sustain: 0.68, release: 2.4, aCurve: -0.2 })
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.72, res: 0.08, keytrack: 0.2 })
+  p.lfos[0] = { ...p.lfos[0], rate: 0.08, sync: false }
+  p.matrix.push(mod('lfo1', 'f1.cutoff', 0.09, { bipolar: true }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.4 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.32 }))
 })
 
 export const VOICES = {
@@ -296,6 +409,11 @@ export const VOICES = {
   cowbell:{ build: cowbell,              notes: '72:0:0.1',        seconds: 0.8 },
   funkbas:{ build: funkBass,             notes: '45:0:0.3,52:0.5:0.3', seconds: 1.6 },
   warmep: { build: warmEp,               notes: '57:0:1,61:0:1,64:0:1', seconds: 2.5 },
+  pluck:  { build: pluck,                notes: '60:0:0.5,67:0.25:0.5', seconds: 2.0 },
+  glass:  { build: glass,                notes: '72:0:1.5,79:0:1.5',    seconds: 3.0 },
+  tine:   { build: tine,                 notes: '57:0:1,61:0:1,64:0:1', seconds: 2.5 },
+  picked: { build: picked,               notes: '52:0:0.6,59:0.25:0.6', seconds: 2.0 },
+  airpad: { build: airPad,               notes: '58:0:3,62:0:3,65:0:3', seconds: 5.0 },
 }
 
 if (process.argv.includes('--audit')) {
