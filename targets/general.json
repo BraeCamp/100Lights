@@ -1,0 +1,103 @@
+{
+  "name": "general",
+  "provisional": false,
+  "builtFrom": {
+    "tracks": 9,
+    "files": [
+      "mix.wav",
+      "mix.mp3",
+      "mix.mp3",
+      "mix.mp3",
+      "mix.mp3",
+      "mix.mp3",
+      "mix.mp3",
+      "mix.mp3",
+      "mix.mp3"
+    ],
+    "when": "(stamped by the caller)"
+  },
+  "truePeakDb": [
+    null,
+    -1
+  ],
+  "clippedSamples": [
+    null,
+    0
+  ],
+  "lufs": [
+    -32,
+    -8
+  ],
+  "bands": {
+    "sub": [
+      0.1338,
+      0.5025
+    ],
+    "bass": [
+      0.1727,
+      0.4375
+    ],
+    "lowMid": [
+      0.0807,
+      0.3417
+    ],
+    "mid": [
+      0.0373,
+      0.2791
+    ],
+    "highMid": [
+      0.0257,
+      0.0589
+    ],
+    "presence": [
+      0.0064,
+      0.0325
+    ],
+    "brilliance": [
+      0.0006,
+      0.0149
+    ],
+    "air": [
+      0,
+      0.0022
+    ]
+  },
+  "centroidHz": [
+    227,
+    472
+  ],
+  "crestDb": [
+    12.99,
+    18.56
+  ],
+  "dynamicRangeDb": [
+    17.32,
+    null
+  ],
+  "correlation": [
+    null,
+    0.982
+  ],
+  "maxOnGridPct": 85,
+  "minVelocitySpread": 4,
+  "maxSectionChurn": 2,
+  "minSections": 4,
+  "minSeconds": 90,
+  "medians": {
+    "lufs": -13.05,
+    "crestDb": 14.6,
+    "dynamicRangeDb": 26.12,
+    "centroidHz": 381,
+    "correlation": 0.843,
+    "bands": {
+      "sub": 0.2144,
+      "bass": 0.2744,
+      "lowMid": 0.2142,
+      "mid": 0.0559,
+      "highMid": 0.0328,
+      "presence": 0.0138,
+      "brilliance": 0.0066,
+      "air": 0.0004
+    }
+  }
+}
