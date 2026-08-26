@@ -24,6 +24,12 @@ import type { MidiClip } from '@/lib/daw-types'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { renderApolloProject, freezeStamp, type TrackRenderGroup } from '@/lib/apollo/daw-freeze'
 import { loadCombined, saveCombined } from '@/lib/apollo/combine-store'
+import { keepForNextTime, setCombineWriter, setStorageTransportPlaying, storagePolicy } from '@/lib/apollo/storage-policy'
+
+// The policy module does the deciding; the store does the writing. Wiring them
+// here keeps storage-policy free of any dependency on IndexedDB, which is what
+// lets it be reasoned about (and tested) without a browser.
+setCombineWriter(saveCombined)
 
 // AudioBuffers are not tied to the context that allocated them, so one
 // throwaway context is enough to rebuild what was stored.
@@ -417,7 +423,11 @@ export function setPlayhead(beat: number): void {
  * matters any more, because the first sound arrives in half a second either way.
  */
 let transportPlaying = false
-export function setTransportPlaying(v: boolean): void { transportPlaying = v }
+export function setTransportPlaying(v: boolean): void {
+  transportPlaying = v
+  // Stopping is the cue to write down everything rendered while playing.
+  setStorageTransportPlaying(v)
+}
 
 /** Hand the main thread back between pieces of a long job. scheduler.yield()
  *  resumes at the front of the queue after a frame, so splitting work up doesn't
@@ -487,12 +497,16 @@ async function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip;
     buffers.set(w.key, buf)
     landed.push(w.key)
     // A clip becomes playable the moment it is in `buffers`; persisting it is
-    // for the NEXT page load and nobody is waiting on it. saveCombined converts
-    // both channels to Int16 synchronously before its first await, so firing
-    // twenty-five of them in a tight loop is twenty-five conversions in one
-    // task. Yield between clips: the song stays combined just as fast, the
-    // interface just gets a turn in between.
-    void saveCombined(w.key, buf)
+    // for the NEXT page load and nobody is waiting on it. So the write is handed
+    // to the storage policy, which holds it until the transport is stopped and
+    // then writes in bursts sized to how fast this machine actually writes.
+    //
+    // That ordering is the point: saveCombined converts both channels to Int16
+    // synchronously before its first await, so a burst of them during playback
+    // is heard. The same burst while paused costs nothing. And on a device with
+    // no usable storage the policy drops it, rather than failing once per clip
+    // after doing the conversion work each time.
+    void keepForNextTime(w.key, buf)
     await breathe()
   }
   forgiveBad(landed)   // it rendered, so any earlier strike was contention
@@ -566,9 +580,16 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // over data that has not changed.
         const tDisk = Date.now()
         let fromDisk = 0
-        for (const w of missing()) {
-          const stored = await loadCombined(w.key, alloc())
-          if (stored) { buffers.set(w.key, stored); fromDisk++ }
+        // Skip the disk entirely where there is none. Asking for thirty-nine
+        // clips that cannot exist is thirty-nine round trips to a database that
+        // will answer "no" — pure latency in front of the first sound, on
+        // exactly the devices that can least afford it.
+        const policy = await storagePolicy()
+        if (policy.mode !== 'none') {
+          for (const w of missing()) {
+            const stored = await loadCombined(w.key, alloc())
+            if (stored) { buffers.set(w.key, stored); fromDisk++ }
+          }
         }
         timings.diskMs = Date.now() - tDisk
         timings.fromDisk = fromDisk

@@ -18,6 +18,7 @@
     "lib/command-palette.ts",
     "lib/daw-splice.ts",
     "lib/daw-effect-catalog.ts",
-    "lib/audio-capture.ts"
+    "lib/audio-capture.ts",
+    "lib/apollo/storage-policy.ts"
   ]
 }
