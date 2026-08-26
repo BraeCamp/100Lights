@@ -178,7 +178,13 @@ export const pad = () => patch('Pad', p => {
 
 /** Short bell-ish keys for stabs and arps. */
 export const keys = () => patch('Keys', p => {
-  osc(p, 0, { level: 0.55, enabled: true, unison: 2, detune: 0.05, width: 1, stereo: 0.6 })
+  // 0.03, not 0.05, because BEAT RATE SCALES WITH PITCH. Two voices n cents
+  // apart beat at roughly f x n / 1731 Hz, so a spread that is lush down low is
+  // rough up high: at 0.05 this patch beat at 2.3Hz playing G4 and 5.8Hz playing
+  // B5 — the same setting, on the right side of the roughness threshold in one
+  // register and the wrong side in the other. This voice is used for bell-ish
+  // parts an octave or two up, so it is tuned for where it actually plays.
+  osc(p, 0, { level: 0.55, enabled: true, unison: 2, detune: 0.03, width: 1, stereo: 0.6 })
   p.oscs[0].wt.tableId = 'bells'
   p.oscs[0].wt.pos = 0.38
   osc(p, 1, { level: 0.18, enabled: true, octave: -1 })
