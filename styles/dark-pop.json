@@ -1,0 +1,206 @@
+{
+  "name": "dark-pop",
+  "kind": "style profile — ranges, not a recipe",
+  "measuredFrom": [
+    "Artemas - cross my heart (lyric video).wav",
+    "Artemas - how could u love somebody like me？ (official lyric video).wav",
+    "Artemas - i always kinda knew you'd be the death of me (official lyric video).wav",
+    "Artemas - i like the way you kiss me (official music video).wav",
+    "Artemas - if u think i'm pretty (lyric video).wav"
+  ],
+  "tracks": 5,
+  "tempo": {
+    "lo": 95,
+    "hi": 152,
+    "median": 98
+  },
+  "keys": [
+    "Bb minor",
+    "Gb minor",
+    "Ab minor",
+    "Eb minor",
+    "C minor"
+  ],
+  "fullMix": {
+    "lufs": {
+      "lo": -9.53,
+      "hi": -5.58,
+      "median": -6.53
+    },
+    "crestDb": {
+      "lo": 8.13,
+      "hi": 9.75,
+      "median": 8.45
+    },
+    "dynamicRangeDb": {
+      "lo": 1.38,
+      "hi": 9.39,
+      "median": 3.74
+    },
+    "correlation": {
+      "lo": 0.438,
+      "hi": 0.932,
+      "median": 0.617
+    },
+    "centroidHz": {
+      "lo": 192,
+      "hi": 894,
+      "median": 622
+    },
+    "from": 5,
+    "bands": {
+      "sub": {
+        "lo": 0.11,
+        "hi": 0.564,
+        "median": 0.298
+      },
+      "bass": {
+        "lo": 0.141,
+        "hi": 0.357,
+        "median": 0.221
+      },
+      "lowMid": {
+        "lo": 0.15,
+        "hi": 0.296,
+        "median": 0.211
+      },
+      "mid": {
+        "lo": 0.03,
+        "hi": 0.219,
+        "median": 0.155
+      },
+      "highMid": {
+        "lo": 0.013,
+        "hi": 0.211,
+        "median": 0.083
+      },
+      "presence": {
+        "lo": 0.006,
+        "hi": 0.043,
+        "median": 0.025
+      },
+      "brilliance": {
+        "lo": 0.006,
+        "hi": 0.029,
+        "median": 0.02
+      },
+      "air": {
+        "lo": 0.001,
+        "hi": 0.007,
+        "median": 0.005
+      }
+    }
+  },
+  "instrumental": {
+    "centroidHz": {
+      "lo": 91,
+      "hi": 533,
+      "median": 309
+    },
+    "from": 5,
+    "bands": {
+      "sub": {
+        "lo": 0.097,
+        "hi": 0.608,
+        "median": 0.361
+      },
+      "bass": {
+        "lo": 0.246,
+        "hi": 0.513,
+        "median": 0.274
+      },
+      "lowMid": {
+        "lo": 0.108,
+        "hi": 0.3,
+        "median": 0.22
+      },
+      "mid": {
+        "lo": 0.005,
+        "hi": 0.104,
+        "median": 0.043
+      },
+      "highMid": {
+        "lo": 0.002,
+        "hi": 0.059,
+        "median": 0.043
+      },
+      "presence": {
+        "lo": 0.001,
+        "hi": 0.028,
+        "median": 0.007
+      },
+      "brilliance": {
+        "lo": 0.001,
+        "hi": 0.023,
+        "median": 0.007
+      },
+      "air": {
+        "lo": 0,
+        "hi": 0.006,
+        "median": 0.002
+      }
+    }
+  },
+  "groove": {
+    "onsetsPerSec": {
+      "lo": 5.54,
+      "hi": 9.18,
+      "median": 7.36
+    },
+    "spreadMs": {
+      "lo": 28.3,
+      "hi": 44.5,
+      "median": 43.7
+    },
+    "swingPct": {
+      "lo": 49.5,
+      "hi": 50,
+      "median": 49.8
+    },
+    "meanDeviationMs": {
+      "lo": -0.8,
+      "hi": 0.3,
+      "median": 0
+    }
+  },
+  "arrangement": {
+    "sections": {
+      "lo": 2,
+      "hi": 9,
+      "median": 3
+    },
+    "travelsDb": {
+      "lo": 3,
+      "hi": 15.6,
+      "median": 7.5
+    },
+    "seconds": {
+      "lo": 113.6,
+      "hi": 155.1,
+      "median": 136.1
+    }
+  },
+  "balance": {
+    "from": 5,
+    "bass": {
+      "lo": -6.5,
+      "hi": -2.4,
+      "median": -4.1
+    },
+    "drums": {
+      "lo": -7,
+      "hi": -5.3,
+      "median": -5.7
+    },
+    "vocals": {
+      "lo": -9,
+      "hi": -5.5,
+      "median": -6.6
+    },
+    "other": {
+      "lo": -20,
+      "hi": -5.2,
+      "median": -8.8
+    }
+  }
+}

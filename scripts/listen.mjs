@@ -56,6 +56,37 @@ if (typeof targetName === 'string') {
   target = JSON.parse(readFileSync(p, 'utf8'))
 }
 
+// A STYLE is measured from real records of a kind (see scripts/build-style.mjs)
+// and is the better comparison when there is one, for a specific reason: it
+// compares against the reference's INSTRUMENTAL, and our music is instrumental.
+// Judging our tracks against a finished vocal record blames the arrangement for
+// a missing singer — the voice occupies exactly the midrange we would otherwise
+// be told to fill.
+const styleName = flag('style')
+if (typeof styleName === 'string') {
+  const p = join(ROOT, 'styles', `${styleName}.json`)
+  if (!existsSync(p)) { console.error(`no style at ${p} — run scripts/build-style.mjs first`); process.exit(2) }
+  const s = JSON.parse(readFileSync(p, 'utf8'))
+  const src = s.instrumental?.bands ?? s.fullMix?.bands
+  if (!src) { console.error(`${styleName} has no band data`); process.exit(2) }
+  // Widen each measured range a little: a style built from five records has seen
+  // five points, not the whole space, and a hard edge would fail songs that are
+  // simply somewhere those five did not happen to go.
+  const pad = ([lo, hi]) => { const w = Math.max(0.02, (hi - lo) * 0.25); return [Math.max(0, lo - w), hi + w] }
+  target = {
+    ...DEFAULT_TARGET,
+    name: `${s.name} (${s.tracks} records, instrumental)`,
+    provisional: false,
+    bands: Object.fromEntries(Object.entries(src).map(([b, r]) => [b, pad([r.lo, r.hi])])),
+    centroidHz: s.instrumental?.centroidHz ? pad([s.instrumental.centroidHz.lo, s.instrumental.centroidHz.hi]) : DEFAULT_TARGET.centroidHz,
+    // Travel and crest come from the FULL mix — they are arrangement and
+    // mastering facts, not affected by the voice being removed.
+    dynamicRangeDb: [Math.max(0, (s.arrangement?.travelsDb?.lo ?? 3) * 0.7), null],
+    crestDb: DEFAULT_TARGET.crestDb,
+    styleNotes: s,
+  }
+}
+
 // ── Get audio ───────────────────────────────────────────────────────────────
 const isProject = /\.cfproj$/i.test(file) && !flag('no-render')
 let mixPath = file, stemFiles = {}, renderReport = null, tmp = null, dp = null

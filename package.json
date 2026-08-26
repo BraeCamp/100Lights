@@ -61,7 +61,9 @@
     "test:features": "node scripts/audio-features.test.mjs",
     "probe": "node --experimental-strip-types scripts/apollo-probe.mjs",
     "master": "node scripts/master.mjs",
-    "size": "node scripts/project-size.mjs"
+    "size": "node scripts/project-size.mjs",
+    "study": "node scripts/study.mjs",
+    "style": "node scripts/build-style.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1067.0",
