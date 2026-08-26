@@ -1,7 +1,17 @@
 #!/usr/bin/env node
-// Turn a set of studied records into a STYLE profile.
+// Turn a set of studied records into an ARTIST profile.
 //
-// A style profile is not a recipe and must not read like one. Five Artemas
+// ARTIST FIRST, GENRE SECOND. Brae's correction, and it matters: "dark pop" is a
+// label applied afterwards by people who need a shelf to put a record on. What
+// actually exists is an artist who makes particular decisions, and the genre is
+// an observation about the result. Naming the profile after the genre invites
+// exactly the averaging this file exists to avoid — five Artemas records are not
+// five samples of "dark pop", they are five decisions by one person.
+//
+// So a profile is keyed by artist, and `genre` is a field that records what the
+// measurements suggest, kept honest about how confident that is.
+//
+// A profile is not a recipe and must not read like one. Five Artemas
 // records span 95 to 152 BPM, 11% to 56% sub, and 1.4 to 15.6 dB of travel —
 // so what a profile can honestly say is "here is the space these records
 // occupy", and choosing a point inside it is a decision the song makes, not
@@ -26,7 +36,9 @@ const argv = process.argv.slice(2)
 const flag = (n, d = null) => { const a = argv.find(x => x.startsWith(`--${n}=`)); return a ? a.split('=').slice(1).join('=') : d }
 const name = flag('name')
 const from = flag('from')
-if (!name || !from) { console.error('usage: build-style.mjs --name=dark-pop --from=<dir of study json>'); process.exit(2) }
+const artist = flag('artist', name)
+const genre = flag('genre', null)
+if (!name || !from) { console.error('usage: build-style.mjs --name=<artist> --from=<dir> [--genre="..."]'); process.exit(2) }
 
 const dir = resolve(from)
 const rows = readdirSync(dir).filter(f => f.endsWith('.json'))
@@ -47,7 +59,11 @@ const bandsOf = key => {
 
 const style = {
   name,
-  kind: 'style profile — ranges, not a recipe',
+  artist,
+  // What the measurements suggest this IS. Secondary to the artist on purpose:
+  // a genre is an observation about a body of work, not the thing that made it.
+  genre: genre ?? null,
+  kind: 'artist profile — ranges, not a recipe',
   measuredFrom: rows.map(r => r.file),
   tracks: rows.length,
 
@@ -102,7 +118,7 @@ const out = join(ROOT, 'styles', `${name}.json`)
 writeFileSync(out, JSON.stringify(style, null, 2))
 
 const fmtSpan = s => s ? `${s.lo} … ${s.hi}  (median ${s.median})` : '—'
-console.log(`\n${name} — from ${rows.length} records\n`)
+console.log(`\n${artist}${genre ? ` — ${genre}` : ''} — from ${rows.length} records\n`)
 console.log(`  tempo          ${fmtSpan(style.tempo)}`)
 console.log(`  keys           ${style.keys.join(', ')}`)
 console.log(`  travels        ${fmtSpan(style.arrangement.travelsDb)} dB`)

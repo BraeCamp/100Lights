@@ -83,6 +83,10 @@ if (typeof styleName === 'string') {
     // mastering facts, not affected by the voice being removed.
     dynamicRangeDb: [Math.max(0, (s.arrangement?.travelsDb?.lo ?? 3) * 0.7), null],
     crestDb: DEFAULT_TARGET.crestDb,
+    // Stereo width from the profile too. These references run 0.44 to 0.93
+    // correlation — near-mono is normal here, and keeping the generic 0.85
+    // ceiling invented a fault the reference set does not support.
+    correlation: s.fullMix?.correlation ? [null, Math.min(0.98, s.fullMix.correlation.hi + 0.03)] : DEFAULT_TARGET.correlation,
     styleNotes: s,
   }
 }

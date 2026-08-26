@@ -11,7 +11,7 @@ in numbers, so that choosing differently is a choice rather than an accident.
 
 ```
 npm run study -- <record.wav> --stems=<demucs dir>   # learn from someone else's
-npm run listen -- <song.cfproj> --style=dark-pop     # judge our own against it
+npm run listen -- <song.cfproj> --style=artemas     # judge our own against it
 npm run style -- --name=<x> --from=<study dir>       # turn studied records into a profile
 ```
 
@@ -75,7 +75,7 @@ comparatively empty.** Filling it is not an improvement, it is taking the
 singer's chair. If a track is genuinely instrumental and final, fill it — but
 then say so, because it is a different job.
 
-Instrumental band ranges across the five (`styles/dark-pop.json`):
+Instrumental band ranges across the five (`styles/artemas.json`):
 
 | band | range | median |
 |---|---|---|
@@ -227,7 +227,7 @@ Bass on top, in all five.
 |---|---|
 | `npm run study` | learn from a record; with `--stems` it reads the instrumental and the groove separately |
 | `npm run style` | turn studied records into a profile of ranges |
-| `npm run listen -- … --style=dark-pop` | judge our song against those ranges rather than against an opinion |
+| `npm run listen -- … --style=artemas` | judge our song against those ranges rather than against an opinion |
 | `npm run probe` | what Apollo can actually do headlessly (99 of 107 features) |
 | `npm run voices:audit` / `voices:calibrate` | what each voice sounds like, whether it is in tune, and level-matching so a fader means something |
 | `npm run size` | where a project file's bytes go |
