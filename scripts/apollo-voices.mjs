@@ -102,7 +102,7 @@ export const hatDual = () => patch('Hats', p => {
 /** A dry, short click of noise — used as a rim/tick, not a backbeat. */
 export const tick = () => patch('Tick', p => {
   osc(p, 0, { enabled: true, engine: 'wavetable', keytrackPitch: false,
-    level: 1, semi: 0, unison: 2, detune: 0.4, width: 0.8 })
+    level: 1, semi: 0, unison: 2, detune: 0.07, width: 1, stereo: 0.8 })
   p.oscs[0].wt.tableId = 'metallic'
   env(p, 0, { attack: 0.0003, decay: 0.035, sustain: 0, release: 0.02 })
   filt(p, 0, { enabled: true, type: 'bp12', cutoff: 0.66, res: 0.4, drive: 0.4 })
@@ -124,7 +124,7 @@ export const subBass = () => patch('Sub', p => {
 
 /** The moving bass: detuned saws with weight underneath and a filter pluck. */
 export const bass = () => patch('Bass', p => {
-  osc(p, 0, { level: 0.85, enabled: true, unison: 2, detune: 0.22, width: 0.6 })
+  osc(p, 0, { level: 0.85, enabled: true, unison: 2, detune: 0.05, width: 1, stereo: 0.5 })
   p.oscs[0].wt.tableId = 'analog-saws'
   p.oscs[0].wt.pos = 0.3
   osc(p, 1, { level: 0.26, enabled: true, octave: -1 })
@@ -152,9 +152,17 @@ export const pad = () => patch('Pad', p => {
   //
   // A released voice being stolen is fine; the allocator takes those first and
   // they are already fading. Staying under 16 ACTIVE is the whole trick. Three
-  // voices per note puts a four-note chord at 12. The width lost to fewer unison
-  // voices is bought back with wider detune and full stereo spread.
-  osc(p, 0, { level: 0.48, enabled: true, unison: 2, detune: 0.46, width: 1, stereo: 0.95, pan: -0.15 })
+  // voices per note puts a four-note chord at 12.
+  //
+  // The width lost to fewer unison voices is bought back with STEREO SPREAD, not
+  // with wider detune. That was the original compensation and it was the wrong
+  // one: at unison 2 there is no middle voice, both copies sit at the extremes,
+  // and the lower one dominates — so detune 0.46 did not widen this pad, it
+  // tuned it 46 cents flat. Measured on Undertow: 0.0433 of power at -48 cents
+  // and 0.0002 at the written note, under an organ sitting at exactly 0. That is
+  // what "some sounds are slightly off" was. Keep detune <= 0.08 on anything
+  // pitched; npm run check:tuning will say if it drifts back.
+  osc(p, 0, { level: 0.48, enabled: true, unison: 2, detune: 0.07, width: 1, stereo: 1, pan: -0.15 })
   p.oscs[0].wt.tableId = 'pwm'
   p.oscs[0].wt.pos = 0.35
   osc(p, 1, { level: 0.32, enabled: true, unison: 1, detune: 0.28, width: 1, stereo: 0.9, pan: 0.18, fine: 6 })
@@ -170,7 +178,7 @@ export const pad = () => patch('Pad', p => {
 
 /** Short bell-ish keys for stabs and arps. */
 export const keys = () => patch('Keys', p => {
-  osc(p, 0, { level: 0.55, enabled: true, unison: 2, detune: 0.12, width: 0.5 })
+  osc(p, 0, { level: 0.55, enabled: true, unison: 2, detune: 0.05, width: 1, stereo: 0.6 })
   p.oscs[0].wt.tableId = 'bells'
   p.oscs[0].wt.pos = 0.38
   osc(p, 1, { level: 0.18, enabled: true, octave: -1 })
@@ -185,7 +193,13 @@ export const keys = () => patch('Keys', p => {
 
 /** Hollow, vocal-ish sustained voice — a different colour from the pad. */
 export const choirish = () => patch('Choir', p => {
-  osc(p, 0, { level: 1, enabled: true, unison: 4, detune: 0.2, width: 1, stereo: 0.7 })
+  // Four voices, so unlike the unison-2 patches this one DOES have inner voices
+  // near the centre and the pitch stays put. What it had instead was roughness:
+  // detune 0.2 puts the outer pair 40 cents apart, which at G4 beats about ten
+  // times a second — fast enough that the ear stops hearing one thick voice and
+  // starts hearing two that disagree. 0.08 keeps the choir wide and moves the
+  // beating down to ~3.6Hz, which is heard as breath rather than as a wobble.
+  osc(p, 0, { level: 1, enabled: true, unison: 4, detune: 0.08, width: 1, stereo: 0.85 })
   p.oscs[0].wt.tableId = 'vocal'
   p.oscs[0].wt.pos = 0.4
   env(p, 0, { attack: 0.6, decay: 0.8, sustain: 0.65, release: 1.8 })
@@ -210,7 +224,7 @@ export const organ = () => patch('Organ', p => {
 
 /** Plucked and bright, harpsichord-leaning: fast decay, no sustain to speak of. */
 export const harpsi = () => patch('Harpsichord', p => {
-  osc(p, 0, { level: 0.7, enabled: true, unison: 2, detune: 0.1, width: 0.5 })
+  osc(p, 0, { level: 0.7, enabled: true, unison: 2, detune: 0.05, width: 1, stereo: 0.6 })
   p.oscs[0].wt.tableId = 'bells'
   p.oscs[0].wt.pos = 0.5
   osc(p, 1, { level: 0.25, enabled: true })
@@ -226,11 +240,12 @@ export const harpsi = () => patch('Harpsichord', p => {
 /** Bowed ensemble — slow on, wide, for the baroque chord writing. */
 export const strings = () => patch('Strings', p => {
   // Two voices, not three: strings play CHORDS, and at 5 voices per note a
-  // four-note chord was 20 against a limit of 16. Wider detune keeps the size.
-  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.38, width: 1, stereo: 0.9, pan: -0.1 })
+  // four-note chord was 20 against a limit of 16. Stereo spread keeps the size —
+  // NOT wider detune, which at unison 2 just tunes the whole section flat.
+  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.07, width: 1, stereo: 1, pan: -0.1 })
   p.oscs[0].wt.tableId = 'analog-saws'
   p.oscs[0].wt.pos = 0.4
-  osc(p, 1, { level: 0.34, enabled: true, unison: 2, detune: 0.2, width: 1, stereo: 0.7, pan: 0.12, fine: 5 })
+  osc(p, 1, { level: 0.34, enabled: true, unison: 2, detune: 0.06, width: 1, stereo: 0.8, pan: 0.12, fine: 5 })
   p.oscs[1].wt.tableId = 'pwm'
   p.oscs[1].wt.pos = 0.3
   env(p, 0, { attack: 0.25, decay: 0.8, sustain: 0.72, release: 1.2 })
@@ -241,7 +256,7 @@ export const strings = () => patch('Strings', p => {
 
 /** The phonk cowbell: pitched metal, bandpassed, gone in a moment. */
 export const cowbell = () => patch('Cowbell', p => {
-  osc(p, 0, { level: 0.9, enabled: true, unison: 2, detune: 0.3, width: 0.6 })
+  osc(p, 0, { level: 0.9, enabled: true, unison: 2, detune: 0.06, width: 1, stereo: 0.6 })
   p.oscs[0].wt.tableId = 'metallic'
   env(p, 0, { attack: 0.0005, decay: 0.16, sustain: 0, release: 0.06, dCurve: -0.5 })
   filt(p, 0, { enabled: true, type: 'bp12', cutoff: 0.68, res: 0.5, drive: 0.3 })
@@ -250,7 +265,7 @@ export const cowbell = () => patch('Cowbell', p => {
 
 /** Funk bass: short, resonant, with a filter pluck on every note. */
 export const funkBass = () => patch('Funk Bass', p => {
-  osc(p, 0, { level: 0.85, enabled: true, unison: 2, detune: 0.12, width: 0.5 })
+  osc(p, 0, { level: 0.85, enabled: true, unison: 2, detune: 0.05, width: 1, stereo: 0.6 })
   p.oscs[0].wt.tableId = 'analog-saws'
   p.oscs[0].wt.pos = 0.25
   osc(p, 1, { level: 0.3, enabled: true, octave: -1 })
