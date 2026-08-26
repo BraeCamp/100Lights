@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useMemo } from 'react'
+import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend, ChevronDown, Music, Grid3x3, X, Cloud, HardDrive, Folder, Check, MessageSquare, RectangleHorizontal, MoreHorizontal, Download } from 'lucide-react'
 import { onCenterOnBeat } from '@/lib/daw-view'
@@ -2117,18 +2118,16 @@ style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems:
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
               <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>Sensitivity</span>
-              <input
-                type="range" min={0.5} max={5.0} step={0.1}
+              <Knob
+                min={0.5} max={5.0} defaultValue={2} size={26}
+                format={v => v.toFixed(1)}
                 value={arrangeTransientDialog.sensitivity}
-                onChange={e => {
-                  const sens = parseFloat(e.target.value)
+                onChange={sens => {
                   const { buf, clip: ac } = arrangeTransientDialog
                   const newTransients = detectTransients(buf, ac.startBeat, project.tempo, sens, ac.trimStart ?? 0)
                     .filter(b => b > ac.startBeat + 0.01 && b < ac.startBeat + ac.durationBeats - 0.01)
                   setArrangeTransientDialog(d => d ? { ...d, sensitivity: sens, transients: newTransients } : null)
                 }}
-                className="cf-slider"
-                style={{ flex: 1, accentColor: 'var(--accent)' }}
               />
               <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', minWidth: 28, textAlign: 'right' }}>
                 {arrangeTransientDialog.sensitivity.toFixed(1)}

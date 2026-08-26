@@ -7,6 +7,7 @@
 // reference file is never saved with the project.
 
 import { useEffect, useRef, useState } from 'react'
+import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { Headphones, X, Upload } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
@@ -119,7 +120,10 @@ export default function ReferenceAB() {
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>
                 <span>REFERENCE LEVEL</span><span>{Math.round(level * 100)}%</span>
               </div>
-              <input type="range" min={0} max={1} step={0.01} value={level} onChange={e => setRefLevel(Number(e.target.value))} style={{ width: '100%', accentColor: '#f59e0b', cursor: 'pointer' }} />
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <Knob value={level} min={0} max={1} defaultValue={0.8} size={34} color="#f59e0b"
+                  onChange={setRefLevel} format={v => `${Math.round(v * 100)}%`} />
+              </div>
             </div>
             <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '12px 0 0', lineHeight: 1.5 }}>
               The reference plays raw (past your master FX). Closing this returns to your mix. It isn&rsquo;t saved with the project.

@@ -1,6 +1,7 @@
 'use client'
 
 import { memo, useCallback , useMemo } from 'react'
+import Knob from './Knob'
 import { Play, Mic, Circle, X } from 'lucide-react'
 import { useApolloMotion } from './ApolloMotion'
 import { useDaw } from '@/lib/daw-state'
@@ -45,12 +46,12 @@ const SliderRow = memo(function SliderRow({ label, value, min, max, step = 0.01,
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ width: 72, fontSize: 11, color: C.textMuted, flexShrink: 0 }}>{label}</span>
-      <input
-        type="range" min={min} max={max} step={step} value={value}
-        onClick={e => e.stopPropagation()}
-        onChange={e => { e.stopPropagation(); onChange(parseFloat(e.target.value)) }}
-        style={{ flex: 1, accentColor: C.accent }}
-      />
+      <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }} onClick={e => e.stopPropagation()}>
+        <Knob value={value} min={min} max={max} defaultValue={value} size={30} color={C.accent}
+          bipolar={min < 0 && max > 0}
+          onChange={onChange}
+          format={fmt ?? (v => v.toFixed(2))} />
+      </div>
       <span style={{ width: 44, fontSize: 11, color: C.textPrimary, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
         {fmt ? fmt(value) : value.toFixed(2)}
       </span>

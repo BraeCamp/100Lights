@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { SkipBack, SkipForward, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useDaw, makeAudioClip, extractPeaks } from '@/lib/daw-state'
@@ -259,17 +260,16 @@ style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems:
               &nbsp;·&nbsp;{(engine.beatsToSeconds(windowBeats) * 1000).toFixed(1)} ms
             </span>
           </div>
-          <input
-            type="range" min={0} max={1} step={0.0001}
+          <Knob
+            min={0} max={1} defaultValue={beatsToSlider(windowBeats)} size={28}
+            format={() => ''}
             value={beatsToSlider(windowBeats)}
-            onChange={e => {
-              const wb = sliderToBeats(parseFloat(e.target.value))
+            onChange={raw => {
+              const wb = sliderToBeats(raw)
               setWindowBeats(wb)
               winBeatsRef.current = wb
               void loadAt(beatRef.current, wb)
             }}
-            className="cf-slider"
-            style={{ width: '100%' }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
             <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>1/128 b</span>

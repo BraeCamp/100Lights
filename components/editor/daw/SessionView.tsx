@@ -1,6 +1,7 @@
 'use client'
 
 import { uploadRecordingBlob } from '@/lib/record-upload'
+import Knob from './Knob'
 import { useRegisterCommands } from '@/lib/commands'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Plus, Square, Circle, ChevronRight, X } from 'lucide-react'
@@ -144,13 +145,12 @@ function TrackHeader({ track }: { track: DawTrack }) {
           title="Arm">
           <Circle size={7} fill={track.armed ? '#ef4444' : 'transparent'} />
         </button>
-        <input
-          type="range" min={0} max={1} step={0.01} value={track.volume}
-          onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
-          className="cf-slider"
-          style={{ flex: 1, accentColor: track.color, minWidth: 0 }}
-          title={`Volume: ${Math.round(track.volume * 100)}%`}
+        <Knob
+          value={track.volume} min={0} max={1} defaultValue={0.8} size={22} color={track.color}
+          onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
+          format={v => `${Math.round(v * 100)}%`}
         />
+        <div style={{ flex: 1 }} />
         <PanDrag value={track.pan} onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }} />
       </div>
 
@@ -1234,11 +1234,11 @@ export default function SessionView() {
         <div style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center' }}>
           {/* Center marker tick */}
           <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: 1, height: 8, background: 'rgba(255,255,255,0.2)', pointerEvents: 'none' }} />
-          <input
-            type="range" min={0} max={1} step={0.005} value={crossfaderValue}
-            onChange={e => dispatch({ type: 'SET_CROSSFADER', value: parseFloat(e.target.value) })}
-            className="cf-slider"
-            style={{ width: '100%', accentColor: 'var(--text-muted)' }}
+          <Knob
+            value={crossfaderValue} min={0} max={1} defaultValue={0.5} size={24} bipolar
+            color="var(--text-muted)"
+            onChange={v => dispatch({ type: 'SET_CROSSFADER', value: v })}
+            format={v => (Math.abs(v - 0.5) < 0.01 ? 'Center' : v < 0.5 ? `A${Math.round((0.5 - v) * 200)}` : `B${Math.round((v - 0.5) * 200)}`)}
             title={
               Math.abs(crossfaderValue - 0.5) < 0.01
                 ? 'Center'

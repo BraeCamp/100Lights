@@ -386,10 +386,12 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
               if (isMobile) return (
                 <div key={band} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ width: 32, fontSize: 9, fontWeight: 700, color: c, flexShrink: 0 }}>{label}</span>
-                  <input type="range" min={-12} max={12} step={0.5} value={val}
-                    onChange={e => setBand(band, parseFloat(e.target.value))}
-                    onDoubleClick={() => setBand(band, 0)}
-                    style={{ flex: 1, minWidth: 0, accentColor: c, height: 22 }} />
+                  <Knob
+                    value={val} min={-12} max={12} defaultValue={0} size={44} bipolar color={c}
+                    onChange={v => setBand(band, Math.round(v * 2) / 2)}
+                    format={v => `${v > 0 ? '+' : ''}${v.toFixed(1)}`}
+                  />
+                  <div style={{ flex: 1 }} />
                   <span style={{ width: 30, fontSize: 9, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)', flexShrink: 0 }}>{val > 0 ? '+' : ''}{val}</span>
                 </div>
               )
@@ -424,10 +426,13 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
             <span style={{ fontSize: 8, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', flex: 1 }}>Pan</span>
             <span style={{ fontSize: 9, color: 'var(--text-secondary)' }}>{panLabel}</span>
           </div>
-          <input type="range" min={-1} max={1} step={0.02} value={pan}
-            onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
-            onDoubleClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: 0 } }); engine.setTrackPan(track.id, 0) }}
-            style={{ width: '100%', accentColor: color, height: 22 }} />
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <Knob
+              value={pan} min={-1} max={1} defaultValue={0} size={44} bipolar color={color}
+              onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
+              format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)}
+            />
+          </div>
         </div>
       )}
       {/* Pan is a knob on the desktop, as it is in Apollo — bipolar, so the arc
@@ -757,18 +762,23 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
           {/* Volume */}
           <div style={row}>
             <span style={lab}>Volume</span>
-            <input type="range" min={0} max={1.2} step={0.01} value={track.volume}
-              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
-              style={{ flex: 1, minWidth: 0, accentColor: track.color ?? 'var(--accent)', height: 30 }} />
+            <Knob
+              value={track.volume} min={0} max={1.2} defaultValue={1} size={48} color={track.color ?? 'var(--accent)'}
+              onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
+              format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
+            />
+            <div style={{ flex: 1 }} />
             <span style={val}>{db}dB</span>
           </div>
           {/* Pan */}
           <div style={row}>
             <span style={lab}>Pan</span>
-            <input type="range" min={-1} max={1} step={0.02} value={track.pan ?? 0}
-              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
-              onDoubleClick={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: 0 } }); engine.setTrackPan(track.id, 0) }}
-              style={{ flex: 1, minWidth: 0, accentColor: track.color ?? 'var(--accent)', height: 30 }} />
+            <Knob
+              value={track.pan ?? 0} min={-1} max={1} defaultValue={0} size={44} bipolar color={track.color ?? 'var(--accent)'}
+              onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
+              format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)}
+            />
+            <div style={{ flex: 1 }} />
             <span style={val}>{panLabel}</span>
           </div>
 
@@ -788,10 +798,12 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
                 return (
                   <div key={band} style={row}>
                     <span style={{ ...lab, color: c }}>{label}</span>
-                    <input type="range" min={-12} max={12} step={0.5} value={v}
-                      onChange={e => setBand(band, parseFloat(e.target.value))}
-                      onDoubleClick={() => setBand(band, 0)}
-                      style={{ flex: 1, minWidth: 0, accentColor: c, height: 30 }} />
+                    <Knob
+                      value={v} min={-12} max={12} defaultValue={0} size={44} bipolar color={c}
+                      onChange={nv => setBand(band, Math.round(nv * 2) / 2)}
+                      format={nv => `${nv > 0 ? '+' : ''}${nv.toFixed(1)}`}
+                    />
+                    <div style={{ flex: 1 }} />
                     <span style={val}>{v > 0 ? '+' : ''}{v}dB</span>
                   </div>
                 )
@@ -809,9 +821,12 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
                   return (
                     <div key={rt.id} style={row}>
                       <span style={{ ...lab, color: rt.color }}>{rt.name}</span>
-                      <input type="range" min={0} max={1} step={0.01} value={sv}
-                        onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { sendAmounts: { ...(track.sendAmounts ?? {}), [rt.id]: v } } }); engine.setSendAmount(track.id, rt.id, v) }}
-                        style={{ flex: 1, minWidth: 0, accentColor: rt.color, height: 30 }} />
+                      <Knob
+                        value={sv} min={0} max={1} defaultValue={0} size={44} color={rt.color}
+                        onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { sendAmounts: { ...(track.sendAmounts ?? {}), [rt.id]: v } } }); engine.setSendAmount(track.id, rt.id, v) }}
+                        format={v => `${Math.round(v * 100)}%`}
+                      />
+                      <div style={{ flex: 1 }} />
                       <span style={val}>{Math.round(sv * 100)}%</span>
                     </div>
                   )

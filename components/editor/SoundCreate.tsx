@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import Knob from './daw/Knob'
 import { Play, Square, Dices, BookmarkPlus, Search, Plus, X, Globe2 } from 'lucide-react'
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
@@ -396,9 +397,11 @@ export function SynthDesigner({ onUse, applyLabel = 'Use this sound \u2192' }: {
   const slider = (label: string, value: number, min: number, max: number, step: number, fmt: (v: number) => string, k: keyof SynthParams) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ fontSize: 10, color: 'var(--text-muted)', width: 56, flexShrink: 0 }}>{label}</span>
-      <input type="range" min={min} max={max} step={step} value={value}
-        onChange={e => set(k, Number(e.target.value) as SynthParams[typeof k])}
-        style={{ flex: 1, accentColor: 'var(--accent)' }} />
+      <Knob value={value} min={min} max={max} defaultValue={value} size={30}
+        bipolar={min < 0 && max > 0}
+        onChange={v => set(k, v as SynthParams[typeof k])}
+        format={fmt} />
+      <div style={{ flex: 1 }} />
       <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 44, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(value)}</span>
     </div>
   )
@@ -779,14 +782,16 @@ export function MotionFxPanel({ fxs, onChange }: { fxs: MotionFx[]; onChange: (f
             >
               {(Object.keys(MOTION_FX_DEFS) as MotionFxType[]).map(t => <option key={t} value={t}>{MOTION_FX_DEFS[t].label}</option>)}
             </select>
-            <input type="range" min={def.min} max={def.max} step={def.step} value={fx.from}
-              onChange={e => patch(fx.id, { from: Number(e.target.value) })}
-              title="Value at the start" style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <Knob value={fx.from} min={def.min} max={def.max} defaultValue={fx.from} size={26}
+              bipolar={def.min < 0 && def.max > 0}
+              onChange={v => patch(fx.id, { from: v })}
+              title="Value at the start" format={def.fmt} />
             <span style={{ fontSize: 9, color: 'var(--text-secondary)', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{def.fmt(fx.from)}</span>
             <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>→</span>
-            <input type="range" min={def.min} max={def.max} step={def.step} value={fx.to}
-              onChange={e => patch(fx.id, { to: Number(e.target.value) })}
-              title="Value at the end" style={{ flex: 1, accentColor: '#34d399' }} />
+            <Knob value={fx.to} min={def.min} max={def.max} defaultValue={fx.to} size={26} color="#34d399"
+              bipolar={def.min < 0 && def.max > 0}
+              onChange={v => patch(fx.id, { to: v })}
+              title="Value at the end" format={def.fmt} />
             <span style={{ fontSize: 9, color: 'var(--text-secondary)', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{def.fmt(fx.to)}</span>
             <button onClick={() => onChange(fxs.filter(f => f.id !== fx.id))} aria-label="Remove effect"
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2, flexShrink: 0 }}>

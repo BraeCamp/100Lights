@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
 import { spliceClipAt } from '@/lib/daw-splice'
+import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { Plus, Headphones, X, Eraser, ChevronRight, ChevronDown, Circle, Settings, Snowflake, SlidersHorizontal, Music, Piano, Grid3x3, Group, Library, Code, Upload, Minimize2, Maximize2 } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
@@ -917,10 +918,15 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
           </div>
           {/* Group lane — a thin summary bar (no clips) */}
           <div style={{ flex: 1, height: GROUP_TRACK_HEIGHT, borderBottom: '1px solid var(--border)', background: `linear-gradient(90deg, ${track.color}18, transparent 40%)`, display: 'flex', alignItems: 'center', paddingLeft: 10 }}>
-            <input type="range" min={0} max={1} step={0.01} value={track.volume}
-              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
-              onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()} onDragStart={e => { e.preventDefault(); e.stopPropagation() }} draggable={false}
-              className="cf-slider" style={{ width: 120, accentColor: track.color, height: 12, background: 'transparent' }} />
+            {/* Small, because the track header row is only a few pixels tall and
+                growing it would change every track's height in the arrangement. */}
+            <div onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+              <Knob
+                value={track.volume} min={0} max={1} defaultValue={0.8} size={20} color={track.color}
+                onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
+                format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
+              />
+            </div>
             <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 10 }}>{isFolded ? 'folded' : `${childCount} track${childCount === 1 ? '' : 's'}`}</span>
           </div>
         </div>
@@ -1085,10 +1091,14 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 />
               )}
             </>)}
-            <input type="range" min={0} max={1} step={0.01} value={track.volume}
-              onChange={e => { const v = parseFloat(e.target.value); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
-              onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()} onDragStart={e => { e.preventDefault(); e.stopPropagation() }} draggable={false}
-              className="cf-slider" style={{ flex: 1, accentColor: track.color, minWidth: 0, height: 12, background: 'transparent' }} />
+            <div onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+              <Knob
+                value={track.volume} min={0} max={1} defaultValue={0.8} size={20} color={track.color}
+                onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
+                format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
+              />
+            </div>
+            <div style={{ flex: 1 }} />
             <AddAutoButton track={track} />
             <button
               title="Toggle effects lane"
@@ -1124,10 +1134,10 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 }}
               >
                 <span style={{ fontSize: 9, fontWeight: 800, color: '#34d399', letterSpacing: '0.06em' }}>MY MIX · {Math.round(myMixGain * 100)}%</span>
-                <input
-                  type="range" min={0} max={2} step={0.01} value={myMixGain}
-                  onChange={e => { const v = parseFloat(e.target.value); setMyMixGain(v); engine.setLocalTrackGain(track.id, v) }}
-                  className="cf-slider" style={{ accentColor: '#34d399' }}
+                <Knob
+                  value={myMixGain} min={0} max={2} defaultValue={1} size={30} color="#34d399"
+                  onChange={v => { setMyMixGain(v); engine.setLocalTrackGain(track.id, v) }}
+                  format={v => `${Math.round(v * 100)}%`}
                 />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>Only you hear this change</span>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import Knob from './daw/Knob'
 import { FileText, Newspaper, AlignLeft, RotateCcw, Mic, Scissors, Sparkles, CheckCircle, AlertCircle, Loader2, ChevronRight, Copy, Check, PlaySquare, MessageSquare, Mail, BookOpen, Quote, Flag, Trash2, Pencil, FlipHorizontal2, FlipVertical2, X, Wrench, Palette, Download, AudioLines } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { formatDisplayTime } from '@/lib/captions'
@@ -121,11 +122,12 @@ function Slider({ label, value, min, max, unit, step = 1, onChange }: {
         <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{label}</span>
         <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{value}{unit ?? ''}</span>
       </div>
-      <input
-        type="range" className="cf-slider w-full" min={min} max={max} step={step} value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        style={{ background: `linear-gradient(to right, var(--accent) ${pct}%, var(--border-light) ${pct}%)` }}
-      />
+      <div className="flex justify-center">
+        <Knob value={value} min={min} max={max} defaultValue={value} size={32}
+          bipolar={min < 0 && max > 0}
+          onChange={onChange}
+          format={v => `${Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(2)}${unit ?? ''}`} />
+      </div>
     </div>
   )
 }
@@ -484,9 +486,10 @@ export default function Inspector({
                   {captions.length > 0 && (
                     <div className="px-3 pb-2.5 flex items-center gap-2">
                       <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>Threshold</span>
-                      <input type="range" className="cf-slider flex-1" min={0.2} max={3} step={0.1}
-                        value={silenceThreshold} onChange={(e) => onSilenceThresholdChange(Number(e.target.value))}
-                        style={{ background: `linear-gradient(to right, var(--accent) ${((silenceThreshold - 0.2) / 2.8) * 100}%, var(--border-light) ${((silenceThreshold - 0.2) / 2.8) * 100}%)` }} />
+                      <Knob value={silenceThreshold} min={0.2} max={3} defaultValue={1} size={28}
+                        onChange={v => onSilenceThresholdChange(Math.round(v * 10) / 10)}
+                        format={v => `${v.toFixed(1)}s`} />
+                      <div className="flex-1" />
                       <span className="text-xs font-mono shrink-0" style={{ color: 'var(--text-muted)', minWidth: 28 }}>{silenceThreshold.toFixed(1)}s</span>
                     </div>
                   )}

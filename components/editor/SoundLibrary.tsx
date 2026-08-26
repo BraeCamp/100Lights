@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import Knob from './daw/Knob'
 import { createPortal } from 'react-dom'
 import { RotateCw, Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2, ArrowLeft } from 'lucide-react'
 import {
@@ -867,41 +868,46 @@ export function AddToLibraryModal({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
         {row('Gain', (
           <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-            <input type="range" min={0.1} max={3} step={0.05} value={sel.gain}
-              onChange={e => updateLayer(sel.id, { gain: Number(e.target.value) })}
-              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <Knob value={sel.gain} min={0.1} max={3} defaultValue={1} size={30}
+              onChange={v => updateLayer(sel.id, { gain: v })}
+              format={v => `${Math.round(v * 100)}%`} />
+            <div style={{ flex: 1 }} />
             <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(sel.gain * 100)}%</span>
           </div>
         ))}
         {row('Speed', (
           <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-            <input type="range" min={0.25} max={4} step={0.05} value={sel.speed}
-              onChange={e => updateLayer(sel.id, { speed: Number(e.target.value) })}
-              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <Knob value={sel.speed} min={0.25} max={4} defaultValue={1} size={30}
+              onChange={v => updateLayer(sel.id, { speed: v })}
+              format={v => `${v.toFixed(2)}x`} />
+            <div style={{ flex: 1 }} />
             <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{sel.speed.toFixed(2)}×</span>
           </div>
         ))}
         {row('Pan', (
           <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-            <input type="range" min={-1} max={1} step={0.05} value={sel.pan}
-              onChange={e => updateLayer(sel.id, { pan: Number(e.target.value) })}
-              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <Knob value={sel.pan} min={-1} max={1} defaultValue={0} size={30} bipolar
+              onChange={v => updateLayer(sel.id, { pan: v })}
+              format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)} />
+            <div style={{ flex: 1 }} />
             <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{sel.pan === 0 ? 'C' : sel.pan < 0 ? `L${Math.round(-sel.pan * 100)}` : `R${Math.round(sel.pan * 100)}`}</span>
           </div>
         ))}
         {row('Fade in', (
           <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-            <input type="range" min={0} max={0.5} step={0.01} value={sel.fadeIn}
-              onChange={e => updateLayer(sel.id, { fadeIn: Number(e.target.value) })}
-              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <Knob value={sel.fadeIn} min={0} max={0.5} defaultValue={0} size={30}
+              onChange={v => updateLayer(sel.id, { fadeIn: v })}
+              format={v => `${Math.round(v * 100)}%`} />
+            <div style={{ flex: 1 }} />
             <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(sel.fadeIn * 100)}%</span>
           </div>
         ))}
         {row('Fade out', (
           <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 8 }}>
-            <input type="range" min={0} max={0.5} step={0.01} value={sel.fadeOut}
-              onChange={e => updateLayer(sel.id, { fadeOut: Number(e.target.value) })}
-              style={{ flex: 1, accentColor: 'var(--accent)' }} />
+            <Knob value={sel.fadeOut} min={0} max={0.5} defaultValue={0} size={30}
+              onChange={v => updateLayer(sel.id, { fadeOut: v })}
+              format={v => `${Math.round(v * 100)}%`} />
+            <div style={{ flex: 1 }} />
             <span style={{ fontSize: 10, color: 'var(--text-secondary)', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(sel.fadeOut * 100)}%</span>
           </div>
         ))}

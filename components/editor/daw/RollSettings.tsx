@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import Knob from './Knob'
 import { Settings2, Play, ChevronDown, ChevronRight, ChevronLeft, Check, Copy, RotateCw, RotateCcw } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx, AutoPoint } from '@/lib/daw-types'
 import DrawnGraphModal from './DrawnGraphModal'
@@ -622,10 +623,12 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           {artOpts.slide.available && (legatoOn || !artOpts.legato.available) ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
               <span style={{ fontSize: 9.5, color: 'var(--text-muted)', flexShrink: 0 }}>Slide</span>
-              <input type="range" min={0} max={1} step={0.02} value={slideAmt}
-                onChange={e => commitFx({ ...(clip.rollFx || {}), slide: Number(e.target.value) })}
-                title="Portamento: glide the pitch from the previous note into this one, between connected notes at different pitches."
-                style={{ flex: 1, minWidth: 0, accentColor: CYAN }} />
+              <Knob
+                value={slideAmt} min={0} max={1} defaultValue={0} size={26} color={CYAN}
+                onChange={v => commitFx({ ...(clip.rollFx || {}), slide: v })}
+                format={v => (v > 0 ? `${Math.round(v * 100)}%` : 'Off')}
+              />
+              <div style={{ flex: 1 }} />
               <span style={{ fontSize: 9, color: slideAmt > 0 ? 'var(--text-primary)' : 'var(--text-muted)', width: 34, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
                 {slideAmt > 0 ? `${Math.round(slideAmt * 100)}%` : 'Off'}
               </span>
@@ -682,9 +685,12 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px 4px' }}>
             <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 44, flexShrink: 0 }}>Volume</span>
-            <input type="range" min={0} max={1.2} step={0.005} value={trackVol}
-              onChange={e => setTrackVol(Number(e.target.value))}
-              style={{ flex: 1, minWidth: 0, accentColor: CYAN }} />
+            <Knob
+              value={trackVol} min={0} max={1.2} defaultValue={1} size={26} color={CYAN}
+              onChange={setTrackVol}
+              format={v => `${Math.round(v * 100)}%`}
+            />
+            <div style={{ flex: 1 }} />
             <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 40, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{Math.round(trackVol * 100)}%</span>
           </div>
           <button onClick={() => setOpenGraph({ kind: 'eq' })}

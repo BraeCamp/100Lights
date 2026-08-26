@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { X, Loader2, Play, Square, Undo2, Redo2, ZoomIn, ZoomOut } from 'lucide-react'
 import type { AudioClip } from '@/lib/daw-types'
@@ -509,8 +510,9 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
           ))}
           {tool === 'brush' && (
             <>
-              <input type="range" min={2} max={30} value={brushSize} onChange={e => setBrushSize(parseInt(e.target.value))}
-                title={`Brush size: ${brushSize}`} className="cf-slider" style={{ width: 70, accentColor: 'var(--accent)' }} />
+              <Knob value={brushSize} min={2} max={30} defaultValue={8} size={24}
+                onChange={v => setBrushSize(Math.round(v))}
+                title={`Brush size: ${brushSize}`} format={v => String(Math.round(v))} />
               <select value={brushGain} onChange={e => setBrushGain(parseFloat(e.target.value))}
                 title="Brush strength"
                 style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, borderRadius: 4, padding: '3px 4px', cursor: 'pointer' }}>

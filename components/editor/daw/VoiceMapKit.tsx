@@ -7,6 +7,7 @@
 // and a delay control nudges everything earlier to cancel input latency.
 
 import { useEffect, useRef, useState } from 'react'
+import Knob from './Knob'
 import { Mic, Eye, EyeOff, X, Circle } from 'lucide-react'
 import { detectPitch } from '@/lib/pitch-detect'
 import type { MidiClip } from '@/lib/daw-types'
@@ -353,11 +354,11 @@ export function VoiceMapControls({ vm }: { vm: VoiceMap }) {
 
       {vm.hasTrace && !vm.recording && (
         <>
-          <input
-            type="range" min={0} max={1} step={0.05} value={vm.volume}
-            onChange={e => vm.setVolume(Number(e.target.value))}
+          <Knob
+            value={vm.volume} min={0} max={1} defaultValue={0.8} size={22} color={TRACE_COLOR}
+            onChange={v => vm.setVolume(v)}
             title={vm.hasAudio ? 'Voice playback volume' : 'Voice playback volume (this take has no audio — re-record to hear it)'}
-            style={{ width: 52, accentColor: TRACE_COLOR }}
+            format={v => `${Math.round(v * 100)}%`}
           />
           <span style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 9, color: 'var(--text-muted)' }} title="Input-delay compensation — shifts the trace and playback earlier/later">
             <button onClick={() => vm.nudgeOffset(-10)} style={{ ...btn, padding: '1px 5px' }}>−</button>

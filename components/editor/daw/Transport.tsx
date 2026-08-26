@@ -2,6 +2,7 @@
 
 import { uploadRecordingBlob } from '@/lib/record-upload'
 import { useRegisterCommands } from '@/lib/commands'
+import Knob from './Knob'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
 import { useEffect, useRef, useState, type ReactNode, type Dispatch } from 'react'
 import { createPortal } from 'react-dom'
@@ -419,9 +420,13 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
             return (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }}>{def.label}</span>
-                <input type="range" min={def.min} max={def.max} step={def.step} value={fx.value}
-                  onChange={e => patchRecFx(recFx.map((f, j) => j === i ? { ...f, value: Number(e.target.value) } : f))}
-                  style={{ flex: 1, accentColor: '#dc2626' }} />
+                <Knob
+                  value={fx.value} min={def.min} max={def.max} defaultValue={fx.value} size={26} color="#dc2626"
+                  bipolar={def.min < 0 && def.max > 0}
+                  onChange={v => patchRecFx(recFx.map((f, j) => j === i ? { ...f, value: v } : f))}
+                  format={def.fmt}
+                />
+                <div style={{ flex: 1 }} />
                 <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 38, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{def.fmt(fx.value)}</span>
                 <button onClick={() => patchRecFx(recFx.filter((_, j) => j !== i))} aria-label="Remove effect"
                   style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><X size={12} /></button>
@@ -432,10 +437,12 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }}>Timing</span>
-          <input type="range" min={-1} max={250} step={1} value={latencyMs}
-            onChange={e => commitLatency(Number(e.target.value))}
-            title="Recorded takes are placed this much earlier to cancel the audio pipeline's delay. Auto uses the browser's estimate."
-            style={{ flex: 1, accentColor: '#dc2626' }} />
+          <Knob
+            value={latencyMs} min={-1} max={250} defaultValue={-1} size={26} color="#dc2626"
+            onChange={v => commitLatency(Math.round(v))}
+            format={v => (v < 0 ? 'auto' : `${Math.round(v)}ms`)}
+          />
+          <div style={{ flex: 1 }} />
           <span style={{ fontSize: 9.5, color: 'var(--text-primary)', width: 52, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
             {latencyMs < 0 ? `auto ${Math.round(engine.recordLatencySec() * 1000)}ms` : `${latencyMs}ms`}
           </span>
@@ -798,15 +805,10 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         {/* Master volume */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} data-help-id="master-volume">
           <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={project.masterVolume}
-            onChange={handleVolumeChange}
-            className="cf-slider"
-            style={{ width: 68, accentColor: 'var(--accent)' }}
+          <Knob
+            value={project.masterVolume} min={0} max={1} defaultValue={0.85} size={26}
+            onChange={v => { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }}
+            format={v => `${Math.round(v * 100)}%`}
           />
         </div>
       </div>
@@ -1101,24 +1103,21 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                     title="Click to cycle groove presets: straight → light → classic swing → triplet feel → hard shuffle"
                     style={{ fontSize: 9, width: 42, color: 'var(--text-muted)', letterSpacing: '0.06em', cursor: 'pointer', flexShrink: 0 }}
                   >SWING</span>
-                  <input
-                    type="range" min={0} max={0.5} step={0.01}
-                    value={project.swing ?? 0}
-                    onChange={e => { const swing = parseFloat(e.target.value); dispatch({ type: 'SET_SWING', swing }); engine.swing = swing }}
-                    className="cf-slider" style={{ flex: 1, minWidth: 0, accentColor: 'var(--accent)' }}
-                    title={`Swing: ${Math.round((project.swing ?? 0) * 100)}%`}
+                  <Knob
+                    value={project.swing ?? 0} min={0} max={0.5} defaultValue={0} size={26}
+                    onChange={v => { dispatch({ type: 'SET_SWING', swing: v }); engine.swing = v }}
+                    format={v => `${Math.round(v * 100)}%`}
                   />
                   <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'monospace', width: 30, textAlign: 'right', flexShrink: 0 }}>{Math.round((project.swing ?? 0) * 100)}%</span>
                 </div>
                 {/* Varispeed (tape mode) */}
                 <div data-help-id="varispeed" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 9, width: 42, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', letterSpacing: '0.06em', flexShrink: 0 }} title="Tape speed — pitch follows speed">SPEED</span>
-                  <input
-                    type="range" min={25} max={200} step={1}
-                    value={varispeed}
-                    onChange={e => { const pct = parseInt(e.target.value); setVarispeed(pct); engine.setPlaybackRate(pct / 100) }}
-                    className="cf-slider" style={{ flex: 1, minWidth: 0, accentColor: varispeed !== 100 ? '#f59e0b' : 'var(--accent)' }}
-                    title={`Varispeed: ${varispeed}% — tape mode (pitch follows speed).`}
+                  <Knob
+                    value={varispeed} min={25} max={200} defaultValue={100} size={26}
+                    color={varispeed !== 100 ? '#f59e0b' : 'var(--accent)'}
+                    onChange={v => { const pct = Math.round(v); setVarispeed(pct); engine.setPlaybackRate(pct / 100) }}
+                    format={v => `${Math.round(v)}%`}
                   />
                   <span style={{ fontSize: 9, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', fontFamily: 'monospace', width: 30, textAlign: 'right', flexShrink: 0 }}>{varispeed}%</span>
                   {varispeed !== 100 && (
@@ -1172,15 +1171,10 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       {/* Master volume */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} data-help-id="master-volume">
         <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={project.masterVolume}
-          onChange={handleVolumeChange}
-          className="cf-slider"
-          style={{ width: 68, accentColor: 'var(--accent)' }}
+        <Knob
+          value={project.masterVolume} min={0} max={1} defaultValue={0.85} size={26}
+          onChange={v => { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }}
+          format={v => `${Math.round(v * 100)}%`}
         />
       </div>
 

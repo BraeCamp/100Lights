@@ -8,6 +8,7 @@
 // (a starter groove) are picked from the header. Length extends bar-by-bar.
 
 import { useEffect, useRef, useState } from 'react'
+import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { Dices, Trash2, X, ArrowRight, Rows2, Rows3 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
@@ -389,10 +390,10 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
               <span style={{ ...stickyCol, display: 'flex', alignItems: 'center', gap: 3, minWidth: 0, paddingRight: 5 }}>
                 <span style={{ flex: 1, fontSize: 10, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
                   onClick={() => audition(lane.pitch)} title={padSample(lane.pitch) ? `${lane.label} — sample: ${padSample(lane.pitch)!.name ?? 'custom'} (click to preview)` : `Preview ${lane.label}`}>{lane.label}</span>
-                <input type="range" min={0} max={1.5} step={0.05} value={padVolume(lane.pitch)}
-                  onChange={e => setPadVolume(lane.pitch, Number(e.target.value))}
-                  title={`${lane.label} volume — ${Math.round(padVolume(lane.pitch) * 100)}%`} aria-label={`${lane.label} volume`}
-                  style={{ width: 34, flexShrink: 0, accentColor: 'var(--accent)', height: 12, cursor: 'pointer' }} />
+                <Knob value={padVolume(lane.pitch)} min={0} max={1.5} defaultValue={1} size={20}
+                  onChange={v => setPadVolume(lane.pitch, v)}
+                  title={`${lane.label} volume`}
+                  format={v => `${Math.round(v * 100)}%`} />
                 {padSample(lane.pitch) && (
                   <button onClick={() => clearSample(lane.pitch)} title="Remove sample (back to the synth voice)" style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, padding: '1px 3px', borderRadius: 3, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--text-muted)' }}><X size={10} /></button>
                 )}

@@ -1,5 +1,6 @@
 'use client'
 
+import Knob from './Knob'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
@@ -34,11 +35,24 @@ function Slider({ value, min, max, step, onChange, ticks, disabled }: {
   ticks?: number[]
   disabled?: boolean
 }) {
-  const input = (
+  // Ticks mark the shifts that stay in key, and they only mean anything against
+  // a straight track — so a ticked control stays a slider and an unticked one
+  // becomes a knob. The alternative was drawing key positions around an arc,
+  // which is harder to read for the one thing this control exists to show.
+  const input = ticks?.length ? (
     <input type="range" min={min} max={max} step={step} value={value}
       disabled={disabled}
       onChange={e => onChange(parseFloat(e.target.value))}
       className="cf-slider" style={{ flex: 1, opacity: disabled ? 0.4 : 1 }} />
+  ) : (
+    <div style={{ flex: 1, display: 'flex', justifyContent: 'center', opacity: disabled ? 0.4 : 1 }}>
+      <Knob
+        value={value} min={min} max={max} defaultValue={value} size={34}
+        bipolar={min < 0 && max > 0}
+        onChange={v => { if (!disabled) onChange(v) }}
+        format={v => (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(2))}
+      />
+    </div>
   )
   if (!ticks?.length) return input
   return (

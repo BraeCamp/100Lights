@@ -1,5 +1,6 @@
 'use client'
 
+import Knob from './Knob'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { RotateCcw, Square, Play, Check, Volume2, X, ChevronUp, ChevronDown, ChevronRight, ChevronLeft, Folder, Repeat, Rewind, Minimize, Maximize } from 'lucide-react'
@@ -131,13 +132,19 @@ function PopSlider({ label, value, min, max, step, format, onChange, accent }: {
         <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</span>
         <span style={{ fontSize: 10, color: accent || C.text, fontFamily: 'monospace' }}>{format(value)}</span>
       </div>
-      <input
-        type="range" min={min} max={max} step={step} value={value}
-        onChange={e => onChange(parseFloat(e.target.value))}
-        onMouseDown={e => e.stopPropagation()}
-        onClick={e => e.stopPropagation()}
-        style={{ width: '100%', accentColor: accent || C.accent, cursor: 'pointer', display: 'block' }}
-      />
+      {/* One shared row, so every parameter in the pad editor becomes a knob
+          together. Centred, because a knob has a fixed width and a left-aligned
+          one under a full-width label reads as unfinished. */}
+      <div style={{ display: 'flex', justifyContent: 'center' }}
+        onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+        <Knob
+          value={value} min={min} max={max} defaultValue={value} size={34}
+          bipolar={min < 0 && max > 0}
+          color={accent || C.accent}
+          onChange={onChange}
+          format={format}
+        />
+      </div>
     </div>
   )
 }
@@ -668,12 +675,12 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                         )}
                       </div>
                     </div>
-                    <input
-                      type="range" min={-24} max={24} step={1} value={pitchVal}
-                      onChange={e => updateSound(sound.id, { pitch: parseInt(e.target.value) })}
-                      onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}
-                      style={{ width: '100%', accentColor: C.accent, cursor: 'pointer', display: 'block' }}
-                    />
+                    <div style={{ display: 'flex', justifyContent: 'center' }}
+                      onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+                      <Knob value={pitchVal} min={-24} max={24} defaultValue={0} size={34} bipolar color={C.accent}
+                        onChange={v => updateSound(sound.id, { pitch: Math.round(v) })}
+                        format={v => `${v > 0 ? '+' : ''}${Math.round(v)}`} />
+                    </div>
                     <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>Pitch shifts playback speed</div>
                   </div>
                   {/* Volume per sound */}
@@ -681,12 +688,12 @@ function PadPopover({ pad, anchor, onRemap, onPadChange, onClose }: {
                     <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Volume</span>
                     <span style={{ fontSize: 10, color: C.text, fontFamily: 'monospace' }}>{Math.round((sound.volume ?? 1) * 100)}%</span>
                   </div>
-                  <input
-                    type="range" min={0} max={2} step={0.01} value={sound.volume ?? 1}
-                    onChange={e => updateSound(sound.id, { volume: parseFloat(e.target.value) })}
-                    onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}
-                    style={{ width: '100%', accentColor: C.accent, cursor: 'pointer', display: 'block' }}
-                  />
+                  <div style={{ display: 'flex', justifyContent: 'center' }}
+                    onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
+                    <Knob value={sound.volume ?? 1} min={0} max={2} defaultValue={1} size={34} color={C.accent}
+                      onChange={v => updateSound(sound.id, { volume: v })}
+                      format={v => `${Math.round(v * 100)}%`} />
+                  </div>
                 </div>
               )}
             </div>
@@ -1532,14 +1539,14 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 4 }}
               title="Velocity for mouse and computer-keyboard input — hardware MIDI keeps its own">
               <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: C.muted }}>VEL</span>
-              <input
-                type="range" min={1} max={127} value={inputVelocity}
-                onChange={e => {
-                  const v = Number(e.target.value)
+              <Knob
+                value={inputVelocity} min={1} max={127} defaultValue={100} size={24} color={C.accent}
+                format={v => String(Math.round(v))}
+                onChange={raw => {
+                  const v = Math.round(raw)
                   setInputVelocity(v)
                   inputVelocityRef.current = v
                 }}
-                style={{ width: 80, accentColor: C.accent }}
               />
               <span style={{ fontSize: 10, color: C.text, minWidth: 22, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{inputVelocity}</span>
             </div>

@@ -30,6 +30,10 @@ interface KnobProps {
   label?: string
   /** Draw the arc out from the centre — for pan, and anything else ±. */
   bipolar?: boolean
+  /** Replaces the default hover text. Several controls that became knobs had a
+   *  sentence explaining what they do, and that is worth more than "drag to
+   *  change" which the shape already tells you. */
+  title?: string
   onChange: (v: number) => void
   onCommit?: (v: number) => void
   format?: (v: number) => string
@@ -48,6 +52,7 @@ export default function Knob({
   color = 'var(--accent)',
   label,
   bipolar,
+  title,
   onChange,
   onCommit,
   format,
@@ -104,7 +109,7 @@ export default function Knob({
         display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 2,
         width: size + 14, userSelect: 'none',
       }}
-      title={label ? `${label} — drag to change, double-click resets` : shown}
+      title={title ?? (label ? `${label} — drag to change, double-click resets` : shown)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
