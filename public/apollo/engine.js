@@ -1489,7 +1489,13 @@ function processFxUnit(engine, unit, st, L, R, n) {
       const beats = engine.SYNC_BEATS
       const tl = sync ? beats[Math.round(clamp(P('timeL', 9), 0, beats.length - 1))] * 60 / engine.bpm : P('freeMs', 350) / 1000
       const tr = sync ? beats[Math.round(clamp(P('timeR', 9), 0, beats.length - 1))] * 60 / engine.bpm : P('freeMs', 350) / 1000
-      const fb = clamp(P('feedback', 0.4), 0, 1.1)
+      // 0.95, not 1.1. Above 1.0 a delay line feeds back MORE than it loses,
+      // so it grows without bound — and the FX chain runs every block whether or
+      // not a note is sounding, so it keeps growing with the transport stopped.
+      // That is the "lots of feedback, even when paused" howl: nothing to do
+      // with playback, just a loop with gain over unity. Every other delay-ish
+      // effect in this file already clamps below 1; this one did not.
+      const fb = clamp(P('feedback', 0.4), 0, 0.95)
       const pp = P('pingpong', 0) > 0.5
       const lpc = onePoleCoeff(cutoffHz(clamp(P('lpf', 0.75), 0, 1)), sr)
       const hpc = onePoleCoeff(cutoffHz(clamp(P('hpf', 0.1), 0, 1)), sr)

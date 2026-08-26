@@ -32,6 +32,35 @@ function buildIR(ctx: AudioContext, decay: number, preDelay: number): AudioBuffe
   return buf
 }
 
+// ── The studio must never be able to howl ────────────────────────────────────
+//
+// A delay and a chorus are both a delay line wired back into itself. That loop
+// decays only while its gain is below one; at one it sustains forever, and above
+// one it grows without bound. The result is a rising howl that has nothing to do
+// with the transport — it keeps building with playback stopped, because the loop
+// is live whenever the graph is.
+//
+// These gains were being assigned straight from the patch — `feedback.gain.value
+// = params.feedback` — with the safe range recorded only as a COMMENT on the
+// type ("0..0.95"). A comment does not clamp anything, and the value arrives
+// from wherever the project came from: a preset, an imported file, a knob whose
+// range was set wrong, an older schema, a bad edit. Any one of those puts the
+// studio into feedback with no way for the user to understand why.
+//
+// So it is enforced here, at the one place the value reaches the audio graph,
+// rather than trusted at every place it might be produced. 0.9 keeps a long,
+// musical repeat while leaving real headroom below unity.
+const MAX_FEEDBACK = 0.9
+const safeFeedback = (v: number): number =>
+  Number.isFinite(v) ? Math.min(MAX_FEEDBACK, Math.max(0, v)) : 0
+
+// Resonance has the same failure at the top of its range: a biquad at very high
+// Q rings for a long time and, driven hard, is heard as a whistle sitting on top
+// of the music. Web Audio permits Q up to 1000.
+const MAX_Q = 20
+const safeQ = (v: number): number =>
+  Number.isFinite(v) ? Math.min(MAX_Q, Math.max(0.0001, v)) : 1
+
 // ── Effect builders ───────────────────────────────────────────────────────────
 
 export function buildEq3(ctx: AudioContext, params: Eq3Params): EffectHandle {
@@ -158,9 +187,9 @@ export function buildDynEq(ctx: AudioContext, params: DynEqParams): EffectHandle
   const input  = ctx.createGain()
   const output = ctx.createGain()
   const peak = ctx.createBiquadFilter(); peak.type = 'peaking'
-  peak.frequency.value = params.freq; peak.Q.value = params.q; peak.gain.value = 0
+  peak.frequency.value = params.freq; peak.Q.value = safeQ(params.q); peak.gain.value = 0
   const det = ctx.createBiquadFilter(); det.type = 'bandpass'
-  det.frequency.value = params.freq; det.Q.value = params.q
+  det.frequency.value = params.freq; det.Q.value = safeQ(params.q)
   const ana = ctx.createAnalyser(); ana.fftSize = 512; ana.smoothingTimeConstant = 0.2
   const sink = ctx.createGain(); sink.gain.value = 0
 
@@ -190,7 +219,7 @@ export function buildDynEq(ctx: AudioContext, params: DynEqParams): EffectHandle
     setParam(key, value) {
       ;(p as Record<string, unknown>)[key] = value
       if (key === 'freq')    { peak.frequency.value = value as number; det.frequency.value = value as number }
-      if (key === 'q')       { peak.Q.value = value as number; det.Q.value = value as number }
+      if (key === 'q')       { peak.Q.value = safeQ(value as number); det.Q.value = safeQ(value as number) }
       if (key === 'enabled') { value ? start() : stop() }
     },
     dispose() {
@@ -264,7 +293,7 @@ export function buildDelay(ctx: AudioContext, params: DelayParams, tempo: number
 
   const delayTime = params.syncToTempo ? (params.syncBeats * 60 / tempo) : params.time
   delay.delayTime.value = delayTime
-  feedback.gain.value   = params.feedback
+  feedback.gain.value   = safeFeedback(params.feedback)
   dryGain.gain.value    = 1
   wetGain.gain.value    = params.enabled ? params.wet : 0
 
@@ -282,7 +311,7 @@ export function buildDelay(ctx: AudioContext, params: DelayParams, tempo: number
     setParam(key, value) {
       if (key === 'enabled')   wetGain.gain.value    = (value as boolean) ? params.wet : 0
       if (key === 'wet')       wetGain.gain.value    = params.enabled ? value as number : 0
-      if (key === 'feedback')  feedback.gain.value   = value as number
+      if (key === 'feedback')  feedback.gain.value   = safeFeedback(value as number)
       if (key === 'time')      delay.delayTime.value = value as number
     },
     dispose() { delay.disconnect(); feedback.disconnect(); dryGain.disconnect(); wetGain.disconnect(); input.disconnect(); output.disconnect() },
@@ -293,7 +322,7 @@ export function buildFilter(ctx: AudioContext, params: FilterParams): EffectHand
   const filter = ctx.createBiquadFilter()
   filter.type = params.enabled ? params.type : ('allpass' as BiquadFilterType)
   filter.frequency.value = params.frequency
-  filter.Q.value = params.q
+  filter.Q.value = safeQ(params.q)
 
   return {
     input: filter,
@@ -302,7 +331,7 @@ export function buildFilter(ctx: AudioContext, params: FilterParams): EffectHand
       if (key === 'enabled')   { params = { ...params, enabled: value as boolean }; filter.type = params.enabled ? params.type : ('allpass' as BiquadFilterType) }
       if (key === 'type')      { params = { ...params, type: value as FilterParams['type'] }; if (params.enabled) filter.type = params.type }
       if (key === 'frequency') { params = { ...params, frequency: value as number }; filter.frequency.value = value as number }
-      if (key === 'q')         filter.Q.value = value as number
+      if (key === 'q')         filter.Q.value = safeQ(value as number)
     },
     dispose() { filter.disconnect() },
   }
@@ -625,7 +654,7 @@ export function buildChorus(ctx: AudioContext, params: ChorusParams): EffectHand
 
   delay.delayTime.value = baseDelay
   lfoGain.gain.value = params.enabled ? depthMs * params.depth : 0
-  feedback.gain.value = params.feedback
+  feedback.gain.value = safeFeedback(params.feedback)
 
   dryGain.gain.value = 1
   wetGain.gain.value = params.enabled ? params.mix : 0
@@ -653,7 +682,7 @@ export function buildChorus(ctx: AudioContext, params: ChorusParams): EffectHand
       const dm = _p.type === 'flanger' ? 0.003 : _p.type === 'chorus' ? 0.01  : 0.0005
       delay.delayTime.value = bd
       lfoGain.gain.value = _p.enabled ? dm * _p.depth : 0
-      feedback.gain.value = _p.feedback
+      feedback.gain.value = safeFeedback(_p.feedback)
       wetGain.gain.value = _p.enabled ? _p.mix : 0
     },
     dispose() {

@@ -13,6 +13,7 @@
     "test:noteids": "tsc -p tsconfig.test.json && node scripts/note-ids.test.mjs",
     "test:splice": "tsc -p tsconfig.test.json && node scripts/daw-splice.test.mjs",
     "check:discoverable": "node scripts/check-discoverable.mjs",
+    "check:no-howl": "node scripts/check-no-howl.mjs",
     "check:tuning": "node --experimental-strip-types scripts/check-tuning.mjs",
     "test:tuning": "node scripts/check-tuning.test.mjs",
     "test:audio-input": "tsc -p tsconfig.test.json && node scripts/audio-capture.test.mjs",
