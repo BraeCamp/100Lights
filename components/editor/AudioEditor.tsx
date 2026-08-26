@@ -990,6 +990,19 @@ export default function AudioEditor(props: AudioEditorProps) {
   // separate piece of work.
   const AUTO_FREEZE_ON_LOAD = false
 
+  // Loading progress, for the bar at the top of the studio.
+  const [loadProgress, setLoadProgress] = useState<{ done: number; total: number; active: boolean; phase: 'head' | 'fill' | 'idle' }>(
+    { done: 0, total: 0, active: false, phase: 'idle' })
+  useEffect(() => {
+    let stop: (() => void) | undefined
+    let cancelled = false
+    void import('@/lib/apollo/freeze-cache').then(({ onCombineProgress }) => {
+      if (cancelled) return
+      stop = onCombineProgress(setLoadProgress)
+    })
+    return () => { cancelled = true; stop?.() }
+  }, [])
+
   const autoFroze = useRef(false)
   useEffect(() => {
     if (!AUTO_FREEZE_ON_LOAD) return
@@ -2823,6 +2836,42 @@ export default function AudioEditor(props: AudioEditorProps) {
           position: 'relative',
         }}
       >
+        {/* Loading a heavy song means synthesising it, and that took a minute
+            with NOTHING on screen to say so — the studio just felt slow. This is
+            the one indicator that covers ordinary loading rather than the
+            deliberate Freeze below it. It only appears while there is real work
+            outstanding, and it says which half of the work it is doing: getting
+            to first sound, or filling in the rest behind you. */}
+        {loadProgress.active && loadProgress.total > 0 && (
+          <div
+            data-ui-el="load-progress"
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0, zIndex: 940,
+              pointerEvents: 'none', display: 'flex', flexDirection: 'column', gap: 0,
+            }}
+          >
+            <div style={{ height: 2, background: 'transparent' }}>
+              <div style={{
+                height: '100%',
+                width: `${Math.round((loadProgress.done / loadProgress.total) * 100)}%`,
+                background: 'var(--accent)',
+                transition: 'width 240ms linear',
+              }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <div style={{
+                marginTop: 4, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 600,
+                background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
+                color: 'var(--text-muted)', letterSpacing: '0.02em',
+              }}>
+                {loadProgress.phase === 'head'
+                  ? 'Getting the sound ready…'
+                  : `Loading the rest of the song — ${loadProgress.done}/${loadProgress.total}`}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Freezing renders the whole song, which takes a while — say so, or it
             looks like the studio has hung. */}
         {freezing && (

@@ -499,6 +499,41 @@ async function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip;
   evictIfNeeded()
 }
 
+// ── Telling the user something is happening ─────────────────────────────────
+//
+// There was no indication at all. A heavy song opens, the studio spends a minute
+// synthesising it, and the only evidence is that playback sounds thin for a
+// while and the machine is busy — which reads as the app being slow rather than
+// as the app doing work with an end in sight. Brae asked where the progress bar
+// was; there wasn't one, anywhere.
+export interface CombineProgress {
+  /** Clips whose audio is ready. */
+  done: number
+  /** Clips this song wants. */
+  total: number
+  /** Is a render running right now? */
+  active: boolean
+  /** 'head' = racing to first sound; 'fill' = filling the rest in behind you. */
+  phase: 'head' | 'fill' | 'idle'
+}
+
+let progress: CombineProgress = { done: 0, total: 0, active: false, phase: 'idle' }
+const progressListeners = new Set<(p: CombineProgress) => void>()
+
+export function combineProgress(): CombineProgress { return progress }
+
+/** Subscribe to loading progress. Returns an unsubscribe. */
+export function onCombineProgress(fn: (p: CombineProgress) => void): () => void {
+  progressListeners.add(fn)
+  fn(progress)
+  return () => { progressListeners.delete(fn) }
+}
+
+function setProgress(next: Partial<CombineProgress>): void {
+  progress = { ...progress, ...next }
+  for (const l of progressListeners) l(progress)
+}
+
 export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!groups.length) return
   const wanted = groups.flatMap(g => g.clips
@@ -509,6 +544,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   const spb = 60 / bpm
   setProjectNeed(wanted.reduce((n, w) => n + Math.ceil(w.clip.durationBeats * spb * 48_000), 0))
   const missing = () => wanted.filter(w => !buffers.has(w.key))
+  setProgress({ done: wanted.length - missing().length, total: wanted.length, phase: 'idle', active: false })
   if (!missing().length) return
 
   const jobKey = 'project-combine'
@@ -625,11 +661,48 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
 
         if (!msPerUnit) msPerUnit = initialMsPerUnit()
 
+        // ── Head start first, then fill ─────────────────────────────────────
+        //
+        // Two phases, because the first few seconds and the rest of the song are
+        // different problems:
+        //
+        //   HEAD START — the smallest useful window, right where the playhead
+        //   is. The only thing that matters is time-to-first-sound; nobody cares
+        //   that bar 40 is not ready when they have not heard bar 1.
+        //
+        //   FILL — everything else, in AS FEW PASSES as memory allows.
+        //
+        // The fill phase is deliberately the opposite of the head start, and it
+        // is the fix for "it's just slow". This loop used to run the whole song
+        // in head-start-sized windows: at most four clips, time-budgeted, over
+        // and over. That is the exact pattern this file already had a
+        // measurement against, a few lines below —
+        //
+        //     ten batches + a full pass   128s, 21 of 31 landed
+        //     a single full pass           17s, 26 of 31 landed
+        //
+        // — and the same thing measured again on freezing this week: four clips
+        // per render took 66s where one clip per render took 123s. Every render
+        // builds an offline context that is not reclaimed promptly, so each pass
+        // costs more than the last. Many small passes do not merely fail to
+        // help, they roughly double the work. The comment survived; the code had
+        // drifted back into the shape the comment warns about.
+        //
+        // So: small while it matters, then big. And bigger still when the
+        // transport is stopped, because then there is no deadline to miss — that
+        // is Brae's "load the full thing in the background when it's paused".
+        let headStartDone = false
         while (renderable().length) {
           const queue2 = byUrgency()
           const window: typeof queue2 = []
           let windowVoiceSec = 0
-          const timeBudget = renderTimeBudgetMs()
+          const phase: 'head' | 'fill' = headStartDone ? 'fill' : 'head'
+          // A deadline only exists while the transport is running. Stopped, the
+          // only limit is memory, so the fill goes as wide as the device allows.
+          const timeBudget = phase === 'head' ? renderTimeBudgetMs()
+            : transportPlaying ? renderTimeBudgetMs() * 3
+            : Infinity
+          const maxClips = phase === 'head' ? 2 : Infinity
           for (const w of queue2) {
             const vs = clipVoiceSeconds(w.clip, w.patch, spb2)
             // TWO independent limits, because they guard different failures.
@@ -644,10 +717,13 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
             }
             window.push(w)
             windowVoiceSec += vs
-            // A hard ceiling regardless: many tiny clips in one pass still make
-            // one long slice-and-store on the main thread.
-            if (window.length >= 4) break
+            if (window.length >= maxClips) break
           }
+          headStartDone = true
+          setProgress({
+            done: wanted.length - missing().length, total: wanted.length,
+            active: true, phase,
+          })
           if (!window.length) break
           timings.attempts++
           const before = buffers.size
@@ -666,26 +742,13 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           if (buffers.size === before) { rememberBad(window.map(w => w.key)); break }
           await gap(Date.now() - tWin)
         }
-        // Render in BATCHES, earliest first, instead of the whole song before
-        // anything is usable. On production the all-at-once pass took 113
-        // seconds — nearly two minutes of the song running on the expensive
-        // live path. A batch is a few seconds, and playback can use each one the
-        // moment it lands, so the opening is playable almost immediately and the
-        // rest fills in behind you.
-        // ONE small opening batch so playback starts immediately, then ONE
-        // whole-project pass. Not ten batches — that strategy was upside down.
-        //
-        // Measured on Winter Drift (31 clips, 7 tracks, 1:50):
-        //   ten batches + a full pass   128s, 21 of 31 landed
-        //   a single full pass           17s, 26 of 31 landed
-        //
-        // Every render builds an offline context that is not reclaimed promptly,
-        // so passes DEGRADE as they pile up: timed back to back, the first took
-        // 17s and landed 26, the second 14s and landed 13, the third 90s and
-        // still 13. Each extra pass was buying less and costing more. Fewer,
-        // bigger renders are faster AND more complete — the batching was
-        // manufacturing the very exhaustion it was working around.
+        // (The measurements that shaped the two-phase loop above are recorded
+        // there, at the point where the window is sized. They used to live down
+        // here, describing a strategy the code no longer followed — which is how
+        // the loop drifted back into many-small-passes without anyone noticing
+        // it contradicted its own evidence.)
         timings.renderMs = Date.now() - tRender
+        setProgress({ done: wanted.length - missing().length, total: wanted.length, active: false, phase: 'idle' })
         const stubborn = renderable().map(w => w.key)
         rememberBad(stubborn)     // do not chase these again next time
         // Say which it was. "Would not render" was reported for clips that had
