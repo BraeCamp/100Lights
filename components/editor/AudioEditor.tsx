@@ -2842,7 +2842,7 @@ export default function AudioEditor(props: AudioEditorProps) {
             deliberate Freeze below it. It only appears while there is real work
             outstanding, and it says which half of the work it is doing: getting
             to first sound, or filling in the rest behind you. */}
-        {loadProgress.active && loadProgress.total > 0 && (
+        {loadProgress.total > 0 && loadProgress.done < loadProgress.total && (
           <div
             data-ui-el="load-progress"
             style={{
@@ -2854,8 +2854,8 @@ export default function AudioEditor(props: AudioEditorProps) {
               <div style={{
                 height: '100%',
                 width: `${Math.round((loadProgress.done / loadProgress.total) * 100)}%`,
-                background: 'var(--accent)',
-                transition: 'width 240ms linear',
+                background: playing ? 'var(--text-muted)' : 'var(--accent)',
+                transition: 'width 240ms linear, background 300ms',
               }} />
             </div>
             <div style={{ display: 'flex', justifyContent: 'center' }}>
@@ -2864,9 +2864,11 @@ export default function AudioEditor(props: AudioEditorProps) {
                 background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
                 color: 'var(--text-muted)', letterSpacing: '0.02em',
               }}>
-                {loadProgress.phase === 'head'
-                  ? 'Getting the sound ready…'
-                  : `Loading the rest of the song — ${loadProgress.done}/${loadProgress.total}`}
+                {playing
+                  ? `Loading paused while you play — ${loadProgress.done}/${loadProgress.total}`
+                  : loadProgress.phase === 'head'
+                    ? 'Getting the sound ready…'
+                    : `Loading the rest of the song — ${loadProgress.done}/${loadProgress.total}`}
               </div>
             </div>
           </div>

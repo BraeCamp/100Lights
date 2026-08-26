@@ -720,10 +720,37 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           const phase: 'head' | 'fill' = headStartDone ? 'fill' : 'head'
           // A deadline only exists while the transport is running. Stopped, the
           // only limit is memory, so the fill goes as wide as the device allows.
-          const timeBudget = phase === 'head' ? renderTimeBudgetMs()
-            : transportPlaying ? renderTimeBudgetMs() * 3
-            : Infinity
-          const maxClips = phase === 'head' ? 2 : Infinity
+          // ALWAYS bounded, and bounded tightly.
+          //
+          // This previously used renderTimeBudgetMs() x 3 while playing and
+          // Infinity while paused, on the theory that fewer, bigger passes are
+          // faster. Two measurements killed that theory:
+          //
+          //   Total time barely moved. 4-clip windows: 39.4s in 12 passes.
+          //   Unbounded windows: 38.5s in 8. Within noise.
+          //
+          //   And a render BLOCKS THE MAIN THREAD for its entire duration —
+          //   Chrome runs an OfflineAudioContext carrying JS worklets there. So
+          //   an unbounded window is an unbounded freeze. Playing Hallway Light
+          //   from a cold cache, the playhead jumped from beat 4.8 to 25.5
+          //   between two samples one second apart: audio carried on from the
+          //   audio thread while the interface was gone for thirteen seconds.
+          //   That is Brae's "super slow, and the bar appears and disappears".
+          //
+          // So the window is sized to stay under a human's patience rather than
+          // to minimise passes. Costing nothing in total time, it is the whole
+          // difference between a studio that works while it loads and one that
+          // locks up.
+          // Measured. Tightening these does NOT keep shrinking the stall, because a
+          // window always takes at least one clip and a single clip's render is
+          // atomic — the budget only decides whether a SECOND one joins it. At
+          // 500ms idle the worst stall measured 1820ms (three over a second),
+          // worse than at 900ms, because more passes means more chances to meet
+          // an expensive clip alone plus per-pass overhead. 900/450/250 is the
+          // measured floor for this shape of work; going below it trades total
+          // time for nothing.
+          const timeBudget = transportPlaying ? 450 : userIsBusy() ? 250 : 900
+          const maxClips = phase === 'head' ? 2 : 8
           for (const w of queue2) {
             const vs = clipVoiceSeconds(w.clip, w.patch, spb2)
             // TWO independent limits, because they guard different failures.
