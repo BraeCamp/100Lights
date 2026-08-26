@@ -5,6 +5,7 @@
 // key + scale) lives in a Settings sheet behind the gear, so it never overwhelms.
 
 import { useEffect, useRef, useState } from 'react'
+import Knob from '@/components/editor/daw/Knob'
 import { Repeat, Music2, Zap } from 'lucide-react'
 import { centerOnBeat } from '@/lib/daw-view'
 import { useDaw, useDawPlayhead } from '@/lib/daw-state'
@@ -209,7 +210,16 @@ export function MobileTransport() {
               {/* Swing */}
               <div>
                 <div style={label}>Swing {Math.round((project.swing ?? 0) * 100)}%</div>
-                <input type="range" min={0} max={100} value={Math.round((project.swing ?? 0) * 100)} onChange={e => dispatch({ type: 'SET_SWING', swing: Number(e.target.value) / 100 })} style={{ width: '100%', accentColor: '#8b5cf6' }} />
+                {/* 48px, because this is a phone — the desktop sizes are far
+                    below a usable touch target. */}
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                  <Knob
+                    value={Math.round((project.swing ?? 0) * 100)} min={0} max={100} defaultValue={0}
+                    size={48} color="#8b5cf6"
+                    onChange={v => dispatch({ type: 'SET_SWING', swing: Math.round(v) / 100 })}
+                    format={v => `${Math.round(v)}%`}
+                  />
+                </div>
               </div>
 
               {/* Key */}
