@@ -367,7 +367,11 @@ export const glass = () => patch('Glass', p => {
 
 /** Electric piano with a real tine: warm body, bright bark on the attack. */
 export const tine = () => patch('Tine Keys', p => {
-  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.05, width: 0.4 })
+  // Unison 1. This voice plays four-note chords with overlapping hits, and at
+  // 4 voices per note that peaked at 32 against Apollo's limit of 16 — past
+  // which the allocator steals notes that are still sounding. Width comes from
+  // the chorus and the octave-up tine instead, neither of which costs a voice.
+  osc(p, 0, { level: 0.6, enabled: true, unison: 1, detune: 0.05, width: 0.4 })
   p.oscs[0].wt.tableId = 'basic-shapes'
   p.oscs[0].wt.pos = 0.1
   osc(p, 1, { level: 0.19, enabled: true, octave: 2, fine: 6 })

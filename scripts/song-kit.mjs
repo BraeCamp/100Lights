@@ -120,9 +120,13 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
       const bySlot = new Map()
       for (const n of notes) {
         const startBeat = +Math.max(0, n.startBeat).toFixed(4)
+        // Keep the note inside its clip. Humanising pushes late notes later, and
+        // a note that runs past the clip boundary is reported as a fault by
+        // check-notes and gets cut at playback anyway.
+        const durationBeats = +Math.max(0.05, Math.min(n.durationBeats, len - startBeat)).toFixed(4)
         const slot = `${n.pitch}@${startBeat.toFixed(3)}`
         const prev = bySlot.get(slot)
-        if (!prev || (n.velocity ?? 0) > (prev.velocity ?? 0)) bySlot.set(slot, { ...n, startBeat })
+        if (!prev || (n.velocity ?? 0) > (prev.velocity ?? 0)) bySlot.set(slot, { ...n, startBeat, durationBeats })
       }
       clips.push({
         kind: 'midi', id: uid(), trackId: t.id, name: `${t.name} · ${sec.name}`,

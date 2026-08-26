@@ -189,6 +189,20 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
         'The arrangement is a loop with layers muted, not a shape. Make the quietest section genuinely sparse — long notes, fewer parts.', +(hi / lo).toFixed(2))
   }
 
+  // ── Voices ────────────────────────────────────────────────────────────────
+  // Invisible to every audio measurement: past the limit the allocator steals
+  // notes that are still sounding, and the render still has plenty of sound in
+  // it. Only the note data shows it coming.
+  for (const p of sym.polyphony ?? []) {
+    if (p.peakVoices > 16)
+      add('warn', 'voices', `"${p.track}" needs ${p.peakVoices} synth voices at its busiest (Apollo allows 16)`,
+        `${p.maxAtOnce} notes at once x ${p.voicesPerNote} per note. Notes past the limit get cut off mid-sustain, which is heard as stuttering. ` +
+        `Drop the patch's unison, or write fewer notes at a time — a three-note voicing instead of four.`, p.peakVoices)
+  }
+  for (const o of (sym.overflow ?? []).slice(0, 3))
+    add('note', 'voices', `"${o.track}" has a note running ${o.over} beats past the end of "${o.clip}"`,
+      'It gets cut at playback. Shorten the note or lengthen the clip.', o.over)
+
   // ── Register ──────────────────────────────────────────────────────────────
   for (const c of sym.registers.clashes.slice(0, 4))
     add('warn', 'register', `"${c.a}" and "${c.b}" occupy the same ${c.semitones} semitones`,

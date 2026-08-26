@@ -58,7 +58,10 @@ const ROOTS = { Gm9: 43, Cm11: 48, 'Ebmaj7#11': 51, F9sus: 41 }   // in the bass
 const VOICED = []
 let prev = null
 for (const sym of LOOP) {
-  const v = voice(sym, { style: 'rootless', centre: 63, spread: 11, near: prev })
+  // Three sounding voices, not four: the comp overlaps its own hits, and voice
+  // cost multiplies by the number of notes held. Three is also the better
+  // voicing — guide tones plus one colour, with the bass supplying the root.
+  const v = voice(sym, { style: 'rootless', centre: 63, spread: 11, near: prev }).slice(0, 3)
   VOICED.push(v)
   prev = v
 }

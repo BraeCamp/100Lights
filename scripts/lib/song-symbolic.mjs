@@ -227,6 +227,51 @@ export function trackNotes(dp) {
   return out
 }
 
+/**
+ * Peak simultaneous notes per track, and what that costs in synth voices.
+ *
+ * Apollo allows 16 voices per patch and unison MULTIPLIES per held note, so a
+ * four-voice patch playing a four-note chord is already at the limit and past it
+ * the allocator steals notes that are still sounding — audible as stuttering,
+ * and invisible to every audio measurement because the render still has sound in
+ * it. A pad on unison 4 + 3 costs 7 per note; four notes is 28.
+ */
+export function polyphony(dp, notes) {
+  const byId = Object.fromEntries((dp.tracks ?? []).map(t => [t.name, t]))
+  return Object.entries(notes).map(([name, ns]) => {
+    // Sweep the note starts and ends; the high-water mark is the answer.
+    const events = []
+    for (const n of ns) { events.push([n.beat, 1], [n.beat + n.durationBeats, -1]) }
+    events.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+    let cur = 0, peak = 0
+    for (const [, d] of events) { cur += d; if (cur > peak) peak = cur }
+
+    const p = byId[name]?.instrument?.type === 'apollo' ? byId[name].instrument.params : null
+    let perNote = 1
+    if (p) {
+      perNote = 0
+      for (const o of p.oscs ?? []) if (o.enabled) perNote += Math.max(1, o.unison || 1)
+      if (p.sub?.enabled) perNote += 1
+      if (p.noise?.enabled) perNote += 1
+      perNote = Math.max(1, perNote)
+    }
+    return { track: name, maxAtOnce: peak, voicesPerNote: perNote, peakVoices: peak * perNote }
+  })
+}
+
+/** Notes that run past the end of the clip holding them. */
+export function overflow(dp) {
+  const byId = Object.fromEntries((dp.tracks ?? []).map(t => [t.id, t.name]))
+  const out = []
+  for (const c of (dp.arrangementClips ?? [])) {
+    for (const n of c.notes ?? []) {
+      const over = (n.startBeat + n.durationBeats) - c.durationBeats
+      if (over > 0.001) out.push({ track: byId[c.trackId] ?? c.trackId, clip: c.name, over: round(over, 3) })
+    }
+  }
+  return out
+}
+
 /** Everything symbolic, in one call. */
 export function symbolic(dp) {
   const notes = trackNotes(dp)
@@ -238,6 +283,8 @@ export function symbolic(dp) {
     groove: groove(dp, notes),
     dynamics: dynamics(dp, notes),
     registers: registers(pitched),
+    polyphony: polyphony(dp, notes),
+    overflow: overflow(dp),
     totalNotes: Object.values(notes).reduce((a, b) => a + b.length, 0),
     trackNotes: notes,
   }
