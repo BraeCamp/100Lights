@@ -393,16 +393,22 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
                   <span style={{ width: 30, fontSize: 9, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)', flexShrink: 0 }}>{val > 0 ? '+' : ''}{val}</span>
                 </div>
               )
+              // Desktop: a knob per band, as Apollo does it. Bipolar, so cut and
+              // boost read as direction out of centre rather than as a thumb
+              // sitting somewhere along a bar — which on a 72px strip was four
+              // near-identical grey lines.
               return (
-                <div key={band}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, fontWeight: 700, marginBottom: 1, lineHeight: 1 }}>
-                    <span style={{ color: c }}>{label}</span>
-                    <span style={{ color: val ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{val > 0 ? '+' : ''}{val}</span>
-                  </div>
-                  <input type="range" min={-12} max={12} step={0.5} value={val}
-                    onChange={e => setBand(band, parseFloat(e.target.value))}
-                    onDoubleClick={() => setBand(band, 0)}
-                    style={{ width: '100%', accentColor: c, height: 13 }} />
+                <div key={band} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 26, fontSize: 8, fontWeight: 700, color: c, flexShrink: 0 }}>{label}</span>
+                  <Knob
+                    value={val} min={-12} max={12} defaultValue={0} size={26} bipolar color={c}
+                    onChange={v => setBand(band, Math.round(v * 2) / 2)}
+                    format={v => `${v > 0 ? '+' : ''}${v.toFixed(1)}`}
+                  />
+                  <span style={{
+                    flex: 1, textAlign: 'right', fontSize: 8, fontWeight: 700,
+                    color: val ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums',
+                  }}>{val > 0 ? '+' : ''}{val}</span>
                 </div>
               )
             })}

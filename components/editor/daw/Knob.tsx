@@ -120,20 +120,34 @@ export default function Knob({
         // turning the knob.
         style={{ cursor: 'ns-resize', touchAction: 'none', display: 'block' }}
       >
-        <path d={arc(A0, A0 + SWEEP, r)} stroke="var(--border)" strokeWidth={3} fill="none" strokeLinecap="round" />
+        {/* The unfilled part of the arc.
+            var(--border) alone is almost invisible against a dark panel — on
+            the mixer strip a centred pan knob showed as a bare needle floating
+            in space, with nothing to say it was a control at all. Apollo gets
+            away with the same colour because its knobs are 38-42px; these are
+            26-30px in a 72px strip. Layering a faint wash of the value colour
+            over the border gives the ring a visible body while still reading as
+            "empty", and it follows the theme rather than pinning a grey. */}
+        <path d={arc(A0, A0 + SWEEP, r)} stroke="var(--border)" strokeWidth={3.5} fill="none" strokeLinecap="round" />
+        <path d={arc(A0, A0 + SWEEP, r)} stroke={color} strokeWidth={3.5} fill="none" strokeLinecap="round" opacity={0.18} />
         {bipolar
           ? <path
               d={norm >= 0.5 ? arc(A0 + 0.5 * SWEEP, angle, r) : arc(angle, A0 + 0.5 * SWEEP, r)}
-              stroke={color} strokeWidth={3} fill="none" strokeLinecap="round" />
-          : <path d={arc(A0, angle, r)} stroke={color} strokeWidth={3} fill="none" strokeLinecap="round" />}
+              stroke={color} strokeWidth={3.5} fill="none" strokeLinecap="round" />
+          : <path d={arc(A0, angle, r)} stroke={color} strokeWidth={3.5} fill="none" strokeLinecap="round" />}
         {/* Flat face — Apollo dropped the gradient and bevel, so this does too. */}
         <circle cx={cx} cy={cy} r={Math.max(1, r - 4.5)} fill="var(--bg-surface, #252c36)" />
+        {/* Needle length is a FRACTION of the radius, not Apollo's fixed pixel
+            offsets. Those assume a 38-42px knob: at 26px they work out to a
+            three-pixel stub, which is why the first version of these read as a
+            speck rather than a pointer. Proportional keeps the same look at
+            every size Beacon uses. */}
         <line
-          x1={cx + (r - 12) * Math.cos(((angle - 90) * Math.PI) / 180) * 0.25}
-          y1={cy + (r - 12) * Math.sin(((angle - 90) * Math.PI) / 180) * 0.25}
-          x2={cx + (r - 7) * Math.cos(((angle - 90) * Math.PI) / 180)}
-          y2={cy + (r - 7) * Math.sin(((angle - 90) * Math.PI) / 180)}
-          stroke="var(--text-primary)" strokeWidth={1.8} strokeLinecap="round"
+          x1={cx + r * 0.25 * Math.cos(((angle - 90) * Math.PI) / 180)}
+          y1={cy + r * 0.25 * Math.sin(((angle - 90) * Math.PI) / 180)}
+          x2={cx + r * 0.72 * Math.cos(((angle - 90) * Math.PI) / 180)}
+          y2={cy + r * 0.72 * Math.sin(((angle - 90) * Math.PI) / 180)}
+          stroke="var(--text-primary)" strokeWidth={Math.max(1.4, size / 18)} strokeLinecap="round"
         />
       </svg>
       {label && (
