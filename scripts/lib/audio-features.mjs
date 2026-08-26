@@ -239,26 +239,41 @@ export function loudness(l, r, sr) {
   }
 }
 
-/** True peak, 4x oversampled with a windowed-sinc interpolator. */
+/**
+ * True peak, 4x oversampled with a windowed-sinc interpolator.
+ *
+ * Only near the loudest samples. Oversampling every sample of a two-minute
+ * stereo file is about 1.6 billion multiply-adds and took longer than rendering
+ * the song did — it was the single slowest thing in the whole loop. An
+ * inter-sample peak cannot exceed its neighbouring samples by more than a couple
+ * of dB, so anything more than 3 dB below the sample peak cannot become the true
+ * peak, and there is no need to look there.
+ */
 export function truePeak(l, r, sr) {
-  const OS = 4, TAPS = 32
+  const OS = 4, TAPS = 32, HALF = TAPS / 2
   const filt = []
   for (let p = 0; p < OS; p++) {
     const h = new Float32Array(TAPS)
     for (let t = 0; t < TAPS; t++) {
-      const x = t - TAPS / 2 + 1 - p / OS
+      const x = t - HALF + 1 - p / OS
       const s = x === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x)
       h[t] = s * (0.5 - 0.5 * Math.cos(2 * Math.PI * (t + 0.5) / TAPS))
     }
     filt.push(h)
   }
-  let peak = 0
+  let samplePeak = 0
+  for (const ch of [l, r]) for (let i = 0; i < ch.length; i++) { const a = Math.abs(ch[i]); if (a > samplePeak) samplePeak = a }
+  if (samplePeak === 0) return 0
+  const gate = samplePeak * 0.708           // 3 dB down
+
+  let peak = samplePeak
   for (const ch of [l, r]) {
-    for (let i = TAPS; i < ch.length - TAPS; i++) {
+    for (let i = HALF; i < ch.length - HALF; i++) {
+      if (Math.abs(ch[i]) < gate) continue
       for (let p = 0; p < OS; p++) {
         let acc = 0
         const h = filt[p]
-        for (let t = 0; t < TAPS; t++) acc += ch[i - TAPS / 2 + t] * h[t]
+        for (let t = 0; t < TAPS; t++) acc += ch[i - HALF + t] * h[t]
         const a = Math.abs(acc)
         if (a > peak) peak = a
       }

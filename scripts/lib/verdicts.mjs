@@ -240,6 +240,29 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
     // as loud as the whole record.
     const sumPower = stems.filter(s => !s.silent).reduce((a, s) => a + Math.pow(10, s.rmsDb / 10), 0)
     const sumDb = 10 * Math.log10(Math.max(1e-12, sumPower))
+    // Per-voice calibration cannot know how OFTEN a voice plays. A pad holding a
+    // three-note chord in every bar of every section, with a release that laps
+    // into the next bar, accumulates — in "Cold Signal" it came out 16 dB above
+    // everything else with its fader already at 0.13 against the bass's 0.62.
+    // Calibration measures one event; this measures the song.
+    // The failure mode is a bed DOMINATING, not a bed being quiet — flagging any
+    // pad more than 8 dB under the mix was my own invention and it nags about
+    // correct mixes. What actually went wrong in "Cold Signal" was the pad
+    // arriving as the loudest thing in the record with its fader at 0.13 against
+    // the bass's 0.62. So: only complain when a sustained bed is at or near the
+    // top of the stem table, and say by how much to move it.
+    const isBed = name => /pad|fog|air|string|choir|atmos/i.test(name)
+    const sounding = stems.filter(s => !s.silent && s.rmsDb != null)
+    const loudestDb = Math.max(...sounding.map(s => s.rmsDb), -120)
+    for (const s of sounding) {
+      if (!isBed(s.track)) continue
+      if (s.rmsDb < loudestDb - 3) continue
+      const want = loudestDb - 6
+      add('warn', 'mix', `"${s.track}" is the loudest thing in the mix, and it is a bed`,
+        `Sustained parts accumulate — every bar's chord laps into the next, so a pad that measures fine alone can arrive on top. ` +
+        `Turn it down about ${(s.rmsDb - want).toFixed(0)} dB (multiply its track volume by ${Math.pow(10, (want - s.rmsDb) / 20).toFixed(2)}), ` +
+        `shorten its release, or play it every other bar.`, +(s.rmsDb - sumDb).toFixed(1))
+    }
     for (const s of stems) {
       const role = roleOf(s.track)
       if (!role || s.silent || s.rmsDb == null) continue

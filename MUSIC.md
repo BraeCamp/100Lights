@@ -304,6 +304,56 @@ the library does not fix songs already written; their scripts have to be re-run.
 
 ---
 
+## Using Apollo properly
+
+`npm run probe` (`scripts/apollo-probe.mjs`) renders one note through every
+feature and says which ones actually change the sound headlessly. **99 of 107 do,
+and none render silent.** Run it before reaching for something unfamiliar.
+
+The palette used three wavetables, two filter types and four effects out of
+eighteen warp modes, seven spectral warps, thirty-seven filters and twenty-three
+effects. That is most of what "the songs all sound similar" means — the notes
+were varying and the synthesis was not. Reach for:
+
+- **warps** (`osc.wt.warp1`) — `sync` is the big one, a 247→1036 Hz shift, and it
+  sweeps beautifully from an envelope. `pd` for hard digital, `rm`/`am` for
+  metallic, `saturate` for weight.
+- **spectral warps** (`osc.wt.specWarp`) — `inharm` pulls partials off the
+  harmonic series, which is the difference between a bell and a synth playing a
+  bell patch. `evenodd`, `smear`, `stretch` all work.
+- **filters** — all 37. `formant` gives a throat rather than a spectrum,
+  `acidLadder`/`mgDirty` for growl, `sampHold`/`downsample` for digital dirt,
+  `comb`/`phase` for movement.
+- **chaos LFOs** (`lfo.mode:'chaos'`, lorenz or sh) — a pad that breathes on a
+  repeating cycle announces the cycle.
+- **the arp** — verified working in a full song render, synced to project tempo:
+  hold a chord and it generates sixteenths (measured at 0.150–0.165 s gaps at
+  98 BPM). Texture from the synth instead of typed into the roll.
+- **mod sources** — `vel`, `note`, `rand`, `gate`, `follower`, `macro1..8` all
+  route. Velocity → filter cutoff is the cheapest "played" cue there is.
+
+**Field names that cost an hour each.** The probe reported twenty-two features
+dead on its first run and nearly all of it was the caller, not the engine:
+
+- it is `wt.specWarp`, **singular** — `specWarp1` is silently never read
+- macros live at `patch.macros`, **not** `patch.global.macros`
+- in SERIAL filter routing the last enabled **filter** decides the bus, not the
+  oscillator, so setting `osc.bus` alone sends the chain silence
+- `fm`/`am`/`rm` warps modulate using **another oscillator** (`wt.fmSource`) —
+  with one osc enabled there is nothing to modulate with
+- an effect at its **default** parameters is neutral by design. An EQ ships flat,
+  a gate ships open, a transient shaper ships at 0 dB.
+
+Genuinely inert headless: the `flip`/`quantize`/`shift` warps, the `lowpass`
+spectral warp, and the `rossler` chaos LFO. `remap` needs a `remapCurve`, which
+is null by default.
+
+**Watch the cost.** Under a realistic chord load voices run 1–5x real time, not
+the 50x a single monophonic patch suggests — polyphony is the driver, and the
+unison-3 chord voices (`pad`, `strings`) are the slowest at 0.8x. A dense
+eight-track song renders around real time rather than in fifteen seconds. Check
+`voiceCost` before putting a wide unison on something that plays chords.
+
 ## Open
 
 - **Seed real multisamples into the Sound Library** so a sampled instrument can

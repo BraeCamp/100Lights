@@ -379,6 +379,34 @@ export function stagger(plan, { maxChurn = 2 } = {}) {
 }
 
 /**
+ * Sidechain pump, written as an effect bar rather than baked into the audio.
+ *
+ * The duck-on-every-kick is most of what makes modern pop feel like it is
+ * breathing, and it is normally a compressor keyed off the kick — which we do
+ * not have, and which would be invisible and uneditable if we did. Written as a
+ * gain graph with a point per beat it does the same job and stays a curve
+ * someone can grab and reshape.
+ *
+ * `depth` is how far it ducks (0.65 is a firm pop pump, 0.85 is a hint), and
+ * `recover` is the fraction of the beat it takes to come back.
+ */
+export function pump(trackKey, startBeat, beats, { depth = 0.7, recover = 0.55, row = 2, bpb = 4 } = {}) {
+  const pts = []
+  for (let b = 0; b < beats; b++) {
+    pts.push([b, 1])                                  // fully ducked on the beat
+    pts.push([b + Math.min(0.95, recover), 0])        // back up before the next
+  }
+  pts.push([beats, 0])
+  return {
+    trackKey, startBeat, durationBeats: beats, row,
+    fx: { gain: depth },
+    graph: pts.map(([t, v]) => ({
+      id: `p${t}-${v}`, t: +t.toFixed(4), v, smooth: false, h1: [0, 0], h2: [0, 0],
+    })),
+  }
+}
+
+/**
  * A density target per section, as a multiplier on the busiest section.
  *
  * The rule this encodes is that the quietest section has to be GENUINELY quiet.

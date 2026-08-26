@@ -418,6 +418,132 @@ export const airPad = () => patch('Air Pad', p => {
   p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.32 }))
 })
 
+// ── Dark pop ────────────────────────────────────────────────────────────────
+// Built after `scripts/apollo-probe.mjs` established what the engine actually
+// does headlessly. The palette up to here used three wavetables, two filter
+// types and four effects out of eighteen warps, seven spectral warps, thirty-
+// seven filters and twenty-three effects — so everything sounded like the same
+// synth with the filter in a different place, which is most of what "the songs
+// all sound similar" means.
+//
+// Each of these is built around ONE thing the probe verified, so the character
+// comes from the synthesis rather than from the notes:
+//   growlBass   oscillator SYNC, swept by an envelope   (247 -> 1036 Hz)
+//   coldKeys    INHARMONIC spectral warp on a bell table
+//   fogPad      FORMANT filter, vowel morphed by a LORENZ chaos LFO
+//   wireArp     Apollo's own ARP through a SAMPLE-AND-HOLD filter
+//   gritHats    DOWNSAMPLE filter for aliasing dirt
+//   rimSnap     band-passed body plus a noise crack
+
+/**
+ * The hook. In this idiom the bass is the melody, so it needs to move on its
+ * own: an envelope opens the oscillator's sync amount on every note, which is a
+ * timbral attack rather than a filter one, and the acid ladder adds the growl
+ * underneath it.
+ */
+export const growlBass = () => patch('Growl Bass', p => {
+  osc(p, 0, { level: 0.85, enabled: true, unison: 3, detune: 0.10, width: 0.5, fine: -12 })
+  p.oscs[0].wt.tableId = 'analog-saws'
+  p.oscs[0].wt.pos = 0.35
+  p.oscs[0].wt.warp1 = { mode: 'sync', amount: 0.12 }
+  osc(p, 1, { level: 0.22, enabled: true, octave: -1 })
+  p.oscs[1].wt.tableId = 'basic-shapes'
+  p.oscs[1].wt.pos = 0
+  env(p, 0, { attack: 0.004, decay: 0.32, sustain: 0.42, release: 0.14 })
+  env(p, 1, { attack: 0.002, decay: 0.14, sustain: 0, release: 0.07, dCurve: -0.5 })
+  // Sync sweep on the attack, and the filter under it. Two different kinds of
+  // brightness moving together is what makes a bass sound played rather than
+  // triggered.
+  p.matrix.push(mod('env2', 'osc0.wt.warp1.amount', 0.30))
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.26))
+  p.matrix.push(mod('vel', 'f1.cutoff', 0.14))
+  filt(p, 0, { enabled: true, type: 'acidLadder', cutoff: 0.34, res: 0.42, drive: 0.30, keytrack: 0.3 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.22, mode: 2 }, { mix: 0.35 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -18, ratio: 4 }, { mix: 1 }))
+})
+
+/** Struck and slightly wrong: inharmonic partials are the dark-pop keyboard. */
+export const coldKeys = () => patch('Cold Keys', p => {
+  osc(p, 0, { level: 0.6, enabled: true, unison: 1, detune: 0.05, width: 0.5, stereo: 0.6 })
+  p.oscs[0].wt.tableId = 'bells'
+  p.oscs[0].wt.pos = 0.42
+  // Pulls the partials off the harmonic series — the difference between a bell
+  // and a synth playing a bell patch.
+  p.oscs[0].wt.specWarp = { mode: 'inharm', amount: 0.30 }
+  osc(p, 1, { level: 0.24, enabled: true, octave: 1, fine: -7 })
+  p.oscs[1].wt.tableId = 'basic-shapes'
+  p.oscs[1].wt.pos = 0.18
+  env(p, 0, { attack: 0.002, decay: 1.1, sustain: 0.14, release: 0.6, dCurve: -0.5 })
+  env(p, 1, { attack: 0.001, decay: 0.28, sustain: 0, release: 0.12 })
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.22))
+  transient(p, { level: 0.24, decay: 0.022, table: 'metallic', pos: 0.4, keytrack: true, octave: 1 })
+  filt(p, 0, { enabled: true, type: 'phasePlus', cutoff: 0.76, res: 0.20, fat: 0.5, keytrack: 0.25 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.26 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.30 }))
+})
+
+/**
+ * The room the song sits in. A formant filter gives it a throat rather than a
+ * spectrum, and a Lorenz chaos LFO morphs the vowel — chaos rather than a sine
+ * because a pad that breathes on a repeating cycle announces the cycle.
+ */
+export const fogPad = () => patch('Fog', p => {
+  osc(p, 0, { level: 0.55, enabled: true, unison: 3, detune: 0.14, width: 0.7, stereo: 0.55, pan: -0.12, fine: -8 })
+  p.oscs[0].wt.tableId = 'vocal'
+  p.oscs[0].wt.pos = 0.35
+  osc(p, 1, { level: 0.24, enabled: true, unison: 1, fine: 8, width: 0.7, stereo: 0.5, pan: 0.16 })
+  p.oscs[1].wt.tableId = 'pwm'
+  p.oscs[1].wt.pos = 0.45
+  env(p, 0, { attack: 1.1, decay: 1.2, sustain: 0.52, release: 1.4, aCurve: -0.25 })
+  filt(p, 0, { enabled: true, type: 'formant', cutoff: 0.44, res: 0.18, fat: 0.35, keytrack: 0.1 })
+  p.lfos[0] = { ...p.lfos[0], mode: 'chaos', chaosType: 'lorenz', rate: 0.22, sync: false, smooth: 0.8 }
+  p.matrix.push(mod('lfo1', 'f1.fat', 0.35, { bipolar: true }))     // the vowel drifts
+  p.matrix.push(mod('lfo1', 'f1.cutoff', 0.10, { bipolar: true }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.22 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.28 }))
+})
+
+/**
+ * Texture, generated by the synth rather than written out: hold a chord and
+ * Apollo's arp turns it into sixteenths, through a sample-and-hold filter that
+ * re-steps on its own clock so the figure never quite repeats. Not a melody —
+ * it is the chord, moving.
+ */
+export const wireArp = () => patch('Wire', p => {
+  osc(p, 0, { level: 0.7, enabled: true, unison: 1, width: 0.4, stereo: 0.5, fine: 18 })
+  p.oscs[0].wt.tableId = 'squares-morph'
+  p.oscs[0].wt.pos = 0.3
+  p.oscs[0].wt.warp1 = { mode: 'pd', amount: 0.35 }       // phase distortion: digital, hard
+  env(p, 0, { attack: 0.001, decay: 0.13, sustain: 0, release: 0.06, dCurve: -0.6 })
+  filt(p, 0, { enabled: true, type: 'sampHold', cutoff: 0.55, res: 0.3, fat: 0.5, keytrack: 0.2 })
+  p.arp = { ...p.arp, on: true, mode: 'updown', octaves: 2, syncRate: 13, gate: 0.55, swing: 0 }
+  p.fxMain.push(fxUnit(FX_DEFS, 'delay', { feedback: 0.34 }, { mix: 0.26 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
+})
+
+/** Hats with aliasing dirt rather than a clean noise burst. */
+export const gritHats = () => patch('Grit Hats', p => {
+  osc(p, 0, { enabled: true, engine: 'wavetable', keytrackPitch: false,
+    level: 1, semi: 0, unison: 4, detune: 0.85, width: 1, stereo: 0.7 })
+  p.oscs[0].wt.tableId = 'metallic'
+  env(p, 0, { attack: 0.0004, decay: 0.055, sustain: 0.28, release: 0.09, dCurve: -0.5 })
+  filt(p, 0, { enabled: true, type: 'downsample', cutoff: 0.92, res: 0.08, fat: 0.16, drive: 0.30 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.25 }, { mix: 0.28 }))
+})
+
+/** A rim/snap rather than a snare: short, band-passed, with a noise crack. */
+export const rimSnap = () => patch('Rim', p => {
+  osc(p, 0, { level: 0.55, enabled: true, semi: 0 })
+  p.oscs[0].wt.tableId = 'basic-shapes'
+  p.oscs[0].wt.pos = 0.3
+  useNoise(p, 1, { level: 0.75, unison: 2, detune: 0.6, width: 1, stereo: 0.5 })
+  env(p, 0, { attack: 0.0006, decay: 0.11, sustain: 0, release: 0.05, dCurve: -0.6 })
+  env(p, 1, { attack: 0.0004, decay: 0.03, sustain: 0, release: 0.02 })
+  p.matrix.push(mod('env2', 'osc0.semi', 0.06))
+  filt(p, 0, { enabled: true, type: 'bp12', cutoff: 0.58, res: 0.42, drive: 0.35 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.3 }, { mix: 0.3 }))
+})
+
 export const VOICES = {
   kick:   { build: kick,                 notes: '24:0:0.4',        seconds: 1.2 },
   snare:  { build: snare,                notes: '48:0:0.25',       seconds: 1.0 },
@@ -442,6 +568,12 @@ export const VOICES = {
   tine:   { build: tine,                 notes: '57:0:1,61:0:1,64:0:1', seconds: 2.5 },
   picked: { build: picked,               notes: '52:0:0.6,59:0.25:0.6', seconds: 2.0 },
   airpad: { build: airPad,               notes: '58:0:3,62:0:3,65:0:3', seconds: 5.0 },
+  growl:  { build: growlBass,            notes: '41:0:0.45,48:0.5:0.4', seconds: 2.0 },
+  cold:   { build: coldKeys,             notes: '56:0:1.2,60:0:1.2,63:0:1.2', seconds: 3.0 },
+  fog:    { build: fogPad,               notes: '53:0:3.5,60:0:3.5,68:0:3.5', seconds: 6.0 },
+  wire:   { build: wireArp,              notes: '65:0:2,68:0:2,72:0:2', seconds: 3.0 },
+  grithat:{ build: gritHats,             notes: '60:0:0.06',            seconds: 0.6 },
+  rim:    { build: rimSnap,              notes: '48:0:0.12',            seconds: 0.8 },
 }
 
 if (process.argv.includes('--audit')) {
