@@ -75,6 +75,16 @@ const hann = n => { const w = new Float32Array(n); for (let i = 0; i < n; i++) w
  * power of the signal.
  */
 export function spectrum(sig, sr, fftSize = 8192) {
+  // A signal SHORTER than one block used to fall straight through the loop and
+  // return all-zero power — no error, just "there is no energy anywhere", which
+  // reads downstream as a silent sample. Drum one-shots are routinely shorter
+  // than the default block (a closed hat is ~3000 samples), so a short signal is
+  // zero-padded into one block instead.
+  if (sig.length < fftSize) {
+    const padded = new Float32Array(fftSize)
+    padded.set(sig)
+    sig = padded
+  }
   const win = hann(fftSize)
   const hop = fftSize >> 1
   const acc = new Float64Array(fftSize / 2)

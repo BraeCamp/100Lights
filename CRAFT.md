@@ -206,6 +206,61 @@ ignored.
 
 ---
 
+### Is the part in the register its name claims?
+
+Brae called the hi-hat bad twice. The number was in the report both times:
+
+    Hats   256 notes   -36.4dB   centroid 2880Hz   dominant band: mid 38%
+
+A hi-hat does not live in the midrange. Every real hat sample in the repo sits
+between **5.4 and 12.7 kHz**; ours was at **2.9 kHz** — about an octave and a half
+below anything that reads as a cymbal. It was a midrange noise burst playing a
+hi-hat's rhythm, and no amount of shaping the oscillator was going to move it.
+
+The library already had four voices in the right place — `hat`, `openhat`,
+`hatShut`, `hatOpen`, all around 8.5 kHz and the ONLY things covering brilliance
+and air. The song was using `gritHats`, which is the one "hat" that isn't one.
+`npm run voice-audit` prints every voice's band profile; read it before choosing.
+
+**This is a source problem, not an EQ problem.** A filter cannot add what was
+never there. When a part is in the wrong register, change the source: a sample,
+or a voice whose own profile lands where the part belongs.
+
+`listen` now checks it — a track whose NAME claims a register (hats, cymbal,
+ride, shaker; sub, 808) is compared against where its energy actually is, and
+only fires when the audio contradicts the name by roughly an octave, so a
+deliberately dark cymbal is not second-guessed.
+
+**Sampled drums are first-class here.** A drum track's pads carry a URL path
+(`/drum-kits/<kit>/<gm-note>.wav`), so the project stays small, the app resolves
+it, and the offline renderer reads the same file — 8 kits, closed hat on GM 42,
+open hat on 46. Prefer one over synthesising a cymbal: the inharmonic clatter of
+real metal is most of what makes a hat sound like a hat.
+
+---
+
+### Low is not the same as loud, and can be neither
+
+"The sub might be too low and quiet" turned out to be one fault, not two:
+
+| | below 40 Hz | 40-60 Hz |
+|---|---|---|
+| before | **20.1%** | 77.6% |
+| after | 3.0% | **94.2%** |
+
+A fifth of the sub's energy sat under 40 Hz, where most speakers, laptops and
+phones reproduce nothing at all. That energy was inaudible AND it was using the
+headroom, so every attempt to make the sub louder was mostly making the silent
+part louder. The fix was not level, it was **where the energy sits**: pull back
+the octave-down oscillator so the fundamental carries the note, and then the
+level can come up and land somewhere a listener has.
+
+Check the split before reaching for the fader. And mind the neighbour: our sub
+occupies 40-60 Hz and the bass 60-120, which is why both are audible at once —
+raising the sub an octave to "fix" it would have walked it straight into the bass.
+
+---
+
 ### The bass: what it plays, and what it sounds like
 
 Two rules from Brae's ear, both of which changed a design rather than a setting.

@@ -41,7 +41,7 @@
 //     --json             print the stats as JSON only
 //     --jobs=N           parallel track renders (default: cores - 1)
 
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { join, dirname, basename, resolve } from 'node:path'
 import { tmpdir, cpus } from 'node:os'
 import { execFile } from 'node:child_process'
@@ -117,7 +117,8 @@ for (const t of audible) {
   if (audioClips.length) problems.push(`${t.name}: ${audioClips.length} audio clip(s) — offline render is MIDI/Apollo only`)
   const sampled = clips.filter(c => c.presetId)
   if (sampled.length) { problems.push(`${t.name}: uses sampled preset ${sampled[0].presetId} — needs the browser renderer`); continue }
-  if (t.instrument?.type !== 'apollo') { problems.push(`${t.name}: instrument type "${t.instrument?.type}" — offline render handles 'apollo' only`); continue }
+  const isDrum = t.instrument?.type === 'drum'
+  if (!isDrum && t.instrument?.type !== 'apollo') { problems.push(`${t.name}: instrument type "${t.instrument?.type}" — offline render handles 'apollo' and 'drum'`); continue }
   const withFx = clips.filter(c => c.rollFx && Object.keys(c.rollFx).length)
   if (withFx.length) problems.push(`${t.name}: ${withFx.length} clip(s) carry rollFx — not applied offline`)
   if (t.effects?.length) problems.push(`${t.name}: ${t.effects.length} track effect(s) — not applied offline`)
@@ -170,7 +171,7 @@ for (const t of audible) {
   // A note starting before the window still needs to be heard from the window's
   // start — a two-bar pad chord is otherwise missing from every partial render.
   for (const n of notes) if (n.t < 0) { n.dur += n.t; n.t = 0 }
-  renderable.push({ track: t, notes: notes.filter(n => n.dur > 0.01), bends: bends.filter(b => b.t >= 0) })
+  renderable.push({ track: t, isDrum, notes: notes.filter(n => n.dur > 0.01), bends: bends.filter(b => b.t >= 0) })
 }
 if (!renderable.length) {
   console.error('Nothing to render.' + (problems.length ? '\n  ' + problems.join('\n  ') : ''))
@@ -182,7 +183,119 @@ const tmp = mkdtempSync(join(tmpdir(), 'songrender-'))
 const jobs = Number(flag('jobs')) || Math.max(1, cpus().length - 1)
 log(`${dp.name ?? basename(file)} — ${bpm} BPM, ${renderable.length} track(s), ${seconds.toFixed(1)}s, ${jobs} jobs`)
 
+// ── Sampled drums ───────────────────────────────────────────────────────────
+// A drum track plays one-shot WAVs off disk (public/drum-kits/...), which is
+// what the app does too — `sample.data` on a pad is a URL path, so a project
+// referencing a kit stays small and both the app and this renderer resolve the
+// same file.
+//
+// Worth doing rather than synthesising: our synthesised hi-hat measured a 2.9 kHz
+// spectral centroid, where every real hat sample in the repo sits between 5.4 and
+// 12.7 kHz. It was a midrange noise burst wearing a hat's rhythm.
+
+const HAT_CHOKE_GROUP = 900
+const GM_HAT = new Set([42, 44, 46])
+const drumCache = new Map()
+
+/** Windowed-sinc resample + pitch shift, cached per (file, semitones).
+ *  Linear interpolation is tempting and wrong here: a hat keeps ALL of its
+ *  energy between 8 and 16 kHz, which is exactly where cheap interpolation
+ *  rolls off and aliases. */
+function drumSample(urlPath, semis) {
+  const key = `${urlPath}|${semis}`
+  const hit = drumCache.get(key)
+  if (hit) return hit
+  const file = join(ROOT, 'public', urlPath.replace(/^\//, ''))
+  if (!existsSync(file)) return null
+  const w = readWav(readFileSync(file))
+  const rate = Math.pow(2, (semis || 0) / 12)
+  const step = (w.sr / SR) * rate
+  const outLen = Math.max(1, Math.floor(w.frames / step))
+  const A = 8
+  const widen = Math.max(1, step)          // downsampling needs a wider kernel
+  const out = [new Float32Array(outLen), new Float32Array(outLen)]
+  const src = [w.l, w.r]
+  for (let c = 0; c < 2; c++) {
+    for (let i = 0; i < outLen; i++) {
+      const pos = i * step
+      const lo = Math.ceil(pos - A * widen), hi = Math.floor(pos + A * widen)
+      let acc = 0, wsum = 0
+      for (let k = lo; k <= hi; k++) {
+        if (k < 0 || k >= w.frames) continue
+        const x = (k - pos) / widen
+        if (x === 0) { acc += src[c][k]; wsum += 1; continue }
+        if (Math.abs(x) >= A) continue
+        const px = Math.PI * x
+        const wgt = (Math.sin(px) / px) * (Math.sin(px / A) / (px / A))
+        acc += src[c][k] * wgt
+        wsum += wgt
+      }
+      out[c][i] = wsum ? acc / wsum : 0
+    }
+  }
+  drumCache.set(key, out)
+  return out
+}
+
+function renderDrumTrack(entry) {
+  const params = entry.track.instrument.params ?? {}
+  const L = new Float32Array(frames), R = new Float32Array(frames)
+  // Closed hat cuts open hat: work out each hit's cut point BEFORE writing any
+  // of them, so a choked tail is never in the buffer to begin with.
+  const byGroup = new Map()
+  for (const n of entry.notes) {
+    const pad = params.pads?.[n.note]
+    const g = pad?.chokeGroup ?? (GM_HAT.has(n.note) ? HAT_CHOKE_GROUP : 0)
+    if (!g) continue
+    if (!byGroup.has(g)) byGroup.set(g, [])
+    byGroup.get(g).push(n)
+  }
+  const cutAt = new Map()
+  for (const list of byGroup.values()) {
+    list.sort((a, b) => a.t - b.t)
+    for (let i = 0; i < list.length - 1; i++) cutAt.set(list[i], list[i + 1].t)
+  }
+
+  let placed = 0
+  for (const n of entry.notes) {
+    const pad = params.pads?.[n.note]
+    if (!pad) { problems.push(`${entry.track.name}: no pad for note ${n.note} — that hit is silent`); continue }
+    if (pad.mute) continue
+    if (!pad.sample?.data) { problems.push(`${entry.track.name}: pad ${n.note} has no sample (synth drum voices are not rendered offline)`); continue }
+    const buf = drumSample(pad.sample.data, pad.pitch)
+    if (!buf) { problems.push(`${entry.track.name}: sample missing on disk: ${pad.sample.data}`); continue }
+
+    // The app only builds the pad gain/pan node when a pad differs from neutral,
+    // so a pad sitting exactly at the 0.8 default plays at unity. Matched here
+    // deliberately — parity with playback matters more than tidiness.
+    const neutral = pad.volume === 0.8 && !pad.pan && !pad.pitch
+    const padGain = neutral ? 1 : (pad.volume ?? 0.8)
+    const gain = (n.vel ?? 0.7) * padGain
+    const pan = pad.pan ?? 0
+    const gl = Math.cos((pan + 1) * Math.PI / 4), gr = Math.sin((pan + 1) * Math.PI / 4)
+
+    const start = Math.round(n.t * SR)
+    let len = buf[0].length
+    const cut = cutAt.get(n)
+    if (cut != null) len = Math.min(len, Math.max(1, Math.round((cut - n.t) * SR)))
+    const fade = Math.min(Math.round(0.005 * SR), Math.max(1, len >> 2))
+    for (let i = 0; i < len; i++) {
+      const o = start + i
+      if (o < 0) continue
+      if (o >= frames) break
+      // only a CHOKED voice gets the fade; a hit ending naturally already has one
+      const env = (cut != null && i > len - fade) ? (len - i) / fade : 1
+      L[o] += buf[0][i] * gain * gl * env
+      R[o] += buf[1][i] * gain * gr * env
+    }
+    placed++
+  }
+  if (!placed) problems.push(`${entry.track.name}: no drum hits were placed — the track is silent`)
+  return { ...entry, l: L, r: R }
+}
+
 async function renderTrack(entry, i) {
+  if (entry.isDrum) return renderDrumTrack(entry)
   const pf = join(tmp, `p${i}.json`), nf = join(tmp, `n${i}.json`), wf = join(tmp, `t${i}.wav`)
   writeFileSync(pf, JSON.stringify(entry.track.instrument.params))
   writeFileSync(nf, JSON.stringify(entry.notes))

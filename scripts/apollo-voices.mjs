@@ -587,13 +587,18 @@ export const glideSub = () => patch('Glide Sub', p => {
   osc(p, 0, { level: 0.92, enabled: true })
   p.oscs[0].wt.tableId = 'basic-shapes'
   p.oscs[0].wt.pos = 0
-  p.sub = { ...p.sub, enabled: true, shape: 'sine', octave: -1, level: 0.38, ref: 'lowest', direct: false }
+  // The octave-down oscillator is a WEIGHT, not the note. At 0.38 it put a fifth
+  // of this voice's energy below 40 Hz, where most speakers reproduce nothing --
+  // so it cost headroom, and made the sub read as "too low" and quiet at the
+  // same time: the part you could hear was the smaller half of it. At 0.16 the
+  // fundamental carries the pitch and the octave-down only underlines it.
+  p.sub = { ...p.sub, enabled: true, shape: 'sine', octave: -1, level: 0.16, ref: 'lowest', direct: false }
   // Long attack and release, full sustain, and legato on: this envelope is meant
   // to open once at the top of the song and close once at the end.
   env(p, 0, { attack: 0.05, decay: 0.6, sustain: 1.0, release: 0.9, legato: true })
   // Fixed filter, no envelope — the same rule as steadyBass. A sub that changes
   // tone as it moves is a different sound arriving, not one sound moving.
-  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.26, res: 0.04, drive: 0.14 })
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.30, res: 0.04, drive: 0.14 })
   p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -24, ratio: 3 }, { mix: 1 }))
 })
 

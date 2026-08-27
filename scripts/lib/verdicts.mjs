@@ -72,6 +72,38 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
     if (s.silent) add('fail', 'render', `"${s.track}" produced no sound at all`,
       'A track that does not sound makes the mix measure CLEANER, so nothing else here can be trusted until it is fixed. Check the patch loaded and the notes are in range.')
   }
+
+  // Is a part in the register its NAME claims?
+  //
+  // Brae said the hats sounded bad twice before anything here noticed, and the
+  // number was in the report the whole time: that hat had a 2.9 kHz centroid and
+  // a dominant band of "mid", where every real hi-hat sits above 5 kHz. The
+  // per-stem centroid was printed and simply not read, which is what a check is
+  // for. Name-based on purpose — a track called Hats is a claim about what the
+  // part IS, and this only fires when the audio contradicts it by an octave or
+  // more, so a deliberately dark cymbal is not second-guessed.
+  const REGISTER = [
+    { re: /\b(hat|hats|hi-?hat|cymbal|ride|shaker|tamb)/i, loHz: 4000, what: 'a hi-hat or cymbal' },
+    { re: /\b(sub|808)\b/i, hiHz: 120, what: 'a sub' },
+  ]
+  for (const s of stems) {
+    if (s.silent || s.centroidHz == null) continue
+    for (const r of REGISTER) {
+      if (!r.re.test(s.track)) continue
+      if (r.loHz && s.centroidHz < r.loHz) {
+        add('warn', 'register', `"${s.track}" is centred at ${Math.round(s.centroidHz)} Hz, too low for ${r.what}`,
+          `Its energy is ${Math.round(s.centroidHz)} Hz where this kind of part lives above ${r.loHz} Hz — it will read as a ` +
+          `midrange noise burst playing the right rhythm. This is a WRONG SOURCE, not an EQ problem: no filter adds ` +
+          `what is not there. Use a sample, or a voice whose own band profile lands up there (npm run voice-audit).`,
+          Math.round(s.centroidHz))
+      }
+      if (r.hiHz && s.centroidHz > r.hiHz) {
+        add('warn', 'register', `"${s.track}" is centred at ${Math.round(s.centroidHz)} Hz, too high for ${r.what}`,
+          `A sub belongs under ${r.hiHz} Hz; at ${Math.round(s.centroidHz)} Hz it is competing with the bass instead of sitting beneath it.`,
+          Math.round(s.centroidHz))
+      }
+    }
+  }
   if (mix.clipped > 0) add('fail', 'mix', `${mix.clipped} clipped samples`,
     `Lower masterVolume until the peak sits below -1 dBFS. Do loudness in post with ffmpeg loudnorm, not in the bounce.`, mix.clipped)
   if (mix.truePeakDb != null && outside(mix.truePeakDb, target.truePeakDb))

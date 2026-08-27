@@ -36,7 +36,23 @@ import { execFileSync } from 'child_process'
 import { fileURLToPath } from 'url'
 import { uid, N, assemble, dipInto, lift, bar } from './song-kit.mjs'
 import { groove, play, voice, parseChord, intoSlot, checkSlots, stagger, densityArc, thin, pump, rng } from './lib/craft.mjs'
-import { kick, snare, gritHats, glideSub, steadyBass, boom, coldKeys, pad as darkPad } from './apollo-voices.mjs'
+import { kick, snare, glideSub, steadyBass, boom, coldKeys, pad as darkPad } from './apollo-voices.mjs'
+import { importTs } from './lib/ts-import.mjs'
+
+// The kit comes from the app's own table rather than a copy of it, so the pads,
+// their levels and the sample paths cannot drift from what the studio plays.
+// 'techno' by measurement: 70 ms and a 15 ms decay (tight enough for eighths at
+// 148 without smearing), an 8.4 kHz centroid that lands in brilliance rather
+// than air, and 24% of its energy in the midrange so it has body instead of fizz.
+const { DRUM_KITS } = await importTs('lib/drum-presets.ts')
+const HAT_KIT = DRUM_KITS.find(k => k.id === 'techno')
+if (!HAT_KIT) throw new Error('drum kit "techno" is missing from DRUM_KITS')
+// Deep-copied because DRUM_KITS is the app's live table, not ours to edit, and
+// this raises the hat pad: the kit's own 0.6 is set for a kit playing every pad,
+// where the hat should sit under the kick and snare. Here the hat is the only
+// pad on the track and the balance is made at the trackhead instead.
+const HAT_INSTRUMENT = JSON.parse(JSON.stringify(HAT_KIT.instrument))
+HAT_INSTRUMENT.params.pads[42].volume = 1.0
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT_DIR = join(homedir(), 'Desktop', '100lights-ai-renders')
@@ -67,7 +83,9 @@ const clash = checkSlots(SLOT)
 if (clash.length) throw new Error('register collision: ' + clash.join('; '))
 
 // ── Parts ───────────────────────────────────────────────────────────────────
-const KICK = 24, CLAP = 48, HAT = 60
+// The hats are a SAMPLED kit, so their pitch is a GM drum pad number, not a
+// note: 42 is the closed hat. Kick and clap are still Apollo voices.
+const KICK = 24, CLAP = 48, HAT = 42
 
 /** Four on the floor — the driving shape. */
 const kickBar = ({ on = true } = {}) => on
@@ -91,12 +109,25 @@ const clapBar = ({ fill = false } = {}) => {
  * close to each other" clutter Brae heard — sixteen hits a bar at 148 BPM is a
  * hiss, not a groove.
  */
+/**
+ * Eighths on a real closed hat, offbeats accented.
+ *
+ * This used to be a synthesised noise burst, and Brae's read was that it sounded
+ * bad. The measurement agreed and said why: our hat had a spectral centroid of
+ * 2.9 kHz and `listen` called its dominant band "mid" — every real hat sample in
+ * the repo sits between 5.4 and 12.7 kHz. It was not a dull hi-hat, it was a
+ * midrange noise burst playing a hi-hat's rhythm, and no amount of shaping the
+ * oscillator was going to move it three octaves.
+ *
+ * The long/short alternation the synth version used is gone: it existed to make
+ * two timbres out of one noise source, and a sample already has its own decay.
+ * The accent is velocity only, which keeps the hat CONSISTENT the way Brae
+ * described Artemas keeping it — and when it should change, it leaves entirely.
+ */
 const hatBar = () => {
   const out = []
   for (let i = 0; i < 8; i++) {
-    const b = i * 0.5
-    const off = i % 2 === 1
-    out.push({ pitch: HAT, beat: b, durationBeats: off ? 0.30 : 0.07, velocity: off ? 70 : 52 })
+    out.push({ pitch: HAT, beat: i * 0.5, durationBeats: 0.25, velocity: i % 2 ? 100 : 76 })
   }
   return out
 }
@@ -205,10 +236,15 @@ export function build() {
   const tracks = [
     { key: 'kick', id: uid(), name: 'Kick', presetId: null, volume: 0.46, color: '#f0abfc', instrument: { type: 'apollo', params: kick() } },
     { key: 'clap', id: uid(), name: 'Clap', presetId: null, volume: 0.92, color: '#f472b6', instrument: { type: 'apollo', params: snare() } },
-    { key: 'hats', id: uid(), name: 'Hats', presetId: null, volume: 0.30, pan: 0.18, color: '#fda4af', instrument: { type: 'apollo', params: gritHats() } },
-    // Turned down: "the sub needs to be lower". It was carrying 30-48% of the
+    { key: 'hats', id: uid(), name: 'Hats', presetId: null, volume: 0.62, pan: 0.18, color: '#fda4af', instrument: HAT_INSTRUMENT },
+    // Brae: "the sub might be too low and quiet". Both, and they were the same
+    // fault -- a fifth of its energy sat under 40 Hz where nothing reproduces it,
+    // so turning it up had been making the inaudible part louder. With the
+    // octave-down oscillator pulled back (see glideSub) the level can come up and
+    // land somewhere audible.
+    // Previously: "the sub needs to be lower". It was carrying 30-48% of the
     // whole record's energy and swallowing the bass it is supposed to support.
-    { key: 'sub',  id: uid(), name: 'Sub',  presetId: null, volume: 0.30, color: '#c084fc',
+    { key: 'sub',  id: uid(), name: 'Sub',  presetId: null, volume: 0.45, color: '#c084fc',
       glide: true, glideOpts: { glide: 0.22, accel: 0.15, decel: 0.8, anchor: 'center' },
       instrument: { type: 'apollo', params: glideSub() } },
     { key: 'boom', id: uid(), name: 'Boom', presetId: null, volume: 0.34, color: '#fbbf24', instrument: { type: 'apollo', params: boom() } },
