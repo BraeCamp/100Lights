@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "test:merge": "tsc lib/project-merge.ts --outDir .test-build --rootDir lib --target es2022 --module esnext --moduleResolution bundler --skipLibCheck && node scripts/project-merge.test.mjs",
+    "test:practice": "tsc lib/practice-progress.ts lib/practice-paths.ts lib/ui-tiers.ts --outDir .test-build --rootDir lib --target es2022 --module esnext --moduleResolution bundler --skipLibCheck && node scripts/practice-progress.test.mjs",
     "test:session": "node lib/session-capture/session-capture.test.mjs",
     "validate:articles": "node scripts/validate-articles.mjs",
     "build-tutorial-song": "tsc lib/daw-types.ts --outDir .fixture-build --rootDir lib --target es2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck && node scripts/build-tutorial-song.mjs",

@@ -13,24 +13,17 @@ import { usePlan } from '@/hooks/usePlan'
 import { useUITierOptional } from '../UITierProvider'
 import { useUpgradeModal } from '@/components/UpgradeModal'
 import { lessonVisibleInMode, lessonRequiresPro, type UITier } from '@/lib/ui-tiers'
+import { loadPracticeProgress, savePracticeProgress, type PracticeProgress } from '@/lib/practice-progress'
 
 const GENRE_COLOR: Record<PracticeSong['genre'], string> = { Pop: '#ec4899', Rock: '#f59e0b', Metal: '#ef4444' }
 
 // ── Progress persistence ────────────────────────────────────────────────────
-// { [pathId]: string[] } — completed step ids. Steps are sticky: once done,
-// un-doing the action (e.g. un-soloing) doesn't take the checkmark away.
+// Moved to lib/practice-progress so the dashboard can read the same store —
+// it lived here privately, which is why nothing outside the editor could show
+// the user their own progress. Shape is unchanged: { [pathId]: string[] } of
+// completed step ids, sticky once done.
 
-const STORAGE_KEY = '100lights-practice-progress'
-
-type Progress = Record<string, string[]>
-
-function loadProgress(): Progress {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as Progress
-  } catch {
-    return {}
-  }
-}
+type Progress = PracticeProgress
 
 export default function PracticeButton() {
   const { project, view, playing, recording, metronome, expandedPianoRollClipId, expandedStepSeqClipId, dispatch, setView, setSelectedTrackId, setExpandedPianoRollClipId } = useDaw()
@@ -86,7 +79,7 @@ export default function PracticeButton() {
     for (const part of song.parts) loadSongPart(song, part)
   }
   const [progress, setProgress] = useState<Progress>(() =>
-    typeof window === 'undefined' ? {} : loadProgress()
+    loadPracticeProgress()
   )
   // Per-path baseline of the project state, captured when the session starts
   // (and reset on "Restart this path"). A step only auto-completes on a genuine
@@ -157,7 +150,7 @@ export default function PracticeButton() {
   if (advanced) setProgress(advanced)
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(progress)) } catch { /* private mode */ }
+    savePracticeProgress(progress)
   }, [progress])
 
   useEffect(() => {

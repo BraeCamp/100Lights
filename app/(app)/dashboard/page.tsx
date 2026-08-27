@@ -15,6 +15,8 @@ import { projectPath } from '@/lib/project-url'
 import { openProjectsFromFile } from '@/lib/project-serializer'
 import { openMediaInStudio } from '@/lib/media-handoff'
 import StarterCodeBanner from '@/components/StarterCodeBanner'
+import PracticeProgressCard from './PracticeProgressCard'
+import CommunityStrip from './CommunityStrip'
 import { useIsMobile } from '@/lib/use-is-mobile'
 
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
@@ -272,6 +274,10 @@ export default function DashboardPage() {
           </p>
         </div>
 
+        {/* Progress before the app grid: the pitch is that the work makes you
+            better, so the evidence of that should come before the file list. */}
+        <PracticeProgressCard resumeHref={recentProjects[0] ? projHref(recentProjects[0]) : '/new'} />
+
         {/* ── App Launcher Grid ── */}
         <section style={{ marginBottom: 52 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -394,8 +400,28 @@ export default function DashboardPage() {
               </button>
             </div>
           ) : recentProjects.length === 0 ? (
-            <div style={{ padding: '36px 0', textAlign: 'center', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
-              <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>No projects yet — pick an app above to get started.</p>
+            <div style={{ padding: '30px 24px', textAlign: 'center', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 5px' }}>
+                Nothing here yet — let&rsquo;s make something.
+              </p>
+              <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.55 }}>
+                Open the studio and the Practice Room will walk you through your first track, step by step.
+                It checks each step off as you actually do it.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <Link
+                  href="/new"
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px', borderRadius: 9, background: 'var(--accent)', color: '#fff', fontSize: 12.5, fontWeight: 600, textDecoration: 'none' }}
+                >
+                  Start your first track <ArrowRight size={13} />
+                </Link>
+                <Link
+                  href="/community"
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px', borderRadius: 9, background: 'var(--bg-base)', border: '1px solid var(--border)', color: 'var(--text-secondary)', fontSize: 12.5, fontWeight: 600, textDecoration: 'none' }}
+                >
+                  Hear what others made
+                </Link>
+              </div>
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
@@ -504,6 +530,8 @@ export default function DashboardPage() {
             </div>
           </section>
         )}
+
+        <CommunityStrip />
       </div>
     </main>
 
