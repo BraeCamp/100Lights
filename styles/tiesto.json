@@ -1,0 +1,208 @@
+{
+  "name": "tiesto",
+  "artist": "Tiesto",
+  "genre": "dance / electronic pop — tightest tempo cluster (120), the ONLY one of the four where drums are the loudest element, biggest low end, heavily limited",
+  "kind": "artist profile — ranges, not a recipe",
+  "measuredFrom": [
+    "Tiësto & Alana Springsteen - Hot Honey.wav",
+    "Tiësto & KAROL G - Don’t Be Shy (Official Audio).wav",
+    "Tiësto & Tate McRae - 10_35 (Official Audio).wav",
+    "Tiësto - Lay Low (Official Visualizer).wav",
+    "Tiësto - The Business (Official Audio).wav"
+  ],
+  "tracks": 5,
+  "tempo": {
+    "lo": 120,
+    "hi": 137,
+    "median": 120
+  },
+  "keys": [
+    "G major",
+    "B minor",
+    "Bb minor",
+    "Db major",
+    "Ab minor"
+  ],
+  "fullMix": {
+    "lufs": {
+      "lo": -9.21,
+      "hi": -5.79,
+      "median": -7.15
+    },
+    "crestDb": {
+      "lo": 7.68,
+      "hi": 11.09,
+      "median": 8.61
+    },
+    "dynamicRangeDb": {
+      "lo": 4.98,
+      "hi": 12.37,
+      "median": 8.87
+    },
+    "correlation": {
+      "lo": 0.617,
+      "hi": 0.907,
+      "median": 0.767
+    },
+    "centroidHz": {
+      "lo": 353,
+      "hi": 606,
+      "median": 435
+    },
+    "from": 5,
+    "bands": {
+      "sub": {
+        "lo": 0.319,
+        "hi": 0.416,
+        "median": 0.37
+      },
+      "bass": {
+        "lo": 0.15,
+        "hi": 0.243,
+        "median": 0.175
+      },
+      "lowMid": {
+        "lo": 0.162,
+        "hi": 0.27,
+        "median": 0.198
+      },
+      "mid": {
+        "lo": 0.09,
+        "hi": 0.153,
+        "median": 0.135
+      },
+      "highMid": {
+        "lo": 0.048,
+        "hi": 0.107,
+        "median": 0.071
+      },
+      "presence": {
+        "lo": 0.01,
+        "hi": 0.022,
+        "median": 0.014
+      },
+      "brilliance": {
+        "lo": 0.008,
+        "hi": 0.02,
+        "median": 0.011
+      },
+      "air": {
+        "lo": 0.003,
+        "hi": 0.005,
+        "median": 0.004
+      }
+    }
+  },
+  "instrumental": {
+    "centroidHz": {
+      "lo": 227,
+      "hi": 358,
+      "median": 256
+    },
+    "from": 5,
+    "bands": {
+      "sub": {
+        "lo": 0.369,
+        "hi": 0.504,
+        "median": 0.397
+      },
+      "bass": {
+        "lo": 0.282,
+        "hi": 0.337,
+        "median": 0.296
+      },
+      "lowMid": {
+        "lo": 0.155,
+        "hi": 0.254,
+        "median": 0.208
+      },
+      "mid": {
+        "lo": 0.016,
+        "hi": 0.056,
+        "median": 0.044
+      },
+      "highMid": {
+        "lo": 0.017,
+        "hi": 0.035,
+        "median": 0.022
+      },
+      "presence": {
+        "lo": 0.004,
+        "hi": 0.011,
+        "median": 0.009
+      },
+      "brilliance": {
+        "lo": 0.004,
+        "hi": 0.014,
+        "median": 0.007
+      },
+      "air": {
+        "lo": 0.002,
+        "hi": 0.004,
+        "median": 0.004
+      }
+    }
+  },
+  "groove": {
+    "onsetsPerSec": {
+      "lo": 4.77,
+      "hi": 7.33,
+      "median": 5.3
+    },
+    "spreadMs": {
+      "lo": 31.4,
+      "hi": 35.7,
+      "median": 35.3
+    },
+    "swingPct": {
+      "lo": 49.9,
+      "hi": 50.4,
+      "median": 50
+    },
+    "meanDeviationMs": {
+      "lo": -0.4,
+      "hi": 1.1,
+      "median": -0.2
+    }
+  },
+  "arrangement": {
+    "sections": {
+      "lo": 3,
+      "hi": 7,
+      "median": 6
+    },
+    "travelsDb": {
+      "lo": 6.4,
+      "hi": 14,
+      "median": 10.5
+    },
+    "seconds": {
+      "lo": 140.5,
+      "hi": 172.2,
+      "median": 167.9
+    }
+  },
+  "balance": {
+    "from": 5,
+    "bass": {
+      "lo": -6.7,
+      "hi": -4.8,
+      "median": -5.9
+    },
+    "drums": {
+      "lo": -6.2,
+      "hi": -3.4,
+      "median": -3.9
+    },
+    "vocals": {
+      "lo": -8.2,
+      "hi": -4.3,
+      "median": -6.1
+    },
+    "other": {
+      "lo": -11.1,
+      "hi": -8.6,
+      "median": -9.8
+    }
+  }
+}

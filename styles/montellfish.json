@@ -1,0 +1,222 @@
+{
+  "name": "montellfish",
+  "artist": "Montell Fish",
+  "genre": "lo-fi alternative R&B / bedroom soul — drums absent or near-absent in 8 of 12 tracks, barely mastered (crest 17), vocal-led, low-mid dominant with almost no sub",
+  "kind": "artist profile — ranges, not a recipe",
+  "measuredFrom": [
+    "Altitude.wav",
+    "Bathroom.wav",
+    "Jamie.wav",
+    "Montell Fish - Heavenly Father (Music Video).wav",
+    "Montell Fish - Hotel.wav",
+    "Montell Fish - I Just Wanna Feel Your Love Again..wav",
+    "Montell Fish - ＂Dreams Don't Sleep＂ (Music Video).wav",
+    "Montell Fish-Peter (Lyric Video).wav",
+    "fall in love with you..wav",
+    "heaven.wav",
+    "so confused baby idk.wav",
+    "talk 2 me (official video).wav"
+  ],
+  "tracks": 12,
+  "tempo": {
+    "lo": 60,
+    "hi": 168,
+    "median": 120
+  },
+  "keys": [
+    "Eb major",
+    "G minor",
+    "G major",
+    "Bb minor",
+    "G minor",
+    "A major",
+    "Eb major",
+    "G major",
+    "E major",
+    "B major",
+    "Eb major",
+    "B major"
+  ],
+  "fullMix": {
+    "lufs": {
+      "lo": -24.57,
+      "hi": -5.47,
+      "median": -15.39
+    },
+    "crestDb": {
+      "lo": 7.55,
+      "hi": 18.86,
+      "median": 17.11
+    },
+    "dynamicRangeDb": {
+      "lo": 6.9,
+      "hi": 31.34,
+      "median": 14.33
+    },
+    "correlation": {
+      "lo": 0.617,
+      "hi": 0.975,
+      "median": 0.84
+    },
+    "centroidHz": {
+      "lo": 130,
+      "hi": 701,
+      "median": 366
+    },
+    "from": 12,
+    "bands": {
+      "sub": {
+        "lo": 0.001,
+        "hi": 0.629,
+        "median": 0.102
+      },
+      "bass": {
+        "lo": 0.069,
+        "hi": 0.517,
+        "median": 0.183
+      },
+      "lowMid": {
+        "lo": 0.144,
+        "hi": 0.767,
+        "median": 0.441
+      },
+      "mid": {
+        "lo": 0.033,
+        "hi": 0.252,
+        "median": 0.152
+      },
+      "highMid": {
+        "lo": 0.003,
+        "hi": 0.085,
+        "median": 0.032
+      },
+      "presence": {
+        "lo": 0,
+        "hi": 0.033,
+        "median": 0.007
+      },
+      "brilliance": {
+        "lo": 0,
+        "hi": 0.036,
+        "median": 0.004
+      },
+      "air": {
+        "lo": 0,
+        "hi": 0.007,
+        "median": 0
+      }
+    }
+  },
+  "instrumental": {
+    "centroidHz": {
+      "lo": 92,
+      "hi": 523,
+      "median": 208
+    },
+    "from": 12,
+    "bands": {
+      "sub": {
+        "lo": 0.007,
+        "hi": 0.601,
+        "median": 0.104
+      },
+      "bass": {
+        "lo": 0.11,
+        "hi": 0.686,
+        "median": 0.351
+      },
+      "lowMid": {
+        "lo": 0.146,
+        "hi": 0.829,
+        "median": 0.421
+      },
+      "mid": {
+        "lo": 0.002,
+        "hi": 0.125,
+        "median": 0.063
+      },
+      "highMid": {
+        "lo": 0,
+        "hi": 0.052,
+        "median": 0.017
+      },
+      "presence": {
+        "lo": 0,
+        "hi": 0.019,
+        "median": 0.003
+      },
+      "brilliance": {
+        "lo": 0,
+        "hi": 0.028,
+        "median": 0.001
+      },
+      "air": {
+        "lo": 0,
+        "hi": 0.009,
+        "median": 0
+      }
+    }
+  },
+  "groove": {
+    "onsetsPerSec": {
+      "lo": 0.11,
+      "hi": 7.62,
+      "median": 0.82
+    },
+    "spreadMs": {
+      "lo": 19.7,
+      "hi": 70.7,
+      "median": 35.6
+    },
+    "swingPct": {
+      "lo": 48.8,
+      "hi": 52.8,
+      "median": 50.4
+    },
+    "meanDeviationMs": {
+      "lo": -0.6,
+      "hi": 2.3,
+      "median": 0
+    }
+  },
+  "arrangement": {
+    "sections": {
+      "lo": 3,
+      "hi": 15,
+      "median": 8
+    },
+    "travelsDb": {
+      "lo": 8.7,
+      "hi": 32.8,
+      "median": 19
+    },
+    "seconds": {
+      "lo": 128.6,
+      "hi": 223.4,
+      "median": 184.4
+    }
+  },
+  "balance": {
+    "from": 12,
+    "bass": {
+      "lo": -55.2,
+      "hi": -1.5,
+      "median": -3.3
+    },
+    "drums": {
+      "lo": -47.8,
+      "hi": -3.4,
+      "median": -15.6
+    },
+    "vocals": {
+      "lo": -11.9,
+      "hi": -1.5,
+      "median": -5.2
+    },
+    "other": {
+      "lo": -15.3,
+      "hi": -2.9,
+      "median": -6.3
+    }
+  }
+}

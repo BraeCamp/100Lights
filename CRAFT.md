@@ -17,14 +17,21 @@ npm run style -- --name=<x> --from=<study dir>       # turn studied records into
 
 ---
 
-## 0. The one rule about the numbers
+## 0. Two rules about the numbers
 
 **A range is not a target. It is the space real records occupied.**
 
 Five Artemas records span 95–152 BPM, 9.7%–60.8% sub, and 3–15.6 dB of travel.
-Anything that collapsed that into an average and called it "dark pop" would
-produce the average song, which is nobody's favourite record. Pick a point in the
-range deliberately, and know which end you are at and why.
+Anything that collapsed that into an average would produce the average song,
+which is nobody's favourite record. Pick a point in the range deliberately, and
+know which end you are at and why.
+
+**Artist first, genre second.** A genre is a shelf label applied afterwards by
+people who need somewhere to file a record. What exists is an artist making
+particular decisions, and the genre is an observation about the result. So every
+profile here is keyed by artist, and `genre` is a *finding* — see §7, where four
+artists are measured against each other and three of the four labels turned out
+to be things the numbers could actually settle.
 
 When a measurement disagrees with the music, the music wins — but find out *why*
 it disagrees first, because half the time the measurement is asking the wrong
@@ -34,18 +41,20 @@ question. Three separate times here it was.
 
 ## 1. Decide these before writing a note
 
-1. **What carries it?** One thing does. In all five references it is the bass —
-   it is the loudest element in every single track (−2.4 to −6.5 dB under the
-   summed stems, above both drums and voice). If the bass is not the hook, know
-   what is and give it that space instead.
+1. **What carries it?** One thing does, and which one is a genre marker in
+   itself. For Artemas, Two Feet and Montell Fish it is the **bass** — loudest
+   element in the mix, above both drums and voice. For Tiësto it is the
+   **drums**. Decide which, and give it the top of the stem table.
 2. **Is a voice coming?** For our work the answer is usually yes — Brae sings
    over these. That single fact changes the arrangement more than anything else
    in this document. See §2.
 3. **What is the one device?** A song needs one thing that is *this song*: a
    Neapolitan chord, a bass that talks, a drop-out, a rhythm that lands wrong on
    purpose. One. Two devices is a sketch of two songs.
-4. **How much does it move?** 3 dB and 15.6 dB are both correct in this genre and
-   they are completely different records. Decide, don't drift.
+4. **How much does it move?** Across the four artists, medians run 7.5 dB
+   (Artemas) to 23.6 dB (Two Feet) — and inside Artemas alone, 3 to 15.6. Both
+   ends are correct and they are completely different records. Decide, don't
+   drift.
 5. **What is left out?** In the sparsest reference the entire harmonic layer sits
    20 dB down — effectively absent. Restraint is a choice you make once, at the
    start, or never.
@@ -54,8 +63,10 @@ question. Three separate times here it was.
 
 ## 2. Leave the voice its space
 
-**This is the most important thing measured here, and it inverts a conclusion I
-had already acted on.**
+*Holds for all four artists — the strongest general finding here.*
+
+**This is the most important thing measured, and it inverts a conclusion I had
+already acted on.**
 
 Comparing our instrumentals against finished records said we had a hole in the
 midrange. Separating the references and measuring the instrumental alone shows
@@ -91,6 +102,9 @@ Instrumental band ranges across the five (`styles/artemas.json`):
 
 ## 3. The low end is the song
 
+*Holds for Artemas, Two Feet and Tiësto. NOT for Montell Fish, who sits at 45%
+with almost no sub — see §7.*
+
 Between sub and bass these records put **50–75% of all their instrumental
 energy**. That is not a mix decision, it is what the music is made of.
 
@@ -112,8 +126,12 @@ register makes two parts fight for one job (`checkSlots` refuses it).
 
 ## 4. Groove
 
-**Straight. Every reference: swing 49.5–50.0%.** Dark pop does not shuffle. Swing
-belongs to other idioms; putting it here is a genre error.
+*Holds for all four artists.*
+
+**Straight. All thirty-two records measure 48.8–52.8% swing, median 50.**
+Not one of these artists shuffles. Swing belongs to other idioms, and reaching
+for it here is a genre error — which is worth knowing, because `craft.groove()`
+offers it and "Coriander" used 58%.
 
 **Looseness, measured like-for-like** — audio onsets on an isolated drum bus:
 
@@ -137,9 +155,13 @@ late and off-beat notes early — both are built in.
 
 ## 5. Harmony
 
-All five references are **minor**, in flat keys: B♭, G♭, A♭, E♭, C minor. That is
-not a rule of the universe but it is what the idiom does, and a bright major key
-is a different genre wearing the same clothes.
+*ARTEMAS ONLY — and the comparison in §7 is what proves it.*
+
+All five Artemas records are **minor**, in flat keys: B♭, G♭, A♭, E♭, C minor.
+It would have been easy to write that down as a rule of the idiom. It is not:
+Two Feet is 7 of 10 in MAJOR, Montell Fish 9 of 12, Tiësto 2 of 5. Minor keys are
+an Artemas fact, not a dark-music fact, and this is exactly the mistake that
+naming profiles after genres invites.
 
 - Voice **rootless** — the bass owns the root, and doubling it in the keys is
   what fills a mix at the bottom while leaving the middle empty.
@@ -176,7 +198,66 @@ Rules that hold regardless:
 
 ---
 
-## 7. The shapes inside one genre
+## 7. Four artists, measured against each other
+
+`npm run artists` prints this. Thirty-two records: Artemas 5, Two Feet 10,
+Montell Fish 12, Tiësto 5. It is the section to read when deciding what a song
+is going to *be*, because it shows how far apart artists sit on the things that
+actually matter.
+
+| | Artemas | Two Feet | Montell Fish | Tiësto |
+|---|---|---|---|---|
+| tempo (median) | 98 | 105 | 120 | **120**, range only 120–137 |
+| minor keys | **5/5** | 3/10 | 3/12 | 3/5 |
+| drum onsets /sec | 7.4 | 3.5 | **0.8** | 5.3 |
+| master LUFS | −6.5 | −7.5 | **−15.4** | −7.2 |
+| crest dB | 8.5 | 10.0 | **17.1** | 8.6 |
+| travels dB | **7.5** | **23.6** | 19.0 | 10.5 |
+| sections | **3** | **9** | 8 | 6 |
+| instr. centroid | 309 Hz | 319 Hz | **208 Hz** | 256 Hz |
+| low end share | 64% | 59% | **45%** | **69%** |
+| loudest element | bass −4.1 | bass −3.2 | bass −3.3 | **drums −3.9** |
+| vocal vs bass | −2.5 dB | **−5.1 dB** | −1.9 dB | −0.2 dB |
+| harmony vs bass | −4.7 dB | −3.0 dB | −3.0 dB | −3.9 dB |
+
+**What the numbers settle:**
+
+- **Tiësto — dance / electronic pop.** Brae's label, and the measurements agree
+  without argument. The tightest tempo cluster of the four (120–137 against
+  Two Feet's 78–179), the biggest low end (69%), heavily limited, and **the only
+  one of the four where the drums are the loudest element in the mix.** In the
+  other three the bass is on top. That single reversal is the clearest genre
+  marker in the whole table.
+- **Montell Fish — lo-fi alternative R&B / bedroom soul.** Not dark pop and not
+  dance. **Drums are absent or near-absent in 8 of his 12 tracks** (0.8 onsets
+  per second, drums 15.6 dB down — ten decibels further back than anyone else),
+  and he is **barely mastered**: crest 17.1 and −15.4 LUFS, roughly twice the
+  dynamic range of the other three and eight decibels quieter. Darkest
+  instrumental of the four, low-mid dominant with almost no sub. This is
+  intimate, arrangement-light, voice-first music.
+- **Two Feet — guitar-led alternative / blues-electronic.** Often filed next to
+  Artemas, and the numbers say they are not the same thing. **Seven of ten are in
+  MAJOR keys** where Artemas is five of five minor; he has the most instrumental
+  midrange (8.9%) and presence (1.1%) of the four, which is where an electric
+  guitar lives; his vocals sit furthest back (−5.1 dB relative to the bass
+  against Tiësto's −0.2); and he is the most sectional and most dynamic
+  (9 sections, 23.6 dB) against Artemas's 3 and 7.5.
+- **Artemas — dark pop with alt-R&B bones.** Every record minor, busy drums,
+  heavily limited, harmony pushed furthest down of the four, and the *least*
+  movement — 7.5 dB and three sections. Static and dense on purpose.
+
+**The practical use.** These are four different instructions. Writing "a dance
+track" means 120 BPM and drums on top. Writing "a Montell Fish kind of thing"
+means taking the drums out and not mastering it loud — and if you master it to
+−7 LUFS you have destroyed the thing that makes it what it is.
+
+**What the numbers could NOT settle:** chord progressions. The estimator returns
+roughly 0.36 confidence across all four artists, which is too low to build on.
+Tempo and key are trustworthy (0.62–0.81); harmony is not, yet.
+
+---
+
+## 7b. The shapes inside one artist
 
 The point of this section is that these are all the same artist and arguably the
 same genre, and they are not the same kind of record at all.
@@ -226,6 +307,7 @@ Bass on top, in all five.
 | | |
 |---|---|
 | `npm run study` | learn from a record; with `--stems` it reads the instrumental and the groove separately |
+| `npm run artists` | put artist profiles side by side — how a genre gets decided rather than assumed |
 | `npm run style` | turn studied records into a profile of ranges |
 | `npm run listen -- … --style=artemas` | judge our song against those ranges rather than against an opinion |
 | `npm run probe` | what Apollo can actually do headlessly (99 of 107 features) |
@@ -298,11 +380,13 @@ problem, which by ear takes far longer and by guessing takes forever.
 
 ## 11. Where this is thin
 
-- **One artist, five records.** It is a profile of Artemas, labelled dark-pop. It
-  needs other artists before the name is honest.
-- **Chord progressions are not extracted yet.** `study.mjs` reports key but not
-  the progression; `music-learn.mjs` has the chord estimator and it is not wired
-  in. That is the most obvious next addition.
+- **Sample sizes are small.** Artemas 5 records, Tiësto 5, Two Feet 10, Montell
+  Fish 12. Enough to separate four artists from each other; not enough to speak
+  for a genre.
+- **Chord progressions are extracted but not trustworthy.** `study.mjs` now
+  reads a roman-numeral loop off the harmonic stem, and it comes back at ~0.36
+  confidence on all four artists. Tempo (0.62–0.81) and key (0.62–0.69) can be
+  leaned on; harmony cannot, yet. Do not quote a progression from this as fact.
 - **No per-section analysis of the references.** We get whole-track numbers and
   boundary times, not "what the chorus does that the verse doesn't", which is
   where most arrangement craft actually lives.
