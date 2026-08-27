@@ -923,6 +923,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             <div onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
               <Knob
                 value={track.volume} min={0} max={1} defaultValue={0.8} size={20} color={track.color}
+                label="V" title="Group volume — drag to change, double-click resets"
                 onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
                 format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
               />
@@ -1092,10 +1093,27 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               )}
             </>)}
             <div onClick={e => e.stopPropagation()} onPointerDown={e => e.stopPropagation()}>
+              {/* A letter under each knob, which becomes the VALUE while you are
+                  touching it. A track head has room for a glyph, not a word, and
+                  an unlabelled knob is a guess — the letter costs one line of
+                  8px type and removes the guessing. Same idea as a mixer's
+                  silk-screened legend. */}
               <Knob
                 value={track.volume} min={0} max={1} defaultValue={0.8} size={20} color={track.color}
+                label="V" title="Volume — drag to change, double-click resets"
                 onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
                 format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
+              />
+              {/* Pan, right beside it. This was the clearest gap: panning a track
+                  meant leaving the arrangement, opening the Mixer, finding the
+                  strip and coming back — for a control people reach for while
+                  looking at the tracks. Bipolar, so "off centre" reads as a
+                  direction rather than a position. */}
+              <Knob
+                value={track.pan ?? 0} min={-1} max={1} defaultValue={0} size={20} bipolar color={track.color}
+                label="P" title="Pan — drag to change, double-click centres"
+                onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
+                format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)}
               />
             </div>
             <div style={{ flex: 1 }} />

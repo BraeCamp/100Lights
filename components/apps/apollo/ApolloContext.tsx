@@ -8,7 +8,7 @@ import {
   resolvePatchPath, uid,
 } from '@/lib/apollo/patch'
 import { ApolloEngine, ApolloMeters, getApolloEngine } from '@/lib/apollo/engine-client'
-import { initApolloLibrary, restorePatchSamples, setApolloSourceSample, onApolloSampleSelect } from '@/lib/apollo/sample-store'
+import { initApolloLibrary, restorePatchSamples, setApolloSourceSample, onApolloSampleSelect, armedApolloSample } from '@/lib/apollo/sample-store'
 import { useUser } from '@clerk/nextjs'
 import {
   allMidiBindings, armMidiBinding, armedBinding, ccForBinding,
@@ -379,7 +379,7 @@ export function ApolloProvider({ children, quickMod, embed, onParamMove, livePar
   // `version`, that effect re-runs and pulls the blob out of the library. If the
   // engine has not been started yet the restore is a no-op, so kick `start()`
   // too — its deps include `started`, so it runs again once audio is live.
-  useEffect(() => onApolloSampleSelect(({ id, name }) => {
+  const applySampleSelection = useCallback((id: string, name: string) => {
     setApolloSourceSample(id, name)
     update(p => {
       const osc = p.oscs[0]
@@ -389,7 +389,33 @@ export function ApolloProvider({ children, quickMod, embed, onParamMove, livePar
       if (!p.name || p.name === 'Init') p.name = name
     })
     void start()
-  }), [update, start])
+  }, [update, start])
+
+  useEffect(() => onApolloSampleSelect(({ id, name }) => {
+    applySampleSelection(id, name)
+  }), [applySampleSelection])
+
+  // Open on the sound that is selected in Beacon's Sound Library.
+  //
+  // onApolloSampleSelect only fires for selections made after subscribing, and
+  // the ordinary way to use the bridge is to pick a sound and THEN open Apollo
+  // — so nothing fired at all and the rack opened on the wavetable oscillator
+  // with the sound chosen and invisible. This is the other half.
+  //
+  // No cleverness about whether you have "started work" on the patch: two
+  // versions of that guess are described in armedApolloSample() and both got it
+  // wrong in ways that were invisible to the tests. While a sound is selected,
+  // a rack that opens shows it. The one check that cannot misfire is whether
+  // osc 1 already holds it.
+  const armedApplied = useRef(false)
+  useEffect(() => {
+    if (armedApplied.current) return
+    const armed = armedApolloSample()
+    if (!armed) return
+    if (patchRef.current?.oscs[0]?.smp?.sampleId === armed.id) return
+    armedApplied.current = true
+    applySampleSelection(armed.id, armed.name)
+  }, [applySampleSelection])
 
   const restoring = useRef(false)
   useEffect(() => {

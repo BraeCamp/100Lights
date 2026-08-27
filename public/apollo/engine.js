@@ -519,6 +519,10 @@ class OscState {
     this.grainAlt = 0
     this.scanPos = 0
     this.scanInit = false
+    // Wavetable scan: where in the table this voice currently is, and which way
+    // it is travelling (ping-pong). Separate from the granular scanPos above.
+    this.wtScan = 0
+    this.wtScanDir = 1
     // spectral
     this.specPhases = null
     this.specSmear = null
@@ -540,6 +544,8 @@ class OscState {
       this.sampleDir[i] = 1
     }
     this.ended = false
+    this.wtScan = 0
+    this.wtScanDir = 1
     this.grainTimer = 0
     this.scanInit = false
     for (const g of this.grains) g.active = false
@@ -591,7 +597,29 @@ class Voice {
     } else { this.glideFrom = targetFreq; this.glideT = 1 }
     this.freq = targetFreq
     engine.lastFreq = targetFreq
-    const rng = makeRng((note * 7919 + this.serial * 104729) >>> 0)
+    // Seeded from the NOTE alone, not from the global voice serial.
+    //
+    // Oscillator start phase is randomised (osc.rand defaults to 1), and seeding
+    // that from a counter that increments for every voice ever created meant the
+    // same clip rendered twice was a different sum every time. With unison it is
+    // not a subtle difference: six renders of one five-voice patch measured peaks
+    // of 0.420, 0.201, 0.414, 0.306, 0.222 and 0.059 — a 614% spread, and the
+    // last one is effectively silent. With the seed stable it is 0.501 six times.
+    //
+    // That variance is the "renders come back silent" fault the combine layer
+    // retries three times for, keeps a strikes list against, and refuses to cache
+    // around (freeze-cache: "peaks of 0.202, 0 and 0.0657" — the same signature).
+    // It was read as resource exhaustion; it is destructive phase cancellation.
+    //
+    // It also matters for what a listener hears, because a combined render
+    // REPLACES live playback: with a rolling seed the cache could sit several dB
+    // away from the live sound it stands in for, so a clip jumped in level the
+    // moment its render landed.
+    //
+    // Unison voices still get DIFFERENT phases from each other — rng() is called
+    // once per voice below. What is gone is the difference between one render and
+    // the next.
+    const rng = makeRng((note * 7919 + 104729) >>> 0)
     // CONTINUOUS note change: keep the sound running and only move the pitch.
     //
     // initNote() resets oscillator phase, grain/spectral state and — the one you
@@ -812,7 +840,37 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
     const blend = clamp(vp(voice, `osc${oi}.blend`, cfg.blend), 0, 1)
     const width = clamp(vp(voice, `osc${oi}.width`, cfg.width), 0, 1)
     const stW = clamp(cfg.stereo != null ? cfg.stereo : 1, 0, 1)
-    const wtPos = clamp(vp(voice, `osc${oi}.wt.pos`, cfg.wt.pos), 0, 1)
+    // ── Scan: travel through the table instead of sitting at one position ──
+    //
+    // `wt.pos` picks ONE frame and stays there, which is why an oscillator had
+    // nothing answering to "start", "end" or "loop" the way a sample does. A
+    // scan gives it those: a region of the table (start..end) and a way of
+    // moving through it — once, looping, or back and forth.
+    //
+    // Advanced once per BLOCK rather than per sample. A block is 128 samples,
+    // under 3ms, and this is a slow morph — per-sample would cost the inner
+    // loop an add and a branch for a difference nobody can hear.
+    //
+    // Off by default, and off means exactly the old behaviour: existing patches
+    // sound identical.
+    let wtPos = clamp(vp(voice, `osc${oi}.wt.pos`, cfg.wt.pos), 0, 1)
+    const scan = cfg.wt.scan
+    if (scan && scan.mode && scan.mode !== 'off') {
+      const a = clamp(scan.start != null ? scan.start : 0, 0, 1)
+      const b = clamp(scan.end != null ? scan.end : 1, 0, 1)
+      const lo = Math.min(a, b), hi = Math.max(a, b)
+      const rate = clamp(scan.rate != null ? scan.rate : 0.5, 0.01, 20)
+      os.wtScan += (rate * n / sr) * os.wtScanDir
+      if (scan.mode === 'pingpong') {
+        if (os.wtScan >= 1) { os.wtScan = 1; os.wtScanDir = -1 }
+        else if (os.wtScan <= 0) { os.wtScan = 0; os.wtScanDir = 1 }
+      } else if (scan.mode === 'once') {
+        if (os.wtScan > 1) os.wtScan = 1
+      } else {
+        os.wtScan -= Math.floor(os.wtScan)
+      }
+      wtPos = lo + (hi - lo) * os.wtScan
+    }
     const framePos = cfg.wt.interp === 'off' ? Math.round(wtPos * (tbl.frames - 1)) : wtPos * (tbl.frames - 1)
     const w1m = cfg.wt.warp1.mode, w2m = cfg.wt.warp2.mode
     const w1a = clamp(vp(voice, `osc${oi}.wt.warp1.amount`, cfg.wt.warp1.amount), 0, 1)

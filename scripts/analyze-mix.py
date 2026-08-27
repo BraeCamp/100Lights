@@ -18,6 +18,12 @@ render.json is what __dawRenderWav returns (save it via Playwright's evaluate
 """
 import sys, json, base64, struct
 import numpy as np
+
+# numpy 2 removed np.trapz in favour of np.trapezoid. Support both, so this
+# keeps working whichever the machine has — it is the only tool here that can
+# tell me what a mix actually sounds like, and it should not stop being able to
+# because of a rename.
+_trapz = getattr(np, 'trapezoid', None) or np.trapz
 from scipy import signal
 
 
@@ -118,11 +124,11 @@ BANDS = [('sub', 20, 60), ('bass', 60, 120), ('lo-mid', 120, 400),
 
 def spectral_balance(mono, fs):
     f, pxx = signal.welch(mono, fs=fs, nperseg=min(8192, len(mono)))
-    total = np.trapz(pxx, f) + 1e-20
+    total = _trapz(pxx, f) + 1e-20
     out = {}
     for name, lo, hi in BANDS:
         m = (f >= lo) & (f < hi)
-        out[name] = float(np.trapz(pxx[m], f[m]) / total * 100)
+        out[name] = float(_trapz(pxx[m], f[m]) / total * 100)
     return out
 
 
@@ -222,7 +228,10 @@ def main():
         for i, path in enumerate(args):
             samp, sr = read_wav_bytes(open(path, 'rb').read())
             fs = sr
-            name = 'master' if i == 0 and len(args) > 1 else path.split('/')[-1].rsplit('.', 1)[0]
+            # The first file is always the master, including when it is the
+            # ONLY file — the report keys off that name, so analysing a single
+            # bounce used to crash with KeyError('master').
+            name = 'master' if i == 0 else path.split('/')[-1].rsplit('.', 1)[0]
             tracks[name] = analyze(samp, fs)
     print_report(tracks, fs)
 

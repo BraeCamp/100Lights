@@ -8,6 +8,7 @@ import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
 import { spliceClipAt } from '@/lib/daw-splice'
 import { ADD_OPTIONS, makeDefaultParams as makeDefaultEffectParams } from '@/lib/daw-effect-catalog'
 import { CHECKOUT_LS_KEY } from '@/lib/apollo/checkout'
+import { installDawDiagnose, type DiagnoseEngine } from '@/lib/daw-diagnose'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
 import type { DawView, EditTarget, DawProject, DawTrack, DawClip, AudioClip, ApolloInstrumentParams } from '@/lib/daw-types'
@@ -991,7 +992,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const AUTO_FREEZE_ON_LOAD = false
 
   // Loading progress, for the bar at the top of the studio.
-  const [loadProgress, setLoadProgress] = useState<{ done: number; total: number; active: boolean; phase: 'head' | 'fill' | 'idle' }>(
+  const [loadProgress, setLoadProgress] = useState<{ done: number; total: number; active: boolean; phase: 'head' | 'fill' | 'idle' | 'paused' }>(
     { done: 0, total: 0, active: false, phase: 'idle' })
   useEffect(() => {
     let stop: (() => void) | undefined
@@ -1164,6 +1165,19 @@ export default function AudioEditor(props: AudioEditorProps) {
       broadcastRef.current?.(action)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The playback diagnostic, installed for EVERYONE rather than behind
+  // DAW_HOOKS like everything below it.
+  //
+  // That gate is why a playback fault Brae keeps hitting could not be measured
+  // where it happens: the hooks are absent from the production bundle, so the
+  // only place with the problem is the one place with no instruments. This
+  // reads meters and clocks and never touches playback, so there is nothing to
+  // gate. window.__dawDiagnose() to start, .report() to read.
+  useEffect(() => installDawDiagnose(
+    () => engineRef.current as unknown as DiagnoseEngine,
+    id => projectRef.current?.tracks.find(t => t.id === id)?.name,
+  ), [])
 
   // Dev-only: expose dispatch + a project/history snapshot so a genuine build
   // session can be driven and recorded (the History capture mode then replays
@@ -2842,7 +2856,7 @@ export default function AudioEditor(props: AudioEditorProps) {
             deliberate Freeze below it. It only appears while there is real work
             outstanding, and it says which half of the work it is doing: getting
             to first sound, or filling in the rest behind you. */}
-        {loadProgress.active && loadProgress.total > 0 && (
+        {loadProgress.total > 0 && loadProgress.done < loadProgress.total && (
           <div
             data-ui-el="load-progress"
             style={{
@@ -2854,8 +2868,8 @@ export default function AudioEditor(props: AudioEditorProps) {
               <div style={{
                 height: '100%',
                 width: `${Math.round((loadProgress.done / loadProgress.total) * 100)}%`,
-                background: 'var(--accent)',
-                transition: 'width 240ms linear',
+                background: playing ? 'var(--text-muted)' : 'var(--accent)',
+                transition: 'width 240ms linear, background 300ms',
               }} />
             </div>
             <div style={{ display: 'flex', justifyContent: 'center' }}>
@@ -2864,9 +2878,18 @@ export default function AudioEditor(props: AudioEditorProps) {
                 background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
                 color: 'var(--text-muted)', letterSpacing: '0.02em',
               }}>
-                {loadProgress.phase === 'head'
-                  ? 'Getting the sound ready…'
-                  : `Loading the rest of the song — ${loadProgress.done}/${loadProgress.total}`}
+                {/* Say what is actually happening, and it has changed twice.
+                    First it claimed loading was paused while playing when it
+                    was not; then it said "ahead of the playhead" while
+                    rendering fourteen seconds of song, which Brae read as
+                    loading far ahead because that is what it was. Now playing
+                    really does stop the work — the song is synthesised live —
+                    so the honest thing to say is that it is playing. */}
+                {playing
+                  ? 'Playing live — the rest loads when you pause'
+                  : loadProgress.phase === 'head'
+                    ? 'Getting the sound ready…'
+                    : `Loading the rest of the song — ${loadProgress.done}/${loadProgress.total}`}
               </div>
             </div>
           </div>

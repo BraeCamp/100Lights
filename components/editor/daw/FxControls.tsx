@@ -6,6 +6,7 @@
 // in collapsible category sections. Commits on release (pointer/key up).
 
 import { useEffect, useMemo, useState } from 'react'
+import Knob from './Knob'
 import { ChevronRight } from 'lucide-react'
 import { FX_FIELDS, FX_CATEGORIES, TOP_FIELDS, BASIC_FIELDS, fieldIsSet, type FxField, type FxCat } from '@/lib/roll-fx'
 import type { RollFx, AutoPoint } from '@/lib/daw-types'
@@ -201,21 +202,20 @@ function FieldSlider({ f, draft, set, commit, range, dim, graphPts, graphable, o
       ) : (
         <span style={{ fontSize: dim ? 9.5 : 10, color: dim ? 'var(--text-muted)' : 'var(--text-secondary)', width: dim ? 62 : 70, flexShrink: 0 }}>{f.label}</span>
       )}
-      <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
-        {hasRange && (
-          // Heat band: the spread of this setting across the selection. Bars mark
-          // the min/max ends. It vanishes once the field is set for all of them.
-          <div style={{ position: 'absolute', left: `${lo * 100}%`, right: `${(1 - hi) * 100}%`, top: '50%', height: 6, transform: 'translateY(-50%)', borderRadius: 3, background: 'linear-gradient(90deg, #3b82f6, #f59e0b, #ef4444)', pointerEvents: 'none', zIndex: 0 }}>
-            <div style={{ position: 'absolute', left: 0, top: -3, bottom: -3, width: 2, background: '#fff' }} />
-            <div style={{ position: 'absolute', right: 0, top: -3, bottom: -3, width: 2, background: '#fff' }} />
-          </div>
-        )}
-        <input
-          type="range" min={0} max={1} step={0.005}
-          value={f.toNorm(v)}
-          onChange={e => set(f, Number(e.target.value))}
-          onPointerUp={commit} onKeyUp={commit}
-          style={{ position: 'relative', zIndex: 1, width: '100%', minWidth: 0, accentColor: hasRange ? 'transparent' : ACCENT }}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {/* The heat band became an arc on the knob. It carried real information —
+            the spread of this setting across a multi-selection — so it could not
+            just be dropped when the slider went: without it, ten notes that
+            disagree would look identical to ten that agree. */}
+        <Knob
+          value={f.toNorm(v)} min={0} max={1} defaultValue={f.toNorm(f.neutral)}
+          size={dim ? 26 : 30}
+          color={on ? ACCENT : 'var(--text-muted)'}
+          spread={hasRange ? [lo, hi] : null}
+          title={hasRange ? `${f.label} — these differ across the selection` : f.label}
+          onChange={nv => set(f, nv)}
+          onCommit={commit}
+          format={() => (hasRange ? 'range' : f.fmt(v))}
         />
       </div>
       <span style={{ fontSize: 9.5, color: hasRange ? '#f59e0b' : on ? 'var(--text-primary)' : 'var(--text-muted)', width: graphable && !onOpenGraph ? 34 : 48, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>

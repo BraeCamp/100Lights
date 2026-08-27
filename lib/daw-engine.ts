@@ -14,7 +14,7 @@ import { translateInstrument } from './apollo/daw-synth'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
-import { combined, combinedStamp, requestCombine, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
+import { combined, combinedStale, combinedStamp, requestCombine, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
 import { fatPatch } from './apollo/patch-diff'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
@@ -521,13 +521,19 @@ export class DawEngine extends EventTarget {
     const chain = this.effectsChains.get(trackId)
     if (!chain) return
     for (const effect of effects) {
-      if (effect.type !== 'compressor') continue
-      const p = effect.params as import('./daw-types').CompressorParams
-      if (!p.sidechainTrackId) continue
+      // Any effect that listens to another track, not just the compressor.
+      // Unmask needs exactly the same wiring — a tap from the key track into the
+      // handle's keyInput — and hard-coding 'compressor' here is what would have
+      // made the new effect silently do nothing.
+      const p = effect.params as { sidechainTrackId?: string | null; keyTrackId?: string | null }
+      const keyTrackId = p.sidechainTrackId ?? p.keyTrackId
+      if (!keyTrackId) continue
       const handle = chain.handles.get(effect.id)
       if (!handle?.keyInput) continue
-      const srcNodes = this.trackNodes.get(p.sidechainTrackId)
-      if (srcNodes) srcNodes.analyser.connect(handle.keyInput)
+      const srcNodes = this.trackNodes.get(keyTrackId)
+      // A track cannot key off itself: the tap is post-effects, so feeding it
+      // back into its own ducker is a loop that ducks itself into silence.
+      if (srcNodes && keyTrackId !== trackId) srcNodes.analyser.connect(handle.keyInput)
     }
   }
 
@@ -1821,7 +1827,20 @@ export class DawEngine extends EventTarget {
 
     const patch = inst.params as unknown as ApolloPatch
     const stamp = combinedStamp(clip, patch, this.tempo)
-    const buf = combined(stamp)
+    // The exact render if there is one; otherwise the PREVIOUS render of this
+    // same clip, which is what makes changing a sound survivable. Editing a
+    // patch moves the stamp of every clip on the track at once, and without
+    // this each of them dropped to live synthesis — the expensive path, all at
+    // once, which is the stutter. The clips nearest the playhead are re-rendered
+    // first, so what you are listening to catches up almost immediately and the
+    // stale audio only ever covers the part of the song you have not reached.
+    const exact = combined(stamp)
+    // Ask for the up-to-date render whenever the exact one is missing — INCLUDING
+    // when a stale one is about to cover for it. Falling back without asking
+    // would mean the new sound never gets built at all, and the old one plays
+    // forever.
+    if (!exact) requestCombine(this.tempo, this._apolloGroups())
+    const buf = exact ?? combinedStale(clip.id)
     if (!buf) {
       // Not ready (or the notes/patch just changed, so the stamp moved) — ask
       // for it and let this pass play live. The whole track goes in one request:

@@ -141,3 +141,23 @@ export async function pruneCombined(keepStamps: Set<string>, maxAgeMs = 1000 * 6
     db.close()
   } catch { /* best effort */ }
 }
+
+/**
+ * Throw away every stored render.
+ *
+ * For measuring a COLD first play, which is the one that hurts and the only one
+ * worth measuring — a warm cache turns any such measurement into a measurement
+ * of the cache. Clearing the browser's site data would also do it, but that
+ * signs you out and takes your projects with it; this touches only the render
+ * cache, which costs a re-render and nothing else.
+ */
+export async function clearStoredCombines(): Promise<void> {
+  const db = await openDb().catch(() => null)
+  if (!db) return
+  await new Promise<void>(resolve => {
+    const tx = db.transaction(STORE, 'readwrite')
+    tx.objectStore(STORE).clear()
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => resolve()   // nothing stored is the same as cleared
+  })
+}

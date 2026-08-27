@@ -23,7 +23,7 @@
 import type { MidiClip } from '@/lib/daw-types'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { renderApolloProject, freezeStamp, type TrackRenderGroup } from '@/lib/apollo/daw-freeze'
-import { loadCombined, saveCombined } from '@/lib/apollo/combine-store'
+import { loadCombined, saveCombined, clearStoredCombines } from '@/lib/apollo/combine-store'
 import { keepForNextTime, setCombineWriter, setStorageTransportPlaying, storagePolicy } from '@/lib/apollo/storage-policy'
 
 // The policy module does the deciding; the store does the writing. Wiring them
@@ -377,6 +377,46 @@ export function combined(stamp: string): AudioBuffer | null {
   return b
 }
 
+/**
+ * The most recent render for this CLIP, even if the sound has since changed.
+ *
+ * Brae: "we still have the option of loading procedurally… it should save the
+ * baked audio so that it can play again from that spot without a problem…
+ * can we add audio on top as things are added, and apply inverse audio to
+ * remove things?"
+ *
+ * Adding and subtracting renders is the right instinct and does not survive
+ * contact with this signal path. Summing a new note into an existing buffer only
+ * reproduces the real thing if everything downstream of the sum is LINEAR — and
+ * Apollo's is not. The ladder filter saturates through tanh, the drive stage is
+ * a waveshaper, and the FX chain compresses. Add a voice and the nonlinear
+ * stages see a different signal, so the correct output is not the old output
+ * plus the new note in isolation. Subtracting to remove a note is the same
+ * problem and worse: it would leave the residue of everything the nonlinearity
+ * did differently, which is audible as a ghost of the note you deleted.
+ *
+ * But the PROBLEM behind the idea is real, and this fixes it. Changing a sound
+ * changes the stamp of every clip on that track at once, and each of those clips
+ * then had no cached audio — so they fell back to live synthesis, which is the
+ * expensive path, which is the stutter. Meanwhile a perfectly good render of
+ * that clip was still sitting in the cache under its old key.
+ *
+ * So: on a miss, hand back the previous render for the same clip. You hear the
+ * old sound on the far side of the song for a few seconds while the new one is
+ * built, instead of hearing the studio struggle. The clips near the playhead are
+ * re-rendered first, so the one you are actually listening to updates almost at
+ * once — the stale audio only ever covers the parts you have not reached yet.
+ */
+export function combinedStale(clipId: string): AudioBuffer | null {
+  // Keys are `${clipId}|${hash}`, and Map keeps insertion order, so the LAST
+  // match is the most recently rendered version of this clip.
+  let found: AudioBuffer | null = null
+  for (const [key, buf] of buffers) {
+    if (key.startsWith(clipId + '|')) found = buf
+  }
+  return found
+}
+
 /** True while anything is still being combined — useful for a UI hint. */
 export function combining(): boolean { return inFlight.size > 0 || queue.length > 0 }
 
@@ -406,8 +446,16 @@ function idle(): Promise<void> {
 // small, and the work is yielded through, so it can run while you listen. Which
 // it must: rendering ahead of the playhead is the entire point.
 let playheadBeat = 0
+let lastLookaheadAsk = 0
+
 export function setPlayhead(beat: number): void {
-  if (Number.isFinite(beat)) playheadBeat = beat
+  if (!Number.isFinite(beat)) return
+  playheadBeat = beat
+  // Deliberately does NOT ask for a render any more. It used to, to keep a
+  // lookahead window topped up during playback — but nothing renders during
+  // playback now, so waking the baker here would only put the freeze back.
+  // The playhead still matters: byUrgency() sorts by distance from it, so
+  // baking on pause starts with whatever you are about to hear.
 }
 
 /**
@@ -424,9 +472,18 @@ export function setPlayhead(beat: number): void {
  */
 let transportPlaying = false
 export function setTransportPlaying(v: boolean): void {
+  const was = transportPlaying
   transportPlaying = v
   // Stopping is the cue to write down everything rendered while playing.
   setStorageTransportPlaying(v)
+  // And to start baking again. The loop parks itself on play and has no other
+  // way back, so without this the cache would only ever be filled by whatever
+  // happened to be running when play was pressed — the song would stay live
+  // forever and never get cheaper on the second pass.
+  if (was && !v && lastGroups && pendingWhilePlaying) {
+    pendingWhilePlaying = false
+    requestCombine(lastBpm, lastGroups)
+  }
 }
 
 /** Hand the main thread back between pieces of a long job. scheduler.yield()
@@ -528,7 +585,7 @@ export interface CombineProgress {
   /** Is a render running right now? */
   active: boolean
   /** 'head' = racing to first sound; 'fill' = filling the rest in behind you. */
-  phase: 'head' | 'fill' | 'idle'
+  phase: 'head' | 'fill' | 'idle' | 'paused'
 }
 
 let progress: CombineProgress = { done: 0, total: 0, active: false, phase: 'idle' }
@@ -548,8 +605,30 @@ function setProgress(next: Partial<CombineProgress>): void {
   for (const l of progressListeners) l(progress)
 }
 
+// The most recent request, so advancing the playhead can ask for the next
+// window without the caller having to hand the groups over again.
+let lastGroups: TrackRenderGroup[] | null = null
+let lastBpm = 120
+/** Someone asked for a render while the transport was running. Served on pause. */
+let pendingWhilePlaying = false
+
 export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!groups.length) return
+  lastGroups = groups
+  lastBpm = bpm
+  // ── Playing means playing ──────────────────────────────────────────────
+  //
+  // Park before doing ANY work, not once the render loop is reached. The
+  // engine asks for a combine on every clip that is not yet baked, so during
+  // playback this is called constantly — and everything above the render loop
+  // (stamping every clip, sizing the cache, a disk lookup per missing clip)
+  // would run every time for a job that is only going to stop anyway. Parking
+  // late turned that into a busy loop and made the stalls worse, not better:
+  // measured 179ms worst frame against 133ms before the change.
+  //
+  // So remember that someone asked, and serve it on pause.
+  if (transportPlaying) { pendingWhilePlaying = true; return }
+
   const wanted = groups.flatMap(g => g.clips
     .filter(c => c.notes.length > 0)
     .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
@@ -712,18 +791,82 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // So: small while it matters, then big. And bigger still when the
         // transport is stopped, because then there is no deadline to miss — that
         // is Brae's "load the full thing in the background when it's paused".
+        // ── While playing, DO NOT RENDER ───────────────────────────────────
+        //
+        // This started as "render the whole song", then became "render 14
+        // seconds ahead of the playhead". Brae, on the second one: "it says
+        // (loading ahead of playhead) but it loads far ahead instead of just
+        // right in front of it. Can we change the loading type to the one that
+        // plays real time when the user hits play?" — and before that, three
+        // times, some version of the same request.
+        //
+        // He is right, and a smaller window was never going to be the answer.
+        // Chrome runs an OfflineAudioContext carrying JS worklets ON THE MAIN
+        // THREAD, so every render is a main-thread block — and the note
+        // scheduler runs there too. Rendering while playing therefore competes
+        // with the very thing it is trying to serve: the studio goes quiet
+        // because nothing is left to schedule the notes. Fourteen seconds of
+        // lookahead is just a shorter freeze than the whole song.
+        //
+        // Apollo already has a real-time path — its DSP is an AudioWorklet on
+        // the audio thread, which is what real-time synthesis IS. Pressing play
+        // now uses it: whatever is already baked plays from the cache, and
+        // everything else is synthesised live. Baking resumes on pause, which
+        // is when there is nothing to interrupt, and is what makes the second
+        // pass over a section instant.
+        const stopWhilePlaying = () => transportPlaying
         let headStartDone = false
         while (renderable().length) {
+          // Someone pressed play. Stop, and let the audio thread have the
+          // machine — a render in flight cannot be cancelled, but no new one
+          // starts. setTransportPlaying(false) wakes this again on pause.
+          if (stopWhilePlaying()) {
+            // Play was pressed while this job was running. Stop, and make sure
+            // pausing picks the work back up — the entry guard above never saw
+            // this request, so without this the remaining clips would never be
+            // baked and every pass over them would stay live.
+            pendingWhilePlaying = true
+            setProgress({ ...progress, active: false, phase: 'paused' })
+            break
+          }
           const queue2 = byUrgency()
+          if (!queue2.length) break
           const window: typeof queue2 = []
           let windowVoiceSec = 0
           const phase: 'head' | 'fill' = headStartDone ? 'fill' : 'head'
           // A deadline only exists while the transport is running. Stopped, the
           // only limit is memory, so the fill goes as wide as the device allows.
-          const timeBudget = phase === 'head' ? renderTimeBudgetMs()
-            : transportPlaying ? renderTimeBudgetMs() * 3
-            : Infinity
-          const maxClips = phase === 'head' ? 2 : Infinity
+          // ALWAYS bounded, and bounded tightly.
+          //
+          // This previously used renderTimeBudgetMs() x 3 while playing and
+          // Infinity while paused, on the theory that fewer, bigger passes are
+          // faster. Two measurements killed that theory:
+          //
+          //   Total time barely moved. 4-clip windows: 39.4s in 12 passes.
+          //   Unbounded windows: 38.5s in 8. Within noise.
+          //
+          //   And a render BLOCKS THE MAIN THREAD for its entire duration —
+          //   Chrome runs an OfflineAudioContext carrying JS worklets there. So
+          //   an unbounded window is an unbounded freeze. Playing Hallway Light
+          //   from a cold cache, the playhead jumped from beat 4.8 to 25.5
+          //   between two samples one second apart: audio carried on from the
+          //   audio thread while the interface was gone for thirteen seconds.
+          //   That is Brae's "super slow, and the bar appears and disappears".
+          //
+          // So the window is sized to stay under a human's patience rather than
+          // to minimise passes. Costing nothing in total time, it is the whole
+          // difference between a studio that works while it loads and one that
+          // locks up.
+          // Measured. Tightening these does NOT keep shrinking the stall, because a
+          // window always takes at least one clip and a single clip's render is
+          // atomic — the budget only decides whether a SECOND one joins it. At
+          // 500ms idle the worst stall measured 1820ms (three over a second),
+          // worse than at 900ms, because more passes means more chances to meet
+          // an expensive clip alone plus per-pass overhead. 900/450/250 is the
+          // measured floor for this shape of work; going below it trades total
+          // time for nothing.
+          const timeBudget = userIsBusy() ? 250 : 900
+          const maxClips = phase === 'head' ? 2 : 8
           for (const w of queue2) {
             const vs = clipVoiceSeconds(w.clip, w.patch, spb2)
             // TWO independent limits, because they guard different failures.
@@ -796,6 +939,13 @@ export function clearCombined(): void {
   buffers.clear(); inFlight.clear(); failures.clear(); queue.length = 0
 }
 
+/** Memory AND disk. Clearing only memory left the next request pulling every
+ *  clip straight back off the disk, which looks cold from in here and is not. */
+export async function clearCombinedEverywhere(): Promise<void> {
+  clearCombined()
+  await clearStoredCombines()
+}
+
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
 export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
@@ -832,4 +982,13 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
 }
 if (typeof window !== 'undefined') {
   (window as unknown as { __combineStats?: typeof combineStats }).__combineStats = combineStats
+  // Drop every cached render, so the next play is a COLD one.
+  //
+  // Brae, on testing this: "make sure to clear the cache before each test or it
+  // might skew the results." He is right — a warm cache turns any measurement
+  // of the first play into a measurement of the cache. Clearing site data would
+  // do it too, but that signs you out and throws away your projects; this
+  // clears only the thing under test. Safe to ship: it costs a re-render, never
+  // any of your work.
+  ;(window as unknown as { __clearCombined?: typeof clearCombinedEverywhere }).__clearCombined = clearCombinedEverywhere
 }

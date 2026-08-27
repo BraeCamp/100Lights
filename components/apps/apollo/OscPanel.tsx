@@ -236,6 +236,27 @@ export default function OscPanel({ osc: oscProp, onOpenWt }: { osc?: number; onO
               { value: 'smooth', label: 'Smooth' }, { value: 'crossfade', label: 'Crossfade' }, { value: 'off', label: 'Stepped' },
             ]} onChange={v => ctx.update(p => { p.oscs[i].wt.interp = v as typeof osc.wt.interp })} />
           </div>
+          {/* Start, end and loop — the things a sample has and an oscillator did
+              not. WT Pos above picks one frame and stays there; this travels a
+              region of the table instead. Off by default, and off is exactly the
+              old behaviour. */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: 0.5 }}>SCAN</span>
+            <Sel width={96} title="How to travel through the table" value={osc.wt.scan?.mode ?? 'off'} options={[
+              { value: 'off', label: 'Off' }, { value: 'loop', label: 'Loop' },
+              { value: 'pingpong', label: 'Ping-pong' }, { value: 'once', label: 'Once' },
+            ]} onChange={v => ctx.update(p => {
+              const wt = p.oscs[i].wt
+              wt.scan = { ...(wt.scan ?? { start: 0, end: 1, rate: 0.5, mode: 'off' }), mode: v as 'off' | 'loop' | 'pingpong' | 'once' }
+            })} />
+            {(osc.wt.scan?.mode ?? 'off') !== 'off' && (
+              <>
+                <Knob path={`osc${i}.wt.scan.start`} label="Start" size={34} />
+                <Knob path={`osc${i}.wt.scan.end`} label="End" size={34} />
+                <Knob path={`osc${i}.wt.scan.rate`} label="Rate" size={34} />
+              </>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             {([1, 2] as const).map(w => {
               const slot = w === 1 ? osc.wt.warp1 : osc.wt.warp2

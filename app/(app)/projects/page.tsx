@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil, Check, ExternalLink } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
-import { openProjectsFromFile, readProjectFile } from '@/lib/project-serializer'
-import { openMediaInStudio } from '@/lib/media-handoff'
+import { readProjectFile } from '@/lib/project-serializer'
+import { useProjectImport } from '@/components/site/useProjectImport'
 import { projectPath } from '@/lib/project-url'
 import { saveFolder, loadFolder, clearFolder, verifyPermission, verifyWritePermission } from '@/lib/local-folder'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -914,70 +914,9 @@ function EmptyState({ isSignedIn, hasFolder, onConnect }: { isSignedIn: boolean;
 export default function ProjectsPage() {
   const { isSignedIn, isLoaded } = useUser()
   const [reloadKey, setReloadKey] = useState(0)
-  const [importing, setImporting] = useState(false)
-  const [importMsg, setImportMsg] = useState<string | null>(null)
-
-  async function handleOpenFromFile() {
-    // Uploading a Firefly bundle's recordings can take a moment, so the
-    // spinner goes up before the read, not after it.
-    setImporting(true)
-    let read
-    try {
-      read = await openProjectsFromFile()
-    } finally {
-      setImporting(false)
-    }
-    // Raw media (mp4, mov, mp3…) opens a fresh video project seeded with the clip.
-    if (read.media.length) { await openMediaInStudio(read.media); return }
-
-    const { projects: files, degraded, errors } = read
-
-    // Recordings that never reached storage play now and die on reload — say
-    // so, rather than letting the user find out later.
-    const notes = [
-      ...errors,
-      ...(degraded
-        ? [`${degraded} recording${degraded !== 1 ? 's' : ''} couldn't be saved to your library — ${degraded !== 1 ? 'they' : 'it'} will play now but won't survive a reload.`]
-        : []),
-    ]
-    const flash = (msg: string) => {
-      setImportMsg([msg, ...notes].join(' '))
-      setTimeout(() => setImportMsg(null), 8000)
-    }
-
-    if (files.length === 0) {
-      if (notes.length) flash('Nothing imported.')
-      return
-    }
-
-    // A single file opens straight into the editor (edit-and-save flow).
-    if (files.length === 1 && !isSignedIn) {
-      const cfproj = files[0]
-      localStorage.setItem(`cf_pending_cfproj_${cfproj.id}`, JSON.stringify(cfproj))
-      window.location.href = `/projects/${cfproj.id}`
-      return
-    }
-    if (!isSignedIn) { flash('Sign in to import project files to your account.'); return }
-
-    // Signed in: import all selected files straight into the projects list.
-    setImporting(true)
-    let ok = 0, fail = 0, limit = false
-    for (const cf of files) {
-      try {
-        const r = await fetch('/api/projects', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cf),
-        })
-        if (r.ok) ok++
-        else { fail++; if (r.status === 403) limit = true }
-      } catch { fail++ }
-    }
-    setImporting(false)
-    flash(
-      `Imported ${ok} project${ok !== 1 ? 's' : ''}` +
-      (fail ? ` — ${fail} failed${limit ? ' (project limit reached)' : ''}` : '') + '.'
-    )
-    setReloadKey(k => k + 1)
-  }
+  // Shared with the module dashboards (Beacon, Prism) so the two cannot drift.
+  const { importing, importMsg, openFromFile: handleOpenFromFile } =
+    useProjectImport(() => setReloadKey(k => k + 1))
 
   return (
     <main className="flex-1 overflow-y-auto">

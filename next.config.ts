@@ -3,6 +3,21 @@ import { withSentryConfig } from '@sentry/nextjs'
 import { LEGACY_REDIRECTS } from './lib/lights-registry'
 
 const nextConfig: NextConfig = {
+  // Which build is this? Vercel knows the commit; the browser did not, and
+  // that gap cost real time — more than once a bug report and a deploy could
+  // not be lined up because there was no way to ask "are you even on the build
+  // I just shipped?". Surfaced in the studio's admin menu.
+  //
+  // Three sources, because the first is not guaranteed: VERCEL_GIT_COMMIT_SHA
+  // is only set when the deploy carries git metadata, and a CLI deploy may not.
+  // VERCEL_URL is unique per deployment and always present on Vercel, and the
+  // build time is computed here so it exists everywhere — so SOMETHING always
+  // identifies the build, which is the whole point.
+  env: {
+    NEXT_PUBLIC_BUILD_SHA: process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev',
+    NEXT_PUBLIC_DEPLOY_ID: process.env.VERCEL_URL ?? 'local',
+    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
+  },
   async redirects() {
     // Permanent redirects so old links, shared scenes, and SEO carry over
     // (query strings are preserved automatically).

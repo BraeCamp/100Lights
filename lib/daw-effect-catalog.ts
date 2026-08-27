@@ -14,7 +14,7 @@ import {
   defaultEq3, defaultCompressor, defaultReverb, defaultDelay, defaultFilter,
   defaultSaturator, defaultRedux, defaultAutoPan, defaultUtility, defaultLfo,
   defaultNoiseGate, defaultDeEsser, defaultChorus, defaultTransientShaper,
-  defaultMultibandComp, defaultLimiter, defaultDynEq,
+  defaultMultibandComp, defaultLimiter, defaultDynEq, defaultUnmask,
   type EffectType,
 } from './daw-types'
 
@@ -37,6 +37,7 @@ export const ADD_OPTIONS: { type: EffectType; label: string }[] = [
   { type: 'multibandcomp',  label: 'Multiband Comp' },
   { type: 'limiter',        label: 'Limiter' },
   { type: 'dyneq',          label: 'Dynamic EQ' },
+  { type: 'unmask',         label: 'Unmask (duck under another track)' },
 ]
 
 /** Sensible starting values for a freshly added effect. */
@@ -59,6 +60,7 @@ export function makeDefaultParams(type: EffectType) {
     case 'multibandcomp':  return defaultMultibandComp()
     case 'limiter':        return defaultLimiter()
     case 'dyneq':          return defaultDynEq()
+    case 'unmask':         return defaultUnmask()
     default:               return defaultEq3()
   }
 }

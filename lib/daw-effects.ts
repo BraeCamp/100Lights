@@ -1,7 +1,8 @@
 'use client'
 
-import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams } from './daw-types'
+import type { TrackEffect, Eq3Params, CompressorParams, ReverbParams, DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams, UnmaskParams } from './daw-types'
 import { createSidechainProcessor } from './sidechain'
+import { createSpectralDucker } from './spectral-duck'
 
 // Live Web Audio node handle for a single effect
 export interface EffectHandle {
@@ -143,6 +144,49 @@ export function buildCompressor(ctx: AudioContext, params: CompressorParams): Ef
       if (key === 'makeupGain') makeup.gain.value    = params.enabled ? Math.pow(10, (value as number) / 20) : 1
     },
     dispose() { comp.disconnect(); makeup.disconnect() },
+  }
+}
+
+/**
+ * Unmask — duck this track only in the bands where the key track is loud.
+ *
+ * The whole graph lives in lib/spectral-duck.ts; this is the wrapper that gives
+ * it an EffectHandle, so the engine wires the key track into `keyInput` exactly
+ * as it already does for the sidechain compressor.
+ *
+ * With no key track chosen it is a straight wire. That matters: the effect is
+ * added before the track is picked, and an effect that silences or colours the
+ * signal while you decide would be worse than useless.
+ */
+export function buildUnmask(ctx: AudioContext, params: UnmaskParams): EffectHandle {
+  const p = { ...params }
+  const bypass = ctx.createGain()
+  const out = ctx.createGain()
+
+  const duck = createSpectralDucker(ctx, {
+    amount: p.enabled ? p.amount : 0,
+    attack: p.attack, release: p.release, threshold: p.threshold,
+    weights: [p.bandLow, p.bandBody, p.bandPresence, p.bandAir],
+  })
+  bypass.connect(duck.signalIn)
+  duck.signalOut.connect(out)
+
+  return {
+    input: bypass,
+    output: out,
+    keyInput: duck.keyInput,
+    setParam(key, value) {
+      ;(p as Record<string, unknown>)[key] = value
+      if (key === 'amount' || key === 'enabled') duck.setAmount(p.enabled ? p.amount : 0)
+      if (key.startsWith('band')) {
+        duck.setWeights([p.bandLow, p.bandBody, p.bandPresence, p.bandAir])
+      }
+      // Attack, release and threshold are baked into filter cutoffs when the
+      // followers are built, so changing them rebuilds the effect rather than
+      // being applied live. The chain is rebuilt on any structural change, so
+      // this is a no-op here by design rather than an omission.
+    },
+    dispose() { bypass.disconnect(); out.disconnect() },
   }
 }
 
@@ -838,6 +882,7 @@ export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tem
       case 'multibandcomp':  handle = buildMultibandComp(ctx, effect.params as MultibandCompParams); break
       case 'limiter':        handle = buildLimiter(ctx, effect.params as LimiterParams); break
       case 'dyneq':          handle = buildDynEq(ctx, effect.params as DynEqParams); break
+      case 'unmask':         handle = buildUnmask(ctx, effect.params as unknown as UnmaskParams); break
       default: continue
     }
     prev.connect(handle.input)

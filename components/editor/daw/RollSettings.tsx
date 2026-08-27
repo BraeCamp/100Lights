@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Knob from './Knob'
-import { Settings2, Play, ChevronDown, ChevronRight, ChevronLeft, Check, Copy, RotateCw, RotateCcw } from 'lucide-react'
+import { Settings2, Play, ChevronRight, ChevronLeft, Check, Copy, RotateCw, RotateCcw } from 'lucide-react'
 import type { MidiClip, DawClip, RollFx, AutoPoint } from '@/lib/daw-types'
 import DrawnGraphModal from './DrawnGraphModal'
 import { GRAPH_AREAS, defaultFieldGraph, type MotionAreaId } from '@/lib/draw-graphs'
@@ -28,8 +28,6 @@ import { clampToViewport } from './menu-clamp'
 import { useUITierOptional } from '../UITierProvider'
 
 const CYAN = 'var(--accent-light)'
-// Comparison switch for the drawn-suite layout (temporary — button vs chips vs rows).
-const DRAW_PRESENTATION_KEY = '100lights-draw-presentation'
 const SOUND_MODE_KEY = '100lights-sound-mode-v1'
 
 export function RollSettings({ clip, dispatch, presetLabel, onChangeSound, onPreviewSound, canPreview }: {
@@ -130,22 +128,6 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
   // inline anymore — clicking a setting's name opens it here.
   type OpenGraph = { kind: 'area'; area: MotionAreaId } | { kind: 'field'; key: keyof RollFx } | { kind: 'eq' } | null
   const [openGraph, setOpenGraph] = useState<OpenGraph>(null)
-  // Tone popover (the tone row collapsed to one button).
-  const [toneOpen, setToneOpen] = useState(false)
-  // "Draw ▾" menu (the button layout for the drawn suite).
-  const [drawMenuOpen, setDrawMenuOpen] = useState(false)
-  // Drawn-suite presentation — a comparison switch across the three layouts.
-  const [drawMode, setDrawMode] = useState<'button' | 'chips' | 'rows'>(() => {
-    if (typeof window === 'undefined') return 'button'
-    const v = localStorage.getItem(DRAW_PRESENTATION_KEY)
-    return v === 'chips' || v === 'rows' || v === 'button' ? v : 'button'
-  })
-  const cycleDrawMode = () => setDrawMode(m => {
-    const next = m === 'button' ? 'chips' : m === 'chips' ? 'rows' : 'button'
-    try { localStorage.setItem(DRAW_PRESENTATION_KEY, next) } catch { /* off */ }
-    return next
-  })
-
   useLayoutEffect(() => {
     // Re-clamp when the panel grows (e.g. switching to Advanced) so its bottom
     // never runs off screen.
@@ -542,61 +524,46 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
       {showPreset && tones.length > 0 && (() => {
         const activeTone = tones.find(t => toneMatches(clip.rollFx, t))
         const extraFx = activeTone ? Math.max(0, countSetFields(activeTone.fx) - 1) : 0
+        // Tone, laid out rather than hidden.
+        // This was a button that opened a portal menu — one more click, and a
+        // list you could not see while listening. There are only a handful of
+        // tones and they are the fastest way to change a sound, so they sit in
+        // the panel as chips with the active one lit. Same choices, no door in
+        // front of them.
         return (
-          <div style={{ ...row, paddingTop: 3, paddingBottom: 3, position: 'relative' }}>
-            <span style={label}>Tone</span>
-            <button
-              onClick={() => setToneOpen(o => !o)}
-              title="Pick a tone — a curated sound character for this instrument"
-              style={{
-                flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, textAlign: 'left',
-                fontSize: 10, fontWeight: 600, padding: '4px 9px', borderRadius: 5, cursor: 'pointer',
-                border: activeTone ? `1px solid ${CYAN}` : '1px solid var(--border-light)',
-                background: activeTone ? 'rgb(var(--accent-rgb) / 0.12)' : 'var(--bg-card)',
-                color: activeTone ? CYAN : 'var(--text-secondary)',
-              }}>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {activeTone ? activeTone.name : 'Choose a tone…'}
-                {activeTone && !soundAdvancedAllowed && extraFx > 0 && <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}> · {extraFx} fx</span>}
-              </span>
-              <ChevronDown size={11} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-            </button>
-            {toneOpen && createPortal(
-              <div
-                data-editor="true" data-sound-overlay="true"
-                onClick={() => setToneOpen(false)}
-                style={{ position: 'fixed', inset: 0, zIndex: 10040 }}>
-                <div
-                  onClick={e => e.stopPropagation()}
-                  style={{
-                    position: 'fixed', left: anchor.x + 60, top: anchor.y + 74, width: 224, maxHeight: '60vh', overflowY: 'auto',
-                    background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
-                    padding: 5, boxShadow: '0 14px 34px rgba(0,0,0,0.7)', zIndex: 10041,
-                  }}>
-                  <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '4px 8px 3px' }}>Tone</div>
-                  {tones.map(t => {
-                    const on = activeTone?.name === t.name
-                    return (
-                      <button key={t.name}
-                        onClick={() => { commitFx(applyTone(clip.rollFx, t)); setToneOpen(false) }}
-                        title={`${t.name} — sets ${countSetFields(t.fx)} sound setting${countSetFields(t.fx) === 1 ? '' : 's'}`}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 7, width: '100%', textAlign: 'left',
-                          padding: '7px 8px', borderRadius: 7, cursor: 'pointer', border: 'none',
-                          background: on ? 'var(--accent-subtle)' : 'transparent',
-                          color: on ? CYAN : 'var(--text-primary)', fontSize: 11.5, fontWeight: on ? 700 : 500,
-                        }}
-                        onMouseEnter={e => { if (!on) e.currentTarget.style.background = 'var(--bg-card)' }}
-                        onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'transparent' }}>
-                        <span style={{ width: 12, flexShrink: 0, color: CYAN, display: 'inline-flex', alignItems: 'center' }}>{on ? <Check size={12} /> : null}</span>
-                        {t.name}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>,
-              document.body,
-            )}
+          <div style={{ padding: '5px 12px 7px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>TONE</span>
+              {activeTone && !soundAdvancedAllowed && extraFx > 0 && (
+                <span style={{ fontSize: 8.5, color: 'var(--text-muted)' }}>· {extraFx} fx</span>
+              )}
+              {activeTone && (
+                <button
+                  onClick={() => commitFx(applyTone(clip.rollFx, { name: '', fx: {} } as typeof tones[number]))}
+                  title="Clear the tone"
+                  style={{ marginLeft: 'auto', fontSize: 8.5, fontWeight: 700, padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-muted)' }}
+                >clear</button>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {tones.map(t => {
+                const on = activeTone?.name === t.name
+                return (
+                  <button key={t.name}
+                    onClick={() => commitFx(applyTone(clip.rollFx, t))}
+                    title={`${t.name} — sets ${countSetFields(t.fx)} sound setting${countSetFields(t.fx) === 1 ? '' : 's'}`}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      fontSize: 9.5, fontWeight: on ? 800 : 600, padding: '3px 9px', borderRadius: 99, cursor: 'pointer',
+                      border: on ? `1px solid ${CYAN}` : '1px solid var(--border-light)',
+                      background: on ? 'rgb(var(--accent-rgb) / 0.16)' : 'var(--bg-card)',
+                      color: on ? CYAN : 'var(--text-secondary)',
+                    }}>
+                    {on && <Check size={9} />}{t.name}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )
       })()}
@@ -750,47 +717,12 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
         <div style={{ borderTop: '1px solid var(--border)', padding: '9px 12px 8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
             <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>DRAW GRAPHS</span>
-            <button onClick={cycleDrawMode} title="Compare the three layouts for these draw controls"
-              style={{ fontSize: 8, fontWeight: 700, padding: '2px 7px', borderRadius: 4, cursor: 'pointer', border: '1px solid var(--border-light)', background: 'var(--bg-card)', color: 'var(--text-muted)' }}>
-              {drawMode === 'button' ? 'Layout · Button' : drawMode === 'chips' ? 'Layout · Chips' : 'Layout · Rows'} ⇄
-            </button>
+
           </div>
 
-          {/* 1a — a single "Draw ▾" button → a menu of the areas. */}
-          {drawMode === 'button' && (
-            <div style={{ position: 'relative' }}>
-              <button onClick={() => setDrawMenuOpen(o => !o)}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left', fontSize: 10, fontWeight: 700, padding: '5px 10px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${CYAN}`, background: 'rgb(var(--accent-rgb) / 0.1)', color: CYAN }}>
-                <span style={{ flex: 1 }}>Draw a graph</span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, color: 'var(--text-muted)' }}>
-                  {drawAreas.filter(a => areaBind[a].points).length ? `${drawAreas.filter(a => areaBind[a].points).length} on` : ''}
-                  <ChevronDown size={10} />
-                </span>
-              </button>
-              {drawMenuOpen && createPortal(
-                <div data-editor="true" data-sound-overlay="true" onClick={() => setDrawMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10040 }}>
-                  <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', left: anchor.x + 24, top: anchor.y + 120, width: 210, maxHeight: '60vh', overflowY: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 5, boxShadow: '0 14px 34px rgba(0,0,0,0.7)' }}>
-                    {drawAreas.map(a => {
-                      const on = !!areaBind[a].points
-                      return (
-                        <button key={a} onClick={() => { setDrawMenuOpen(false); openArea(a) }}
-                          style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%', textAlign: 'left', padding: '7px 8px', borderRadius: 7, cursor: 'pointer', border: 'none', background: on ? 'var(--accent-subtle)' : 'transparent', color: on ? CYAN : 'var(--text-primary)', fontSize: 11.5, fontWeight: on ? 700 : 500 }}
-                          onMouseEnter={e => { if (!on) e.currentTarget.style.background = 'var(--bg-card)' }}
-                          onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'transparent' }}>
-                          <span style={{ width: 12, flexShrink: 0, color: CYAN }}>{on ? '●' : ''}</span>
-                          {GRAPH_AREAS[a].short}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>,
-                document.body,
-              )}
-            </div>
-          )}
-
           {/* 1b — a row of chips, active ones lit. */}
-          {drawMode === 'chips' && (
+          {(
+
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
               {drawAreas.map(a => {
                 const on = !!areaBind[a].points
@@ -805,21 +737,7 @@ export function RollSoundPanel({ clip, clips, dispatch, anchor, onClose, presetL
           )}
 
           {/* 1c — a lean row per area, name click opens the modal. */}
-          {drawMode === 'rows' && (
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {drawAreas.map(a => {
-                const on = !!areaBind[a].points
-                return (
-                  <button key={a} onClick={() => openArea(a)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 4px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
-                    <span style={{ width: 8, flexShrink: 0, color: CYAN, fontSize: 9 }}>{on ? '●' : ''}</span>
-                    <span style={{ flex: 1, fontSize: 10.5, fontWeight: on ? 700 : 500, color: on ? CYAN : 'var(--text-secondary)' }}>{GRAPH_AREAS[a].short}</span>
-                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{on ? 'edit ▸' : 'draw ▸'}</span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
+
         </div>
       )}
 
