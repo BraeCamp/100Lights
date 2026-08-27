@@ -22,6 +22,13 @@ interface Managed {
   isReady: boolean
   queue: SchedEvent[]
   lastParams: ApolloPatch | null
+  /** The node this engine plays into — so stopAll can drop the byDest entry
+   *  explicitly instead of trusting the node to become unreferenced. */
+  dest: AudioNode
+  /** Init threw. Without this the engine stays not-ready forever, every later
+   *  note piles into `queue`, and the track is silent for the rest of the
+   *  session with nothing logged anywhere. */
+  failed?: boolean
 }
 
 const byDest = new WeakMap<AudioNode, Managed>()
@@ -37,7 +44,7 @@ export function setApolloCtxTempo(ctx: BaseAudioContext, bpm: number): void {
 
 function create(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Managed {
   const engine = new ApolloEngine()
-  const m: Managed = { engine, isReady: false, queue: [], lastParams: null }
+  const m: Managed = { engine, isReady: false, queue: [], lastParams: null, dest }
   byDest.set(dest, m)
   let set = byCtx.get(ctx)
   if (!set) { set = new Set(); byCtx.set(ctx, set) }
@@ -51,16 +58,26 @@ function create(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Man
       await restorePatchSamples(patch, engine)
       m.isReady = true
       if (m.queue.length) {
-        engine.scheduleEvents(m.queue)
+        engine.scheduleEvents(flushable(m.queue, ctx.currentTime, patch))
         m.queue = []
       }
     })
-    .catch(() => { /* engine unavailable — notes drop silently */ })
+    .catch((err) => {
+      // Was: swallowed. An engine that never came up leaves isReady false, so
+      // every later note queues against it and the track is silent for the rest
+      // of the session — the exact "one track just stopped" report, with nothing
+      // logged. Mark it so the next note can retry, and say so.
+      m.failed = true
+      m.queue = []
+      console.error(`[apollo] instrument "${patch.name || 'patch'}" failed to start — ` +
+        'this track will be silent until it is retried', err)
+    })
   return m
 }
 
 function ensure(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Managed {
   let m = byDest.get(dest)
+  if (m?.failed) m = undefined     // let a failed engine be rebuilt rather than stay dead
   if (!m) m = create(ctx, dest, patch)
   else if (m.isReady && m.lastParams !== patch) {
     // instrument edited (SET_INSTRUMENT replaces the params object)
@@ -99,6 +116,40 @@ export function playApolloNote(
   }
   if (m.isReady) m.engine.scheduleEvents(events)
   else m.queue.push(...events)
+}
+
+/**
+ * Events queued while the engine was starting, filtered to what is still worth
+ * playing.
+ *
+ * They carry ABSOLUTE context times, so by the time an engine is ready some are
+ * already in the past — and the engine drains everything older than the current
+ * block at once, firing a note's on and off together, which is silence with
+ * extra steps. A note that should STILL be sounding is started now instead:
+ * for a pad or a sustained sub, a slightly late entry is much closer to right
+ * than a missing part. A note whose end has also passed is genuinely over, and
+ * a late percussive hit is worse than none, so those are dropped.
+ */
+function flushable(queue: SchedEvent[], now: number, patch: ApolloPatch): SchedEvent[] {
+  const out: SchedEvent[] = []
+  let late = 0, dropped = 0
+  const offAt = new Map<number, number>()
+  for (const e of queue) if (e.type === 'noteOff' && e.note != null) offAt.set(e.note, e.t)
+  for (const e of queue) {
+    if (e.t >= now) { out.push(e); continue }
+    if (e.type === 'noteOn' && e.note != null && (offAt.get(e.note) ?? 0) > now + 0.05) {
+      out.push({ ...e, t: now + 0.005 })   // still sounding — bring it in late
+      late++
+      continue
+    }
+    if (e.type === 'noteOff' || e.type === 'bend') { out.push({ ...e, t: now + 0.005 }); continue }
+    dropped++
+  }
+  if (late || dropped) {
+    console.warn(`[apollo] "${patch.name || 'patch'}" started late: ` +
+      `${late} sustained note(s) brought in late, ${dropped} short note(s) missed`)
+  }
+  return out
 }
 
 /** Warm module + patch + samples ahead of playback / offline render. */
@@ -157,7 +208,11 @@ export function apolloStopAll(ctx: BaseAudioContext): void {
       m.engine.panic()
       m.engine.node?.disconnect()
     } catch { /* already gone */ }
+    // Drop the mapping explicitly. Leaving it relied on the dest node becoming
+    // unreferenced; if a caller ever reuses one, ensure() would hand back this
+    // engine with isReady still true and its output already disconnected — a
+    // track that plays every note into nothing, permanently.
+    byDest.delete(m.dest)
   }
   set.clear()
-  // byDest entries die with their (now unreferenced) dest nodes
 }
