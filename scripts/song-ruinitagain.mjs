@@ -1,0 +1,374 @@
+// "i'd ruin it again" — B♭ minor, 148 BPM. Written to sit inside the measured
+// Artemas space (styles/artemas.json), as an ORIGINAL song in that manner —
+// not a recreation of any of theirs. None of their melodies, chords or parts are
+// here; what is borrowed is the shape the measurements describe.
+//
+// THE SHAPE CHOSEN, from CRAFT.md §7. Five references, five different kinds of
+// record. This one takes the "driving" shape — the 132–152 BPM family, balanced
+// sub against bass, harmony well down, most sectional of that group — because
+// the half-time shape is what "Cold Signal" already did and the point of a range
+// is to pick different points in it.
+//
+// WHAT THE MEASUREMENTS DICTATED, and it is most of the arrangement:
+//
+//   · THE BASS IS THE LOUDEST THING. In all five references the bass sits above
+//     both drums and voice (−2.4 to −6.5 dB under the summed stems). So the
+//     bassline is the song and everything else is staging for it.
+//   · THE MIDRANGE IS LEFT EMPTY. Brae sings over these. Separating the
+//     references showed the voice IS the midrange — take it away and mid falls
+//     to 4.3%, highMid to 1.7%. So the harmony here is deliberately thin, short
+//     and quiet: stabs rather than pads, ~10 dB under the bass, which is exactly
+//     where the references put theirs (−8.5 dB on the track this shape follows).
+//   · IT DOES NOT TRAVEL FAR. These records move 3–15.6 dB; ours have been
+//     moving 17.7. So the quiet sections here are thinner but not much quieter —
+//     the dynamic scale is 0.72–1.0 rather than the 0.42–1.0 used before.
+//   · STRAIGHT. Every reference swings 49.5–50.0%. No swing anywhere.
+//   · MINOR, FLAT KEY. All five are. B♭ minor, and the loop is the archetype:
+//     i – ♭VII – ♭VI – ♭VII, which circles rather than resolves.
+//
+// The one device is the bass itself: oscillator sync opened by an envelope on
+// every note, so the timbre moves even when the note does not.
+
+import { writeFileSync, mkdirSync } from 'fs'
+import { join, dirname } from 'path'
+import { homedir } from 'os'
+import { execFileSync } from 'child_process'
+import { fileURLToPath } from 'url'
+import { uid, N, assemble, dipInto, lift, bar } from './song-kit.mjs'
+import { groove, play, voice, parseChord, intoSlot, checkSlots, stagger, densityArc, thin, pump, rng } from './lib/craft.mjs'
+import { kick, snare, glideSub, steadyBass, boom, coldKeys, pad as darkPad } from './apollo-voices.mjs'
+import { importTs } from './lib/ts-import.mjs'
+
+// The kit comes from the app's own table rather than a copy of it, so the pads,
+// their levels and the sample paths cannot drift from what the studio plays.
+// 'techno' by measurement: 70 ms and a 15 ms decay (tight enough for eighths at
+// 148 without smearing), an 8.4 kHz centroid that lands in brilliance rather
+// than air, and 24% of its energy in the midrange so it has body instead of fizz.
+const { DRUM_KITS } = await importTs('lib/drum-presets.ts')
+const HAT_KIT = DRUM_KITS.find(k => k.id === 'techno')
+if (!HAT_KIT) throw new Error('drum kit "techno" is missing from DRUM_KITS')
+// Deep-copied because DRUM_KITS is the app's live table, not ours to edit, and
+// this raises the hat pad: the kit's own 0.6 is set for a kit playing every pad,
+// where the hat should sit under the kick and snare. Here the hat is the only
+// pad on the track and the balance is made at the trackhead instead.
+const HAT_INSTRUMENT = JSON.parse(JSON.stringify(HAT_KIT.instrument))
+HAT_INSTRUMENT.params.pads[42].volume = 1.0
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const OUT_DIR = join(homedir(), 'Desktop', '100lights-ai-renders')
+const argv = process.argv.slice(2)
+const flagOf = (n, d) => { const a = argv.find(x => x.startsWith(`--${n}=`)); return a ? a.split('=')[1] : d }
+
+const BPM = 148, BPB = 4
+const g = groove({ bpm: BPM, feel: 'straight', swing: 0, seed: 8814 })
+const rand = rng(8814)
+
+// ── Harmony ─────────────────────────────────────────────────────────────────
+// Four bars, one chord each. Simple on purpose: in this idiom the harmony is a
+// bed for a voice, and complexity here would compete with the singer as surely
+// as loudness would.
+const LOOP = ['Bbm9', 'Ab', 'Gbmaj7', 'Ab']
+const ROOTS = { Bbm9: 46, Ab: 44, 'Gbmaj7': 42 }
+
+const VOICED = []
+let prev = null
+for (const sym of LOOP) {
+  const v = voice(sym, { style: 'rootless', centre: 63, spread: 9, near: prev }).slice(0, 3)
+  VOICED.push(v)
+  prev = v
+}
+
+const SLOT = { sub: 'sub', bass: 'bass', keys: 'upper', pad: 'lowChord' }
+const clash = checkSlots(SLOT)
+if (clash.length) throw new Error('register collision: ' + clash.join('; '))
+
+// ── Parts ───────────────────────────────────────────────────────────────────
+// The hats are a SAMPLED kit, so their pitch is a GM drum pad number, not a
+// note: 42 is the closed hat. Kick and clap are still Apollo voices.
+const KICK = 24, CLAP = 48, HAT = 42
+
+/** Four on the floor — the driving shape. */
+const kickBar = ({ on = true } = {}) => on
+  ? Array.from({ length: 4 }, (_, b) => ({ pitch: KICK, beat: b, durationBeats: 0.35, velocity: b === 0 ? 108 : 100 }))
+  : []
+
+const clapBar = ({ fill = false } = {}) => {
+  const out = [1, 3].map(b => ({ pitch: CLAP, beat: b, durationBeats: 0.25, velocity: 100 }))
+  if (fill) for (const b of [3.5, 3.75]) out.push({ pitch: CLAP, beat: b, durationBeats: 0.15, velocity: 68 + (b - 3.5) * 90 })
+  return out
+}
+
+/** Closed on the beat, open on the offbeat — what stops four-on-the-floor
+ *  stamping, and the only part carrying anything above 2 kHz. */
+/**
+ * Steady eighths, closed on the beat and open off it. No sixteenth layer.
+ *
+ * The pattern does not vary, because in "cross my heart" it does not: the hat is
+ * consistent for most of the record and where it is not consistent it is simply
+ * GONE. Sprinkling random sixteenths through it was the "so many drum notes
+ * close to each other" clutter Brae heard — sixteen hits a bar at 148 BPM is a
+ * hiss, not a groove.
+ */
+/**
+ * Eighths on a real closed hat, offbeats accented.
+ *
+ * This used to be a synthesised noise burst, and Brae's read was that it sounded
+ * bad. The measurement agreed and said why: our hat had a spectral centroid of
+ * 2.9 kHz and `listen` called its dominant band "mid" — every real hat sample in
+ * the repo sits between 5.4 and 12.7 kHz. It was not a dull hi-hat, it was a
+ * midrange noise burst playing a hi-hat's rhythm, and no amount of shaping the
+ * oscillator was going to move it three octaves.
+ *
+ * The long/short alternation the synth version used is gone: it existed to make
+ * two timbres out of one noise source, and a sample already has its own decay.
+ * The accent is velocity only, which keeps the hat CONSISTENT the way Brae
+ * described Artemas keeping it — and when it should change, it leaves entirely.
+ */
+const hatBar = () => {
+  const out = []
+  for (let i = 0; i < 8; i++) {
+    out.push({ pitch: HAT, beat: i * 0.5, durationBeats: 0.25, velocity: i % 2 ? 100 : 76 })
+  }
+  return out
+}
+
+/** The chorus accent: one deep hit on the start of a bar, where the hats aren't. */
+const boomBar = (i) => [{ pitch: intoSlot(ROOTS[LOOP[i % 4]] - 12, [26, 40]), beat: 0, durationBeats: 2.6, velocity: 96 }]
+
+/**
+ * The sub is ONE note for the whole song, DRAGGED between pitches.
+ *
+ * Brae, on "cross my heart": "like a single sub note, a looooong sub sound that
+ * changes notes without stopping or restarting."
+ *
+ * The first attempt at this overlapped separate notes in legato mode, which held
+ * 88-97% of the level through a change instead of the 0% a plain gap gives — but
+ * it was still a second note arriving under the first. This is the real thing:
+ * `glide: true` on the track means these pitches are not notes, they are the
+ * targets one note travels between, and the movement is a drawn pitch curve.
+ * There is exactly ONE attack in 105 seconds.
+ *
+ * The move is 0.22 beats and eased in hard at the end (decel 0.8): the pitch
+ * leaves quickly and settles into the new note rather than arriving at speed,
+ * which is what a slid 808 does. `anchor: 'center'` straddles the downbeat so
+ * the bar is in tune ON the beat — 'depart' would leave the downbeat still
+ * sitting on the previous chord's root, which at this tempo is audible as a
+ * wrong bass note rather than as an articulation.
+ */
+const subBar = (i) => {
+  const root = intoSlot(ROOTS[LOOP[i % 4]] - 12, 'sub')
+  return [{ pitch: root, beat: 0, durationBeats: BPB, velocity: 88 }]
+}
+
+/**
+ * The song. Sixteenth syncopation with an octave pop, resting across the second
+ * half of beat two so the four-four kick has somewhere to breathe.
+ */
+/**
+ * The hook. It STAYS or it FALLS — it never rises.
+ *
+ * Brae, on the first version: it went "2 low and 1 high", and taking the high
+ * third note out makes it more powerful — "just like how people tone down for
+ * statements and up for questions. The toning down or staying at the tone will
+ * be more powerful."
+ *
+ * That is exactly right and it is a rule worth keeping. The old figure answered
+ * itself twice a bar by jumping up a fifth; a bass that only ever holds its
+ * ground or drops below it sounds certain. The two notes that move now go DOWN
+ * to the seventh and the fifth beneath the root rather than up to them.
+ *
+ * Also fewer notes: eight in a bar at 148 BPM is clutter, which was the other
+ * complaint.
+ */
+const bassBar = (i, { lean = false } = {}) => {
+  const c = LOOP[i % 4]
+  const root = intoSlot(ROOTS[c], 'bass')
+  const tones = parseChord(c).tones
+  const seventhInt = tones.find(t => t === 10 || t === 11) ?? 10
+  const seventhBelow = root - (12 - seventhInt)     // the chord's 7th, an octave down
+  const fifthBelow = root - 5                        // the fifth BELOW the root
+  const fig = lean
+    ? [[root, 0, 0.95, 104], [root, 2.0, 0.75, 86]]
+    : [[root, 0, 0.44, 108], [root, 0.75, 0.30, 86],
+       [root, 1.5, 0.40, 100], [seventhBelow, 2.25, 0.30, 84],
+       [root, 2.5, 0.42, 104], [fifthBelow, 3.5, 0.44, 88]]
+  return fig.map(([p, b, d, v]) => ({ pitch: p, beat: b, durationBeats: d, velocity: v }))
+}
+
+/** Stabs, not a pad: short, off the downbeat, and quiet. The harmonic layer in
+ *  these records sits 8–20 dB under the bass, and this is how you get there
+ *  without simply turning a sustained part down until it is mush. */
+const keysBar = (i, { sparse = false } = {}) => {
+  const v = VOICED[i % 4]
+  const hits = sparse ? [[2.5, 0.3, 58]] : [[0.75, 0.22, 66], [2.5, 0.3, 62]]
+  const out = []
+  for (const [b, d, vel] of hits) {
+    v.forEach((p, k) => out.push({ pitch: intoSlot(p, 'upper'), beat: b + k * 0.005, durationBeats: d, velocity: vel - k * 4 }))
+  }
+  return out
+}
+
+/** One held chord low and very quiet — the floor under everything, not a voice. */
+const padBar = (i) => VOICED[i % 4].map(p => ({
+  pitch: intoSlot(p, [52, 64]), beat: 0, durationBeats: BPB - 0.2, velocity: 34,
+}))
+
+// ── Form ────────────────────────────────────────────────────────────────────
+// Five sections, matching the shape this follows. The break thins rather than
+// empties: these records do not drop to nothing.
+// `boom` is listed in every section so the stagger never treats it as a layer
+// ARRIVING — it is an accent that the bar logic places, not a part that plays
+// continuously, and counting it as an entrance pushed the kick into the intro.
+const FORM = [
+  { name: 'Open',   bars: 8,  energy: 0.30, want: ['sub', 'bass', 'pad', 'boom'] },
+  { name: 'Drive',  bars: 16, energy: 0.80, want: ['sub', 'bass', 'pad', 'kick', 'hats', 'boom'] },
+  { name: 'Turn',   bars: 8,  energy: 1.00, want: ['sub', 'bass', 'pad', 'kick', 'hats', 'clap', 'keys', 'boom'] },
+  // No hats: this is the second place they go, the eight bars before the last chorus.
+  { name: 'Thin',   bars: 8,  energy: 0.42, want: ['sub', 'bass', 'pad', 'boom'] },
+  { name: 'Drive 2', bars: 16, energy: 0.96, want: ['sub', 'bass', 'pad', 'kick', 'hats', 'clap', 'keys', 'boom'] },
+  { name: 'Close',  bars: 8,  energy: 0.34, want: ['sub', 'bass', 'pad', 'boom'] },
+]
+const { sections: staggered, unresolved } = stagger(FORM, { maxChurn: 2 })
+if (unresolved.length) console.warn('arrangement:\n  ' + unresolved.join('\n  '))
+const DENSITY = densityArc(FORM.map(s => s.energy))
+
+export function build() {
+  const tracks = [
+    { key: 'kick', id: uid(), name: 'Kick', presetId: null, volume: 0.46, color: '#f0abfc', instrument: { type: 'apollo', params: kick() } },
+    { key: 'clap', id: uid(), name: 'Clap', presetId: null, volume: 0.92, color: '#f472b6', instrument: { type: 'apollo', params: snare() } },
+    { key: 'hats', id: uid(), name: 'Hats', presetId: null, volume: 0.62, pan: 0.18, color: '#fda4af', instrument: HAT_INSTRUMENT },
+    // Brae: "the sub might be too low and quiet". Both, and they were the same
+    // fault -- a fifth of its energy sat under 40 Hz where nothing reproduces it,
+    // so turning it up had been making the inaudible part louder. With the
+    // octave-down oscillator pulled back (see glideSub) the level can come up and
+    // land somewhere audible.
+    // Previously: "the sub needs to be lower". It was carrying 30-48% of the
+    // whole record's energy and swallowing the bass it is supposed to support.
+    { key: 'sub',  id: uid(), name: 'Sub',  presetId: null, volume: 0.45, color: '#c084fc',
+      glide: true, glideOpts: { glide: 0.22, accel: 0.15, decel: 0.8, anchor: 'center' },
+      instrument: { type: 'apollo', params: glideSub() } },
+    { key: 'boom', id: uid(), name: 'Boom', presetId: null, volume: 0.34, color: '#fbbf24', instrument: { type: 'apollo', params: boom() } },
+    // The loudest fader in the song, because that is what the references do.
+    { key: 'bass', id: uid(), name: 'Bass', presetId: null, volume: 0.74, color: '#a78bfa', instrument: { type: 'apollo', params: steadyBass() } },
+    { key: 'keys', id: uid(), name: 'Keys', presetId: null, volume: 0.18, pan: -0.20, color: '#7dd3fc', instrument: { type: 'apollo', params: coldKeys() } },
+    { key: 'pad',  id: uid(), name: 'Pad',  presetId: null, volume: 0.040, pan: 0.12, color: '#94a3b8', instrument: { type: 'apollo', params: darkPad() } },
+  ]
+
+  const sections = staggered.map((sec, si) => {
+    const on = new Set(sec.layers)
+    const density = DENSITY[si]
+    const parts = {}
+    const push = (k, ns) => { (parts[k] ??= []).push(...ns) }
+
+    for (let i = 0; i < sec.bars; i++) {
+      const at = i * BPB
+      const last = i === sec.bars - 1
+      const busy = density > 0.7
+      const shift = ns => ns.map(n => ({ ...n, beat: n.beat + at }))
+
+      if (on.has('sub')) push('sub', shift(subBar(i)))
+      if (on.has('bass')) push('bass', shift(bassBar(i, { lean: density < 0.5 })))
+      if (on.has('pad')) push('pad', shift(padBar(i)))
+      if (on.has('kick')) push('kick', shift(kickBar()))
+      if (on.has('clap')) push('clap', shift(clapBar({ fill: last && busy })))
+      if (on.has('keys')) push('keys', shift(keysBar(i, { sparse: !busy })))
+
+      // THE HAT ARRANGEMENT, which is the shape Brae described in "cross my
+      // heart": the hat is consistent for most of the record, and where it is
+      // not consistent it is GONE — typically for the eight bars before a
+      // chorus. Where it goes, something else marks the start of a bar instead:
+      // deep, electronic, with a fast tremolo.
+      const beforeChorus = sec.name === 'Drive' && i >= sec.bars - 8
+      if (on.has('hats') && !beforeChorus) push('hats', shift(hatBar()))
+
+      // The accent lands on the first bar of a chorus and again in its middle —
+      // "a bar or two", not a pattern. It is also what fills the hole the hats
+      // leave on the way in.
+      if (sec.name === 'Open' && i === 0) push('boom', shift(boomBar(i)))
+      const chorus = sec.name === 'Turn' || sec.name === 'Drive 2'
+      if (chorus && (i === 0 || i === 4 || (sec.bars > 8 && i === 8))) push('boom', shift(boomBar(i)))
+      if ((beforeChorus || sec.name === 'Thin') && i === sec.bars - 1) push('boom', shift(boomBar(i)))
+    }
+
+    // Narrow on purpose. These records travel 3–15.6 dB and ours were moving
+    // 17.7; a section here is thinner in texture without dropping much in level.
+    const dyn = 0.72 + 0.28 * density
+
+    const ROLE = { kick: 'kick', clap: 'clap', hats: 'hats', sub: 'sub', bass: 'bass', keys: 'keys', pad: 'pad', boom: 'perc' }
+    const played = {}
+    for (const [k, ns] of Object.entries(parts)) {
+      if (k === 'sub') {
+        // A glide track's "notes" are pitch TARGETS, not notes: song-kit turns
+        // them into one note plus a curve. Grooving them would micro-time an
+        // attack that does not exist, and varying their velocity would ask a
+        // single sustained note to be several loudnesses at once. The sub's
+        // dynamics come from the FX lane instead.
+        played[k] = ns.map(n => N(n.pitch, n.beat, n.durationBeats, 88))
+        continue
+      }
+      played[k] = play(ns, ROLE[k] ?? 'default', g, { bpb: BPB })
+        .map(n => N(n.pitch, n.beat, n.durationBeats, Math.max(1, Math.round(n.velocity * dyn))))
+    }
+    return { name: sec.name, bars: sec.bars, parts: played }
+  })
+
+  // ── Dynamics in the FX lane ───────────────────────────────────────────────
+  const at = {}
+  let acc = 0
+  for (const s of staggered) { at[s.name] = acc; acc += s.bars * BPB }
+  const W = b => b * BPB
+
+  const bars = [
+    // The sub's arc lives here now: one sound whose LEVEL moves through the song,
+    // rather than notes that get louder and quieter by being re-struck.
+    bar('sub', 0, W(8), { gain: 0.55 }, [[0, 1], [W(6), 0.4], [W(8), 0]], 0),
+    bar('sub', at['Thin'], W(8), { gain: 0.72 }, [[0, 0], [W(1), 1], [W(7), 1], [W(8), 0]], 0),
+    // Standing filters, not gestures: the pad is a floor under the record and
+    // has no business in the singer's octave, and the bass's sync harmonics were
+    // landing in the low mids instead of the bass band.
+    bar('pad', 0, acc, { filterHz: 460 }, [[0, 1], [acc, 1]], 3),
+    // The pump is the four-four signature — everything harmonic ducks on the
+    // kick. Written as a curve so it stays visible and editable.
+    pump('pad', at['Drive'], W(16), { depth: 0.55, recover: 0.62 }),
+    pump('pad', at['Turn'], W(8), { depth: 0.52, recover: 0.62 }),
+    pump('pad', at['Drive 2'], W(16), { depth: 0.52, recover: 0.62 }),
+    pump('keys', at['Drive 2'], W(16), { depth: 0.7, recover: 0.5 }),
+
+    // Close the filter into each arrival so it lands without needing more level.
+    dipInto('keys', at['Drive 2'], 3, 1),
+
+    // Drive across the peaks — the bass gets grittier rather than louder.
+    lift('bass', at['Turn'], W(8), { gain: 1.06 }),
+    lift('bass', at['Drive 2'], W(16), { gain: 1.05 }),
+
+    // The thin section sits behind a filter and opens on the way out of it.
+    bar('pad', at['Thin'], W(8), { reverbWet: 0.4 }, [[0, 0], [W(2), 1], [W(8), 1]], 1),
+
+    // Outro: parts leave, tails ring.
+    bar('bass', at['Close'] + W(4), W(4), { gain: 0.25 }, [[0, 0], [W(4), 1]], 2),
+    bar('sub', at['Close'] + W(5), W(3), { gain: 0.3 }, [[0, 0], [W(3), 1]], 0),
+  ]
+
+  return assemble({
+    name: "i'd ruin it again", bpm: BPM, bpb: BPB, key: 'Bb', scale: 'minor',
+    swing: 0, tracks, sections, bars, masterVolume: 0.34,
+  })
+}
+
+// ── Run ─────────────────────────────────────────────────────────────────────
+const built = build()
+mkdirSync(OUT_DIR, { recursive: true })
+const label = flagOf('label', "i'd ruin it again")
+const outFile = join(flagOf('out', OUT_DIR), `${label}.cfproj`)
+writeFileSync(outFile, JSON.stringify(built.project))
+
+const clips = built.project.dawProject.arrangementClips
+console.log(`${label} — ${BPM} BPM, Bb minor, ${built.seconds.toFixed(0)}s, ${clips.length} clips, ` +
+  `${clips.reduce((a, c) => a + c.notes.length, 0)} notes, ${built.project.dawProject.clipEffects.length} fx bars`)
+for (const s of staggered) console.log(`  ${s.name.padEnd(8)} ${String(s.bars).padStart(2)} bars  ${s.layers.join(' ')}`)
+console.log(`→ ${outFile}`)
+
+if (argv.includes('--listen')) {
+  execFileSync('node', ['--experimental-strip-types', join(ROOT, 'scripts/listen.mjs'), outFile, '--style=artemas'],
+    { cwd: ROOT, stdio: 'inherit' })
+}

@@ -319,6 +319,9 @@ export function playInstrumentNote(
   /** Seconds already elapsed into the note (>0 when the playhead enters mid-note).
    *  `duration` is the FULL note length; poly sample layers resume at this phase. */
   offset = 0,
+  /** A drawn pitch contour for this note, in absolute context time. Apollo only:
+   *  the sampled path applies clip.pitchGraph itself, via src.detune. */
+  bend?: { t: number; semis: number }[],
 ) {
   if (instrument.type === 'none') return
 
@@ -398,7 +401,7 @@ export function playInstrumentNote(
   if (instrument.type === 'apollo') {
     // Apollo runs a persistent AudioWorklet engine per track destination and
     // schedules note on/off at absolute context time (offline-render safe).
-    playApolloNote(ctx, dest, instrument.params as ApolloInstrumentParams, pitch, velocity, when, duration)
+    playApolloNote(ctx, dest, instrument.params as ApolloInstrumentParams, pitch, velocity, when, duration, bend)
     return
   }
 }

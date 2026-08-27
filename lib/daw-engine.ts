@@ -149,6 +149,10 @@ export class DawEngine extends EventTarget {
   // main cause of playback stutter in dense arrangements. Torn down on stop /
   // project change; rebuilt if the clip's sound signature changes.
   private _clipFxChains = new Map<string, { input: AudioNode; nodes: AudioNode[]; tailSec: number; sig: string }>()
+  /** One FX-lane-bar chain per (track, overlapping bar set) — see the note in
+   *  _tick. Cleared alongside _clipFxChains, so every midiInput bus swap drops
+   *  them and the next note rebuilds against the fresh bus. */
+  private _barChains = new Map<string, { input: AudioNode; nodes: AudioNode[]; oscs: OscillatorNode[]; sig: string }>()
   // Per-clip cache of note occurrences + the unison-skip set. Both are position-
   // INDEPENDENT (clip-relative), yet were recomputed every 25ms scheduler tick —
   // and the unison guard is O(notes²), ~600k ops/tick for a 780-note clip. Cache
@@ -2097,6 +2101,9 @@ export class DawEngine extends EventTarget {
         const sustainSec = rfx.sustain ?? 0
         const fxCleanup: { nodes: AudioNode[]; oscs: OscillatorNode[] } = { nodes: [], oscs: [] }
         let clipEffectActive = false
+        // Whether any overlapping effect is scoped to THIS note rather than to
+        // the bar's own span. Only those actually need a per-note graph.
+        let anyPerNote = false
         {
           const overlapping = this._clipEffects.filter(e =>
             e.trackId === clip.trackId && e.type !== 'pitch' &&
@@ -2112,6 +2119,7 @@ export class DawEngine extends EventTarget {
             // shape stretched over the clip, every note tapping it at its position.
             const span  = mot.perNote ? maxDur : clip.durationBeats
             const start = mot.perNote ? noteAbsBeat : clip.startBeat
+            if (mot.perNote) anyPerNote = true
             overlapping.push({
               id: `motion:${clip.id}`, trackId: clip.trackId,
               startBeat: start, durationBeats: span,
@@ -2129,6 +2137,7 @@ export class DawEngine extends EventTarget {
               const target = key === 'filterHz' ? field.fromNorm(0) : field.fromNorm(1)
               const span  = pg.perNote ? maxDur : clip.durationBeats
               const start = pg.perNote ? noteAbsBeat : clip.startBeat
+              if (pg.perNote) anyPerNote = true
               overlapping.push({
                 id: `pg:${clip.id}:${key}`, trackId: clip.trackId,
                 startBeat: start, durationBeats: span,
@@ -2139,25 +2148,57 @@ export class DawEngine extends EventTarget {
           }
           if (overlapping.length > 0) {
             clipEffectActive = true
-            const entry = this.ctx.createGain()
-            fxCleanup.nodes.push(entry)
-            let last: AudioNode = entry
-            for (const eff of overlapping) {
-              const effContextStart  = this._ctxTimeForBeat(Math.max(now, eff.startBeat), now, contextNow)
-              const effSeekOffsetSec = Math.max(0, this._spanSeconds(eff.startBeat, now))
-              const r = eff.fx ? this._buildEffectBar(eff, last, startAt, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, last, startAt, effContextStart, effSeekOffsetSec)
-              last = r.output
-              fxCleanup.nodes.push(...r.extraNodes)
-              fxCleanup.oscs.push(...r.extraOscs)
+            // An FX-LANE BAR is a track-wide effect over its own span: the
+            // automation _buildEffectBar schedules is the BAR's timeline, not the
+            // note's, so one chain can serve every note under it. Building one
+            // per note was not just wasteful, it silenced Apollo tracks — Apollo
+            // looks its persistent worklet engine up in a WeakMap keyed by the
+            // node it plays into (apollo/daw-instrument.ts `byDest`), so a fresh
+            // GainNode per note meant a fresh ENGINE per note. Each one comes up
+            // asynchronously (worklet module, patch upload, restorePatchSamples
+            // → IndexedDB), and a note due before its engine is ready is queued,
+            // then flushed with a timestamp already in the past: its noteOn and
+            // noteOff drain in the same block and it is never heard.
+            //
+            // 440 engines for one song, on exactly the tracks carrying bars —
+            // `npm run check:audiopath` counts them for a project.
+            //
+            // Only a graph scoped to the NOTE (fxMotion/fxGraphs with perNote)
+            // genuinely differs per note; those still build their own.
+            const sig = overlapping.map(e => `${e.id}@${e.startBeat}:${e.durationBeats}`).join('|')
+            const key = `${clip.trackId}|${sig}`
+            const cached = anyPerNote ? undefined : this._barChains.get(key)
+            if (cached) {
+              noteDest = cached.input
+            } else {
+              const entry = this.ctx.createGain()
+              const own: { nodes: AudioNode[]; oscs: OscillatorNode[] } = { nodes: [entry], oscs: [] }
+              let last: AudioNode = entry
+              for (const eff of overlapping) {
+                const effContextStart  = this._ctxTimeForBeat(Math.max(now, eff.startBeat), now, contextNow)
+                const effSeekOffsetSec = Math.max(0, this._spanSeconds(eff.startBeat, now))
+                const r = eff.fx ? this._buildEffectBar(eff, last, startAt, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, last, startAt, effContextStart, effSeekOffsetSec)
+                last = r.output
+                own.nodes.push(...r.extraNodes)
+                own.oscs.push(...r.extraOscs)
+              }
+              last.connect(nodes.midiInput)
+              noteDest = entry
+              if (anyPerNote) {
+                // scoped to this note — tear it down after the note (plus a tail)
+                fxCleanup.nodes.push(...own.nodes)
+                fxCleanup.oscs.push(...own.oscs)
+                const ttlMs = (startAt - contextNow + remaining + sustainSec + 3) * 1000
+                setTimeout(() => {
+                  for (const o of fxCleanup.oscs)  { try { o.stop(); o.disconnect() } catch { /* ok */ } }
+                  for (const nd of fxCleanup.nodes) { try { nd.disconnect() } catch { /* ok */ } }
+                }, Math.max(0, ttlMs))
+              } else {
+                // Lives as long as the bar set does. Torn down by
+                // _clearClipFxChains, which every bus swap already calls.
+                this._barChains.set(key, { input: entry, nodes: own.nodes, oscs: own.oscs, sig })
+              }
             }
-            last.connect(nodes.midiInput)
-            noteDest = entry
-            // Tear the chain down after the note (plus a tail for time-based FX)
-            const ttlMs = (startAt - contextNow + remaining + sustainSec + 3) * 1000
-            setTimeout(() => {
-              for (const o of fxCleanup.oscs)  { try { o.stop(); o.disconnect() } catch { /* ok */ } }
-              for (const nd of fxCleanup.nodes) { try { nd.disconnect() } catch { /* ok */ } }
-            }, Math.max(0, ttlMs))
           }
         }
 
@@ -2319,7 +2360,27 @@ export class DawEngine extends EventTarget {
           // uses a sample resumes at the right phase instead of restarting when
           // the playhead enters mid-note.
           const noteOffsetSec = this.beatsToSeconds(alreadyBeats)
-          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec)
+          const noteSpan = this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec
+          // A drawn pitch contour on a synth track. The sampled branch above
+          // applies this with src.detune; a synth voice has no buffer source, so
+          // it is sampled here and sent as bend events that move the SOUNDING
+          // voice — one note can then travel between pitches with no retrigger.
+          let bend: { t: number; semis: number }[] | undefined
+          const pg2 = clip.pitchGraph
+          if (pg2 && pg2.length >= 2) {
+            const M2 = Math.max(8, Math.min(4000, Math.ceil(noteSpan * 120)))
+            const full2 = sampleAutomation(pg2, 1, M2)
+            const s2 = Math.min(M2 - 2, Math.max(0, Math.floor((alreadyBeats / Math.max(1e-6, maxDur)) * M2)))
+            bend = []
+            let prev: number | null = null
+            for (let i = s2; i < M2; i++) {
+              const semis = ((full2[i] ?? 0.5) - 0.5) * 24
+              if (prev !== null && Math.abs(semis - prev) < 0.005 && i < M2 - 1) continue
+              prev = semis
+              bend.push({ t: startAt + ((i - s2) / Math.max(1, M2 - 1 - s2)) * (noteSpan - noteOffsetSec), semis })
+            }
+          }
+          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, noteSpan, noteOffsetSec, bend)
           this._choke(track.id, h, startAt)
         }
 
@@ -2910,6 +2971,11 @@ export class DawEngine extends EventTarget {
   private _clearClipFxChains() {
     for (const c of this._clipFxChains.values()) this._teardownFxNodes(c.nodes)
     this._clipFxChains.clear()
+    for (const c of this._barChains.values()) {
+      for (const o of c.oscs) { try { o.stop(); o.disconnect() } catch { /* ok */ } }
+      this._teardownFxNodes(c.nodes)
+    }
+    this._barChains.clear()
   }
 
   /** Source-side pitch shaping for a sampled note: fine detune, a pitch-envelope

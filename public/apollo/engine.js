@@ -76,6 +76,24 @@ class Env {
   constructor() { this.state = ENV_IDLE; this.t = 0; this.out = 0; this.relFrom = 0 }
   trigger(legato) { if (!legato || this.state === ENV_IDLE || this.state === ENV_REL) { this.state = ENV_ATK; this.t = 0 } else if (this.state !== ENV_IDLE) { this.state = ENV_ATK; this.t = this.out } }
   release() { if (this.state !== ENV_IDLE) { this.relFrom = this.out; this.state = ENV_REL; this.t = 0 } }
+  /**
+   * A legato note arriving while this envelope is RELEASING has to bring it
+   * back. `legato: true` used to skip the trigger outright, which is right while
+   * the voice is still held but silent when it is not: the envelope carried on
+   * releasing and the new note was never heard. From a piano roll that is the
+   * normal case — note B begins exactly where note A ends, so every note after
+   * the first was inaudible.
+   *
+   * Resume rather than retrigger. Close to sustain (the zero-gap case, where the
+   * release has barely begun) go straight there and nothing is audible at all.
+   * Further down, rise from the CURRENT level instead of from zero, which is
+   * still continuous — no click, and no restart from silence.
+   */
+  resume(cfg) {
+    if (this.state !== ENV_REL && this.state !== ENV_IDLE) return
+    if (this.state === ENV_REL && this.out >= cfg.sustain * 0.75) { this.state = ENV_SUS; this.t = 0 }
+    else { this.state = ENV_ATK; this.t = this.out }
+  }
   kill() { this.state = ENV_IDLE; this.out = 0 }
   process(cfg, dt) {
     switch (this.state) {
@@ -579,10 +597,44 @@ class Voice {
     } else { this.glideFrom = targetFreq; this.glideT = 1 }
     this.freq = targetFreq
     engine.lastFreq = targetFreq
-    const rng = makeRng((note * 7919 + this.serial * 104729) >>> 0)
-    for (let i = 0; i < 3; i++) this.oscs[i].initNote(patch.oscs[i], note, rng)
-    // multisample zone pick
-    for (let i = 0; i < 3; i++) {
+    // Seeded from the NOTE alone, not from the global voice serial.
+    //
+    // Oscillator start phase is randomised (osc.rand defaults to 1), and seeding
+    // that from a counter that increments for every voice ever created meant the
+    // same clip rendered twice was a different sum every time. With unison it is
+    // not a subtle difference: six renders of one five-voice patch measured peaks
+    // of 0.420, 0.201, 0.414, 0.306, 0.222 and 0.059 — a 614% spread, and the
+    // last one is effectively silent. With the seed stable it is 0.501 six times.
+    //
+    // That variance is the "renders come back silent" fault the combine layer
+    // retries three times for, keeps a strikes list against, and refuses to cache
+    // around (freeze-cache: "peaks of 0.202, 0 and 0.0657" — the same signature).
+    // It was read as resource exhaustion; it is destructive phase cancellation.
+    //
+    // It also matters for what a listener hears, because a combined render
+    // REPLACES live playback: with a rolling seed the cache could sit several dB
+    // away from the live sound it stands in for, so a clip jumped in level the
+    // moment its render landed.
+    //
+    // Unison voices still get DIFFERENT phases from each other — rng() is called
+    // once per voice below. What is gone is the difference between one render and
+    // the next.
+    const rng = makeRng((note * 7919 + 104729) >>> 0)
+    // CONTINUOUS note change: keep the sound running and only move the pitch.
+    //
+    // initNote() resets oscillator phase, grain/spectral state and — the one you
+    // hear — samplePos, which sends a sample back to its first frame. Legato
+    // already spared the ENVELOPE; the source restarted anyway, so a sampled
+    // instrument re-articulated on every note. Skipping it is what makes "one
+    // sound that changes note" possible for samples, and `glide` then decides
+    // whether that change is instant (0) or a slide (> 0).
+    const continuous = !!patch.global.glideContinuous && legato && wasActive &&
+      patch.global.mode === 'legato'
+    if (!continuous) for (let i = 0; i < 3; i++) this.oscs[i].initNote(patch.oscs[i], note, rng)
+    // multisample zone pick — skipped while continuous, because swapping the
+    // zone mid-sound swaps the sample, which is the restart this exists to avoid.
+    // The held zone is re-pitched from curFreq instead (see the sample block).
+    for (let i = 0; i < 3 && !continuous; i++) {
       const o = patch.oscs[i]
       if (o.engine === 'multisample' && o.ms.zones.length) {
         const v127 = Math.round(vel * 127)
@@ -596,11 +648,11 @@ class Voice {
         this.oscs[i].msBuf = z ? engine.samples.get(z.sampleId) : null
       }
     }
-    this.subPhase = patch.sub.enabled ? 0 : 0
-    this.noisePos = -1
+    if (!continuous) { this.subPhase = 0; this.noisePos = -1 }
     const legatoEnv = legato && wasActive && patch.global.mode === 'legato'
     for (let e = 0; e < 4; e++) {
-      if (!(legatoEnv && patch.envs[e].legato)) this.envs[e].trigger(legatoEnv)
+      if (legatoEnv && patch.envs[e].legato) this.envs[e].resume(patch.envs[e])
+      else this.envs[e].trigger(legatoEnv)
     }
     // per-voice LFO retrig
     for (let l = 0; l < 10; l++) {
@@ -890,7 +942,13 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
     const srRatio = smp.sr / sr
     let pitchRatio
     if (eng === 'multisample') {
-      pitchRatio = cfg.keytrackPitch ? Math.pow(2, (voice.note - zone.rootKey + zone.tune / 100) / 12) * pitchRatioBase : pitchRatioBase
+      // From curFreq, not voice.note: a note number is a STEP and cannot express
+      // a slide, so a multisampled instrument could not glide at all — it jumped
+      // from note to note however long `glide` was. Reading the voice's current
+      // frequency puts it on the same continuous pitch every other engine uses.
+      pitchRatio = cfg.keytrackPitch
+        ? (voice.curFreq / midiFreq(zone.rootKey)) * Math.pow(2, zone.tune / 1200) * pitchRatioBase
+        : pitchRatioBase
     } else if (sc.keytrack && cfg.keytrackPitch) {
       pitchRatio = (voice.curFreq / midiFreq(sc.rootKey)) * pitchRatioBase
     } else pitchRatio = pitchRatioBase
@@ -2343,6 +2401,10 @@ class ApolloProcessor extends AudioWorkletProcessor {
       if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false)
       else if (ev.type === 'noteOff') this.noteOff(ev.note, false)
       else if (ev.type === 'macro') this.macros[ev.index] = ev.value
+      // A drawn pitch contour arrives as bend events on a SOUNDING voice, so one
+      // note can travel between pitches without a second noteOn. chanBend is
+      // per-voice and in semitones, and is applied after glide (renderVoice).
+      else if (ev.type === 'bend') this.chanBend[(ev.ch || 0) & 15] = ev.semis
     }
     this.timeSec = end
   }
@@ -2521,7 +2583,13 @@ class ApolloProcessor extends AudioWorkletProcessor {
       // return to previous held note (legato back-step) — snapped like noteOn
       const prev = this.heldNotes[this.heldNotes.length - 1]
       const prevSnapped = this.patch.global.scaleLock ? this.snapScale(prev) : prev
-      if (this.monoVoice && this.monoVoice.active) {
+      // Stepping back to the note already sounding is not a step. Restarting
+      // for it re-ran start(), which sets glideFrom to the LAST note's frequency
+      // — by then the note being glided TO — so an in-progress glide collapsed to
+      // its destination the moment the previous key lifted. Overlapping notes are
+      // the normal case from a piano roll, so that cancelled almost every glide
+      // the studio ever asked for.
+      if (this.monoVoice && this.monoVoice.active && this.monoVoice.note !== prevSnapped) {
         this.monoVoice.start(prevSnapped, this.monoVoice.vel, this.patch, this, true, false)
         this.monoVoice.srcNote = prev
       }
@@ -2811,7 +2879,24 @@ class ApolloProcessor extends AudioWorkletProcessor {
     if (v.glideT < 1) {
       v.glideT = Math.min(1, v.glideT + (v.glideRate || 1) * n)
     }
-    v.curFreq = v.glideT >= 1 ? v.freq : v.glideFrom * Math.pow(v.freq / v.glideFrom, v.glideT)
+    // The raw ramp is linear in log-pitch: a straight line between the two notes.
+    // accel eases the departure (the old note is held, then it goes), decel eases
+    // the arrival (it travels early and settles in), both together make an S.
+    //
+    // A cubic Bezier in the parameter, with the control points' heights set from
+    // the two knobs. a1 = 1/3 and a2 = 2/3 are collinear and reduce EXACTLY to
+    // y = t, so 0/0 costs nothing and changes nothing; accel pulls a1 down to 0
+    // (flat start) and decel pulls a2 up to 1 (flat finish).
+    let gt = v.glideT
+    if (gt < 1) {
+      const ac = patch.global.glideAccel || 0, de = patch.global.glideDecel || 0
+      if (ac > 0 || de > 0) {
+        const a1 = (1 - ac) / 3, a2 = 2 / 3 + de / 3
+        const u = 1 - gt
+        gt = 3 * u * u * gt * a1 + 3 * u * gt * gt * a2 + gt * gt * gt
+      }
+    }
+    v.curFreq = v.glideT >= 1 ? v.freq : v.glideFrom * Math.pow(v.freq / v.glideFrom, gt)
     const chB = this.chanBend[v.ch || 0]
     if (chB !== 0) v.curFreq *= Math.pow(2, chB / 12)
     const spreadIdxE = v.serial % 7 - 3
@@ -3207,6 +3292,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
         const ev = this.absEvents.shift()
         if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false, ev.ch || 0)
         else if (ev.type === 'noteOff') this.noteOff(ev.note, false)
+        else if (ev.type === 'bend') this.chanBend[(ev.ch || 0) & 15] = ev.semis
       }
     }
     if (this.sr === sampleRate) { this.renderQuantum(OL, OR, n); return true }

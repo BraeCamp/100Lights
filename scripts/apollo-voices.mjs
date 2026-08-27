@@ -1,7 +1,8 @@
 // The instrument palette, built entirely inside Apollo.
 //
 // Nothing here loads a sample or a preset: every voice is oscillators, filters,
-// envelopes, modulation and FX. Drums included — a kick is a sine with a fast
+// envelopes, modulation and FX. (For the ones built on REAL recordings — drums
+// that are recordings of drums, piano, bass — see sampled-voices.mjs.) Drums included — a kick is a sine with a fast
 // pitch envelope, a hat is a noise wavetable through a highpass with a 40ms
 // decay. That is the whole point of the exercise.
 //
@@ -17,13 +18,37 @@ const { initPatch, FX_DEFS, tableToBase64 } = A
 
 const NOISE = noiseTable(tableToBase64, 20260824)
 
+// Per-voice loudness trims, measured by scripts/voice-calibrate.mjs.
+//
+// These patches were each designed alone, and their intrinsic output levels
+// ended up more than 10 dB apart — which meant a track fader did not mean the
+// same thing on two instruments, and every song hand-compensated for it blind.
+// In "Coriander" that put the kick 9 dB underneath the electric piano and the
+// snare out of the mix entirely, with the faders already pushed the wrong way.
+//
+// With every voice normalised to the same perceived loudness, a fader is a
+// musical decision again. Missing entries simply mean "not calibrated yet".
+import LEVELS from './voice-levels.json' with { type: 'json' }
+
 /** Start from Init and apply an edit function — every voice is a full patch. */
 function patch(name, fn) {
   const p = initPatch()
   p.name = name
   p.global.masterGain = 0.8
   fn(p)
+  const trim = LEVELS[TRIM_KEY[name] ?? '']
+  if (trim) p.global.masterGain = Math.min(1, p.global.masterGain * trim)
   return p
+}
+
+/** patch() knows a voice by its display name; the trims are keyed by the name
+ *  used in VOICES. One table rather than renaming either. */
+const TRIM_KEY = {
+  Kick: 'kick', Snare: 'snare', Hat: 'hat', 'Open Hat': 'openhat', Hats: 'hatShut',
+  Tick: 'tick', Sub: 'sub', Bass: 'bass', Pad: 'pad', Keys: 'keys', Choir: 'choir',
+  Organ: 'organ', Harpsichord: 'harpsi', Strings: 'strings', Cowbell: 'cowbell',
+  'Funk Bass': 'funkbas', 'Warm Keys': 'warmep', Pluck: 'pluck', Glass: 'glass',
+  'Tine Keys': 'tine', Picked: 'picked', 'Air Pad': 'airpad',
 }
 const osc = (p, i, cfg) => Object.assign(p.oscs[i], cfg)
 const env = (p, i, cfg) => Object.assign(p.envs[i], cfg)
@@ -40,15 +65,22 @@ function useNoise(p, i, cfg = {}) {
 
 /** Sine + a fast downward pitch envelope. Play low (C1). */
 export const kick = () => patch('Kick', p => {
+  // Brae, on the first Artemas-manner track: the kick is "weak and short". Both
+  // were true and they had different causes. SHORT was a 0.34s decay with a
+  // steep curve, which is a click and a puff of air; WEAK was that all of its
+  // weight sat in one sine that the filter then rolled off. So: a longer, less
+  // steeply curved decay, and Apollo's own sub oscillator underneath for body
+  // that does not depend on the pitch envelope having already finished.
   osc(p, 0, { level: 1, enabled: true })
   p.oscs[0].wt.tableId = 'basic-shapes'
   p.oscs[0].wt.pos = 0                                   // frame 0 is the sine
-  env(p, 0, { attack: 0.001, decay: 0.34, sustain: 0, release: 0.07, dCurve: -0.55 })
-  env(p, 1, { attack: 0.0004, decay: 0.055, sustain: 0, release: 0.02, dCurve: -0.75 })
+  p.sub = { ...p.sub, enabled: true, shape: 'sine', octave: -1, level: 0.28, ref: 'each', direct: false }
+  env(p, 0, { attack: 0.0008, decay: 0.62, sustain: 0, release: 0.16, dCurve: -0.3 })
+  env(p, 1, { attack: 0.0004, decay: 0.05, sustain: 0, release: 0.02, dCurve: -0.75 })
   // span of osc0.semi is 72st, so 0.22 ≈ +16 semitones at the transient
   p.matrix.push(mod('env2', 'osc0.semi', 0.22))
-  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.44, res: 0.06, drive: 0.38 })
-  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', {}, { mix: 1 }))
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.60, res: 0.10, drive: 0.55 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -22, ratio: 4 }, { mix: 1 }))
 })
 
 /** Tuned body + a noise burst, bandpassed. */
@@ -165,7 +197,7 @@ export const pad = () => patch('Pad', p => {
   osc(p, 0, { level: 0.48, enabled: true, unison: 2, detune: 0.07, width: 1, stereo: 1, pan: -0.15 })
   p.oscs[0].wt.tableId = 'pwm'
   p.oscs[0].wt.pos = 0.35
-  osc(p, 1, { level: 0.32, enabled: true, unison: 1, detune: 0.28, width: 1, stereo: 0.9, pan: 0.18, fine: 6 })
+  osc(p, 1, { level: 0.32, enabled: true, unison: 1, detune: 0.28, width: 1, stereo: 0.9, pan: 0.18, fine: 9 })
   p.oscs[1].wt.tableId = 'analog-saws'
   p.oscs[1].wt.pos = 0.55
   env(p, 0, { attack: 1.2, decay: 1.1, sustain: 0.7, release: 2.6, aCurve: -0.2 })
@@ -286,7 +318,7 @@ export const funkBass = () => patch('Funk Bass', p => {
 
 /** Round electric-piano-ish keys for the disco chords. */
 export const warmEp = () => patch('Warm Keys', p => {
-  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.08, width: 0.4 })
+  osc(p, 0, { level: 0.6, enabled: true, unison: 2, detune: 0.05, width: 0.4 })
   p.oscs[0].wt.tableId = 'basic-shapes'
   p.oscs[0].wt.pos = 0.12
   osc(p, 1, { level: 0.3, enabled: true })
@@ -296,6 +328,365 @@ export const warmEp = () => patch('Warm Keys', p => {
   filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.6, res: 0.1, keytrack: 0.25 })
   p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.3 }))
   p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.22 }))
+})
+
+// ── Brightness ──────────────────────────────────────────────────────────────
+// Added after `scripts/voice-audit.mjs` put the problem in a table: eight of
+// these eighteen voices put most of their energy in 120–400 Hz, and NOT ONE
+// pitched voice reached presence (2.5–5 kHz) or above. Everything from 900 Hz
+// up was hi-hats.
+//
+// That is the measured gap against real music: our songs carry 1.5% of their
+// energy between 900 Hz and 5 kHz where the ElevenLabs reference set carries
+// 5.4%. It is also, from the other side, the register clash the note analysis
+// keeps finding — when every harmony instrument occupies the same octave and a
+// half, they mask each other and no fader fixes it.
+//
+// The instinct is to open every filter, and that is wrong: it makes a thin,
+// harsh palette instead of a dark one, and the dark voices are dark on purpose.
+// What real instruments have in that region is mostly the ATTACK — the pick,
+// the hammer, the stick — a few tens of milliseconds of bright noise over a
+// body that stays warm. So these voices are built that way, and the dark ones
+// are left alone.
+
+/**
+ * A short bright attack layer on osc C — the pick, hammer or stick.
+ *
+ * Level starts at zero and is driven by env 3, so the transient exists only for
+ * its decay and never colours the sustain. `keytrack:false` makes it the same
+ * click at every pitch, which is what a stick or a fret noise is; a struck bar
+ * or a bell tine should track.
+ */
+function transient(p, { level = 0.45, decay = 0.035, table = 'metallic', pos = 0.5, keytrack = true, octave = 1 } = {}) {
+  osc(p, 2, { enabled: true, engine: 'wavetable', level: 0, keytrackPitch: keytrack, octave })
+  p.oscs[2].wt.tableId = table
+  p.oscs[2].wt.pos = pos
+  env(p, 2, { attack: 0.0004, decay, sustain: 0, release: 0.02, dCurve: -0.6 })
+  p.matrix.push(mod('env3', 'osc2.level', level))
+}
+
+/** Plucked and forward — the voice that carries definition in a busy bar. */
+export const pluck = () => patch('Pluck', p => {
+  osc(p, 0, { level: 0.62, enabled: true, unison: 3, detune: 0.12, width: 0.8, stereo: 0.5 })
+  p.oscs[0].wt.tableId = 'analog-saws'
+  p.oscs[0].wt.pos = 0.62
+  osc(p, 1, { level: 0.22, enabled: true, octave: 1, fine: 4 })
+  p.oscs[1].wt.tableId = 'bells'
+  p.oscs[1].wt.pos = 0.55
+  env(p, 0, { attack: 0.001, decay: 0.55, sustain: 0.06, release: 0.32, dCurve: -0.55 })
+  env(p, 1, { attack: 0.001, decay: 0.22, sustain: 0, release: 0.1 })
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.30))
+  transient(p, { level: 0.32, decay: 0.028, table: 'metallic', pos: 0.6, keytrack: false })
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.88, res: 0.16, keytrack: 0.5 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.18 }))
+})
+
+/** Struck glass — high accents, and the only voice that reaches brilliance. */
+export const glass = () => patch('Glass', p => {
+  osc(p, 0, { level: 0.55, enabled: true, octave: 1, unison: 3, detune: 0.08, width: 0.7, stereo: 0.6 })
+  p.oscs[0].wt.tableId = 'bells'
+  p.oscs[0].wt.pos = 0.85
+  osc(p, 1, { level: 0.3, enabled: true, octave: 2, fine: 7 })
+  p.oscs[1].wt.tableId = 'metallic'
+  p.oscs[1].wt.pos = 0.4
+  env(p, 0, { attack: 0.0008, decay: 1.6, sustain: 0.02, release: 0.9, dCurve: -0.7 })
+  filt(p, 0, { enabled: true, type: 'hp12', cutoff: 0.22, res: 0.05 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.34 }))
+})
+
+/** Electric piano with a real tine: warm body, bright bark on the attack. */
+export const tine = () => patch('Tine Keys', p => {
+  // Unison 1. This voice plays four-note chords with overlapping hits, and at
+  // 4 voices per note that peaked at 32 against Apollo's limit of 16 — past
+  // which the allocator steals notes that are still sounding. Width comes from
+  // the chorus and the octave-up tine instead, neither of which costs a voice.
+  osc(p, 0, { level: 0.6, enabled: true, unison: 1, detune: 0.05, width: 0.4 })
+  p.oscs[0].wt.tableId = 'basic-shapes'
+  p.oscs[0].wt.pos = 0.1
+  osc(p, 1, { level: 0.19, enabled: true, octave: 2, fine: 6 })
+  p.oscs[1].wt.tableId = 'bells'
+  p.oscs[1].wt.pos = 0.55
+  env(p, 0, { attack: 0.003, decay: 1.0, sustain: 0.22, release: 0.55, dCurve: -0.45 })
+  env(p, 1, { attack: 0.001, decay: 0.34, sustain: 0, release: 0.12 })
+  p.matrix.push(mod('env2', 'osc1.level', 0.22))
+  transient(p, { level: 0.26, decay: 0.02, table: 'metallic', pos: 0.35, keytrack: true, octave: 2 })
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.82, res: 0.08, keytrack: 0.3 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.28 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
+})
+
+/** Picked string — fret noise on the front, mid-forward body. */
+export const picked = () => patch('Picked', p => {
+  osc(p, 0, { level: 0.7, enabled: true, unison: 3, detune: 0.1, width: 0.7, stereo: 0.45 })
+  p.oscs[0].wt.tableId = 'harmonic-sweep'
+  p.oscs[0].wt.pos = 0.45
+  osc(p, 1, { level: 0.2, enabled: true, fine: -5 })
+  p.oscs[1].wt.tableId = 'analog-saws'
+  p.oscs[1].wt.pos = 0.7
+  env(p, 0, { attack: 0.002, decay: 0.7, sustain: 0.1, release: 0.35, dCurve: -0.5 })
+  env(p, 1, { attack: 0.001, decay: 0.18, sustain: 0, release: 0.08 })
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.26))
+  transient(p, { level: 0.38, decay: 0.022, table: 'digital-glitch', pos: 0.3, keytrack: false })
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.8, res: 0.2, keytrack: 0.45 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
+})
+
+/** A pad that has a top: the warm bed, plus a quiet octave of air above it. */
+export const airPad = () => patch('Air Pad', p => {
+  osc(p, 0, { level: 0.46, enabled: true, unison: 2, detune: 0.05, width: 1, stereo: 0.95, pan: -0.15 })
+  p.oscs[0].wt.tableId = 'pwm'
+  p.oscs[0].wt.pos = 0.35
+  osc(p, 1, { level: 0.2, enabled: true, octave: 1, fine: 9, width: 1, stereo: 0.9, pan: 0.2 })
+  p.oscs[1].wt.tableId = 'harmonic-sweep'
+  p.oscs[1].wt.pos = 0.6
+  env(p, 0, { attack: 1.0, decay: 1.2, sustain: 0.68, release: 2.4, aCurve: -0.2 })
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.72, res: 0.08, keytrack: 0.2 })
+  p.lfos[0] = { ...p.lfos[0], rate: 0.08, sync: false }
+  p.matrix.push(mod('lfo1', 'f1.cutoff', 0.09, { bipolar: true }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.4 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.32 }))
+})
+
+// ── Dark pop ────────────────────────────────────────────────────────────────
+// Built after `scripts/apollo-probe.mjs` established what the engine actually
+// does headlessly. The palette up to here used three wavetables, two filter
+// types and four effects out of eighteen warps, seven spectral warps, thirty-
+// seven filters and twenty-three effects — so everything sounded like the same
+// synth with the filter in a different place, which is most of what "the songs
+// all sound similar" means.
+//
+// Each of these is built around ONE thing the probe verified, so the character
+// comes from the synthesis rather than from the notes:
+//   growlBass   oscillator SYNC, swept by an envelope   (247 -> 1036 Hz)
+//   coldKeys    INHARMONIC spectral warp on a bell table
+//   fogPad      FORMANT filter, vowel morphed by a LORENZ chaos LFO
+//   wireArp     Apollo's own ARP through a SAMPLE-AND-HOLD filter
+//   gritHats    DOWNSAMPLE filter for aliasing dirt
+//   rimSnap     band-passed body plus a noise crack
+
+/**
+ * The hook. In this idiom the bass is the melody, so it needs to move on its
+ * own: an envelope opens the oscillator's sync amount on every note, which is a
+ * timbral attack rather than a filter one, and the acid ladder adds the growl
+ * underneath it.
+ */
+export const growlBass = () => patch('Growl Bass', p => {
+  osc(p, 0, { level: 0.85, enabled: true, unison: 3, detune: 0.10, width: 0.5, fine: -12 })
+  p.oscs[0].wt.tableId = 'analog-saws'
+  p.oscs[0].wt.pos = 0.35
+  p.oscs[0].wt.warp1 = { mode: 'sync', amount: 0.12 }
+  osc(p, 1, { level: 0.22, enabled: true, octave: -1 })
+  p.oscs[1].wt.tableId = 'basic-shapes'
+  p.oscs[1].wt.pos = 0
+  env(p, 0, { attack: 0.004, decay: 0.32, sustain: 0.42, release: 0.14 })
+  env(p, 1, { attack: 0.002, decay: 0.14, sustain: 0, release: 0.07, dCurve: -0.5 })
+  // Sync sweep on the attack, and the filter under it. Two different kinds of
+  // brightness moving together is what makes a bass sound played rather than
+  // triggered.
+  p.matrix.push(mod('env2', 'osc0.wt.warp1.amount', 0.30))
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.26))
+  p.matrix.push(mod('vel', 'f1.cutoff', 0.14))
+  filt(p, 0, { enabled: true, type: 'acidLadder', cutoff: 0.34, res: 0.42, drive: 0.30, keytrack: 0.3 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.22, mode: 2 }, { mix: 0.35 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -18, ratio: 4 }, { mix: 1 }))
+})
+
+/** Struck and slightly wrong: inharmonic partials are the dark-pop keyboard. */
+export const coldKeys = () => patch('Cold Keys', p => {
+  osc(p, 0, { level: 0.6, enabled: true, unison: 1, detune: 0.05, width: 0.5, stereo: 0.6 })
+  p.oscs[0].wt.tableId = 'bells'
+  p.oscs[0].wt.pos = 0.42
+  // Pulls the partials off the harmonic series — the difference between a bell
+  // and a synth playing a bell patch.
+  p.oscs[0].wt.specWarp = { mode: 'inharm', amount: 0.30 }
+  osc(p, 1, { level: 0.24, enabled: true, octave: 1, fine: -7 })
+  p.oscs[1].wt.tableId = 'basic-shapes'
+  p.oscs[1].wt.pos = 0.18
+  env(p, 0, { attack: 0.002, decay: 1.1, sustain: 0.14, release: 0.6, dCurve: -0.5 })
+  env(p, 1, { attack: 0.001, decay: 0.28, sustain: 0, release: 0.12 })
+  p.matrix.push(mod('env2', 'f1.cutoff', 0.22))
+  transient(p, { level: 0.24, decay: 0.022, table: 'metallic', pos: 0.4, keytrack: true, octave: 1 })
+  filt(p, 0, { enabled: true, type: 'phasePlus', cutoff: 0.76, res: 0.20, fat: 0.5, keytrack: 0.25 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.26 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.30 }))
+})
+
+/**
+ * The room the song sits in. A formant filter gives it a throat rather than a
+ * spectrum, and a Lorenz chaos LFO morphs the vowel — chaos rather than a sine
+ * because a pad that breathes on a repeating cycle announces the cycle.
+ */
+export const fogPad = () => patch('Fog', p => {
+  osc(p, 0, { level: 0.55, enabled: true, unison: 3, detune: 0.14, width: 0.7, stereo: 0.55, pan: -0.12, fine: -8 })
+  p.oscs[0].wt.tableId = 'vocal'
+  p.oscs[0].wt.pos = 0.35
+  osc(p, 1, { level: 0.24, enabled: true, unison: 1, fine: 8, width: 0.7, stereo: 0.5, pan: 0.16 })
+  p.oscs[1].wt.tableId = 'pwm'
+  p.oscs[1].wt.pos = 0.45
+  env(p, 0, { attack: 1.1, decay: 1.2, sustain: 0.52, release: 1.4, aCurve: -0.25 })
+  filt(p, 0, { enabled: true, type: 'formant', cutoff: 0.44, res: 0.18, fat: 0.35, keytrack: 0.1 })
+  p.lfos[0] = { ...p.lfos[0], mode: 'chaos', chaosType: 'lorenz', rate: 0.22, sync: false, smooth: 0.8 }
+  p.matrix.push(mod('lfo1', 'f1.fat', 0.35, { bipolar: true }))     // the vowel drifts
+  p.matrix.push(mod('lfo1', 'f1.cutoff', 0.10, { bipolar: true }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'chorus', {}, { mix: 0.22 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.28 }))
+})
+
+/**
+ * Texture, generated by the synth rather than written out: hold a chord and
+ * Apollo's arp turns it into sixteenths, through a sample-and-hold filter that
+ * re-steps on its own clock so the figure never quite repeats. Not a melody —
+ * it is the chord, moving.
+ */
+export const wireArp = () => patch('Wire', p => {
+  osc(p, 0, { level: 0.7, enabled: true, unison: 1, width: 0.4, stereo: 0.5, fine: 18 })
+  p.oscs[0].wt.tableId = 'squares-morph'
+  p.oscs[0].wt.pos = 0.3
+  p.oscs[0].wt.warp1 = { mode: 'pd', amount: 0.35 }       // phase distortion: digital, hard
+  env(p, 0, { attack: 0.001, decay: 0.13, sustain: 0, release: 0.06, dCurve: -0.6 })
+  filt(p, 0, { enabled: true, type: 'sampHold', cutoff: 0.55, res: 0.3, fat: 0.5, keytrack: 0.2 })
+  p.arp = { ...p.arp, on: true, mode: 'updown', octaves: 2, syncRate: 13, gate: 0.55, swing: 0 }
+  p.fxMain.push(fxUnit(FX_DEFS, 'delay', { feedback: 0.34 }, { mix: 0.26 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
+})
+
+/** Hats with aliasing dirt rather than a clean noise burst. */
+export const gritHats = () => patch('Grit Hats', p => {
+  osc(p, 0, { enabled: true, engine: 'wavetable', keytrackPitch: false,
+    level: 1, semi: 0, unison: 4, detune: 0.85, width: 1, stereo: 0.7 })
+  p.oscs[0].wt.tableId = 'metallic'
+  // Longer and more open than it was. A 55ms decay under a downsampler is a
+  // tick, not a hat — it has no time to say anything before it is gone.
+  env(p, 0, { attack: 0.0004, decay: 0.10, sustain: 0.34, release: 0.15, dCurve: -0.35 })
+  filt(p, 0, { enabled: true, type: 'downsample', cutoff: 0.96, res: 0.06, fat: 0.10, drive: 0.24 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.2 }, { mix: 0.22 }))
+})
+
+/** A rim/snap rather than a snare: short, band-passed, with a noise crack. */
+export const rimSnap = () => patch('Rim', p => {
+  osc(p, 0, { level: 0.55, enabled: true, semi: 0 })
+  p.oscs[0].wt.tableId = 'basic-shapes'
+  p.oscs[0].wt.pos = 0.3
+  useNoise(p, 1, { level: 0.75, unison: 2, detune: 0.6, width: 1, stereo: 0.5 })
+  env(p, 0, { attack: 0.0006, decay: 0.11, sustain: 0, release: 0.05, dCurve: -0.6 })
+  env(p, 1, { attack: 0.0004, decay: 0.03, sustain: 0, release: 0.02 })
+  p.matrix.push(mod('env2', 'osc0.semi', 0.06))
+  filt(p, 0, { enabled: true, type: 'bp12', cutoff: 0.58, res: 0.42, drive: 0.35 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.3 }, { mix: 0.3 }))
+})
+
+/**
+ * One continuous sub that CHANGES NOTE without stopping.
+ *
+ * Brae, on "cross my heart": "it was like a single sub note, like a looooong sub
+ * sound that changes notes without stopping or restarting the sound."
+ *
+ * Measured, our sub was doing the opposite. Rendering three notes and watching
+ * the amplitude through each change:
+ *
+ *     poly, notes with a gap (what we had)     drops to   0% of peak
+ *     poly, notes overlapping                            52%
+ *     LEGATO, notes overlapping                       88-97%
+ *
+ * So it was stopping dead and starting again twice a bar. Three things have to
+ * be true together and none of them works alone:
+ *
+ *   · `global.mode = 'legato'` — the engine only treats a note as legato when a
+ *     voice is ALREADY SOUNDING (engine.js:2449), so this is what makes the
+ *     other two mean anything
+ *   · `envs[0].legato = true` — the amplitude envelope is then not retriggered
+ *     at all (engine.js:597), which is what stops the re-attack
+ *   · the NOTES MUST OVERLAP. A gap between them ends the voice and no setting
+ *     recovers it. `craft.legatoChain()` is what guarantees that.
+ *
+ * `glideLegatoOnly:false` lets the pitch slide on every change rather than only
+ * on ones the engine has already decided are legato.
+ */
+export const glideSub = () => patch('Glide Sub', p => {
+  p.global.mode = 'legato'
+  p.global.glide = 0.10
+  p.global.glideLegatoOnly = false
+  osc(p, 0, { level: 0.92, enabled: true })
+  p.oscs[0].wt.tableId = 'basic-shapes'
+  p.oscs[0].wt.pos = 0
+  // The octave-down oscillator is a WEIGHT, not the note. At 0.38 it put a fifth
+  // of this voice's energy below 40 Hz, where most speakers reproduce nothing --
+  // so it cost headroom, and made the sub read as "too low" and quiet at the
+  // same time: the part you could hear was the smaller half of it. At 0.16 the
+  // fundamental carries the pitch and the octave-down only underlines it.
+  p.sub = { ...p.sub, enabled: true, shape: 'sine', octave: -1, level: 0.16, ref: 'lowest', direct: false }
+  // Long attack and release, full sustain, and legato on: this envelope is meant
+  // to open once at the top of the song and close once at the end.
+  env(p, 0, { attack: 0.05, decay: 0.6, sustain: 1.0, release: 0.9, legato: true })
+  // Fixed filter, no envelope — the same rule as steadyBass. A sub that changes
+  // tone as it moves is a different sound arriving, not one sound moving.
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.30, res: 0.04, drive: 0.14 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -24, ratio: 3 }, { mix: 1 }))
+})
+
+/**
+ * A bass whose TONE does not move — only its loudness does.
+ *
+ * Brae, on the first attempt: "the bass seems to change its tone to sound like a
+ * deep electronic note. The consistent sound within the sample with only volume
+ * changes is a good bass for something deeper and more sensual."
+ *
+ * That is a correction to the design, not to the settings. `growlBass` sweeps
+ * oscillator sync AND filter cutoff from an envelope on every single note, which
+ * was chosen deliberately — "the timbre moves even when the note does not". For
+ * a track that wants to sit still and be felt, that is exactly wrong: a tone
+ * that re-shapes on every note keeps announcing itself, and the ear follows the
+ * change instead of settling into the groove.
+ *
+ * So there is no filter envelope here, no sync, and no velocity routing to
+ * anything but level. Filter keytrack is kept at 0.35 so the timbre stays
+ * CONSISTENT as the pitch moves — with keytrack at zero a fixed cutoff makes low
+ * notes bright and high notes dull, which is a tone change by another route.
+ */
+export const steadyBass = () => patch('Steady Bass', p => {
+  osc(p, 0, { level: 0.62, enabled: true, unison: 3, detune: 0.09, width: 0.45 })
+  p.oscs[0].wt.tableId = 'analog-saws'
+  p.oscs[0].wt.pos = 0.20
+  // A sine at the fundamental, not an octave below: the body of the note, and
+  // what keeps the 60-120 Hz band occupied rather than doubling the sub.
+  osc(p, 1, { level: 0.66, enabled: true })
+  p.oscs[1].wt.tableId = 'basic-shapes'
+  p.oscs[1].wt.pos = 0
+  env(p, 0, { attack: 0.006, decay: 0.55, sustain: 0.82, release: 0.20, dCurve: -0.2 })
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.32, res: 0.10, drive: 0.20, keytrack: 0.35 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -20, ratio: 3 }, { mix: 1 }))
+})
+
+/**
+ * The chorus accent — deep, electronic, with a fast tremolo.
+ *
+ * Brae's description of what Artemas does where the hats drop out: "different
+ * sounds to accent the start of a bar or two... deep and electronic and
+ * sometimes with a powerful quick tremolo". That is this. It is not a drum and
+ * not a bass note; it is a marker, and it works because it arrives where the
+ * ear has just lost the hats and is listening for something.
+ *
+ * Apollo has no tremolo effect, so the tremolo is an LFO on the oscillator
+ * levels — which is what a tremolo is anyway, and modulating the source rather
+ * than a post gain keeps it in front of the filter and the drive.
+ */
+export const boom = () => patch('Boom', p => {
+  osc(p, 0, { level: 0.9, enabled: true, octave: -1 })
+  p.oscs[0].wt.tableId = 'basic-shapes'
+  p.oscs[0].wt.pos = 0.05
+  osc(p, 1, { level: 0.34, enabled: true, unison: 3, detune: 0.1, width: 0.6 })
+  p.oscs[1].wt.tableId = 'analog-saws'
+  p.oscs[1].wt.pos = 0.4
+  env(p, 0, { attack: 0.002, decay: 1.1, sustain: 0, release: 0.3, dCurve: -0.4 })
+  env(p, 1, { attack: 0.001, decay: 0.09, sustain: 0, release: 0.05, dCurve: -0.6 })
+  p.matrix.push(mod('env2', 'osc0.semi', 0.12))            // a short drop into the note
+  // The tremolo: fast, deep, and gone with the note.
+  p.lfos[0] = { ...p.lfos[0], mode: 'normal', rate: 13, sync: false, bipolar: true, trigMode: 'trig' }
+  p.matrix.push(mod('lfo1', 'osc0.level', 0.30, { bipolar: true }))
+  p.matrix.push(mod('lfo1', 'osc1.level', 0.22, { bipolar: true }))
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.36, res: 0.22, drive: 0.4, keytrack: 0.2 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.3 }, { mix: 0.3 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
 })
 
 export const VOICES = {
@@ -317,6 +708,20 @@ export const VOICES = {
   cowbell:{ build: cowbell,              notes: '72:0:0.1',        seconds: 0.8 },
   funkbas:{ build: funkBass,             notes: '45:0:0.3,52:0.5:0.3', seconds: 1.6 },
   warmep: { build: warmEp,               notes: '57:0:1,61:0:1,64:0:1', seconds: 2.5 },
+  pluck:  { build: pluck,                notes: '60:0:0.5,67:0.25:0.5', seconds: 2.0 },
+  glass:  { build: glass,                notes: '72:0:1.5,79:0:1.5',    seconds: 3.0 },
+  tine:   { build: tine,                 notes: '57:0:1,61:0:1,64:0:1', seconds: 2.5 },
+  picked: { build: picked,               notes: '52:0:0.6,59:0.25:0.6', seconds: 2.0 },
+  airpad: { build: airPad,               notes: '58:0:3,62:0:3,65:0:3', seconds: 5.0 },
+  growl:  { build: growlBass,            notes: '41:0:0.45,48:0.5:0.4', seconds: 2.0 },
+  cold:   { build: coldKeys,             notes: '56:0:1.2,60:0:1.2,63:0:1.2', seconds: 3.0 },
+  fog:    { build: fogPad,               notes: '53:0:3.5,60:0:3.5,68:0:3.5', seconds: 6.0 },
+  wire:   { build: wireArp,              notes: '65:0:2,68:0:2,72:0:2', seconds: 3.0 },
+  grithat:{ build: gritHats,             notes: '60:0:0.06',            seconds: 0.6 },
+  rim:    { build: rimSnap,              notes: '48:0:0.12',            seconds: 0.8 },
+  boom:   { build: boom,                 notes: '33:0:1.2',             seconds: 2.4 },
+  steady: { build: steadyBass,           notes: '46:0:0.5,46:0.75:0.5', seconds: 2.0 },
+  glidesub:{ build: glideSub,            notes: '34:0:2.2,32:2:2.2,30:4:2', seconds: 7.0 },
 }
 
 if (process.argv.includes('--audit')) {

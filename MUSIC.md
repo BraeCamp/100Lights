@@ -1,244 +1,416 @@
-# Music Creator — making good music in 100Lights
+# Making music in 100Lights
 
-A living guide for authoring music **through the program** (fully editable, no raw
-synth patches). Written after building Petrichor, Rainy Window, Neon Skyline, and
-the Måneskin tracks. Add to it as we learn more.
+How songs get written here, what the tools are for, and the things that are true
+whether or not anyone remembers them.
 
-**North star:** make music someone would actually *listen to* — on a walk, on a
-rainy day — not grid-locked "video game" loops. Two things separate the two:
-**real, warm, sustaining sounds** and **composition that breathes** (space, long
-notes, tension → release). Everything below serves those two.
+**North star:** music someone would choose to listen to. The bar Brae set is
+ElevenLabs — not "good for a generator", actually good — with the difference that
+every note here stays editable in the program, and it costs nothing per song.
 
----
-
-## The composer (`scripts/compose.mjs`) — start here
-
-A genre-driven generator that DRIVES FROM THE APP'S OWN LIBRARIES (bundles
-`lib/genres.ts` + `lib/drum-presets.ts`), so adding a genre/kit in the app
-expands what it can make. Pick a genre + key and it assembles drums (a real
-kit + a feel pattern, auto-tagged `isDrumClip`), bass (chord tones), chord
-keys/pad, and a lead across arrangement sections, with breathing-rhythm
-patterns + humanised velocities, gain-staged for headroom. Output = a
-build-spec (the format §0 dispatches).
-
-```
-node scripts/compose.mjs --list                 # 20 genres
-node scripts/compose.mjs lofi "F minor" 48      # → public/_songgen/lofi-fminor.json
-node scripts/compose.mjs deep-house "A minor" 48 --seed=7
-```
-
-Internals to tune: `PROGRESSIONS` (roman numerals per scale), `PALETTE`
-(genre → builtin-N preset ids + layers + 7ths), `FEELS` (drum-feel → 16-step
-pattern), the section `plan` (which layers per 4-bar section + drum density),
-and the track gains / `masterVolume` (headroom). Lead uses CHORD TONES ONLY —
-never a raw ±semitone nudge (that slipped chromatic notes; caught by the loop).
-Verified deep-house: 0 out-of-key notes, peak −1.9 dBFS (no clip), crest 14 dB,
-~−17 LUFS. Then feed the output through §0 (build → render → analyze → fix).
-The older hand-written `gen_rhythm_songs.py` is kept for reference.
-
-## 0. The loop (build → hear → fix)
-
-I can't literally listen, so every track goes through a measurable feedback loop:
-
-1. **Compose deterministically** — a small Python generator emits a build-spec
-   (tracks + clips + notes + `presetId` + `rollFx`). Music theory lives here.
-2. **Build it in the program** — drive `window.__dawDispatch` (dev-only hook):
-   `SET_TEMPO`, `SET_SWING`, `SET_TIME_SIG {num,den}` (e.g. 3/4 waltz),
-   `ADD_TRACK`, `SET_INSTRUMENT {type:'none'}` (so the *clip preset* drives the
-   sound), `ADD_EFFECT` (bus fx only), `SET_MASTER_VOLUME`.
-   - **Build clips GRANULARLY so the History replay animates the construction.**
-     For each clip dispatch an **empty** `ADD_CLIP` (`{...clip, notes: []}`,
-     `kind:'midi'`, final `durationBeats` + `presetId` + `rollFx`), then one
-     `ADD_MIDI_NOTE {clipId, note}` per note **in `startBeat` order**. Do it
-     **track by track in composer order** (core/melody → foundation → layers →
-     accents). This records one history entry per note (never coalesced), so the
-     "History" panel (Transport → Capture → History) replays notes appearing one
-     by one instead of a whole clip popping in. Keep total actions under ~5000
-     (the buildLog cap). A single `ADD_CLIP` carrying all notes = a flat replay —
-     don't do that.
-3. **Hear it** — `window.__dawRenderWav({startBeat, endBeat, stems, mono})`
-   bounces a slice to WAV; `python3 scripts/analyze-mix.py <render.json>` prints
-   LUFS / peak / clipping / spectral balance / per-stem levels + hints. Render the
-   **busiest section** (all instruments) for the truest read.
-4. **Fix** through the program (`UPDATE_TRACK` volume, `UPDATE_CLIP` rollFx,
-   `UPDATE_EFFECT`, `SET_MASTER_VOLUME`), re-render, repeat.
-5. **Save** — snapshot via `__dawSnapshot()`, wrap in a `.cfproj` scaffold, write
-   to `Content/Audio/` (+ Desktop backup). **Round-trip verify** by loading it
-   back through `LOAD_PROJECT` and confirming 0 play errors.
-6. **Push** when Brae asks.
-
-> Render is real-time (a 16 s slice takes ~16 s). Keep analysis slices short.
-> Real (soundfont) instruments fetch from a CDN on first play — do a throwaway
-> "warm" render before the real one so notes aren't skipped mid-bounce.
-
-Details of the render/analysis tooling: see `scripts/analyze-mix.py` header and
-the mix-analysis notes in agent memory.
+**The one rule that shapes everything else:** I cannot hear. Every judgement in
+this document is a measurement, every measurement has a tool, and every tool has
+a test that proves it against a signal whose answer is known before it is allowed
+to say anything about a song. Where something is still a matter of taste it says
+so. Where a number came from a reference recording rather than an opinion, it
+says that too.
 
 ---
 
-## 1. The palette — pick sounds that aren't shallow
+## The loop
 
-Most built-in library presets are **procedurally synthesized at playtime** —
-that's the thin, "video game" timbre, and their samples are short so they can't
-hold long notes. For listenable music, reach for the **real sampled** ones first.
+```
+write a song script  →  node scripts/listen.mjs <song.cfproj> --target=general
+                            renders offline, measures, and tells you what is wrong
+```
 
-**Real sampled (FluidR3 soundfont — warm, organic, sustain long notes):**
+**Fifteen seconds for a two-minute song**, with every stem written out. It needs
+no dev server, no browser and nothing running.
 
-| Preset | id | Good for |
+That number is the point. It used to be 2m20s through a real-time browser bounce,
+and checking a single track alone cost another full render — seventeen minutes to
+verify seven tracks, so in practice it never happened and songs shipped judged on
+one number computed over their whole length. At fifteen seconds you can afford to
+be wrong twenty times, which is what writing music actually requires.
+
+### The tools
+
+| | |
+|---|---|
+| `scripts/listen.mjs` | **Start here.** Render + measure + ranked verdict, one command. |
+| `scripts/song-render.mjs` | Whole `.cfproj` → mix and stems, offline, ~9x real time. |
+| `scripts/voice-audit.mjs` | What each voice sounds like, what the palette cannot reach, and whether anything is out of tune. |
+| `scripts/voice-calibrate.mjs` | Level-match the palette so a fader means the same thing on every instrument. |
+| `scripts/build-targets.mjs` | Measure reference music and write out what "normal" is. |
+| `scripts/check-notes.mjs` | Note validity, key fit and polyphony, from the notes alone. |
+| `scripts/check-tuning.mjs` | Per-track pitch of a finished song, in cents. |
+| `scripts/craft.test.mjs`, `audio-features.test.mjs` | Prove the rules and the measurements. Run them after touching either. |
+
+### Where the parts come from
+
+- `scripts/song-kit.mjs` — assembly: one clip per track per section, FX bars, the
+  `.cfproj` envelope.
+- `scripts/lib/craft.mjs` — the musical rules: groove, voicing, register slots,
+  arrangement staggering, motif development.
+- `scripts/apollo-voices.mjs` — the instruments, built entirely inside Apollo.
+
+A song script is then mostly harmony and form, which is the part that should be
+different every time.
+
+---
+
+## What actually separates our music from the reference
+
+Measured, not guessed: `build-targets.mjs` ran the ElevenLabs corpus through the
+same code that measures our songs. The medians:
+
+| | ElevenLabs | ours, before | "Coriander", after |
+|---|---|---|---|
+| sub (20–60 Hz) | 21.4% | 62.9% | 19.3% |
+| bass | 27.4% | 12.8% | 29.2% |
+| 900 Hz – 5 kHz | 5.4% | **0.7%** | 8.6% |
+| centroid | 381 Hz | 237 Hz | 408 Hz |
+| stereo correlation | 0.84 | 0.90 | 0.86 |
+| findings from `listen` | — | 8 warnings | 3 |
+
+Two things worth reading twice:
+
+**The midrange was empty and the bottom was enormous.** Not a mixing problem —
+`voice-audit` showed eight of eighteen voices putting most of their energy in
+120–400 Hz and *not one pitched voice* reaching above 900 Hz. Everything up there
+was hi-hats. A mix cannot be given a midrange that was never played, and no EQ
+reaches it.
+
+**Stereo width was never the problem.** Our mixes are near-mono at 0.85, and so
+is ElevenLabs at 0.84. Considerable effort was aimed at width on the assumption
+that it mattered; the reference says it does not. That is what a target set is
+for — it deletes false alarms as well as confirming real ones.
+
+### Two targets that are NOT trustworthy yet, and why
+
+Both of these nearly produced confident, wrong advice, so they are written down
+rather than quietly fixed.
+
+**Dynamic range.** Measured whole, the reference set appeared to move 26 dB
+against our 13, which reads as "our arrangements are flat". Trim two seconds off
+each end and it collapses — the one reference track of comparable length to ours
+went from 22.6 dB to **6.9**. The corpus is mostly 30–40 second clips and what
+was being measured was their fade-ins. `loudness()` now drops leading and
+trailing near-silence (40 dB down, not 25 — at 25 it also ate a genuinely quiet
+intro, which is real dynamics). The target is still built from clips shorter than
+our songs, so treat it as directional until there is a length-matched set.
+
+**Crest and loudness are post-master measurements.** The references are released
+records: levelled and limited, so their crest is lower by construction. A correct
+unmastered bounce will always read peakier, and comparing the two is
+apples-to-oranges. `listen` downgrades that warning when the bounce is clearly
+unmastered. Band balance and centroid are level-independent and stay full
+warnings.
+
+### On "cheaper than ElevenLabs"
+
+Worth being straight about: at ElevenLabs' published $0.15/min, a 2-minute track
+with 4 stems is about **$0.60**. Authoring one here costs roughly a dollar to
+two in model tokens. **The first generation is not cheaper.** What is nearly free
+is everything after it — every re-render, every edit, every variant — where each
+ElevenLabs revision is a fresh charge and each result is a fixed audio file. The
+case is editability and marginal cost, not sticker price.
+
+---
+
+## The instruments
+
+Every voice is Apollo: oscillators, filters, envelopes, modulation. Drums
+included — a kick is a sine with a fast pitch envelope.
+
+**Reach for brightness deliberately.** `tine`, `pluck`, `picked` and `glass` are
+the voices that live above 900 Hz; `pad`, `strings`, `warmep`, `organ` and `keys`
+all sit in the low mids and will pile up if you use more than one of them. What
+puts an instrument in the midrange is mostly its ATTACK — the pick, the hammer,
+the stick — which is why `transient()` exists and why opening every filter is the
+wrong fix. It trades a dark palette for a thin one.
+
+**Two rules that are not matters of taste:**
+
+- **Unison ≥ 3, or detune ≤ 0.05.** Apollo's `detune` is a WIDTH across the
+  unison voices. At unison 2 there is no middle voice: both copies sit at the
+  extremes, the lower one dominates, and the instrument is dragged flat by about
+  detune × 60 cents. Measured at F4: unison 2 / detune 0.38 lands −22.5¢, unison 3
+  at the same detune lands −7.5¢. This was diagnosed once, fixed in one song file,
+  and left in the library — so Winter Drift's strings render a quarter-semitone
+  flat. `voice-audit` now fails on anything past ±8¢.
+- **Watch the voice cost.** Unison multiplies per held note and Apollo allows 16.
+  A pad on unison 4 + 3 is 7 voices per note, so a four-note chord is 28 and past
+  the limit the allocator steals notes that are still sounding. That is what "it
+  stutters at the beginning" was.
+
+**The palette is level-matched.** `voice-calibrate.mjs` trims every voice to the
+same perceived loudness — sustained voices to −23 LUFS, hits to −9 dBTP, because
+BS.1770 cannot measure a 40 ms hi-hat at all. Before it, voices differed by 12 dB
+and every song hand-compensated blind; in "Coriander" that had the kick 9 dB under
+the electric piano with the faders already pushed the wrong way. Re-run it with
+`--write` after adding or changing a voice.
+
+### Real recorded instruments
+
+Apollo's `multisample` engine works headless, with no change to `apollo-render.mjs`
+— see `scripts/apollo-multisample.mjs`. A zone map is plain JSON on the patch and
+audio loads through the same `--sample id=path.wav` channel. Verified against
+Splendid Grand Piano (public domain, 226 samples, 4 velocity layers): a rendered
+zone matches its source WAV to 0.0 percentage points in all eight bands.
+
+What real samples uniquely give is **air above 5 kHz** and **velocity that
+changes timbre rather than just level** — the same note played FF against Mp
+carries about 20 dB more 5–10 kHz energy, which no single-layer synth voice can
+imitate. They are not automatically brighter: that piano is darker than our synth
+`tine`.
+
+**The blocker before this can ship inside a song:** zone JSON travels in the
+`.cfproj` but the audio does not, so sample ids have to resolve through the Sound
+Library. A sampled instrument needs its samples seeded the way the AI instruments
+were, not just referenced by a patch.
+
+---
+
+## Writing the music
+
+### Groove
+
+The fault this replaces: every part in every song sat within 1.5 ms of the grid,
+with a spread of 1–3 ms and swing exactly zero. That is symmetric jitter around
+zero — motion without feel. It measures loose and still sounds like a machine,
+because no part *leans*.
+
+A groove is the difference in DIRECTION between parts. `craft.groove()` gives each
+role a consistent lean: snare and clap behind the beat (+11, +12 ms), bass ahead
+of it (−6 ms), kick as the anchor, hats loosest. Swing applies to hats, arps and
+comping — never to the kick and snare, which turns a shuffle into a tempo change.
+
+Three findings from the literature are built in, and are worth knowing because
+they contradict the obvious approach:
+
+- **The size of it.** The Groove MIDI Dataset baseline puts a quantised
+  rendering **22.6 ms mean absolute error** away from the human performances, and
+  the best learned humaniser only reaches 18.5 ms. If you are nudging by ±5 ms
+  you are not doing it.
+- **On-beat notes are played LATE, off-beat notes EARLY** (same source). It is a
+  structured deviation, not noise, and it is most of what separates a played part
+  from a jittered one.
+- **Do not use plain random jitter.** Roger Linn, who invented the swing control,
+  says so outright. What reads as human is white noise per onset PLUS a slow 1/f
+  drift across the phrase; per-note randomness alone reads as sloppiness.
+
+Swing is tempo-aware: measured jazz swing runs about 3.5:1 slow and collapses
+toward 1:1 fast, because the short off-note holds a roughly constant ~100 ms. A
+fixed percentage is wrong at speed, so the delay is capped to leave the off-note
+audible. Linn's own scale, for reference: 54% loosens without sounding swung, 62%
+was his preference at 90 BPM, 66% is a perfect triplet.
+
+### Harmony
+
+`craft.voice()` realises a chord symbol as pitches. Prefer **rootless** voicings:
+the bass has the root, and doubling it in the keys is exactly what fills a mix at
+the bottom while leaving the middle empty. Pass the previous voicing as `near` and
+it voice-leads — inner voices move as little as possible, which is most of what
+separates chords that progress from chords that jump.
+
+**The low interval limit is enforced**, because it is one of the few genuinely
+hard rules in arranging: two notes close together low down do not sound like a
+chord, they sound like mud. Below E2 keep to octaves; thirds do not work below
+about C3. `deMud()` drops the offender.
+
+### Register
+
+`craft.SLOTS` — sub, bass, lowChord, chord, upper, air. Assign every part a slot
+and fold its notes in with `intoSlot()`. Two parts in one octave mask each other
+whatever the faders do; the fix is arrangement, not EQ. `checkSlots()` refuses the
+collision while you are writing rather than after you have mixed around it.
+
+### Arrangement
+
+- **Layers ARRIVE one or two at a time.** Several arriving together is the sound
+  of a loop being switched on. `craft.stagger()` moves an entrance a section
+  earlier rather than dropping it.
+- **Layers may LEAVE all at once.** A drop-out is one of the strongest gestures
+  an arrangement has, and it is not the same event as an entrance. The first
+  version of `stagger` counted them together and "fixed" a strip-back section by
+  putting the kick back into it, which destroyed the one thing that section was
+  for. The band returning together after a drop is the payoff, not a fault, and
+  both `stagger` and the verdicts exempt it.
+- **The quiet sections have to be genuinely quiet.** A ratio under about 1.8
+  between the sparsest and densest section reads as constant. `densityArc()` plus
+  `thin()` make a section sparser rather than merely quieter — long notes, fewer
+  parts. Quieter is the same loop; sparser is a different place.
+- **Dynamics live as bars in the FX lane**, not hidden in clip graphs — Brae needs
+  to see and edit the gestures. `dipInto()` before an arrival, `lift()` across a
+  peak.
+
+---
+
+## Standing rules
+
+These come from Brae and they are not up for re-litigation in a session.
+
+1. **No lead lines.** Program-wide, until the whole idea is redesigned from
+   scratch. Arps and repeated figures are texture and are fine; do not sneak a
+   melody back in as a "counter" or a high keys part.
+2. **Effects go on the trackhead FX lane, never on returns.** `returnTracks` stays
+   empty. Returns clutter the mixer for users.
+3. **Fix the music in the DAW first, then do video.** Never patch a musical
+   problem at the video layer.
+4. **Vary the genre.** The house habit is minor keys and four-chord loops. Vary
+   key, mode, progression, tempo, kit and register. Nine songs with swing exactly
+   zero is what happens when nobody checks.
+5. **Everything stays editable in the program.** Clip presets or Apollo patches,
+   never baked audio; one clip per section, not one frozen blob.
+6. **Never commit Brae's content.** `content/Audio/*.cfproj` and the renders
+   folder are his to push.
+
+---
+
+## Things that have gone wrong, so they do not go wrong again
+
+**A silent track measures as an improvement.** This has been hit more than once: a
+part fails to sound, the mix gets more dynamic and less muddy, and every meter
+says the song got better. `song-render.mjs` reports every track's peak and RMS,
+calls silence a failure, and refuses loudly rather than skipping quietly when it
+cannot render something.
+
+**Analyzers that disagree are worse than no analyzer.** On the same file,
+`analyze-mix.py` said "dull, 1% over 2 kHz" while `song-sections.mjs` reported
+24–46% air. Both were right about their own band edges. Every measurement now
+lives in `scripts/lib/audio-features.mjs` and nothing defines its own.
+
+**Detectors need testing before they accuse anything.** Plain autocorrelation
+reported a perfectly in-tune sub bass as 1200 cents flat, because a sub is a
+fundamental plus a deliberate octave-down oscillator. The band maths double-counted
+every boundary bin and invented 15% of sub that was not there. Both were caught by
+a signal with a known answer, and by nothing else.
+
+**The offline renderer is not the product's renderer.** The instrument DSP is the
+real Apollo worklet, and the biquads, distortion curve and reverb impulse are
+daw-engine's own, transcribed. Two things are approximations and say so where they
+are defined: the master compressor and waveshaping without oversampling. Against a
+browser bounce of Iced it lands every band within 0.5%, crest within 0.6 dB and
+correlation within 0.004, sitting 1.8 dB low overall. Trust it for musical
+decisions; take a browser bounce before delivering.
+
+**`__dawRenderOffline` in the app silently drops layers.** Measured on the same
+project: sub and bass entirely absent, 11.6 dB quieter than the real-time path.
+Do not use `hear-ai --offline` for verification. (Worth fixing in the app — its
+automation freezes at the render-start value because `renderOffline` ticks once.)
+
+**Existing `.cfproj` files embed their own copy of each patch.** Fixing a voice in
+the library does not fix songs already written; their scripts have to be re-run.
+
+---
+
+## Using Apollo properly
+
+`npm run probe` (`scripts/apollo-probe.mjs`) renders one note through every
+feature and says which ones actually change the sound headlessly. **99 of 107 do,
+and none render silent.** Run it before reaching for something unfamiliar.
+
+The palette used three wavetables, two filter types and four effects out of
+eighteen warp modes, seven spectral warps, thirty-seven filters and twenty-three
+effects. That is most of what "the songs all sound similar" means — the notes
+were varying and the synthesis was not. Reach for:
+
+- **warps** (`osc.wt.warp1`) — `sync` is the big one, a 247→1036 Hz shift, and it
+  sweeps beautifully from an envelope. `pd` for hard digital, `rm`/`am` for
+  metallic, `saturate` for weight.
+- **spectral warps** (`osc.wt.specWarp`) — `inharm` pulls partials off the
+  harmonic series, which is the difference between a bell and a synth playing a
+  bell patch. `evenodd`, `smear`, `stretch` all work.
+- **filters** — all 37. `formant` gives a throat rather than a spectrum,
+  `acidLadder`/`mgDirty` for growl, `sampHold`/`downsample` for digital dirt,
+  `comb`/`phase` for movement.
+- **chaos LFOs** (`lfo.mode:'chaos'`, lorenz or sh) — a pad that breathes on a
+  repeating cycle announces the cycle.
+- **the arp** — verified working in a full song render, synced to project tempo:
+  hold a chord and it generates sixteenths (measured at 0.150–0.165 s gaps at
+  98 BPM). Texture from the synth instead of typed into the roll.
+- **mod sources** — `vel`, `note`, `rand`, `gate`, `follower`, `macro1..8` all
+  route. Velocity → filter cutoff is the cheapest "played" cue there is.
+
+**Field names that cost an hour each.** The probe reported twenty-two features
+dead on its first run and nearly all of it was the caller, not the engine:
+
+- it is `wt.specWarp`, **singular** — `specWarp1` is silently never read
+- macros live at `patch.macros`, **not** `patch.global.macros`
+- in SERIAL filter routing the last enabled **filter** decides the bus, not the
+  oscillator, so setting `osc.bus` alone sends the chain silence
+- `fm`/`am`/`rm` warps modulate using **another oscillator** (`wt.fmSource`) —
+  with one osc enabled there is nothing to modulate with
+- an effect at its **default** parameters is neutral by design. An EQ ships flat,
+  a gate ships open, a transient shaper ships at 0 dB.
+
+Genuinely inert headless: the `flip`/`quantize`/`shift` warps, the `lowpass`
+spectral warp, and the `rossler` chaos LFO. `remap` needs a `remapCurve`, which
+is null by default.
+
+**Watch the cost.** Under a realistic chord load voices run 1–5x real time, not
+the 50x a single monophonic patch suggests — polyphony is the driver, and the
+unison-3 chord voices (`pad`, `strings`) are the slowest at 0.8x. A dense
+eight-track song renders around real time rather than in fifteen seconds. Check
+`voiceCost` before putting a wide unison on something that plays chords.
+
+## File size
+
+`npm run size -- <song.cfproj>` breaks a project file down by where its bytes
+go. It exists because a song file was 886 KB of which 667 KB was one wavetable
+nobody was reading, and nothing made that visible.
+
+**How this compares to Ableton.** An `.als` is gzipped XML containing **no
+audio** — samples are referenced by path into the project folder beside it. A big
+Ableton *project* reaches hundreds of megabytes because of that folder; the .als
+itself is usually well under a megabyte. Our `.cfproj` is the .als equivalent,
+and on the authored path it is now smaller than a typical one. Two differences
+remain, one cosmetic and one structural:
+
+| | Ableton `.als` | our `.cfproj` |
 |---|---|---|
-| Grand Piano | `builtin-26` | the emotional core — melodies, chords |
-| Warm Electric Piano | `builtin-27` | lo-fi / soul / jazzy comping |
-| String Ensemble | `builtin-28` | sustained warmth, swells, pads of chords |
-| Choir Aahs | `builtin-29` | atmosphere, emotional lift |
-| Warm Pad | `builtin-30` | ambient bed under everything |
-| Music Box | `builtin-31` | delicate high accents (rainy-day twinkle) |
-| Orchestral Harp | `builtin-32` | glissandos, arpeggios, neoclassical shimmer |
-| Nylon / Steel / Clean-Electric Guitar | `builtin-33/34/35` | fingerstyle, folk, clean comping |
-| Vibraphone | `builtin-36` | jazzy mellow mallet |
-| Marimba | `builtin-37` | warm wooden mallet |
-| Glockenspiel | `builtin-38` | bright bell twinkle |
-| Kalimba | `builtin-39` | organic thumb-piano pluck |
-| Solo Violin | `builtin-40` | expressive bowed lead / countermelody |
-| Pizzicato Strings | `builtin-41` | plucked-string rhythm & arrangement color |
-| Oboe | `builtin-42` | plaintive wind lead |
-| Pan Flute | `builtin-43` | airy, breathy melody |
-| Church Organ | `builtin-44` | cathedral swell, sustained pads |
-| Harpsichord | `builtin-45` | baroque plucked keys |
-| Electric / Acoustic Bass, Cello, Flute, Clarinet, Trumpet… | `builtin-17..25` | real bass/strings/wind |
+| container | gzipped XML | **uncompressed** JSON |
+| audio | referenced by path | **inlined as base64** on the ElevenLabs path |
+| authored song | — | 154–222 KB (gzips to ~50 KB) |
+| ElevenLabs song | — | **10.8 MB, 100% of it inlined audio** |
 
-**Synth-rendered (bright, immediate — fine for electronic/lo-fi flavor, but read
-"video game" if used for everything):** Rhodes `2`, Synth Lead `3`, Synth Bass
-`4`, Synth Pad `12`, etc. Great as *color*, not as the whole track.
+**Fixed, with the audio proved bit-identical (same MD5) either side:**
 
-**Drums:** the `drum` instrument, `pack: 'synth' | '808'`. Often *omit drums
-entirely* for ambient/neoclassical — that alone stops it sounding like a "beat."
+- The noise wavetable shipped **64 frames and no voice ever read past frame 0**,
+  because nothing modulates `wt.pos`. 683 KB → 43 KB. If you want real noise
+  rather than one periodic frame, modulate `wt.pos` and raise `frames`
+  deliberately, knowing it costs ~11 KB each.
+- Note ids are no longer written. `restoreNoteIds` (lib/note-ids.ts) re-derives
+  them by index on load, so the stored form never needed them — this is the
+  app's own convention and the authoring path simply was not following it.
+  Another 45 KB, and because the ids were random they did not compress either.
 
-> ~120 more General MIDI instruments live on the same soundfont CDN and can be
-> added the same way (see `lib/default-samples.ts` `SOUNDFONT_PACKS` +
-> `lib/midi-presets.ts` `BUILT_IN`, append only). Candidates worth adding: nylon
-> guitar, harp, glockenspiel, vibraphone, ocarina/pan flute, cello section.
->
-> Soundfont renders are peak-normalized (`renderSoundfont`) so they're not ~15 dB
-> quieter than the synth ones — but they still read a touch quiet, so **ride the
-> lead up** (`rollFx.gain` up to 2.0) and let the mix loop confirm.
+Together: **886 KB → 222 KB**, and gzip now buys 4.5x rather than 1.6x, because
+what remained was no longer incompressible base64.
 
----
+**Still open, and both need app work rather than script work:**
 
-## 2. Composition — what actually makes it *music*
+1. **Stop inlining audio.** A 10.8 MB ElevenLabs project is 100% base64 audio —
+   this is the one place we are structurally heavier than Ableton rather than
+   just untidy, and base64 is 33% larger than the bytes it carries. Referencing
+   media the way `.als` does would take those files to a few KB each. There is
+   already a rescue script (`shrink-cfproj.mjs`) for the symptom.
+2. **Gzip the container**, as `.als` does. Our JSON gzips 4.5x. The reader would
+   need to sniff the gzip magic bytes and keep accepting plain JSON.
 
-This is the hard part and where "a beat" becomes a song. Following a chord
-progression on a grid is not enough.
+**And the 879 MB nobody meant to keep:** that is the WAV renders in
+`~/Desktop/100lights-ai-renders`, not project files. Each two-minute bounce is
+~50 MB of 24-bit/48k audio, and they are regenerable in a couple of minutes from
+the `.cfproj`. The MP3 masters beside them are ~3 MB.
 
-- **Space & silence.** Don't fill every beat. Rests create tension; let notes
-  ring into the reverb. Sparse beats *listenable*. (Petrichor = 275 notes over
-  2:00; the busy tracks were ~1,000.)
-- **Breathing rhythm — this is what kills the "video-game" feel.** The problem
-  with the early songs was every instrument played *straight to the beat* with no
-  pauses. Instead give each part a **16th-grid pattern of hits (`o`) and rests
-  (`x`)** that syncopates and then releases — e.g. `oxoxoxooxoxooooo` stays locked
-  to the bar but the gaps build tension and the run of `o`s at the end spills a
-  fill into the next bar. Rules that worked (see `gen_rhythm_songs.py`, Signal
-  Fire + Paper Lanterns):
-  - **Give different instruments different patterns** so they interlock and leave
-    holes for each other — never all-on-the-beat together. Bass pushes on
-    off-beats and rests on 2/4; guitar/keys chop syncopated stabs; hats fill,
-    kick/snare leave space.
-  - **Vary the pattern by section** (sparse in verses, busier + end-of-bar fills
-    in the chorus) so the arrangement goes somewhere.
-  - Drive the whole thing off short `o/x` strings in code — trivial to audition
-    and re-shape, and it forces the rests instead of defaulting to every beat.
-- **Lead in chords / double-stops — occasionally.** A single-note lead reads flat.
-  Add a harmony note (a 3rd/6th below, or the chord) **only sometimes**: on a bar
-  downbeat for emphasis, or a stray double note mid-phrase for style. Constant
-  chords sound like a pad; the *occasional* double note sounds skilled and
-  dynamic. (Both 2026-08 songs mark ~2–3 double-stops per 4-bar lead phrase.)
-- **Long notes.** Use sustaining instruments (piano/strings/choir/pad) and write
-  whole-/multi-bar notes. This is exactly what short one-shot samples can't do.
-- **Tension → release.** The core of feeling:
-  - Suspensions that resolve (`sus4 → 3`, `sus2 → 3`).
-  - A **held dominant** (V or Vsus) before resolving to the tonic.
-  - A **pedal tone** held under moving chords (clashes, then releases).
-  - A dissonant/high note held over a bar, then resolved downward.
-- **Dynamics.** Swell in with a slow `attack` + rising velocities; build sections
-  and then strip back; bring instruments **in and out** rather than all at once.
-- **Arrangement shape.** intro (sparse) → build → peak → resolve/outro with a
-  reverb tail. Change instrumentation per section so it goes somewhere.
-- **Humanize.** Vary velocities (downbeats a little louder), avoid robotic
-  uniformity, add swing for lo-fi, consider being drumless.
-- **Fit palette to vibe.** lo-fi = Rhodes + warm bass + soft swing; ambient /
-  neoclassical = piano + strings + choir, drumless; synth-pop = synth presets +
-  drums; rock = driven guitar tones.
+## Open
 
----
-
-## 3. Sound shaping (per-clip `rollFx`)
-
-The clip's `rollFx` bag *is* its sound, and it's fully editable in the Sound
-panel afterward. Useful keys: `gain`, `sustain` (release ring), `reverbWet` /
-`reverbSize`, `attack` / `decay` / `sustainLevel`, `filterHz` (low-pass),
-`highpassHz`, `drive` / `distortion` / `bitcrush`, `delayWet` / `delayTime` /
-`delayFeedback`, `chorusDepth`, EQ (`sub`/`bass`/`mid`/`treble`), `pan` / `width`,
-`vibratoDepth`. There are also curated **Tone presets** per instrument in the
-Sound panel (Guitar → Rock/Metal/Punk, etc.).
-
-Atmospheric starting points that worked in Petrichor:
-- Piano: `{reverbWet:0.32, reverbSize:0.7, sustain:1.2, gain:1.8}`
-- Strings/Choir: big reverb + slow `attack` (0.4–0.7) so they swell in.
-- Pad: `{reverbWet:0.5, filterHz:3500}` — subliminal bed.
-- Music Box: reverb + a slap `delay`.
-
----
-
-## 4. Mixing (read the meters, trust your eyes)
-
-Render the busiest section with `stems:true`, then in the report watch:
-- **Clipping** — master `peak ≥ -0.1 dBFS` or any `clip%`. Fix by trimming the
-  loud parts (usually bass/drums) or the master, not by ear-guessing.
-- **Buried parts** — a stem's LUFS far below the master. The **lead should be the
-  most prominent** melodic element; bass felt, not booming.
-- **Spectral balance** — muddy (`>45%` under 120 Hz), boxy (`>48%` 120–400 Hz),
-  harsh (`>40%` over 2 kHz), dark (`<4%` over 2 kHz).
-- **Absolute level doesn't matter much** — a project can sit at ~-18 to -22 LUFS;
-  export normalizes to target. Chase *relative balance* and *no clipping*.
-- **Genre caveat:** the "boxy/dark" hints are tuned for pop. Warm/dark/mid-forward
-  is *correct* for lo-fi and ambient — don't EQ the soul out of it. (And EQ can't
-  add highs the source doesn't have; pick a brighter instrument instead.)
-
----
-
-## 5. Reference tracks (`Content/Audio/`)
-
-> 2026-08-01: the folder was cleared to start fresh on the *breathing-rhythm*
-> approach (§2). The two current references were built by `gen_rhythm_songs.py`
-> (a Python generator → `o/x` 16th patterns → `__dawDispatch`). Earlier tracks
-> (petrichor / rainy-window / neon-skyline / maneskin …) are the historical
-> templates but no longer on disk.
-
-- **`signal-fire.cfproj`** — moody indie-alt, Am, 92 bpm, ~1:40. Clean guitar +
-  bass + light drums + strings + piano + violin lead. Syncopated stabs, held-V
-  tension, lead double-stops on downbeats. The template for **rhythmic drive with
-  space**.
-- **`paper-lanterns.cfproj`** — warm neo-soul / trip-hop, Bm, 76 bpm swing, ~2:00.
-  Rhodes + bass + soft drums + vibraphone + choir pad + pan-flute lead. Laid-back
-  pockets, lots of rests, ii–V tension. Deliberately warm/dark (correct for the
-  genre — didn't EQ the soul out).
-
----
-
-## 6. Ideas to build on (open backlog)
-
-- Add still more real GM instruments (ocarina, shakuhachi, dulcimer, banjo,
-  sitar, tremolo/bowed-pad strings, timpani, drawbar/rock organ) — same
-  soundfont pipeline. (20 real instruments wired so far: `builtin-26..45`.)
-- Foley / atmosphere layers (rain, vinyl crackle, room tone) — needs CC0 samples.
-- Micro-timing + velocity humanization (a "feel" pass) so it's less quantized.
-- Tempo/rubato and key changes; motif development across a longer form.
-- A song-spec loader (`__dawLoadSpec`) so composition happens at the musical
-  level (chords/sections/named tones) instead of raw MIDI in a Python script.
-- Deliberate stereo width / panning for depth (renders are mono-analyzed today).
-- An offline (non-real-time) render path so full-song analysis is instant.
-
----
-
-*Keep this current: when a technique works (or doesn't), add a line. The goal is
-that the next session can pick up and make something better than the last.*
+- **Seed real multisamples into the Sound Library** so a sampled instrument can
+  travel in a shared song. Biggest remaining sonic lever.
+- **Per-genre targets.** `targets/general.json` is nine ElevenLabs tracks. A
+  reference set per genre would stop a lo-fi track being told it is too dark.
+- **Fix `width` in the engine.** It is a no-op that also drops 6 dB on dual-mono
+  sources, and hard-pans a true-mono one. Not urgent — width is not the gap —
+  but it is a real bug.
+- **The lead problem.** Melodies have disappointed every time they have been
+  tried. When it is reopened, it starts from scratch.

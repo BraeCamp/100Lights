@@ -124,10 +124,24 @@ export function userTable(tableToBase64, name, frames, fn) {
   return { name, frames, data: tableToBase64(data) }
 }
 
-/** Noise as a wavetable: every frame is a different block of white noise, so
- *  sweeping wt.pos across frames keeps successive cycles from repeating — a
- *  single frame read at pitch would be a periodic buzz, not noise. */
-export function noiseTable(tableToBase64, seed = 7, frames = 64) {
+/**
+ * Noise as a wavetable: every frame is a different block of white noise, so
+ * sweeping `wt.pos` across frames keeps successive cycles from repeating — a
+ * single frame read at pitch is a periodic buzz, not noise.
+ *
+ * FOUR frames, not sixty-four, and the difference is worth reading. A user
+ * wavetable travels inside the patch, and the patch travels inside the project
+ * file, so at 64 frames this one table was 683 KB — **75% of an entire song
+ * file**. It was also almost entirely unread: no voice in the palette modulates
+ * `wt.pos`, so only frame 0 is ever sounded. Rendering the Rim voice at 64, 8
+ * and 2 frames produced BIT-IDENTICAL audio (same MD5), which is as clear as
+ * that gets.
+ *
+ * Four leaves headroom for a voice that does sweep, at 43 KB instead of 683.
+ * If you want real noise rather than a periodic frame, modulate `wt.pos` — and
+ * raise `frames` here deliberately, knowing what it costs per patch.
+ */
+export function noiseTable(tableToBase64, seed = 7, frames = 4) {
   const rand = rng(seed)
   return userTable(tableToBase64, 'Noise', frames, () => rand() * 2 - 1)
 }
@@ -137,7 +151,13 @@ export function noiseTable(tableToBase64, seed = 7, frames = 64) {
  * Render a patch through the real engine and return its stats.
  * notes: "note:start:dur[:vel]" comma-separated, seconds.
  */
-export function render(patch, { notes = '60:0:1', seconds = 2, out = null, bpm = 120 } = {}) {
+/**
+ * @param samples  { [sampleId]: '/abs/path.wav' } for patches whose oscillators
+ *                 read real recordings. Without it a sample oscillator renders
+ *                 SILENCE and every stat below reads as a working quiet patch,
+ *                 so apollo-render is told about them explicitly.
+ */
+export function render(patch, { notes = '60:0:1', seconds = 2, out = null, bpm = 120, samples = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'apollo-render-'))
   const pf = join(dir, 'patch.json')
   writeFileSync(pf, JSON.stringify(patch))
@@ -145,6 +165,7 @@ export function render(patch, { notes = '60:0:1', seconds = 2, out = null, bpm =
   const args = ['--experimental-strip-types', 'scripts/apollo-render.mjs',
     '--patch', pf, '--notes', notes, '--seconds', String(seconds), '--bpm', String(bpm), '--json']
   if (out) args.push('--out', out)
+  for (const [id, path] of Object.entries(samples ?? {})) args.push('--sample', `${id}=${path}`)
   const raw = execFileSync('node', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 })
   const line = raw.trim().split('\n').filter(l => l.trim().startsWith('{')).pop()
   if (!line) throw new Error('no JSON stats from apollo-render:\n' + raw.slice(0, 500))

@@ -301,6 +301,25 @@ export interface GlobalConfig {
   mode: 'poly' | 'mono' | 'legato'
   glide: number // secs
   glideLegatoOnly: boolean
+  /**
+   * Change note WITHOUT restarting the sound.
+   *
+   * Legato already keeps the envelope from retriggering, but every note start
+   * still ran initNote(), which resets oscillator phase, grain and spectral
+   * state and — the audible one — the sample playback position. So a sampled
+   * instrument jumped back to the top of the sample on every note, which is the
+   * opposite of one sound moving.
+   *
+   * With this on, a legato note change keeps the oscillators (and the sample,
+   * and its multisample zone) running and only moves the pitch. `glide` decides
+   * how: 0 is an instant pitch change on a sound that never stops, above 0 is a
+   * slide. Only meaningful in 'legato' mode.
+   */
+  glideContinuous: boolean
+  /** Shape of the slide. 0/0 is a straight line in pitch. accel holds the old
+   *  note then moves; decel arrives early and settles. Both make an S. */
+  glideAccel: number   // 0..1
+  glideDecel: number   // 0..1
   pbRange: number // semitones
   masterGain: number // 0..1
   bpm: number
@@ -455,6 +474,8 @@ export const PARAMS: ParamDef[] = [
   P('f2.pan', 'Filter 2 Pan', -1, 1, 0, true),
   P('global.masterGain', 'Master', 0, 1, 0.8),
   P('global.glide', 'Glide', 0, 2, 0, false, 'log', 's'),
+  P('global.glideAccel', 'Glide Accel', 0, 1, 0),
+  P('global.glideDecel', 'Glide Decel', 0, 1, 0),
   P('bus1Return', 'Bus 1 Return', 0, 1, 1),
   P('bus2Return', 'Bus 2 Return', 0, 1, 1),
   ...Array.from({ length: 8 }, (_, i) => P(`macro${i + 1}`, `Macro ${i + 1}`, 0, 1, 0)),
@@ -723,6 +744,7 @@ export function initPatch(): ApolloPatch {
     version: 1, name: 'Init', author: '', tags: [],
     global: {
       poly: 16, mode: 'poly', glide: 0, glideLegatoOnly: true, pbRange: 2,
+      glideContinuous: false, glideAccel: 0, glideDecel: 0,
       masterGain: 0.8, bpm: 120, click: false, quality: 'good',
       voiceSpreadPan: 0, voiceSpreadTune: 0, voiceSpreadCutoff: 0,
       scaleRoot: 0, scaleName: 'Minor', scaleLock: false, masterTune: 0, tuning: null,

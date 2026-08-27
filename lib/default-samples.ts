@@ -631,7 +631,67 @@ export async function renderSpecToBuffer(spec: RenderSpec): Promise<AudioBuffer>
   return renderMelodic(spec.beatType as BeatType, spec.midiNote ?? 60, spec.duration, spec.channels)
 }
 
+/**
+ * Sample ids that carry their own source: `builtin:`.
+ *
+ * Everything else here resolves through a Sound Library entry, which means a
+ * patch referencing a sample only works on a machine where that entry was
+ * already seeded — a project opened anywhere else finds nothing and plays
+ * silence. These ids say where the audio comes from instead, so a .cfproj
+ * carries a string and works on a fresh machine:
+ *
+ *   builtin:/drum-kits/techno/36.wav   a public asset
+ *   builtin:ai/grand-piano/C3          one root of an AI multisample instrument
+ *
+ * scripts/lib/samples.mjs resolves exactly the same ids off disk, so what the
+ * authoring tools render and what the studio plays are the same sound.
+ */
+const BUILTIN = 'builtin:'
+const builtinCache = new Map<string, Promise<Blob | null>>()
+
+async function fulfilBuiltin(id: string): Promise<Blob | null> {
+  const cached = builtinCache.get(id)
+  if (cached) return cached
+  const job = (async (): Promise<Blob | null> => {
+    const rest = id.slice(BUILTIN.length)
+    if (rest.startsWith('/')) {
+      const resp = await fetch(rest)
+      if (!resp.ok) throw new Error(`builtin sample fetch failed: ${resp.status} ${rest}`)
+      return await resp.blob()
+    }
+    const m = /^ai\/([^/]+)\/(.+)$/.exec(rest)
+    if (!m) throw new Error(`unrecognised builtin sample id: ${id}`)
+    const [, instrument, note] = m
+    const map = await fetchSoundfont(`/ai-instruments/${instrument}.js`)
+    const dataUrl = map[note]
+    if (!dataUrl) throw new Error(`"${instrument}" has no root ${note}`)
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+    const bin = atob(base64)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return new Blob([bytes], { type: 'audio/mpeg' })
+  })()
+  builtinCache.set(id, job)
+  return job
+}
+
 export async function libraryFulfill(id: string): Promise<LibraryEntry | null> {
+  if (id.startsWith(BUILTIN)) {
+    try {
+      const audioBlob = await fulfilBuiltin(id)
+      if (!audioBlob) return null
+      return {
+        id, name: id.slice(BUILTIN.length), category: 'custom',
+        audioBlob, duration: 0, addedAt: new Date().toISOString(),
+        folder: 'Built-in', tags: ['builtin'],
+      }
+    } catch (err) {
+      // Loud: a sample that will not resolve renders the oscillator SILENT, and
+      // a silent layer reads as a cleaner mix rather than as a fault.
+      console.error('[library] could not fulfil', id, err)
+      return null
+    }
+  }
   const entry = await libraryGetById(id)
   if (!entry) return null
   if (entry.audioBlob) return entry

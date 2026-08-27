@@ -344,7 +344,9 @@ export class ApolloEngine extends EventTarget {
   }
 
   /** Absolute-context-time note events (DAW instrument mode). */
-  scheduleEvents(events: { t: number; type: 'noteOn' | 'noteOff'; note: number; vel?: number }[]): void {
+  // 'bend' moves a SOUNDING voice's pitch (per MIDI channel, in semitones), so a
+  // drawn pitch contour can travel one note between pitches with no retrigger.
+  scheduleEvents(events: { t: number; type: 'noteOn' | 'noteOff' | 'bend'; note?: number; vel?: number; semis?: number; ch?: number }[]): void {
     this.post({ type: 'scheduleAt', events })
   }
 

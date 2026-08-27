@@ -1,0 +1,218 @@
+{
+  "name": "twofeet",
+  "artist": "Two Feet",
+  "genre": "guitar-led alternative / blues-electronic — 7 of 10 in MAJOR keys, most instrumental midrange and presence of the four, vocals furthest back, most sectional and most dynamic",
+  "kind": "artist profile — ranges, not a recipe",
+  "measuredFrom": [
+    "Two Feet - Devil (Official Lyric Video).wav",
+    "Two Feet - Grey (Audio).wav",
+    "Two Feet - Had Some Drinks.wav",
+    "Two Feet - Hurt People feat. Madison Love (Official Audio).wav",
+    "Two Feet - I Feel Like I'm Drowning.wav",
+    "Two Feet - Lost The Game (Lyric Video).wav",
+    "Two Feet - Love is a Bitch.wav",
+    "Two Feet - Pink.wav",
+    "Two Feet - Quick Musical Doodles and Sex.wav",
+    "Two Feet - Same Old Song (S.O.S. Part 1) (Audio).wav"
+  ],
+  "tracks": 10,
+  "tempo": {
+    "lo": 78,
+    "hi": 179,
+    "median": 105
+  },
+  "keys": [
+    "Gb major",
+    "Bb major",
+    "A minor",
+    "Db major",
+    "Eb major",
+    "E major",
+    "A minor",
+    "A minor",
+    "Gb major",
+    "F major"
+  ],
+  "fullMix": {
+    "lufs": {
+      "lo": -11.65,
+      "hi": -6.21,
+      "median": -7.49
+    },
+    "crestDb": {
+      "lo": 7.11,
+      "hi": 12.2,
+      "median": 10.03
+    },
+    "dynamicRangeDb": {
+      "lo": 1.94,
+      "hi": 24.16,
+      "median": 13.49
+    },
+    "correlation": {
+      "lo": 0.703,
+      "hi": 0.974,
+      "median": 0.911
+    },
+    "centroidHz": {
+      "lo": 170,
+      "hi": 696,
+      "median": 423
+    },
+    "from": 10,
+    "bands": {
+      "sub": {
+        "lo": 0.233,
+        "hi": 0.828,
+        "median": 0.365
+      },
+      "bass": {
+        "lo": 0.058,
+        "hi": 0.274,
+        "median": 0.13
+      },
+      "lowMid": {
+        "lo": 0.053,
+        "hi": 0.4,
+        "median": 0.257
+      },
+      "mid": {
+        "lo": 0.029,
+        "hi": 0.202,
+        "median": 0.13
+      },
+      "highMid": {
+        "lo": 0.012,
+        "hi": 0.147,
+        "median": 0.066
+      },
+      "presence": {
+        "lo": 0.006,
+        "hi": 0.05,
+        "median": 0.014
+      },
+      "brilliance": {
+        "lo": 0.002,
+        "hi": 0.022,
+        "median": 0.01
+      },
+      "air": {
+        "lo": 0.001,
+        "hi": 0.004,
+        "median": 0.002
+      }
+    }
+  },
+  "instrumental": {
+    "centroidHz": {
+      "lo": 176,
+      "hi": 480,
+      "median": 319
+    },
+    "from": 10,
+    "bands": {
+      "sub": {
+        "lo": 0.264,
+        "hi": 0.74,
+        "median": 0.376
+      },
+      "bass": {
+        "lo": 0.138,
+        "hi": 0.309,
+        "median": 0.215
+      },
+      "lowMid": {
+        "lo": 0.046,
+        "hi": 0.384,
+        "median": 0.215
+      },
+      "mid": {
+        "lo": 0.013,
+        "hi": 0.156,
+        "median": 0.089
+      },
+      "highMid": {
+        "lo": 0.008,
+        "hi": 0.096,
+        "median": 0.038
+      },
+      "presence": {
+        "lo": 0.004,
+        "hi": 0.026,
+        "median": 0.011
+      },
+      "brilliance": {
+        "lo": 0.002,
+        "hi": 0.012,
+        "median": 0.007
+      },
+      "air": {
+        "lo": 0.001,
+        "hi": 0.003,
+        "median": 0.001
+      }
+    }
+  },
+  "groove": {
+    "onsetsPerSec": {
+      "lo": 0.96,
+      "hi": 9.45,
+      "median": 3.51
+    },
+    "spreadMs": {
+      "lo": 23.3,
+      "hi": 53.7,
+      "median": 43.1
+    },
+    "swingPct": {
+      "lo": 49,
+      "hi": 50.2,
+      "median": 50.1
+    },
+    "meanDeviationMs": {
+      "lo": -1,
+      "hi": 0.3,
+      "median": 0
+    }
+  },
+  "arrangement": {
+    "sections": {
+      "lo": 2,
+      "hi": 11,
+      "median": 9
+    },
+    "travelsDb": {
+      "lo": 1.8,
+      "hi": 34.9,
+      "median": 23.6
+    },
+    "seconds": {
+      "lo": 122.6,
+      "hi": 201.4,
+      "median": 173
+    }
+  },
+  "balance": {
+    "from": 10,
+    "bass": {
+      "lo": -12.9,
+      "hi": -1,
+      "median": -3.2
+    },
+    "drums": {
+      "lo": -10.3,
+      "hi": -3.3,
+      "median": -5.6
+    },
+    "vocals": {
+      "lo": -19.4,
+      "hi": -4.8,
+      "median": -8.3
+    },
+    "other": {
+      "lo": -13.1,
+      "hi": -4.2,
+      "median": -6.2
+    }
+  }
+}

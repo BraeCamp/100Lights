@@ -20,6 +20,7 @@
 // (clip notes are clip-relative, which is the shape the loader expects).
 
 import { randomUUID } from 'crypto'
+import { glideLine } from './lib/craft.mjs'
 
 export const uid = () => randomUUID()
 
@@ -105,6 +106,16 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
   const clips = []
   let beat = 0
   const sectionAt = {}
+  // A track marked `continuous` is collected here and emitted as ONE clip at the
+  // end, because a clip boundary ends a note and a note ending ends a legato
+  // chain. One clip is the wrong default — per-section clips are what make an
+  // arrangement editable — but for a sub that is meant to be a single unbroken
+  // sound for the length of the song it is the only representation that works.
+  const continuous = {}
+  // A track marked `glide` goes further: its notes are not notes at all, they
+  // are the pitches ONE note travels between. They are collected here and turned
+  // into a single note plus a drawn pitch curve — see craft.glideLine.
+  const glides = {}
   for (const sec of sections) {
     sectionAt[sec.name] = beat
     const len = sec.bars * bpb
@@ -120,20 +131,80 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
       const bySlot = new Map()
       for (const n of notes) {
         const startBeat = +Math.max(0, n.startBeat).toFixed(4)
+        // Keep the note inside its clip. Humanising pushes late notes later, and
+        // a note that runs past the clip boundary is reported as a fault by
+        // check-notes and gets cut at playback anyway.
+        //
+        // EXCEPT on a continuous track, where the clamp would cut exactly the
+        // overlap a legato chain depends on — at every section seam the sound
+        // would stop and restart, which is the thing the track exists to avoid.
+        // Those notes are clamped later, against the single clip that holds them.
+        const durationBeats = (t.continuous || t.glide)
+          ? +Math.max(0.05, n.durationBeats).toFixed(4)
+          : +Math.max(0.05, Math.min(n.durationBeats, len - startBeat)).toFixed(4)
         const slot = `${n.pitch}@${startBeat.toFixed(3)}`
         const prev = bySlot.get(slot)
-        if (!prev || (n.velocity ?? 0) > (prev.velocity ?? 0)) bySlot.set(slot, { ...n, startBeat })
+        if (!prev || (n.velocity ?? 0) > (prev.velocity ?? 0)) bySlot.set(slot, { ...n, startBeat, durationBeats })
+      }
+      if (t.continuous || t.glide) {
+        const acc = ((t.glide ? glides : continuous)[t.key] ??= { track: t, notes: [] })
+        for (const n of bySlot.values()) acc.notes.push({ ...n, startBeat: n.startBeat + beat })
+        continue
       }
       clips.push({
         kind: 'midi', id: uid(), trackId: t.id, name: `${t.name} · ${sec.name}`,
         startBeat: beat, durationBeats: len,
-        notes: [...bySlot.values()].sort((a, b) => a.startBeat - b.startBeat),
+        // Written WITHOUT note ids. A note's id is runtime identity, not musical
+        // data: `restoreNoteIds` in lib/note-ids.ts re-derives them by index on
+        // load, so the stored form does not need them — and they are 17-22% of a
+        // song file and, being random, do not compress. This is the app's own
+        // convention (lib/note-ids.ts, npm run test:noteids); the authoring path
+        // simply was not following it.
+        notes: [...bySlot.values()].sort((a, b) => a.startBeat - b.startBeat)
+          .map(({ id, ...rest }) => rest),
         isDrumClip: !!t.isDrum, presetId: t.presetId ?? null,
         rollFx: sec.rollFx?.[t.key] ?? t.rollFx ?? {},
       })
     }
     beat += len
   }
+  for (const { track: t, notes } of Object.values(continuous)) {
+    if (!notes.length) continue
+    const end = Math.max(...notes.map(n => n.startBeat + n.durationBeats))
+    clips.push({
+      kind: 'midi', id: uid(), trackId: t.id, name: `${t.name} · whole`,
+      startBeat: 0, durationBeats: Math.max(beat, Math.ceil(end)),
+      notes: notes.sort((a, b) => a.startBeat - b.startBeat)
+        .map(({ id, ...rest }) => ({ ...rest, durationBeats: +Math.min(rest.durationBeats, Math.max(beat, Math.ceil(end)) - rest.startBeat).toFixed(4) })),
+      isDrumClip: !!t.isDrum, presetId: t.presetId ?? null, rollFx: t.rollFx ?? {},
+    })
+  }
+
+  // One note, one curve, for the whole song.
+  for (const { track: t, notes } of Object.values(glides)) {
+    if (notes.length < 2) {
+      throw new Error(`track "${t.key}" is marked glide but has ${notes.length} pitch(es) — ` +
+        `a glide line needs at least two, since it describes where ONE note travels`)
+    }
+    const steps = notes
+      .sort((a, b) => a.startBeat - b.startBeat)
+      .map(n => ({
+        pitch: n.pitch, beat: n.startBeat,
+        ...(n.glide != null ? { glide: n.glide } : {}),
+        ...(n.accel != null ? { accel: n.accel } : {}),
+        ...(n.decel != null ? { decel: n.decel } : {}),
+        ...(n.anchor != null ? { anchor: n.anchor } : {}),
+      }))
+    const { note, graph } = glideLine(steps, { ...(t.glideOpts ?? {}), startBeat: 0, endBeat: beat })
+    clips.push({
+      kind: 'midi', id: uid(), trackId: t.id, name: `${t.name} · glide`,
+      startBeat: 0, durationBeats: beat,
+      notes: [{ pitch: note.pitch, startBeat: 0, durationBeats: +note.durationBeats.toFixed(4), velocity: note.velocity }],
+      pitchGraph: graph,
+      isDrumClip: false, presetId: t.presetId ?? null, rollFx: t.rollFx ?? {},
+    })
+  }
+
   const songBeats = beat
 
   const byKey = Object.fromEntries(tracks.map(t => [t.key, t.id]))
