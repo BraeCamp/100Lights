@@ -137,12 +137,13 @@ export function getApolloSourceSample(): { id: string; name: string } | null { r
 export interface ApolloSampleSelection { id: string; name: string }
 type SelectionListener = (sel: ApolloSampleSelection) => void
 
-let selection: ApolloSampleSelection | null = null
+/** The armed selection, plus whether an Apollo has already taken it. */
+let selection: (ApolloSampleSelection & { consumed: boolean }) | null = null
 const selectionListeners = new Set<SelectionListener>()
 
 /** Beacon: the user picked this library sound; hand it to any open Apollo. */
 export function selectApolloSample(id: string, name: string): void {
-  selection = { id, name }
+  selection = { id, name, consumed: false }
   for (const fn of selectionListeners) {
     try { fn(selection) } catch { /* one bad listener must not block the rest */ }
   }
@@ -157,7 +158,35 @@ export function onApolloSampleSelect(fn: SelectionListener): () => void {
 }
 
 /** The most recent selection, for UI that wants to show what is armed. */
-export function getApolloSampleSelection(): ApolloSampleSelection | null { return selection }
+export function getApolloSampleSelection(): ApolloSampleSelection | null {
+  return selection ? { id: selection.id, name: selection.name } : null
+}
+
+/**
+ * The sound Apollo should open on, if any.
+ *
+ * Brae: "It should start on sample and load the sample that is selected."
+ * Taken literally, which is the right way to take it — while a sound is
+ * selected in the Sound Library, every rack that opens shows it.
+ *
+ * Two earlier rules were both cleverer than this and both wrong:
+ *
+ *   "only onto an untouched patch", judged by the patch's NAME. Opening the
+ *   rack for an Apollo track seeds it from a blank initPatch() (name 'Init',
+ *   allowed), while a rack opened with a seed carries the track's name
+ *   (refused). Same feature, opposite behaviour depending on which button you
+ *   pressed — and every test happened to press the lucky one.
+ *
+ *   "apply it once, then spend it". Safer-sounding, and it would have produced
+ *   exactly the symptom being complained about: pick a sound, open Apollo once,
+ *   and from then on opening Apollo never shows your sound again.
+ *
+ * The only protection kept is the one that cannot misfire: if osc 1 already
+ * holds this sound, there is nothing to do.
+ */
+export function armedApolloSample(): ApolloSampleSelection | null {
+  return selection ? { id: selection.id, name: selection.name } : null
+}
 
 /** Overwrite an existing library entry's audio in place (keeps its identity —
  *  name/folder/tags — so every project referencing it hears the new take). */

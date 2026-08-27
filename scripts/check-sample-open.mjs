@@ -15,6 +15,9 @@
 // Apollo and then selected would have passed against the broken build.
 
 import { chromium } from 'playwright'
+import { readFileSync, existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 const PORT = process.env.PORT || '4618'
 const BASE = `http://localhost:${PORT}`
@@ -126,6 +129,101 @@ const embedEngine = await page.evaluate(() => {
 })
 console.log(`  Apollo opened inside Beacon:    osc 1 engine = ${embedEngine}`)
 check('the rack inside Beacon also opens on the Sample section', embedEngine === 'sample', String(embedEngine))
+
+// 5. The case that actually matters, and that scenario 4 missed: a project
+//    with TRACKS IN IT. The rack seeds its patch from the track's instrument,
+//    so the patch it opens with is not a blank one — which is exactly the
+//    condition an "only onto an untouched patch" guard refuses. Scenario 4 used
+//    an empty project, got a seed of initPatch(), and sailed through.
+const FIXTURE = join(homedir(), 'Desktop', '100lights-ai-renders', 'Hallway Light.cfproj')
+if (existsSync(FIXTURE)) {
+  const dawProject = JSON.parse(readFileSync(FIXTURE, 'utf8')).dawProject
+  await page.goto(beacon, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => !!window.__dawDispatch, null, { timeout: 120000 }).catch(() => {})
+  await page.waitForTimeout(5000)
+  await page.evaluate(pr => window.__dawDispatch?.({ type: 'LOAD_PROJECT', project: pr }), dawProject)
+  await page.waitForTimeout(4000)
+
+  await page.evaluate(() => window.__apolloArmSample?.('check-real-project', 'Real Project Sample'))
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')]
+      .find(b => /apollo/i.test((b.textContent || '').trim()))
+    btn?.click()
+  })
+  await page.waitForTimeout(8000)
+
+  const realEngine = await page.evaluate(() => {
+    const sels = [...document.querySelectorAll('select')]
+    const s = sels.find(el => [...el.options].some(o => o.value === 'wavetable'))
+    return s ? s.value : null
+  })
+  console.log(`  with a real project loaded:     osc 1 engine = ${realEngine}`)
+  check('a real project with tracks also opens on the Sample section', realEngine === 'sample', String(realEngine))
+
+  // 6. The rack SEEDED FROM A TRACK'S OWN PATCH — the path the first fix
+  //    silently refused, because it judged "have you started work on this?" by
+  //    the patch's name, and a seeded patch carries the track's name. Every
+  //    other scenario here seeds from a blank initPatch() and so never touched
+  //    the failing branch.
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-track-id]')
+    el?.click()
+  })
+  await page.waitForTimeout(1200)
+  await page.evaluate(() => window.__apolloArmSample?.('check-seeded', 'Seeded Sample'))
+  const ranSeeded = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('[role=option],li,button,div')]
+      .find(e => /^Edit .* in Apollo$/.test((e.textContent || '').trim()))
+    if (el) { el.click(); return true }
+    return false
+  })
+  if (!ranSeeded) {
+    await page.keyboard.press('Meta+k')
+    await page.waitForTimeout(700)
+    await page.keyboard.type('Apollo', { delay: 40 })
+    await page.waitForTimeout(1100)
+    await page.evaluate(() => {
+      const el = [...document.querySelectorAll('[role=option],li,button,div')]
+        .find(e => /^Edit .* in Apollo$/.test((e.textContent || '').trim()))
+      el?.click()
+    })
+  }
+  await page.waitForTimeout(9000)
+  const seededEngine = await page.evaluate(() => {
+    const sels = [...document.querySelectorAll('select')]
+    const s = sels.find(el => [...el.options].some(o => o.value === 'wavetable'))
+    return s ? s.value : null
+  })
+  console.log(`  rack seeded from a track:       osc 1 engine = ${seededEngine}`)
+  check('a rack seeded from a track also takes the sound', seededEngine === 'sample', String(seededEngine))
+
+  // 7. CLOSE IT AND OPEN IT AGAIN. A "spend the selection once" rule passes
+  //    every scenario above and fails here — and failing here looks exactly
+  //    like the bug being reported: pick a sound, open Apollo once, and from
+  //    then on opening Apollo never shows your sound again. While a sound is
+  //    selected in the library, every rack that opens shows it.
+  await page.evaluate(() => {
+    const close = [...document.querySelectorAll('button')]
+      .find(b => (b.getAttribute('aria-label') || '') === 'Close' || (b.textContent || '').trim() === '✕')
+    close?.click()
+  })
+  await page.waitForTimeout(2000)
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')]
+      .find(b => /apollo/i.test((b.textContent || '').trim()))
+    btn?.click()
+  })
+  await page.waitForTimeout(9000)
+  const reopened = await page.evaluate(() => {
+    const sels = [...document.querySelectorAll('select')]
+    const s = sels.find(el => [...el.options].some(o => o.value === 'wavetable'))
+    return s ? s.value : null
+  })
+  console.log(`  closed and opened again:        osc 1 engine = ${reopened}`)
+  check('opening Apollo a second time still shows the sound', reopened === 'sample', String(reopened))
+} else {
+  console.log('  (no Hallway Light fixture — skipping the real-project case)')
+}
 
 await browser.close()
 console.log(failures ? `\n${failures} failing` : '\nApollo opens where the armed sample is')

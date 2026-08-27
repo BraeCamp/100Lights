@@ -8,7 +8,7 @@ import {
   resolvePatchPath, uid,
 } from '@/lib/apollo/patch'
 import { ApolloEngine, ApolloMeters, getApolloEngine } from '@/lib/apollo/engine-client'
-import { initApolloLibrary, restorePatchSamples, setApolloSourceSample, onApolloSampleSelect, getApolloSampleSelection } from '@/lib/apollo/sample-store'
+import { initApolloLibrary, restorePatchSamples, setApolloSourceSample, onApolloSampleSelect, armedApolloSample } from '@/lib/apollo/sample-store'
 import { useUser } from '@clerk/nextjs'
 import {
   allMidiBindings, armMidiBinding, armedBinding, ccForBinding,
@@ -395,26 +395,24 @@ export function ApolloProvider({ children, quickMod, embed, onParamMove, livePar
     applySampleSelection(id, name)
   }), [applySampleSelection])
 
-  // Pick up a sample that was ALREADY armed before Apollo opened.
+  // Open on the sound that is selected in Beacon's Sound Library.
   //
-  // onApolloSampleSelect only fires for selections made after subscribing, so
-  // that opening Apollo cannot retroactively overwrite a patch you were working
-  // on. That is the right rule and it left a hole: the ordinary way to use this
-  // is to pick a sound in Beacon and THEN open Apollo, which means the selection
-  // has already happened and nothing fires. Apollo opened on the oscillator
-  // engine showing wavetable controls, with the sample armed and invisible.
+  // onApolloSampleSelect only fires for selections made after subscribing, and
+  // the ordinary way to use the bridge is to pick a sound and THEN open Apollo
+  // — so nothing fired at all and the rack opened on the wavetable oscillator
+  // with the sound chosen and invisible. This is the other half.
   //
-  // So on mount, apply an armed selection — but only onto an untouched patch,
-  // which is exactly the case the original rule was protecting against. A patch
-  // that has been named or already has a sample loaded is left alone.
+  // No cleverness about whether you have "started work" on the patch: two
+  // versions of that guess are described in armedApolloSample() and both got it
+  // wrong in ways that were invisible to the tests. While a sound is selected,
+  // a rack that opens shows it. The one check that cannot misfire is whether
+  // osc 1 already holds it.
   const armedApplied = useRef(false)
   useEffect(() => {
     if (armedApplied.current) return
-    const armed = getApolloSampleSelection()
+    const armed = armedApolloSample()
     if (!armed) return
-    const p = patchRef.current as ApolloPatch
-    const untouched = (!p.name || p.name === 'Init') && !p.oscs[0]?.smp?.sampleId
-    if (!untouched) return
+    if (patchRef.current?.oscs[0]?.smp?.sampleId === armed.id) return
     armedApplied.current = true
     applySampleSelection(armed.id, armed.name)
   }, [applySampleSelection])
