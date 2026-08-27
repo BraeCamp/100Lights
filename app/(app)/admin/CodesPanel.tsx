@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useToast, Toast } from '@/components/Toast'
+import { apiGet, apiPost, apiPatch, apiDelete, errorMessage } from '@/lib/api-client'
 
 type CodeKind = 'promo' | 'starter'
 interface RedemptionCode {
@@ -42,12 +43,10 @@ export default function CodesPanel() {
   const load = useCallback(async () => {
     setLoading(true); setErr(null)
     try {
-      const res = await fetch('/api/admin/codes')
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json() as { codes: RedemptionCode[] }
+      const data = await apiGet<{ codes: RedemptionCode[] }>('/api/admin/codes')
       setCodes(data.codes)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to load codes')
+      setErr(errorMessage(e, 'Failed to load codes'))
     } finally { setLoading(false) }
   }, [])
 
@@ -58,46 +57,36 @@ export default function CodesPanel() {
     e.preventDefault()
     setCreating(true)
     try {
-      const res = await fetch('/api/admin/codes', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: code.trim() || undefined,
-          kind,
-          grantDays: Number(grantDays),
-          expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
-          maxRedemptions: maxRedemptions.trim() ? Number(maxRedemptions) : null,
-          note: note.trim() || null,
-        }),
+      const data = await apiPost<{ code: RedemptionCode }>('/api/admin/codes', {
+        code: code.trim() || undefined,
+        kind,
+        grantDays: Number(grantDays),
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+        maxRedemptions: maxRedemptions.trim() ? Number(maxRedemptions) : null,
+        note: note.trim() || null,
       })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
       showToast(`Created ${data.code.code}`)
       setCode(''); setNote(''); setMaxRedemptions('')
       await load()
     } catch (e) {
-      showToast(e instanceof Error ? e.message : 'Create failed')
+      showToast(errorMessage(e, 'Create failed'))
     } finally { setCreating(false) }
   }
 
   async function toggleActive(c: RedemptionCode) {
     try {
-      const res = await fetch(`/api/admin/codes/${encodeURIComponent(c.code)}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active: !c.active }),
-      })
-      if (!res.ok) throw new Error()
+      await apiPatch(`/api/admin/codes/${encodeURIComponent(c.code)}`, { active: !c.active })
       await load()
-    } catch { showToast('Action failed') }
+    } catch (e) { showToast(errorMessage(e, 'Action failed')) }
   }
 
   async function remove(c: RedemptionCode) {
     if (!confirm(`Delete ${c.code}? Time already granted stays; the code just stops being redeemable.`)) return
     try {
-      const res = await fetch(`/api/admin/codes/${encodeURIComponent(c.code)}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error()
+      await apiDelete(`/api/admin/codes/${encodeURIComponent(c.code)}`)
       showToast(`Deleted ${c.code}`)
       await load()
-    } catch { showToast('Delete failed') }
+    } catch (e) { showToast(errorMessage(e, 'Delete failed')) }
   }
 
   const copy = (c: string) => { void navigator.clipboard?.writeText(c); showToast(`Copied ${c}`) }

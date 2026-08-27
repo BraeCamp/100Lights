@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useToast, Toast } from '@/components/Toast'
+import { apiGet, apiPost, apiDelete, errorMessage } from '@/lib/api-client'
 
 const CATEGORIES = ['sound', 'sample', 'preset', 'drum kit', 'loop', 'article audio', 'image', 'font', 'other']
 
@@ -30,10 +31,8 @@ export default function LicensesPanel() {
   const load = useCallback(async () => {
     setLoading(true); setErr(null)
     try {
-      const res = await fetch('/api/admin/licenses')
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setRows((await res.json() as { licenses: License[] }).licenses)
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Failed to load') }
+      setRows((await apiGet<{ licenses: License[] }>('/api/admin/licenses')).licenses)
+    } catch (e) { setErr(errorMessage(e, 'Failed to load')) }
     finally { setLoading(false) }
   }, [])
   useEffect(() => { void load() }, [load])
@@ -49,21 +48,18 @@ export default function LicensesPanel() {
   async function save(e: React.FormEvent) {
     e.preventDefault(); setSaving(true)
     try {
-      const res = await fetch('/api/admin/licenses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+      await apiPost('/api/admin/licenses', form)
       showToast(form.id ? 'Saved' : 'Added'); reset(); await load()
-    } catch (e) { showToast(e instanceof Error ? e.message : 'Save failed') }
+    } catch (e) { showToast(errorMessage(e, 'Save failed')) }
     finally { setSaving(false) }
   }
 
   async function remove(l: License) {
     if (!confirm(`Delete the license record for “${l.name}”?`)) return
     try {
-      const res = await fetch(`/api/admin/licenses?id=${encodeURIComponent(l.id)}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error()
+      await apiDelete(`/api/admin/licenses?id=${encodeURIComponent(l.id)}`)
       showToast('Deleted'); if (form.id === l.id) reset(); await load()
-    } catch { showToast('Delete failed') }
+    } catch (e) { showToast(errorMessage(e, 'Delete failed')) }
   }
 
   const input: React.CSSProperties = { padding: '7px 10px', borderRadius: 8, fontSize: 13, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', outline: 'none', width: '100%' }
