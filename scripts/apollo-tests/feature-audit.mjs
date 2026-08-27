@@ -222,8 +222,16 @@ function rms(buf) { let s = 0; for (const v of buf) s += v * v; return Math.sqrt
   const de = mkP([{ id: 'd', type: 'deesser', enabled: true, mix: 1, params: { freq: 0.82, bandwidth: 1, threshold: -50, reduction: 20 } }])
   de.noteOn(57, 0.9, false)
   const deB = render(de, 60)
-  // the unit's band centers at cutoffHz(0.82) ≈ 4.9 kHz — probe there
-  const sib = b => bandEnergy(b.subarray(2560), 4950) / (bandEnergy(b.subarray(2560), 220) + 1e-9)
+  // The unit's band centres at cutoffHz(0.82) ~ 4.9 kHz, but bandEnergy is a
+  // SINGLE BIN and note 57 is A3 — whose harmonics land at 4840 and 5060 Hz.
+  // 4950 sits between them, so probing there measured spectral leakage rather
+  // than signal: the ratio came out around 0.001 and moved with the oscillator's
+  // start phase, which is how this check came to depend on a random seed.
+  // Probe the REAL harmonics either side, the way brightness() does.
+  const sib = b => {
+    const x = b.subarray(2560)
+    return (bandEnergy(x, 220 * 22) + bandEnergy(x, 220 * 23)) / (bandEnergy(x, 220) + 1e-9)
+  }
   check('de-esser reduces the sibilant band', sib(deB) < sib(dryB) * 0.8, `${sib(dryB).toFixed(3)} → ${sib(deB).toFixed(3)}`)
 
   // transient shaper: +attack raises early rms vs late
