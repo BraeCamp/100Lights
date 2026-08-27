@@ -236,7 +236,7 @@ export default function AdminMenu() {
           <div style={head}>About this build</div>
           <button style={item} onClick={copyBuild}>Copy build info</button>
           <div style={{ ...head, textTransform: 'none', letterSpacing: 0, fontWeight: 500, fontSize: 9.5, padding: '2px 10px 7px', whiteSpace: 'normal' }}>
-            {String(buildInfo().commit)} · Apollo {String(buildInfo().apolloEngine)}
+            {String(buildInfo().commit)} · {String(buildInfo().deployment)}
           </div>
         </div>
       )}

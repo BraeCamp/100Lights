@@ -157,9 +157,13 @@ const build = await page.evaluate(async () => {
 })
 let buildJson = null
 try { buildJson = JSON.parse(build) } catch { /* not json */ }
-console.log(`  build info: ${buildJson ? `${buildJson.commit}, Apollo ${buildJson.apolloEngine}` : build.slice(0, 40)}`)
-check('build info says which commit and engine are running',
-  !!buildJson?.commit && !!buildJson?.apolloEngine && !!buildJson?.renderCache,
+console.log(`  build info: ${buildJson ? `${buildJson.commit} / ${buildJson.deployment}, Apollo ${buildJson.apolloEngine}` : build.slice(0, 40)}`)
+check('build info says which build and engine are running',
+  // `deployment` matters as much as `commit`: a CLI deploy may carry no git
+  // metadata, in which case the commit reads "no git metadata" and the
+  // deployment id is the only thing identifying the build.
+  !!buildJson?.commit && !!buildJson?.deployment && !!buildJson?.apolloEngine
+  && !!buildJson?.builtAt && !!buildJson?.renderCache,
   buildJson ? Object.keys(buildJson).join(', ') : build.slice(0, 40))
 
 // Clearing the cache has to actually empty it, not just say so.

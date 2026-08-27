@@ -11,8 +11,13 @@ import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
  */
 export function buildInfo(): Record<string, unknown> {
   const sha = process.env.NEXT_PUBLIC_BUILD_SHA ?? 'unknown'
+  const deploy = process.env.NEXT_PUBLIC_DEPLOY_ID ?? 'unknown'
   return {
-    commit: sha === 'dev' ? 'dev (local)' : sha.slice(0, 8),
+    // The commit where there is one, the deployment otherwise. A CLI deploy may
+    // carry no git metadata, and a build that cannot say which build it is
+    // would defeat the reason this exists.
+    commit: sha === 'dev' ? 'no git metadata' : sha.slice(0, 8),
+    deployment: deploy === 'local' ? 'local dev' : deploy,
     builtAt: process.env.NEXT_PUBLIC_BUILD_TIME ?? 'unknown',
     apolloEngine: ENGINE_VERSION,
     url: typeof location !== 'undefined' ? location.href : 'n/a',
