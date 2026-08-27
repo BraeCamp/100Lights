@@ -14,6 +14,16 @@ const isPublicRoute = createRouteMatcher([
   '/api/webhook/(.*)',
   '/api/share/(.*)',
   '/api/platform-flags',
+  // The sound catalog ships to EVERY user — syncCatalog says "signed in or
+  // not" — but it was never listed here, so auth.protect() 404'd it for signed
+  // out visitors and the catalog could not reach a guest at all. The audio
+  // endpoint has to be public for the same reason, or the entries arrive and
+  // every one of them fails to stream.
+  '/api/catalog',
+  '/api/catalog/(.*)',
+  // Banners are shown to signed-out visitors too. This 404 has been in the
+  // notes as "pre-existing, site-wide" for a while; this is why.
+  '/api/announcements',
   '/api/guest/:token/time',
   '/api/guest/:token',
   '/api/guest/:token/presign',
