@@ -21,8 +21,24 @@ export default function ToolShell({
   studioHref?: string
   studioLabel?: string
 }) {
+  // Rich-result eligibility for the free tools. These pages target high-intent
+  // queries ("online tuner", "metronome"), and every one of them is a free web
+  // app — exactly what SoftwareApplication describes. Emitted here so all ten
+  // tool pages get it from one place rather than ten hand-written blocks.
+  const appSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: title,
+    description: intro,
+    applicationCategory: 'MultimediaApplication',
+    operatingSystem: 'Any (web browser)',
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    publisher: { '@type': 'Organization', name: '100Lights', url: 'https://100lights.com' },
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(appSchema) }} />
       <main id="main" className="max-w-2xl mx-auto px-6 py-14">
         <nav style={{ marginBottom: 24, display: 'flex', gap: 16, fontSize: 13 }}>
           <Link href="/" style={{ color: 'var(--text-muted)', textDecoration: 'none' }}>100Lights</Link>

@@ -93,7 +93,7 @@ export function ItemClient({ id, initialItem, related = [], byAuthor = [], remix
 
         <FeedCard
           item={item} busy={busy} signedIn={!isLoaded || !!isSignedIn}
-          commentsOpen
+          commentsOpen titleAs="h1"
           onAuthorClick={() => { if (authorHandle) window.location.href = `/community/creator/${encodeURIComponent(authorHandle)}` }}
           onTagClick={t => { window.location.href = `/community?tag=${encodeURIComponent(t)}` }}
           onVote={async () => {

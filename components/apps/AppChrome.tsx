@@ -100,6 +100,25 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
       <ShellStyles />
       <div data-editor="true" data-anim={motion}
         style={{ minHeight: '100dvh', background: 'var(--bg-base)', backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)' }}>
+        {app && (
+          // Rich-result eligibility. Each /apps/<slug> page targets a high-intent
+          // query ("free online drum machine") and is a free web app, which is what
+          // WebApplication describes. Emitted from the registry so all eight apps get
+          // it from one place — /apps/lightningbug used to hand-write this exact block
+          // and was the only app that had it.
+          <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'WebApplication',
+            name: app.title,
+            description: app.description || app.tagline,
+            url: `https://100lights.com${app.href}`,
+            applicationCategory: 'MultimediaApplication',
+            operatingSystem: 'Any (web browser)',
+            browserRequirements: 'Requires a modern browser with Web Audio support',
+            offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+            publisher: { '@type': 'Organization', name: '100Lights', url: 'https://100lights.com' },
+          }) }} />
+        )}
         {/*
           The page heading. These apps are full-screen tools with no visible title bar,
           so this is visually hidden — but every /apps/* page is a public landing page in

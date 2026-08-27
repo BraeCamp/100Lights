@@ -22,24 +22,9 @@ export const metadata: Metadata = {
   },
 }
 
-// Structured data so search engines understand this is a free browser app (helps rich results).
-const jsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'WebApplication',
-  name: 'Lightning Bug',
-  url: 'https://100lights.com/apps/lightningbug',
-  applicationCategory: 'MultimediaApplication',
-  operatingSystem: 'Any (web browser)',
-  browserRequirements: 'Requires a modern browser with Web Audio support',
-  description: 'Turn any track into a glowing live visual — reactive bars and radial glow, artsy video backgrounds, cinematic look modes, and auto-shuffling scenes. Full-screen it for a party, or lay visuals over your own video.',
-  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-  publisher: { '@type': 'Organization', name: '100Lights', url: 'https://100lights.com' },
-}
-
 export default function LightningBugPage() {
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       <LightningBug />
     </>
   )

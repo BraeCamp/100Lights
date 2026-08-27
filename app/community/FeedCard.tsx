@@ -160,7 +160,7 @@ function metaBadges(item: CommunityItem): string[] {
 
 // ── Card ───────────────────────────────────────────────────────────────────────
 
-export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onAuthorClick, onTagClick, onToast, commentsOpen }: {
+export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onAuthorClick, onTagClick, onToast, commentsOpen, titleAs: TitleTag = 'span' }: {
   item: CommunityItem
   busy: boolean
   signedIn: boolean
@@ -172,6 +172,14 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
   onToast: (msg: string) => void
   /** Start with the comment thread open (the dedicated item page does this). */
   commentsOpen?: boolean
+  /**
+   * Element for the item's name. In the feed this is one card among many, so it
+   * stays a <span>. On /community/[id] the card IS the page and the item's name
+   * is the page's subject, so that page passes 'h1' — those pages are the
+   * long-tail ranking surface (own generateMetadata, canonical and JSON-LD) and
+   * had no <h1> at all before.
+   */
+  titleAs?: 'span' | 'h1'
 }) {
   const meta = KIND_META[item.kind]
   const Icon = meta.icon
@@ -289,7 +297,7 @@ export function FeedCard({ item, busy, signedIn, onVote, onImport, onDelete, onA
       ) : (
         <>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>{name}</span>
+            <TitleTag style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.01em', margin: 0, display: 'inline' }}>{name}</TitleTag>
             {badges.map(b => (
               <span key={b} style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-muted)', background: 'rgba(255,255,255,0.06)', borderRadius: 5, padding: '2px 7px', fontVariantNumeric: 'tabular-nums' }}>{b}</span>
             ))}
