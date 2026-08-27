@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useToast, Toast } from '@/components/Toast'
 
 type Level = 'beginner' | 'intermediate' | 'advanced'
 
@@ -27,11 +28,11 @@ const SOURCE_BADGE: Record<AdminPath['source'], { label: string; color: string; 
 }
 
 export default function LearnPathsPanel() {
+  const { toast, showToast } = useToast(2600)
   const [paths, setPaths] = useState<AdminPath[]>([])
   const [articles, setArticles] = useState<ArticleRef[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
 
   const [editing, setEditing] = useState<string | null>(null) // slug being edited, null = new
   const [form, setForm] = useState({ ...BLANK })
@@ -51,7 +52,6 @@ export default function LearnPathsPanel() {
   }, [])
   useEffect(() => { void load() }, [load])
 
-  const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(null), 2600) }
   const known = useMemo(() => new Map(articles.map(a => [a.slug, a])), [articles])
   const slugLines = slugsText.split('\n').map(s => s.trim()).filter(Boolean)
   const unknownSlugs = slugLines.filter(s => !known.has(s))
@@ -198,9 +198,7 @@ export default function LearnPathsPanel() {
           </div>
         )}
 
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 9001, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px', fontSize: 13, color: 'var(--text-primary)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>{toast}</div>
-      )}
+      <Toast message={toast} />
     </>
   )
 }

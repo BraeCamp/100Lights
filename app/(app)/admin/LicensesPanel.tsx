@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useToast, Toast } from '@/components/Toast'
 
 const CATEGORIES = ['sound', 'sample', 'preset', 'drum kit', 'loop', 'article audio', 'image', 'font', 'other']
 
@@ -18,10 +19,10 @@ interface License {
 const BLANK = { id: '', name: '', category: 'sound', source: '', license: '', url: '', notes: '' }
 
 export default function LicensesPanel() {
+  const { toast, showToast } = useToast(2600)
   const [rows, setRows] = useState<License[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
   const [form, setForm] = useState({ ...BLANK })
   const [saving, setSaving] = useState(false)
   const [query, setQuery] = useState('')
@@ -37,7 +38,6 @@ export default function LicensesPanel() {
   }, [])
   useEffect(() => { void load() }, [load])
 
-  const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(null), 2600) }
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setForm(p => ({ ...p, [k]: e.target.value }))
   const reset = () => setForm({ ...BLANK })
 
@@ -126,7 +126,7 @@ export default function LicensesPanel() {
           </div>
         )}
 
-      {toast && <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 9001, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px', fontSize: 13, color: 'var(--text-primary)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>{toast}</div>}
+      <Toast message={toast} />
     </>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, X, ChevronRight, ExternalLink, AlertTriangle } from 'lucide-react'
+import { useToast, Toast } from '@/components/Toast'
 
 interface UserRow {
   userId: string
@@ -111,6 +112,7 @@ function dueBadge(iso: string): { text: string; overdue: boolean } {
 }
 
 export default function UsersPanel() {
+  const { toast, showToast } = useToast(3000)
   const [users, setUsers] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
   const [fetchErr, setFetchErr] = useState<string | null>(null)
@@ -134,7 +136,6 @@ export default function UsersPanel() {
   const [ctx, setCtx] = useState<CtxMenu | null>(null)
   const [showCustom, setShowCustom] = useState(false)
   const [customDays, setCustomDays] = useState('')
-  const [toast, setToast] = useState<string | null>(null)
   const [detailUser, setDetailUser] = useState<UserRow | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [detailTab, setDetailTab] = useState<'overview' | 'timeline' | 'notes' | 'contact'>('overview')
@@ -277,7 +278,6 @@ export default function UsersPanel() {
 
   useEffect(() => { if (showCustom) customInputRef.current?.focus() }, [showCustom])
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
   const applyGift = async (userId: string, plan: string | null, days: number | null) => {
     setCtx(null); setShowCustom(false); setCustomDays('')
@@ -961,9 +961,7 @@ export default function UsersPanel() {
         </div>
       )}
 
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 9600, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 16px', fontSize: 13, color: 'var(--text-primary)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)', pointerEvents: 'none' }}>{toast}</div>
-      )}
+      <Toast message={toast} zIndex={9600} />
     </>
   )
 }

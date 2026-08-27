@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useState } from 'react'
+import { useToast, Toast } from '@/components/Toast'
 
 interface Affiliate {
   code: string
@@ -48,10 +49,10 @@ interface Application {
 }
 
 export default function AffiliatesPanel() {
+  const { toast, showToast } = useToast(3000)
   const [rows, setRows] = useState<Affiliate[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
   const [origin, setOrigin] = useState('https://100lights.com')
 
   // Create form
@@ -124,7 +125,6 @@ export default function AffiliatesPanel() {
     } finally { setBusyApp(null) }
   }
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
   const refLink = (c: string) => `${origin}/?ref=${c}`
   const copy = (text: string, label: string) => { void navigator.clipboard?.writeText(text); showToast(`Copied ${label}`) }
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -588,13 +588,7 @@ export default function AffiliatesPanel() {
         </div>
       )}
 
-      {toast && (
-        <div style={{
-          position: 'fixed', bottom: 24, right: 24, zIndex: 9001,
-          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10,
-          padding: '10px 16px', fontSize: 13, color: 'var(--text-primary)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-        }}>{toast}</div>
-      )}
+      <Toast message={toast} />
     </>
   )
 }

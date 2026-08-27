@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useToast, Toast } from '@/components/Toast'
 
 type CodeKind = 'promo' | 'starter'
 interface RedemptionCode {
@@ -24,10 +25,10 @@ const STATUS_COLOR: Record<RedemptionCode['status'], string> = {
 }
 
 export default function CodesPanel() {
+  const { toast, showToast } = useToast(3000)
   const [codes, setCodes] = useState<RedemptionCode[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
 
   // Create form
   const [kind, setKind] = useState<CodeKind>('promo')
@@ -52,7 +53,6 @@ export default function CodesPanel() {
 
   useEffect(() => { void load() }, [load])
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
   async function create(e: React.FormEvent) {
     e.preventDefault()
@@ -210,13 +210,7 @@ export default function CodesPanel() {
         </div>
       )}
 
-      {toast && (
-        <div style={{
-          position: 'fixed', bottom: 24, right: 24, zIndex: 9001,
-          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10,
-          padding: '10px 16px', fontSize: 13, color: 'var(--text-primary)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-        }}>{toast}</div>
-      )}
+      <Toast message={toast} />
     </>
   )
 }
