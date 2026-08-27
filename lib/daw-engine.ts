@@ -517,13 +517,19 @@ export class DawEngine extends EventTarget {
     const chain = this.effectsChains.get(trackId)
     if (!chain) return
     for (const effect of effects) {
-      if (effect.type !== 'compressor') continue
-      const p = effect.params as import('./daw-types').CompressorParams
-      if (!p.sidechainTrackId) continue
+      // Any effect that listens to another track, not just the compressor.
+      // Unmask needs exactly the same wiring — a tap from the key track into the
+      // handle's keyInput — and hard-coding 'compressor' here is what would have
+      // made the new effect silently do nothing.
+      const p = effect.params as { sidechainTrackId?: string | null; keyTrackId?: string | null }
+      const keyTrackId = p.sidechainTrackId ?? p.keyTrackId
+      if (!keyTrackId) continue
       const handle = chain.handles.get(effect.id)
       if (!handle?.keyInput) continue
-      const srcNodes = this.trackNodes.get(p.sidechainTrackId)
-      if (srcNodes) srcNodes.analyser.connect(handle.keyInput)
+      const srcNodes = this.trackNodes.get(keyTrackId)
+      // A track cannot key off itself: the tap is post-effects, so feeding it
+      // back into its own ducker is a loop that ducks itself into silence.
+      if (srcNodes && keyTrackId !== trackId) srcNodes.analyser.connect(handle.keyInput)
     }
   }
 

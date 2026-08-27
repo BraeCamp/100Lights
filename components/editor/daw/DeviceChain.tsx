@@ -10,7 +10,7 @@ import { useMidiLearn } from '@/lib/midi-learn'
 import type {
   TrackEffect, Eq3Params, CompressorParams, ReverbParams,
   DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, EffectType,
-  NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams,
+  NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams, UnmaskParams,
   MidiEffect, MidiEffectType, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams,
 } from '@/lib/daw-types'
 import {
@@ -43,6 +43,7 @@ const EFFECT_LABELS: Record<EffectType, string> = {
   multibandcomp:  'Multiband Comp',
   limiter:        'Limiter',
   dyneq:          'Dynamic EQ',
+  unmask: 'Unmask',
 }
 
 // ── Shared micro-components ────────────────────────────────────────────────────
@@ -242,6 +243,61 @@ function Eq3Controls({ effect, trackId, returnId }: { effect: TrackEffect; track
 }
 
 // ── Compressor controls ────────────────────────────────────────────────────────
+
+function UnmaskControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { project, dispatch } = useDaw()
+  const p = effect.params as unknown as UnmaskParams
+  const up = (changes: Partial<UnmaskParams>) => returnId
+    ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+    : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params: { ...p, ...changes } } })
+  return (
+    <>
+      {/* The track to listen to comes FIRST — until it is chosen the effect is a
+          straight wire, so asking anything else first is asking about nothing. */}
+      <CtrlRow label="Listen to">
+        <select
+          value={p.keyTrackId ?? ''}
+          style={{ width: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontSize: 10, padding: '1px 2px', borderRadius: 2, outline: 'none', cursor: 'pointer', boxSizing: 'border-box' }}
+          onChange={e => { e.stopPropagation(); up({ keyTrackId: e.target.value || null }) }}
+          onKeyDown={e => e.stopPropagation()}
+          onClick={e => e.stopPropagation()}
+        >
+          <option value="">Nothing yet</option>
+          {project.tracks.filter(t => t.id !== trackId).map(t => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+      </CtrlRow>
+      <CtrlRow label="Amount">
+        <RangeCtrl value={p.amount} min={0} max={1} step={0.01} onChange={v => up({ amount: v })} />
+      </CtrlRow>
+      <CtrlRow label="Attack">
+        <RangeCtrl value={p.attack} min={0.001} max={0.2} step={0.001} onChange={v => up({ attack: v })} />
+      </CtrlRow>
+      <CtrlRow label="Release">
+        <RangeCtrl value={p.release} min={0.02} max={1} step={0.01} onChange={v => up({ release: v })} />
+      </CtrlRow>
+      <CtrlRow label="Sensitivity">
+        <RangeCtrl value={p.threshold} min={-60} max={-6} step={1} onChange={v => up({ threshold: v })} />
+      </CtrlRow>
+      {/* Per-band depth. This is the whole point of the effect — a bass can duck
+          in the mids and keep its floor, a pad can step aside for a voice only
+          where the voice actually is. */}
+      <CtrlRow label="Low">
+        <RangeCtrl value={p.bandLow} min={0} max={1} step={0.01} onChange={v => up({ bandLow: v })} />
+      </CtrlRow>
+      <CtrlRow label="Body">
+        <RangeCtrl value={p.bandBody} min={0} max={1} step={0.01} onChange={v => up({ bandBody: v })} />
+      </CtrlRow>
+      <CtrlRow label="Presence">
+        <RangeCtrl value={p.bandPresence} min={0} max={1} step={0.01} onChange={v => up({ bandPresence: v })} />
+      </CtrlRow>
+      <CtrlRow label="Air">
+        <RangeCtrl value={p.bandAir} min={0} max={1} step={0.01} onChange={v => up({ bandAir: v })} />
+      </CtrlRow>
+    </>
+  )
+}
 
 function DynEqControls({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
@@ -844,6 +900,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
         {effect.type === 'compressor'     && <CompressorControls      effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'limiter'        && <LimiterControls         effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'dyneq'          && <DynEqControls           effect={effect} trackId={trackId} returnId={returnId} />}
+        {effect.type === 'unmask'         && <UnmaskControls          effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'reverb'         && <ReverbControls          effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'delay'          && <DelayControls           effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'filter'         && <FilterControls          effect={effect} trackId={trackId} returnId={returnId} />}

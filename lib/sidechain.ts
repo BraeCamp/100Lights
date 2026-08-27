@@ -20,6 +20,47 @@
  * Sensitivity is driven by threshold (dB): lower threshold = higher boost,
  * so quieter sources still trigger a full duck.
  */
+/**
+ * The envelope of a signal, as an audio-rate control signal in 0..1.
+ *
+ * Pulled out of createSidechainProcessor so the spectral ducker can build one
+ * per band instead of duplicating the chain. Same shape as before: rectify,
+ * boost so quiet sources still trigger, then two lowpasses whose cutoffs ARE the
+ * attack and release times.
+ */
+export function createEnvelopeFollower(
+  ctx: BaseAudioContext,
+  { threshold = -24, attack = 0.01, release = 0.2 }: { threshold?: number; attack?: number; release?: number },
+): { input: AudioNode; envelope: AudioNode } {
+  const rectCurve = new Float32Array(4096)
+  for (let i = 0; i < 4096; i++) rectCurve[i] = Math.abs((i / 2047.5) - 1)
+  const rect = ctx.createWaveShaper()
+  rect.curve = rectCurve
+  rect.oversample = '2x'
+
+  const threshLin = Math.pow(10, threshold / 20)
+  const boost = Math.min(40, Math.max(2, 0.5 / Math.max(0.005, threshLin)))
+  const boostCurve = new Float32Array(4096)
+  for (let i = 0; i < 4096; i++) boostCurve[i] = Math.min(1, Math.abs((i / 2047.5) - 1) * boost)
+  const boostShape = ctx.createWaveShaper()
+  boostShape.curve = boostCurve
+  boostShape.oversample = '2x'
+
+  const atk = ctx.createBiquadFilter()
+  atk.type = 'lowpass'
+  atk.frequency.value = Math.min(500, Math.max(5, 1 / (2 * Math.PI * Math.max(0.001, attack))))
+  atk.Q.value = 0.5
+
+  const rel = ctx.createBiquadFilter()
+  rel.type = 'lowpass'
+  rel.frequency.value = Math.min(200, Math.max(0.5, 1 / (2 * Math.PI * Math.max(0.01, release))))
+  rel.Q.value = 0.5
+
+  const input = ctx.createGain()
+  input.connect(rect); rect.connect(boostShape); boostShape.connect(atk); atk.connect(rel)
+  return { input, envelope: rel }
+}
+
 export function createSidechainProcessor(
   ctx: AudioContext,
   params: { threshold: number; ratio: number; attack: number; release: number }

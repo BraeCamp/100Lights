@@ -20,7 +20,44 @@ export type FollowAction = 'stop' | 'again' | 'next' | 'prev' | 'first' | 'last'
 
 // ── Effects ───────────────────────────────────────────────────────────────────
 
-export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo' | 'noisegate' | 'deesser' | 'chorus' | 'transientshaper' | 'multibandcomp' | 'limiter' | 'dyneq' | 'helios'
+export type EffectType = 'eq3' | 'compressor' | 'reverb' | 'delay' | 'filter' | 'saturator' | 'redux' | 'autopan' | 'utility' | 'lfo' | 'noisegate' | 'deesser' | 'chorus' | 'transientshaper' | 'multibandcomp' | 'limiter' | 'dyneq' | 'unmask' | 'helios'
+
+/**
+ * Unmask — duck this track in the bands where ANOTHER track is loud.
+ *
+ * A plain sidechain ducks everything whenever the key plays. This ducks only the
+ * frequencies that are actually clashing, and only while they clash, so a pad
+ * steps aside for a vocal at 400Hz without losing its top and bottom too.
+ */
+export interface UnmaskParams {
+  enabled: boolean
+  /** The track to listen to. Null = nothing to respond to, so it passes through. */
+  keyTrackId?: string | null
+  /** How far out of the way to get, 0..1. */
+  amount: number
+  /** How quickly a band steps aside, seconds. */
+  attack: number
+  /** How long it stays there after the key stops, seconds. */
+  release: number
+  /** Sensitivity in dB — lower means quieter key material still triggers it. */
+  threshold: number
+  /** Per-band depth, low → high. Lets a bass duck in the mids and keep its floor. */
+  bandLow: number
+  bandBody: number
+  bandPresence: number
+  bandAir: number
+}
+
+export function defaultUnmask(): UnmaskParams {
+  return {
+    enabled: true, keyTrackId: null, amount: 0.6,
+    attack: 0.008, release: 0.18, threshold: -30,
+    // Body and presence are where masking actually happens, so those lean in;
+    // the low band is left alone by default because ducking a bass's bottom is
+    // usually the opposite of what someone reaches for this to do.
+    bandLow: 0.35, bandBody: 1, bandPresence: 1, bandAir: 0.6,
+  }
+}
 
 export interface Eq3Params {
   enabled: boolean
@@ -169,7 +206,7 @@ export interface HeliosFxParams {
   unit: { id: string; type: string; enabled: boolean; mix: number; params: Record<string, number>; chains?: unknown[][] }
 }
 
-export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams | NoiseGateParams | DeEsserParams | ChorusParams | TransientShaperParams | MultibandCompParams | LimiterParams | DynEqParams | HeliosFxParams
+export type TrackEffectParams = Eq3Params | CompressorParams | ReverbParams | DelayParams | FilterParams | SaturatorParams | ReduxParams | AutoPanParams | UtilityParams | LfoParams | NoiseGateParams | DeEsserParams | ChorusParams | TransientShaperParams | MultibandCompParams | LimiterParams | DynEqParams | UnmaskParams | HeliosFxParams
 
 export interface TrackEffect {
   id: string
