@@ -579,7 +579,29 @@ class Voice {
     } else { this.glideFrom = targetFreq; this.glideT = 1 }
     this.freq = targetFreq
     engine.lastFreq = targetFreq
-    const rng = makeRng((note * 7919 + this.serial * 104729) >>> 0)
+    // Seeded from the NOTE alone, not from the global voice serial.
+    //
+    // Oscillator start phase is randomised (osc.rand defaults to 1), and seeding
+    // that from a counter that increments for every voice ever created meant the
+    // same clip rendered twice was a different sum every time. With unison it is
+    // not a subtle difference: six renders of one five-voice patch measured peaks
+    // of 0.420, 0.201, 0.414, 0.306, 0.222 and 0.059 — a 614% spread, and the
+    // last one is effectively silent. With the seed stable it is 0.501 six times.
+    //
+    // That variance is the "renders come back silent" fault the combine layer
+    // retries three times for, keeps a strikes list against, and refuses to cache
+    // around (freeze-cache: "peaks of 0.202, 0 and 0.0657" — the same signature).
+    // It was read as resource exhaustion; it is destructive phase cancellation.
+    //
+    // It also matters for what a listener hears, because a combined render
+    // REPLACES live playback: with a rolling seed the cache could sit several dB
+    // away from the live sound it stands in for, so a clip jumped in level the
+    // moment its render landed.
+    //
+    // Unison voices still get DIFFERENT phases from each other — rng() is called
+    // once per voice below. What is gone is the difference between one render and
+    // the next.
+    const rng = makeRng((note * 7919 + 104729) >>> 0)
     for (let i = 0; i < 3; i++) this.oscs[i].initNote(patch.oscs[i], note, rng)
     // multisample zone pick
     for (let i = 0; i < 3; i++) {
