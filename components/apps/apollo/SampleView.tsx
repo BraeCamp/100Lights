@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useApollo, Knob, Sel, ToggleBtn, UI } from './ApolloContext'
 import SamplePicker from './SamplePicker'
+import { detectTransients, gridSlices, MAX_SLICES } from '@/lib/apollo/slicing'
 
 type Marker = 'start' | 'end' | 'loopStart' | 'loopEnd' | null
 
@@ -165,28 +166,29 @@ export default function SampleView() {
     if (idx >= 0) ctx.update(p => { p.oscs[i].smp.slices = p.oscs[i].smp.slices.filter((_, j) => j !== idx) })
   }
 
+  // Slicing lives in lib/apollo/slicing.ts so it can be tested against known
+  // audio rather than by ear. Sensitivity is deliberately NOT a patch param —
+  // it is how the slices were made, not part of the sound, and the slices
+  // themselves are what gets saved.
+  const [sensitivity, setSensitivity] = useState(0.5)
+  const [sliceNote, setSliceNote] = useState<string | null>(null)
+
+  const applySlices = (r: { slices: { pos: number }[]; found: number; truncated: boolean }) => {
+    ctx.update(p => { p.oscs[i].smp.slices = r.slices })
+    // Say when slices were dropped. The old code did `.slice(0, 64)` silently,
+    // so a dense break quietly lost everything past the cap and looked like the
+    // detector had simply missed them.
+    setSliceNote(r.truncated ? `${r.found} found, kept ${r.slices.length} (max ${MAX_SLICES})` : null)
+  }
+
   const autoSlice = () => {
     if (!smp) return
-    // simple energy-derivative transient detection
-    const win = Math.max(64, Math.floor(smp.sr * 0.01))
-    const hops = Math.floor(smp.len / win)
-    const energy = new Float32Array(hops)
-    for (let hI = 0; hI < hops; hI++) {
-      let e = 0
-      for (let s = hI * win; s < (hI + 1) * win; s++) e += smp.l[s] * smp.l[s]
-      energy[hI] = Math.sqrt(e / win)
-    }
-    const slices: { pos: number }[] = []
-    let lastSlice = -10
-    for (let hI = 2; hI < hops; hI++) {
-      const prev = (energy[hI - 1] + energy[hI - 2]) / 2
-      if (energy[hI] > prev * 2 && energy[hI] > 0.02 && hI - lastSlice > 4) {
-        slices.push({ pos: (hI * win) / smp.len })
-        lastSlice = hI
-      }
-    }
-    if (!slices.length || slices[0].pos > 0.01) slices.unshift({ pos: 0 })
-    ctx.update(p => { p.oscs[i].smp.slices = slices.slice(0, 64) })
+    applySlices(detectTransients(smp.l, smp.sr, { sensitivity }))
+  }
+
+  const divide = (n: number) => {
+    if (!smp) return
+    applySlices(gridSlices(n))
   }
 
   return (
@@ -218,11 +220,24 @@ export default function SampleView() {
         </label>
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <ToggleBtn on={false} label="Auto Slice" onClick={autoSlice} title="Detect transients" />
-        <ToggleBtn on={false} label="Clear Slices" onClick={() => ctx.update(p => { p.oscs[i].smp.slices = [] })} />
+        <ToggleBtn on={false} label="Auto Slice" onClick={autoSlice} title="Chop where the hits are" />
+        <span title="How eager transient detection is — higher finds more, including quieter hits">
+          <Knob label="Sens" size={30} min={0} max={1} def={0.5} value={sensitivity}
+            onChange={setSensitivity} onCommit={autoSlice} />
+        </span>
+        {/* Equal divisions, ignoring the audio. The reliable answer when the
+            material has no transients to grip: a pad, a swung break, a fade-in. */}
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Divide</span>
+        {[4, 8, 16, 32].map(n => (
+          <ToggleBtn key={n} on={false} label={String(n)} onClick={() => divide(n)}
+            title={`Chop into ${n} equal slices`} />
+        ))}
+        <ToggleBtn on={false} label="Clear Slices" onClick={() => { setSliceNote(null); ctx.update(p => { p.oscs[i].smp.slices = [] }) }} />
         <ToggleBtn on={cfg.sliceMap === 'keys'} label="Slices → Keys" title="Map slices chromatically from C1"
           onClick={() => ctx.update(p => { p.oscs[i].smp.sliceMap = p.oscs[i].smp.sliceMap === 'keys' ? 'off' : 'keys' })} />
-        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{cfg.slices.length} slices</span>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+          {cfg.slices.length} slices{sliceNote ? ` · ${sliceNote}` : ''}
+        </span>
       </div>
     </div>
   )

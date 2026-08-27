@@ -915,7 +915,9 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
     const gain = (eng === 'multisample' ? dbToLin(zone.gain) : 1)
     // slice targeting
     let sliceStart = startN * smp.len, sliceEnd = endN * smp.len
+    let usingSlices = false
     if (eng === 'sample' && sc.sliceMap === 'keys' && sc.slices.length) {
+      usingSlices = true
       const idx = clamp(voice.note - 36, 0, sc.slices.length - 1)
       const sorted = sc.slices
       sliceStart = sorted[idx].pos * smp.len
@@ -944,6 +946,23 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
       if (rpos >= sliceStart - 1 && rpos <= sliceEnd + 1) {
         let l = sampleAt(smp, rpos, 0)
         let r = stereo ? sampleAt(smp, rpos, 1) : l
+        // Declick the slice edges.
+        //
+        // A slice boundary lands wherever the transient was, which is almost
+        // never a zero crossing — so playback starts and ends on a step, and a
+        // step is a click. 3ms of fade removes it and is far too short to hear
+        // as a fade. Only when actually playing SLICES: for an ordinary
+        // one-shot the start/end markers are the player's own choice and the
+        // amp envelope shapes them, so forcing a fade there would change how
+        // existing patches sound.
+        if (usingSlices) {
+          const fadeN = 0.003 * smp.sr
+          const dIn = rpos - sliceStart, dOut = sliceEnd - rpos
+          let g = 1
+          if (dIn < fadeN) g = clamp(dIn / fadeN, 0, 1)
+          if (dOut < fadeN) g = Math.min(g, clamp(dOut / fadeN, 0, 1))
+          l *= g; r *= g
+        }
         if (hasWarp) {
           for (const [wm, wa] of [[w1m, w1a], [w2m, w2a]]) {
             if (wa <= 0) continue

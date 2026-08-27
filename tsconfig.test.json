@@ -21,6 +21,7 @@
     "lib/audio-capture.ts",
     "lib/apollo/storage-policy.ts",
     "lib/spectral-duck.ts",
-    "lib/entitlements.ts"
+    "lib/entitlements.ts",
+    "lib/apollo/slicing.ts"
   ]
 }
