@@ -15,6 +15,7 @@
     "check:discoverable": "node scripts/check-discoverable.mjs",
     "test:storage": "tsc -p tsconfig.test.json && node scripts/storage-policy.test.mjs",
     "check:add-project": "node scripts/check-module-add-project.mjs",
+    "check:admin-menu": "node scripts/check-admin-menu.mjs",
     "check:diagnose": "node scripts/check-diagnose.mjs",
     "check:no-dropouts": "node scripts/check-no-dropouts.mjs",
     "check:realtime-play": "node scripts/check-realtime-play.mjs",
