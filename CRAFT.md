@@ -153,6 +153,46 @@ meant to hold. Move its dynamics into the FX lane as gain bars instead.
 `listen` checks this: any part written as a continuous chain is measured in the
 render, and one that gates is reported.
 
+#### In Apollo itself: change note without restarting the sound
+
+The two systems above are the DAW's. Apollo now has its own, which is what you
+reach for when the part should just be PLAYED — notes in a piano roll, nothing
+drawn.
+
+    Apollo -> Global -> NOTE CHANGE
+      Keep sound running   the source is not restarted on a legato note
+      Glide                0 = the pitch jumps, above 0 = it slides
+      Accel / Decel        shape of the slide
+
+Legato always spared the ENVELOPE. It did not spare the SOURCE: every note start
+re-ran `initNote()`, which resets oscillator phase, grain and spectral state, and
+the sample's playback position. So a sampled instrument jumped back to its first
+frame on every note — measured, a 17x waveform discontinuity against a floor of
+1.0. With this on it sits at the pitch ratio and no higher: no break at all
+beyond the note change itself.
+
+That makes it work on **ordinary samples**, as an instant pitch change or a
+gradual one, which is the case the drawn curve cannot serve: the curve needs a
+single held note, this needs nothing but notes.
+
+Three long-standing faults had to go first, and each would have bitten any glide:
+
+- **Multisample could not glide at all.** Its rate came from `voice.note`, a
+  discrete step, so a multisampled instrument jumped between notes however long
+  the glide was. It reads `curFreq` now, like every other engine.
+- **A key lifting cancelled the glide.** The mono "legato back-step" restarted
+  the voice on the note it was ALREADY playing, which reset the glide's origin to
+  its destination. Overlapping notes are the normal case from a piano roll, so in
+  practice almost every glide collapsed the moment the previous key lifted.
+- **A legato envelope could not come back.** Marked legato, the trigger was
+  skipped outright — right while the voice is held, silent when it is not. From a
+  piano roll, where note B starts exactly where note A ends, every note after the
+  first was inaudible. A releasing envelope now resumes from its current level.
+
+`npm run test:apollo` measures all of it.
+
+---
+
 #### Better: one note, dragged
 
 The chain above is still separate notes, overlapped so the ear cannot hear the

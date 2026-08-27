@@ -39,6 +39,28 @@ export default function GlobalPanel() {
         <label style={lbl}>Voices {num(g.poly, (gg, n) => { gg.poly = n }, 1, 32)}</label>
         <Knob path="global.glide" label="Glide" size={34} log />
         <ToggleBtn on={g.glideLegatoOnly} label="Glide: legato" onClick={() => ctx.update(p => { p.global.glideLegatoOnly = !p.global.glideLegatoOnly })} />
+      </div>
+      {/* Change note without restarting the sound. Legato spares the envelope;
+          this spares the SOURCE — oscillator phase, grains, and the sample's own
+          playback position — so a sampled instrument moves instead of
+          re-articulating. Glide then decides whether that move is instant or a
+          slide, and Accel/Decel shape it. Only meaningful in Legato mode, so the
+          row says so rather than silently doing nothing. */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700 }}>NOTE CHANGE</span>
+        <ToggleBtn on={g.glideContinuous} label="Keep sound running"
+          onClick={() => ctx.update(p => { p.global.glideContinuous = !p.global.glideContinuous })} />
+        <Knob path="global.glideAccel" label="Accel" size={30} />
+        <Knob path="global.glideDecel" label="Decel" size={30} />
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+          {g.mode !== 'legato'
+            ? 'needs Legato mode'
+            : g.glideContinuous
+              ? (g.glide > 0.001
+                  ? 'one sound, sliding between notes — the sample never restarts'
+                  : 'one sound, pitch jumps instantly — the sample never restarts')
+              : 'each note restarts the sound'}
+        </span>
         <label style={lbl}>PB range {num(g.pbRange, (gg, n) => { gg.pbRange = n }, 0, 48)}</label>
         <Knob label="Tune" size={34} min={-100} max={100} def={0} bipolar value={g.masterTune}
           onChange={v => { ctx.update(p => { p.global.masterTune = v }) }} format={v => `${v.toFixed(0)}ct`} />
