@@ -137,8 +137,12 @@ if (dawProject) {
   await page.evaluate(p => window.__dawDispatch?.({ type: 'LOAD_PROJECT', project: p }), dawProject)
   await page.waitForTimeout(3000)
 }
+// Cold cache, memory AND disk. A fresh browser context already gives a fresh
+// IndexedDB, but this also makes the check usable against a real logged-in
+// browser, where clearing site data would sign the user out.
+await page.evaluate(async () => { await window.__clearCombined?.() })
 const trackCount = await page.evaluate(() => window.__dawEngine?.trackNodes?.size ?? null)
-console.log(`  engine up, ${trackCount} tracks wired`)
+console.log(`  engine up, ${trackCount} tracks wired, render cache cleared`)
 
 // Brae: "To clarify, I mean when Apollo opens in Beacon." The Apollo rack is a
 // SECOND engine running beside the DAW's, so it is its own load, and testing

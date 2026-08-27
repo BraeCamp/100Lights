@@ -23,7 +23,7 @@
 import type { MidiClip } from '@/lib/daw-types'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { renderApolloProject, freezeStamp, type TrackRenderGroup } from '@/lib/apollo/daw-freeze'
-import { loadCombined, saveCombined } from '@/lib/apollo/combine-store'
+import { loadCombined, saveCombined, clearStoredCombines } from '@/lib/apollo/combine-store'
 import { keepForNextTime, setCombineWriter, setStorageTransportPlaying, storagePolicy } from '@/lib/apollo/storage-policy'
 
 // The policy module does the deciding; the store does the writing. Wiring them
@@ -939,6 +939,13 @@ export function clearCombined(): void {
   buffers.clear(); inFlight.clear(); failures.clear(); queue.length = 0
 }
 
+/** Memory AND disk. Clearing only memory left the next request pulling every
+ *  clip straight back off the disk, which looks cold from in here and is not. */
+export async function clearCombinedEverywhere(): Promise<void> {
+  clearCombined()
+  await clearStoredCombines()
+}
+
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
 export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
@@ -975,4 +982,13 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
 }
 if (typeof window !== 'undefined') {
   (window as unknown as { __combineStats?: typeof combineStats }).__combineStats = combineStats
+  // Drop every cached render, so the next play is a COLD one.
+  //
+  // Brae, on testing this: "make sure to clear the cache before each test or it
+  // might skew the results." He is right — a warm cache turns any measurement
+  // of the first play into a measurement of the cache. Clearing site data would
+  // do it too, but that signs you out and throws away your projects; this
+  // clears only the thing under test. Safe to ship: it costs a re-render, never
+  // any of your work.
+  ;(window as unknown as { __clearCombined?: typeof clearCombinedEverywhere }).__clearCombined = clearCombinedEverywhere
 }
