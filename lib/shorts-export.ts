@@ -5,10 +5,10 @@
 import JSZip from 'jszip'
 import { sql } from '@/lib/db'
 import { presignDownload } from '@/lib/r2'
+import { slugify } from '@/lib/slugify'
 
 export interface ShortRow { id: string; name: string; slug: string; r2Key: string; caption: string; duration: number }
 
-const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'short'
 
 /** Resolve a nested folder (parent → child) to its id for a user. */
 async function resolveFolder(userId: string, parent: string, child: string): Promise<string | null> {
@@ -36,7 +36,7 @@ export async function listShorts(userId: string, parent = 'Shorts', child = 'Tes
     const r2Key = media[0]?.r2Key
     if (!r2Key) continue
     out.push({
-      id: r.id, name: r.name, slug: r.slug || slugify(r.name), r2Key,
+      id: r.id, name: r.name, slug: r.slug || slugify(r.name, 'short'), r2Key,
       caption: (r.data?.postCaption as string) || r.name,
       duration: Number(media[0]?.duration ?? 0),
     })

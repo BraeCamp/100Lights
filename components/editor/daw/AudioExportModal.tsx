@@ -24,6 +24,7 @@ async function resampleBuffer(buffer: AudioBuffer, targetRate: number): Promise<
   return ctx.startRendering()
 }
 import { shareSong, shareProjectStarter } from '@/lib/community'
+import { slugify } from '@/lib/slugify'
 
 interface Props {
   onClose: () => void
@@ -37,10 +38,6 @@ type ExportFormat  = 'webm' | 'wav' | 'stems' | 'midi'
 const KEY_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const keyLabel = (key: unknown, scale: unknown) => `${typeof key === 'number' ? KEY_NAMES[key % 12] ?? 'C' : key} ${scale}`
 type StatusMessage = 'recording' | 'converting' | 'normalizing' | 'done'
-
-function slugify(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || ''
-}
 
 async function normalizeAudioBuffer(buffer: AudioBuffer, targetLufs = -16): Promise<AudioBuffer> {
   // Calculate RMS power across all channels

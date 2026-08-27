@@ -29,7 +29,11 @@ export function articlePersona(a: { voice?: string; title: string; tags: string[
   return PERSONAS[v] ?? PERSONAS.heretic
 }
 
-const slugify = (s: string) => s.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
+// Heading anchor id for published Learn articles. NOT lib/slugify.ts: this keeps
+// underscores and does not trim leading/trailing dashes or cap length. Every
+// article's table of contents and every external #deep-link into an article was
+// generated with these exact rules — changing them silently breaks those links.
+const headingAnchorId = (s: string) => s.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
 
 export interface Heading { id: string; text: string; level: 2 | 3 }
 
@@ -41,7 +45,7 @@ export function extractHeadings(body: string): Heading[] {
     if (/^```/.test(line)) { inFence = !inFence; continue }
     if (inFence) continue
     const m = line.match(/^(#{2,3})\s+(.+?)\s*$/)
-    if (m) out.push({ id: slugify(m[2]), text: m[2].replace(/[*_`]/g, ''), level: m[1].length as 2 | 3 })
+    if (m) out.push({ id: headingAnchorId(m[2]), text: m[2].replace(/[*_`]/g, ''), level: m[1].length as 2 | 3 })
   }
   return out
 }
