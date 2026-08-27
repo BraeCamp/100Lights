@@ -83,8 +83,19 @@ function referencedSampleIds(patch: ApolloPatch): string[] {
 
 /** Load every sample the patch references that the engine doesn't have yet.
  *  Returns the ids that were restored (empty = nothing to do). */
-export async function restorePatchSamples(patch: ApolloPatch, engine: ApolloEngine): Promise<string[]> {
-  if (!engine.ready) return []
+export async function restorePatchSamples(
+  patch: ApolloPatch,
+  engine: ApolloEngine,
+  opts: { requireReady?: boolean } = {},
+): Promise<string[]> {
+  // The RENDER path has no worklet: daw-freeze builds a bare ApolloEngine purely
+  // to render, and its samples are forwarded to the render worker rather than
+  // posted to a node. Requiring `ready` there meant a combine never loaded any
+  // samples at all — so every clip on a sampled instrument rendered silence and
+  // was struck as unrenderable, while synth clips on the same song were fine.
+  // loadSample's post is null-safe, so populating the cache without a node is
+  // exactly what is wanted.
+  if (opts.requireReady !== false && !engine.ready) return []
   const restored: string[] = []
   for (const id of referencedSampleIds(patch)) {
     if (engine.samples.has(id) || engine.getSpectral(id)) continue

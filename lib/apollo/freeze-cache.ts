@@ -746,10 +746,14 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         const estimateMs = (set: { clip: MidiClip }[], voiceSec: number): number =>
           (voiceSec + SPAN_WEIGHT * spanSeconds(set)) * msPerUnit
 
+        // Windows that came back with nothing THIS pass. Skipped rather than
+        // used to abandon the project — see the loop below.
+        const failedHere = new Set<string>()
+
         /** Clips ordered by how soon the playhead reaches them. */
         const byUrgency = () => {
           const head = playheadBeat
-          return [...renderable()].sort((a, b) => {
+          return [...renderable()].filter(w => !failedHere.has(w.key)).sort((a, b) => {
             // Anything the playhead has already passed goes last: it is only
             // wanted if the user scrolls back, and by then it can be fetched.
             const da = a.clip.startBeat + a.clip.durationBeats < head ? Infinity : Math.abs(a.clip.startBeat - head)
@@ -902,8 +906,25 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           learnRenderCost(windowVoiceSec + SPAN_WEIGHT * spanSeconds(window), Date.now() - tWin)
           await keep(rendered, window)
           timings.batches++
-          // A window that lands nothing would loop forever on the same clips.
-          if (buffers.size === before) { rememberBad(window.map(w => w.key)); break }
+          // A window that lands nothing must not be retried immediately — the
+          // ordering would hand back the same clips forever — but it must not
+          // stop the project either.
+          //
+          // It used to `break`, which abandoned every clip still missing. One
+          // silent window at clip three left the other twenty stuck at "2/23",
+          // for the whole session, with nothing to restart it: the only thing
+          // that re-requests a combine is pausing after a play, so a user who
+          // never pressed play never got the rest. Worse, the clips were then
+          // struck as unrenderable without ever having been ATTEMPTED, and three
+          // such loads condemn them permanently.
+          //
+          // So: set this window aside and carry on with the rest.
+          if (buffers.size === before) {
+            for (const w of window) failedHere.add(w.key)
+            rememberBad(window.map(w => w.key))
+            await gap(Date.now() - tWin)
+            continue
+          }
           await gap(Date.now() - tWin)
         }
         // (The measurements that shaped the two-phase loop above are recorded
@@ -913,8 +934,10 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // it contradicted its own evidence.)
         timings.renderMs = Date.now() - tRender
         setProgress({ done: wanted.length - missing().length, total: wanted.length, active: false, phase: 'idle' })
-        const stubborn = renderable().map(w => w.key)
-        rememberBad(stubborn)     // do not chase these again next time
+        // Only what was actually ATTEMPTED and failed. `renderable()` here is
+        // everything still missing, which included clips the loop never reached
+        // — striking those is condemning a clip for work that was never done.
+        rememberBad([...failedHere])
         // Say which it was. "Would not render" was reported for clips that had
         // rendered perfectly and were then evicted, and that wrong label cost
         // real time chasing a rendering bug that did not exist.

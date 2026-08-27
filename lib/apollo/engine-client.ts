@@ -65,6 +65,38 @@ export function collectFxRanges(units: FxUnit[], out: Record<string, [number, nu
   }
 }
 
+// How many renders each path has served. The worker falls back silently by
+// design, which is right for reliability and terrible for knowing whether the
+// fast path is running at all — so it is counted, and published below.
+let workerRenders = 0
+let fallbackRenders = 0
+
+// ONE worker for the page, not one per engine. daw-freeze builds a fresh
+// ApolloEngine for every render, so a per-instance worker meant a new worker —
+// and a fresh engine.js load inside it — on every combine.
+let sharedWorker: Worker | null = null
+let sharedWorkerFailed = false
+const sharedWorkerAssets = new Set<string>()
+let renderSeq = 0
+
+function getSharedRenderWorker(): Worker | null {
+  if (sharedWorker || sharedWorkerFailed) return sharedWorker
+  // An escape hatch, and the only honest way to compare the two paths on the
+  // same machine: localStorage['apollo-no-render-worker'] = '1'.
+  try { if (localStorage.getItem('apollo-no-render-worker') === '1') { sharedWorkerFailed = true; return null } } catch { /* private mode */ }
+  try {
+    sharedWorker = new Worker(new URL('./render.worker.ts', import.meta.url), { type: 'module' })
+    sharedWorker.onerror = () => { sharedWorkerFailed = true; sharedWorker = null }
+  } catch { sharedWorkerFailed = true }
+  return sharedWorker
+}
+
+function publishRenderPath(): void {
+  if (typeof window === 'undefined') return
+  ;(window as unknown as { __apolloRenderPath?: unknown }).__apolloRenderPath =
+    () => ({ worker: workerRenders, mainThread: fallbackRenders })
+}
+
 export class ApolloEngine extends EventTarget {
   ctx: AudioContext | null = null
   node: AudioWorkletNode | null = null
@@ -426,6 +458,133 @@ export class ApolloEngine extends EventTarget {
    * Item `i` occupies channels `i*2` (left) and `i*2+1` (right) — see the note
    * at the return for why this is not split into per-item buffers.
    */
+  /**
+   * Combine through a WORKER, with no AudioContext at all.
+   *
+   * The OfflineAudioContext path below works, but it has two costs that are not
+   * incidental. Chrome runs an OfflineAudioContext carrying JS worklets on the
+   * MAIN THREAD, so every render freezes the interface — measured in the studio
+   * at 100-494 ms per pass, repeatedly. And each render builds a fresh context,
+   * which is a limited resource: exhaust them and renders come back empty, which
+   * is the "Connecting nodes after the context has been closed" warning and the
+   * silent renders the combine layer retries and strikes clips for. Measured
+   * loading "the quiet part": 5 to 7 clips in 115 seconds, three quarters of
+   * attempts landing nothing.
+   *
+   * A combine needs none of it. The graph is Apollo engines summed into
+   * channels — no convolver, no biquad, no browser DSP — and the engine is
+   * plain JavaScript. So it runs on a thread nobody is drawing on, and the
+   * asynchronous-setup race disappears with it, because there the setup
+   * messages are ordinary function calls.
+   *
+   * Returns null if a worker cannot be had, and the caller falls through to the
+   * path that exists today.
+   */
+  private getRenderWorker(): Worker | null { return getSharedRenderWorker() }
+
+  /** Tables and samples: sent ONCE per worker. A wavetable with its mipmaps is
+   *  around half a megabyte, and re-sending them per render would move the cost
+   *  from DSP to serialisation without moving it off the main thread. */
+  private assetMessagesFor(patch: ApolloPatch): unknown[] {
+    const out: unknown[] = []
+    for (const id of new Set(patch.oscs.map(o => o.wt.tableId))) {
+      if (sharedWorkerAssets.has('t:' + id)) continue
+      const user = patch.userTables?.[id]
+      const built = user ? userTableWithMips(user.data, user.frames) : factoryTableWithMips(id)
+      if (!built) continue
+      sharedWorkerAssets.add('t:' + id)
+      out.push({ type: 'table', id, ...copyBuilt(built) })
+    }
+    for (const [id, smp] of this.samples) {
+      if (sharedWorkerAssets.has('s:' + id)) continue
+      sharedWorkerAssets.add('s:' + id)
+      out.push({ type: 'sample', id, sr: smp.sr, len: smp.len, l: new Float32Array(smp.l), r: smp.r ? new Float32Array(smp.r) : null })
+      const an = this.spectralCache.get(id)
+      if (an) out.push({ type: 'spectral', id, frames: an.frames, bins: an.bins, hop: an.hop, sr: an.sr, mags: new Float32Array(an.mags), phases: new Float32Array(an.phases), onsets: new Uint8Array(an.onsets) })
+    }
+    return out
+  }
+
+  /** Everything an engine needs that is specific to THIS item. */
+  private jobMessagesFor(patch: ApolloPatch, notes: { t: number; dur: number; note: number; vel: number }[]): unknown[] {
+    const msgs: unknown[] = []
+    const ranges: Record<string, [number, number]> = {}
+    for (const p of PARAMS) ranges[p.path] = [p.min, p.max]
+    collectFxRanges(patch.fxMain, ranges)
+    collectFxRanges(patch.fxBus1, ranges)
+    collectFxRanges(patch.fxBus2, ranges)
+    msgs.push({ type: 'ranges', ranges })
+    patch.lfos.forEach((lfo, i) => {
+      msgs.push({ type: 'lfoLut', index: i, main: lfoLutFromPoints(lfo.points), y: lfo.mode === 'path' ? lfoLutFromPoints(lfo.pathPoints) : null })
+    })
+    for (const row of patch.matrix) if (row.curve?.length) msgs.push({ type: 'remapLut', rowId: row.id, lut: lfoLutFromPoints(row.curve) })
+    msgs.push({ type: 'patch', patch })
+    const events: { t: number; type: string; note: number; vel?: number }[] = []
+    for (const n of notes) {
+      events.push({ t: n.t, type: 'noteOn', note: n.note, vel: n.vel })
+      events.push({ t: n.t + n.dur, type: 'noteOff', note: n.note })
+    }
+    msgs.push({ type: 'schedule', events })
+    if (patch.clipMode || patch.arp.on) msgs.push({ type: 'transport', playing: true, bpm: patch.global.bpm })
+    return msgs
+  }
+
+  private renderViaWorker(
+    items: { patch: ApolloPatch; notes: { t: number; dur: number; note: number; vel: number }[] }[],
+    frames: number,
+    sr: number,
+  ): Promise<AudioBuffer | null> {
+    // NOT gated on this.ctx. daw-freeze builds `new ApolloEngine()` for every
+    // render, so on that path there is no AudioContext at all — requiring one
+    // sent every combine straight back to the main-thread renderer while
+    // silently spawning a worker per call. An AudioBuffer can be constructed
+    // without a context.
+    const w = this.getRenderWorker()
+    if (!w) return Promise.resolve(null)
+    const assets: unknown[] = []
+    for (const it of items) assets.push(...this.assetMessagesFor(it.patch))
+    if (assets.length) {
+      try { w.postMessage({ type: 'assets', msgs: assets }) }
+      catch { return Promise.resolve(null) }
+    }
+    const id = ++renderSeq
+    const jobs = items.map(it => ({ messages: this.jobMessagesFor(it.patch, it.notes) }))
+    return new Promise<AudioBuffer | null>(resolve => {
+      // Generous, because a slow machine rendering a long window is not a
+      // failure — but bounded, because a wedged worker must not stall the queue.
+      const timer = setTimeout(() => { cleanup(); resolve(null) }, 60_000)
+      const onMsg = (e: MessageEvent) => {
+        const d = e.data as { type?: string; id?: number; channels?: Float32Array[]; message?: string }
+        if (d?.id !== id) return
+        if (d.type === 'progress') return
+        cleanup()
+        if (d.type !== 'done' || !d.channels?.length) {
+          if (d?.message) console.warn('[apollo] worker render failed, falling back:', d.message)
+          resolve(null)
+          return
+        }
+        try {
+          const buf = this.ctx
+            ? this.ctx.createBuffer(d.channels.length, frames, sr)
+            : new AudioBuffer({ numberOfChannels: d.channels.length, length: frames, sampleRate: sr })
+          // The cast is the structured-clone boundary: a Float32Array arriving
+          // from a worker is typed over ArrayBufferLike (it could in principle be
+          // backed by a SharedArrayBuffer), while copyToChannel wants a plain
+          // ArrayBuffer. These are transferred, so they are always plain.
+          for (let c = 0; c < d.channels.length; c++) {
+            buf.copyToChannel(d.channels[c] as Float32Array<ArrayBuffer>, c)
+          }
+          workerRenders++
+          resolve(buf)
+        } catch { resolve(null) }
+      }
+      const cleanup = () => { clearTimeout(timer); w.removeEventListener('message', onMsg) }
+      w.addEventListener('message', onMsg)
+      try { w.postMessage({ type: 'render', id, jobs, frames, sampleRate: sr }) }
+      catch { cleanup(); resolve(null) }
+    })
+  }
+
   async renderManyToBuffer(
     items: { patch: ApolloPatch; notes: { t: number; dur: number; note: number; vel: number }[] }[],
     seconds: number,
@@ -433,6 +592,11 @@ export class ApolloEngine extends EventTarget {
     if (!items.length) return null
     const sr = this.ctx?.sampleRate || 48000
     const frames = Math.ceil(seconds * sr)
+    publishRenderPath()
+    const fromWorker = await this.renderViaWorker(items, frames, sr)
+    if (fromWorker) { publishRenderPath(); return fromWorker }
+    fallbackRenders++
+    publishRenderPath()
     const octx = new OfflineAudioContext(items.length * 2, frames, sr)
     await octx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const merger = octx.createChannelMerger(items.length * 2)

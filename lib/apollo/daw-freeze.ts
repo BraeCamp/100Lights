@@ -28,6 +28,7 @@
 // always correct, so it is what happens.
 
 import type { DawProject, DawClip, MidiClip, AudioClip, ApolloInstrumentParams } from '@/lib/daw-types'
+import { restorePatchSamples } from './sample-store'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { ApolloEngine } from '@/lib/apollo/engine-client'
 import { saveBounceToLibrary } from '@/lib/apollo/sample-store'
@@ -252,6 +253,14 @@ export async function renderApolloProject(
   }))
 
   const engine = new ApolloEngine()
+  // Load every patch's samples BEFORE rendering. Without this the combine ran
+  // with an empty sample cache, so a sampled instrument rendered silence and the
+  // cache layer struck the clip as unrenderable. Measured on "the quiet part":
+  // all 7 synth clips landed and all 16 sampled ones failed, every time.
+  for (const g of live) {
+    try { await restorePatchSamples(g.patch, engine, { requireReady: false }) }
+    catch { /* a sample that will not load leaves that clip playing live */ }
+  }
   // One merged buffer, track i on channels i*2 and i*2+1. Slices are cut
   // straight out of it — see renderManyToBuffer for why it isn't split first.
   const merged = await engine.renderManyToBuffer(items, seconds)
