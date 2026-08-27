@@ -131,19 +131,25 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
   }
 
   // ── Feel ──────────────────────────────────────────────────────────────────
-  const flat = sym.groove.filter(g => g.onGridPct >= target.maxOnGridPct && g.notes > 8)
+  // A part written as ONE continuous sound is exempt from all of this. Timing
+  // places an attack and it has one attack in the whole song; velocity
+  // re-articulates, which is the thing it exists not to do. Flagging it for
+  // sitting on the grid is the tool asking a held note to behave like a played
+  // one.
+  const held = new Set((sym.continuous ?? []).map(c => c.track))
+  const flat = sym.groove.filter(g => !held.has(g.track) && g.onGridPct >= target.maxOnGridPct && g.notes > 8)
   for (const g of flat)
     add('warn', 'feel', `"${g.track}" is ${g.onGridPct}% dead on the grid`,
       'Nothing about this part is played. Give it a consistent lean, not symmetric jitter.', g.onGridPct)
 
-  const noLean = sym.groove.filter(g => Math.abs(g.meanOffsetMs) < 1.5 && g.spreadMs > 0.5 && g.notes > 16)
+  const noLean = sym.groove.filter(g => !held.has(g.track) && Math.abs(g.meanOffsetMs) < 1.5 && g.spreadMs > 0.5 && g.notes > 16)
   if (noLean.length >= Math.max(2, sym.groove.length - 1))
     add('warn', 'feel',
       `every part averages within ±1.5 ms of the grid (${noLean.map(g => g.track).join(', ')})`,
       'Random jitter around zero is motion without feel — it measures loose and still sounds like a machine, because no part leans. ' +
       'Give each part a DIRECTION: snare and clap a few ms late, bass slightly early, hats loosest. That difference between parts is what a groove is.')
 
-  const stiff = sym.dynamics.filter(d => d.spread < target.minVelocitySpread)
+  const stiff = sym.dynamics.filter(d => !held.has(d.track) && d.spread < target.minVelocitySpread)
   for (const d of stiff)
     add('note', 'feel', `"${d.track}" velocities barely vary (±${d.spread})`,
       'Vary velocity with the bar — downbeats harder, ghost notes much softer.', d.spread)
@@ -202,6 +208,20 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
   for (const o of (sym.overflow ?? []).slice(0, 3))
     add('note', 'voices', `"${o.track}" has a note running ${o.over} beats past the end of "${o.clip}"`,
       'It gets cut at playback. Shorten the note or lengthen the clip.', o.over)
+
+  // ── Continuity ────────────────────────────────────────────────────────────
+  // A part written as one unbroken sound that gates in the render is the single
+  // most audible kind of broken intent: the ear hears a new note arriving where
+  // one note was supposed to move.
+  for (const c of sym.continuous ?? []) {
+    if (c.gatedFrames == null || !c.frames) continue
+    if (c.gatedFrames > Math.max(2, c.frames * 0.01)) {
+      add('warn', 'continuity', `"${c.track}" is written as one continuous sound but the render gates it ${c.gatedFrames} times`,
+        'A legato chain needs all three: the patch in legato mode with a legato amp envelope, notes that OVERLAP, and — if it should ' +
+        'cross section boundaries — a single clip (`continuous: true` in song-kit). A gap of any size ends the voice and no glide setting recovers it.',
+        c.gatedFrames)
+    }
+  }
 
   // ── Register ──────────────────────────────────────────────────────────────
   for (const c of sym.registers.clashes.slice(0, 4))

@@ -143,6 +143,27 @@ export function play(notes, role, g, { bpb = 4 } = {}) {
   }))
 }
 
+/**
+ * Make a line CONTINUOUS: every note stretched to overlap the next.
+ *
+ * A legato patch only glides when a voice is still sounding as the next note
+ * arrives — a gap of even a few milliseconds ends the voice, and then no amount
+ * of glide or envelope setting brings it back. Measured on a sub: notes with a
+ * gap drop to 0% of peak through the change, overlapping notes in legato mode
+ * hold 88-97%.
+ *
+ * So this is not a stylistic helper, it is the precondition. Use it for anything
+ * meant to be heard as one sound that moves — a sub, a drone, a bowed line.
+ */
+export function legatoChain(notes, { overlapBeats = 0.25, tailBeats = 1 } = {}) {
+  const out = [...notes].sort((a, b) => a.beat - b.beat)
+  return out.map((n, i) => {
+    const next = out[i + 1]
+    const end = next ? next.beat + overlapBeats : n.beat + n.durationBeats + tailBeats
+    return { ...n, durationBeats: Math.max(0.05, end - n.beat) }
+  })
+}
+
 // ═══ HARMONY ════════════════════════════════════════════════════════════════
 
 const PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }

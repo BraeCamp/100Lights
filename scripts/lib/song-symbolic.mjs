@@ -272,6 +272,29 @@ export function overflow(dp) {
   return out
 }
 
+/**
+ * Which parts were WRITTEN to be one continuous sound.
+ *
+ * A line whose notes overlap is asking to be heard as a single sound that
+ * changes pitch rather than a series of separate ones — a sub, a drone, a bowed
+ * line. That intent is visible in the note data, and whether the render honours
+ * it is checkable, so `listen` does both: it spots the intent here and then
+ * looks at the stem to see whether the sound actually held.
+ */
+export function continuousParts(trackNotes) {
+  const out = []
+  for (const [name, notes] of Object.entries(trackNotes)) {
+    if (notes.length < 4) continue
+    let overlaps = 0
+    for (let i = 0; i < notes.length - 1; i++) {
+      if (notes[i].beat + notes[i].durationBeats > notes[i + 1].beat + 1e-6) overlaps++
+    }
+    const ratio = overlaps / (notes.length - 1)
+    if (ratio >= 0.8) out.push({ track: name, notes: notes.length, overlapRatio: round(ratio, 2) })
+  }
+  return out
+}
+
 /** Everything symbolic, in one call. */
 export function symbolic(dp) {
   const notes = trackNotes(dp)
@@ -284,6 +307,7 @@ export function symbolic(dp) {
     dynamics: dynamics(dp, notes),
     registers: registers(pitched),
     polyphony: polyphony(dp, notes),
+    continuous: continuousParts(notes),
     overflow: overflow(dp),
     totalNotes: Object.values(notes).reduce((a, b) => a + b.length, 0),
     trackNotes: notes,

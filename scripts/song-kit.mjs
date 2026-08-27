@@ -105,6 +105,12 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
   const clips = []
   let beat = 0
   const sectionAt = {}
+  // A track marked `continuous` is collected here and emitted as ONE clip at the
+  // end, because a clip boundary ends a note and a note ending ends a legato
+  // chain. One clip is the wrong default — per-section clips are what make an
+  // arrangement editable — but for a sub that is meant to be a single unbroken
+  // sound for the length of the song it is the only representation that works.
+  const continuous = {}
   for (const sec of sections) {
     sectionAt[sec.name] = beat
     const len = sec.bars * bpb
@@ -123,10 +129,22 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
         // Keep the note inside its clip. Humanising pushes late notes later, and
         // a note that runs past the clip boundary is reported as a fault by
         // check-notes and gets cut at playback anyway.
-        const durationBeats = +Math.max(0.05, Math.min(n.durationBeats, len - startBeat)).toFixed(4)
+        //
+        // EXCEPT on a continuous track, where the clamp would cut exactly the
+        // overlap a legato chain depends on — at every section seam the sound
+        // would stop and restart, which is the thing the track exists to avoid.
+        // Those notes are clamped later, against the single clip that holds them.
+        const durationBeats = t.continuous
+          ? +Math.max(0.05, n.durationBeats).toFixed(4)
+          : +Math.max(0.05, Math.min(n.durationBeats, len - startBeat)).toFixed(4)
         const slot = `${n.pitch}@${startBeat.toFixed(3)}`
         const prev = bySlot.get(slot)
         if (!prev || (n.velocity ?? 0) > (prev.velocity ?? 0)) bySlot.set(slot, { ...n, startBeat, durationBeats })
+      }
+      if (t.continuous) {
+        const acc = (continuous[t.key] ??= { track: t, notes: [] })
+        for (const n of bySlot.values()) acc.notes.push({ ...n, startBeat: n.startBeat + beat })
+        continue
       }
       clips.push({
         kind: 'midi', id: uid(), trackId: t.id, name: `${t.name} · ${sec.name}`,
@@ -145,6 +163,18 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
     }
     beat += len
   }
+  for (const { track: t, notes } of Object.values(continuous)) {
+    if (!notes.length) continue
+    const end = Math.max(...notes.map(n => n.startBeat + n.durationBeats))
+    clips.push({
+      kind: 'midi', id: uid(), trackId: t.id, name: `${t.name} · whole`,
+      startBeat: 0, durationBeats: Math.max(beat, Math.ceil(end)),
+      notes: notes.sort((a, b) => a.startBeat - b.startBeat)
+        .map(({ id, ...rest }) => ({ ...rest, durationBeats: +Math.min(rest.durationBeats, Math.max(beat, Math.ceil(end)) - rest.startBeat).toFixed(4) })),
+      isDrumClip: !!t.isDrum, presetId: t.presetId ?? null, rollFx: t.rollFx ?? {},
+    })
+  }
+
   const songBeats = beat
 
   const byKey = Object.fromEntries(tracks.map(t => [t.key, t.id]))

@@ -129,6 +129,37 @@ for (const [name, p] of Object.entries(stemFiles)) {
 
 const sym = dp ? symbolic(dp) : null
 
+// Did the parts written as ONE continuous sound actually stay continuous?
+//
+// The envelope follower here uses a 60 ms window on purpose. At 30-60 Hz one
+// cycle is 17-33 ms, so a short RMS window measures the waveform's own zero
+// crossings rather than its amplitude — with a 5 ms window every sub on earth
+// looks like it is gating, which is exactly the false alarm this check exists
+// to avoid raising.
+if (sym?.continuous?.length) {
+  for (const c of sym.continuous) {
+    const p = stemFiles[c.track]
+    if (!p) continue
+    const w = readWav(readFileSync(p))
+    const mono = Float32Array.from(w.l, (v, i) => (v + w.r[i]) * 0.5)
+    const win = Math.floor(0.06 * w.sr), step = Math.floor(0.02 * w.sr)
+    const env = []
+    for (let i = 0; i + win <= mono.length; i += step) {
+      let m = 0
+      for (let k = i; k < i + win; k++) { const a = Math.abs(mono[k]); if (a > m) m = a }
+      env.push(m)
+    }
+    const peak = Math.max(...env, 1e-9)
+    let first = env.findIndex(v => v > peak * 0.15)
+    let last = env.length - 1
+    while (last > first && env[last] < peak * 0.15) last--
+    const body = first >= 0 ? env.slice(first, last + 1) : []
+    c.gatedFrames = body.filter(v => v < peak * 0.2).length
+    c.frames = body.length
+    c.quietestPct = body.length ? +(Math.min(...body) / peak * 100).toFixed(1) : null
+  }
+}
+
 // ── Judge ───────────────────────────────────────────────────────────────────
 const findings = sym
   ? judge({ symbolic: sym, mix, stems, target, refused: renderReport?.refused ?? [] })

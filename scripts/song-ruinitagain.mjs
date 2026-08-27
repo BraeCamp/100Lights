@@ -35,8 +35,8 @@ import { homedir } from 'os'
 import { execFileSync } from 'child_process'
 import { fileURLToPath } from 'url'
 import { uid, N, assemble, dipInto, lift, bar } from './song-kit.mjs'
-import { groove, play, voice, parseChord, intoSlot, checkSlots, stagger, densityArc, thin, pump, rng } from './lib/craft.mjs'
-import { kick, snare, gritHats, subBass, steadyBass, boom, coldKeys, pad as darkPad } from './apollo-voices.mjs'
+import { groove, play, voice, parseChord, intoSlot, checkSlots, stagger, densityArc, thin, pump, legatoChain, rng } from './lib/craft.mjs'
+import { kick, snare, gritHats, glideSub, steadyBass, boom, coldKeys, pad as darkPad } from './apollo-voices.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT_DIR = join(homedir(), 'Desktop', '100lights-ai-renders')
@@ -104,9 +104,25 @@ const hatBar = () => {
 /** The chorus accent: one deep hit on the start of a bar, where the hats aren't. */
 const boomBar = (i) => [{ pitch: intoSlot(ROOTS[LOOP[i % 4]] - 12, [26, 40]), beat: 0, durationBeats: 2.6, velocity: 96 }]
 
+/**
+ * The sub is ONE note for the length of the song. It changes pitch; it never
+ * stops.
+ *
+ * Brae, on "cross my heart": "like a single sub note, a looooong sub sound that
+ * changes notes without stopping or restarting." Measured, ours was doing the
+ * opposite — a gap between notes drops the sound to 0% of peak through every
+ * change, which is a new note arriving four times a bar rather than one note
+ * moving.
+ *
+ * Three things make it continuous and all three are required: the `glideSub`
+ * patch (legato mode, legato envelope, glide), `legatoChain()` to overlap the
+ * notes so a voice is always still sounding when the next arrives, and
+ * `continuous: true` on the track so the whole song is ONE clip — a clip
+ * boundary ends a note, and an ended note ends the chain.
+ */
 const subBar = (i) => {
   const root = intoSlot(ROOTS[LOOP[i % 4]] - 12, 'sub')
-  return [{ pitch: root, beat: 0, durationBeats: BPB - 0.25, velocity: 90 }]
+  return [{ pitch: root, beat: 0, durationBeats: BPB, velocity: 88 }]
 }
 
 /**
@@ -188,7 +204,8 @@ export function build() {
     { key: 'hats', id: uid(), name: 'Hats', presetId: null, volume: 0.30, pan: 0.18, color: '#fda4af', instrument: { type: 'apollo', params: gritHats() } },
     // Turned down: "the sub needs to be lower". It was carrying 30-48% of the
     // whole record's energy and swallowing the bass it is supposed to support.
-    { key: 'sub',  id: uid(), name: 'Sub',  presetId: null, volume: 0.22, color: '#c084fc', instrument: { type: 'apollo', params: subBass() } },
+    { key: 'sub',  id: uid(), name: 'Sub',  presetId: null, volume: 0.30, color: '#c084fc',
+      continuous: true, instrument: { type: 'apollo', params: glideSub() } },
     { key: 'boom', id: uid(), name: 'Boom', presetId: null, volume: 0.34, color: '#fbbf24', instrument: { type: 'apollo', params: boom() } },
     // The loudest fader in the song, because that is what the references do.
     { key: 'bass', id: uid(), name: 'Bass', presetId: null, volume: 0.74, color: '#a78bfa', instrument: { type: 'apollo', params: steadyBass() } },
@@ -239,6 +256,15 @@ export function build() {
     const ROLE = { kick: 'kick', clap: 'clap', hats: 'hats', sub: 'sub', bass: 'bass', keys: 'keys', pad: 'pad', boom: 'perc' }
     const played = {}
     for (const [k, ns] of Object.entries(parts)) {
+      if (k === 'sub') {
+        // No groove and no per-note velocity on a continuous sound. Micro-timing
+        // places an ATTACK, and this has one attack in the whole song; changing
+        // velocity per note would re-articulate the very thing that is meant to
+        // hold. Its dynamics come from the FX lane instead.
+        played[k] = legatoChain(ns, { overlapBeats: 0.5, tailBeats: 2 })
+          .map(n => N(n.pitch, n.beat, n.durationBeats, 88))
+        continue
+      }
       played[k] = play(ns, ROLE[k] ?? 'default', g, { bpb: BPB })
         .map(n => N(n.pitch, n.beat, n.durationBeats, Math.max(1, Math.round(n.velocity * dyn))))
     }
@@ -252,6 +278,10 @@ export function build() {
   const W = b => b * BPB
 
   const bars = [
+    // The sub's arc lives here now: one sound whose LEVEL moves through the song,
+    // rather than notes that get louder and quieter by being re-struck.
+    bar('sub', 0, W(8), { gain: 0.55 }, [[0, 1], [W(6), 0.4], [W(8), 0]], 0),
+    bar('sub', at['Thin'], W(8), { gain: 0.72 }, [[0, 0], [W(1), 1], [W(7), 1], [W(8), 0]], 0),
     // Standing filters, not gestures: the pad is a floor under the record and
     // has no business in the singer's octave, and the bass's sync harmonics were
     // landing in the low mids instead of the bass band.

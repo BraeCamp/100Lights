@@ -554,6 +554,50 @@ export const rimSnap = () => patch('Rim', p => {
 })
 
 /**
+ * One continuous sub that CHANGES NOTE without stopping.
+ *
+ * Brae, on "cross my heart": "it was like a single sub note, like a looooong sub
+ * sound that changes notes without stopping or restarting the sound."
+ *
+ * Measured, our sub was doing the opposite. Rendering three notes and watching
+ * the amplitude through each change:
+ *
+ *     poly, notes with a gap (what we had)     drops to   0% of peak
+ *     poly, notes overlapping                            52%
+ *     LEGATO, notes overlapping                       88-97%
+ *
+ * So it was stopping dead and starting again twice a bar. Three things have to
+ * be true together and none of them works alone:
+ *
+ *   · `global.mode = 'legato'` — the engine only treats a note as legato when a
+ *     voice is ALREADY SOUNDING (engine.js:2449), so this is what makes the
+ *     other two mean anything
+ *   · `envs[0].legato = true` — the amplitude envelope is then not retriggered
+ *     at all (engine.js:597), which is what stops the re-attack
+ *   · the NOTES MUST OVERLAP. A gap between them ends the voice and no setting
+ *     recovers it. `craft.legatoChain()` is what guarantees that.
+ *
+ * `glideLegatoOnly:false` lets the pitch slide on every change rather than only
+ * on ones the engine has already decided are legato.
+ */
+export const glideSub = () => patch('Glide Sub', p => {
+  p.global.mode = 'legato'
+  p.global.glide = 0.10
+  p.global.glideLegatoOnly = false
+  osc(p, 0, { level: 0.92, enabled: true })
+  p.oscs[0].wt.tableId = 'basic-shapes'
+  p.oscs[0].wt.pos = 0
+  p.sub = { ...p.sub, enabled: true, shape: 'sine', octave: -1, level: 0.38, ref: 'lowest', direct: false }
+  // Long attack and release, full sustain, and legato on: this envelope is meant
+  // to open once at the top of the song and close once at the end.
+  env(p, 0, { attack: 0.05, decay: 0.6, sustain: 1.0, release: 0.9, legato: true })
+  // Fixed filter, no envelope — the same rule as steadyBass. A sub that changes
+  // tone as it moves is a different sound arriving, not one sound moving.
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.26, res: 0.04, drive: 0.14 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -24, ratio: 3 }, { mix: 1 }))
+})
+
+/**
  * A bass whose TONE does not move — only its loudness does.
  *
  * Brae, on the first attempt: "the bass seems to change its tone to sound like a
@@ -650,6 +694,7 @@ export const VOICES = {
   rim:    { build: rimSnap,              notes: '48:0:0.12',            seconds: 0.8 },
   boom:   { build: boom,                 notes: '33:0:1.2',             seconds: 2.4 },
   steady: { build: steadyBass,           notes: '46:0:0.5,46:0.75:0.5', seconds: 2.0 },
+  glidesub:{ build: glideSub,            notes: '34:0:2.2,32:2:2.2,30:4:2', seconds: 7.0 },
 }
 
 if (process.argv.includes('--audit')) {
