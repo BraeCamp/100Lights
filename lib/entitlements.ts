@@ -145,7 +145,7 @@ export function can(plan: Plan, feature: Feature): boolean {
 export interface Entitlements {
   // ── Scale / quotas ──
   projectsMax: number               // cloud projects (local save is always unlimited)
-  storageMb: number                 // total R2 media
+  storageMb: number                 // media AND project data (lib/storage-usage.ts)
   maxUploadMb: number               // per-file upload cap
   syncedSounds: number              // account-synced custom sounds
   communityPostsPerDay: number
@@ -163,7 +163,18 @@ export interface Entitlements {
 
 export const ENTITLEMENTS: Record<Plan, Entitlements> = {
   free: {
-    projectsMax: 5,
+    // Space is the limit, not a count.
+    //
+    // Brae: "Do make it so that there's some cloud space for free users, but
+    // not a huge amount. They'd have 5-10 projects worth… Maybe we can limit by
+    // storage space like we're doing for others."
+    //
+    // Project data counts toward storage now (lib/storage-usage.ts), so the
+    // count no longer has to exist to bound anything — it stays only as an
+    // abuse guard against someone creating rows in a loop. Twenty tiny MIDI
+    // sketches are not a storage problem and should not hit a wall; a handful
+    // of projects full of recorded audio is, and will.
+    projectsMax: 50,
     storageMb: 500,
     maxUploadMb: 100,
     syncedSounds: 30,

@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { getSubscription, getPlanLimits } from '@/lib/subscription'
+import { storageUsage } from '@/lib/storage-usage'
 
 export async function GET() {
   const { userId } = await auth()
@@ -9,24 +10,16 @@ export async function GET() {
   const sub = await getSubscription(userId)
   const limits = getPlanLimits(sub.plan)
 
-  // Cloud storage used = sum of one (latest) row per R2 key, matching the
-  // presign route's accounting (stable keys overwrite, so duplicate rows from
-  // re-uploads must not double-count). Best-effort: 0 if the log isn't there.
-  let usedBytes = 0
-  try {
-    const rows = await sql`
-      SELECT COALESCE(SUM(sz), 0)::bigint AS total FROM (
-        SELECT DISTINCT ON (key) size AS sz
-        FROM upload_log WHERE user_id = ${userId}
-        ORDER BY key, at DESC
-      ) t`
-    usedBytes = Number(rows[0]?.total ?? 0)
-  } catch { /* upload_log not provisioned yet → 0 */ }
+  // One shared definition of space used — media AND project data. See
+  // lib/storage-usage.ts for why projects count.
+  const usage = await storageUsage(userId)
 
   return Response.json({
     plan: sub.plan,
     storage: {
-      usedBytes,
+      usedBytes: usage.totalBytes,
+      mediaBytes: usage.mediaBytes,
+      projectBytes: usage.projectBytes,
       limitBytes: limits.storageMb * 1024 * 1024,
     },
   })

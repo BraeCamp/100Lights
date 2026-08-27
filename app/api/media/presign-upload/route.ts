@@ -1,4 +1,5 @@
 import { testUserId } from '@/lib/api-user'
+import { storageUsage } from '@/lib/storage-usage'
 import { auth } from '@clerk/nextjs/server'
 import { presignUpload } from '@/lib/r2'
 import { sql } from '@/lib/db'
@@ -77,13 +78,8 @@ export async function POST(req: Request) {
       const limits = getPlanLimits(sub.plan)
       // Count one (latest) row per key, so historical duplicate rows from
       // re-uploading the same stable key don't inflate the usage total.
-      const used = await sql`
-        SELECT COALESCE(SUM(sz), 0)::bigint AS total FROM (
-          SELECT DISTINCT ON (key) size AS sz
-          FROM upload_log WHERE user_id = ${clerkId}
-          ORDER BY key, at DESC
-        ) t`
-      const totalAfter = Number(used[0]?.total ?? 0) + size
+      const used = await storageUsage(clerkId)
+      const totalAfter = used.totalBytes + size
       if (totalAfter > limits.storageMb * 1024 * 1024) {
         return Response.json({ error: `Storage limit reached (${limits.storageMb >= 1024 ? `${limits.storageMb / 1024} GB` : `${limits.storageMb} MB`}). Upgrade for more space.` }, { status: 413 })
       }

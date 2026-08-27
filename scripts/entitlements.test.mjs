@@ -100,5 +100,21 @@ walk(join(ROOT, 'components'))
 check('nothing asks "is the plan exactly pro" any more', offenders.length === 0,
   offenders.slice(0, 4).join(', ') || 'clean')
 
+// Space used must have ONE definition. Three call sites each wrote their own
+// SUM over upload_log before lib/storage-usage.ts existed, which is how project
+// data ended up costing nothing against the limit — and why free accounts
+// needed a separate projects-count cap to bound anything at all.
+const rogueSums = []
+for (const rel of ['app/api/usage/route.ts', 'app/api/media/upload/route.ts', 'app/api/media/presign-upload/route.ts']) {
+  const src = readFileSync(join(ROOT, rel), 'utf8')
+  // The distinctive shape of the private sums, not any mention of the table —
+  // these routes legitimately DELETE and INSERT their own log rows, and an
+  // earlier version of this guard flagged that bookkeeping as a violation.
+  if (/DISTINCT ON \(key\)\s*size/.test(src)) rogueSums.push(`${rel} (rolls its own sum)`)
+  if (!/storageUsage\(/.test(src)) rogueSums.push(`${rel} (does not use storageUsage)`)
+}
+check('every storage gate uses the one shared definition', rogueSums.length === 0,
+  rogueSums.join(', ') || 'clean')
+
 console.log(failures ? `\n${failures} failing` : '\nthe tier table holds')
 assert.equal(failures, 0)
