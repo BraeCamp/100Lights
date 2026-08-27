@@ -122,6 +122,31 @@ Practically: the sub holds one note per chord and never moves much; the bass is
 where syncopation and octave pops live. Put them an octave apart — sharing a
 register makes two parts fight for one job (`checkSlots` refuses it).
 
+### The bass: what it plays, and what it sounds like
+
+Two rules from Brae's ear, both of which changed a design rather than a setting.
+
+**Its tone must not move.** Give a bass a filter envelope or an oscillator-sync
+sweep on every note and the timbre re-shapes constantly — which announces itself,
+and the ear follows the change instead of settling into the groove. For music
+that wants to sit still and be felt, the sound stays CONSISTENT and only the
+VOLUME moves. `steadyBass` is built that way: no filter envelope, no sync,
+velocity routed to level and nothing else. Keep filter keytrack around 0.35 —
+at zero, a fixed cutoff makes low notes bright and high notes dull, which is a
+tone change by another route.
+
+It also solved a measurement problem nothing else could. A sync'd saw through a
+resonant ladder has a weak fundamental, so it reads as low-mid energy with an
+empty bass band; the steady voice measures 93% in the bass band at a 91 Hz
+centroid.
+
+**It stays or it falls. It never rises.** Brae, on a figure that went
+root-root-root+5th: *"just like how people tone down for statements and up for
+questions. The toning down or staying at the tone will be more powerful."* A bass
+that answers itself by jumping up sounds uncertain; one that holds its ground or
+drops below it sounds certain. When the line needs to move, move it DOWN — to the
+seventh or the fifth beneath the root.
+
 ---
 
 ## 4. Groove
@@ -144,6 +169,32 @@ We are already inside the range. This matters because measuring our *note
 positions* instead gives ±3 ms and looks alarmingly tight — those are different
 quantities, and "fixing" the wrong one would have wrecked the timing. **Compare
 the same measurement or don't compare.**
+
+### Drums: fewer notes, and hats that are either there or gone
+
+**Do not sprinkle.** Sixteen hat hits a bar at 148 BPM is a hiss, not a groove,
+and a random sixteenth layer over steady eighths is the "so many drum notes close
+to each other" clutter that reads as mush. Steady eighths — closed on the beat,
+open off it — and the pattern does not vary.
+
+**The hat is consistent, or it is absent.** From "cross my heart": the hat runs
+through most of the record, and where it is not consistent it is *gone* — for the
+four or eight bars before the first or last chorus. That absence is the build;
+nothing else has to happen.
+
+**Something else marks the bar where the hats were.** Brae's description of what
+arrives instead: *"different sounds to accent the start of a bar or two — deep
+and electronic and sometimes with a powerful quick tremolo"*. That is the `boom`
+voice: a sub-octave sine and a detuned saw under a fast LFO on the oscillator
+LEVELS. Apollo has no tremolo effect, and modulating the source rather than a
+post-gain keeps it in front of the filter and the drive. It works because it
+lands where the ear has just lost the hats and is listening for something.
+
+**Kick and hat both need length.** A 0.34 s steeply-curved kick decay is a click
+and a puff of air; a 55 ms hat under a downsampler is a tick. Give the kick a
+longer, flatter decay plus a sub oscillator for body, and let the hat run ~100 ms
+with the filter open — measured, that moved the hat from 1747 Hz to 2881 Hz and
+into presence and air for the first time.
 
 What produces that spread is not one loose part, it is different parts leaning in
 different directions: kick as the anchor, snare/rim behind the beat, bass ahead
@@ -390,6 +441,11 @@ problem, which by ear takes far longer and by guessing takes forever.
 - **No per-section analysis of the references.** We get whole-track numbers and
   boundary times, not "what the chorus does that the verse doesn't", which is
   where most arrangement craft actually lives.
+- **Two measurements have known blind spots.** The tuning guard sweeps a DFT over
+  a 32768-sample window whose main lobe is ~1.5 Hz wide — 82 cents of smear at
+  30 Hz — so it declines to answer below 50 Hz rather than guess. And the
+  "bed is loudest" rule sits at 1 dB, because the references put harmony a median
+  3.0 dB under the bass and a wider threshold flags correct mixes.
 - **Nothing here measures whether a song is any good.** It measures whether it
   sits where records of its kind sit. Those are not the same, and Brae's ear
   remains the only judge of the second one.
