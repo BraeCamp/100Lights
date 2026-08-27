@@ -35,9 +35,3 @@ export function saveProject(project: StoredProject) {
 export function loadProject(id: string): StoredProject | null {
   return read()[id] ?? null
 }
-
-export function listProjects(): StoredProject[] {
-  return Object.values(read()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  )
-}

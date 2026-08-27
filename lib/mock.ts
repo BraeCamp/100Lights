@@ -1,7 +1,5 @@
-import type { Project, PipelineStep, Output, Caption, Clip } from '@/lib/types'
+import type { PipelineStep, Output, Caption, Clip } from '@/lib/types'
 import { sliceCaptions } from '@/lib/captions'
-
-export const DEMO_PROJECT_ID = 'demo'
 
 export function createDemoPipeline(): PipelineStep[] {
   return [
@@ -174,51 +172,9 @@ Better equipment won't make better content. What matters is starting, listening 
   },
 ]
 
-export const mockProjects: Project[] = [
-  {
-    id: '1',
-    name: 'Product Launch Keynote 2025',
-    contentType: 'video',
-    status: 'completed',
-    duration: 3840,
-    createdAt: new Date(Date.now() - 86400000 * 2),
-    pipeline: [],
-    outputs: [MOCK_OUTPUTS[2], MOCK_OUTPUTS[3]],
-  },
-  {
-    id: '2',
-    name: 'The Deep Work Podcast — Ep. 47',
-    contentType: 'audio',
-    status: 'completed',
-    duration: 2700,
-    createdAt: new Date(Date.now() - 86400000 * 5),
-    pipeline: [],
-    outputs: [MOCK_OUTPUTS[3], MOCK_OUTPUTS[4]],
-  },
-  {
-    id: '3',
-    name: 'Q2 Team All-Hands Recording',
-    contentType: 'video',
-    status: 'completed',
-    duration: 5400,
-    createdAt: new Date(Date.now() - 86400000 * 9),
-    pipeline: [],
-    outputs: [MOCK_OUTPUTS[2]],
-  },
-]
-
 export function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)
   if (h > 0) return `${h}h ${m}m`
   return `${m}m`
-}
-
-export function formatRelativeDate(date: Date): string {
-  const diff = Date.now() - date.getTime()
-  const days = Math.floor(diff / 86400000)
-  if (days === 0) return 'Today'
-  if (days === 1) return 'Yesterday'
-  if (days < 7) return `${days} days ago`
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }

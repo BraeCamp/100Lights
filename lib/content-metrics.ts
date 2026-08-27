@@ -39,24 +39,6 @@ export interface ContentPost {
   avgViewS?: number; likes?: number; comments?: number; shares?: number; subsGained?: number; notes?: string
 }
 
-/** Upsert a post + its metrics (safe to call repeatedly as analytics update). */
-export async function recordPost(p: ContentPost): Promise<void> {
-  await ensure()
-  await sql`
-    INSERT INTO content_perf (id, platform, format_tag, hook_type, title, length_s, posted_at, views,
-      avg_pct_viewed, first3s_retention, avg_view_s, likes, comments, shares, subs_gained, notes, updated_at)
-    VALUES (${p.id}, ${p.platform ?? 'youtube'}, ${p.formatTag ?? null}, ${p.hookType ?? null}, ${p.title ?? null},
-      ${p.lengthS ?? null}, ${p.postedAt ?? null}, ${p.views ?? 0}, ${p.avgPctViewed ?? null}, ${p.first3sRetention ?? null},
-      ${p.avgViewS ?? null}, ${p.likes ?? 0}, ${p.comments ?? 0}, ${p.shares ?? 0}, ${p.subsGained ?? 0}, ${p.notes ?? null}, NOW())
-    ON CONFLICT (id) DO UPDATE SET
-      platform = EXCLUDED.platform, format_tag = COALESCE(EXCLUDED.format_tag, content_perf.format_tag),
-      hook_type = COALESCE(EXCLUDED.hook_type, content_perf.hook_type), title = COALESCE(EXCLUDED.title, content_perf.title),
-      length_s = COALESCE(EXCLUDED.length_s, content_perf.length_s), posted_at = COALESCE(EXCLUDED.posted_at, content_perf.posted_at),
-      views = EXCLUDED.views, avg_pct_viewed = EXCLUDED.avg_pct_viewed, first3s_retention = EXCLUDED.first3s_retention,
-      avg_view_s = EXCLUDED.avg_view_s, likes = EXCLUDED.likes, comments = EXCLUDED.comments, shares = EXCLUDED.shares,
-      subs_gained = EXCLUDED.subs_gained, notes = COALESCE(EXCLUDED.notes, content_perf.notes), updated_at = NOW()`
-}
-
 export async function listPosts(limit = 1000): Promise<Record<string, unknown>[]> {
   try { await ensure(); return await sql`SELECT * FROM content_perf ORDER BY posted_at DESC NULLS LAST, created_at DESC LIMIT ${limit}` }
   catch { return [] }

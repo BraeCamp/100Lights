@@ -24,7 +24,6 @@
 // scripts/capture-tutorials.mjs, then `npm run capture-tutorials`.
 
 import type { UITier } from './ui-tiers'
-import { lessonVisibleInMode } from './ui-tiers'
 
 export interface TutorialStep {
   text: string
@@ -353,11 +352,6 @@ export const TUTORIALS: Tutorial[] = [
 
 export function getTutorial(slug: string): Tutorial | undefined {
   return TUTORIALS.find(t => t.slug === slug)
-}
-
-/** Tutorials offered in a given studio mode (that mode's tier and below). */
-export function tutorialsInMode(mode: UITier): Tutorial[] {
-  return TUTORIALS.filter(t => lessonVisibleInMode(t.tier, mode))
 }
 
 /** Public path of a step's generated screenshot (1-based file naming). */

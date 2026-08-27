@@ -54,19 +54,6 @@ export function detectMediaKind(file: File): MediaKind | null {
   return null
 }
 
-/** Decode a file's audio into an AudioBuffer. Works for audio files AND video
- *  containers — `decodeAudioData` pulls only the audio track, so the picture is
- *  discarded. Throws if the codec can't be decoded. Shared by every "video in,
- *  audio only" surface (sound library import, drag-and-drop). */
-export async function decodeFileAudio(file: Blob, ctx?: AudioContext): Promise<AudioBuffer> {
-  const ac = ctx ?? new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
-  try {
-    return await ac.decodeAudioData(await file.arrayBuffer())
-  } finally {
-    if (!ctx) ac.close()
-  }
-}
-
 export const MAX_MEDIA_BYTES = 500 * 1024 * 1024
 
 /** '' if the file is importable, otherwise a human-readable reason. */

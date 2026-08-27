@@ -164,29 +164,3 @@ export function synthDrum(type: string, sampleRate: number): Float32Array {
     default:           return synthKick(sampleRate)
   }
 }
-
-// ── Visual identity ───────────────────────────────────────────────────────
-export const DRUM_COLORS: Record<string, string> = {
-  kick:        '#dc2626',
-  snare:       '#d97706',
-  hihat:       '#16a34a',
-  'open-hihat':'#0891b2',
-  clap:        '#7c3aed',
-  tom:         '#db2777',
-  rim:         '#ea580c',
-  crash:       '#0e7490',
-}
-
-export const DRUM_LABELS: Record<string, string> = {
-  kick:        'Kick',
-  snare:       'Snare',
-  hihat:       'Hi-Hat',
-  'open-hihat':'Open Hat',
-  clap:        'Clap',
-  tom:         'Tom',
-  rim:         'Rim',
-  crash:       'Crash',
-}
-
-// Ordered list for the kit configurator UI (must match what synthDrum supports)
-export const DRUM_TYPES = ['kick', 'snare', 'hihat', 'open-hihat', 'clap', 'tom', 'rim', 'crash'] as const

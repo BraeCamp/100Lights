@@ -21,11 +21,6 @@ export function normToParam(v: number, meta: { min: number; max: number; log?: b
   return meta.min + Math.max(0, Math.min(1, v)) * (meta.max - meta.min)
 }
 
-export function paramToNorm(val: number, meta: { min: number; max: number; log?: boolean }): number {
-  if (meta.log) return Math.log(Math.max(meta.min, val) / meta.min) / Math.log(meta.max / meta.min)
-  return (val - meta.min) / (meta.max - meta.min)
-}
-
 function evalBezier(
   p0: [number, number], c1: [number, number], c2: [number, number], p1: [number, number], s: number,
 ): [number, number] {

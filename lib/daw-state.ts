@@ -869,16 +869,6 @@ export function useEnginePlaying(): boolean {
   return playing
 }
 
-export function useTrack(trackId: string): DawTrack | undefined {
-  const { project } = useDaw()
-  return project.tracks.find(t => t.id === trackId)
-}
-
-export function useClip(clipId: string): DawClip | undefined {
-  const { project } = useDaw()
-  return project.arrangementClips.find(c => c.id === clipId)
-}
-
 // ── Beat/bar formatting ───────────────────────────────────────────────────
 
 export function formatBeat(beat: number, num = 4): string {

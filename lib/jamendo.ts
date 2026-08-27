@@ -14,9 +14,6 @@ export interface JamendoTrack {
   tags?: string[]     // the track's own genre/mood tags (from musicinfo) — used to re-rank by vibe
 }
 
-// A CC license permits commercial use unless it's NonCommercial (…/by-nc…).
-export const isCommercialLicense = (ccurl: string) => !/\/by-nc/i.test(ccurl || '')
-
 export const jamendoConfigured = () => !!process.env.JAMENDO_CLIENT_ID
 export const jamendoLicensed = () => process.env.JAMENDO_COMMERCIAL === 'true'
 

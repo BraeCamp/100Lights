@@ -41,7 +41,3 @@ export const BUILT_IN_TEMPLATES: StarterTemplate[] = [
     instruments: ['Sub Bass', 'Warm EP', 'Synth Strings'],
   },
 ]
-
-export function getTemplate(id: string): StarterTemplate | undefined {
-  return BUILT_IN_TEMPLATES.find(t => t.id === id)
-}

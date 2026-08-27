@@ -302,12 +302,6 @@ export async function syncCatalog(): Promise<void> {
   } catch { /* offline — keep local library untouched */ }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-export function blobToUrl(blob: Blob): string {
-  return URL.createObjectURL(blob)
-}
-
 export function getAudioDurationFromBlob(blob: Blob): Promise<number> {
   return new Promise(resolve => {
     const url = URL.createObjectURL(blob)

@@ -339,35 +339,7 @@ export function spectralDistance(a: HitSpectral, b: HitSpectral): number {
   return Math.sqrt((bands + temporal + mfccSum) / totalWeight)
 }
 
-export const NN_MAX_DIST = 0.38  // beyond this threshold, don't trust the nearest neighbour
-
-// ── Standalone hit classifier ─────────────────────────────────────────────────
-// Classifies a single hit's spectral fingerprint against a set of reference sounds.
-// Returns { type, confidence } where confidence is 0–1 (1 = perfect match).
-// If no reference is within NN_MAX_DIST, type is null (caller falls back to rules).
-export function classifyHitLocally(
-  spectral: HitSpectral,
-  references: ReferenceSound[],
-  allowed: Set<BeatType>,
-): { type: BeatType | null; confidence: number; dist: number } {
-  if (references.length === 0) return { type: null, confidence: 0, dist: Infinity }
-  let bestDist = Infinity
-  let bestType: BeatType | null = null
-  for (const ref of references) {
-    if (!ref.spectral || !TYPE_FALLBACKS[ref.category]) continue
-    const d = spectralDistance(spectral, ref.spectral)
-    if (d < bestDist) { bestDist = d; bestType = ref.category }
-  }
-  if (!bestType || bestDist >= NN_MAX_DIST) return { type: null, confidence: 0, dist: bestDist }
-  // If the best match isn't in the allowed set, fall back to the closest allowed type
-  if (!allowed.has(bestType)) {
-    const fallback = (TYPE_FALLBACKS[bestType] ?? TYPE_FALLBACKS['other']).find(t => allowed.has(t))
-    bestType = fallback ?? null
-    if (!bestType) return { type: null, confidence: 0, dist: bestDist }
-  }
-  const confidence = Math.max(0, 1 - bestDist / NN_MAX_DIST)
-  return { type: bestType, confidence, dist: bestDist }
-}
+export const NN_MAX_DIST = 0.38
 
 // ── Main analysis entry point ─────────────────────────────────────────────────
 
@@ -381,10 +353,6 @@ export interface ReferenceSound {
 // Returns a map of hit.id → cluster index (0, 1, 2…).
 
 export const CLUSTER_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'] as const
-export const CLUSTER_COLORS: Record<string, string> = {
-  A: '#3b82f6', B: '#ef4444', C: '#22c55e',
-  D: '#f97316', E: '#a855f7', F: '#06b6d4',
-}
 
 // Exported so callers can recompute vectors from saved HitSpectral objects
 // (e.g. turning stored correction fingerprints into seed vectors for clustering).
@@ -434,46 +402,6 @@ export function hitToVec(s: HitSpectral): number[] {
 
 function vecDist(a: number[], b: number[]): number {
   let s = 0; for (let i = 0; i < a.length; i++) s += (a[i] - b[i]) ** 2; return Math.sqrt(s)
-}
-
-// seedVecs: optional pre-computed feature vectors to use as initial centroids
-// (from saved user corrections). Any remaining slots are filled with k-means++.
-// Build a full cluster-space vector from a spectral fingerprint (same dimensions as vectors
-// used inside clusterHits). Gap context is set to neutral (0.5); pitchDelta to 0.
-export function spectralToClusterVec(s: HitSpectral): number[] {
-  const base = hitToVec(s)
-  const f0Norm    = Math.min(1, (s.f0 ?? 0) / 800)
-  const pitchConf = s.pitchConfidence ?? 0
-  base.push(0.5)                                          // gapBefore — neutral
-  base.push(0.5)                                          // gapAfter  — neutral
-  base.push(f0Norm * Math.min(1, pitchConf * 5) * 3.0)  // enhanced pitch
-  base.push(0)                                            // pitchDelta — unknown
-  return base
-}
-
-// Returns true if any split pair rule is violated: a cluster contains hits matching
-// BOTH the distinct-spectral AND the confused-with-spectral from the same pair.
-export function checkSplitViolations(
-  assignments: Record<string, number>,
-  hits: BeatHit[],
-  pairs: Array<{ distinctSpectral: HitSpectral; confusedWithSpectral: HitSpectral }>,
-  matchDist = 0.4,
-): boolean {
-  if (pairs.length === 0) return false
-  const byCluster = new Map<number, BeatHit[]>()
-  for (const h of hits) {
-    const c = assignments[h.id] ?? 0
-    if (!byCluster.has(c)) byCluster.set(c, [])
-    byCluster.get(c)!.push(h)
-  }
-  for (const pair of pairs) {
-    for (const members of byCluster.values()) {
-      const hasDistinct  = members.some(h => h.spectral && spectralDistance(h.spectral, pair.distinctSpectral)   < matchDist)
-      const hasConfused  = members.some(h => h.spectral && spectralDistance(h.spectral, pair.confusedWithSpectral) < matchDist)
-      if (hasDistinct && hasConfused) return true
-    }
-  }
-  return false
 }
 
 export function clusterHits(hits: BeatHit[], k: number, seedVecs?: number[][]): Record<string, number> {
@@ -1134,125 +1062,5 @@ export async function analyzeBeats(
   })
 
   return { hits: dedupedHits, bpm, duration: audioBuffer.duration }
-}
-
-// ── Amplitude-threshold segmentation ─────────────────────────────────────────
-//
-// Detects note boundaries by watching the RMS envelope:
-//   - When envelope crosses ABOVE (onsetPct × peak)  → start of a note
-//   - When envelope crosses BELOW (offsetPct × peak) → end of a note
-//
-// Each segment is then analyzed for spectral features so notes can be
-// compared and grouped by tonal similarity (same timbre = same cluster).
-export function segmentByAmplitude(
-  audioBuffer: AudioBuffer,
-  onsetPct  = 0.15,  // 15% of peak RMS triggers a note start
-  offsetPct = 0.10,  // 10% of peak RMS triggers a note end
-): BeatAnalysis {
-  const sr  = audioBuffer.sampleRate
-  const raw = audioBuffer.getChannelData(0)
-  const n   = raw.length
-
-  // ── 1. RMS envelope (5 ms hop, 10 ms window) ──────────────────────────────
-  const HOP      = Math.max(1, Math.round(0.005 * sr))
-  const WIN_HALF = HOP
-  const nFrames  = Math.floor(n / HOP)
-  const rmsEnv   = new Float32Array(nFrames)
-
-  for (let f = 0; f < nFrames; f++) {
-    const lo = Math.max(0, f * HOP - WIN_HALF)
-    const hi = Math.min(n, f * HOP + WIN_HALF)
-    let sum = 0
-    for (let s = lo; s < hi; s++) sum += raw[s] ** 2
-    rmsEnv[f] = Math.sqrt(sum / (hi - lo))
-  }
-
-  // ── 2. Peak and thresholds ────────────────────────────────────────────────
-  let peakRms = 0
-  for (let f = 0; f < nFrames; f++) if (rmsEnv[f] > peakRms) peakRms = rmsEnv[f]
-  if (peakRms < 1e-7) return { hits: [], bpm: null, duration: audioBuffer.duration }
-
-  const onsetThresh  = peakRms * onsetPct
-  const offsetThresh = peakRms * offsetPct
-
-  // ── 3. Threshold-crossing segmentation ────────────────────────────────────
-  // 20 ms minimum note length prevents noise blips from becoming hits.
-  // 10 ms minimum silence before a new note can start prevents double-triggers
-  // on the same transient.
-  const minNoteFr    = Math.ceil(0.020 * sr / HOP)
-  const minSilenceFr = Math.ceil(0.010 * sr / HOP)
-
-  const segments: Array<{ start: number; end: number }> = []
-  let inNote       = false
-  let onsetFrame   = 0
-  let silenceCount = 0
-
-  for (let f = 0; f < nFrames; f++) {
-    if (!inNote) {
-      if (rmsEnv[f] >= onsetThresh) {
-        onsetFrame   = f
-        inNote       = true
-        silenceCount = 0
-      }
-    } else {
-      if (rmsEnv[f] < offsetThresh) {
-        silenceCount++
-        if (silenceCount >= minSilenceFr) {
-          const endFrame = f - silenceCount + 1
-          if (endFrame - onsetFrame >= minNoteFr) {
-            segments.push({ start: onsetFrame * HOP, end: endFrame * HOP })
-          }
-          inNote       = false
-          silenceCount = 0
-        }
-      } else {
-        silenceCount = 0
-      }
-    }
-  }
-  // Note still active at buffer end
-  if (inNote && nFrames - onsetFrame >= minNoteFr) {
-    segments.push({ start: onsetFrame * HOP, end: n })
-  }
-
-  if (segments.length === 0) {
-    return { hits: [], bpm: null, duration: audioBuffer.duration }
-  }
-
-  // ── 4. Spectral feature extraction per segment ────────────────────────────
-  const hits: BeatHit[] = []
-  let prevSpectrum: Float32Array | null = null
-
-  for (let i = 0; i < segments.length; i++) {
-    const seg       = segments[i]
-    const nextStart = segments[i + 1]?.start ?? null
-    const { spectral, spectrum } = computeHitFeatures(raw, seg.start, sr, prevSpectrum, nextStart)
-    prevSpectrum = spectrum
-
-    hits.push({
-      id:       crypto.randomUUID(),
-      time:     seg.start / sr,
-      duration: (seg.end - seg.start) / sr,
-      type:     'kick',
-      velocity: Math.min(0.92, Math.max(0.18, spectral.peakAmplitude * 0.9)),
-      note:     DEFAULT_NOTES.kick,
-      spectral,
-    })
-  }
-
-  // ── 5. BPM from median inter-onset interval ────────────────────────────────
-  let bpm: number | null = null
-  if (hits.length >= 2) {
-    const iois = hits.slice(1).map((h, i) => h.time - hits[i].time).sort((a, b) => a - b)
-    const med  = iois[Math.floor(iois.length / 2)]
-    if (med > 0) {
-      let candidate = 60 / med
-      while (candidate < 60)  candidate *= 2
-      while (candidate > 220) candidate /= 2
-      bpm = Math.round(candidate)
-    }
-  }
-
-  return { hits, bpm, duration: audioBuffer.duration }
 }
 

@@ -281,11 +281,6 @@ export interface MidiEffect {
   params: MidiEffectParams
 }
 
-export function defaultVelocityMidi(): VelocityMidiParams { return { enabled: true, outMin: 0, outMax: 127, random: 0 } }
-export function defaultScaleMidi(): ScaleMidiParams { return { enabled: true, root: 0, scale: 'major' } }
-export function defaultChordMidi(): ChordMidiParams { return { enabled: true, intervals: [4, 7] } }
-export function defaultArpMidi(): ArpMidiParams { return { enabled: true, style: 'up', rate: 0.25, octaves: 1, gate: 0.9 } }
-
 // ── Instruments ───────────────────────────────────────────────────────────────
 
 export type InstrumentType = 'none' | 'drum' | 'fm' | 'poly' | 'sampler' | 'fm4op' | 'wavetable'
@@ -557,11 +552,6 @@ export interface ClipEffect {
     param: string
     points: AutoPoint[]
   }
-}
-
-/** A ClipEffect is a "bar" once it carries an `fx` target bag. */
-export function isEffectBar(e: ClipEffect): boolean {
-  return !!e.fx
 }
 
 /** Per-clip "FX Motion": the chosen effects (`fx`, their full-on target) morph

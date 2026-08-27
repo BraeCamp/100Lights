@@ -155,33 +155,6 @@ export function removeStaffLines(bin: Binary, staves: Staff[]): Binary {
   return { bits: out, w, h }
 }
 
-// Binary morphological closing (dilate then erode, 3×3). Reconnects rings/strokes that staff-line
-// removal severed (esp. thin HOLLOW half/whole noteheads) and bridges ≤2px gaps, without filling a
-// notehead's central hole (that hole is ~S px wide, far larger than the kernel) or merging separate
-// noteheads (they sit >S apart).
-export function closeBinary(bin: Binary): Binary {
-  const { bits, w, h } = bin
-  const dil = new Uint8Array(w * h)
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    let v = 0
-    for (let dy = -1; dy <= 1 && !v; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const nx = x + dx, ny = y + dy
-      if (nx >= 0 && nx < w && ny >= 0 && ny < h && bits[ny * w + nx]) { v = 1; break }
-    }
-    dil[y * w + x] = v
-  }
-  const out = new Uint8Array(w * h)
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    let v = 1
-    for (let dy = -1; dy <= 1 && v; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const nx = x + dx, ny = y + dy
-      if (nx < 0 || nx >= w || ny < 0 || ny >= h || !dil[ny * w + nx]) { v = 0; break }
-    }
-    out[y * w + x] = v
-  }
-  return { bits: out, w, h }
-}
-
 // ── Stage 4: notehead detection (connected components + widest-band localization) ─────────────────
 // Robust for standard FILLED noteheads (the common case): flood-fill components, then localize the head
 // as the widest vertical band (row ink-count) so stems/beams/ledger lines fall away. HOLLOW half/whole

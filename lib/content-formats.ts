@@ -31,5 +31,3 @@ export type HookType = typeof HOOK_TYPES[number]
 
 export const PLATFORMS = ['youtube', 'tiktok', 'reels', 'shorts', 'other'] as const
 export type Platform = typeof PLATFORMS[number]
-
-export const isFormat = (id: string) => CONTENT_FORMATS.some(f => f.id === id)

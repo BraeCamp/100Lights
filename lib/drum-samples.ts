@@ -12,10 +12,6 @@ export interface DrumPack {
   name: string
 }
 
-export const DRUM_PACKS: DrumPack[] = [
-  { id: 'synth', name: 'Acoustic' },
-]
-
 // ── Kick ──────────────────────────────────────────────────────────────────────
 
 function synthKick(ctx: AudioContext, when: number, v: number, maxDur: number, dest: AudioNode) {

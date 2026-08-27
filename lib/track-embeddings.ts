@@ -3,9 +3,7 @@
 // same 512-d space. The store is populated offline (scripts/embed-jamendo.mjs); production only READS
 // it (query-by-example: pick a seed track, return its nearest-by-sound neighbours), so nothing heavy
 // runs on the server. Only commercial-safe tracks are stored, so every neighbour is broadcast-safe.
-import { sql } from '@/lib/db'
-
-export const EMBED_DIM = 512   // CLAP (laion/clap-htsat-unfused)
+import { sql } from '@/lib/db'   // CLAP (laion/clap-htsat-unfused)
 
 let ready = false
 async function ensure() {
@@ -33,25 +31,10 @@ const parseVec = (s: string) => s.replace(/[[\]]/g, '').split(',').map(Number)
 
 export interface EmbTrack { id: string; title: string; artist: string; audio: string; tags: string[]; source?: string; license?: string }
 
-export async function upsertEmbedding(t: EmbTrack, embedding: number[]): Promise<void> {
-  await ensure()
-  await sql`
-    INSERT INTO track_embeddings (id, title, artist, audio, tags, source, license, embedding)
-    VALUES (${t.id}, ${t.title}, ${t.artist}, ${t.audio}, ${t.tags}, ${t.source ?? 'jamendo'}, ${t.license ?? ''}, ${toVec(embedding)}::vector)
-    ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding, tags = EXCLUDED.tags, title = EXCLUDED.title, artist = EXCLUDED.artist`
-}
-
 export async function embeddingCount(): Promise<number> {
   await ensure()
   try { const [{ n }] = await sql`SELECT COUNT(*)::int AS n FROM track_embeddings WHERE embedding IS NOT NULL` as { n: number }[]; return n }
   catch { return 0 }
-}
-
-export async function getEmbeddingById(id: string): Promise<number[] | null> {
-  await ensure()
-  const rows = await sql`SELECT embedding::text AS e FROM track_embeddings WHERE id = ${id}` as { e: string }[]
-  if (!rows.length || !rows[0].e) return null
-  return parseVec(rows[0].e)
 }
 
 export interface Seed { id: string; title: string; artist: string; embedding: number[]; overlap: number }

@@ -39,12 +39,6 @@ export function beatDur(grid: BeatGrid): number {
   return 60 / Math.max(1, grid.bpm)
 }
 
-/** Nearest beat time (seconds) to `t`, clamped to ≥ 0. */
-export function nearestBeat(grid: BeatGrid, t: number): number {
-  const spb = beatDur(grid)
-  return Math.max(0, grid.offset + Math.round((t - grid.offset) / spb) * spb)
-}
-
 // Per-audio-clip tempo map — a clip can carry its own BPM, and split into
 // several tempo sections (each starting at a source-time in the audio file).
 // This is what creates a clip's snapping points; it is NOT tied to any linked
@@ -308,7 +302,6 @@ export const DEFAULT_ADJUSTMENTS: VideoAdjustments = {
 export const PIXELS_PER_SECOND = 80
 export const TRACK_HEIGHT = 44
 export const AUDIO_TRACK_HEIGHT = 32
-export const CAPTION_TRACK_HEIGHT = 20
 export const RULER_HEIGHT = 28
 export const TOOLBAR_HEIGHT = 34
 

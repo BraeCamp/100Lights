@@ -68,12 +68,6 @@ export function articOptions(group?: string, category?: string, name?: string): 
   }
 }
 
-/** True when the instrument offers at least one articulation (→ show the panel). */
-export function hasArticulations(group?: string, category?: string, name?: string): boolean {
-  const o = articOptions(group, category, name)
-  return o.legato.available || o.slide.available
-}
-
 /** Resolve the effective articulation for a clip: clip override → family default,
  *  gated by what the instrument actually supports. */
 export function resolveArtic(

@@ -152,13 +152,6 @@ export async function listMyCollections(itemId?: string): Promise<CommunityColle
   return (await res.json()).collections ?? []
 }
 
-/** A creator's public (non-empty) collections. */
-export async function listCollectionsByAuthor(author: string): Promise<CommunityCollection[]> {
-  const res = await fetch(`/api/community/collections?author=${encodeURIComponent(author)}`)
-  if (!res.ok) return []
-  return (await res.json()).collections ?? []
-}
-
 export async function createCollection(name: string, description = ''): Promise<CommunityCollection> {
   const res = await fetch('/api/community/collections', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, description }),

@@ -98,20 +98,3 @@ export const LEARN_PATHS: LearnPath[] = [
     ],
   },
 ]
-
-// Pure helpers over a given path array (the array comes from the store, which
-// merges these built-ins with admin edits in the DB — see lib/learn-paths-store).
-
-export function findPath(paths: LearnPath[], slug: string): LearnPath | null {
-  return paths.find(p => p.slug === slug) ?? null
-}
-
-/** Every path that contains this article, with the article's 0-based position. */
-export function pathsContaining(paths: LearnPath[], articleSlug: string): Array<{ path: LearnPath; index: number }> {
-  const out: Array<{ path: LearnPath; index: number }> = []
-  for (const path of paths) {
-    const index = path.articleSlugs.indexOf(articleSlug)
-    if (index !== -1) out.push({ path, index })
-  }
-  return out
-}

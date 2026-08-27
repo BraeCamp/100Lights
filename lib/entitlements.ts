@@ -93,8 +93,3 @@ export type BoolFeature = {
 export function can(plan: Plan, feature: BoolFeature): boolean {
   return entitlements(plan)[feature]
 }
-
-/** Human label for a storage number, e.g. 20480 → "20 GB", 500 → "500 MB". */
-export function formatStorage(mb: number): string {
-  return mb >= 1024 ? `${mb / 1024} GB` : `${mb} MB`
-}

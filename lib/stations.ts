@@ -165,9 +165,6 @@ export const STATIONS: Station[] = [
   },
 ]
 
-export const getStation = (slug?: string | null): Station | undefined =>
-  slug ? STATIONS.find(s => s.slug === slug) : undefined
-
 // ── Scene option ids (for the admin control panel's dropdowns) ─────────────────
 // These MIRROR the ids in components/apps/LightningBug.tsx (PALETTES / VIDEO_LOOKS /
 // VIDEO_MODES / the style union) — kept here so the React-free admin can offer them

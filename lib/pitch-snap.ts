@@ -59,9 +59,3 @@ export function inScaleOffsets(min: number, max: number, ctx: SnapContext): numb
   }
   return out
 }
-
-/** Resulting MIDI note after a shift, for display. */
-export function resultMidi(semitones: number, cents: number, ctx: SnapContext): number | null {
-  if (ctx.detectedHz == null) return null
-  return hzToMidi(ctx.detectedHz) + semitones + cents / 100
-}

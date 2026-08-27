@@ -40,8 +40,6 @@ export const GENRES: Genre[] = [
   { id: 'disco',       name: 'Disco',            bpm: 120, swing: 0,    scale: 'major',      drums: 'four-floor', feel: 'Four-floor with open hats, string stabs, octave bass, live-band feel.' },
 ]
 
-export const genreById = (id: string): Genre | undefined => GENRES.find(g => g.id === id)
-
 /** Pick a genre for a new piece of audio. Pass a seed (e.g. a slug or index) so
  *  it's stable/varied per caller instead of everything defaulting to house. */
 export function pickGenre(seed?: string | number): Genre {

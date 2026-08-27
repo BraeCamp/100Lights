@@ -12,8 +12,7 @@ const clamp01 = (n: number) => Math.max(0, Math.min(1, n))
 // The params a bar can host: the post-source, graphable sound-settings fields.
 // Excludes source-side envelope/pitch (attack, detune, vibrato…) which only
 // make sense per synth voice, not on a track's mixed audio.
-export const BAR_FIELDS: FxField[] = FX_FIELDS.filter(f => f.chain && f.graph)
-export const BAR_CATS_HIDDEN = ['env', 'pitch'] as const   // categories to hide in the bar editor
+export const BAR_FIELDS: FxField[] = FX_FIELDS.filter(f => f.chain && f.graph)   // categories to hide in the bar editor
 
 /** The value an active param takes at graph position g (0=neutral, 1=target).
  *  Interpolated in the field's normalized space so log/bipolar fields sweep

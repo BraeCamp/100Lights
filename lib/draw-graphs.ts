@@ -89,14 +89,3 @@ export const GRAPH_AREAS: Record<MotionAreaId, GraphAreaDef> = {
 
 /** Default for a per-slider ◠ graph (a single FX control drawn over the clip). */
 export const defaultFieldGraph = (): AutoPoint[] => [P(0, 1), P(1, 0)]
-
-// ── the whole map (incl. the non-'motion' editors) ──────────────────────────
-// Lets one place describe every drawn surface in the studio, even where the
-// drawing primitive differs. Used for docs/discovery; gating of the motion
-// suite is via the `graphs` UI dimension.
-export const DRAWN_SURFACES: { id: string; label: string; editor: GraphEditor; where: string }[] = [
-  ...Object.values(GRAPH_AREAS).map(a => ({ id: a.id, label: a.label, editor: 'motion' as const, where: 'clip Sound panel' })),
-  { id: 'fxparam', label: 'Per-slider FX curve (◠)', editor: 'motion', where: 'clip Sound panel · FX sliders' },
-  { id: 'eq', label: 'EQ curve', editor: 'eq', where: 'Mixer / track tone' },
-  { id: 'pitchgraph', label: 'Pitch→amount graph', editor: 'pitch', where: 'Preset creator' },
-]
