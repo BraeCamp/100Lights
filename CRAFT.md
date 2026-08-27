@@ -122,6 +122,39 @@ Practically: the sub holds one note per chord and never moves much; the bass is
 where syncopation and octave pops live. Put them an octave apart — sharing a
 register makes two parts fight for one job (`checkSlots` refuses it).
 
+### One sound that moves, versus notes that arrive
+
+A sub, a drone, a bowed line — anything meant to be heard as ONE sound changing
+pitch rather than a series of separate ones — has to be built for it, and the
+default gets it wrong. Measured, on three notes:
+
+| | amplitude through the note change |
+|---|---|
+| notes with a gap between them | **0% of peak** — it stops dead |
+| notes overlapping, normal poly mode | 52% — you hear the re-attack |
+| **legato mode + legato envelope + overlap** | **88-97%** — it holds |
+
+Three things are required and **none of them works alone**:
+
+1. A `glideSub`-style patch: `global.mode = 'legato'`, a glide time, and
+   `envs[0].legato = true`. The engine only treats a note as legato when a voice
+   is *already sounding*, and only then does it skip the envelope retrigger.
+2. `craft.legatoChain()` - every note stretched to overlap the next. **A gap of
+   any size ends the voice and no glide setting recovers it.** This is the
+   precondition, not a refinement.
+3. `continuous: true` on the track, if it should cross section boundaries. A clip
+   boundary ends a note and an ended note ends the chain, so the per-section
+   clips that make everything else editable break this one thing.
+
+And do not groove it. Micro-timing places an *attack*, and a held part has one
+attack in the whole song; per-note velocity re-articulates the thing that is
+meant to hold. Move its dynamics into the FX lane as gain bars instead.
+
+`listen` checks this: any part written as a continuous chain is measured in the
+render, and one that gates is reported.
+
+---
+
 ### The bass: what it plays, and what it sounds like
 
 Two rules from Brae's ear, both of which changed a design rather than a setting.
@@ -441,6 +474,13 @@ problem, which by ear takes far longer and by guessing takes forever.
 - **No per-section analysis of the references.** We get whole-track numbers and
   boundary times, not "what the chorus does that the verse doesn't", which is
   where most arrangement craft actually lives.
+- **Low frequencies break short analysis windows, repeatedly.** At 30-60 Hz one
+  cycle is 17-33 ms, so a 5 ms RMS window measures the waveform's own zero
+  crossings rather than its envelope - the continuity probe reported every
+  setting dipping an identical ~21% until the window went to 60 ms. The same trap
+  had the tuning guard reporting cents it could not resolve. Any time a
+  measurement of something low looks suspiciously uniform, check the window
+  before believing it.
 - **Two measurements have known blind spots.** The tuning guard sweeps a DFT over
   a 32768-sample window whose main lobe is ~1.5 Hz wide — 82 cents of smear at
   30 Hz — so it declines to answer below 50 Hz rather than guess. And the
