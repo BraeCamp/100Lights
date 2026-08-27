@@ -12,6 +12,14 @@ on:
       - 'components/apps/apollo/**'
       - 'components/apps/Apollo.tsx'
       - 'scripts/apollo-tests/**'
+      # The suite reaches OUTSIDE lib/apollo: patch.ts imports lib/scale-constants,
+      # and the audits load app modules through scripts/lib/ts-import.mjs. Without
+      # these, editing a dependency skips the suite entirely — the break lands with
+      # no red at all, and the next commit that does touch lib/apollo/** goes red
+      # and gets the blame. That is how 971e5ba's breakage came to look like
+      # 3e923ef's.
+      - 'lib/scale-constants.ts'
+      - 'scripts/lib/**'
       - '.github/workflows/apollo-tests.yml'
   workflow_dispatch:
 
