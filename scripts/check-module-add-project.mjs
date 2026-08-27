@@ -42,13 +42,30 @@ for (const [name, path] of [['Beacon', '/beacon'], ['Prism', '/prism']]) {
 
   const found = await page.evaluate(() => {
     const btns = [...document.querySelectorAll('button')]
-    const add = btns.filter(b => /add a project/i.test(b.textContent || ''))
+    // Same wording as All Projects, including its signed-out variant.
+    const add = btns.filter(b => /open \/ import files|open from file/i.test(b.textContent || ''))
     const nw = [...document.querySelectorAll('a')].filter(a => /new .*project|new podcast/i.test(a.textContent || ''))
     return { add: add.length, nw: nw.length }
   })
-  console.log(`  ${name}: ${found.nw} "new project" links, ${found.add} "add a project" buttons`)
+  console.log(`  ${name}: ${found.nw} "new project" links, ${found.add} open/import buttons`)
   check(`${name} can start a new project`, found.nw > 0, `${found.nw}`)
-  check(`${name} can add an existing project`, found.add > 0, `${found.add}`)
+  check(`${name} can open an existing project`, found.add > 0, `${found.add}`)
+
+  // A guest is not a fault. /api/projects answers 401 to one, and the panel
+  // used to report that as "Failed to load projects" with a Retry that could
+  // never succeed.
+  const guest = await page.evaluate(() => {
+    const t = document.body.innerText
+    return {
+      failed: /Failed to load projects/i.test(t),
+      invite: /Log in to access saved files/i.test(t),
+      signIn: [...document.querySelectorAll('a')].some(a =>
+        a.getAttribute('href') === '/sign-in' && /sign in/i.test(a.textContent || '')),
+    }
+  })
+  check(`${name} does not call a signed-out visitor a failure`, !guest.failed)
+  check(`${name} invites a signed-out visitor to log in`, guest.invite && guest.signIn,
+    `text ${guest.invite}, button ${guest.signIn}`)
 }
 
 // And it has to actually do something. Clicking it must open a file chooser —
@@ -59,7 +76,7 @@ if (existsSync(FIXTURE)) {
   const chooser = page.waitForEvent('filechooser', { timeout: 15000 }).catch(() => null)
   // A real click, not a scripted one: opening a file picker needs a trusted
   // user gesture, and element.click() from page script is not one.
-  await page.getByRole('button', { name: /add a project/i }).first().click()
+  await page.getByRole('button', { name: /open \/ import files|open from file/i }).first().click()
   const fc = await chooser
   check('clicking it opens a file picker', !!fc)
   if (fc) {

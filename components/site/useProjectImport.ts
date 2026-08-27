@@ -22,7 +22,7 @@ import { openMediaInStudio } from '@/lib/media-handoff'
  * play now and vanish on reload.
  */
 export function useProjectImport(onImported?: () => void) {
-  const { isSignedIn } = useUser()
+  const { isSignedIn, isLoaded } = useUser()
   const [importing, setImporting] = useState(false)
   const [importMsg, setImportMsg] = useState<string | null>(null)
 
@@ -88,5 +88,5 @@ export function useProjectImport(onImported?: () => void) {
     onImported?.()
   }, [isSignedIn, onImported])
 
-  return { importing, importMsg, openFromFile, isSignedIn }
+  return { importing, importMsg, openFromFile, isSignedIn, isLoaded }
 }
