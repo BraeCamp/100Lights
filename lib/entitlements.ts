@@ -42,8 +42,8 @@ export interface Entitlements {
 
 export const ENTITLEMENTS: Record<Plan, Entitlements> = {
   free: {
-    projectsMax: 5,
-    storageMb: 500,
+    projectsMax: 25,
+    storageMb: 2048,
     maxUploadMb: 100,
     syncedSounds: 30,
     communityPostsPerDay: 3,

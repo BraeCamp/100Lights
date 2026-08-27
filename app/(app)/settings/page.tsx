@@ -6,6 +6,7 @@ import { useUser, useClerk } from '@clerk/nextjs'
 import Link from 'next/link'
 import posthog from 'posthog-js'
 import RedeemCode from '@/components/RedeemCode'
+import { ENTITLEMENTS } from '@/lib/entitlements'
 
 interface BillingInfo {
   plan: 'free' | 'pro'
@@ -364,7 +365,13 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <p className="text-sm font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Free plan</p>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>500 MB storage</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {/* From lib/entitlements so it can't drift from the real quota again. */}
+                    {ENTITLEMENTS.free.storageMb >= 1024
+                      ? `${Math.round(ENTITLEMENTS.free.storageMb / 1024)} GB storage`
+                      : `${ENTITLEMENTS.free.storageMb} MB storage`}
+                    {' · '}{ENTITLEMENTS.free.projectsMax} projects
+                  </p>
                 </div>
               </div>
               <div

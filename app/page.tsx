@@ -63,7 +63,7 @@ const beyondFeatures = [
   {
     icon: Library,
     title: 'A sound library that sustains',
-    description: 'Over a thousand built-in sounds across strings, keys, guitar, synths, brass, and drums. Every sample stretches to any note length — hold a violin for four bars and it keeps singing.',
+    description: 'Around a hundred instruments and drum sounds across strings, keys, guitar, synths, brass, and percussion — and every melodic one is sampled note by note across its whole range, not pitch-shifted from a single take. Hold a violin for four bars and it keeps singing.',
     color: '#14b8a6',
   },
   {
@@ -125,7 +125,7 @@ const steps = [
 const faqs = [
   {
     q: 'Is 100Lights really free?',
-    a: 'Yes — the studio is free to use: tracks, piano roll, mixer, effects, recording, and WAV export all work on the free plan. Pro removes project limits and unlocks live co-editing for collaborators.',
+    a: 'Yes — the studio itself is free: every instrument, effect, and track, plus the piano roll, the mixer, recording, and export to WebM and MIDI. Nothing about making the song is paywalled. Pro adds release-grade output (WAV and per-track stems, no watermark), more storage, unlimited cloud projects, and live co-editing with collaborators.',
   },
   {
     q: 'I’m a beginner — can 100Lights teach me?',
@@ -145,7 +145,7 @@ const faqs = [
   },
   {
     q: 'What can I export?',
-    a: 'Full mixes as WAV (44.1 or 48 kHz) or WebM, per-track stems as a zip of WAVs, and MIDI files from any pattern. Your sounds and chord recipes can also be published to the community.',
+    a: 'Full mixes as WebM, and MIDI files from any pattern, on every plan. Pro adds WAV (44.1 or 48 kHz) and per-track stems as a zip of WAVs. Your sounds and chord recipes can also be published to the community on any plan.',
   },
 ]
 
