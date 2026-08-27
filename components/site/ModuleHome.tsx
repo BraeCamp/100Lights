@@ -9,17 +9,47 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   Film, AudioLines, Music2, Mic2, Palette,
-  Plus, ArrowRight, Clock, Star, Pencil, RefreshCw, AlertCircle,
+  Plus, ArrowRight, Clock, Star, Pencil, RefreshCw, AlertCircle, FolderOpen,
 } from 'lucide-react'
 import { MODULE_DEFS } from '@/lib/editor-types'
 import type { ModuleKey } from '@/lib/editor-types'
 import { moduleEntry } from '@/lib/lights-registry'
 import { useIsMobile } from '@/lib/use-is-mobile'
+import { useProjectImport } from '@/components/site/useProjectImport'
 
 const ICONS: Record<ModuleKey, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film,
   audio: AudioLines,
   image: Palette,
+}
+
+/** "Add a project" — opens or imports an existing file. Deliberately the quiet
+ *  sibling of the New Project call to action: starting something new is what
+ *  most people came for, but bringing a project in has to be possible from
+ *  here, not only from All Projects. */
+function AddProjectButton({ onClick, importing, signedIn }: {
+  onClick: () => void; importing: boolean; signedIn: boolean | undefined
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={importing}
+      title={signedIn
+        ? 'Open one file to edit, or select several to import them all'
+        : 'Open a project file'}
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        padding: '10px 18px', borderRadius: 10,
+        background: 'var(--bg-card)', border: '1px solid var(--border)',
+        color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600,
+        cursor: importing ? 'default' : 'pointer', opacity: importing ? 0.6 : 1,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <FolderOpen size={14} />
+      {importing ? 'Adding…' : 'Add a project'}
+    </button>
+  )
 }
 
 // Per-module hero copy — distinct identity for each app
@@ -77,6 +107,12 @@ export default function ModuleHome({ moduleKey }: { moduleKey: ModuleKey }) {
   }
 
   useEffect(() => { loadProjects() }, [])
+
+  // Bringing an EXISTING project in. Until now these pages could only start
+  // something new — every way of opening a file lived on /projects, so from
+  // Beacon or Prism there was no way to add one. Same hook the All Projects
+  // page uses, so the two cannot drift.
+  const { importing, importMsg, openFromFile, isSignedIn } = useProjectImport(loadProjects)
 
   // Platform flags — a hidden module's app page bounces to the dashboard
   const router = useRouter()
@@ -211,6 +247,7 @@ export default function ModuleHome({ moduleKey }: { moduleKey: ModuleKey }) {
                   <Mic2 size={14} />
                   New Podcast
                 </Link>
+                <AddProjectButton onClick={openFromFile} importing={importing} signedIn={isSignedIn} />
               </>
             ) : (
               <Link
@@ -228,9 +265,22 @@ export default function ModuleHome({ moduleKey }: { moduleKey: ModuleKey }) {
                 New {mod.label} Project
               </Link>
             )}
+            {mod.key !== 'audio' && (
+              <AddProjectButton onClick={openFromFile} importing={importing} signedIn={isSignedIn} />
+            )}
           </div>
         </div>
       </div>
+
+      {importMsg && (
+        <div style={{
+          margin: '0 0 14px', padding: '10px 14px', borderRadius: 10, fontSize: 12.5,
+          background: 'var(--accent-subtle)', border: '1px solid var(--border)',
+          color: 'var(--text-primary)',
+        }}>
+          {importMsg}
+        </div>
+      )}
 
       {/* ── Projects ── */}
       <div style={{ flex: 1, padding: isMobile ? '24px 16px 48px' : '36px 48px 60px' }}>
@@ -273,19 +323,25 @@ export default function ModuleHome({ moduleKey }: { moduleKey: ModuleKey }) {
               No {mod.label} projects yet
             </p>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 24 }}>
-              Create your first to get started.
+              Start a new one, or add a project you already have.
             </p>
-            <Link
-              href={`/create?modules=${mod.key}`}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 7,
-                padding: '10px 20px', borderRadius: 8,
-                background: mod.color, color: '#fff',
-                fontSize: 12, fontWeight: 600, textDecoration: 'none',
-              }}
-            >
-              <Plus size={13} /> New {mod.label} Project
-            </Link>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <Link
+                href={`/create?modules=${mod.key}`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 7,
+                  padding: '10px 20px', borderRadius: 8,
+                  background: mod.color, color: '#fff',
+                  fontSize: 12, fontWeight: 600, textDecoration: 'none',
+                }}
+              >
+                <Plus size={13} /> New {mod.label} Project
+              </Link>
+              {/* An empty dashboard is exactly where someone who ALREADY has a
+                  project file goes looking, and telling them to create their
+                  first one is the wrong answer for them. */}
+              <AddProjectButton onClick={openFromFile} importing={importing} signedIn={isSignedIn} />
+            </div>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
