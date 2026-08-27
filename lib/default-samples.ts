@@ -651,6 +651,20 @@ export async function libraryFulfill(id: string): Promise<LibraryEntry | null> {
     } catch { return null }
   }
 
+  // Catalog sounds stream from the server on first use, then persist locally
+  // so later plays are instant and work offline — same shape as a community
+  // import above.
+  if (entry.catalogUrl) {
+    try {
+      const res = await fetch(entry.catalogUrl)
+      if (!res.ok) return null
+      const blob = await res.blob()
+      const fulfilled: LibraryEntry = { ...entry, audioBlob: blob }
+      libraryAdd(fulfilled).catch(() => {})
+      return fulfilled
+    } catch { return null }
+  }
+
   const spec = entry.renderSpec
   if (!spec) return null
 

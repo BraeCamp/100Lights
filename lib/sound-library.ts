@@ -49,6 +49,9 @@ export interface LibraryEntry {
    *  the user can't delete it (a delete would just re-sync), and it's shared
    *  across every account. Local id is `catalog_<catalogId>`. */
   catalog?:     boolean
+  /** Where a catalog entry's audio lives. Present INSTEAD of audioBlob until
+   *  the sound is first used — see the note on syncCatalog. */
+  catalogUrl?:  string
 }
 
 /** Built-in/official entries a user must not delete — deterministic synth seeds
@@ -174,7 +177,10 @@ const AUDIO_EXT: Record<string, string> = {
 /** A sound is the user's own (syncable) when it has a local blob and isn't a
  *  built-in synth (renderSpec) or a community import (communityRef). */
 function isSyncable(e: LibraryEntry): boolean {
-  return !!e.audioBlob && !e.renderSpec && !e.communityRef
+  // `catalog` too: those already live on the server, and re-uploading a
+  // catalog sound into someone's personal library would bill their storage for
+  // a sound everybody already has.
+  return !!e.audioBlob && !e.renderSpec && !e.communityRef && !e.catalog
 }
 
 /** Upload one entry's audio to the account library. No-op unless it's the
@@ -289,11 +295,17 @@ export async function syncCatalog(): Promise<void> {
       const lid = `catalog_${it.id}`
       if (localIds.has(lid)) continue
       try {
-        const audio = await fetch(it.url)
-        if (!audio.ok) continue
-        const audioBlob = await audio.blob()
+        // Metadata only — the audio streams on first use (libraryFulfill).
+        //
+        // This used to download every new entry's audio during the sync. With
+        // a handful of curated sounds that was invisible; with a real library
+        // it is not. A 731-sound drum pack is about 500MB, and every visitor —
+        // signed in or not, on any connection — would have pulled all of it
+        // into IndexedDB before touching a single one. The catalog has to be
+        // able to grow without the cost landing on people who never open it.
         await libraryAdd({
-          id: lid, name: it.name, category: (it.category as LibraryCategory) || 'custom', audioBlob,
+          id: lid, name: it.name, category: (it.category as LibraryCategory) || 'custom',
+          catalogUrl: it.url,
           duration: it.duration ?? 0, addedAt: new Date().toISOString(),
           folder: it.folder, parentFolder: it.parentFolder ?? '100Lights Catalog',
           tags: it.tags, key: it.key, bpm: it.bpm, catalog: true,
