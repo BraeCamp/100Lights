@@ -5,10 +5,11 @@
 // Lazy self-creating table (mirrors lib/credits.ts / lib/age-gate.ts). Reads fail soft to the default
 // (participating; opt_out = false).
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS user_prefs (
       user_id           TEXT PRIMARY KEY,

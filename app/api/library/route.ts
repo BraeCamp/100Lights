@@ -15,10 +15,11 @@ import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { getSubscription } from '@/lib/subscription'
 import { entitlements } from '@/lib/entitlements'
+import { schemaManaged } from '@/lib/schema-guard'
 
 let schemaReady = false
 async function ensureSchema() {
-  if (schemaReady) return
+  if (schemaReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS user_sounds (
       id           TEXT PRIMARY KEY,

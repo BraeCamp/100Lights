@@ -5,6 +5,7 @@ import { logAdmin } from '@/lib/admin-audit'
 import { buildTimeline, listNoteEntries, listTasks } from '@/lib/user-crm'
 import { stageOf, healthOf } from '@/lib/lifecycle'
 import { emailEnabled } from '@/lib/email'
+import { schemaManaged } from '@/lib/schema-guard'
 
 export const runtime = 'nodejs'
 
@@ -25,7 +26,7 @@ async function safe<T = Record<string, unknown>>(p: Promise<unknown>, fallback: 
 // separate from anything the user sees.
 let notesReady = false
 async function ensureNotes() {
-  if (notesReady) return
+  if (notesReady || schemaManaged) return
   await sql`CREATE TABLE IF NOT EXISTS user_notes (user_id TEXT PRIMARY KEY, note TEXT NOT NULL DEFAULT '', tags JSONB, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
   notesReady = true
 }

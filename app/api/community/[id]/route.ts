@@ -2,6 +2,22 @@ import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { ensureTables, devTestUser, rowToItem, reactionMaps, commentCounts, proUserIds, REACTION_EMOJI, LARGE_MODE_LIMITS, isUuid } from '@/lib/community-server'
 import { getFlags } from '@/lib/platform-flags'
+import { schemaManaged } from '@/lib/schema-guard'
+
+// Was a CREATE TABLE on every large-mode community action — i.e. a DDL
+// round-trip before each rate-limit check. Memoised per process, and skipped
+// entirely once SCHEMA_MANAGED=1 (db/migrations owns this table).
+let actionLogReady = false
+async function ensureActionLog() {
+  if (actionLogReady || schemaManaged) return
+  await sql`
+    CREATE TABLE IF NOT EXISTS community_action_log (
+      user_id TEXT NOT NULL,
+      at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+  actionLogReady = true
+}
 
 export const runtime = 'nodejs'
 
@@ -85,12 +101,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { communityScale } = await getFlags()
   if (communityScale === 'large') {
     await ensureTables()
-    await sql`
-      CREATE TABLE IF NOT EXISTS community_action_log (
-        user_id TEXT NOT NULL,
-        at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `
+    await ensureActionLog()
     const n = await sql`SELECT COUNT(*)::int AS n FROM community_action_log WHERE user_id = ${userId} AND at > NOW() - INTERVAL '1 hour'`
     if ((n[0]?.n ?? 0) >= LARGE_MODE_LIMITS.actionsPerHour) {
       return Response.json({ error: 'Slow down — too many actions this hour' }, { status: 429 })

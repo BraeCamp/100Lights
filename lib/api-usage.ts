@@ -7,10 +7,11 @@
 // The same table is written by the .mjs scripts via scripts/_usage.mjs (identical schema).
 import { sql } from '@/lib/db'
 import { randomUUID } from 'node:crypto'
+import { schemaManaged } from './schema-guard'
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS api_usage (
       id            TEXT PRIMARY KEY,

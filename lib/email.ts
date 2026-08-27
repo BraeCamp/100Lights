@@ -7,6 +7,7 @@
 
 import { renderEmail, emailP, emailButton } from '@/lib/email-layout'
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 export function emailEnabled(): boolean {
   return !!process.env.RESEND_API_KEY
@@ -18,7 +19,7 @@ export function emailEnabled(): boolean {
 // healthy. All best-effort: a DB hiccup never blocks a legitimate send.
 let suppressReady = false
 async function ensureSuppress(): Promise<void> {
-  if (suppressReady) return
+  if (suppressReady || schemaManaged) return
   await sql`CREATE TABLE IF NOT EXISTS email_suppressions (email TEXT PRIMARY KEY, reason TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
   suppressReady = true
 }

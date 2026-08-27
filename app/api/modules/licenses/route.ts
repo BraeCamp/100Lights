@@ -2,12 +2,13 @@ import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { getSubscription } from '@/lib/subscription'
 import { ALL_MODULE_KEYS, type ModuleKey } from '@/lib/editor-types'
+import { schemaManaged } from '@/lib/schema-guard'
 
 export const runtime = 'nodejs'
 
 let tableReady = false
 async function ensureTable() {
-  if (tableReady) return
+  if (tableReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS module_licenses (
       user_id TEXT NOT NULL,

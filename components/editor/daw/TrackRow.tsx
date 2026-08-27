@@ -574,8 +574,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
     const midFile = [...(e.dataTransfer.files ?? [])].find(f => /\.midi?$/i.test(f.name))
     if (midFile) {
       try {
-        const { parseMidiFile } = await import('@/lib/midi-file')
-        const parsed = parseMidiFile(await midFile.arrayBuffer())
+        const { parseMidiNotes } = await import('@/lib/midi-file')
+        const parsed = parseMidiNotes(await midFile.arrayBuffer())
         if (parsed.notes.length === 0) return
         const bar = project.timeSignatureNum || 4
         const contentEnd = Math.max(...parsed.notes.map(n => n.startBeat + n.durationBeats))

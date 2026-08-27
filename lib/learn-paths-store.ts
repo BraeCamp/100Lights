@@ -1,5 +1,6 @@
 import { sql } from '@/lib/db'
 import { LEARN_PATHS, type LearnPath, type PathLevel } from './learn-paths'
+import { schemaManaged } from './schema-guard'
 
 // Admin-editable layer over the code registry (lib/learn-paths.ts), mirroring
 // how Learn articles merge repo files with DB rows: the built-in paths are the
@@ -19,7 +20,7 @@ export interface AdminPath extends LearnPath {
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS learn_paths (
       slug          TEXT        PRIMARY KEY,

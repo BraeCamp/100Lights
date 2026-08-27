@@ -1,5 +1,6 @@
 import { sql } from '@/lib/db'
 import { randomUUID } from 'crypto'
+import { schemaManaged } from './schema-guard'
 
 export type GuestStatus = 'pending' | 'waiting' | 'ready' | 'uploaded' | 'pulled'
 
@@ -17,7 +18,9 @@ export interface GuestSession {
   createdAt: string
 }
 
+let ready = false
 async function ensureTable() {
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS guest_sessions (
       token              TEXT PRIMARY KEY,
@@ -33,6 +36,7 @@ async function ensureTable() {
       created_at         TIMESTAMPTZ DEFAULT NOW()
     )
   `
+  ready = true
 }
 
 function row2session(r: Record<string, unknown>): GuestSession {

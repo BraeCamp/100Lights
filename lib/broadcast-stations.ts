@@ -5,6 +5,7 @@
 // unreachable the playlist route falls back to the code list. Server-only (imports @/lib/db).
 import { sql } from '@/lib/db'
 import { STATIONS, type Station } from '@/lib/stations'
+import { schemaManaged } from './schema-guard'
 
 export interface StationRow extends Station {
   enabled: boolean
@@ -15,7 +16,7 @@ export interface StationRow extends Station {
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS broadcast_stations (
       slug       TEXT PRIMARY KEY,

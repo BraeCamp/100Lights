@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { getSubscription } from '@/lib/subscription'
 import { entitlements } from '@/lib/entitlements'
+import { schemaManaged } from '@/lib/schema-guard'
 
 export const runtime = 'nodejs'
 
@@ -12,7 +13,7 @@ export const runtime = 'nodejs'
 
 let versionsSchemaReady = false
 async function ensureVersionsSchema() {
-  if (versionsSchemaReady) return
+  if (versionsSchemaReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS project_versions (
       id          TEXT PRIMARY KEY,

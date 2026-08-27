@@ -1,4 +1,5 @@
 import { sql } from './db'
+import { schemaManaged } from './schema-guard'
 
 // Uploaded replacements for the demo clips. When a clip has an override, the
 // /api/demo-audio route serves that file instead of the generated one — so
@@ -7,7 +8,7 @@ import { sql } from './db'
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS demo_audio_overrides (
       clip         TEXT PRIMARY KEY,

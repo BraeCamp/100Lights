@@ -1,4 +1,5 @@
 import { sql } from './db'
+import { schemaManaged } from './schema-guard'
 
 // Broadcast announcements — a message the founder can push to everyone (or a
 // plan segment) that renders as a dismissible banner across the app. One place
@@ -24,7 +25,7 @@ export interface Announcement {
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`CREATE TABLE IF NOT EXISTS announcements (
     id BIGSERIAL PRIMARY KEY,
     message TEXT NOT NULL,

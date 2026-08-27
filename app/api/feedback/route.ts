@@ -1,12 +1,13 @@
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { isAdmin } from '@/lib/admin-auth'
+import { schemaManaged } from '@/lib/schema-guard'
 
 export const runtime = 'nodejs'
 
 let tableReady = false
 async function ensureTable() {
-  if (tableReady) return
+  if (tableReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS feedback (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -3,6 +3,18 @@ import { sql } from '@/lib/db'
 import { deleteObjects } from '@/lib/r2'
 import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
 import { slugify } from '@/lib/slugify'
+import { schemaManaged } from '@/lib/schema-guard'
+
+// projects.folder_id is created by db/migrations; this is the pre-migration
+// fallback. Memoised so it costs at most one DDL round-trip per process
+// instead of one per folder-move request, and skipped entirely once
+// SCHEMA_MANAGED=1.
+let folderColumnReady = false
+async function ensureFolderColumn() {
+  if (folderColumnReady || schemaManaged) return
+  try { await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS folder_id TEXT` } catch { /* pre-migration only */ }
+  folderColumnReady = true
+}
 
 async function uniqueSlugExcluding(userId: string, name: string, excludeId: string): Promise<string> {
   const base = slugify(name)
@@ -79,7 +91,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   // Move a project to a folder (or out of one with folderId: null).
   if (body.folderId !== undefined) {
-    try { await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS folder_id TEXT` } catch { /* ignore */ }
+    await ensureFolderColumn()
     const rows = await sql`
       UPDATE projects SET folder_id = ${body.folderId}
       WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL

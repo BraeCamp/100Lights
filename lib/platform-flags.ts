@@ -1,5 +1,6 @@
 import { sql } from '@/lib/db'
 import { LAUNCH_MODULES, type ModuleKey } from '@/lib/editor-types'
+import { schemaManaged } from './schema-guard'
 
 export interface PlatformFlags {
   enabledModules:    ModuleKey[]
@@ -18,7 +19,7 @@ const DEFAULTS: PlatformFlags = {
 
 let tableReady = false
 async function ensureTable() {
-  if (tableReady) return
+  if (tableReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS platform_config (
       key        TEXT PRIMARY KEY,

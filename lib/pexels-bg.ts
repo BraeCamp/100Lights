@@ -2,6 +2,7 @@
 // video file) — the <video> streams straight from Pexels' CDN. A row is a few hundred bytes, so the
 // whole catalog is tiny (see the admin panel). Curated in /admin/lightning-bug.
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 export type Brightness = 'bright' | 'mid' | 'dark'
 export type Speed = 'fast' | 'standard' | 'slow'
@@ -28,7 +29,7 @@ export interface PexelsBg {
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS pexels_bg (
       id         TEXT PRIMARY KEY,

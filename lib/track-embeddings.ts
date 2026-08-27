@@ -4,10 +4,11 @@
 // it (query-by-example: pick a seed track, return its nearest-by-sound neighbours), so nothing heavy
 // runs on the server. Only commercial-safe tracks are stored, so every neighbour is broadcast-safe.
 import { sql } from '@/lib/db'   // CLAP (laion/clap-htsat-unfused)
+import { schemaManaged } from './schema-guard'
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`CREATE EXTENSION IF NOT EXISTS vector`
   await sql`
     CREATE TABLE IF NOT EXISTS track_embeddings (

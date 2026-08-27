@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
+import { schemaManaged } from '@/lib/schema-guard'
 
 export const runtime = 'nodejs'
 
@@ -8,7 +9,7 @@ export const runtime = 'nodejs'
 // manual migration step is needed on fresh installs.
 let ready = false
 async function ensureTable() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id    TEXT        PRIMARY KEY,

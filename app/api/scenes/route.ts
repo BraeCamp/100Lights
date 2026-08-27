@@ -1,12 +1,13 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
+import { schemaManaged } from '@/lib/schema-guard'
 
 // Account-synced Lightning Bug scenes (the whole visualizer setup). One row per scene per
 // user; the full scene object is stored as JSONB so the client can evolve the shape freely.
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS user_scenes (
       user_id    TEXT NOT NULL,

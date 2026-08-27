@@ -1,5 +1,6 @@
 import { sql } from './db'
 import { getSubscription } from './subscription'
+import { schemaManaged } from './schema-guard'
 
 // Project sharing model:
 // - visibility 'private' (default): owner + explicitly added members only
@@ -19,7 +20,7 @@ export function asMemberRole(r: unknown): MemberRole {
 
 let ready = false
 export async function ensureSharingSchema() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private'`
   await sql`
     CREATE TABLE IF NOT EXISTS project_members (

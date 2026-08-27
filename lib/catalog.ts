@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 // The OFFICIAL sound catalog — global, admin-curated, ships to every user's
 // library (distinct from per-user synced sounds in `user_sounds`). Audio blobs
@@ -23,7 +24,7 @@ export interface CatalogRow {
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS catalog_sounds (
       id            TEXT PRIMARY KEY,

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { sql } from '@/lib/db'
 import type { Musical } from './caption'
+import { schemaManaged } from '@/lib/schema-guard'
 
 // The content queue — the marketing pipeline's review/approve/publish state,
 // moved into the app backend (Postgres). Every row is one rendered song-video
@@ -30,7 +31,7 @@ export interface ContentPost {
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS content_posts (
       id           TEXT        PRIMARY KEY,

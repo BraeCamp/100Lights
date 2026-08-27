@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { putObject } from '@/lib/r2'
 import { sql } from '@/lib/db'
+import { schemaManaged } from '@/lib/schema-guard'
 
 // Server-side upload proxy: the browser POSTs the file bytes here and WE PUT them
 // to R2. This sidesteps browser CORS entirely (which blocks the direct
@@ -11,7 +12,7 @@ const MAX_PROXY_BYTES = 4 * 1024 * 1024
 
 let uploadLogReady = false
 async function ensureUploadLog() {
-  if (uploadLogReady) return
+  if (uploadLogReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS upload_log (
       user_id TEXT NOT NULL, key TEXT NOT NULL,

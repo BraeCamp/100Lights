@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 // Voice Corrections — the server-side mirror of the VoiceMidi human-in-the-loop
 // correction loop (client store lives in lib/voice-corrections.ts + IndexedDB).
@@ -32,7 +33,7 @@ export interface CorrectionRow {
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS voice_corrections (
       id          TEXT PRIMARY KEY,

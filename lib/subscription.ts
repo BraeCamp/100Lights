@@ -1,6 +1,7 @@
 import { sql } from '@/lib/db'
 import { PLANS } from '@/lib/stripe'
 import { getCodeGrantUntil } from '@/lib/codes'
+import { schemaManaged } from './schema-guard'
 
 export type Plan = 'free' | 'pro'
 
@@ -11,7 +12,7 @@ export type Plan = 'free' | 'pro'
 // proxy for pre-migration signups; new rows get NOW() via the default.
 let subSchemaReady = false
 export async function ensureSubscriptionsSchema() {
-  if (subSchemaReady) return
+  if (subSchemaReady || schemaManaged) return
   await sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ`
   await sql`ALTER TABLE subscriptions ALTER COLUMN created_at SET DEFAULT NOW()`
   await sql`UPDATE subscriptions SET created_at = updated_at WHERE created_at IS NULL`

@@ -1,5 +1,6 @@
 import { sql } from './db'
 import { createHash } from 'node:crypto'
+import { schemaManaged } from './schema-guard'
 
 // Server-side shared helpers for the community API routes.
 
@@ -30,7 +31,7 @@ export function isUuid(id: string): boolean {
 }
 
 export async function ensureTables() {
-  if (tablesReady) return
+  if (tablesReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS community_items (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

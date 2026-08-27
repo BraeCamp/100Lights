@@ -9,12 +9,13 @@
 
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
+import { schemaManaged } from '@/lib/schema-guard'
 
 const TYPES = ['preset', 'kit', 'pattern'] as const
 
 let schemaReady = false
 async function ensureSchema() {
-  if (schemaReady) return
+  if (schemaReady || schemaManaged) return
   // PK is (user_id, id): ids can be deterministic across users (community imports
   // use `community-<itemId>`), so they're only unique WITHIN an account.
   await sql`

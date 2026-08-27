@@ -23,7 +23,7 @@ export interface ParsedMidi {
 // notes FIFO, and bounds-guards truncated files, drag-drop now imports the same
 // files the Open-button importer does (it previously rejected SMPTE / format 2).
 
-export function parseMidiFile(buf: ArrayBuffer): ParsedMidi {
+export function parseMidiNotes(buf: ArrayBuffer): ParsedMidi {
   const smf = parseSmf(buf)
   const div = smf.division || 480
   const notes: Omit<MidiNote, 'id'>[] = []

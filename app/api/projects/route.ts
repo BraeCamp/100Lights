@@ -5,11 +5,12 @@ import { getSubscription, getPlanLimits } from '@/lib/subscription'
 import type { CfProjFile, SerializedMedia } from '@/lib/project-serializer'
 import { slugify } from '@/lib/slugify'
 import { ensureSharingSchema } from '@/lib/project-access'
+import { schemaManaged } from '@/lib/schema-guard'
 
 // Add slug + owner_username columns on first cold start (idempotent)
 let columnsReady = false
 async function ensureSlugColumns() {
-  if (columnsReady) return
+  if (columnsReady || schemaManaged) return
   try {
     await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS slug TEXT`
     await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_username TEXT`

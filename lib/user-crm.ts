@@ -1,4 +1,5 @@
 import { sql } from './db'
+import { schemaManaged } from './schema-guard'
 
 // The CRM layer over a user account: a merged activity timeline (from data we
 // already keep) and a dated notes log (institutional memory that accumulates
@@ -23,7 +24,7 @@ async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
 // ── Dated notes log ─────────────────────────────────────────────────────────
 let logReady = false
 async function ensureNoteLog() {
-  if (logReady) return
+  if (logReady || schemaManaged) return
   await sql`CREATE TABLE IF NOT EXISTS user_note_entries (
     id BIGSERIAL PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -58,7 +59,7 @@ export async function deleteNoteEntry(userId: string, id: number): Promise<void>
 // Open tasks with a due date surface in the Daily Brief when they come due.
 let tasksReady = false
 async function ensureTasks() {
-  if (tasksReady) return
+  if (tasksReady || schemaManaged) return
   await sql`CREATE TABLE IF NOT EXISTS user_tasks (
     id BIGSERIAL PRIMARY KEY,
     user_id TEXT NOT NULL,

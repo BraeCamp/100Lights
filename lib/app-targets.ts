@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 // "Sound Targets" — the owner's ground-truth store of what things are SUPPOSED
 // to sound like. Each target pairs an optional reference-audio clip (in R2 under
@@ -27,7 +28,7 @@ export interface TargetRow {
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS sound_targets (
       id           TEXT PRIMARY KEY,

@@ -12,6 +12,7 @@
 // only decides on/off + who runs what. This keeps it secure and lets it scale to many workers (and,
 // later, many tenants) by just adding boxes.
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 export type StreamStatus = 'starting' | 'live' | 'error' | 'offline'
 export interface AgentReport { slug: string; status: StreamStatus; fps?: number; error?: string }
@@ -27,7 +28,7 @@ const FRESH_SECS = 30   // a worker/stream is considered live if seen within thi
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`ALTER TABLE broadcast_stations ADD COLUMN IF NOT EXISTS desired_live BOOLEAN NOT NULL DEFAULT FALSE`
   await sql`
     CREATE TABLE IF NOT EXISTS broadcast_agents (

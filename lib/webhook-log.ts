@@ -1,4 +1,5 @@
 import { sql } from './db'
+import { schemaManaged } from './schema-guard'
 
 // A durable record of every webhook we receive, with its outcome — so a
 // dropped Stripe event (a customer stuck on the wrong plan) is visible and
@@ -9,7 +10,7 @@ export type WebhookStatus = 'received' | 'handled' | 'failed'
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`CREATE TABLE IF NOT EXISTS webhook_events (
     id BIGSERIAL PRIMARY KEY,
     source TEXT NOT NULL,

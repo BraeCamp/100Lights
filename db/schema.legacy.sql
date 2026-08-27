@@ -1,3 +1,19 @@
+-- SUPERSEDED — do not edit, do not apply.
+--
+-- This was the hand-maintained schema. It went stale: it describes 8 tables
+-- while the application had grown to ~70, the other ~62 being created by
+-- runtime ensure() functions that this file never knew about.
+--
+-- The live schema now lives in db/migrations/. This file is kept for one
+-- reason only: projects, subscriptions and usage have no CREATE TABLE anywhere
+-- in the application code — only ALTERs that assume they exist — so this is
+-- still their sole definition. scripts/db/extract-schema.mjs folds them into
+-- the generated baseline from here.
+--
+-- Once you are confident db/migrations/0001_baseline.sql is correct against
+-- production, this file can be deleted and the LEGACY block removed from
+-- scripts/db/extract-schema.mjs.
+
 -- Run this once in the Neon SQL editor (neon.tech → your project → SQL Editor)
 
 CREATE TABLE IF NOT EXISTS projects (

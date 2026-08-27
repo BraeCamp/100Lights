@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 // 13+ age gate (COPPA). The Privacy Policy already states the Service isn't for
 // under-13; this enforces it: every signed-in user confirms their birth date
@@ -8,7 +9,7 @@ import { sql } from '@/lib/db'
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS user_age (
       user_id      TEXT        PRIMARY KEY,

@@ -8,13 +8,14 @@
 
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
+import { schemaManaged } from '@/lib/schema-guard'
 
 const MAX_ROWS_PER_USER = 500          // safety cap; the client also caps its local list
 const MAX_DATA_BYTES = 400_000         // skip syncing pathologically large payloads
 
 let schemaReady = false
 async function ensureSchema() {
-  if (schemaReady) return
+  if (schemaReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS app_history (
       id         TEXT PRIMARY KEY,

@@ -10,10 +10,11 @@
 // "no cache" (run the model), never an error to the caller.
 import { createHash } from 'node:crypto'
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS ai_cache (
       hash        TEXT PRIMARY KEY,

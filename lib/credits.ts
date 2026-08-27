@@ -15,6 +15,7 @@ import { sql } from '@/lib/db'
 // they differ only in the monthly credit allotment. (Scale/Business removed — consumer tiers only.)
 import { CREDIT_TIERS, CREDIT_COSTS, CREDIT_TOPUPS } from './credit-tiers'
 import type { CreditTier } from './credit-tiers'
+import { schemaManaged } from './schema-guard'
 export { CREDIT_TIERS, CREDIT_COSTS, CREDIT_TOPUPS }
 export type { CreditTier }
 
@@ -45,7 +46,7 @@ export const CREDITS_ENABLED = process.env.CREDITS_ENABLED === 'true'
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS user_credits (
       user_id              TEXT PRIMARY KEY,

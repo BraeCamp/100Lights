@@ -1,5 +1,6 @@
 import { sql } from './db'
 import { currentUser } from '@clerk/nextjs/server'
+import { schemaManaged } from './schema-guard'
 
 // Append-only record of consequential admin actions — gifts, code changes,
 // module-flag toggles, article publishes/deletes, community takedowns. So the
@@ -8,7 +9,7 @@ import { currentUser } from '@clerk/nextjs/server'
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS admin_audit (
       id         BIGSERIAL PRIMARY KEY,

@@ -4,10 +4,11 @@
 // instead of our metered /api/broadcast/audio proxy — and the 24/7 streamer pulls from R2 too. Tracks
 // that aren't mirrored yet keep proxying: mirroring is incremental and never blocks playback.
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS radio_audio_mirror (
       src_url    TEXT PRIMARY KEY,

@@ -1,5 +1,6 @@
 import { sql } from '@/lib/db'
 import crypto from 'crypto'
+import { schemaManaged } from './schema-guard'
 
 // ── Redemption codes ──────────────────────────────────────────────────────
 // Self-service "gifts": a code grants a user N days of Pro, sitting alongside
@@ -46,7 +47,7 @@ const MAX_PROMO_HORIZON_DAYS = 400
 // ── Table provisioning (lazy, idempotent — mirrors the codebase convention) ─
 let tablesReady = false
 export async function ensureCodeTables(): Promise<void> {
-  if (tablesReady) return
+  if (tablesReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS redemption_codes (
       code            TEXT        PRIMARY KEY,

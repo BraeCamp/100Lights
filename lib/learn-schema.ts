@@ -1,11 +1,12 @@
 import { sql } from './db'
+import { schemaManaged } from './schema-guard'
 
 // One place that owns the learn_articles shape, so the articles route and the
 // schedule route can't drift on it.
 let ready = false
 
 export async function ensureLearnSchema() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS learn_articles (
       slug        TEXT PRIMARY KEY,

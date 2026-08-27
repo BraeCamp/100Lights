@@ -2,6 +2,25 @@ import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { slugify } from '@/lib/slugify'
 import type { CfProjFile } from '@/lib/project-serializer'
+import { schemaManaged } from '@/lib/schema-guard'
+
+// Memoised per process (was a CREATE TABLE on every publish) and skipped once
+// SCHEMA_MANAGED=1 — db/migrations owns podcast_feeds.
+let feedsReady = false
+async function ensureFeeds() {
+  if (feedsReady || schemaManaged) return
+  await sql`
+    CREATE TABLE IF NOT EXISTS podcast_feeds (
+      id          TEXT PRIMARY KEY,
+      user_id     TEXT NOT NULL,
+      project_id  TEXT NOT NULL UNIQUE,
+      slug        TEXT NOT NULL UNIQUE,
+      created_at  TIMESTAMPTZ DEFAULT NOW(),
+      updated_at  TIMESTAMPTZ DEFAULT NOW()
+    )
+  `
+  feedsReady = true
+}
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth()
@@ -21,17 +40,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return Response.json({ error: 'Not a podcast project' }, { status: 400 })
   }
 
-  // Idempotent table creation
-  await sql`
-    CREATE TABLE IF NOT EXISTS podcast_feeds (
-      id          TEXT PRIMARY KEY,
-      user_id     TEXT NOT NULL,
-      project_id  TEXT NOT NULL UNIQUE,
-      slug        TEXT NOT NULL UNIQUE,
-      created_at  TIMESTAMPTZ DEFAULT NOW(),
-      updated_at  TIMESTAMPTZ DEFAULT NOW()
-    )
-  `
+  await ensureFeeds()
 
   const showName = data.podcastMeta?.showName ?? data.name ?? 'untitled'
   const baseSlug = slugify(showName)

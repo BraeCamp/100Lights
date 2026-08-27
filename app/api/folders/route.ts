@@ -1,12 +1,13 @@
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
+import { schemaManaged } from '@/lib/schema-guard'
 
 // Cloud folders for organizing projects. Nestable (a folder may sit inside another via `parent_id`).
 // A project's folder is the `folder_id` column on `projects` (see /api/projects). Per-user.
 
 let ready = false
 async function ensureFolders() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS folders (
       id TEXT PRIMARY KEY,

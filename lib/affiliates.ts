@@ -3,6 +3,7 @@ import { sql } from '@/lib/db'
 import { ensureCodeTables, normalizeCode } from '@/lib/codes'
 import { getProPrice } from '@/lib/stripe'
 import { encryptField, fieldEncryptionAvailable } from '@/lib/crypto-field'
+import { schemaManaged } from './schema-guard'
 
 // ── Affiliate (creator referral) program ─────────────────────────────────────
 // An affiliate is a creator who shares a referral link (100lights.com/?ref=CODE)
@@ -78,7 +79,7 @@ export const BETA_TERMS = { commissionPct: 30, commissionMonths: 12, perkDays: 3
 
 let ready = false
 export async function ensureAffiliateTables(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await ensureCodeTables() // affiliates reference redemption_codes + code_redemptions
   await sql`
     CREATE TABLE IF NOT EXISTS affiliates (

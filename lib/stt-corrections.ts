@@ -6,10 +6,11 @@
 //
 // Lazy self-creating Neon table; every write fails soft so feedback never blocks the UI.
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS stt_corrections (
       id          TEXT PRIMARY KEY,

@@ -1,4 +1,5 @@
 import { sql } from './db'
+import { schemaManaged } from './schema-guard'
 
 // Lightweight in-app notifications — the retention loop for the community's
 // social layer (comments today; extendable to replies/reactions later). Email
@@ -7,7 +8,7 @@ import { sql } from './db'
 
 let ready = false
 export async function ensureNotifications() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS notifications (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,5 +1,6 @@
 import { sql } from './db'
 import { LIFECYCLE_CTE, STAGE_CASE } from './lifecycle'
+import { schemaManaged } from './schema-guard'
 
 // Saved "smart segments" — named, reusable filters over the whole user base,
 // built from a fixed, safe set of criteria (so the SQL is fully parameterised —
@@ -20,7 +21,7 @@ export interface SavedSegment { id: number; name: string; criteria: SegmentCrite
 
 let ready = false
 async function ensure() {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`CREATE TABLE IF NOT EXISTS saved_segments (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,

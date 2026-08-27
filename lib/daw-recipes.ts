@@ -11,10 +11,11 @@
 //
 // Lazy self-creating table (mirrors lib/user-prefs.ts / lib/ai-cache.ts); every read fails soft.
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS daw_recipes (
       id            TEXT PRIMARY KEY,

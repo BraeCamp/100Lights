@@ -1,10 +1,11 @@
 import { auth } from '@clerk/nextjs/server'
 import { presignUpload } from '@/lib/r2'
 import { sql } from '@/lib/db'
+import { schemaManaged } from '@/lib/schema-guard'
 
 let uploadLogReady = false
 async function ensureUploadLog() {
-  if (uploadLogReady) return
+  if (uploadLogReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS upload_log (
       user_id TEXT NOT NULL,

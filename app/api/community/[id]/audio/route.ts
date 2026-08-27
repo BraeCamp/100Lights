@@ -1,6 +1,7 @@
 import { sql } from '@/lib/db'
 import { isUuid } from '@/lib/community-server'
 import { presignDownload } from '@/lib/r2'
+import { schemaManaged } from '@/lib/schema-guard'
 
 export const runtime = 'nodejs'
 
@@ -11,7 +12,7 @@ const DAILY_STREAM_CAP = 10_000
 
 let streamLogReady = false
 async function ensureStreamLog() {
-  if (streamLogReady) return
+  if (streamLogReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS community_stream_log (
       item_id UUID NOT NULL,

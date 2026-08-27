@@ -1,4 +1,5 @@
 import { sql } from '@/lib/db'
+import { schemaManaged } from './schema-guard'
 
 // DMCA takedown notices. Safe-harbor protection requires a public way for
 // copyright holders (who often aren't users) to report infringing user content
@@ -7,7 +8,7 @@ import { sql } from '@/lib/db'
 
 let ready = false
 async function ensure(): Promise<void> {
-  if (ready) return
+  if (ready || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS dmca_notices (
       id               BIGSERIAL   PRIMARY KEY,

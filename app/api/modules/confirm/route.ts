@@ -1,12 +1,13 @@
 import { stripe } from '@/lib/stripe'
 import { sql } from '@/lib/db'
 import { redirect } from 'next/navigation'
+import { schemaManaged } from '@/lib/schema-guard'
 
 export const runtime = 'nodejs'
 
 let tableReady = false
 async function ensureTable() {
-  if (tableReady) return
+  if (tableReady || schemaManaged) return
   await sql`
     CREATE TABLE IF NOT EXISTS module_licenses (
       user_id TEXT NOT NULL,
