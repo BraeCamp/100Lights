@@ -20,6 +20,7 @@
     "lib/daw-effect-catalog.ts",
     "lib/audio-capture.ts",
     "lib/apollo/storage-policy.ts",
-    "lib/spectral-duck.ts"
+    "lib/spectral-duck.ts",
+    "lib/entitlements.ts"
   ]
 }

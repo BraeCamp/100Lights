@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
 import { activeAnnouncements } from '@/lib/announcements'
+import type { Plan } from '@/lib/entitlements'
 import { getSubscription } from '@/lib/subscription'
 
 export const runtime = 'nodejs'
@@ -11,7 +12,7 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     const { userId } = await auth()
-    let plan: 'free' | 'pro' | null = null
+    let plan: Plan | null = null
     if (userId) {
       try { plan = (await getSubscription(userId)).plan } catch { plan = 'free' }
     }

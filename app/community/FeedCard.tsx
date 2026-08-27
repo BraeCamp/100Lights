@@ -5,6 +5,7 @@
 // (/community/{id}) — the latter passes signedIn={false} so actions become
 // sign-in prompts instead of failing.
 
+import { isPaid } from '@/lib/entitlements'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import posthog from 'posthog-js'
 import { ArrowBigUp, Download, Trash2, Music, Piano, BookOpen, Disc3, Play, Pause, Loader2, Link2, Package, LayoutTemplate, ExternalLink, Flag, Palette, Drum, Grid3x3, Repeat, MessageCircle, Send, Lock, MessageSquare, Pencil, SlidersHorizontal, Waves, Mic2, Radio, Film } from 'lucide-react'
@@ -45,7 +46,7 @@ function fetchPro(): Promise<boolean> {
   if (proCache !== null) return Promise.resolve(proCache)
   proPromise ??= fetch('/api/billing/info')
     .then(r => (r.ok ? r.json() : null))
-    .then(b => { proCache = !!(b && b.plan === 'pro' && b.status === 'active'); return proCache })
+    .then(b => { proCache = !!(b && isPaid(b.plan) && b.status === 'active'); return proCache })
     .catch(() => { proCache = false; return false })
   return proPromise
 }

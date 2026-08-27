@@ -6,7 +6,7 @@
 
 import { sql } from './db'
 import { getSubscription } from './subscription'
-import { entitlements, type Entitlements, type Plan } from './entitlements'
+import { entitlements, isPaid, type Entitlements, type Plan } from './entitlements'
 import { ALL_MODULE_KEYS, type ModuleKey } from './editor-types'
 import { CREDITS_ENABLED } from './credits'
 
@@ -26,7 +26,8 @@ export interface UserEntitlements {
 
 export async function getUserEntitlements(userId: string): Promise<UserEntitlements> {
   const sub = await getSubscription(userId)
-  const isPro = sub.plan === 'pro' && sub.status === 'active'
+  // Any paid tier, not pro exactly — see isPaid()'s note.
+  const isPro = isPaid(sub.plan) && sub.status === 'active'
 
   // Module licenses (same semantics as /api/modules/licenses: audio is free
   // for everyone; Pro bundles everything; otherwise per-module purchases).

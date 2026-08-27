@@ -1,5 +1,6 @@
 'use client'
 
+import { isPaid } from '@/lib/entitlements'
 import Link from 'next/link'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { usePathname } from 'next/navigation'
@@ -60,7 +61,7 @@ export default function Sidebar() {
       .catch(() => {})
   }, [])
 
-  const isPro = usage?.plan === 'pro'
+  const isPro = !!usage && isPaid(usage.plan)
 
   function navLink(href: string, label: string, Icon: React.ComponentType<{ size?: number; color?: string }>) {
     const active = pathname === href

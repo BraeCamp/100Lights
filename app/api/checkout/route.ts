@@ -1,3 +1,4 @@
+import { isPaid, type Plan } from '@/lib/entitlements'
 import { auth } from '@clerk/nextjs/server'
 import { stripe, getProPrice, type BillingPeriod } from '@/lib/stripe'
 import { getSubscription, upsertSubscription } from '@/lib/subscription'
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
   if (sub.stripeSubId && LIVE_SUB.has(sub.status)) {
     return Response.json({ error: 'You already have a subscription — manage it in Settings.' }, { status: 400 })
   }
-  if (sub.plan === 'pro' && sub.status === 'active') {
+  if (isPaid(sub.plan) && sub.status === 'active') {
     return Response.json({ error: 'Already on Pro plan' }, { status: 400 })
   }
 

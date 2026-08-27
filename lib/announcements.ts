@@ -1,3 +1,4 @@
+import { isPaid, type Plan } from '@/lib/entitlements'
 import { sql } from './db'
 
 // Broadcast announcements — a message the founder can push to everyone (or a
@@ -50,7 +51,15 @@ export async function listAnnouncements(): Promise<Announcement[]> {
 
 // The banners a given viewer should see right now: active, inside any time
 // window, and matching audience. plan null = signed-out (sees 'all' only).
-export async function activeAnnouncements(plan: 'free' | 'pro' | null): Promise<Announcement[]> {
+/**
+ * `audience` stays 'free' | 'pro' because that is what is stored in the table
+ * and what the admin UI writes. Callers pass a real Plan and it is collapsed
+ * here: every paid tier is the 'pro' audience. Widening the stored values
+ * instead would mean migrating rows and re-targeting every existing banner to
+ * say the same thing.
+ */
+export async function activeAnnouncements(plan: Plan | null): Promise<Announcement[]> {
+  const audience: 'free' | 'pro' | null = plan == null ? null : (isPaid(plan) ? 'pro' : 'free')
   await ensure()
   const rows = await sql`
     SELECT id, message, level, href, href_label, audience, dismissible
@@ -58,7 +67,7 @@ export async function activeAnnouncements(plan: 'free' | 'pro' | null): Promise<
     WHERE active = true
       AND (starts_at IS NULL OR starts_at <= NOW())
       AND (ends_at IS NULL OR ends_at > NOW())
-      AND (audience = 'all' OR audience = ${plan ?? 'free'})
+      AND (audience = 'all' OR audience = ${audience ?? 'free'})
     ORDER BY created_at DESC
     LIMIT 5`
   return rows as Announcement[]

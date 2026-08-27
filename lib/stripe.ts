@@ -1,5 +1,5 @@
 import Stripe from 'stripe'
-import { ENTITLEMENTS } from './entitlements'
+import { ENTITLEMENTS, type Plan } from './entitlements'
 
 // In dev, prefer the TEST secret key when present so local billing runs entirely in test mode
 // (production has no STRIPE_TEST_SECRET_KEY set → uses the live key). Keeps live/test separated.
@@ -9,16 +9,18 @@ export const stripe = new Stripe(stripeKey!, { apiVersion: '2026-05-27.dahlia' }
 // App-side limits per plan, derived from the single source of truth in
 // lib/entitlements.ts. Stripe owns the price/product; entitlements.ts owns the
 // feature gates. This shape is kept for existing callers (projectsMax/storageMb).
-export const PLAN_LIMITS = {
-  free: { storageMb: ENTITLEMENTS.free.storageMb, projectsMax: ENTITLEMENTS.free.projectsMax },
-  pro:  { storageMb: ENTITLEMENTS.pro.storageMb,  projectsMax: ENTITLEMENTS.pro.projectsMax  },
-} as const
+// Derived from every plan rather than listed by hand, so a new tier in
+// entitlements.ts cannot be forgotten here — which is exactly how a paying
+// customer ends up on free limits.
+export const PLAN_LIMITS = Object.fromEntries(
+  (Object.keys(ENTITLEMENTS) as Plan[]).map(p => [p, {
+    storageMb: ENTITLEMENTS[p].storageMb,
+    projectsMax: ENTITLEMENTS[p].projectsMax,
+  }]),
+) as Record<Plan, { storageMb: number; projectsMax: number }>
 
 // Legacy alias used by subscription.ts — keeps existing callers working
-export const PLANS = {
-  free: PLAN_LIMITS.free,
-  pro:  { ...PLAN_LIMITS.pro, priceId: '' }, // priceId filled at runtime via getProPrice()
-}
+export const PLANS = PLAN_LIMITS
 
 // ── Runtime price lookup ─────────────────────────────────────────────────────
 // Prices are fetched from Stripe by lookup key so no price ID ever lives in

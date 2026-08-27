@@ -1,4 +1,5 @@
 import { sql } from './db'
+import { isPaid } from '@/lib/entitlements'
 import { getSubscription } from './subscription'
 import { ensureSchema } from './schema-version'
 
@@ -58,7 +59,8 @@ export async function ensureSharingSchema() {
 
 async function isPro(userId: string | null): Promise<boolean> {
   if (!userId) return false
-  try { return (await getSubscription(userId)).plan === 'pro' } catch { return false }
+  // isPaid, not === 'pro': sharing is a paid feature, and every paid tier has it.
+  try { return isPaid((await getSubscription(userId)).plan) } catch { return false }
 }
 
 export async function getProjectAccess(

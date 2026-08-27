@@ -1,3 +1,4 @@
+import { isPaid, type Plan } from '@/lib/entitlements'
 import { isAdmin } from '@/lib/admin-auth'
 import { sql } from '@/lib/db'
 import { clerkClient } from '@clerk/nextjs/server'
@@ -78,8 +79,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ userId:
   const lastSaved = lastSavedRaw ? new Date(lastSavedRaw) : null
   const giftPlanVal = s?.gift_plan ? String(s.gift_plan) : null
   const giftUntilVal = s?.gift_until ? new Date(String(s.gift_until)) : null
-  const paying = !!s && String(s.plan) === 'pro' && String(s.status) === 'active' && !!s.stripe_sub_id
-  const gifted = giftPlanVal === 'pro' && (giftUntilVal === null || giftUntilVal > now)
+  const paying = !!s && isPaid(String(s.plan) as Plan) && String(s.status) === 'active' && !!s.stripe_sub_id
+  const gifted = isPaid(giftPlanVal as Plan) && (giftUntilVal === null || giftUntilVal > now)
   const coded = !!codeUntil
   const hasPro = paying || gifted || coded
   const status = s ? String(s.status) : 'none'

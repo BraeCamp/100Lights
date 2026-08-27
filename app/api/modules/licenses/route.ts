@@ -1,3 +1,4 @@
+import { isPaid, type Plan } from '@/lib/entitlements'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
 import { getSubscription } from '@/lib/subscription'
@@ -32,7 +33,7 @@ export async function GET() {
     sql`SELECT module_key, license_type FROM module_licenses WHERE user_id = ${userId}`,
   ])
 
-  const isPro = sub.plan === 'pro' && sub.status === 'active'
+  const isPro = isPaid(sub.plan) && sub.status === 'active'
   const ownedKeys = new Set(rows.map(r => r.module_key as string))
 
   const licenses = Object.fromEntries(

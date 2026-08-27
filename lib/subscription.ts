@@ -3,7 +3,10 @@ import { ensureSchema } from '@/lib/schema-version'
 import { PLANS } from '@/lib/stripe'
 import { getCodeGrantUntil } from '@/lib/codes'
 
-export type Plan = 'free' | 'pro'
+// Re-exported, not redeclared. Two copies of this union is how a third tier
+// gets added in one file and silently ignored in the other.
+export type { Plan } from '@/lib/entitlements'
+import type { Plan } from '@/lib/entitlements'
 
 // Ensure `created_at` exists so admin "new signups this week/month" can count
 // real account creations rather than `updated_at` (which every gift, plan
@@ -73,7 +76,9 @@ export async function getSubscription(userId: string): Promise<Subscription> {
 }
 
 export function getPlanLimits(plan: Plan) {
-  return plan === 'pro' ? PLANS.pro : PLANS.free
+  // Per plan, not "pro or not". The binary version handed a Max subscriber the
+  // FREE limits the moment a tier above pro existed.
+  return PLANS[plan] ?? PLANS.free
 }
 
 export async function upsertSubscription(params: {

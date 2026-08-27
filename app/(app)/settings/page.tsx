@@ -1,5 +1,6 @@
 'use client'
 
+import { isPaid, type Plan } from '@/lib/entitlements'
 import { useState, useEffect, useRef } from 'react'
 import { Settings, Zap, CheckCircle2, ArrowRight, AlertCircle, RefreshCw, LogIn, Check, X, Download, Trash2 } from 'lucide-react'
 import { useUser, useClerk } from '@clerk/nextjs'
@@ -8,7 +9,7 @@ import posthog from 'posthog-js'
 import RedeemCode from '@/components/RedeemCode'
 
 interface BillingInfo {
-  plan: 'free' | 'pro'
+  plan: Plan
   status: string
   currentPeriodEnd: string | null
   codeUntil: string | null
@@ -172,7 +173,7 @@ export default function SettingsPage() {
     }
   }
 
-  const isPro = billing?.plan === 'pro' && billing.status === 'active'
+  const isPro = !!billing && isPaid(billing.plan) && billing.status === 'active'
 
   return (
     <main className="flex-1 overflow-y-auto">

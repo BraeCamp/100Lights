@@ -1,5 +1,6 @@
 'use client'
 
+import { isPaid, type Plan } from '@/lib/entitlements'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, X, ChevronRight, ExternalLink, AlertTriangle } from 'lucide-react'
 
@@ -594,7 +595,7 @@ export default function UsersPanel() {
                 {users.map((u, i) => {
                   const gift = giftLabel(u)
                   const isGifted = !!u.giftPlan && (!u.giftUntil || new Date(u.giftUntil) > new Date())
-                  const isCode = !isGifted && !!u.codeUntil && u.effectivePlan === 'pro'
+                  const isCode = !isGifted && !!u.codeUntil && isPaid(u.effectivePlan as Plan)
                   return (
                     <tr key={u.userId}
                       onClick={() => void openDetail(u)}
@@ -610,7 +611,7 @@ export default function UsersPanel() {
                       </td>
                       <td className="px-4 py-2.5">
                         <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-                          style={u.effectivePlan === 'pro' ? { background: 'rgba(139,92,246,0.15)', color: 'var(--accent-light)' } : { background: 'var(--bg-base)', color: 'var(--text-muted)' }}>
+                          style={isPaid(u.effectivePlan as Plan) ? { background: 'rgba(139,92,246,0.15)', color: 'var(--accent-light)' } : { background: 'var(--bg-base)', color: 'var(--text-muted)' }}>
                           {u.effectivePlan}
                         </span>
                         {isGifted && <span style={{ marginLeft: 4, fontSize: 10, color: '#f97316' }}>↑ gifted</span>}
@@ -729,7 +730,7 @@ export default function UsersPanel() {
                   </div>
                 )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <Field label="Effective plan" value={detailUser.effectivePlan} accent={detailUser.effectivePlan === 'pro'} />
+                  <Field label="Effective plan" value={detailUser.effectivePlan} accent={isPaid(detailUser.effectivePlan as Plan)} />
                   <Field label="Stripe status" value={detail.subscription?.status ?? 'no record'} />
                   <Field label="Projects" value={String(detail.projectCount)} />
                   <Field label="Last saved" value={detail.risk?.lastSaved ? `${fmt(detail.risk.lastSaved)}${detail.risk.daysSinceSave != null ? ` · ${detail.risk.daysSinceSave}d ago` : ''}` : 'never'} warn={!!detail.risk?.atRisk && (detail.risk?.lastSaved === null || (detail.risk?.daysSinceSave ?? 0) >= 30)} />

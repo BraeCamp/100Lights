@@ -3,6 +3,7 @@
 // ⌘K / Ctrl-K launcher for the admin. Jump to any panel, run a quick action,
 // or find any user — from one keystroke, keyboard-first.
 
+import { isPaid, type Plan } from '@/lib/entitlements'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Search, CornerDownLeft } from 'lucide-react'
 import type { AdminTab } from './AdminTabs'
@@ -112,7 +113,9 @@ export default function CommandPalette({ tabs }: { tabs: AdminTab[] }) {
           {items.length === 0 && <div style={{ padding: '18px 12px', fontSize: 13, color: 'var(--text-muted)' }}>{q.trim().length >= 2 ? 'No matches.' : 'Type to search…'}</div>}
           {items.map((it, i) => {
             const on = i === active
-            const badge = it.kind === 'user' ? (it.user.effectivePlan === 'pro' ? 'pro' : 'free') : it.kind === 'nav' ? 'go' : it.kind === 'link' ? 'open ↗' : 'run'
+            // Show the real tier, not 'pro'/'free' — a Max subscriber reading as 'free'
+            // in the admin list is how a support conversation goes wrong.
+            const badge = it.kind === 'user' ? String(it.user.effectivePlan) : it.kind === 'nav' ? 'go' : it.kind === 'link' ? 'open ↗' : 'run'
             return (
               <button key={i}
                 onMouseEnter={() => setActive(i)} onClick={() => run(it)}
@@ -120,7 +123,7 @@ export default function CommandPalette({ tabs }: { tabs: AdminTab[] }) {
                 <span style={{ fontSize: 13.5, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {it.kind === 'user' && <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>@</span>}{it.label}
                 </span>
-                <span className="mono" style={{ fontSize: 10, color: it.kind === 'user' && it.user.effectivePlan === 'pro' ? 'var(--accent-light)' : 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px', flexShrink: 0 }}>{badge}</span>
+                <span className="mono" style={{ fontSize: 10, color: it.kind === 'user' && isPaid(it.user.effectivePlan as Plan) ? 'var(--accent-light)' : 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px', flexShrink: 0 }}>{badge}</span>
                 {on && <CornerDownLeft size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />}
               </button>
             )
