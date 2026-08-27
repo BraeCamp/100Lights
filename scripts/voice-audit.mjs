@@ -83,15 +83,36 @@ function centrePitch(sig, sr, note) {
 
 const PERC_NAME = /kick|snare|hat|tick|cowbell/
 function checkTuning(name, v) {
-  const note = Number(String(v.notes).split(',')[0].split(':')[0])
+  const written = Number(String(v.notes).split(',')[0].split(':')[0])
+  // A voice that is deliberately transposed sounds where it was TOLD to sound,
+  // not at the written note. `boom` puts osc A an octave down, and comparing its
+  // output against the written pitch reported it 84 cents flat — a misread of
+  // exactly the kind check-tuning was built to stop making, so the offset is
+  // taken from the patch rather than assumed to be zero.
+  const patch = v.build()
+  const o0 = patch.oscs?.[0]
+  const shift = o0 && o0.enabled && o0.keytrackPitch !== false
+    ? (o0.octave ?? 0) * 12 + (o0.semi ?? 0)
+    : 0
+  const note = written + shift
   const pf = join(tmp, `${name}-t.json`), wf = join(tmp, `${name}-t.wav`)
-  writeFileSync(pf, JSON.stringify(v.build()))
+  writeFileSync(pf, JSON.stringify(patch))
   execFileSync('node', ['--experimental-strip-types', join(ROOT, 'scripts/apollo-render.mjs'),
-    '--patch', pf, '--notes', `${note}:0:1.5`, '--seconds', '2', '--out', wf, '--json'],
+    '--patch', pf, '--notes', `${written}:0:1.5`, '--seconds', '2', '--out', wf, '--json'],
     { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 })
   const w = readWav(readFileSync(wf))
   const mono = Float32Array.from(w.l, (x, i) => (x + w.r[i]) * 0.5)
+  // Below about 50 Hz this measurement cannot be trusted and must not be
+  // reported as though it could. The detector sweeps a DFT over a 32768-sample
+  // window, whose main lobe is ~1.5 Hz wide; at 30 Hz that is 82 cents of
+  // smear, and on a voice with a pitch envelope and tremolo sidebands the
+  // weighted centre wanders well past the 8-cent threshold. `boom` read +20.7c,
+  // and compensating by -21 cents made it read +27.5 — which is what chasing a
+  // measurement rather than a sound looks like. Above ~110 Hz the resolution is
+  // 23 cents and falling, and the estimate is a centroid rather than a
+  // peak-pick, so it stays usable; down here it is not.
   const f = centrePitch(mono, w.sr, note)
+  if (f > 0 && f < 50) return null
   return f > 0 ? +centsOf(f, midiHz(note)).toFixed(1) : null
 }
 
@@ -116,7 +137,7 @@ console.log('\nvoice        rms   centroid  tune  ' + names.map(n => n.slice(0, 
 console.log('─'.repeat(84))
 for (const r of rows) {
   if (r.error) { console.log(`${r.name.padEnd(12)} ERROR ${r.error}`); continue }
-  const tune = r.cents == null ? '   —' : `${r.cents > 0 ? '+' : ''}${r.cents}`.padStart(6)
+  const tune = r.cents == null ? '   —' : `${r.cents > 0 ? '+' : ''}${r.cents}`.padStart(6)   // — = percussive, or too low to measure
   console.log(`${r.name.padEnd(12)}${String(r.rmsDb).padStart(6)}${String(r.centroidHz).padStart(10)}Hz${tune}` +
     names.map(n => (r.bands[n] * 100).toFixed(1).padStart(7)).join('') + (r.silent ? '  ** SILENT **' : ''))
 }

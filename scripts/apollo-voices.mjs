@@ -64,15 +64,22 @@ function useNoise(p, i, cfg = {}) {
 
 /** Sine + a fast downward pitch envelope. Play low (C1). */
 export const kick = () => patch('Kick', p => {
+  // Brae, on the first Artemas-manner track: the kick is "weak and short". Both
+  // were true and they had different causes. SHORT was a 0.34s decay with a
+  // steep curve, which is a click and a puff of air; WEAK was that all of its
+  // weight sat in one sine that the filter then rolled off. So: a longer, less
+  // steeply curved decay, and Apollo's own sub oscillator underneath for body
+  // that does not depend on the pitch envelope having already finished.
   osc(p, 0, { level: 1, enabled: true })
   p.oscs[0].wt.tableId = 'basic-shapes'
   p.oscs[0].wt.pos = 0                                   // frame 0 is the sine
-  env(p, 0, { attack: 0.001, decay: 0.34, sustain: 0, release: 0.07, dCurve: -0.55 })
-  env(p, 1, { attack: 0.0004, decay: 0.055, sustain: 0, release: 0.02, dCurve: -0.75 })
+  p.sub = { ...p.sub, enabled: true, shape: 'sine', octave: -1, level: 0.28, ref: 'each', direct: false }
+  env(p, 0, { attack: 0.0008, decay: 0.62, sustain: 0, release: 0.16, dCurve: -0.3 })
+  env(p, 1, { attack: 0.0004, decay: 0.05, sustain: 0, release: 0.02, dCurve: -0.75 })
   // span of osc0.semi is 72st, so 0.22 ≈ +16 semitones at the transient
   p.matrix.push(mod('env2', 'osc0.semi', 0.22))
-  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.44, res: 0.06, drive: 0.38 })
-  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', {}, { mix: 1 }))
+  filt(p, 0, { enabled: true, type: 'lp12', cutoff: 0.60, res: 0.10, drive: 0.55 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -22, ratio: 4 }, { mix: 1 }))
 })
 
 /** Tuned body + a noise burst, bandpassed. */
@@ -526,9 +533,11 @@ export const gritHats = () => patch('Grit Hats', p => {
   osc(p, 0, { enabled: true, engine: 'wavetable', keytrackPitch: false,
     level: 1, semi: 0, unison: 4, detune: 0.85, width: 1, stereo: 0.7 })
   p.oscs[0].wt.tableId = 'metallic'
-  env(p, 0, { attack: 0.0004, decay: 0.055, sustain: 0.28, release: 0.09, dCurve: -0.5 })
-  filt(p, 0, { enabled: true, type: 'downsample', cutoff: 0.92, res: 0.08, fat: 0.16, drive: 0.30 })
-  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.25 }, { mix: 0.28 }))
+  // Longer and more open than it was. A 55ms decay under a downsampler is a
+  // tick, not a hat — it has no time to say anything before it is gone.
+  env(p, 0, { attack: 0.0004, decay: 0.10, sustain: 0.34, release: 0.15, dCurve: -0.35 })
+  filt(p, 0, { enabled: true, type: 'downsample', cutoff: 0.96, res: 0.06, fat: 0.10, drive: 0.24 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.2 }, { mix: 0.22 }))
 })
 
 /** A rim/snap rather than a snare: short, band-passed, with a noise crack. */
@@ -542,6 +551,71 @@ export const rimSnap = () => patch('Rim', p => {
   p.matrix.push(mod('env2', 'osc0.semi', 0.06))
   filt(p, 0, { enabled: true, type: 'bp12', cutoff: 0.58, res: 0.42, drive: 0.35 })
   p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.3 }, { mix: 0.3 }))
+})
+
+/**
+ * A bass whose TONE does not move — only its loudness does.
+ *
+ * Brae, on the first attempt: "the bass seems to change its tone to sound like a
+ * deep electronic note. The consistent sound within the sample with only volume
+ * changes is a good bass for something deeper and more sensual."
+ *
+ * That is a correction to the design, not to the settings. `growlBass` sweeps
+ * oscillator sync AND filter cutoff from an envelope on every single note, which
+ * was chosen deliberately — "the timbre moves even when the note does not". For
+ * a track that wants to sit still and be felt, that is exactly wrong: a tone
+ * that re-shapes on every note keeps announcing itself, and the ear follows the
+ * change instead of settling into the groove.
+ *
+ * So there is no filter envelope here, no sync, and no velocity routing to
+ * anything but level. Filter keytrack is kept at 0.35 so the timbre stays
+ * CONSISTENT as the pitch moves — with keytrack at zero a fixed cutoff makes low
+ * notes bright and high notes dull, which is a tone change by another route.
+ */
+export const steadyBass = () => patch('Steady Bass', p => {
+  osc(p, 0, { level: 0.62, enabled: true, unison: 3, detune: 0.09, width: 0.45 })
+  p.oscs[0].wt.tableId = 'analog-saws'
+  p.oscs[0].wt.pos = 0.20
+  // A sine at the fundamental, not an octave below: the body of the note, and
+  // what keeps the 60-120 Hz band occupied rather than doubling the sub.
+  osc(p, 1, { level: 0.66, enabled: true })
+  p.oscs[1].wt.tableId = 'basic-shapes'
+  p.oscs[1].wt.pos = 0
+  env(p, 0, { attack: 0.006, decay: 0.55, sustain: 0.82, release: 0.20, dCurve: -0.2 })
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.32, res: 0.10, drive: 0.20, keytrack: 0.35 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -20, ratio: 3 }, { mix: 1 }))
+})
+
+/**
+ * The chorus accent — deep, electronic, with a fast tremolo.
+ *
+ * Brae's description of what Artemas does where the hats drop out: "different
+ * sounds to accent the start of a bar or two... deep and electronic and
+ * sometimes with a powerful quick tremolo". That is this. It is not a drum and
+ * not a bass note; it is a marker, and it works because it arrives where the
+ * ear has just lost the hats and is listening for something.
+ *
+ * Apollo has no tremolo effect, so the tremolo is an LFO on the oscillator
+ * levels — which is what a tremolo is anyway, and modulating the source rather
+ * than a post gain keeps it in front of the filter and the drive.
+ */
+export const boom = () => patch('Boom', p => {
+  osc(p, 0, { level: 0.9, enabled: true, octave: -1 })
+  p.oscs[0].wt.tableId = 'basic-shapes'
+  p.oscs[0].wt.pos = 0.05
+  osc(p, 1, { level: 0.34, enabled: true, unison: 3, detune: 0.1, width: 0.6 })
+  p.oscs[1].wt.tableId = 'analog-saws'
+  p.oscs[1].wt.pos = 0.4
+  env(p, 0, { attack: 0.002, decay: 1.1, sustain: 0, release: 0.3, dCurve: -0.4 })
+  env(p, 1, { attack: 0.001, decay: 0.09, sustain: 0, release: 0.05, dCurve: -0.6 })
+  p.matrix.push(mod('env2', 'osc0.semi', 0.12))            // a short drop into the note
+  // The tremolo: fast, deep, and gone with the note.
+  p.lfos[0] = { ...p.lfos[0], mode: 'normal', rate: 13, sync: false, bipolar: true, trigMode: 'trig' }
+  p.matrix.push(mod('lfo1', 'osc0.level', 0.30, { bipolar: true }))
+  p.matrix.push(mod('lfo1', 'osc1.level', 0.22, { bipolar: true }))
+  filt(p, 0, { enabled: true, type: 'lp24', cutoff: 0.36, res: 0.22, drive: 0.4, keytrack: 0.2 })
+  p.fxMain.push(fxUnit(FX_DEFS, 'distortion', { drive: 0.3 }, { mix: 0.3 }))
+  p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: 0.2 }))
 })
 
 export const VOICES = {
@@ -574,6 +648,8 @@ export const VOICES = {
   wire:   { build: wireArp,              notes: '65:0:2,68:0:2,72:0:2', seconds: 3.0 },
   grithat:{ build: gritHats,             notes: '60:0:0.06',            seconds: 0.6 },
   rim:    { build: rimSnap,              notes: '48:0:0.12',            seconds: 0.8 },
+  boom:   { build: boom,                 notes: '33:0:1.2',             seconds: 2.4 },
+  steady: { build: steadyBass,           notes: '46:0:0.5,46:0.75:0.5', seconds: 2.0 },
 }
 
 if (process.argv.includes('--audit')) {

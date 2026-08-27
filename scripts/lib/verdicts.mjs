@@ -256,8 +256,13 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
     const loudestDb = Math.max(...sounding.map(s => s.rmsDb), -120)
     for (const s of sounding) {
       if (!isBed(s.track)) continue
-      if (s.rmsDb < loudestDb - 3) continue
-      const want = loudestDb - 6
+      // Within 1 dB of the top, not 3. The reference sets put the harmony layer
+      // a median 3.0 dB under the bass, so a bed sitting 3 dB down is where it
+      // BELONGS — flagging that was my own threshold inventing a fault, and it
+      // pushed a correctly-placed pad down until the low mids fell out of range.
+      // The real failure is a bed arriving on top, which is what this now says.
+      if (s.rmsDb < loudestDb - 1) continue
+      const want = loudestDb - 4
       add('warn', 'mix', `"${s.track}" is the loudest thing in the mix, and it is a bed`,
         `Sustained parts accumulate — every bar's chord laps into the next, so a pad that measures fine alone can arrive on top. ` +
         `Turn it down about ${(s.rmsDb - want).toFixed(0)} dB (multiply its track volume by ${Math.pow(10, (want - s.rmsDb) / 20).toFixed(2)}), ` +
