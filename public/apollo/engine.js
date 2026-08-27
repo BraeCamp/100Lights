@@ -25,7 +25,14 @@ function makeRng(seed) {
     return s / 4294967296
   }
 }
-const grng = makeRng(0x9e3779b9)
+// Module-level, and it ADVANCES with every voice that starts — so the same
+// notes rendered twice in one process do not produce the same audio. In a
+// browser tab that is invisible and arguably desirable (each note gets its own
+// phase). In a long-lived render worker it means a cached clip re-renders to
+// something different, and it is why offline renders of the same project have
+// been drifting run to run. `reseed` puts it back to a known state.
+const GRNG_SEED = 0x9e3779b9
+let grng = makeRng(GRNG_SEED)
 
 // Curve interpolation: t 0..1, c -1..1
 function curveShape(t, c) {
@@ -2238,6 +2245,26 @@ class ApolloProcessor extends AudioWorkletProcessor {
 
   onMessageInner(m) {
     switch (m.type) {
+      // Put the shared randomness back to a known state, so a render is
+      // reproducible. Both pieces of module-level state have to go back: the
+      // global RNG each voice draws its `rand` from, and the serial counter
+      // that seeds each voice's own RNG. Resetting one and not the other still
+      // drifts, just more slowly and therefore more confusingly.
+      case 'reseed':
+        grng = makeRng((m.seed >>> 0) || GRNG_SEED)
+        // The serial is part of the random state, not separate from it: each
+        // voice seeds its own generator from (note, serial), which is what
+        // decides oscillator start phase. Zeroing it always would make every
+        // seed produce identical phases — the reseed would look deterministic
+        // while quietly ignoring the seed it was given.
+        VOICE_SERIAL = (m.seed >>> 0) & 0xffff
+        // The voice pool is built in the constructor and each Voice draws its
+        // own `rand` from grng as it is created — so resetting the generator
+        // without rebuilding them leaves 32 voices still holding values from
+        // the old stream, and the render still drifts. Rebuild from the fresh
+        // one. Safe here because reseed only ever arrives before a patch.
+        this.voices = Array.from({ length: 32 }, () => new Voice(this.sr))
+        return
       // "Have you received everything I sent?" Port messages are delivered in
       // order, so a reply to a ping posted AFTER the patch and the schedule
       // proves the patch and the schedule arrived. An offline render asks this
