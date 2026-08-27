@@ -1,7 +1,8 @@
 // The instrument palette, built entirely inside Apollo.
 //
 // Nothing here loads a sample or a preset: every voice is oscillators, filters,
-// envelopes, modulation and FX. Drums included — a kick is a sine with a fast
+// envelopes, modulation and FX. (For the ones built on REAL recordings — drums
+// that are recordings of drums, piano, bass — see sampled-voices.mjs.) Drums included — a kick is a sine with a fast
 // pitch envelope, a hat is a noise wavetable through a highpass with a 40ms
 // decay. That is the whole point of the exercise.
 //

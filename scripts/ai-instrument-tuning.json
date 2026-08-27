@@ -1,0 +1,252 @@
+{
+  "grand-piano": [
+    {
+      "note": "C2",
+      "declared": 36,
+      "sounds": 48,
+      "rootKey": 48,
+      "offsetSemis": 12,
+      "spread": 0,
+      "durSec": 0.42,
+      "confidence": 0.18
+    },
+    {
+      "note": "G2",
+      "declared": 43,
+      "sounds": 55.02,
+      "rootKey": 55,
+      "offsetSemis": 12.02,
+      "spread": 15,
+      "durSec": 0.57,
+      "confidence": 0.03
+    },
+    {
+      "note": "A2",
+      "declared": 45,
+      "sounds": 64.04,
+      "rootKey": 64,
+      "offsetSemis": 19.04,
+      "spread": 0.02,
+      "durSec": 0.53,
+      "confidence": 0.11
+    },
+    {
+      "note": "C3",
+      "declared": 48,
+      "sounds": 48.02,
+      "rootKey": 48,
+      "offsetSemis": 0.02,
+      "spread": 0,
+      "durSec": 1.08,
+      "confidence": 0.42
+    },
+    {
+      "note": "E3",
+      "declared": 52,
+      "sounds": 51.98,
+      "rootKey": 52,
+      "offsetSemis": -0.02,
+      "spread": 0.06,
+      "durSec": 1.09,
+      "confidence": 0.4
+    },
+    {
+      "note": "C4",
+      "declared": 60,
+      "sounds": 60.02,
+      "rootKey": 60,
+      "offsetSemis": 0.02,
+      "spread": 0,
+      "durSec": 1.08,
+      "confidence": 0.49
+    },
+    {
+      "note": "D4",
+      "declared": 62,
+      "sounds": 62.02,
+      "rootKey": 62,
+      "offsetSemis": 0.02,
+      "spread": 0,
+      "durSec": 1.07,
+      "confidence": 0.55
+    },
+    {
+      "note": "E4",
+      "declared": 64,
+      "sounds": 64.04,
+      "rootKey": 64,
+      "offsetSemis": 0.04,
+      "spread": 0.02,
+      "durSec": 0.94,
+      "confidence": 0.2
+    },
+    {
+      "note": "G4",
+      "declared": 67,
+      "sounds": 67.02,
+      "rootKey": 67,
+      "offsetSemis": 0.02,
+      "spread": 0,
+      "durSec": 0.66,
+      "confidence": 0.4
+    },
+    {
+      "note": "A4",
+      "declared": 69,
+      "sounds": 69.04,
+      "rootKey": 69,
+      "offsetSemis": 0.04,
+      "spread": 0.02,
+      "durSec": 0.46,
+      "confidence": 0.18
+    }
+  ],
+  "electric-guitar": [
+    {
+      "note": "G2",
+      "declared": 43,
+      "sounds": 54.98,
+      "rootKey": 55,
+      "offsetSemis": 11.98,
+      "spread": 13.16,
+      "durSec": 0.31,
+      "confidence": 0.08
+    },
+    {
+      "note": "A2",
+      "declared": 45,
+      "sounds": 56.02,
+      "rootKey": 56,
+      "offsetSemis": 11.02,
+      "spread": 0.02,
+      "durSec": 0.18,
+      "confidence": 0.07
+    },
+    {
+      "note": "D3",
+      "declared": 50,
+      "sounds": 50.04,
+      "rootKey": 50,
+      "offsetSemis": 0.04,
+      "spread": 0,
+      "durSec": 0.26,
+      "confidence": 0.44
+    },
+    {
+      "note": "G3",
+      "declared": 55,
+      "sounds": 55.04,
+      "rootKey": 55,
+      "offsetSemis": 0.04,
+      "spread": 0,
+      "durSec": 0.18,
+      "confidence": 0.1
+    },
+    {
+      "note": "B3",
+      "declared": 59,
+      "sounds": 59.12,
+      "rootKey": 59,
+      "offsetSemis": 0.12,
+      "spread": 0.06,
+      "durSec": 0.3,
+      "confidence": 0.69
+    },
+    {
+      "note": "C4",
+      "declared": 60,
+      "sounds": 59.56,
+      "rootKey": 60,
+      "offsetSemis": -0.44,
+      "spread": 0.2,
+      "durSec": 0.22,
+      "confidence": 0.4
+    },
+    {
+      "note": "D4",
+      "declared": 62,
+      "sounds": 61.88,
+      "rootKey": 62,
+      "offsetSemis": -0.12,
+      "spread": 0.16,
+      "durSec": 0.22,
+      "confidence": 0.36
+    }
+  ],
+  "electric-bass": [
+    {
+      "note": "D2",
+      "declared": 38,
+      "sounds": 38.02,
+      "rootKey": 38,
+      "offsetSemis": 0.02,
+      "spread": 0.02,
+      "durSec": 0.68,
+      "confidence": 0.58
+    },
+    {
+      "note": "G2",
+      "declared": 43,
+      "sounds": 43,
+      "rootKey": 43,
+      "offsetSemis": 0,
+      "spread": 0.02,
+      "durSec": 1.09,
+      "confidence": 0.59
+    },
+    {
+      "note": "A2",
+      "declared": 45,
+      "sounds": 45,
+      "rootKey": 45,
+      "offsetSemis": 0,
+      "spread": 0.02,
+      "durSec": 1,
+      "confidence": 0.56
+    }
+  ],
+  "fretless-bass": [
+    {
+      "note": "E2",
+      "declared": 40,
+      "sounds": 41.02,
+      "rootKey": 41,
+      "offsetSemis": 1.02,
+      "spread": 0.02,
+      "durSec": 0.51,
+      "confidence": 0.5
+    },
+    {
+      "note": "F2",
+      "declared": 41,
+      "sounds": 40.94,
+      "rootKey": 41,
+      "offsetSemis": -0.06,
+      "spread": 0.02,
+      "durSec": 1.01,
+      "confidence": 0.58
+    }
+  ],
+  "synth-bass": [
+    {
+      "note": "D2",
+      "declared": 38,
+      "sounds": 38.02,
+      "rootKey": 38,
+      "offsetSemis": 0.02,
+      "spread": 0.92,
+      "durSec": 1.07,
+      "confidence": 0.6
+    },
+    {
+      "note": "D3",
+      "declared": 50,
+      "sounds": 62.02,
+      "rootKey": 62,
+      "offsetSemis": 12.02,
+      "spread": 12.24,
+      "durSec": 0.66,
+      "confidence": 0.47
+    }
+  ]
+}

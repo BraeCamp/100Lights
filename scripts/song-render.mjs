@@ -52,6 +52,7 @@ import {
   reverbIR, normalizeIR, convolve, readWav, writeWav24,
 } from './lib/offline-dsp.mjs'
 import { importTs } from './lib/ts-import.mjs'
+import { patchSampleIds, resolveSample } from './lib/samples.mjs'
 
 const run = promisify(execFile)
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -302,6 +303,14 @@ async function renderTrack(entry, i) {
   const args = ['--experimental-strip-types', join(ROOT, 'scripts/apollo-render.mjs'),
     '--patch', pf, '--notes-json', nf, '--seconds', String(seconds), '--bpm', String(bpm),
     '--out', wf, '--json']
+  // Real recorded sound. A patch names its samples by a `builtin:` id that
+  // resolves the same way here and in the studio (scripts/lib/samples.mjs), so
+  // the project carries a string rather than audio. A sample that will not
+  // resolve is a REFUSAL — an oscillator that silently renders nothing is the
+  // failure this whole renderer exists to avoid.
+  for (const id of patchSampleIds(entry.track.instrument.params)) {
+    args.push('--sample', `${id}=${resolveSample(id)}`)
+  }
   if (entry.bends?.length) {
     const bf = join(tmp, `b${i}.json`)
     writeFileSync(bf, JSON.stringify(entry.bends))

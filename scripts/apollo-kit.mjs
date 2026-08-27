@@ -151,7 +151,13 @@ export function noiseTable(tableToBase64, seed = 7, frames = 4) {
  * Render a patch through the real engine and return its stats.
  * notes: "note:start:dur[:vel]" comma-separated, seconds.
  */
-export function render(patch, { notes = '60:0:1', seconds = 2, out = null, bpm = 120 } = {}) {
+/**
+ * @param samples  { [sampleId]: '/abs/path.wav' } for patches whose oscillators
+ *                 read real recordings. Without it a sample oscillator renders
+ *                 SILENCE and every stat below reads as a working quiet patch,
+ *                 so apollo-render is told about them explicitly.
+ */
+export function render(patch, { notes = '60:0:1', seconds = 2, out = null, bpm = 120, samples = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'apollo-render-'))
   const pf = join(dir, 'patch.json')
   writeFileSync(pf, JSON.stringify(patch))
@@ -159,6 +165,7 @@ export function render(patch, { notes = '60:0:1', seconds = 2, out = null, bpm =
   const args = ['--experimental-strip-types', 'scripts/apollo-render.mjs',
     '--patch', pf, '--notes', notes, '--seconds', String(seconds), '--bpm', String(bpm), '--json']
   if (out) args.push('--out', out)
+  for (const [id, path] of Object.entries(samples ?? {})) args.push('--sample', `${id}=${path}`)
   const raw = execFileSync('node', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 })
   const line = raw.trim().split('\n').filter(l => l.trim().startsWith('{')).pop()
   if (!line) throw new Error('no JSON stats from apollo-render:\n' + raw.slice(0, 500))

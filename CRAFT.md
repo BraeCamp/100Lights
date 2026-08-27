@@ -246,6 +246,72 @@ ignored.
 
 ---
 
+### Recordings, shaped in Apollo
+
+Brae: *"your drums don't sound much like drums, just cut sawtooth oscillators."*
+Correct. A kick is a physical event — a beater, a shell, a room — and the
+inharmonic clatter of that is most of what makes it read as a drum. Synthesis
+gets the envelope and misses the rest.
+
+`scripts/sampled-voices.mjs` loads real ones. They are still Apollo patches: the
+sample is the SOURCE, and Apollo's filter, envelope and drive are the shaping.
+That distinction matters — a raw one-shot is someone else's sound, a shaped one
+is this song's.
+
+Samples are named by an id that resolves from the id alone, on both sides:
+
+    builtin:/drum-kits/techno/36.wav     a public asset
+    builtin:ai/grand-piano/C3            one root of a multisample instrument
+
+so a project carries a **string**, not audio. "the quiet part" is 143 KB with
+fourteen samples in it and nothing inlined.
+
+**The defaults are faithful.** Apollo's cutoff is far darker than its number
+suggests — `cutoffHz = 8 * 2500^n`, so 0.52 is **468 Hz**, not "most of the way
+open". The first pass put a lowpass at 468 Hz on a kick (killing the beater
+click) and 3.6 kHz on a snare (centroid 2163 -> 466). Darkening is a decision per
+song, never a default. `npm run check:sampled` measures every voice against its
+raw file and fails anything that has replaced the recording rather than coloured
+it.
+
+**Choose the kit by measurement.** For a slow heavy record the kick wants
+*definition*, not just depth — techno's has 8% of its energy in 80-250 Hz, which
+is what lets it read THROUGH the sub; trap808's is deeper (32 Hz) and longer and
+would fight the sub for the same octave.
+
+#### What the sample material is actually like
+
+Worth knowing before writing for it, because none of it is visible in a file name:
+
+- **Eight of twenty-four AI instrument roots are mislabelled**, several by an
+  octave or more. A zone map built on the note names puts those samples at the
+  wrong root and every note drawn from them plays at the wrong pitch.
+  `npm run build:aituning` measures what each root actually sounds and writes the
+  table; the zone map is built from that, anchored on the FRACTIONAL pitch so a
+  root a third of a semitone flat does not detune everything mapped to it.
+- **The roots are short** — 0.18 s to 1.1 s. These are not sustaining
+  instruments; write for them accordingly.
+- **The grand piano is usable C3 to A4** and nothing below, once its broken low
+  roots are dropped.
+
+#### Two ways to measure a pitch, and when each lies
+
+This cost real time, twice, so it is worth stating plainly:
+
+- **`pitchAt` is blind** — it answers "what pitch is this?". Use it to catch
+  GROSS errors. It is what found the mislabelled roots.
+- **`pitchNear` is targeted** — it answers "is there energy where I wrote?". Use
+  it for fine tuning. It searches +/-120 cents, so it is completely blind to an
+  octave error: a root mapped an octave wrong reads as *in tune*, because there
+  is always some energy near the expected frequency. Eight broken roots passed a
+  check built only on it.
+- **Never probe the attack.** A struck or plucked onset is inharmonic noise. The
+  guitar's D3 root reads 43.08 at confidence 0.02 fifteen percent in, and 50.04
+  at 0.41 halfway in — the same file. Probe the sustain, take a median of several
+  points, and honour the confidence.
+
+---
+
 ### Is the part in the register its name claims?
 
 Brae called the hi-hat bad twice. The number was in the report both times:

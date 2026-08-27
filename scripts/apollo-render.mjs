@@ -29,6 +29,7 @@
 //     --sample gtr=take.wav --set osc0.engine=sample --set osc0.smp.sampleId=gtr --out take-mangled.wav
 
 import { readFileSync, writeFileSync } from 'node:fs'
+import { spectrum } from './lib/audio-features.mjs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -333,21 +334,30 @@ for (let i = 0; i < outL.length; i++) {
   if (a > 0.002) { if (firstSound < 0) firstSound = i; lastSound = i }
 }
 const rms = Math.sqrt(sumSq / outL.length)
-// spectral centroid over the loudest 8192-sample window (cheap DFT on 64 bands)
+// Spectral centroid over the loudest window, through the SHARED analyser.
+//
+// This used to weight 48 LOG-spaced Goertzel bands by magnitude, which is not a
+// spectral centroid: log spacing puts as many bands between 40 and 80 Hz as
+// between 8 and 16 kHz, so the crowd of low bands drags the weighted mean down.
+// A closed hi-hat measuring 8.4 kHz on a real FFT reported 254 Hz here — and
+// this number is what every voice audit prints, so it was quietly mis-describing
+// the whole palette. Linear bins, one definition of a band, one analyser.
 let centroid = 0
 if (lastSound > 0) {
-  const N = 8192
-  const start = Math.max(0, Math.min(firstSound + 2048, outL.length - N))
+  // Stay INSIDE the sound. The window used to begin 2048 samples (43 ms) after
+  // onset and run for 8192 — but a closed hi-hat is over in 18 ms, so that
+  // window was mostly the silence afterwards and measured the noise floor: 69 Hz
+  // for a hat whose real centroid is 7.7 kHz. Skip a short way in to clear the
+  // attack transient, then take what is actually there.
+  const span = Math.max(256, lastSound - firstSound)
+  const skip = Math.min(2048, Math.floor(span / 4))
+  const N = Math.max(512, Math.min(8192, span - skip))
+  const start = Math.max(0, Math.min(firstSound + skip, outL.length - N))
+  const { power, binHz } = spectrum(outL.subarray(start, start + N), SR, 4096)
   let num = 0, den = 0
-  for (let band = 1; band <= 48; band++) {
-    // log-spaced bands 40 Hz → 16 kHz, full-rate Goertzel (no decimation aliasing)
-    const f = 40 * Math.pow(16000 / 40, (band - 1) / 47)
-    const w = 2 * Math.PI * f / SR
-    const coeff = 2 * Math.cos(w)
-    let s0 = 0, s1 = 0, s2 = 0
-    for (let i = 0; i < N; i++) { s0 = outL[start + i] + coeff * s1 - s2; s2 = s1; s1 = s0 }
-    const mag = Math.sqrt(s1 * s1 + s2 * s2 - coeff * s1 * s2)
-    num += f * mag; den += mag
+  for (let k = 1; k < power.length; k++) {
+    const mag = Math.sqrt(power[k])
+    num += k * binHz * mag; den += mag
   }
   centroid = den > 0 ? num / den : 0
 }
