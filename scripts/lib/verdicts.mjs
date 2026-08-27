@@ -223,6 +223,20 @@ export function judge({ symbolic: sym, mix, stems = [], target = DEFAULT_TARGET,
     }
   }
 
+  // ── Glide lines ───────────────────────────────────────────────────────────
+  for (const gl of sym.glide ?? []) {
+    if (gl.worstCents == null || !gl.holdsChecked) continue
+    if (gl.distinctPitches < 2) {
+      add('note', 'glide', `"${gl.track}" is a glide line but only ever holds one pitch`,
+        'A glide line exists to travel between pitches. One pitch means a plain held note would do the same job more simply.')
+    } else if (gl.worstCents > 25) {
+      add('fail', 'glide', `"${gl.track}" does not follow its pitch curve (off by ${gl.worstCents} cents)`,
+        'The rendered pitch does not match what the curve asks for at its hold points. Either the engine is ignoring ' +
+        'clip.pitchGraph on this track, or the curve reaches past the +/-12 semitones a pitch lane can express.',
+        gl.worstCents)
+    }
+  }
+
   // ── Register ──────────────────────────────────────────────────────────────
   for (const c of sym.registers.clashes.slice(0, 4))
     add('warn', 'register', `"${c.a}" and "${c.b}" occupy the same ${c.semitones} semitones`,

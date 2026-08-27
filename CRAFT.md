@@ -153,6 +153,57 @@ meant to hold. Move its dynamics into the FX lane as gain bars instead.
 `listen` checks this: any part written as a continuous chain is measured in the
 render, and one that gates is reported.
 
+#### Better: one note, dragged
+
+The chain above is still separate notes, overlapped so the ear cannot hear the
+seam. The real thing is **one note whose pitch is moved by a drawn curve** —
+`craft.glideLine()`. However many pitches the line visits, there is exactly
+**one attack**, because there is exactly one note.
+
+    glide: true on the track, and its "notes" stop being notes:
+    they are the pitches ONE note travels between.
+
+    glideLine(steps, { glide, accel, decel, anchor })
+
+      glide   how long a move takes, in beats (per-step override)
+      accel   0 = leaves the old pitch at full speed; 1 = creeps away, then goes
+      decel   0 = arrives at full speed and stops dead; 1 = slides in and settles
+      anchor  where the move sits relative to the beat it targets
+
+`anchor` is a harmonic decision, not a cosmetic one:
+
+| | |
+|---|---|
+| `depart` | starts ON the beat — the classic 808 slide. The downbeat is still the OLD pitch, so keep the move short or the bar begins on the wrong note. |
+| `arrive` | finishes ON the beat — correct from the downbeat, reads as an anticipation into it. |
+| `center` | straddles it — closest to "in tune on the beat" for a slow move. |
+
+This is not a new format. `clip.pitchGraph` is the studio's own per-note pitch
+lane — **clip Sound panel → PITCH** — where the middle line is in tune and the
+full height is ±12 semitones. It has always been drawable on any MIDI clip; what
+was missing was Apollo reading it, which it now does (as bend events on the
+sounding voice). So a curve `glideLine` writes and a curve drawn by hand are the
+same object, and either can be edited into the other.
+
+Two consequences worth knowing:
+
+- **±12 semitones from the played note is the whole range.** `glideLine` centres
+  the note in the line to get the most room, and refuses a line wider than that
+  rather than silently clipping it.
+- **A bent note is not the same as a differently-played one.** Anything that
+  keytracks — filter, sample choice — follows the NOTE, not the bend. That is
+  what keeps the timbre still while the pitch moves, and it is the point: a sub
+  that changes tone as it travels is a different sound arriving, not one sound
+  moving.
+
+`listen` measures this too, and it is the check that matters most here: before
+Apollo could read the curve, the note played, the stem was full, every level
+check passed, and the line simply never moved. Nothing else looks at pitch, so
+nothing else could tell. It now measures the rendered pitch at each of the
+curve's hold points — 64 of them in "i'd ruin it again", worst error **0.5
+cents**, against **151 cents** for the same song rendered with the curve
+ignored.
+
 ---
 
 ### The bass: what it plays, and what it sounds like
@@ -474,6 +525,22 @@ problem, which by ear takes far longer and by guessing takes forever.
 - **No per-section analysis of the references.** We get whole-track numbers and
   boundary times, not "what the chorus does that the verse doesn't", which is
   where most arrangement craft actually lives.
+- **Verifying a pitch we WROTE is a different job from detecting one.** A sub is
+  usually an oscillator plus a sub-oscillator an octave down: two strong
+  components about 5 dB apart, and *any* blind estimator picks between them
+  somewhat arbitrarily, reporting an octave error that is a property of the sound
+  rather than a fault in the note. When the intended pitch is known, look for
+  energy there (`pitchNear`) instead of guessing (`pitchAt`). Related: at sub
+  frequencies `pitchNear` cannot tell "nothing here" from "in tune" at all — a
+  Hann main lobe is 4/T wide, so resolving a 120-cent band at 30 Hz needs a ~1.9 s
+  window, longer than a sub holds one pitch. It reports `resolved: false` rather
+  than a confident-looking number.
+- **Read the WAV header.** Stems are written 24-bit; three hand-rolled readers in
+  a row assumed 16-bit or float and produced pure garbage that *looked* like
+  plausible audio — noise-like spectra, wandering pitch estimates, a "pure sine"
+  patch reading as broadband. Every one of those was chased as a synthesis bug
+  first. `offline-dsp.readWav` handles all four formats; there is no reason to
+  write another one.
 - **Low frequencies break short analysis windows, repeatedly.** At 30-60 Hz one
   cycle is 17-33 ms, so a 5 ms RMS window measures the waveform's own zero
   crossings rather than its envelope - the continuity probe reported every

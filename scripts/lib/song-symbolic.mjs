@@ -174,6 +174,14 @@ export function arrangement(dp, trackNotes) {
   const spb = 60 / (dp.tempo || 120)
   const rows = secs.map(s => {
     const active = {}
+    // A part is PRESENT in a section if it is sounding there, and its DENSITY is
+    // how many notes begin there. Those are different questions, and conflating
+    // them made a sub that holds one note across the whole song read as leaving
+    // after the first section - the arrangement said "-Sub" about a sound that
+    // never stops. A note counts as present if it covers at least half the
+    // section, so a note spilling a beat over a boundary still reads as a
+    // departure rather than as continued presence.
+    const sounding = new Set()
     for (const c of (dp.arrangementClips ?? [])) {
       if (c.startBeat >= s.endBeat || c.startBeat + c.durationBeats <= s.startBeat) continue
       const name = byId[c.trackId] ?? c.trackId
@@ -181,13 +189,21 @@ export function arrangement(dp, trackNotes) {
         const at = c.startBeat + n.startBeat
         return at >= s.startBeat && at < s.endBeat
       })
-      if (!inWindow.length) continue
-      active[name] = (active[name] ?? 0) + inWindow.length
+      if (inWindow.length) {
+        active[name] = (active[name] ?? 0) + inWindow.length
+        sounding.add(name)
+      }
+      const half = (s.endBeat - s.startBeat) * 0.5
+      for (const n of (c.notes ?? [])) {
+        const a0 = c.startBeat + n.startBeat, a1 = a0 + n.durationBeats
+        const overlap = Math.min(a1, s.endBeat) - Math.max(a0, s.startBeat)
+        if (overlap >= half) { sounding.add(name); break }
+      }
     }
     const beats = s.endBeat - s.startBeat
     return {
       name: s.name, startBar: s.startBar, bars: s.bars,
-      layers: Object.keys(active).sort(),
+      layers: [...sounding].sort(),
       notes: Object.values(active).reduce((a, b) => a + b, 0),
       notesPerBar: round(Object.values(active).reduce((a, b) => a + b, 0) / Math.max(1, s.bars), 1),
       perTrack: active,
@@ -295,6 +311,29 @@ export function continuousParts(trackNotes) {
   return out
 }
 
+/**
+ * Parts written as a GLIDE LINE: one note, moved by a drawn pitch curve.
+ *
+ * This is the strongest form of "one sound that moves" — there is a single
+ * attack however many pitches the line visits — so these tracks are held parts
+ * for every purpose that `continuousParts` serves, and are merged into that list.
+ */
+export function glideParts(dp) {
+  const byId = Object.fromEntries((dp.tracks ?? []).map(t => [t.id, t.name]))
+  const out = []
+  for (const c of (dp.arrangementClips ?? [])) {
+    if (!c.pitchGraph || c.pitchGraph.length < 2) continue
+    const name = byId[c.trackId] ?? c.trackId
+    const semis = c.pitchGraph.map(p => (p.v - 0.5) * 24)
+    out.push({
+      track: name, notes: (c.notes ?? []).length, points: c.pitchGraph.length,
+      spanSemis: round(Math.max(...semis) - Math.min(...semis), 2),
+      beats: round(c.durationBeats, 1),
+    })
+  }
+  return out
+}
+
 /** Everything symbolic, in one call. */
 export function symbolic(dp) {
   const notes = trackNotes(dp)
@@ -307,7 +346,10 @@ export function symbolic(dp) {
     dynamics: dynamics(dp, notes),
     registers: registers(pitched),
     polyphony: polyphony(dp, notes),
-    continuous: continuousParts(notes),
+    glide: glideParts(dp),
+    // A glide line is a held part too — one attack, whatever the pitch does — so
+    // the feel checks and the render-side continuity check treat them alike.
+    continuous: [...continuousParts(notes), ...glideParts(dp)],
     overflow: overflow(dp),
     totalNotes: Object.values(notes).reduce((a, b) => a + b.length, 0),
     trackNotes: notes,

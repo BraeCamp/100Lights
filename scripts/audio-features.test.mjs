@@ -13,8 +13,7 @@
 //   node scripts/audio-features.test.mjs
 
 import {
-  BANDS, spectralProfile, loudness, truePeak, levels, stereo, envelope, onsets, analyze, db,
-} from './lib/audio-features.mjs'
+  BANDS, spectralProfile, loudness, truePeak, levels, stereo, envelope, onsets, analyze, db, pitchAt, pitchNear } from './lib/audio-features.mjs'
 
 const SR = 48000
 let pass = 0, fail = 0
@@ -187,6 +186,66 @@ console.log('\nfull analyze()')
   const a = analyze(s, s, SR, { withTruePeak: true, withBandStereo: true })
   ok('reports every field', ['lufs', 'lra', 'peakDb', 'truePeakDb', 'crestDb', 'centroidHz', 'bands', 'correlation'].every(k => a[k] !== undefined && a[k] !== null))
   ok('duration is right', near(a.seconds, 3, 0.01), `${a.seconds}`)
+}
+
+console.log('\npitch')
+{
+  const SR = 48000
+  const tone = (fn, sec = 1.5) => {
+    const n = Math.round(SR * sec), a = new Float32Array(n)
+    let ph = 0
+    for (let i = 0; i < n; i++) { ph += 2 * Math.PI * fn(i / SR) / SR; a[i] = Math.sin(ph) }
+    return a
+  }
+  const rich = (f, sec = 1.5) => {
+    const n = Math.round(SR * sec), a = new Float32Array(n)
+    let ph = 0
+    for (let i = 0; i < n; i++) {
+      ph += 2 * Math.PI * f / SR
+      let v = 0
+      for (let k = 1; k <= 20 && f * k < SR / 2; k++) v += Math.sin(ph * k) / k
+      a[i] = v * 0.5
+    }
+    return a
+  }
+  const hz = m => 440 * Math.pow(2, (m - 69) / 12)
+
+  // pitchAt: two earlier hand-rolled estimators were confidently wrong on these
+  // exact shapes — a zero-crossing counter counted a saw's harmonics, and an
+  // autocorrelator locked onto a sub-oscillator's octave.
+  for (const m of [22, 34, 55, 79]) {
+    ok(`pitchAt reads a ${hz(m).toFixed(0)} Hz sine`, Math.abs(pitchAt(tone(() => hz(m)), SR, 0.7, 0.2).midi - m) * 100 < 5)
+  }
+  ok('pitchAt is not fooled by 20 harmonics', Math.abs(pitchAt(rich(hz(43)), SR, 0.7, 0.2).midi - 43) * 100 < 5)
+  ok('pitchAt is not fooled by an octave-down sub-oscillator', (() => {
+    const a = rich(hz(34)), b = tone(() => hz(22))
+    const mix = Float32Array.from(a, (v, i) => v + 0.4 * b[i])
+    return Math.abs(pitchAt(mix, SR, 0.7, 0.2).midi - 34) * 100 < 5
+  })())
+  ok('pitchAt returns null on silence', pitchAt(new Float32Array(SR), SR, 0.5, 0.2) === null)
+  ok('pitchAt tracks a moving pitch', (() => {
+    const gl = tone(t => hz(55 + 12 * Math.min(1, t)), 1.5)
+    return [0.25, 0.5, 0.75].every(t => Math.abs(pitchAt(gl, SR, t, 0.08).midi - (55 + 12 * t)) < 0.15)
+  })())
+
+  // pitchNear: verifying a pitch we WROTE, which is a different question.
+  ok('pitchNear finds an in-tune tone', Math.abs(pitchNear(tone(() => hz(43)), SR, 0.7, hz(43)).cents) < 2)
+  ok('pitchNear measures a known detuning', (() => {
+    const r = pitchNear(tone(() => hz(43) * Math.pow(2, 35 / 1200)), SR, 0.7, hz(43))
+    return Math.abs(r.cents - 35) < 3
+  })())
+  ok('pitchNear works where blind detection is ambiguous', (() => {
+    // an oscillator plus a sub-oscillator an octave down: two strong components,
+    // and the written note is the upper one
+    const a = rich(hz(34)), b = tone(() => hz(22))
+    const mix = Float32Array.from(a, (v, i) => v + 0.7 * b[i])
+    return Math.abs(pitchNear(mix, SR, 0.7, hz(34)).cents) < 5
+  })())
+  ok('pitchNear admits when the window cannot resolve the band',
+    pitchNear(tone(() => hz(22)), SR, 0.7, hz(22)).resolved === false)
+  ok('pitchNear is resolved at a normal pitch',
+    pitchNear(tone(() => hz(69)), SR, 0.7, hz(69)).resolved === true)
+  ok('pitchNear returns null on silence', pitchNear(new Float32Array(SR), SR, 0.5, 100) === null)
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`)

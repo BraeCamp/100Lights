@@ -2307,6 +2307,10 @@ class ApolloProcessor extends AudioWorkletProcessor {
       if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false)
       else if (ev.type === 'noteOff') this.noteOff(ev.note, false)
       else if (ev.type === 'macro') this.macros[ev.index] = ev.value
+      // A drawn pitch contour arrives as bend events on a SOUNDING voice, so one
+      // note can travel between pitches without a second noteOn. chanBend is
+      // per-voice and in semitones, and is applied after glide (renderVoice).
+      else if (ev.type === 'bend') this.chanBend[(ev.ch || 0) & 15] = ev.semis
     }
     this.timeSec = end
   }
@@ -3171,6 +3175,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
         const ev = this.absEvents.shift()
         if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false, ev.ch || 0)
         else if (ev.type === 'noteOff') this.noteOff(ev.note, false)
+        else if (ev.type === 'bend') this.chanBend[(ev.ch || 0) & 15] = ev.semis
       }
     }
     if (this.sr === sampleRate) { this.renderQuantum(OL, OR, n); return true }

@@ -35,7 +35,7 @@ import { homedir } from 'os'
 import { execFileSync } from 'child_process'
 import { fileURLToPath } from 'url'
 import { uid, N, assemble, dipInto, lift, bar } from './song-kit.mjs'
-import { groove, play, voice, parseChord, intoSlot, checkSlots, stagger, densityArc, thin, pump, legatoChain, rng } from './lib/craft.mjs'
+import { groove, play, voice, parseChord, intoSlot, checkSlots, stagger, densityArc, thin, pump, rng } from './lib/craft.mjs'
 import { kick, snare, gritHats, glideSub, steadyBass, boom, coldKeys, pad as darkPad } from './apollo-voices.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -105,20 +105,24 @@ const hatBar = () => {
 const boomBar = (i) => [{ pitch: intoSlot(ROOTS[LOOP[i % 4]] - 12, [26, 40]), beat: 0, durationBeats: 2.6, velocity: 96 }]
 
 /**
- * The sub is ONE note for the length of the song. It changes pitch; it never
- * stops.
+ * The sub is ONE note for the whole song, DRAGGED between pitches.
  *
  * Brae, on "cross my heart": "like a single sub note, a looooong sub sound that
- * changes notes without stopping or restarting." Measured, ours was doing the
- * opposite — a gap between notes drops the sound to 0% of peak through every
- * change, which is a new note arriving four times a bar rather than one note
- * moving.
+ * changes notes without stopping or restarting."
  *
- * Three things make it continuous and all three are required: the `glideSub`
- * patch (legato mode, legato envelope, glide), `legatoChain()` to overlap the
- * notes so a voice is always still sounding when the next arrives, and
- * `continuous: true` on the track so the whole song is ONE clip — a clip
- * boundary ends a note, and an ended note ends the chain.
+ * The first attempt at this overlapped separate notes in legato mode, which held
+ * 88-97% of the level through a change instead of the 0% a plain gap gives — but
+ * it was still a second note arriving under the first. This is the real thing:
+ * `glide: true` on the track means these pitches are not notes, they are the
+ * targets one note travels between, and the movement is a drawn pitch curve.
+ * There is exactly ONE attack in 105 seconds.
+ *
+ * The move is 0.22 beats and eased in hard at the end (decel 0.8): the pitch
+ * leaves quickly and settles into the new note rather than arriving at speed,
+ * which is what a slid 808 does. `anchor: 'center'` straddles the downbeat so
+ * the bar is in tune ON the beat — 'depart' would leave the downbeat still
+ * sitting on the previous chord's root, which at this tempo is audible as a
+ * wrong bass note rather than as an articulation.
  */
 const subBar = (i) => {
   const root = intoSlot(ROOTS[LOOP[i % 4]] - 12, 'sub')
@@ -205,7 +209,8 @@ export function build() {
     // Turned down: "the sub needs to be lower". It was carrying 30-48% of the
     // whole record's energy and swallowing the bass it is supposed to support.
     { key: 'sub',  id: uid(), name: 'Sub',  presetId: null, volume: 0.30, color: '#c084fc',
-      continuous: true, instrument: { type: 'apollo', params: glideSub() } },
+      glide: true, glideOpts: { glide: 0.22, accel: 0.15, decel: 0.8, anchor: 'center' },
+      instrument: { type: 'apollo', params: glideSub() } },
     { key: 'boom', id: uid(), name: 'Boom', presetId: null, volume: 0.34, color: '#fbbf24', instrument: { type: 'apollo', params: boom() } },
     // The loudest fader in the song, because that is what the references do.
     { key: 'bass', id: uid(), name: 'Bass', presetId: null, volume: 0.74, color: '#a78bfa', instrument: { type: 'apollo', params: steadyBass() } },
@@ -257,12 +262,12 @@ export function build() {
     const played = {}
     for (const [k, ns] of Object.entries(parts)) {
       if (k === 'sub') {
-        // No groove and no per-note velocity on a continuous sound. Micro-timing
-        // places an ATTACK, and this has one attack in the whole song; changing
-        // velocity per note would re-articulate the very thing that is meant to
-        // hold. Its dynamics come from the FX lane instead.
-        played[k] = legatoChain(ns, { overlapBeats: 0.5, tailBeats: 2 })
-          .map(n => N(n.pitch, n.beat, n.durationBeats, 88))
+        // A glide track's "notes" are pitch TARGETS, not notes: song-kit turns
+        // them into one note plus a curve. Grooving them would micro-time an
+        // attack that does not exist, and varying their velocity would ask a
+        // single sustained note to be several loudnesses at once. The sub's
+        // dynamics come from the FX lane instead.
+        played[k] = ns.map(n => N(n.pitch, n.beat, n.durationBeats, 88))
         continue
       }
       played[k] = play(ns, ROLE[k] ?? 'default', g, { bpb: BPB })

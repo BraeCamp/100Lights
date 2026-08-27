@@ -20,6 +20,7 @@
 // (clip notes are clip-relative, which is the shape the loader expects).
 
 import { randomUUID } from 'crypto'
+import { glideLine } from './lib/craft.mjs'
 
 export const uid = () => randomUUID()
 
@@ -111,6 +112,10 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
   // arrangement editable — but for a sub that is meant to be a single unbroken
   // sound for the length of the song it is the only representation that works.
   const continuous = {}
+  // A track marked `glide` goes further: its notes are not notes at all, they
+  // are the pitches ONE note travels between. They are collected here and turned
+  // into a single note plus a drawn pitch curve — see craft.glideLine.
+  const glides = {}
   for (const sec of sections) {
     sectionAt[sec.name] = beat
     const len = sec.bars * bpb
@@ -134,15 +139,15 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
         // overlap a legato chain depends on — at every section seam the sound
         // would stop and restart, which is the thing the track exists to avoid.
         // Those notes are clamped later, against the single clip that holds them.
-        const durationBeats = t.continuous
+        const durationBeats = (t.continuous || t.glide)
           ? +Math.max(0.05, n.durationBeats).toFixed(4)
           : +Math.max(0.05, Math.min(n.durationBeats, len - startBeat)).toFixed(4)
         const slot = `${n.pitch}@${startBeat.toFixed(3)}`
         const prev = bySlot.get(slot)
         if (!prev || (n.velocity ?? 0) > (prev.velocity ?? 0)) bySlot.set(slot, { ...n, startBeat, durationBeats })
       }
-      if (t.continuous) {
-        const acc = (continuous[t.key] ??= { track: t, notes: [] })
+      if (t.continuous || t.glide) {
+        const acc = ((t.glide ? glides : continuous)[t.key] ??= { track: t, notes: [] })
         for (const n of bySlot.values()) acc.notes.push({ ...n, startBeat: n.startBeat + beat })
         continue
       }
@@ -172,6 +177,31 @@ export function assemble({ name, bpm, bpb = 4, key, scale, swing = 0, tracks, se
       notes: notes.sort((a, b) => a.startBeat - b.startBeat)
         .map(({ id, ...rest }) => ({ ...rest, durationBeats: +Math.min(rest.durationBeats, Math.max(beat, Math.ceil(end)) - rest.startBeat).toFixed(4) })),
       isDrumClip: !!t.isDrum, presetId: t.presetId ?? null, rollFx: t.rollFx ?? {},
+    })
+  }
+
+  // One note, one curve, for the whole song.
+  for (const { track: t, notes } of Object.values(glides)) {
+    if (notes.length < 2) {
+      throw new Error(`track "${t.key}" is marked glide but has ${notes.length} pitch(es) — ` +
+        `a glide line needs at least two, since it describes where ONE note travels`)
+    }
+    const steps = notes
+      .sort((a, b) => a.startBeat - b.startBeat)
+      .map(n => ({
+        pitch: n.pitch, beat: n.startBeat,
+        ...(n.glide != null ? { glide: n.glide } : {}),
+        ...(n.accel != null ? { accel: n.accel } : {}),
+        ...(n.decel != null ? { decel: n.decel } : {}),
+        ...(n.anchor != null ? { anchor: n.anchor } : {}),
+      }))
+    const { note, graph } = glideLine(steps, { ...(t.glideOpts ?? {}), startBeat: 0, endBeat: beat })
+    clips.push({
+      kind: 'midi', id: uid(), trackId: t.id, name: `${t.name} · glide`,
+      startBeat: 0, durationBeats: beat,
+      notes: [{ pitch: note.pitch, startBeat: 0, durationBeats: +note.durationBeats.toFixed(4), velocity: note.velocity }],
+      pitchGraph: graph,
+      isDrumClip: false, presetId: t.presetId ?? null, rollFx: t.rollFx ?? {},
     })
   }
 

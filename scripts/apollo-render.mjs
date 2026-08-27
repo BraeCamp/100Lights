@@ -94,7 +94,7 @@ process.on('exit', async () => {
 const argv = process.argv.slice(2)
 const flags = { set: [], sample: [] }
 const KNOWN = ['--list-presets', '--json', '--clip', '--preset', '--patch', '--set', '--notes',
-  '--notes-json', '--seconds', '--bpm', '--sample', '--out']
+  '--notes-json', '--bend-json', '--seconds', '--bpm', '--sample', '--out']
 for (let i = 0; i < argv.length; i++) {
   // Accept BOTH `--flag value` and `--flag=value`. Every other script in this
   // repo takes the `=` form, so only accepting spaces here meant a perfectly
@@ -114,6 +114,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--set') flags.set.push(value())
   else if (a === '--notes') flags.notes = value()
   else if (a === '--notes-json') flags.notesJson = value()
+  else if (a === '--bend-json') flags.bendJson = value()
   else if (a === '--seconds') flags.seconds = parseFloat(value())
   else if (a === '--bpm') flags.bpm = parseFloat(value())
   else if (a === '--sample') flags.sample.push(value())
@@ -181,6 +182,9 @@ if (flags.notes) {
   })
 }
 if (flags.notesJson) notes = JSON.parse(readFileSync(flags.notesJson, 'utf8'))
+// A drawn pitch curve arrives already sampled: [{t, semis}] in seconds, bending
+// a SOUNDING voice so one note can travel between pitches. See craft.glideLine.
+const bends = flags.bendJson ? JSON.parse(readFileSync(flags.bendJson, 'utf8')) : []
 const lastEnd = notes.reduce((m, n) => Math.max(m, n.t + n.dur), 0)
 const seconds = flags.seconds ?? (flags.clip ? 8 : lastEnd + 2)
 
@@ -295,10 +299,13 @@ if (flags.bpm || flags.clip) post({ type: 'transport', playing: !!flags.clip, bp
 // ── Render ──────────────────────────────────────────────────────────────────
 const BLOCK = 128
 const totalBlocks = Math.ceil(seconds * SR / BLOCK)
-const events = flags.clip ? [] : notes.flatMap(n => [
-  { t: n.t, type: 'on', note: n.note, vel: n.vel ?? 0.9 },
-  { t: n.t + n.dur, type: 'off', note: n.note },
-]).sort((a, b) => a.t - b.t)
+const events = flags.clip ? [] : [
+  ...notes.flatMap(n => [
+    { t: n.t, type: 'on', note: n.note, vel: n.vel ?? 0.9 },
+    { t: n.t + n.dur, type: 'off', note: n.note },
+  ]),
+  ...bends.map(x => ({ t: x.t, type: 'bend', ch: x.ch || 0, semis: x.semis })),
+].sort((a, b) => a.t - b.t)
 
 const outL = new Float32Array(totalBlocks * BLOCK)
 const outR = new Float32Array(totalBlocks * BLOCK)
@@ -307,7 +314,8 @@ for (let b = 0; b < totalBlocks; b++) {
   const tNow = b * BLOCK / SR
   while (evIdx < events.length && events[evIdx].t <= tNow) {
     const ev = events[evIdx++]
-    if (ev.type === 'on') proc.noteOn(ev.note, ev.vel, false)
+    if (ev.type === 'on') proc.noteOn(ev.note, ev.vel, false, ev.ch || 0)
+    else if (ev.type === 'bend') proc.chanBend[ev.ch & 15] = ev.semis
     else proc.noteOff(ev.note, false)
   }
   const L = new Float32Array(BLOCK), R = new Float32Array(BLOCK)

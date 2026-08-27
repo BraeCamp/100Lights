@@ -2300,7 +2300,27 @@ export class DawEngine extends EventTarget {
           // uses a sample resumes at the right phase instead of restarting when
           // the playhead enters mid-note.
           const noteOffsetSec = this.beatsToSeconds(alreadyBeats)
-          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec)
+          const noteSpan = this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec
+          // A drawn pitch contour on a synth track. The sampled branch above
+          // applies this with src.detune; a synth voice has no buffer source, so
+          // it is sampled here and sent as bend events that move the SOUNDING
+          // voice — one note can then travel between pitches with no retrigger.
+          let bend: { t: number; semis: number }[] | undefined
+          const pg2 = clip.pitchGraph
+          if (pg2 && pg2.length >= 2) {
+            const M2 = Math.max(8, Math.min(4000, Math.ceil(noteSpan * 120)))
+            const full2 = sampleAutomation(pg2, 1, M2)
+            const s2 = Math.min(M2 - 2, Math.max(0, Math.floor((alreadyBeats / Math.max(1e-6, maxDur)) * M2)))
+            bend = []
+            let prev: number | null = null
+            for (let i = s2; i < M2; i++) {
+              const semis = ((full2[i] ?? 0.5) - 0.5) * 24
+              if (prev !== null && Math.abs(semis - prev) < 0.005 && i < M2 - 1) continue
+              prev = semis
+              bend.push({ t: startAt + ((i - s2) / Math.max(1, M2 - 1 - s2)) * (noteSpan - noteOffsetSec), semis })
+            }
+          }
+          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, noteSpan, noteOffsetSec, bend)
           this._choke(track.id, h, startAt)
         }
 

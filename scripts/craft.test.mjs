@@ -8,8 +8,9 @@
 
 import {
   parseChord, voice, lowIntervalOk, deMud, groove, play, ROLE_LEAN,
-  SLOTS, intoSlot, checkSlots, stagger, densityArc, thin, motif,
+  SLOTS, intoSlot, checkSlots, stagger, densityArc, thin, motif, glideLine,
 } from './lib/craft.mjs'
+import { importTs } from './lib/ts-import.mjs'
 
 let pass = 0, fail = 0
 const ok = (name, cond, detail = '') => {
@@ -168,6 +169,68 @@ console.log('\nmotif')
   ok('an answer lands on chord tones', (() => {
     const tones = [2, 5, 9]       // D minor
     return motif.answer(m, tones).every(n => tones.map(t => t % 12).includes(((n.pitch % 12) + 12) % 12))
+  })())
+}
+
+console.log('\nglideLine')
+{
+  // The curve is read back through the studio's OWN sampler, so these assert
+  // what the engine will actually be handed, not what the generator intended.
+  const { sampleAutomation } = await importTs('lib/clip-effect-utils.ts')
+  const steps = [{ pitch: 34, beat: 0 }, { pitch: 41, beat: 4 }, { pitch: 39, beat: 8 }, { pitch: 34, beat: 12 }]
+  const g = glideLine(steps, { glide: 0.5, accel: 0.35, decel: 0.7, endBeat: 16 })
+  const N = 1601
+  const curve = sampleAutomation(g.graph, 1, N)
+  const at = beat => g.root + (curve[Math.round((beat / 16) * (N - 1))] - 0.5) * 24
+
+  ok('one note for the whole line', g.note.durationBeats === 16)
+  ok('the note sits in the middle of the range', g.root === 38, `${g.root}`)
+  ok('holds land exactly on their pitch', [[3.9, 34], [7.9, 41], [11.9, 39], [15.9, 34]]
+    .every(([b, want]) => Math.abs(at(b) - want) < 0.001))
+  ok('a hold is FLAT, not drifting', (() => {
+    let lo = 99, hi = -99
+    for (let x = 4.9; x <= 7.9; x += 0.02) { const p = at(x); if (p < lo) lo = p; if (p > hi) hi = p }
+    return (hi - lo) * 100 < 0.5      // cents
+  })())
+  ok('points are sorted and inside 0..1', g.graph.every((p, i) =>
+    p.t >= 0 && p.t <= 1 && (i === 0 || p.t >= g.graph[i - 1].t)))
+
+  // accel/decel must move the midpoint of a move in opposite directions, or the
+  // easing controls are decorative.
+  const mid = (ac, de) => {
+    const q = glideLine([{ pitch: 34, beat: 0 }, { pitch: 46, beat: 4 }],
+      { glide: 4, accel: ac, decel: de, anchor: 'depart', root: 40, endBeat: 8 })
+    const c = sampleAutomation(q.graph, 1, 801)
+    return 40 + (c[Math.round(0.75 * 800)] - 0.5) * 24     // beat 6 = middle of the move
+  }
+  ok('no easing gives a straight ramp', Math.abs(mid(0, 0) - 40) < 0.01, `${mid(0, 0).toFixed(2)}`)
+  ok('accel holds the old pitch longer', mid(0.9, 0) < 38, `${mid(0.9, 0).toFixed(2)}`)
+  ok('decel reaches the new pitch sooner', mid(0, 0.9) > 42, `${mid(0, 0.9).toFixed(2)}`)
+  ok('easing both ways stays symmetric', Math.abs(mid(0.85, 0.85) - 40) < 0.01)
+
+  // anchor decides whether the downbeat is the old pitch or the new one
+  const anchored = an => {
+    const q = glideLine([{ pitch: 34, beat: 0 }, { pitch: 41, beat: 4 }],
+      { glide: 1, accel: 0, decel: 0, anchor: an, root: 38, endBeat: 8 })
+    const c = sampleAutomation(q.graph, 1, 801)
+    return 38 + (c[Math.round((4 / 8) * 800)] - 0.5) * 24   // exactly on beat 4
+  }
+  ok("'depart' is still the old pitch on the beat", Math.abs(anchored('depart') - 34) < 0.05)
+  ok("'arrive' is already the new pitch on the beat", Math.abs(anchored('arrive') - 41) < 0.05)
+  ok("'center' is halfway on the beat", Math.abs(anchored('center') - 37.5) < 0.1)
+
+  ok('a line wider than a pitch lane is refused', (() => {
+    try { glideLine([{ pitch: 20, beat: 0 }, { pitch: 60, beat: 4 }], { endBeat: 8 }); return false }
+    catch (e) { return /12/.test(e.message) }
+  })())
+  ok('a one-pitch line is refused', (() => {
+    try { glideLine([{ pitch: 40, beat: 0 }], { endBeat: 8 }); return false }
+    catch { return true }
+  })())
+  ok('moves never overlap in time', (() => {
+    const q = glideLine([{ pitch: 34, beat: 0 }, { pitch: 40, beat: 1 }, { pitch: 36, beat: 1.4 }],
+      { glide: 2, endBeat: 6 })     // glide longer than the gap between targets
+    return q.graph.every((p, i) => i === 0 || p.t >= q.graph[i - 1].t)
   })())
 }
 

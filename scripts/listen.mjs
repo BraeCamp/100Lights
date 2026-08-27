@@ -31,8 +31,9 @@ import { join, dirname, basename, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { readWav, analyze, db } from './lib/audio-features.mjs'
+import { readWav, analyze, db, pitchNear } from './lib/audio-features.mjs'
 import { symbolic } from './lib/song-symbolic.mjs'
+import { importTs } from './lib/ts-import.mjs'
 import { judge, summarize, DEFAULT_TARGET } from './lib/verdicts.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -93,6 +94,7 @@ if (typeof styleName === 'string') {
 
 // ── Get audio ───────────────────────────────────────────────────────────────
 const isProject = /\.cfproj$/i.test(file) && !flag('no-render')
+const { sampleAutomation } = await importTs('lib/clip-effect-utils.ts')
 let mixPath = file, stemFiles = {}, renderReport = null, tmp = null, dp = null
 
 if (isProject) {
@@ -157,6 +159,57 @@ if (sym?.continuous?.length) {
     c.gatedFrames = body.filter(v => v < peak * 0.2).length
     c.frames = body.length
     c.quietestPct = body.length ? +(Math.min(...body) / peak * 100).toFixed(1) : null
+  }
+}
+
+// Did a glide line's PITCH actually follow its curve?
+//
+// This is the check that would catch the curve being ignored — which is exactly
+// what happened before Apollo learned to read it: the note played, the stem was
+// full, every level check passed, and the line simply never moved. Nothing else
+// here looks at pitch, so nothing else could tell.
+//
+// It asks whether there is energy where the pitch was WRITTEN, rather than
+// detecting the pitch blind. A sub is usually an oscillator plus a
+// sub-oscillator an octave down, and a blind estimator picks between those two
+// more or less arbitrarily — reporting an octave error that is a property of the
+// sound, not a fault in the note.
+if (sym?.glide?.length && dp) {
+  const spb = 60 / (dp.tempo || 120)
+  const hzOf = m => 440 * Math.pow(2, (m - 69) / 12)
+  for (const gl of sym.glide) {
+    const p = stemFiles[gl.track]
+    const clip = (dp.arrangementClips ?? []).find(c =>
+      c.pitchGraph?.length >= 2 && (dp.tracks.find(t => t.id === c.trackId)?.name ?? '') === gl.track)
+    if (!p || !clip || !clip.notes?.length) continue
+    const w = readWav(readFileSync(p))
+    const mono = Float32Array.from(w.l, (v, i) => (v + w.r[i]) * 0.5)
+    const note = clip.notes[0]
+    const M = 2000
+    const lut = sampleAutomation(clip.pitchGraph, 1, M)
+
+    // Measure where the line is HOLDING, not mid-move: a moving pitch has no
+    // single answer, and the curve is only claiming to arrive at the holds.
+    const minHold = Math.max(8, Math.round(M * (1 / Math.max(1, note.durationBeats))))
+    const holds = []
+    let runStart = 0
+    for (let i = 1; i <= M; i++) {
+      const moved = i < M && Math.abs(lut[i] - lut[runStart]) > 0.5 / 24   // half a semitone
+      if (moved || i === M) {
+        if (i - runStart >= minHold) holds.push((runStart + i) >> 1)
+        runStart = i
+      }
+    }
+    const errs = []
+    for (const i of holds) {
+      const beat = clip.startBeat + note.startBeat + (i / (M - 1)) * note.durationBeats
+      const want = note.pitch + (lut[i] - 0.5) * 24
+      const r = pitchNear(mono, w.sr, beat * spb, hzOf(want))
+      if (r) errs.push(Math.abs(r.cents))
+    }
+    gl.holdsChecked = errs.length
+    gl.worstCents = errs.length ? +Math.max(...errs).toFixed(1) : null
+    gl.distinctPitches = new Set(holds.map(i => Math.round((lut[i] - 0.5) * 24 * 2))).size
   }
 }
 

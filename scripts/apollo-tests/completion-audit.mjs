@@ -7,8 +7,13 @@ global.sampleRate = 48000
 global.AudioWorkletProcessor = class { constructor() { this.port = { postMessage: () => {}, onmessage: null } } }
 global.registerProcessor = (name, cls) => { global.__cls = cls }
 await import(new URL('../../public/apollo/engine.js', import.meta.url).href)
-const { PARAMS, FX_DEFS } = await import(new URL('../../lib/apollo/patch.ts', import.meta.url).href)
-const { generateFactoryTable } = await import(new URL('../../lib/apollo/tables.ts', import.meta.url).href)
+// Through importTs, not a direct file-URL import: patch.ts imports '@/lib/...',
+// a bundler alias Node cannot resolve, so importing it directly fails outright
+// (it did, from 971e5ba until this line changed). importTs rewrites both import
+// forms — that is the whole reason it exists.
+const { importTs } = await import(new URL('../lib/ts-import.mjs', import.meta.url).href)
+const { PARAMS, FX_DEFS } = await importTs('lib/apollo/patch.ts')
+const { generateFactoryTable } = await importTs('lib/apollo/tables.ts')
 
 const SR = 48000
 // ---------- broadband loopable test sample: saw 110 + saw 223 + noise ----------

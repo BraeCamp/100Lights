@@ -12,7 +12,10 @@ import { ApolloEngine } from '@/lib/apollo/engine-client'
 import { restorePatchSamples } from '@/lib/apollo/sample-store'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 
-interface SchedEvent { t: number; type: 'noteOn' | 'noteOff'; note: number; vel?: number }
+interface SchedEvent { t: number; type: 'noteOn' | 'noteOff' | 'bend'; note?: number; vel?: number; semis?: number; ch?: number }
+
+/** One point of a drawn pitch contour: `semis` away from the note, at time `t`. */
+export interface BendPoint { t: number; semis: number }
 
 interface Managed {
   engine: ApolloEngine
@@ -77,12 +80,23 @@ export function playApolloNote(
   velocity: number, // 0..127
   when: number,
   duration: number,
+  /** A drawn pitch contour, already sampled to absolute context time. Bends the
+   *  SOUNDING voice, so one note can travel between pitches without a second
+   *  noteOn — see craft.glideLine / clip.pitchGraph. */
+  bend?: BendPoint[],
 ): void {
   const m = ensure(ctx, dest, patch)
   const events: SchedEvent[] = [
     { t: when, type: 'noteOn', note: pitch, vel: Math.max(0.05, velocity / 127) },
     { t: when + Math.max(0.02, duration), type: 'noteOff', note: pitch },
   ]
+  if (bend?.length) {
+    for (const b of bend) events.push({ t: b.t, type: 'bend', semis: b.semis, ch: 0 })
+    // The bend is per-CHANNEL, so it must be put back afterwards or the next
+    // note on this track starts transposed — the "MIDI plays a few notes higher"
+    // bug, arrived at from a different direction.
+    events.push({ t: when + Math.max(0.02, duration) + 0.005, type: 'bend', semis: 0, ch: 0 })
+  }
   if (m.isReady) m.engine.scheduleEvents(events)
   else m.queue.push(...events)
 }

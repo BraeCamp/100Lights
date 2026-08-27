@@ -421,6 +421,130 @@ export function onsets(sig, sr, { hopSec = 0.005, hi = 0.18, lo = 0.10 } = {}) {
 }
 
 /** Everything, for one stereo signal. */
+/**
+ * The pitch sounding at a moment, in MIDI note numbers (fractional).
+ *
+ * Written after two hand-rolled estimators gave confident wrong answers on the
+ * same signal - a zero-crossing counter that counted a saw's harmonics, and an
+ * autocorrelator that picked the sub-oscillator's octave. Both failures are the
+ * same failure: a single cue that a rich waveform can satisfy at more than one
+ * frequency. This scores each candidate by its HARMONIC SUM (energy at f, plus
+ * a fraction of the energy at 2f and 3f), which is what separates a fundamental
+ * from a partial, and reports the confidence so a bad read can be discarded
+ * rather than believed.
+ *
+ * @returns { midi, hz, confidence } | null when the window is silent.
+ */
+export function pitchAt(sig, sr, sec, winSec = 0.15, { loMidi = 18, hiMidi = 100 } = {}) {
+  const N = Math.max(64, Math.round(winSec * sr))
+  const i0 = Math.max(0, Math.round(sec * sr) - (N >> 1))
+  if (i0 + N > sig.length) return null
+  const x = new Float64Array(N)
+  let rms = 0
+  for (let i = 0; i < N; i++) {
+    const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1))   // Hann
+    x[i] = sig[i0 + i] * w
+    rms += sig[i0 + i] * sig[i0 + i]
+  }
+  if (Math.sqrt(rms / N) < 2e-4) return null
+
+  // Goertzel: energy at one frequency, without an FFT's bin grid.
+  const mag = f => {
+    const w = 2 * Math.PI * f / sr, cw = Math.cos(w), coeff = 2 * cw
+    let s1 = 0, s2 = 0
+    for (let i = 0; i < N; i++) { const s0 = x[i] + coeff * s1 - s2; s2 = s1; s1 = s0 }
+    return Math.hypot(s1 - s2 * cw, s2 * Math.sin(w))
+  }
+  const hz = m => 440 * Math.pow(2, (m - 69) / 12)
+  const score = m => {
+    const f = hz(m)
+    if (f * 3 > sr / 2) return mag(f)
+    return mag(f) + 0.5 * mag(f * 2) + 0.33 * mag(f * 3)
+  }
+
+  let best = -1, bestM = loMidi
+  for (let m = loMidi; m <= hiMidi; m += 0.5) { const v = score(m); if (v > best) { best = v; bestM = m } }
+  let lo = bestM - 0.5, hi = bestM + 0.5
+  for (let m = lo; m <= hi; m += 0.02) { const v = score(m); if (v > best) { best = v; bestM = m } }
+
+  // Confidence: how much the winner beats the best candidate a whole tone away.
+  // A genuine fundamental stands well clear; a partial does not.
+  let rival = 0
+  for (let m = loMidi; m <= hiMidi; m += 0.5) {
+    if (Math.abs(m - bestM) < 2) continue
+    const v = score(m); if (v > rival) rival = v
+  }
+  return { midi: bestM, hz: hz(bestM), confidence: best > 0 ? 1 - rival / best : 0 }
+}
+
+/**
+ * How far a tone sits from where it was SUPPOSED to be, in cents.
+ *
+ * Blind pitch detection is the wrong tool for verifying something we wrote: a
+ * sub built as an oscillator plus a sub-oscillator an octave down has two strong
+ * components 5 dB apart, and any estimator will pick between them somewhat
+ * arbitrarily — reporting an octave error that is really an ambiguity in the
+ * SOUND, not a fault in the note. When the intended frequency is known, look
+ * for energy there instead of guessing.
+ *
+ * Searches +/-`rangeCents` around `expectedHz` for the strongest response and
+ * returns its offset, plus `prominence` — how far that peak stands above the
+ * average of the search band.
+ *
+ * `prominence` is only meaningful when `resolved` is true. A Hann window's main
+ * lobe is 4/T wide, so telling a 120-cent band apart at 30 Hz would need a ~1.9 s
+ * window — longer than a sub holds one pitch. Below that, every candidate in the
+ * band answers about the same and the ratio approaches 1 no matter how strong the
+ * tone is. The `cents` reading still localises well (the peak of a smooth
+ * response is where the tone is), so a low `prominence` with `resolved: false`
+ * means "cannot say", not "nothing there".
+ *
+ * @returns { cents, hz, prominence, resolved } | null when the window is silent.
+ */
+export function pitchNear(sig, sr, sec, expectedHz, winSec = null, rangeCents = 120) {
+  // The window has to be long enough to RESOLVE the search band, or every
+  // candidate answers about the same and `prominence` is meaningless. Telling
+  // a 120-cent span apart at f needs roughly 14/f seconds — 0.46 s at 30 Hz,
+  // where a fixed 0.3 s window cannot see the difference at all. This is the
+  // same low-frequency trap that made a continuity probe report every setting
+  // dipping identically, so the window is derived rather than guessed.
+  const auto = 14 / Math.max(1e-6, expectedHz)
+  const N = Math.max(64, Math.round((winSec ?? Math.max(0.15, Math.min(2, auto))) * sr))
+  const i0 = Math.max(0, Math.round(sec * sr) - (N >> 1))
+  if (i0 + N > sig.length || expectedHz <= 0) return null
+  const x = new Float64Array(N)
+  let rms = 0
+  for (let i = 0; i < N; i++) {
+    const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1))
+    x[i] = sig[i0 + i] * w
+    rms += sig[i0 + i] * sig[i0 + i]
+  }
+  if (Math.sqrt(rms / N) < 2e-4) return null
+  const mag = f => {
+    const w = 2 * Math.PI * f / sr, cw = Math.cos(w), coeff = 2 * cw
+    let s1 = 0, s2 = 0
+    for (let i = 0; i < N; i++) { const s0 = x[i] + coeff * s1 - s2; s2 = s1; s1 = s0 }
+    return Math.hypot(s1 - s2 * cw, s2 * Math.sin(w))
+  }
+  let best = -1, bestC = 0, sum = 0, count = 0
+  for (let c = -rangeCents; c <= rangeCents; c += 2) {
+    const v = mag(expectedHz * Math.pow(2, c / 1200))
+    sum += v; count++
+    if (v > best) { best = v; bestC = c }
+  }
+  for (let c = bestC - 2; c <= bestC + 2; c += 0.25) {
+    const v = mag(expectedHz * Math.pow(2, c / 1200))
+    if (v > best) { best = v; bestC = c }
+  }
+  const avg = sum / Math.max(1, count)
+  const bandHz = expectedHz * (Math.pow(2, rangeCents / 1200) - Math.pow(2, -rangeCents / 1200))
+  return {
+    cents: bestC, hz: expectedHz * Math.pow(2, bestC / 1200),
+    prominence: best / (avg + 1e-20),
+    resolved: bandHz > 4 * sr / N,
+  }
+}
+
 export function analyze(l, r, sr, { withTruePeak = true, withBandStereo = true } = {}) {
   const mono = new Float32Array(l.length)
   for (let i = 0; i < l.length; i++) mono[i] = (l[i] + r[i]) * 0.5

@@ -123,7 +123,37 @@ for (const t of audible) {
   if (t.effects?.length) problems.push(`${t.name}: ${t.effects.length} track effect(s) — not applied offline`)
 
   const notes = []
+  const bends = []
   for (const c of clips.filter(c => !c.kind || c.kind === 'midi')) {
+    // A drawn pitch curve (clip.pitchGraph) travels ONE note between pitches
+    // instead of playing a note per pitch. It is normalised 0..1 over each
+    // note's own length, v 0.5 = in tune, full height = +/-12 semitones - the
+    // same contract the sampled path uses, so a curve drawn by hand in the
+    // studio and one written by craft.glideLine behave identically.
+    const pg = c.pitchGraph
+    if (pg && pg.length >= 2) {
+      const ns = (c.notes ?? [])
+      if (ns.length > 1) {
+        problems.push(`${t.name}: pitch curve on a clip with ${ns.length} notes - Apollo bends the whole ` +
+          `track at once, so a per-note curve needs one note per clip (the curve is applied from the first note)`)
+      }
+      const n0 = ns[0]
+      if (n0) {
+        const at = c.startBeat + n0.startBeat
+        const durSec = n0.durationBeats * spb
+        // Dense enough that the biggest step in a fast move stays under a cent,
+        // then thinned: a hold emits nothing, so a mostly-still line is cheap.
+        const steps = Math.max(8, Math.min(20000, Math.ceil(durSec * 200)))
+        const lut = sampleAutomation(pg, 1, steps)
+        let last = null
+        for (let i = 0; i < steps; i++) {
+          const semis = +((lut[i] - 0.5) * 24).toFixed(4)
+          if (last !== null && Math.abs(semis - last) < 0.005 && i < steps - 1) continue
+          last = semis
+          bends.push({ t: +((at - beat0) * spb + (i / (steps - 1)) * durSec).toFixed(5), semis })
+        }
+      }
+    }
     for (const n of c.notes ?? []) {
       const at = c.startBeat + n.startBeat
       if (at >= beat1 || at + n.durationBeats <= beat0) continue
@@ -140,7 +170,7 @@ for (const t of audible) {
   // A note starting before the window still needs to be heard from the window's
   // start — a two-bar pad chord is otherwise missing from every partial render.
   for (const n of notes) if (n.t < 0) { n.dur += n.t; n.t = 0 }
-  renderable.push({ track: t, notes: notes.filter(n => n.dur > 0.01) })
+  renderable.push({ track: t, notes: notes.filter(n => n.dur > 0.01), bends: bends.filter(b => b.t >= 0) })
 }
 if (!renderable.length) {
   console.error('Nothing to render.' + (problems.length ? '\n  ' + problems.join('\n  ') : ''))
@@ -156,9 +186,15 @@ async function renderTrack(entry, i) {
   const pf = join(tmp, `p${i}.json`), nf = join(tmp, `n${i}.json`), wf = join(tmp, `t${i}.wav`)
   writeFileSync(pf, JSON.stringify(entry.track.instrument.params))
   writeFileSync(nf, JSON.stringify(entry.notes))
-  await run('node', ['--experimental-strip-types', join(ROOT, 'scripts/apollo-render.mjs'),
+  const args = ['--experimental-strip-types', join(ROOT, 'scripts/apollo-render.mjs'),
     '--patch', pf, '--notes-json', nf, '--seconds', String(seconds), '--bpm', String(bpm),
-    '--out', wf, '--json'], { cwd: ROOT, maxBuffer: 1 << 26 })
+    '--out', wf, '--json']
+  if (entry.bends?.length) {
+    const bf = join(tmp, `b${i}.json`)
+    writeFileSync(bf, JSON.stringify(entry.bends))
+    args.push('--bend-json', bf)
+  }
+  await run('node', args, { cwd: ROOT, maxBuffer: 1 << 26 })
   const wav = readWav(readFileSync(wf))
   return { ...entry, l: wav.l, r: wav.r }
 }

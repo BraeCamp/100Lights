@@ -164,6 +164,104 @@ export function legatoChain(notes, { overlapBeats = 0.25, tailBeats = 1 } = {}) 
   })
 }
 
+/**
+ * ONE note that travels between pitches, instead of a note per pitch.
+ *
+ * `legatoChain` gets a sound to hold ACROSS a note change; this removes the note
+ * change. The track plays a single note for the whole line and a drawn pitch
+ * curve moves it, so there is exactly one attack no matter how many pitches the
+ * line visits - the thing you cannot get from overlapping notes, which always
+ * re-trigger something.
+ *
+ * The curve is a `clip.pitchGraph`: the studio's existing per-note pitch lane,
+ * drawable by hand (clip Sound panel -> PITCH), `v` 0.5 = in tune and the full
+ * height = +/-12 semitones. So everything this writes stays editable as a curve,
+ * and a curve drawn by hand plays back identically.
+ *
+ * Each move has its own duration and its own ease:
+ *
+ *   accel 0                      leaves the old pitch at full speed
+ *   accel 1                      creeps away from it, then accelerates
+ *   decel 0                      arrives at full speed, and stops dead
+ *   decel 1                      slides into the new pitch and settles
+ *
+ * `anchor` decides where the move sits relative to the beat it targets, and the
+ * choice is harmonic, not cosmetic:
+ *
+ *   'depart'  starts ON the beat  - the classic 808 slide. The downbeat is still
+ *             the OLD pitch, so keep `glide` short or the bar starts on the
+ *             wrong note.
+ *   'arrive'  finishes ON the beat - the new pitch is correct from the downbeat
+ *             and the move reads as an anticipation into it.
+ *   'center'  straddles it - splits the difference, closest to "in tune on the
+ *             beat" for a slow move.
+ *
+ * @param steps  [{ pitch, beat, glide?, accel?, decel?, anchor? }] - where the
+ *               line should BE at each beat. Per-step values override the opts.
+ * @returns { note, graph, root, spanSemis } - one note, and the pitch curve.
+ */
+export function glideLine(steps, opts = {}) {
+  const {
+    glide = 0.12, accel = 0.35, decel = 0.7, anchor = 'depart',
+    velocity = 88, endBeat, startBeat,
+  } = opts
+  const st = [...steps].sort((a, b) => a.beat - b.beat)
+  if (st.length < 2) throw new Error('glideLine: needs at least two steps')
+
+  // The played note sits in the MIDDLE of the line so the curve has the most
+  // room on both sides - the graph can only reach +/-12 semitones from it.
+  const pitches = st.map(s => s.pitch)
+  const root = opts.root ?? Math.round((Math.min(...pitches) + Math.max(...pitches)) / 2)
+  const spanSemis = Math.max(...pitches.map(x => Math.abs(x - root)))
+  if (spanSemis > 12) {
+    throw new Error(
+      `glideLine: the line spans ${spanSemis} semitones from its centre (${root}), but a pitch ` +
+      `curve only reaches +/-12. Split it into two glide lines, or move the outliers by an octave.`)
+  }
+
+  const first = startBeat ?? st[0].beat
+  const last = endBeat ?? (st[st.length - 1].beat + 4)
+  const span = last - first
+  if (span <= 0) throw new Error('glideLine: endBeat must be after the first step')
+
+  const v = pitch => 0.5 + (pitch - root) / 24
+  const T = beat => Math.min(1, Math.max(0, (beat - first) / span))
+
+  let pid = 0
+  const P = (t, val) => ({ id: `gl${pid++}`, t, v: val, smooth: false, h1: [0, 0], h2: [0, 0] })
+  const pts = [P(0, v(st[0].pitch))]
+
+  for (let i = 1; i < st.length; i++) {
+    const s = st[i], prev = st[i - 1]
+    const g = s.glide ?? glide
+    const an = s.anchor ?? anchor
+    // Never let a move start before the previous target, or finish after the
+    // next one - overlapping moves would make the curve double back in time.
+    const lo = prev.beat, hi = st[i + 1] ? st[i + 1].beat : last
+    let t0 = an === 'arrive' ? s.beat - g : an === 'center' ? s.beat - g / 2 : s.beat
+    let t1 = t0 + g
+    if (t0 < lo) { t0 = lo; t1 = Math.max(t0 + 1e-4, t1) }
+    if (t1 > hi) { t1 = hi; t0 = Math.min(t0, t1 - 1e-4) }
+
+    const a = P(T(t0), v(prev.pitch))
+    const b = P(T(t1), v(s.pitch))
+    const dt = b.t - a.t
+    const ac = s.accel ?? accel, de = s.decel ?? decel
+    // Handles carry NO vertical offset, which is what keeps the flat stretches
+    // between moves exactly flat: every control point of a hold segment shares
+    // one v, so the bezier is a straight line however the handles are set.
+    if (ac > 0) { a.smooth = true; a.h2 = [ac * dt, 0] }
+    if (de > 0) { b.smooth = true; b.h1 = [-de * dt, 0] }
+    pts.push(a, b)
+  }
+  pts.push(P(1, v(st[st.length - 1].pitch)))
+
+  return {
+    note: { pitch: root, beat: first, durationBeats: span, velocity },
+    graph: pts, root, spanSemis,
+  }
+}
+
 // ═══ HARMONY ════════════════════════════════════════════════════════════════
 
 const PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }
