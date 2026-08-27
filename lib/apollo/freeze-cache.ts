@@ -451,21 +451,11 @@ let lastLookaheadAsk = 0
 export function setPlayhead(beat: number): void {
   if (!Number.isFinite(beat)) return
   playheadBeat = beat
-  // Ask for the next window as the playhead moves.
-  //
-  // While playing, the render loop stops once it has covered the lookahead and
-  // hands the machine back to playback — which means something has to wake it
-  // again, or the song plays straight out of the far end of what was rendered
-  // and goes quiet. That something is the playhead itself: this is the "real
-  // time loading on the playhead" half, and without it the lookahead would just
-  // be a shorter version of the same silence.
-  //
-  // Throttled, because this is called from the transport's own tick.
-  if (!transportPlaying || !lastGroups) return
-  const now = Date.now()
-  if (now - lastLookaheadAsk < 700) return
-  lastLookaheadAsk = now
-  requestCombine(lastBpm, lastGroups)
+  // Deliberately does NOT ask for a render any more. It used to, to keep a
+  // lookahead window topped up during playback — but nothing renders during
+  // playback now, so waking the baker here would only put the freeze back.
+  // The playhead still matters: byUrgency() sorts by distance from it, so
+  // baking on pause starts with whatever you are about to hear.
 }
 
 /**
@@ -482,9 +472,18 @@ export function setPlayhead(beat: number): void {
  */
 let transportPlaying = false
 export function setTransportPlaying(v: boolean): void {
+  const was = transportPlaying
   transportPlaying = v
   // Stopping is the cue to write down everything rendered while playing.
   setStorageTransportPlaying(v)
+  // And to start baking again. The loop parks itself on play and has no other
+  // way back, so without this the cache would only ever be filled by whatever
+  // happened to be running when play was pressed — the song would stay live
+  // forever and never get cheaper on the second pass.
+  if (was && !v && lastGroups && pendingWhilePlaying) {
+    pendingWhilePlaying = false
+    requestCombine(lastBpm, lastGroups)
+  }
 }
 
 /** Hand the main thread back between pieces of a long job. scheduler.yield()
@@ -586,7 +585,7 @@ export interface CombineProgress {
   /** Is a render running right now? */
   active: boolean
   /** 'head' = racing to first sound; 'fill' = filling the rest in behind you. */
-  phase: 'head' | 'fill' | 'idle'
+  phase: 'head' | 'fill' | 'idle' | 'paused'
 }
 
 let progress: CombineProgress = { done: 0, total: 0, active: false, phase: 'idle' }
@@ -610,11 +609,26 @@ function setProgress(next: Partial<CombineProgress>): void {
 // window without the caller having to hand the groups over again.
 let lastGroups: TrackRenderGroup[] | null = null
 let lastBpm = 120
+/** Someone asked for a render while the transport was running. Served on pause. */
+let pendingWhilePlaying = false
 
 export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!groups.length) return
   lastGroups = groups
   lastBpm = bpm
+  // ── Playing means playing ──────────────────────────────────────────────
+  //
+  // Park before doing ANY work, not once the render loop is reached. The
+  // engine asks for a combine on every clip that is not yet baked, so during
+  // playback this is called constantly — and everything above the render loop
+  // (stamping every clip, sizing the cache, a disk lookup per missing clip)
+  // would run every time for a job that is only going to stop anyway. Parking
+  // late turned that into a busy loop and made the stalls worse, not better:
+  // measured 179ms worst frame against 133ms before the change.
+  //
+  // So remember that someone asked, and serve it on pause.
+  if (transportPlaying) { pendingWhilePlaying = true; return }
+
   const wanted = groups.flatMap(g => g.clips
     .filter(c => c.notes.length > 0)
     .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
@@ -777,33 +791,46 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // So: small while it matters, then big. And bigger still when the
         // transport is stopped, because then there is no deadline to miss — that
         // is Brae's "load the full thing in the background when it's paused".
-        // ── While playing, render only what is about to be HEARD ────────────
+        // ── While playing, DO NOT RENDER ───────────────────────────────────
         //
-        // byUrgency() sorts by distance from the playhead but never limits, so
-        // the loop ground through the entire song even during playback. On a
-        // nine-track piece that is the whole arrangement being synthesised while
-        // the same thread is trying to play it — which is Brae's "it still plays
-        // painfully slowly with no audio… it's still loading the whole song
-        // instead of switching to real time loading on the playhead". He read it
-        // exactly right.
+        // This started as "render the whole song", then became "render 14
+        // seconds ahead of the playhead". Brae, on the second one: "it says
+        // (loading ahead of playhead) but it loads far ahead instead of just
+        // right in front of it. Can we change the loading type to the one that
+        // plays real time when the user hits play?" — and before that, three
+        // times, some version of the same request.
         //
-        // So while the transport runs, the queue is cut to a lookahead window
-        // and the loop STOPS when that window is satisfied, handing the machine
-        // back to playback. Advancing the playhead asks for the next window.
-        // Stopped, the window is the whole song again and it fills in properly.
-        const LOOKAHEAD_SEC = 14
-        const inLookahead = (w: { clip: MidiClip }) => {
-          if (!transportPlaying) return true
-          const ahead = (w.clip.startBeat - playheadBeat) * spb2
-          const endsAhead = (w.clip.startBeat + w.clip.durationBeats - playheadBeat) * spb2
-          // Anything already sounding, or starting within the window.
-          return endsAhead > -1 && ahead < LOOKAHEAD_SEC
-        }
-
+        // He is right, and a smaller window was never going to be the answer.
+        // Chrome runs an OfflineAudioContext carrying JS worklets ON THE MAIN
+        // THREAD, so every render is a main-thread block — and the note
+        // scheduler runs there too. Rendering while playing therefore competes
+        // with the very thing it is trying to serve: the studio goes quiet
+        // because nothing is left to schedule the notes. Fourteen seconds of
+        // lookahead is just a shorter freeze than the whole song.
+        //
+        // Apollo already has a real-time path — its DSP is an AudioWorklet on
+        // the audio thread, which is what real-time synthesis IS. Pressing play
+        // now uses it: whatever is already baked plays from the cache, and
+        // everything else is synthesised live. Baking resumes on pause, which
+        // is when there is nothing to interrupt, and is what makes the second
+        // pass over a section instant.
+        const stopWhilePlaying = () => transportPlaying
         let headStartDone = false
         while (renderable().length) {
-          const queue2 = byUrgency().filter(inLookahead)
-          if (!queue2.length) break        // caught up with the playhead
+          // Someone pressed play. Stop, and let the audio thread have the
+          // machine — a render in flight cannot be cancelled, but no new one
+          // starts. setTransportPlaying(false) wakes this again on pause.
+          if (stopWhilePlaying()) {
+            // Play was pressed while this job was running. Stop, and make sure
+            // pausing picks the work back up — the entry guard above never saw
+            // this request, so without this the remaining clips would never be
+            // baked and every pass over them would stay live.
+            pendingWhilePlaying = true
+            setProgress({ ...progress, active: false, phase: 'paused' })
+            break
+          }
+          const queue2 = byUrgency()
+          if (!queue2.length) break
           const window: typeof queue2 = []
           let windowVoiceSec = 0
           const phase: 'head' | 'fill' = headStartDone ? 'fill' : 'head'
@@ -838,7 +865,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           // an expensive clip alone plus per-pass overhead. 900/450/250 is the
           // measured floor for this shape of work; going below it trades total
           // time for nothing.
-          const timeBudget = transportPlaying ? 450 : userIsBusy() ? 250 : 900
+          const timeBudget = userIsBusy() ? 250 : 900
           const maxClips = phase === 'head' ? 2 : 8
           for (const w of queue2) {
             const vs = clipVoiceSeconds(w.clip, w.patch, spb2)

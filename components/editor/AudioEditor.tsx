@@ -991,7 +991,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const AUTO_FREEZE_ON_LOAD = false
 
   // Loading progress, for the bar at the top of the studio.
-  const [loadProgress, setLoadProgress] = useState<{ done: number; total: number; active: boolean; phase: 'head' | 'fill' | 'idle' }>(
+  const [loadProgress, setLoadProgress] = useState<{ done: number; total: number; active: boolean; phase: 'head' | 'fill' | 'idle' | 'paused' }>(
     { done: 0, total: 0, active: false, phase: 'idle' })
   useEffect(() => {
     let stop: (() => void) | undefined
@@ -2864,13 +2864,15 @@ export default function AudioEditor(props: AudioEditorProps) {
                 background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
                 color: 'var(--text-muted)', letterSpacing: '0.02em',
               }}>
-                {/* Say what is actually happening. "Loading paused while you
-                    play" was written when playback really did stop the work —
-                    it no longer does: while playing, the studio renders a short
-                    way ahead of the playhead and leaves the rest alone, so the
-                    honest word is "ahead", not "paused". */}
+                {/* Say what is actually happening, and it has changed twice.
+                    First it claimed loading was paused while playing when it
+                    was not; then it said "ahead of the playhead" while
+                    rendering fourteen seconds of song, which Brae read as
+                    loading far ahead because that is what it was. Now playing
+                    really does stop the work — the song is synthesised live —
+                    so the honest thing to say is that it is playing. */}
                 {playing
-                  ? `Loading ahead of the playhead — ${loadProgress.done}/${loadProgress.total}`
+                  ? 'Playing live — the rest loads when you pause'
                   : loadProgress.phase === 'head'
                     ? 'Getting the sound ready…'
                     : `Loading the rest of the song — ${loadProgress.done}/${loadProgress.total}`}

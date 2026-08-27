@@ -91,6 +91,42 @@ const guarded = await page.evaluate(() => window.__apolloPatch?.()?.name ?? null
 console.log(`  a named patch, something armed: patch name = ${guarded}`)
 check('a patch you were working on is left alone', guarded !== 'Other Sample', String(guarded))
 
+// 4. The EMBEDDED card, which is what Brae actually meant: "To clarify, I mean
+//    when Apollo opens in Beacon." The rack hosted inside Beacon is a different
+//    mount from the standalone app — it takes its patch from the host and skips
+//    the deep-link path entirely — so passing above says nothing about it.
+const beacon = `${BASE}/create?modules=audio&audioMode=music`
+await page.goto(beacon, { waitUntil: 'domcontentloaded' })
+await page.waitForFunction(() => !!window.__dawDispatch, null, { timeout: 120000 }).catch(() => {})
+await page.waitForTimeout(6000)
+
+// Arm a sound the way picking one in the Sound Library does, BEFORE the rack is
+// opened — the whole point is that the selection precedes the mount.
+await page.evaluate(() => window.__apolloArmSample?.('check-embed-sample', 'Embed Sample'))
+
+// Open the rack with the toolbar's own APOLLO button — the control a person
+// reaches for. NOT the command palette: its Apollo command acts on a selected
+// track, so in an empty project it does not exist at all, and pressing Enter
+// there silently did something else while this test read the result as a
+// failure of the fix.
+const opened = await page.evaluate(() => {
+  const btn = [...document.querySelectorAll('button')]
+    .find(b => /apollo/i.test((b.textContent || '').trim()))
+  if (!btn) return false
+  btn.click()
+  return true
+})
+check('Beacon has a control that opens Apollo', opened)
+await page.waitForTimeout(8000)
+
+const embedEngine = await page.evaluate(() => {
+  const sels = [...document.querySelectorAll('select')]
+  const s = sels.find(el => [...el.options].some(o => o.value === 'wavetable'))
+  return s ? s.value : null
+})
+console.log(`  Apollo opened inside Beacon:    osc 1 engine = ${embedEngine}`)
+check('the rack inside Beacon also opens on the Sample section', embedEngine === 'sample', String(embedEngine))
+
 await browser.close()
 console.log(failures ? `\n${failures} failing` : '\nApollo opens where the armed sample is')
 process.exit(failures ? 1 : 0)
