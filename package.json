@@ -14,6 +14,7 @@
     "test:splice": "tsc -p tsconfig.test.json && node scripts/daw-splice.test.mjs",
     "check:discoverable": "node scripts/check-discoverable.mjs",
     "test:storage": "tsc -p tsconfig.test.json && node scripts/storage-policy.test.mjs",
+    "check:catalog": "node scripts/check-catalog-in-app.mjs",
     "check:public-api": "node scripts/check-public-api.mjs",
     "check:add-project": "node scripts/check-module-add-project.mjs",
     "test:slicing": "tsc -p tsconfig.test.json && node scripts/slicing.test.mjs",
