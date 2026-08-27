@@ -100,6 +100,20 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
       <ShellStyles />
       <div data-editor="true" data-anim={motion}
         style={{ minHeight: '100dvh', background: 'var(--bg-base)', backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)' }}>
+        {/*
+          The page heading. These apps are full-screen tools with no visible title bar,
+          so this is visually hidden — but every /apps/* page is a public landing page in
+          the sitemap, and until now none of them had an <h1> at all: the only title text
+          was a <div> inside the loading splash. That left crawlers with no heading and
+          screen-reader users with no page heading to navigate to (WCAG 2.4.6).
+          components/tools/ToolShell.tsx renders a visible <h1> for the same reason.
+        */}
+        <h1 style={{
+          position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+          overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
+        }}>
+          {app?.title ?? '100Lights'}
+        </h1>
         {children}
 
         {/* Floating toolbar — one cluster, top-right, safe-area aware. */}

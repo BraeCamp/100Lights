@@ -6,7 +6,7 @@ import { LogoMark } from '@/components/Logo'
 
 export const metadata: Metadata = {
   title: 'Community — Free Sounds, Samples & Chord Recipes',
-  description: 'Browse and play free samples, chord progressions, presets, and full songs shared by 100Lights producers. Listen in the browser, no account needed — import anything into your own project with one click.',
+  description: 'Free samples, chord progressions, presets, and songs shared by 100Lights producers. Play them in the browser and import any of them with one click.',
   alternates: { canonical: 'https://100lights.com/community' },
   openGraph: {
     title: '100Lights Community — Free Sounds & Chord Recipes',

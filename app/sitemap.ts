@@ -4,6 +4,7 @@ import { getArticles } from '@/lib/learn-articles'
 import { TUTORIALS } from '@/lib/tutorials'
 import { LEARN_PATHS } from '@/lib/learn-paths'
 import { MINI_APPS } from '@/lib/apps-registry'
+import { PLAY_EXPERIENCES } from '@/lib/play-experiences'
 
 // Community items are the long-tail SEO surface: every shared sample, recipe,
 // and song is a public, playable page with its own OG card. Fragments (#…)
@@ -35,6 +36,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${base}/sign-in`,       lastModified: new Date(), changeFrequency: 'monthly', priority: 0.5 },
     { url: `${base}/legal/terms`,   lastModified: new Date(), changeFrequency: 'yearly',  priority: 0.3 },
     { url: `${base}/legal/privacy`, lastModified: new Date(), changeFrequency: 'yearly',  priority: 0.3 },
+    { url: `${base}/legal/dmca`,    lastModified: new Date(), changeFrequency: 'yearly',  priority: 0.3 },
+    { url: `${base}/legal/firefly-privacy`, lastModified: new Date(), changeFrequency: 'yearly', priority: 0.2 },
   ]
 
   // Mini-apps — the standalone /apps/<slug> tools (Lightning Bug, Firefly, Beat Maker…). Each is
@@ -46,6 +49,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: new Date(),
       changeFrequency: 'monthly' as const,
       priority: 0.7,
+    })),
+  ]
+
+  // Play widgets — the shareable /play/<slug> mini-games (lib/play-experiences.ts).
+  // Both the index and each experience set their own canonical, so they are meant to
+  // be indexed; they were simply never added here.
+  const play: MetadataRoute.Sitemap = PLAY_EXPERIENCES.length === 0 ? [] : [
+    { url: `${base}/play`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.6 },
+    ...PLAY_EXPERIENCES.map(e => ({
+      url: `${base}/play/${e.slug}`,
+      lastModified: new Date(),
+      changeFrequency: 'monthly' as const,
+      priority: 0.5,
     })),
   ]
 
@@ -151,5 +167,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     }))
   } catch { /* DB unavailable — static pages still ship */ }
 
-  return [...staticPages, ...apps, ...learn, ...paths, ...tutorials, ...categoryHubs, ...creatorPages, ...collectionPages, ...items]
+  return [...staticPages, ...apps, ...play, ...learn, ...paths, ...tutorials, ...categoryHubs, ...creatorPages, ...collectionPages, ...items]
 }
