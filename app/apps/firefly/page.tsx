@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
+import { AppPageSeo } from '@/components/apps/AppChrome'
 
 const Firefly = dynamic(() => import('@/components/apps/Firefly'))
 
@@ -17,5 +18,12 @@ export const metadata: Metadata = {
 }
 
 export default function FireflyPage() {
-  return <Firefly />
+  // Firefly builds its own chrome (it imports only Sheet/CustomizeSheet from
+  // AppChrome), so it does not get the shell's <h1> and JSON-LD automatically.
+  return (
+    <>
+      <AppPageSeo slug="firefly" />
+      <Firefly />
+    </>
+  )
 }

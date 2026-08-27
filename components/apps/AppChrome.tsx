@@ -49,6 +49,58 @@ export default function AppChrome({ slug = '', children }: { slug?: string; chil
   )
 }
 
+/**
+ * The per-app page heading and structured data.
+ *
+ * Lives outside <AppChrome> because not every mini-app renders the shell:
+ * components/apps/Firefly.tsx builds its own chrome and imports only Sheet /
+ * CustomizeSheet from here. Keeping this separate means both paths emit the same
+ * <h1> and the same JSON-LD from the same registry entry, instead of Firefly
+ * quietly missing both (which is exactly what happened before — caught by
+ * grepping the built HTML, not the source).
+ */
+export function AppPageSeo({ slug }: { slug: string }) {
+  const app = bySlug(slug)
+  if (!app) return null
+  return (
+    <>
+      {/*
+        Rich-result eligibility. Each /apps/<slug> page targets a high-intent query
+        ("free online drum machine") and is a free browser app, which is what
+        schema.org WebApplication describes. Emitted from lib/apps-registry so all
+        eight apps get it from one place — /apps/lightningbug used to hand-write
+        this exact block and was the only app that had it.
+      */}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'WebApplication',
+        name: app.title,
+        description: app.description || app.tagline,
+        url: `https://100lights.com${app.href}`,
+        applicationCategory: 'MultimediaApplication',
+        operatingSystem: 'Any (web browser)',
+        browserRequirements: 'Requires a modern browser with Web Audio support',
+        offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+        publisher: { '@type': 'Organization', name: '100Lights', url: 'https://100lights.com' },
+      }) }} />
+      {/*
+        The page heading. These apps are full-screen tools with no visible title bar,
+        so it is visually hidden — but every /apps/* page is a public landing page in
+        the sitemap and none of them had an <h1> at all: the only title text was a
+        <div> inside the loading splash. That is also WCAG 2.4.6 (no page heading for
+        screen-reader users). components/tools/ToolShell.tsx renders a visible <h1>
+        for the same purpose.
+      */}
+      <h1 style={{
+        position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+        overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
+      }}>
+        {app.title}
+      </h1>
+    </>
+  )
+}
+
 function Shell({ slug, children }: { slug: string; children: React.ReactNode }) {
   const [sheet, setSheet] = useState<SheetId>(null)
   const [motion, setMotionState] = useState<Motion>('full')
@@ -100,39 +152,7 @@ function Shell({ slug, children }: { slug: string; children: React.ReactNode }) 
       <ShellStyles />
       <div data-editor="true" data-anim={motion}
         style={{ minHeight: '100dvh', background: 'var(--bg-base)', backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)' }}>
-        {app && (
-          // Rich-result eligibility. Each /apps/<slug> page targets a high-intent
-          // query ("free online drum machine") and is a free web app, which is what
-          // WebApplication describes. Emitted from the registry so all eight apps get
-          // it from one place — /apps/lightningbug used to hand-write this exact block
-          // and was the only app that had it.
-          <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
-            '@context': 'https://schema.org',
-            '@type': 'WebApplication',
-            name: app.title,
-            description: app.description || app.tagline,
-            url: `https://100lights.com${app.href}`,
-            applicationCategory: 'MultimediaApplication',
-            operatingSystem: 'Any (web browser)',
-            browserRequirements: 'Requires a modern browser with Web Audio support',
-            offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-            publisher: { '@type': 'Organization', name: '100Lights', url: 'https://100lights.com' },
-          }) }} />
-        )}
-        {/*
-          The page heading. These apps are full-screen tools with no visible title bar,
-          so this is visually hidden — but every /apps/* page is a public landing page in
-          the sitemap, and until now none of them had an <h1> at all: the only title text
-          was a <div> inside the loading splash. That left crawlers with no heading and
-          screen-reader users with no page heading to navigate to (WCAG 2.4.6).
-          components/tools/ToolShell.tsx renders a visible <h1> for the same reason.
-        */}
-        <h1 style={{
-          position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
-          overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
-        }}>
-          {app?.title ?? '100Lights'}
-        </h1>
+        <AppPageSeo slug={slug} />
         {children}
 
         {/* Floating toolbar — one cluster, top-right, safe-area aware. */}
