@@ -1,0 +1,4 @@
+[    2456ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://www.100lights.com/api/projects/by-code/f40966:0
+[    2459ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://www.100lights.com/api/announcements:0
+[   15505ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://www.100lights.com/api/auth/session:0
+[   15555ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://www.100lights.com/api/me:0

@@ -38,13 +38,20 @@ const PLAY_SECONDS = Number(process.env.PLAY_SECONDS || 20)
 //   node scripts/song-hallwaylight.mjs      # regenerates it
 const FIXTURE = process.env.FIXTURE
   || join(homedir(), 'Desktop', '100lights-ai-renders', 'Hallway Light.cfproj')
-const TARGET = URL_ARG || `http://localhost:${PORT}/create?modules=audio&audioMode=music`
+// Pass a base URL to run this against a deployed build:
+//   node scripts/check-realtime-play.mjs https://www.100lights.com
+// The fixture is still loaded into it, so the measurement is of the deployed
+// code playing a real nine-track song rather than of whatever happens to be
+// saved in that account. Public song links cannot be used: opening one needs a
+// sign-in, and a signed-out visitor is told the project does not exist.
+const BASE_URL = URL_ARG ? URL_ARG.replace(/\/$/, '') : `http://localhost:${PORT}`
+const TARGET = `${BASE_URL}/create?modules=audio&audioMode=music`
 
-if (!URL_ARG && !existsSync(FIXTURE)) {
+if (!existsSync(FIXTURE)) {
   console.log(`no fixture at ${FIXTURE} — run: node scripts/song-hallwaylight.mjs`)
   process.exit(1)
 }
-const dawProject = URL_ARG ? null : JSON.parse(readFileSync(FIXTURE, 'utf8')).dawProject
+const dawProject = JSON.parse(readFileSync(FIXTURE, 'utf8')).dawProject
 
 let failures = 0
 const check = (label, pass, extra = '') => {
