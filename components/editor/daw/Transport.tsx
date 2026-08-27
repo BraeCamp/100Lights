@@ -18,6 +18,7 @@ import { openProjectInStudio } from '@/lib/open-in-studio'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { useUITierOptional } from '../UITierProvider'
 import dynamic from 'next/dynamic'
+import AdminMenu from '@/components/editor/daw/AdminMenu'
 
 const PadTuner    = dynamic(() => import('./PadTuner'),    { ssr: false })
 // Screen capture pulls in MediaRecorder plumbing nobody needs until they record.
@@ -1047,6 +1048,10 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         title="Open Apollo for the selected track — it stays open while you work, and follows what you select"
         style={{ ...base, width: 'auto', padding: '0 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.4 }}
       >&#9788; APOLLO</button>
+
+      {/* Admin-only tools. Renders nothing for anyone else, so it costs the
+          toolbar no space for normal users. */}
+      <AdminMenu />
 
       <div style={divider} />
 

@@ -1,13 +1,13 @@
 import { currentUser } from '@clerk/nextjs/server'
 import { cookies } from 'next/headers'
+import { isAdminAddress } from '@/lib/admin-email'
 
-const ADMIN_EMAIL = 'braedancampbell@gmail.com'
 const COOKIE = 'admin_auth'
 
 export async function isAdminEmail(): Promise<boolean> {
   const user = await currentUser()
   const email = user?.emailAddresses?.[0]?.emailAddress
-  return email === ADMIN_EMAIL
+  return isAdminAddress(email)
 }
 
 export async function isAdmin(): Promise<boolean> {
