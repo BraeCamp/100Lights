@@ -5,11 +5,12 @@ import { LogoMark } from '@/components/Logo'
 import HeaderAuthCta from '@/components/HeaderAuthCta'
 import HeroCta from '@/components/HeroCta'
 import { getArticles } from '@/lib/learn-articles'
+import { MINI_APPS } from '@/lib/apps-registry'
 import {
   Zap, Check,
   Layers, Music2, Sliders, CircleDot,
   Library, Globe2, Users, AudioLines,
-  Music, GraduationCap, ListMusic, Code2,
+  Music, GraduationCap, ListMusic, Code2, Sparkles,
 } from 'lucide-react'
 import PricingSection from '@/components/PricingSection'
 
@@ -36,7 +37,7 @@ const studioFeatures = [
   {
     icon: Layers,
     title: 'Session & Arrangement View',
-    description: 'Launch clips in real time from Session View or compose full arrangements in the timeline — like Ableton Live, right in your browser.',
+    description: 'Launch clips in real time from Session View, or build the whole track on the Arrangement timeline. The same two-view workflow the studio records are made with — running in a browser tab.',
     color: '#3b82f6',
   },
   {
@@ -235,7 +236,9 @@ export default async function LandingPage() {
 
             {/* Nav links */}
             <div className="hidden sm:flex items-center gap-6">
+              <Link href="#learn" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Learn</Link>
               <Link href="#studio" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Studio</Link>
+              <Link href="/apps" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Apps</Link>
               <Link href="/community" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Community</Link>
               <Link href="#pricing" className="text-sm" style={{ color: 'var(--text-secondary)' }}>Pricing</Link>
             </div>
@@ -260,7 +263,7 @@ export default async function LandingPage() {
               style={{ background: 'var(--accent-subtle)', color: 'var(--accent-light)', border: '1px solid rgba(139, 92, 246, 0.3)' }}
             >
               <Music size={11} aria-hidden="true" />
-              A full DAW in your browser
+              Learn it by making it
             </div>
 
             <h1
@@ -313,6 +316,50 @@ export default async function LandingPage() {
                 poster="/demo/daw-poster.jpg"
                 ariaLabel="30-second loop of the 100Lights studio: adding tracks, capturing a live take with JAM, and riding a volume fader"
               />
+            </div>
+          </section>
+
+          {/* ── Learn by doing (Practice Room) ── */}
+          <section
+            id="learn"
+            aria-labelledby="learn-heading"
+            className="max-w-6xl mx-auto px-6 pb-16 sm:pb-24"
+          >
+            <div className="text-center mb-10 sm:mb-14">
+              <div
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-6"
+                style={{ background: 'rgba(167, 139, 250, 0.12)', color: '#a78bfa', border: '1px solid rgba(167, 139, 250, 0.28)' }}
+              >
+                <GraduationCap size={11} aria-hidden="true" />
+                Practice Room
+              </div>
+              <h2 id="learn-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
+                Get better every session
+              </h2>
+              <p className="text-base max-w-2xl mx-auto" style={{ color: 'var(--text-secondary)' }}>
+                Most tools do the work for you. 100Lights turns making music into practice — guided paths that
+                watch your project and check off as you go, full songs you build hands-on, and sounds you can
+                shape in code.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {learnFeatures.map(({ icon: Icon, title, description, color }) => (
+                <article
+                  key={title}
+                  className="p-6 rounded-xl border"
+                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+                >
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center mb-4"
+                    style={{ background: `${color}18` }}
+                  >
+                    <Icon size={18} color={color} aria-hidden="true" />
+                  </div>
+                  <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{title}</h3>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{description}</p>
+                </article>
+              ))}
             </div>
           </section>
 
@@ -403,49 +450,47 @@ export default async function LandingPage() {
             </div>
           </section>
 
-          {/* ── Learn by doing (Practice Room) ── */}
+          {/* ── Mini-apps ── */}
           <section
-            id="learn"
-            aria-labelledby="learn-heading"
+            id="apps"
+            aria-labelledby="apps-heading"
             className="max-w-6xl mx-auto px-6 pb-16 sm:pb-24"
           >
             <div className="text-center mb-10 sm:mb-14">
               <div
                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-6"
-                style={{ background: 'rgba(167, 139, 250, 0.12)', color: '#a78bfa', border: '1px solid rgba(167, 139, 250, 0.28)' }}
+                style={{ background: 'rgba(45, 212, 191, 0.12)', color: '#5eead4', border: '1px solid rgba(45, 212, 191, 0.25)' }}
               >
-                <GraduationCap size={11} aria-hidden="true" />
-                Practice Room
+                <Sparkles size={11} aria-hidden="true" />
+                Mini-apps
               </div>
-              <h2 id="learn-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
-                Get better every session
+              <h2 id="apps-heading" className="text-2xl sm:text-3xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>
+                Eight tools that do one thing each
               </h2>
               <p className="text-base max-w-2xl mx-auto" style={{ color: 'var(--text-secondary)' }}>
-                Most tools do the work for you. 100Lights turns making music into practice — guided paths that
-                watch your project and check off as you go, full songs you build hands-on, and sounds you can
-                shape in code.
+                Small, focused tools that stand on their own — no project, no setup, nothing to learn first.
+                Each one opens in the browser and hands its result straight to the studio when you want to keep going.
               </p>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {learnFeatures.map(({ icon: Icon, title, description, color }) => (
-                <article
-                  key={title}
-                  className="p-6 rounded-xl border"
-                  style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {MINI_APPS.map(app => (
+                <Link
+                  key={app.slug}
+                  href={app.href}
+                  className="p-5 rounded-2xl block"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', textDecoration: 'none' }}
                 >
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center mb-4"
-                    style={{ background: `${color}18` }}
-                  >
-                    <Icon size={18} color={color} aria-hidden="true" />
-                  </div>
-                  <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>{title}</h3>
-                  <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{description}</p>
-                </article>
+                  <h3 className="text-sm font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>
+                    {app.title}
+                  </h3>
+                  <p className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                    {app.tagline}
+                  </p>
+                </Link>
               ))}
             </div>
           </section>
+
 
           {/* ── How it works ── */}
           <section
