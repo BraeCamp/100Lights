@@ -104,17 +104,114 @@ if (parsed) {
     Object.keys(parsed).join(', '))
 }
 
-// 4. Stopping actually stops, again through the menu.
+// 4. Stopping ends the capture but KEEPS the report.
+//
+// Brae: "when I stop recording for the one that's there, allow me to copy the
+// analysis if another recording has not been created." Stopping used to throw
+// the capture away, so the natural order — stop, then decide to send it — lost
+// the very thing you stopped to look at.
 await menuBtn.first().click()
 await page.waitForTimeout(400)
 await page.getByRole('button', { name: /stop watching/i }).first().click()
+await page.waitForTimeout(800)
+
+await menuBtn.first().click()
+await page.waitForTimeout(400)
+const copyLast = page.getByRole('button', { name: /copy last report/i })
+check('after stopping, the last report is still offered', await copyLast.count() > 0)
+if (await copyLast.count()) {
+  await page.evaluate(() => navigator.clipboard.writeText('cleared'))
+  await copyLast.first().click()
+  await page.waitForTimeout(1000)
+  const kept = await page.evaluate(async () => {
+    try { return await navigator.clipboard.readText() } catch { return 'unreadable' }
+  })
+  let keptOk = false
+  try { keptOk = !!JSON.parse(kept).audioClockRate } catch { /* not json */ }
+  check('and copying it gives the finished capture, not an error string', keptOk, kept.slice(0, 50))
+}
+
+// Starting a new capture must retire the old one, or you could send a stale
+// report alongside a fresh recording without noticing.
+await menuBtn.first().click()
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: /start watching/i }).first().click()
+await page.waitForTimeout(800)
+await menuBtn.first().click()
+await page.waitForTimeout(400)
+check('a new capture retires the kept one',
+  await page.getByRole('button', { name: /copy last report/i }).count() === 0)
+await page.getByRole('button', { name: /stop watching/i }).first().click()
 await page.waitForTimeout(600)
-const afterStop = await page.evaluate(() => {
-  const r = window.__dawDiagnose.report()
-  return typeof r === 'string' ? r : 'still-reporting'
+
+// 5. The other admin tools.
+await menuBtn.first().click()
+await page.waitForTimeout(400)
+check('the menu offers the render cache', await page.getByRole('button', { name: /clear render cache/i }).count() > 0)
+check('the menu offers a mix bounce', await page.getByRole('button', { name: /bounce mix to wav/i }).count() > 0)
+
+await page.getByRole('button', { name: /copy build info/i }).first().click()
+await page.waitForTimeout(1000)
+const build = await page.evaluate(async () => {
+  try { return await navigator.clipboard.readText() } catch { return 'unreadable' }
 })
-check('stopping ends the capture', /not watching/i.test(afterStop), afterStop.slice(0, 40))
+let buildJson = null
+try { buildJson = JSON.parse(build) } catch { /* not json */ }
+console.log(`  build info: ${buildJson ? `${buildJson.commit}, Apollo ${buildJson.apolloEngine}` : build.slice(0, 40)}`)
+check('build info says which commit and engine are running',
+  !!buildJson?.commit && !!buildJson?.apolloEngine && !!buildJson?.renderCache,
+  buildJson ? Object.keys(buildJson).join(', ') : build.slice(0, 40))
+
+// Clearing the cache has to actually empty it, not just say so.
+//
+// Read it straight away. Waiting 2.5s measured 3 clips still cached and looked
+// like a failure, but baking resumes the moment the transport is stopped — so
+// that was the cache correctly REFILLING, not failing to clear. The claim is
+// that it empties, not that it stays empty.
+await menuBtn.first().click()
+await page.waitForTimeout(400)
+const readyBefore = await page.evaluate(() => window.__combineStats?.().ready ?? -1)
+await page.getByRole('button', { name: /clear render cache/i }).first().click()
+await page.waitForTimeout(150)
+const readyAfter = await page.evaluate(() => window.__combineStats?.().ready ?? -1)
+console.log(`  render cache ${readyBefore} -> ${readyAfter} clips`)
+check('clearing the render cache empties it', readyAfter === 0 && readyBefore > 0,
+  `${readyBefore} -> ${readyAfter}`)
+
+// 6. The bounce has to produce an actual file — base64 to blob to download is
+//    three places it can silently fail, and "the button exists" proves none of
+//    them. Done on a DELIBERATELY TINY project: renderWav renders the whole
+//    song offline, so bouncing the nine-track fixture would take minutes here.
+if (existsSync(FIXTURE)) {
+  const full = JSON.parse(readFileSync(FIXTURE, 'utf8')).dawProject
+  const oneTrack = full.tracks[0]
+  const tiny = {
+    ...full,
+    name: 'Bounce Test',
+    tracks: [oneTrack],
+    arrangementClips: (full.arrangementClips ?? [])
+      .filter(c => c.trackId === oneTrack.id)
+      .slice(0, 1)
+      .map(c => ({ ...c, startBeat: 0, durationBeats: 4, notes: (c.notes ?? []).slice(0, 1) })),
+  }
+  await page.evaluate(t => window.__dawDispatch?.({ type: 'LOAD_PROJECT', project: t }), tiny)
+  await page.waitForTimeout(3000)
+
+  await menuBtn.first().click()
+  await page.waitForTimeout(400)
+  const dl = page.waitForEvent('download', { timeout: 120000 }).catch(() => null)
+  await page.getByRole('button', { name: /bounce mix to wav/i }).first().click()
+  const file = await dl
+  check('bouncing downloads a file', !!file, file ? await file.suggestedFilename() : 'no download')
+  if (file) {
+    const path = await file.path()
+    const head = path ? readFileSync(path).subarray(0, 12) : Buffer.alloc(0)
+    const isWav = head.subarray(0, 4).toString() === 'RIFF' && head.subarray(8, 12).toString() === 'WAVE'
+    console.log(`  downloaded ${await file.suggestedFilename()}, ${path ? readFileSync(path).length : 0} bytes`)
+    check('and the file is a real WAV', isWav, head.subarray(0, 4).toString())
+  }
+}
 
 await browser.close()
-console.log(failures ? `\n${failures} failing` : '\nthe admin menu is admin-only and its diagnostics work')
+console.log(failures ? `\n${failures} failing` : '\nthe admin menu is admin-only and its tools work')
 process.exit(failures ? 1 : 0)

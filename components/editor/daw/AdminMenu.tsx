@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useIsAdmin } from '@/lib/use-is-admin'
+import { useDaw } from '@/lib/daw-state'
+import { buildInfo } from '@/lib/build-info'
+import { clearCombinedEverywhere, combineStats } from '@/lib/apollo/freeze-cache'
 
 /**
  * Admin-only tools, in the studio, for the person who owns it.
@@ -19,15 +22,20 @@ import { useIsAdmin } from '@/lib/use-is-admin'
 type DiagnoseApi = (() => string) & {
   report: () => unknown
   stop: () => void
+  hasReport: () => boolean
 }
 
 export default function AdminMenu() {
   const isAdmin = useIsAdmin()
+  const { engine, project } = useDaw()
   const [open, setOpen] = useState(false)
   const [watching, setWatching] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [since, setSince] = useState<number | null>(null)
-  const [, force] = useState(0)
+  // A finished capture nobody has replaced yet is still worth copying.
+  const [keptReport, setKeptReport] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -41,11 +49,14 @@ export default function AdminMenu() {
 
   // Tick the elapsed readout while watching, so it is obvious the thing is
   // running — a menu that says "watching" and never changes looks stuck.
+  // Elapsed lives in state rather than being read from the clock while
+  // rendering: Date.now() during render is impure, and React is entitled to
+  // render whenever it likes.
   useEffect(() => {
-    if (!watching) return
-    const t = setInterval(() => force(n => n + 1), 1000)
+    if (!watching || !since) return
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - since) / 1000)), 1000)
     return () => clearInterval(t)
-  }, [watching])
+  }, [watching, since])
 
   if (!isAdmin) return null
 
@@ -57,38 +68,90 @@ export default function AdminMenu() {
     if (!d) { flash('Diagnostics not available on this page'); return }
     d()
     setWatching(true)
+    setKeptReport(false)
+    setElapsed(0)
     setSince(Date.now())
     flash('Watching — now play the part that misbehaves')
     setOpen(false)
   }
 
-  const copyReport = async () => {
+  const copyText = async (text: string, what: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      flash(`${what} copied`)
+    } catch {
+      console.log(text)    
+      flash('Clipboard blocked — it is in the browser console')
+    }
+    setOpen(false)
+  }
+
+  const copyReport = () => {
     const d = api()
     if (!d) { flash('Diagnostics not available on this page'); return }
     const report = d.report()
-    const text = typeof report === 'string' ? report : JSON.stringify(report, null, 2)
-    try {
-      await navigator.clipboard.writeText(text)
-      flash('Report copied — paste it to Claude')
-    } catch {
-      // Clipboard access can be refused (permissions, an insecure origin). The
-      // report is the whole point of the button, so it must still be reachable
-      // rather than lost to a failed copy.
-      console.log(text)   // eslint-disable-line no-console
-      flash('Clipboard blocked — the report is in the browser console')
-    }
-    setOpen(false)
+    return copyText(
+      typeof report === 'string' ? report : JSON.stringify(report, null, 2),
+      'Report',
+    )
   }
 
   const stop = () => {
     api()?.stop()
     setWatching(false)
-    setSince(null)
-    flash('Stopped watching')
+    // Keep offering the copy. Stopping and THEN deciding to send the report is
+    // the natural order, and throwing it away at stop lost the very thing you
+    // stopped to look at. It clears when a new capture starts.
+    setKeptReport(!!api()?.hasReport())
+    flash('Stopped — the report is still here to copy')
     setOpen(false)
   }
 
-  const elapsed = since ? Math.round((Date.now() - since) / 1000) : 0
+  const copyBuild = () => copyText(JSON.stringify({
+    ...buildInfo(),
+    renderCache: combineStats(),
+    project: { name: project.name, tempo: project.tempo, tracks: project.tracks.length },
+  }, null, 2), 'Build info')
+
+  const clearCache = async () => {
+    setBusy('clear')
+    await clearCombinedEverywhere()
+    setBusy(null)
+    flash('Render cache cleared — the next play is a cold one')
+    setOpen(false)
+  }
+
+  const bounceWav = async () => {
+    if (!engine) { flash('No engine on this page'); return }
+    setBusy('bounce')
+    setOpen(false)
+    // Say what is about to happen. renderWav is an offline render, and Chrome
+    // runs those on the MAIN THREAD when they carry JS worklets — so on a long
+    // song the studio genuinely stops responding until it finishes. Silently
+    // freezing looks like a crash; a warned wait is just a wait.
+    flash('Bouncing the whole song — the studio will freeze until it finishes')
+    try {
+      const out = await engine.renderWav({})
+      // renderWav hands back base64; turn it into a file rather than making
+      // anyone deal with a data URL by hand.
+      const bin = atob(out.master)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(project.name || 'mix').replace(/[^\w -]+/g, '')}.wav`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+      flash(`Bounced ${out.durationSec.toFixed(1)}s — check your downloads`)
+    } catch (err) {
+      flash(`Bounce failed: ${(err as Error).message.slice(0, 60)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
 
   const item: React.CSSProperties = {
     display: 'block', width: '100%', textAlign: 'left',
@@ -135,7 +198,14 @@ export default function AdminMenu() {
         >
           <div style={head}>Playback diagnostics</div>
           {!watching ? (
-            <button style={item} onClick={start}>Start watching</button>
+            <>
+              <button style={item} onClick={start}>Start watching</button>
+              {/* The capture you just stopped is still here. It disappears when
+                  a new one starts, not the moment you stop looking at it. */}
+              {keptReport && (
+                <button style={item} onClick={copyReport}>Copy last report</button>
+              )}
+            </>
           ) : (
             <>
               <button style={item} onClick={copyReport}>Copy report ({elapsed}s)</button>
@@ -145,7 +215,28 @@ export default function AdminMenu() {
           <div style={{ ...head, textTransform: 'none', letterSpacing: 0, fontWeight: 500, fontSize: 10, padding: '4px 10px 7px', whiteSpace: 'normal', lineHeight: 1.45 }}>
             {watching
               ? 'Play the part that goes wrong, then copy the report.'
-              : 'Start this, then play the part that goes wrong.'}
+              : keptReport
+                ? 'Stopped. The last capture is still here until you start another.'
+                : 'Start this, then play the part that goes wrong.'}
+          </div>
+
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 6px' }} />
+          <div style={head}>Sound</div>
+          <button style={item} onClick={clearCache} disabled={busy === 'clear'}>
+            {busy === 'clear' ? 'Clearing…' : 'Clear render cache'}
+          </button>
+          <button style={item} onClick={bounceWav} disabled={busy === 'bounce'}>
+            {busy === 'bounce' ? 'Bouncing…' : 'Bounce mix to WAV'}
+          </button>
+          <div style={{ ...head, textTransform: 'none', letterSpacing: 0, fontWeight: 500, fontSize: 9.5, padding: '0 10px 6px', whiteSpace: 'normal', lineHeight: 1.4 }}>
+            Renders offline — a long song will freeze the studio while it works.
+          </div>
+
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 6px' }} />
+          <div style={head}>About this build</div>
+          <button style={item} onClick={copyBuild}>Copy build info</button>
+          <div style={{ ...head, textTransform: 'none', letterSpacing: 0, fontWeight: 500, fontSize: 9.5, padding: '2px 10px 7px', whiteSpace: 'normal' }}>
+            {String(buildInfo().commit)} · Apollo {String(buildInfo().apolloEngine)}
           </div>
         </div>
       )}

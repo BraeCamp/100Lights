@@ -50,6 +50,16 @@ type Watch = {
 }
 
 let watch: Watch | null = null
+/**
+ * The finished report from the last capture, kept after Stop.
+ *
+ * Brae: "when I stop recording for the one that's there, allow me to copy the
+ * analysis if another recording has not been created." Stopping used to throw
+ * the capture away, so the natural order — stop, then decide to send it — lost
+ * the very thing you stopped to look at. It survives until the next capture
+ * starts, which is the point at which it stops being the current one.
+ */
+let lastReport: Diagnostic | null = null
 
 function peakOf(an: AnalyserNode): number {
   const buf = new Float32Array(an.fftSize)
@@ -84,6 +94,9 @@ export function installDawDiagnose(
 
   const start = (): string => {
     stop()
+    // A new capture replaces the old one, so the kept report goes now rather
+    // than lingering to be copied by mistake alongside a fresh recording.
+    lastReport = null
     const e = getEngine()
     if (!e) return 'no engine on this page — open a project first'
     watch = {
@@ -137,6 +150,10 @@ export function installDawDiagnose(
 
   const stop = () => {
     if (!watch) return
+    // Take the report BEFORE tearing the capture down — afterwards there is
+    // nothing left to build one from.
+    const snap = report()
+    if (typeof snap !== 'string') lastReport = snap
     if (watch.timer) clearInterval(watch.timer)
     if (watch.raf) cancelAnimationFrame(watch.raf)
     watch = null
@@ -145,7 +162,9 @@ export function installDawDiagnose(
   const report = (): Diagnostic | string => {
     const e = getEngine()
     const w = watch
-    if (!w) return 'not watching — run window.__dawDiagnose() first'
+    // Stopped, but a capture was made and no new one has started: hand back
+    // that one rather than pretending there is nothing to show.
+    if (!w) return lastReport ?? 'not watching — run window.__dawDiagnose() first'
     if (!e) return 'no engine'
     const wallSec = (performance.now() - w.started) / 1000
     const ctxSec = e.ctx.currentTime - w.startedCtx
@@ -182,7 +201,10 @@ export function installDawDiagnose(
     }
   }
 
-  const api = Object.assign(start, { report, stop })
+  /** Is there something to copy — either a live capture or a kept one? */
+  const hasReport = () => !!watch || !!lastReport
+
+  const api = Object.assign(start, { report, stop, hasReport })
   ;(window as unknown as { __dawDiagnose?: typeof api }).__dawDiagnose = api
   return () => {
     stop()
