@@ -46,6 +46,29 @@ export interface WavetableParams {
   remapCurve: LfoPoint[] | null // phase remap curve for the 'remap' warp mode
   /** Optional (older patches lack it): spectral warp — operates on harmonics. */
   specWarp?: SpecWarpSlot
+  /**
+   * Start, end and loop — for an oscillator.
+   *
+   * `pos` picks one frame of the table and stays there, so an oscillator had no
+   * answer to the things a sample takes for granted: where it begins, where it
+   * ends, whether it repeats. A scan gives it those — a region of the table and
+   * a way of moving through it.
+   *
+   * Optional, and 'off' means exactly the old behaviour, so every patch written
+   * before this sounds identical.
+   */
+  scan?: WavetableScan
+}
+
+export interface WavetableScan {
+  /** off = sit at `pos`. once = travel start→end and stay. */
+  mode: 'off' | 'loop' | 'pingpong' | 'once'
+  /** Where in the table to begin, 0..1. */
+  start: number
+  /** Where to end, 0..1. Below `start` simply reverses the direction of travel. */
+  end: number
+  /** How many times a second the whole start→end journey happens. */
+  rate: number
 }
 
 export interface SliceInfo { pos: number /* 0..1 */ }
@@ -380,6 +403,9 @@ function oscParams(i: number): ParamDef[] {
     P(`${o}.width`, `Osc ${'ABC'[i]} Width`, 0, 1, 1, true),
     P(`${o}.phase`, `Osc ${'ABC'[i]} Phase`, 0, 1, 0, true),
     P(`${o}.wt.pos`, `Osc ${'ABC'[i]} WT Pos`, 0, 1, 0, true),
+    P(`${o}.wt.scan.start`, `Osc ${'ABC'[i]} Scan Start`, 0, 1, 0, true),
+    P(`${o}.wt.scan.end`, `Osc ${'ABC'[i]} Scan End`, 0, 1, 1, true),
+    P(`${o}.wt.scan.rate`, `Osc ${'ABC'[i]} Scan Rate`, 0.01, 20, 0.5, true),
     P(`${o}.wt.warp1.amount`, `Osc ${'ABC'[i]} Warp 1`, 0, 1, 0, true),
     P(`${o}.wt.warp2.amount`, `Osc ${'ABC'[i]} Warp 2`, 0, 1, 0, true),
     P(`${o}.smp.rate`, `Osc ${'ABC'[i]} Smp Rate`, -2, 2, 1, true),
@@ -655,7 +681,10 @@ export function defaultOsc(i: number): OscConfig {
     unison: 1, detune: 0.15, blend: 0.5, width: 1, phase: 0, rand: 1, stereo: 0.5,
     keyLo: 0, keyHi: 127,
     keytrackPitch: true, unisonMode: 'classic', dest: 'f1', filterBal: 0, bus: 'main',
-    wt: { tableId: 'basic-shapes', pos: 0, interp: 'smooth', warp1: defaultWarp(), warp2: defaultWarp(), fmSource: (i + 1) % 3 as 0 | 1 | 2, remapCurve: null, specWarp: { mode: 'off', amount: 0 } },
+    wt: { tableId: 'basic-shapes', pos: 0, interp: 'smooth', warp1: defaultWarp(), warp2: defaultWarp(), fmSource: (i + 1) % 3 as 0 | 1 | 2, remapCurve: null, specWarp: { mode: 'off', amount: 0 },
+      // Start/end/loop for an oscillator: which slice of the table to travel
+      // and how. 'off' is the old behaviour exactly — sit at `pos`.
+      scan: { mode: 'off' as 'off' | 'loop' | 'pingpong' | 'once', start: 0, end: 1, rate: 0.5 } },
     smp: { sampleId: null, start: 0, end: 1, loopMode: 'off', loopStart: 0.25, loopEnd: 0.75, xfade: 0.01, rate: 1, keytrack: true, rootKey: 60, slices: [], sliceMap: 'off', warp1: defaultWarp(), warp2: defaultWarp() },
     gran: { sampleId: null, density: 20, length: 80, scan: 1, pos: 0, spray: 0.05, direction: 'fwd', pitchRand: 0, panRand: 0.3, windowShape: 0.5, windowSkew: 0, windowAmount: 1, loopGrains: false, manual: false, keytrack: true, rootKey: 60 },
     spec: { sampleId: null, speed: 1, freeze: false, pos: 0, smear: 0, shift: 0, pitchShift: 0, formant: 0, spread: 0, gate: 0, filterCurve: Array(64).fill(1), transients: 0.5, keytrack: true, rootKey: 60 },

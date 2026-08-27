@@ -14,6 +14,8 @@
     "test:splice": "tsc -p tsconfig.test.json && node scripts/daw-splice.test.mjs",
     "check:discoverable": "node scripts/check-discoverable.mjs",
     "test:storage": "tsc -p tsconfig.test.json && node scripts/storage-policy.test.mjs",
+    "check:sample-open": "node scripts/check-sample-open.mjs",
+    "check:osc-scan": "node scripts/check-osc-scan.mjs",
     "check:unmask": "tsc -p tsconfig.test.json && node scripts/check-unmask.mjs",
     "check:no-howl": "node scripts/check-no-howl.mjs",
     "check:voices": "node --experimental-strip-types scripts/check-voices.mjs",

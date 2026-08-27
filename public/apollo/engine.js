@@ -501,6 +501,10 @@ class OscState {
     this.grainAlt = 0
     this.scanPos = 0
     this.scanInit = false
+    // Wavetable scan: where in the table this voice currently is, and which way
+    // it is travelling (ping-pong). Separate from the granular scanPos above.
+    this.wtScan = 0
+    this.wtScanDir = 1
     // spectral
     this.specPhases = null
     this.specSmear = null
@@ -522,6 +526,8 @@ class OscState {
       this.sampleDir[i] = 1
     }
     this.ended = false
+    this.wtScan = 0
+    this.wtScanDir = 1
     this.grainTimer = 0
     this.scanInit = false
     for (const g of this.grains) g.active = false
@@ -782,7 +788,37 @@ function renderOscBlock(engine, voice, oi, patch, n, outL, outR, monoOut) {
     const blend = clamp(vp(voice, `osc${oi}.blend`, cfg.blend), 0, 1)
     const width = clamp(vp(voice, `osc${oi}.width`, cfg.width), 0, 1)
     const stW = clamp(cfg.stereo != null ? cfg.stereo : 1, 0, 1)
-    const wtPos = clamp(vp(voice, `osc${oi}.wt.pos`, cfg.wt.pos), 0, 1)
+    // ── Scan: travel through the table instead of sitting at one position ──
+    //
+    // `wt.pos` picks ONE frame and stays there, which is why an oscillator had
+    // nothing answering to "start", "end" or "loop" the way a sample does. A
+    // scan gives it those: a region of the table (start..end) and a way of
+    // moving through it — once, looping, or back and forth.
+    //
+    // Advanced once per BLOCK rather than per sample. A block is 128 samples,
+    // under 3ms, and this is a slow morph — per-sample would cost the inner
+    // loop an add and a branch for a difference nobody can hear.
+    //
+    // Off by default, and off means exactly the old behaviour: existing patches
+    // sound identical.
+    let wtPos = clamp(vp(voice, `osc${oi}.wt.pos`, cfg.wt.pos), 0, 1)
+    const scan = cfg.wt.scan
+    if (scan && scan.mode && scan.mode !== 'off') {
+      const a = clamp(scan.start != null ? scan.start : 0, 0, 1)
+      const b = clamp(scan.end != null ? scan.end : 1, 0, 1)
+      const lo = Math.min(a, b), hi = Math.max(a, b)
+      const rate = clamp(scan.rate != null ? scan.rate : 0.5, 0.01, 20)
+      os.wtScan += (rate * n / sr) * os.wtScanDir
+      if (scan.mode === 'pingpong') {
+        if (os.wtScan >= 1) { os.wtScan = 1; os.wtScanDir = -1 }
+        else if (os.wtScan <= 0) { os.wtScan = 0; os.wtScanDir = 1 }
+      } else if (scan.mode === 'once') {
+        if (os.wtScan > 1) os.wtScan = 1
+      } else {
+        os.wtScan -= Math.floor(os.wtScan)
+      }
+      wtPos = lo + (hi - lo) * os.wtScan
+    }
     const framePos = cfg.wt.interp === 'off' ? Math.round(wtPos * (tbl.frames - 1)) : wtPos * (tbl.frames - 1)
     const w1m = cfg.wt.warp1.mode, w2m = cfg.wt.warp2.mode
     const w1a = clamp(vp(voice, `osc${oi}.wt.warp1.amount`, cfg.wt.warp1.amount), 0, 1)

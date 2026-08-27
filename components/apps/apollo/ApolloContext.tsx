@@ -8,7 +8,7 @@ import {
   resolvePatchPath, uid,
 } from '@/lib/apollo/patch'
 import { ApolloEngine, ApolloMeters, getApolloEngine } from '@/lib/apollo/engine-client'
-import { initApolloLibrary, restorePatchSamples, setApolloSourceSample, onApolloSampleSelect } from '@/lib/apollo/sample-store'
+import { initApolloLibrary, restorePatchSamples, setApolloSourceSample, onApolloSampleSelect, getApolloSampleSelection } from '@/lib/apollo/sample-store'
 import { useUser } from '@clerk/nextjs'
 import {
   allMidiBindings, armMidiBinding, armedBinding, ccForBinding,
@@ -379,7 +379,7 @@ export function ApolloProvider({ children, quickMod, embed, onParamMove, livePar
   // `version`, that effect re-runs and pulls the blob out of the library. If the
   // engine has not been started yet the restore is a no-op, so kick `start()`
   // too — its deps include `started`, so it runs again once audio is live.
-  useEffect(() => onApolloSampleSelect(({ id, name }) => {
+  const applySampleSelection = useCallback((id: string, name: string) => {
     setApolloSourceSample(id, name)
     update(p => {
       const osc = p.oscs[0]
@@ -389,7 +389,35 @@ export function ApolloProvider({ children, quickMod, embed, onParamMove, livePar
       if (!p.name || p.name === 'Init') p.name = name
     })
     void start()
-  }), [update, start])
+  }, [update, start])
+
+  useEffect(() => onApolloSampleSelect(({ id, name }) => {
+    applySampleSelection(id, name)
+  }), [applySampleSelection])
+
+  // Pick up a sample that was ALREADY armed before Apollo opened.
+  //
+  // onApolloSampleSelect only fires for selections made after subscribing, so
+  // that opening Apollo cannot retroactively overwrite a patch you were working
+  // on. That is the right rule and it left a hole: the ordinary way to use this
+  // is to pick a sound in Beacon and THEN open Apollo, which means the selection
+  // has already happened and nothing fires. Apollo opened on the oscillator
+  // engine showing wavetable controls, with the sample armed and invisible.
+  //
+  // So on mount, apply an armed selection — but only onto an untouched patch,
+  // which is exactly the case the original rule was protecting against. A patch
+  // that has been named or already has a sample loaded is left alone.
+  const armedApplied = useRef(false)
+  useEffect(() => {
+    if (armedApplied.current) return
+    const armed = getApolloSampleSelection()
+    if (!armed) return
+    const p = patchRef.current as ApolloPatch
+    const untouched = (!p.name || p.name === 'Init') && !p.oscs[0]?.smp?.sampleId
+    if (!untouched) return
+    armedApplied.current = true
+    applySampleSelection(armed.id, armed.name)
+  }, [applySampleSelection])
 
   const restoring = useRef(false)
   useEffect(() => {

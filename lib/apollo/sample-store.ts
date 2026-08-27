@@ -188,3 +188,16 @@ export async function saveBounceToLibrary(name: string, buffer: AudioBuffer): Pr
   })
   return id
 }
+
+// Test seam: arm a selection without going through the Sound Library UI.
+//
+// The bridge's whole subtlety is ORDERING — pick a sound in Beacon, THEN open
+// Apollo — and that order is unreachable from a test that can only drive a
+// mounted Apollo. This lives at module scope rather than in a component so it
+// survives Apollo unmounting, which is precisely the window under test.
+// Same guard as the DAW hooks: dev, or an explicit opt-in for a prod bundle.
+if (typeof window !== 'undefined'
+  && (process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DAW_HOOKS === '1')) {
+  ;(window as unknown as Record<string, unknown>).__apolloArmSample =
+    (id: string, name: string) => selectApolloSample(id, name)
+}
