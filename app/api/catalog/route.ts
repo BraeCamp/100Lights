@@ -1,5 +1,21 @@
 import { listCatalog } from '@/lib/catalog'
 
+/**
+ * The catalog rows carry full provenance — every label, the source URL, the
+ * description — because a pack is only reorganisable later if that survives
+ * the import. None of it belongs in THIS response: syncCatalog fetches the
+ * whole list with `no-store`, so it is paid on every page load by every
+ * visitor. Measured on a 3,289-sound pack: 234 KB gzipped with everything,
+ * 86 KB without the four heavy fields.
+ *
+ * They stay in the database, which is where a reorganisation runs anyway.
+ */
+const HEAVY = /^(labels|desc|url|src):/
+function displayTags(tags: string[] | undefined): string[] | undefined {
+  if (!tags) return tags
+  return tags.filter(t => !HEAVY.test(t))
+}
+
 export const runtime = 'nodejs'
 
 // GET /api/catalog — the official sound catalog, for every user's library.
@@ -11,7 +27,7 @@ export async function GET() {
       id: r.id, name: r.name, category: r.category,
       url: `/api/catalog/audio?key=${encodeURIComponent(r.r2Key)}`,
       duration: r.duration, folder: r.folder, parentFolder: r.parentFolder,
-      tags: r.tags, key: r.key, bpm: r.bpm,
+      tags: displayTags(r.tags), key: r.key, bpm: r.bpm,
     }))
     return Response.json({ items }, {
       headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=600' },

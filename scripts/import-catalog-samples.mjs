@@ -103,13 +103,35 @@ const idFor = file => 'cc0-' + createHash('sha1').update(file).digest('hex').sli
 
 /** "388042__sami-kullstrom__clap.wav" → "Clap". Freesound ids and uploader
  *  handles are noise in a picker; the attribution lives in the tags. */
-function prettyName(file, category) {
+function prettyName(file, category, row) {
+  // A manifest that carries a real title beats anything derived from a path.
+  if (row?.title) {
+    // Drop leading track numbers — "110717_02_(4)_Seagull" — which are the
+    // recordist's filing, not the sound's name. Separators are normalised
+    // FIRST: stripping "(4)" before the underscores become spaces leaves the
+    // pattern unmatched, which is how "(4) Seagull" survived the first pass.
+    let t = String(row.title)
+      .replace(/\.(wav|mp3|ogg|flac|m4a)$/i, '')
+      .replace(/[_-]+/g, ' ')
+      .trim()
+    let prev
+    do { prev = t; t = t.replace(/^(\(\s*\d+\s*\)|\d+)\s*/, '').trim() } while (t !== prev)
+    if (t) return t.replace(/\b\w/g, c => c.toUpperCase())
+  }
   let n = basename(file, extname(file))
   n = n.replace(/^\d+__[^_]+__/, '')          // freesound id + author prefix
   n = n.replace(/[_-]+/g, ' ').trim()
   n = n.replace(/\b\w/g, c => c.toUpperCase())
   return n || category
 }
+
+/** Both levels where the manifest has them: a 3,000-sound pack with only
+ *  thirteen folders is a pile, not a library. */
+const folderFor = r => (r.subcategory ? `${r.category}/${r.subcategory}` : (r.category || null))
+
+/** The pack's name in the library. Taken from the folder rather than hardcoded
+ *  so the next import is not another edit here. */
+const PARENT = basename(dir.replace(/\/$/, ''))
 
 const picked = limit ? rows.slice(0, limit) : rows
 const CONTENT_TYPE = { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.flac': 'audio/flac', '.m4a': 'audio/mp4' }
@@ -118,7 +140,7 @@ if (dryRun) {
   console.log('\nDry run — nothing uploaded.\n')
   for (const r of picked.slice(0, 12)) {
     const cat = CATEGORY[r.category] || 'custom'
-    console.log(`  ${prettyName(r.file, r.category).padEnd(28)} ${cat.padEnd(8)} ${r.file}`)
+    console.log(`  ${prettyName(r.file, r.category, r).padEnd(26)} ${cat.padEnd(8)} ${String(folderFor(r)).padEnd(24)} ${r.file.slice(0, 40)}`)
   }
   const cats = {}
   for (const r of picked) { const c = CATEGORY[r.category] || 'custom'; cats[c] = (cats[c] || 0) + 1 }
@@ -156,17 +178,40 @@ async function worker() {
       await s3.send(new PutObjectCommand({
         Bucket: BUCKET, Key: r2Key, Body: bytes, ContentType: CONTENT_TYPE[ext] || 'audio/wav',
       }))
-      // JSONB column — it takes a JSON string, not a JS array. Passing the
-      // array straight through fails with "invalid input syntax for type json"
-      // AFTER the upload has already happened, which leaves the object in R2
-      // and no row pointing at it. The key is deterministic, so a re-run
-      // overwrites rather than accumulating orphans.
-      const tags = JSON.stringify([r.author && `by ${r.author}`, r.license, r.source_pack].filter(Boolean))
+      // EVERYTHING the manifest knows, kept as `key:value` strings.
+      //
+      // Brae: "make sure they keep the notes that they need to help
+      // reorganizing." A pack like this is only reorganisable if the labels,
+      // the predominance flag, the subcategory and the source survive the
+      // import — derive them again later and you are guessing. They live in
+      // the DATABASE; /api/catalog trims the heavy ones before sending the
+      // list to every visitor, because that request runs on every page load.
+      //
+      // JSONB takes a JSON string, not a JS array. Passing the array straight
+      // through fails with "invalid input syntax for type json" AFTER the
+      // upload has happened, leaving an object in R2 with no row pointing at
+      // it. Keys are deterministic, so a re-run overwrites rather than
+      // accumulating orphans.
+      const tags = JSON.stringify([
+        r.category && `cat:${r.category}`,
+        r.subcategory && `sub:${r.subcategory}`,
+        r.tier && `tier:${r.tier}`,
+        r.primary_label && `label:${r.primary_label}`,
+        r.all_labels && `labels:${r.all_labels}`,
+        r.pp_verified && `pp:${r.pp_verified}`,
+        r.ambience_hint && `amb:${r.ambience_hint}`,
+        r.tags && `kw:${r.tags}`,
+        r.description && `desc:${r.description}`,
+        r.author && `by:${r.author}`,
+        r.license && `lic:${r.license}`,
+        (r.source || r.source_pack) && `src:${r.source || r.source_pack}`,
+        r.source_url && `url:${r.source_url}`,
+      ].filter(Boolean))
       await sql`
         INSERT INTO catalog_sounds (id, name, category, r2_key, duration, content_type, folder, parent_folder, tags)
-        VALUES (${id}, ${prettyName(r.file, r.category)}, ${CATEGORY[r.category] || 'custom'},
+        VALUES (${id}, ${prettyName(r.file, r.category, r)}, ${CATEGORY[r.category] || 'custom'},
                 ${r2Key}, ${Number(r.duration_s) || 0}, ${CONTENT_TYPE[ext] || 'audio/wav'},
-                ${r.category || null}, ${'CC0 Drums'}, ${tags})
+                ${folderFor(r)}, ${PARENT}, ${tags})
         ON CONFLICT (id) DO NOTHING`
       done++
       if (done % 25 === 0) console.log(`  ${done} uploaded, ${queue.length} to go`)
