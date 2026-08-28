@@ -22,6 +22,9 @@
     "lib/apollo/storage-policy.ts",
     "lib/spectral-duck.ts",
     "lib/entitlements.ts",
-    "lib/apollo/slicing.ts"
+    "lib/apollo/slicing.ts",
+    "lib/apollo/modules.ts",
+    "lib/scale-constants.ts",
+    "lib/apollo/patch.ts"
   ]
 }

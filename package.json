@@ -17,6 +17,8 @@
     "check:catalog": "node scripts/check-catalog-in-app.mjs",
     "check:public-api": "node scripts/check-public-api.mjs",
     "check:add-project": "node scripts/check-module-add-project.mjs",
+    "test:modules": "tsc -p tsconfig.test.json && node scripts/apollo-modules.test.mjs",
+    "check:module-board": "node scripts/check-module-board.mjs",
     "test:slicing": "tsc -p tsconfig.test.json && node scripts/slicing.test.mjs",
     "test:slice-declick": "node --experimental-strip-types scripts/slice-declick.test.mjs",
     "test:render-host": "node --experimental-strip-types scripts/render-host.test.mjs",

@@ -28,6 +28,7 @@ import ArpPanel from './ArpPanel'
 import ClipPanel from './ClipPanel'
 import GlobalPanel from './GlobalPanel'
 import ScopeView from './ScopeView'
+import ModuleBoard from './ModuleBoard'
 import KeyboardStrip from './KeyboardStrip'
 import { MacrosBlock } from '@/components/apps/Apollo2'
 
@@ -47,17 +48,6 @@ export const APOLLO_CARD_SCOPES: { id: ApolloCardScope; label: string }[] = [
   { id: 'arp', label: 'Arp' },
   { id: 'clip', label: 'Clips' },
   { id: 'global', label: 'Global' },
-]
-
-// The full-instrument layout: same packed spans as the standalone SOUND tab,
-// with effects + performance rows beneath (the card body scrolls).
-const ALL_LAYOUT: { id: ApolloCardScope | 'scope'; cols: number }[] = [
-  { id: 'osc', cols: 7 }, { id: 'env', cols: 5 },
-  { id: 'filters', cols: 7 }, { id: 'lfo', cols: 5 },
-  { id: 'subnoise', cols: 5 }, { id: 'macros', cols: 3 }, { id: 'scope', cols: 4 },
-  { id: 'fx', cols: 12 },
-  { id: 'arp', cols: 5 }, { id: 'clip', cols: 7 },
-  { id: 'global', cols: 12 },
 ]
 
 function CardBody({ scope, footer, top }: { scope: ApolloCardScope; footer?: React.ReactNode; top?: React.ReactNode }) {
@@ -101,17 +91,14 @@ function CardBody({ scope, footer, top }: { scope: ApolloCardScope; footer?: Rea
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {top}
       {scope === 'all' ? (
-        <div style={{
-          ...plate,
-          display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 0, alignItems: 'stretch',
-        }}>
-          {ALL_LAYOUT.map(m => (
-            <div key={m.id} style={{
-              gridColumn: `span ${m.cols}`, minWidth: 0,
-              borderRight: `1px solid ${UI.border}`, borderBottom: `1px solid ${UI.border}`,
-            }}>{render(m.id)}</div>
-          ))}
-        </div>
+        /* The BOARD replaces the whole-instrument rack in Beacon.
+         *
+         * The old view mounted every panel at once, which measured ~2.9
+         * seconds of blocked main thread on every open. The board mounts
+         * knob bars; panels arrive lazily when you open one. Single-scope
+         * mode below is untouched — it is how a track's Devices panel opens
+         * straight into the effects chain. */
+        <ModuleBoard />
       ) : (
         <div style={plate}>{render(scope)}</div>
       )}
@@ -145,7 +132,9 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
    *  everything below it rather than an afterthought under the keyboard. */
   top?: React.ReactNode
 }) {
-  const [scope, setScope] = useState<ApolloCardScope>(fxOnly ? 'fx' : initialScope)
+  // Not state any more: with the tabs gone there is nothing left to change it.
+  // The board navigates itself, and fxOnly is fixed by the caller.
+  const scope: ApolloCardScope = fxOnly ? 'fx' : initialScope
   // Re-renders when the workshop customizer changes anything.
   const themeVersion = useBeaconThemeVersion()
   void themeVersion
@@ -325,16 +314,18 @@ export default function ApolloCard({ patch, onChange, scope: initialScope = 'all
             {title && <span style={{ fontWeight: 500, letterSpacing: 0.2, color: 'var(--text-muted, #8b93a0)', marginLeft: 10, fontSize: 12 }}>{title}</span>}
           </div>
           {headerExtra}
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {(fxOnly ? APOLLO_CARD_SCOPES.filter(sc => sc.id === 'fx') : APOLLO_CARD_SCOPES).map(s => (
-              <button key={s.id} onClick={() => setScope(s.id)} style={{
-                fontSize: 10, fontWeight: 700, letterSpacing: 0.4, padding: '4px 9px', borderRadius: 999, cursor: 'pointer',
-                background: scope === s.id ? 'var(--accent, #4aa9ff)' : 'transparent',
-                color: scope === s.id ? '#0b0d10' : 'var(--text-muted, #8b93a0)',
-                border: `1px solid ${scope === s.id ? 'var(--accent, #4aa9ff)' : 'var(--border, #262c35)'}`,
-              }}>{s.label}</button>
-            ))}
-          </div>
+          {/* The scope tabs are gone with the rack they navigated.
+              The board is the navigation now — a module is one click away on
+              its own bar, and a row of tabs offering the same eleven
+              destinations is a second way to do one thing. fxOnly keeps its
+              single tab, because that mode is a different entry point: a
+              track's Devices panel opening straight into the effects chain. */}
+          {fxOnly && (
+            <div style={{
+              fontSize: 10, fontWeight: 700, letterSpacing: 0.4, padding: '4px 9px', borderRadius: 999,
+              background: 'var(--accent, #4aa9ff)', color: '#0b0d10',
+            }}>Effects</div>
+          )}
           <div style={{ flex: 1 }} />
           <button onClick={onClose} title="Close (Esc)" style={{ background: 'none', border: 'none', color: 'var(--text-muted, #8b93a0)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 2 }}>✕</button>
         </div>
