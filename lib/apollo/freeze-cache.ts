@@ -65,8 +65,21 @@ const timings = { diskMs: 0, renderMs: 0, fromDisk: 0, attempts: 0, batches: 0 }
 // So: a miss is a strike. Give up only on a clip that has missed in three
 // separate sessions — contention won't reproduce that reliably, a genuinely
 // silent clip will. A clip that does render has its record cleared.
-const STRIKE_KEY = 'apollo-combine-strikes'
-const LEGACY_BAD_KEY = 'apollo-combine-unrenderable'
+// v2, and the version bump IS the migration.
+//
+// Every strike written before this version is untrustworthy, because the loop
+// used to condemn every clip it had not reached whenever it broke early — and
+// it breaks early every time PLAY is pressed. Three sessions of pressing play
+// while a song was still baking was enough to give up on clips that had never
+// been attempted, permanently, on that browser. Those clips then played live
+// forever: a progress bar that will not move on pause, and enough live voices
+// at four tracks to drop out.
+//
+// The ledger cannot distinguish those false strikes from real ones, so the
+// whole thing is discarded once. This is the same call the line below already
+// made about the even older one-strike list, for the same reason.
+const STRIKE_KEY = 'apollo-combine-strikes-v2'
+const LEGACY_STRIKE_KEYS = ['apollo-combine-strikes', 'apollo-combine-unrenderable']
 const STRIKES_TO_GIVE_UP = 3
 const MAX_TRACKED = 300
 
@@ -83,9 +96,9 @@ function writeStrikes(s: Strikes): void {
   try {
     const entries = Object.entries(s)
     localStorage.setItem(STRIKE_KEY, JSON.stringify(Object.fromEntries(entries.slice(-MAX_TRACKED))))
-    // The old one-strike list is a verdict we no longer trust — drop it so
-    // anyone carrying false condemnations gets them back.
-    localStorage.removeItem(LEGACY_BAD_KEY)
+    // Older ledgers are verdicts we no longer trust — drop them so anyone
+    // carrying false condemnations gets those clips back.
+    for (const k of LEGACY_STRIKE_KEYS) localStorage.removeItem(k)
   } catch { /* private mode */ }
 }
 
@@ -721,7 +734,13 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // Anything already known not to render is left to play live rather than
         // re-attempted on every page load.
         const bad = knownBad()
-        const renderable = () => missing().filter(w => !bad.has(w.key))
+        // Clips that came back SILENT during this job. Excluded from the rest
+        // of it so the loop moves on to the other clips instead of meeting the
+        // same ones again — but deliberately not persisted as a verdict, because
+        // one silent pass is usually contention and the next load should try
+        // them again.
+        const silentThisJob = new Set<string>()
+        const renderable = () => missing().filter(w => !bad.has(w.key) && !silentThisJob.has(w.key))
         const tRender = Date.now()
 
         // ── Render in a WINDOW that follows the playhead ────────────────────
@@ -945,8 +964,26 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           learnRenderCost(windowVoiceSec + SPAN_WEIGHT * spanSeconds(window), Date.now() - tWin)
           await keep(rendered, window)
           timings.batches++
-          // A window that lands nothing would loop forever on the same clips.
-          if (buffers.size === before) { rememberBad(window.map(w => w.key)); break }
+          // A window that lands nothing must not stop the job.
+          //
+          // This used to `break`, and that is the whole of "it gets stuck on
+          // 2/23 and I never even pressed play". The head phase bakes its two
+          // clips, the first fill window comes back silent — renders are not
+          // deterministic, and a patch whose sample has not loaded yet renders
+          // silence — and the entire job gave up there, with twenty-one clips
+          // it had never tried. The bar stops, and every remaining clip plays
+          // live for the rest of the session.
+          //
+          // The original worry was real: retry the same window forever and the
+          // loop never ends. But the fix for that is to stop asking for THOSE
+          // clips, not to abandon the other twenty-one. They are set aside for
+          // this job and the loop carries on down the song.
+          if (buffers.size === before) {
+            for (const w of window) silentThisJob.add(w.key)
+            rememberBad(window.map(w => w.key))
+            await gap(Date.now() - tWin)
+            continue
+          }
           await gap(Date.now() - tWin)
         }
         // (The measurements that shaped the two-phase loop above are recorded
@@ -956,8 +993,35 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // it contradicted its own evidence.)
         timings.renderMs = Date.now() - tRender
         setProgress({ done: wanted.length - missing().length, total: wanted.length, active: false, phase: 'idle' })
-        const stubborn = renderable().map(w => w.key)
-        rememberBad(stubborn)     // do not chase these again next time
+
+        // NOTHING is condemned here, and that is the fix for "the bar doesn't
+        // move when paused" and "it cuts out at four tracks" — one bug wearing
+        // two faces.
+        //
+        // This used to read:
+        //
+        //     const stubborn = renderable().map(w => w.key)
+        //     rememberBad(stubborn)     // do not chase these again next time
+        //
+        // The loop above does not only exit when the work is done. It breaks
+        // when PLAY IS PRESSED, and it breaks when no window fits the budget.
+        // On either of those every clip not yet rendered is still renderable,
+        // so all of them were marked permanently bad — and `renderable()`
+        // filters known-bad clips out forever. Press play once while a song is
+        // still baking, which is what everybody does, and the whole remainder
+        // of that song was condemned: on pause the loop woke up with nothing
+        // left it was allowed to render (a progress bar that never moves), and
+        // every one of those clips stayed on the live synth for the rest of the
+        // session (four tracks of live Apollo, and the audio drops out).
+        //
+        // The giveaway is that on a NORMAL finish the while condition is false
+        // because renderable() is empty — so `stubborn` is empty and the call
+        // does nothing at all. Every time it marked something, it was marking
+        // clips that had never been attempted.
+        //
+        // A clip that genuinely will not render is still remembered, one window
+        // at a time, at the `buffers.size === before` check inside the loop.
+        // That one has evidence: it just tried, and nothing came back.
         // Say which it was. "Would not render" was reported for clips that had
         // rendered perfectly and were then evicted, and that wrong label cost
         // real time chasing a rendering bug that did not exist.
