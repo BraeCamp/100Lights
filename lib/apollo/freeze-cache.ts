@@ -525,6 +525,18 @@ let transportPlaying = false
  * its own merits — a machine that was busy once is not condemned for the
  * session.
  */
+/**
+ * What the loader is, in one string, reported by combineStats().
+ *
+ * Minifiers strip comments and mangle identifiers, so neither can tell you
+ * whether a deploy really carries a change — a marker has to be a string
+ * LITERAL to survive. Chunk filenames are no help either: Vercel builds
+ * remotely, so its content hashes differ from a local build of the same source.
+ * This also lands in the diagnose report, so a capture from a user says which
+ * loader produced it instead of leaving that to be guessed.
+ */
+export const LOADER_MODE = 'layers-1'
+
 const WHILE_PLAYING_LIMIT_MS = 1500
 let slowWhilePlaying = false
 export function setTransportPlaying(v: boolean): void {
@@ -1103,7 +1115,7 @@ export async function clearCombinedEverywhere(): Promise<void> {
 
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
-export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number } {
+export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number; loader: string; playingBake: string } {
   // Peak of each cached render: a buffer that exists but is silent looks
   // identical to a working one from the outside, and silently-empty renders are
   // exactly the failure mode this cache can hide.
@@ -1117,6 +1129,11 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
   const s = strikes()
   const struck = Object.values(s)
   return {
+    // Which loader this capture came from, and what it is doing right now.
+    loader: LOADER_MODE,
+    // 'layers' while it bakes during playback; 'paused-only' once this machine
+    // has shown that a render mid-playback costs too much (WHILE_PLAYING_LIMIT_MS).
+    playingBake: slowWhilePlaying ? 'paused-only' : 'layers',
     ready: buffers.size, inFlight: inFlight.size, queued: queue.length,
     failed: [...failures], lastError, peaks,
     // Strikes are the difference between "missed once, will retry" and "given
