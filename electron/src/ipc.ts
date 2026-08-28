@@ -1,5 +1,6 @@
 import { ipcMain, dialog, shell, app, desktopCapturer } from 'electron'
 import type { OpenFileOptions, SaveFileOptions } from './preload'
+import { getBridgeStatus, startBridge, stopBridge } from './bridge'
 
 const AUDIO_FILTER = { name: 'Audio', extensions: ['mp3', 'wav', 'aiff', 'aif', 'flac', 'm4a', 'ogg', 'opus', 'wma'] }
 const VIDEO_FILTER = { name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'avi', 'webm', 'mxf', 'm4v', 'wmv'] }
@@ -42,6 +43,13 @@ export function setupIpc(): void {
     const sources = await desktopCapturer.getSources({ types: ['screen'] })
     return sources.map(s => ({ id: s.id, name: s.name }))
   })
+
+  // Beacon Bridge — the helper that hosts real AU and VST3 plug-ins. The
+  // renderer talks to it over a WebSocket directly, exactly as the browser
+  // build does; these calls only start and stop it.
+  ipcMain.handle('bridge:status', () => getBridgeStatus())
+  ipcMain.handle('bridge:start',  () => startBridge())
+  ipcMain.handle('bridge:stop',   () => { stopBridge(); return getBridgeStatus() })
 
   // Synchronous app version for preload (used before async bridge is ready)
   ipcMain.on('app:version', (event) => {
