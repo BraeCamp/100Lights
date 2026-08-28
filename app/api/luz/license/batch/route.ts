@@ -10,8 +10,8 @@
 //  activates them first — /license/activate never required an email, it just
 //  reports whatever the licence carries.
 //
-//    curl -X POST https://100lights.app/api/luz/license/batch \
-//      -H "authorization: Bearer $LUZ_ADMIN_TOKEN" \
+//    curl -X POST https://100lights.com/api/luz/license/batch \
+//      -H "authorization: Bearer $PLUGINS_ADMIN_TOKEN" \
 //      -H "content-type: application/json" \
 //      -d '{"count":500,"note":"pluginboutique-2026-09"}'
 // ===========================================================================
@@ -25,7 +25,11 @@ export const runtime = 'nodejs';
 const MAX_BATCH = 5000;
 
 function authorised(request: Request): boolean {
-  const expected = process.env.LUZ_ADMIN_TOKEN ?? '';
+  // Product-neutral: this endpoint mints keys for ANY plug-in in the catalog,
+  // so the token that guards it is not Luz's. LUZ_ADMIN_TOKEN is accepted as a
+  // fallback only so an environment set up before the rename keeps working.
+  const expected =
+    process.env.PLUGINS_ADMIN_TOKEN ?? process.env.LUZ_ADMIN_TOKEN ?? '';
   // Fails CLOSED. If the variable is missing in some environment, the endpoint
   // must refuse rather than accept an empty bearer token and let anyone mint
   // themselves a free licence.

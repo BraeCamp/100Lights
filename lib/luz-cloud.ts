@@ -14,7 +14,13 @@ import { sql } from './db';
 // whenever the variable was unset, taking unrelated pages down with it.
 export { sql };
 
-const pepper = () => process.env.LUZ_KEY_PEPPER ?? '';
+// Peppers the hash of CLOUD API KEYS (luz_api_keys.key_hash) — the tokens the
+// plug-in uses for preset sync. It does NOT touch licence keys: those are
+// stored in the clear and looked up directly, because a licence key has to be
+// findable from the key a customer types. Changing this value logs out preset
+// sync everywhere; it does not invalidate anybody's licence.
+const pepper = () =>
+  process.env.PLUGINS_KEY_PEPPER ?? process.env.LUZ_KEY_PEPPER ?? '';
 
 export const hashKey = (key: string) =>
   createHash('sha256').update(`${key}${pepper()}`).digest('hex');
