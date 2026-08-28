@@ -58,13 +58,17 @@ export const asMillis = (ts: string | null) => (ts ? new Date(ts).getTime() : 0)
 /** Idempotent by order reference: Stripe retries, customers get one key. */
 export async function issueLicenseForOrder(opts: {
   email: string; owner?: string; orderRef: string; seats?: number | string; product?: string;
+  /** Key prefix for this product, e.g. 'LUZ'. Defaults to 'LUZ' for the first
+   *  product; later plug-ins pass their own so a customer with several can tell
+   *  their keys apart at a glance, and a support email says which one it is. */
+  keyPrefix?: string;
 }) {
   const existing = (await sql`
     SELECT * FROM luz_licenses WHERE order_ref = ${opts.orderRef} LIMIT 1
   `) as LuzLicense[];
   if (existing.length > 0) return { license: existing[0], created: false };
 
-  const key = generateLicenseKey();
+  const key = generateLicenseKey(opts.keyPrefix || 'LUZ');
   const seats = Number(opts.seats ?? process.env.LUZ_DEFAULT_SEATS ?? 3);
   const rows = (await sql`
     INSERT INTO luz_licenses (key, product, owner, email, order_ref, seats_allowed)

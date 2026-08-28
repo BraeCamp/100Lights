@@ -1,5 +1,9 @@
 // ===========================================================================
-//  The email a customer gets after buying a plug-in.
+//  The email a customer gets after buying ANY plug-in.
+//
+//  Nothing here knows about Luz. Everything that differs between products —
+//  name, seat count, download link, checksum — arrives as an argument, so a
+//  second plug-in reuses this file untouched.
 //
 //  Uses the app's existing transactional email — same Resend key, same layout,
 //  same suppression list as everything else 100Lights sends. There is one mail

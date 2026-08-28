@@ -39,6 +39,12 @@ export interface PluginProduct {
   demos: PluginDemo[]
   /** Set once the Stripe product exists; until then the button explains itself. */
   stripePriceId?: string
+  /** Licence-key prefix, e.g. 'LUZ' gives LUZ-XXXX-XXXX-XXXX-XXXX. Give every
+   *  product its own so a customer who owns several can tell at a glance which
+   *  key belongs to which, and a support email is unambiguous. Choose it once:
+   *  keys already issued keep whatever prefix they were minted with. Avoid the
+   *  letters I, L, O and U in the body alphabet — the normaliser folds them. */
+  keyPrefix: string
   /** Where the signed, notarized installer lives. The product page and the
    *  purchase email both read this, so they can never disagree. */
   downloadUrl?: string
@@ -118,6 +124,7 @@ export const LUZ: PluginProduct = {
   ],
   // Live-mode price on product prod_V9rUt0yBAN8lUn ("Plugin - Luz"), $69 one-time.
   stripePriceId: 'price_1U9XlqLIcbnU54VLv7y0V2z4',
+  keyPrefix: 'LUZ',
   downloadUrl: 'https://pub-a048d0d7221c44e5936bf3fc9f55a0fe.r2.dev/Luz-1.0.0.pkg',
   checksum: '3592d4baba07bb446c31b2b14c48e0b39d6e0f5431830c0874b85ad128ab02e6',
   // Stays false until the licence tables exist and the webhook has its own

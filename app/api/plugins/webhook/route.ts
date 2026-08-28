@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 import { issueLicenseForOrder } from '@/lib/luz-license';
-import { sendPluginPurchaseEmail } from '@/lib/luz-email';
+import { sendPluginPurchaseEmail } from '@/lib/plugin-email';
 import { pluginBySlug } from '@/lib/plugins-catalog';
 
 export const runtime = 'nodejs';
@@ -13,11 +13,11 @@ export async function POST(request: Request) {
   // second endpoint alongside whichever one the rest of the site already uses.
   // Sharing STRIPE_WEBHOOK_SECRET between them means one of the two always
   // fails its signature check — silently, because a rejected webhook looks
-  // identical to one that was never sent. Set LUZ_STRIPE_WEBHOOK_SECRET to
+  // identical to one that was never sent. Set PLUGINS_STRIPE_WEBHOOK_SECRET to
   // this endpoint's own whsec_; the fallback only helps if you deliberately
   // point a single endpoint at both.
   const webhookSecret =
-    process.env.LUZ_STRIPE_WEBHOOK_SECRET ?? process.env.STRIPE_WEBHOOK_SECRET;
+    process.env.PLUGINS_STRIPE_WEBHOOK_SECRET ?? process.env.STRIPE_WEBHOOK_SECRET;
 
   if (!secretKey || !webhookSecret)
     return Response.json({ error: 'Stripe is not configured.' }, { status: 503 });
@@ -53,7 +53,15 @@ export async function POST(request: Request) {
       const email = session.customer_details?.email ?? session.customer_email;
       if (!email) return Response.json({ received: true, skipped: 'no email' });
 
+      // Which plug-in was bought is carried on the session, not baked into
+      // this route. One endpoint and one signing secret serve every product
+      // we will ever sell; adding a plug-in is a catalog entry, not a new
+      // webhook, a new secret and another redeploy.
+      const slug = session.metadata?.product ?? 'luz';
+      const catalogEntry = pluginBySlug(slug);
+
       const { license, created } = await issueLicenseForOrder({
+        keyPrefix: catalogEntry?.keyPrefix,
         email,
         owner: session.customer_details?.name ?? '',
         orderRef: session.id,
@@ -67,19 +75,26 @@ export async function POST(request: Request) {
       // answered with a 500, which makes Stripe retry the webhook rather than
       // letting the failure disappear into a 200.
       if (created) {
-        const product = pluginBySlug(license.product) ?? pluginBySlug('luz');
+        const product = catalogEntry ?? pluginBySlug(license.product);
+        if (!product) {
+          console.error(
+            `[plugins] licence issued for unknown product "${slug}" — order ` +
+            `${session.id}, ${email}, key ${license.key}. Add it to the catalog.`,
+          );
+          return Response.json({ error: 'Unknown product.' }, { status: 500 });
+        }
         const sent = await sendPluginPurchaseEmail({
           email,
           key: license.key,
-          productName: product?.name ?? 'Luz',
+          productName: product.name,
           seats: license.seats_allowed,
-          downloadUrl: product?.downloadUrl ?? process.env.LUZ_DOWNLOAD_URL ?? '',
-          checksum: product?.checksum,
+          downloadUrl: product.downloadUrl ?? '',
+          checksum: product.checksum,
         });
 
         if (!sent) {
           console.error(
-            `[luz] LICENCE ISSUED BUT NOT DELIVERED — order ${session.id}, ` +
+            `[plugins] LICENCE ISSUED BUT NOT DELIVERED — order ${session.id}, ` +
             `${email}, key ${license.key}. Send it by hand.`,
           );
           return Response.json({ error: 'Licence issued but delivery failed.' }, { status: 500 });
