@@ -4,7 +4,13 @@ import { uploadRecordingBlob } from '@/lib/record-upload'
 import { useRegisterCommands } from '@/lib/commands'
 import Knob from './Knob'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
-import { useEffect, useRef, useState, type ReactNode, type Dispatch } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode, type Dispatch } from 'react'
+import nextDynamic from 'next/dynamic'
+
+// Lazy at module scope: the menu pulls in the plugin registry, which scans for
+// built-in manifests and talks to the Beacon Bridge. None of that belongs in
+// the transport bar's first paint.
+const PluginMenu = nextDynamic(() => import('./PluginMenu'), { ssr: false })
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, Zap, RotateCcw } from 'lucide-react'
 import { TbMetronome } from 'react-icons/tb'
@@ -65,6 +71,20 @@ interface TransportProps {
 
 export default function Transport({ onCommitName }: TransportProps = {}) {
   const { project, dispatch, engine, playing, recording, setPosition, metronome, setMetronome, audioMode, triggerBlink, loopToolArmed, setLoopToolArmed, selectedTrackId, setApolloRack } = useDaw()
+
+  // The track the plugin menu acts on: whatever is selected, else the first.
+  const pluginTrack = project.tracks.find(t => t.id === selectedTrackId) ?? project.tracks[0]
+
+  /** A new project has no tracks at all, and this is the first control a new
+   *  user reaches for — it has to open something rather than sit there doing
+   *  nothing. So choosing anything from the menu gives it a track to live on. */
+  const ensurePluginTrack = useCallback((): string => {
+    const existing = project.tracks.find(t => t.id === selectedTrackId) ?? project.tracks[0]
+    if (existing) return existing.id
+    const id = crypto.randomUUID()
+    dispatch({ type: 'ADD_TRACK', id, name: 'Apollo' })
+    return id
+  }, [project.tracks, selectedTrackId, dispatch])
   // Editable project title shown in the toolbar (the DAW previously showed none).
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput]     = useState('')
@@ -1029,25 +1049,26 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
 
       <div style={divider} />
 
-      {/* Apollo — open the synth for whatever track is selected. The window is
-          non-modal and follows the selection, so you can leave it up and keep
-          picking sounds in Beacon. */}
-      <button
-        onClick={() => {
-          const track = project.tracks.find(t => t.id === selectedTrackId) ?? project.tracks[0]
-          if (track) { setApolloRack({ trackId: track.id, seed: null, follow: true }); return }
-          // A new project has no tracks at all, and this is the first button a
-          // new user reaches for — it has to open something rather than sit
-          // there doing nothing. Give Apollo a track to live on.
-          const id = crypto.randomUUID()
-          dispatch({ type: 'ADD_TRACK', id, name: 'Apollo' })
-          setApolloRack({ trackId: id, seed: null, follow: true })
+      {/* The instrument for whatever track is selected. Apollo sits at the top
+          of this menu — it is Beacon's built-in instrument plugin, not a rival
+          category — and everything the plugin registry knows about follows it,
+          ending in "Add Plugin…" for the player's own.
+
+          Opening Apollo is unchanged: a non-modal window that follows the
+          selection, so you can leave it up and keep picking sounds in Beacon. */}
+      <PluginMenu
+        instrType={pluginTrack?.instrument?.type}
+        instrument={pluginTrack?.instrument}
+        fallbackLabel={'\u2600 APOLLO'}
+        buttonStyle={{ ...base, width: 'auto', padding: '0 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.4 }}
+        onPickApollo={() => setApolloRack({ trackId: ensurePluginTrack(), seed: null, follow: true })}
+        onPickPlugin={d => {
+          dispatch({
+            type: 'SET_INSTRUMENT', trackId: ensurePluginTrack(),
+            instrument: { type: 'plugin', params: { pluginId: d.id, values: {}, displayName: d.name } },
+          })
         }}
-        data-help-id="open-apollo"
-        data-open-apollo
-        title="Open Apollo for the selected track — it stays open while you work, and follows what you select"
-        style={{ ...base, width: 'auto', padding: '0 9px', fontSize: 10, fontWeight: 800, letterSpacing: 0.4 }}
-      >&#9788; APOLLO</button>
+      />
 
       {/* Admin-only tools. Renders nothing for anyone else, so it costs the
           toolbar no space for normal users. */}

@@ -29,6 +29,7 @@ const ApolloCard = dynamic(() => import('@/components/apps/apollo/ApolloCard'), 
 // Lazy for the same reason: the plugin registry fetches manifests, and a
 // track that is not using a plugin should never pay for that.
 const PluginPanel = dynamic(() => import('./PluginPanel'), { ssr: false })
+const PluginMenu = dynamic(() => import('./PluginMenu'), { ssr: false })
 
 const C = {
   bgBase:      '#141414',
@@ -919,8 +920,9 @@ const TYPE_BUTTONS: { label: string; value: InstrumentType }[] = [
   { label: 'FM 4-Op',    value: 'fm4op'     },
   { label: 'Wavetable',  value: 'wavetable' },
   { label: 'Poly',       value: 'poly'      },
-  { label: 'Apollo',     value: 'apollo'    },
-  { label: 'Plugin',     value: 'plugin'    },
+  // Apollo and Plugin are NOT here: they share one dropdown (PluginMenu), with
+  // Apollo pinned at the top of it. Two buttons said the wrong thing about
+  // both — Apollo is Beacon's built-in instrument plugin, not a rival category.
 ]
 
 export default memo(function InstrumentPicker({ trackId }: { trackId: string }) {
@@ -985,6 +987,16 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: { type: 'wavetable', params: next } })
   }, [dispatch, trackId, instrType, instrument?.params])
 
+  // Choosing a plugin from the menu puts it straight on the track, rather than
+  // switching to an empty "plugin" type and making the player pick again in the
+  // panel below.
+  const pickPlugin = useCallback((d: { id: string; name: string }) => {
+    dispatch({
+      type: 'SET_INSTRUMENT', trackId,
+      instrument: { type: 'plugin', params: { pluginId: d.id, values: {}, displayName: d.name } },
+    })
+  }, [dispatch, trackId])
+
   if (!track || !instrument) return null
 
   return (
@@ -994,17 +1006,29 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
       minWidth: isMobile ? 0 : 380,
     }}>
       {isMobile ? (
-        <PresetMenu
-          options={TYPE_BUTTONS.map(b => ({ value: b.value, label: b.label }))}
-          value={instrType}
-          onPick={v => setType(v as InstrumentType)}
-          placeholder="Instrument type"
-        />
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <PresetMenu
+            options={TYPE_BUTTONS.map(b => ({ value: b.value, label: b.label }))}
+            value={instrType}
+            onPick={v => setType(v as InstrumentType)}
+            placeholder="Instrument type"
+          />
+          {/* The plugin menu is a dropdown already, so it works as-is on a
+              phone — and leaving it out would put Apollo out of reach there. */}
+          <PluginMenu
+            instrType={instrType} instrument={instrument}
+            onPickApollo={() => setType('apollo')} onPickPlugin={pickPlugin}
+          />
+        </div>
       ) : (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
           {TYPE_BUTTONS.map(btn => (
             <TypeBtn key={btn.value} label={btn.label} active={instrType === btn.value} onClick={() => setType(btn.value)} />
           ))}
+          <PluginMenu
+            instrType={instrType} instrument={instrument}
+            onPickApollo={() => setType('apollo')} onPickPlugin={pickPlugin}
+          />
           {(instrType === 'poly' || instrType === 'wavetable' || instrType === 'fm') && <HeliosSynthChip trackId={trackId} />}
           <OpenInApolloButton trackId={trackId} />
         </div>
