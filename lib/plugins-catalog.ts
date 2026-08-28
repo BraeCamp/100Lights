@@ -126,7 +126,7 @@ export const LUZ: PluginProduct = {
   stripePriceId: 'price_1U9XlqLIcbnU54VLv7y0V2z4',
   keyPrefix: 'LUZ',
   downloadUrl: 'https://pub-a048d0d7221c44e5936bf3fc9f55a0fe.r2.dev/Luz-1.0.0.pkg',
-  checksum: '3592d4baba07bb446c31b2b14c48e0b39d6e0f5431830c0874b85ad128ab02e6',
+  checksum: '51284224bb4f8db0ec068454e35d12ca4c585f7babafcf4ad65b9bd2af919943',
   // Stays false until the licence tables exist and the webhook has its own
   // signing secret. Flipping it early does not fail safely: Stripe takes the
   // money whatever the webhook does afterwards, so a buyer would be charged
