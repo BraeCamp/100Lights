@@ -28,7 +28,7 @@
  * need a different source.
  */
 
-import { mkdirSync, writeFileSync, existsSync, statSync, readFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, statSync, readFileSync, openSync, readSync, closeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -98,16 +98,25 @@ const ARTIC = {
 function parseName(file) {
   const stem = file.split('/').pop().replace(/\.wav$/i, '')
   const parts = stem.split(/[_\-]/)
-  let note = '', rr = '', artic = '', mic = ''
+  let note = '', rr = '', artic = '', mic = '', vel = ''
   for (const p of parts) {
     if (!note && NOTE.test(p)) { note = p; continue }
     if (/^rr\d+$/i.test(p)) { rr = p.toLowerCase(); continue }
+    if (/^vl\d+$/i.test(p)) { vel = p.slice(2); continue }   // velocity layer
     const a = ARTIC[p.toLowerCase()]
     if (a && !artic) { artic = a; continue }
     if (/^(main|close|room|far|mid|dist)$/i.test(p)) mic = p.toLowerCase()
   }
-  return { note, rr, artic, mic, stem }
+  return { note, rr, artic, mic, vel, stem }
 }
+
+// A release is the noise a key or valve makes when it is LET GO — the damper
+// falling, the pad closing. VCSL ships them as their own sample set, at the
+// same pitches as the notes. They belong in the library, but not in the same
+// folder as the notes: Apollo builds an instrument from everything in one
+// folder, and a piano whose zones are half damper-thuds plays as a piano that
+// does not sound.
+const isRelease = path => /(^|\/)Rel(eases)?(\/|$)/i.test(path) || /_Rel_/i.test(path)
 
 // ── Select ──────────────────────────────────────────────────────────────────
 
@@ -172,7 +181,7 @@ const rows = picked.map(x => {
     // and the Yamaha merge into one instrument that is half of each. The
     // coarser grouping survives as a tag.
     category: x.group.split('/')[0],
-    subcategory: x.instrument,
+    subcategory: isRelease(x.path) ? `${x.instrument} (releases)` : x.instrument,
     group: x.group,
     title: x.instrument + (meta.note ? ` ${meta.note}` : ''),
     instrument: x.instrument,
@@ -180,6 +189,7 @@ const rows = picked.map(x => {
     articulation: meta.artic || variant.split('/').pop() || '',
     variant,
     round_robin: meta.rr,
+    velocity: meta.vel,
     mic: meta.mic,
     family: x.family,
     author: 'Versilian Studios and contributors',
@@ -223,13 +233,42 @@ async function worker() {
 
 await Promise.all(Array.from({ length: CONCURRENCY }, worker))
 
+/**
+ * Seconds, from the WAV header — 4 KB read per file, not a decode.
+ *
+ * Without it every sound in the library reads "0:00", which looks like a
+ * broken import rather than a missing field.
+ */
+function wavSeconds(path) {
+  try {
+    const fd = openSync(path, 'r')
+    const head = Buffer.alloc(4096)
+    const n = readSync(fd, head, 0, 4096, 0)
+    closeSync(fd)
+    if (n < 44 || head.toString('ascii', 0, 4) !== 'RIFF') return 0
+    const byteRate = head.readUInt32LE(28)
+    if (!byteRate) return 0
+    // Walk the chunk list rather than assuming data starts at 44: VCSL files
+    // carry LIST/INFO chunks, and a fixed offset reads their bytes as audio.
+    let off = 12
+    while (off + 8 <= n) {
+      const id = head.toString('ascii', off, off + 4)
+      const size = head.readUInt32LE(off + 4)
+      if (id === 'data') return Number((size / byteRate).toFixed(3))
+      off += 8 + size + (size % 2)
+    }
+    return 0
+  } catch { return 0 }
+}
+
 // Only what actually landed goes in the manifest. A row pointing at a file that
 // is not on disk fails inside the importer, after its neighbours have already
 // been uploaded to R2.
 const onDisk = rows.filter(r => {
   try { return statSync(join(OUT, r.file)).size > 0 } catch { return false }
 })
-const cols = Object.keys(rows[0]).filter(c => c !== 'remote')
+for (const r of onDisk) r.duration_s = wavSeconds(join(OUT, r.file))
+const cols = [...Object.keys(rows[0]).filter(c => c !== 'remote'), 'duration_s']
 const csv = [cols.join(',')]
 for (const r of onDisk) csv.push(cols.map(c => {
   const v = String(r[c] ?? '')

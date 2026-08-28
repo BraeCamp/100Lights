@@ -12,7 +12,7 @@ import assert from 'node:assert'
 import { importTs } from '../lib/ts-import.mjs'
 
 const {
-  midiFromNoteName, noteOf, takeRank, bestTakes, spanZones,
+  midiFromNoteName, noteOf, takeRank, velLayer, bestTakes, spanZones,
 } = await importTs('lib/apollo/multisample-zones.ts')
 
 let failures = 0
@@ -78,6 +78,47 @@ check('sorted low to high', picked.map(p => p.note).join() === '60,62,64', picke
 check('unpitched samples in the folder are dropped, not mapped to 0',
   bestTakes([...steinway, { name: 'readme', tags: [] }]).length === 3)
 check('an empty folder yields nothing rather than throwing', bestTakes([]).length === 0)
+
+// ── Velocity layers ─────────────────────────────────────────────────────────
+// The audible bug: a piano sampled at three dynamics, reduced by taking
+// whichever sample sorted first, plays pianissimo on C and fortissimo on C#.
+check('a velocity layer is read off the tag', velLayer({ name: 'x', tags: ['vl:2'] }) === 2)
+check('and is null when there is none', velLayer({ name: 'x', tags: ['rr:rr1'] }) === null)
+
+const piano = []
+for (const note of ['C4', 'C#4', 'D4']) {
+  for (const vl of ['1', '2', '3']) {
+    piano.push({ name: `${note} vl${vl}`, tags: [`note:${note}`, `vl:${vl}`, 'rr:rr1', 'mic:main'] })
+  }
+}
+const layered = bestTakes(piano)
+check('every pitch comes back on the SAME velocity layer',
+  new Set(layered.map(x => velLayer(x.item))).size === 1,
+  layered.map(x => `${x.note}:vl${velLayer(x.item)}`).join(' '))
+check('and it is the middle layer, not the softest or the loudest',
+  layered.every(x => velLayer(x.item) === 2),
+  layered.map(x => velLayer(x.item)).join())
+
+// Two layers has no true middle; take the lower of the pair rather than
+// silently preferring the loudest sample in the instrument.
+const twoLayer = ['1', '4'].map(vl =>
+  ({ name: `C4 vl${vl}`, tags: ['note:C4', `vl:${vl}`, 'mic:main'] }))
+check('with an even number of layers it stays on the quieter one',
+  velLayer(bestTakes(twoLayer)[0].item) === 1)
+
+// Velocity is chosen first, but round robin still breaks the remaining tie.
+const tie = [
+  { name: 'a', tags: ['note:C4', 'vl:2', 'rr:rr2', 'mic:main'] },
+  { name: 'b', tags: ['note:C4', 'vl:2', 'rr:rr1', 'mic:main'] },
+  { name: 'c', tags: ['note:C4', 'vl:1', 'rr:rr1', 'mic:main'] },
+  { name: 'd', tags: ['note:C4', 'vl:3', 'rr:rr1', 'mic:main'] },
+]
+check('within the chosen layer, the first round robin still wins',
+  bestTakes(tie)[0].item.name === 'b', bestTakes(tie)[0].item.name)
+
+// An instrument with no velocity tags at all must still reduce cleanly.
+check('unlayered instruments are unaffected',
+  bestTakes(steinway).length === 3)
 
 // ── Covering the keyboard ───────────────────────────────────────────────────
 const spans = spanZones([60, 62, 64])

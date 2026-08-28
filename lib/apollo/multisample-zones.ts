@@ -55,10 +55,37 @@ export function noteOf(e: SampleLike): number | null {
   return midiFromNoteName(e.name)
 }
 
+/** The velocity layer a sample was recorded at, if it says. 1 is softest. */
+export function velLayer(e: SampleLike): number | null {
+  const t = e.tags?.find(x => x.startsWith('vl:'))
+  const n = t ? Number(t.slice(3)) : NaN
+  return Number.isFinite(n) ? n : null
+}
+
 /** Lower is better: first round robin, on the main mic. */
 export function takeRank(e: SampleLike): number {
   const rr = Number(e.tags?.find(t => t.startsWith('rr:'))?.match(/\d+/)?.[0] ?? '1')
   return (e.tags?.includes('mic:main') ? 0 : 100) + rr
+}
+
+/**
+ * The one take to keep out of every take of a single pitch.
+ *
+ * Velocity comes first, because it is the choice you can HEAR. A piano
+ * sampled at three dynamics, reduced by picking whichever take sorted first,
+ * plays pianissimo on C and fortissimo on C# — the instrument lurches between
+ * dynamics as you move up the keyboard. Picking the same layer at every pitch
+ * is what makes it sound like one instrument, and the middle layer is the one
+ * that is usable both quiet and loud.
+ */
+function chooseTake<T extends SampleLike>(takes: T[]): T {
+  const layers = [...new Set(takes.map(velLayer).filter((n): n is number => n != null))]
+  if (layers.length > 1) {
+    layers.sort((a, b) => a - b)
+    const mid = layers[Math.floor((layers.length - 1) / 2)]
+    takes = takes.filter(t => velLayer(t) === mid)
+  }
+  return takes.reduce((best, t) => (takeRank(t) < takeRank(best) ? t : best), takes[0])
 }
 
 /**
@@ -72,14 +99,16 @@ export function takeRank(e: SampleLike): number {
  * its sample is fetched to never sound.
  */
 export function bestTakes<T extends SampleLike>(items: T[]): { item: T; note: number }[] {
-  const best = new Map<number, { item: T; note: number }>()
+  const byNote = new Map<number, T[]>()
   for (const item of items) {
     const note = noteOf(item)
     if (note == null) continue
-    const cur = best.get(note)
-    if (!cur || takeRank(item) < takeRank(cur.item)) best.set(note, { item, note })
+    if (!byNote.has(note)) byNote.set(note, [])
+    byNote.get(note)!.push(item)
   }
-  return [...best.values()].sort((a, b) => a.note - b.note)
+  return [...byNote.entries()]
+    .map(([note, takes]) => ({ item: chooseTake(takes), note }))
+    .sort((a, b) => a.note - b.note)
 }
 
 /**

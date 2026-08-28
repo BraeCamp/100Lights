@@ -208,6 +208,7 @@ async function worker() {
         r.instrument && `inst:${r.instrument}`,
         r.articulation && `art:${r.articulation}`,
         r.round_robin && `rr:${r.round_robin}`,
+        r.velocity && `vl:${r.velocity}`,
         r.mic && `mic:${r.mic}`,
         r.variant && `var:${r.variant}`,
         r.group && `grp:${r.group}`,
