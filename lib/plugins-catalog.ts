@@ -116,8 +116,15 @@ export const LUZ: PluginProduct = {
     { name: 'Arp Music Box', category: 'Arp', file: 'Arp Music Box.mp3',
       blurb: 'Ratcheting arpeggiator with a velocity pattern.' },
   ],
+  // Live-mode price on product prod_V9rUt0yBAN8lUn ("Plugin - Luz"), $69 one-time.
+  stripePriceId: 'price_1U9XlqLIcbnU54VLv7y0V2z4',
   downloadUrl: 'https://pub-a048d0d7221c44e5936bf3fc9f55a0fe.r2.dev/Luz-1.0.0.pkg',
   checksum: '3592d4baba07bb446c31b2b14c48e0b39d6e0f5431830c0874b85ad128ab02e6',
+  // Stays false until the licence tables exist and the webhook has its own
+  // signing secret. Flipping it early does not fail safely: Stripe takes the
+  // money whatever the webhook does afterwards, so a buyer would be charged
+  // and get nothing. Turn this on LAST, after a test-mode purchase has been
+  // seen to deliver a working key.
   available: false,
 }
 

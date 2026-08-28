@@ -9,7 +9,15 @@ export const runtime = 'nodejs';
 // signature is computed over.
 export async function POST(request: Request) {
   const secretKey = process.env.STRIPE_SECRET_KEY;
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  // Every Stripe webhook ENDPOINT gets its own signing secret, and this is a
+  // second endpoint alongside whichever one the rest of the site already uses.
+  // Sharing STRIPE_WEBHOOK_SECRET between them means one of the two always
+  // fails its signature check — silently, because a rejected webhook looks
+  // identical to one that was never sent. Set LUZ_STRIPE_WEBHOOK_SECRET to
+  // this endpoint's own whsec_; the fallback only helps if you deliberately
+  // point a single endpoint at both.
+  const webhookSecret =
+    process.env.LUZ_STRIPE_WEBHOOK_SECRET ?? process.env.STRIPE_WEBHOOK_SECRET;
 
   if (!secretKey || !webhookSecret)
     return Response.json({ error: 'Stripe is not configured.' }, { status: 503 });
