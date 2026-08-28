@@ -31,6 +31,7 @@
 import { mkdirSync, writeFileSync, existsSync, statSync, readFileSync, openSync, readSync, closeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
+import { folderFor, isNonNote } from './lib/sample-fetch.mjs'
 
 const OUT = process.env.OUT || join(homedir(), 'Desktop', 'CC0 Instruments')
 const TREE = join(homedir(), '.claude', 'jobs', '0055fedb', 'tmp', 'vcsl-tree.json')
@@ -181,7 +182,11 @@ const rows = picked.map(x => {
     // and the Yamaha merge into one instrument that is half of each. The
     // coarser grouping survives as a tag.
     category: x.group.split('/')[0],
-    subcategory: isRelease(x.path) ? `${x.instrument} (releases)` : x.instrument,
+    // The articulation is part of the folder, not just the instrument — see
+    // folderFor(). A tenor saxophone whose Vibrato, Non-Vibrato and Staccato
+    // share one folder builds an instrument that is staccato on some notes and
+    // sustained on others, and nothing about it looks wrong.
+    subcategory: folderFor(x.instrument, isNonNote(x.path) ? `Releases/${variant}` : variant),
     group: x.group,
     title: x.instrument + (meta.note ? ` ${meta.note}` : ''),
     instrument: x.instrument,

@@ -282,12 +282,34 @@ interface CatalogItem {
 export async function syncCatalog(): Promise<void> {
   if (typeof window === 'undefined') return
   try {
+    const local = await libraryGetAll()
+
+    // Ask whether anything changed before asking for the whole thing.
+    //
+    // The catalog is thousands of entries and a quarter-megabyte gzipped, and
+    // it changes when an admin adds a pack — not when someone opens the studio.
+    // Sending the version we already hold turns the ordinary page load into a
+    // sixty-byte "unchanged".
+    //
+    // The version encodes the row COUNT, and that is the point: a stored
+    // version is only trustworthy if the local library still holds that many
+    // catalog entries. Trusting it blindly means a browser that cleared its
+    // IndexedDB — private window, "clear site data", eviction under storage
+    // pressure — would be told nothing changed and would sit there with an
+    // empty library forever. On a mismatch we simply ask for everything.
+    const haveVersion = readCatalogVersion()
+    const localCatalogCount = local.filter(e => e.catalog).length
+    const trusted = haveVersion && Number(haveVersion.split('-')[0]) === localCatalogCount
+      ? haveVersion : ''
+
     // no-store so this background sync always sees the current catalog —
     // otherwise a browser-cached list would delay additions/removals ~a minute.
-    const res = await fetch('/api/catalog', { cache: 'no-store' })
+    const res = await fetch(`/api/catalog${trusted ? `?v=${encodeURIComponent(trusted)}` : ''}`,
+      { cache: 'no-store' })
     if (!res.ok) return
-    const { items } = await res.json() as { items: CatalogItem[] }
-    const local = await libraryGetAll()
+    const body = await res.json() as { items?: CatalogItem[]; version?: string; unchanged?: boolean }
+    if (body.unchanged) return
+    const items = body.items ?? []
     const localIds = new Set(local.map(e => e.id))
     const wantIds = new Set(items.map(it => `catalog_${it.id}`))
 
@@ -319,7 +341,24 @@ export async function syncCatalog(): Promise<void> {
         try { await libraryDelete(e.id) } catch { /* keep going */ }
       }
     }
+
+    // Written LAST, and only after the adds and removals above have run. Store
+    // it earlier and a sync that failed halfway leaves a version claiming a
+    // library we never finished building.
+    if (body.version) writeCatalogVersion(body.version)
   } catch { /* offline — keep local library untouched */ }
+}
+
+const CATALOG_VERSION_KEY = 'contentforge-catalog-version'
+
+/** localStorage is a cache hint here, never a source of truth: losing it costs
+ *  one extra full fetch, which is exactly what used to happen every time. */
+function readCatalogVersion(): string {
+  try { return localStorage.getItem(CATALOG_VERSION_KEY) || '' } catch { return '' }
+}
+
+function writeCatalogVersion(v: string): void {
+  try { localStorage.setItem(CATALOG_VERSION_KEY, v) } catch { /* private mode — refetch next time */ }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

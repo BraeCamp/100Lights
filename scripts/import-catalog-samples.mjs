@@ -39,6 +39,11 @@ const env = n => (process.env[n] || (readFileSync(join(ROOT, '.env.local'), 'utf
 const args = process.argv.slice(2)
 const dir = (args.find(a => !a.startsWith('--')) || '').replace(/^~/, homedir())
 const dryRun = args.includes('--dry-run')
+// Re-file sounds already in the catalog: fix folder, name, tags and duration on
+// rows whose ids exist, without re-uploading a byte. The id is derived from the
+// file path, so a corrected MANIFEST alone is a no-op — ON CONFLICT DO NOTHING
+// skips exactly the rows that need changing.
+const updateOnly = args.includes('--update')
 const limit = Number((args.find(a => a.startsWith('--limit')) || '').split(/[= ]/)[1] || 0)
   || Number(args[args.indexOf('--limit') + 1]) || 0
 
@@ -170,14 +175,17 @@ async function worker() {
   while (queue.length) {
     const r = queue.shift()
     const id = idFor(r.file)
-    if (existing.has(id)) { skipped++; continue }
+    const refile = existing.has(id) && updateOnly
+    if (existing.has(id) && !updateOnly) { skipped++; continue }
     try {
-      const bytes = readFileSync(join(dir, r.file))
       const ext = extname(r.file).toLowerCase()
       const r2Key = `catalog/${id}${ext}`
-      await s3.send(new PutObjectCommand({
-        Bucket: BUCKET, Key: r2Key, Body: bytes, ContentType: CONTENT_TYPE[ext] || 'audio/wav',
-      }))
+      if (!refile) {
+        const bytes = readFileSync(join(dir, r.file))
+        await s3.send(new PutObjectCommand({
+          Bucket: BUCKET, Key: r2Key, Body: bytes, ContentType: CONTENT_TYPE[ext] || 'audio/wav',
+        }))
+      }
       // EVERYTHING the manifest knows, kept as `key:value` strings.
       //
       // Brae: "make sure they keep the notes that they need to help
@@ -209,6 +217,7 @@ async function worker() {
         r.articulation && `art:${r.articulation}`,
         r.round_robin && `rr:${r.round_robin}`,
         r.velocity && `vl:${r.velocity}`,
+        r.bow && `bow:${r.bow}`,
         r.mic && `mic:${r.mic}`,
         r.variant && `var:${r.variant}`,
         r.group && `grp:${r.group}`,
@@ -220,14 +229,28 @@ async function worker() {
         (r.source || r.source_pack) && `src:${r.source || r.source_pack}`,
         r.source_url && `url:${r.source_url}`,
       ].filter(Boolean))
-      await sql`
-        INSERT INTO catalog_sounds (id, name, category, r2_key, duration, content_type, folder, parent_folder, tags)
-        VALUES (${id}, ${prettyName(r.file, r.category, r)}, ${CATEGORY[r.category] || 'custom'},
-                ${r2Key}, ${Number(r.duration_s) || 0}, ${CONTENT_TYPE[ext] || 'audio/wav'},
-                ${folderFor(r)}, ${PARENT}, ${tags})
-        ON CONFLICT (id) DO NOTHING`
+      if (refile) {
+        // updated_at moves so the catalog VERSION changes and every client
+        // re-syncs. Without it the sounds sit corrected in the database and
+        // still wrong in every browser that already pulled them.
+        await sql`
+          UPDATE catalog_sounds SET
+            name       = ${prettyName(r.file, r.category, r)},
+            folder     = ${folderFor(r)},
+            duration   = ${Number(r.duration_s) || 0},
+            tags       = ${tags},
+            updated_at = NOW()
+          WHERE id = ${id}`
+      } else {
+        await sql`
+          INSERT INTO catalog_sounds (id, name, category, r2_key, duration, content_type, folder, parent_folder, tags)
+          VALUES (${id}, ${prettyName(r.file, r.category, r)}, ${CATEGORY[r.category] || 'custom'},
+                  ${r2Key}, ${Number(r.duration_s) || 0}, ${CONTENT_TYPE[ext] || 'audio/wav'},
+                  ${folderFor(r)}, ${PARENT}, ${tags})
+          ON CONFLICT (id) DO NOTHING`
+      }
       done++
-      if (done % 25 === 0) console.log(`  ${done} uploaded, ${queue.length} to go`)
+      if (done % 250 === 0) console.log(`  ${done} ${refile ? 'refiled' : 'uploaded'}, ${queue.length} to go`)
     } catch (e) {
       failed++
       if (failed <= 3) console.log(`  ✗ ${r.file}: ${String(e.message).slice(0, 90)}`)
@@ -236,4 +259,4 @@ async function worker() {
 }
 
 await Promise.all(Array.from({ length: CONCURRENCY }, worker))
-console.log(`\n${done} added, ${skipped} already there, ${failed} failed`)
+console.log(`\n${done} ${updateOnly ? 'refiled' : 'added'}, ${skipped} already there, ${failed} failed`)

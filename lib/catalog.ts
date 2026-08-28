@@ -71,6 +71,27 @@ export async function listCatalog(): Promise<CatalogRow[]> {
   return rows.map(toRow)
 }
 
+/**
+ * A cheap fingerprint of the whole catalog: "<count>-<newest edit>".
+ *
+ * Every visitor's library syncs against this list on page load, and the list is
+ * the entire catalog — 6,472 entries and 258 KB gzipped at the time of writing,
+ * downloaded again on every visit even though the catalog changes maybe weekly.
+ * Pagination cannot fix that: syncCatalog reconciles REMOVALS, so it needs the
+ * complete id set or it deletes everything it did not see.
+ *
+ * A fingerprint can. COUNT catches adds and deletes, MAX(updated_at) catches
+ * edits (updateCatalog sets it), so any change to any row moves the value. One
+ * indexless aggregate over a small table, against a quarter-megabyte transfer.
+ */
+export async function catalogVersion(): Promise<string> {
+  await ensure()
+  const rows = await sql`SELECT COUNT(*)::int AS n, MAX(updated_at) AS t FROM catalog_sounds`
+  const n = Number(rows[0]?.n ?? 0)
+  const t = rows[0]?.t ? new Date(String(rows[0].t)).getTime() : 0
+  return `${n}-${t}`
+}
+
 export async function addCatalog(p: {
   id: string; name: string; category?: string; r2Key: string
   duration?: number; contentType?: string; folder?: string; parentFolder?: string

@@ -99,9 +99,13 @@ check('no folder holds two different instruments', mixed.length === 0,
   mixed.map(x => x.folder).join(', ') || 'each folder is one instrument')
 
 // ── Releases are not notes ──────────────────────────────────────────────────
-const releaseFolders = [...byFolder.keys()].filter(f => /\(releases\)$/.test(f))
+// Release/noise samples live in a folder whose articulation suffix says so —
+// "Harpsichord, English (Releases Normal)". A note folder holding them is the
+// bug: those zones play damper-thuds instead of notes.
+const IS_RELEASE_FOLDER = /\((?:[^)]*\b)?Releases\b/i
+const releaseFolders = [...byFolder.keys()].filter(f => IS_RELEASE_FOLDER.test(f))
 const strayReleases = instruments.filter(x =>
-  !/\(releases\)$/.test(x.folder) && x.items.some(e => /(^|\/|_)Rel(eases)?(_|\/|$)/i.test(
+  !IS_RELEASE_FOLDER.test(x.folder) && x.items.some(e => /(^|[\/_])(rel|releases?|noises?)([\/_.]|$)/i.test(
     e.tags.find(t => t.startsWith('var:'))?.slice(4) || '')))
 check('release samples are kept out of the note folders', strayReleases.length === 0,
   `${releaseFolders.length} release folders, ${strayReleases.length} strays`)

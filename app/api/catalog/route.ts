@@ -1,4 +1,4 @@
-import { listCatalog } from '@/lib/catalog'
+import { listCatalog, catalogVersion } from '@/lib/catalog'
 
 /**
  * The catalog rows carry full provenance — every label, the source URL, the
@@ -24,8 +24,19 @@ export const runtime = 'nodejs'
 
 // GET /api/catalog — the official sound catalog, for every user's library.
 // Public + edge-cached; metadata only, audio streams from /api/catalog/audio.
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    // The client sends the version it already has. Almost every page load is a
+    // no-op — the catalog changes when an admin adds a pack, not when someone
+    // opens the studio — so answering "nothing changed" in sixty bytes is the
+    // difference between a quarter-megabyte per visit and none.
+    const have = new URL(req.url).searchParams.get('v')
+    const version = await catalogVersion()
+    if (have && have === version) {
+      return Response.json({ unchanged: true, version }, {
+        headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=600' },
+      })
+    }
     const rows = await listCatalog()
     const items = rows.map(r => ({
       id: r.id, name: r.name, category: r.category,
@@ -33,11 +44,11 @@ export async function GET() {
       duration: r.duration, folder: r.folder, parentFolder: r.parentFolder,
       tags: displayTags(r.tags), key: r.key, bpm: r.bpm,
     }))
-    return Response.json({ items }, {
+    return Response.json({ items, version }, {
       headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=600' },
     })
   } catch {
     // Table may not exist yet — an empty catalog beats a broken library.
-    return Response.json({ items: [] })
+    return Response.json({ items: [], version: '' })
   }
 }
