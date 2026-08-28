@@ -39,6 +39,14 @@ export interface PluginProduct {
   demos: PluginDemo[]
   /** Set once the Stripe product exists; until then the button explains itself. */
   stripePriceId?: string
+  /** Where the signed, notarized installer lives. The product page and the
+   *  purchase email both read this, so they can never disagree. */
+  downloadUrl?: string
+  /** sha256 of the installer at downloadUrl. Publish it so a careful buyer can
+   *  check what they downloaded is what we built. Must be updated together
+   *  with downloadUrl — a stale checksum is worse than none, because it makes
+   *  an honest file look tampered with. */
+  checksum?: string
   available: boolean
 }
 
@@ -108,6 +116,8 @@ export const LUZ: PluginProduct = {
     { name: 'Arp Music Box', category: 'Arp', file: 'Arp Music Box.mp3',
       blurb: 'Ratcheting arpeggiator with a velocity pattern.' },
   ],
+  downloadUrl: 'https://pub-a048d0d7221c44e5936bf3fc9f55a0fe.r2.dev/Luz-1.0.0.pkg',
+  checksum: '3592d4baba07bb446c31b2b14c48e0b39d6e0f5431830c0874b85ad128ab02e6',
   available: false,
 }
 

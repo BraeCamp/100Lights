@@ -1,5 +1,7 @@
 import Stripe from 'stripe';
 import { issueLicenseForOrder } from '@/lib/luz-license';
+import { sendPluginPurchaseEmail } from '@/lib/luz-email';
+import { pluginBySlug } from '@/lib/plugins-catalog';
 
 export const runtime = 'nodejs';
 
@@ -41,6 +43,31 @@ export async function POST(request: Request) {
         seats: session.metadata?.seats ?? undefined,
         product: session.metadata?.product ?? 'luz',
       });
+
+      // Deliver the key. This is the whole point of the purchase: a customer
+      // who pays and receives nothing has been robbed, however good the code
+      // upstream of here is. So a failure to send is logged loudly AND
+      // answered with a 500, which makes Stripe retry the webhook rather than
+      // letting the failure disappear into a 200.
+      if (created) {
+        const product = pluginBySlug(license.product) ?? pluginBySlug('luz');
+        const sent = await sendPluginPurchaseEmail({
+          email,
+          key: license.key,
+          productName: product?.name ?? 'Luz',
+          seats: license.seats_allowed,
+          downloadUrl: product?.downloadUrl ?? process.env.LUZ_DOWNLOAD_URL ?? '',
+          checksum: product?.checksum,
+        });
+
+        if (!sent) {
+          console.error(
+            `[luz] LICENCE ISSUED BUT NOT DELIVERED — order ${session.id}, ` +
+            `${email}, key ${license.key}. Send it by hand.`,
+          );
+          return Response.json({ error: 'Licence issued but delivery failed.' }, { status: 500 });
+        }
+      }
 
       if (created && process.env.LUZ_LICENSE_WEBHOOK_URL) {
         await fetch(process.env.LUZ_LICENSE_WEBHOOK_URL, {
