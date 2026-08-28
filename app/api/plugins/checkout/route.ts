@@ -58,8 +58,12 @@ export async function POST(request: Request) {
         product: product.slug,
         seats: String(product.seats),
       },
-      success_url: `${siteUrl()}/store/plugins/${product.slug}?purchased=1`,
-      cancel_url: `${siteUrl()}/store/plugins/${product.slug}`,
+      // /store/plugins is the page that exists; there is no per-product route
+      // yet, so the slug travels as a query param. Getting this wrong lands a
+      // customer on a 404 in the same second they part with their money, which
+      // is the worst possible moment to look broken.
+      success_url: `${siteUrl()}/store/plugins?purchased=${product.slug}`,
+      cancel_url: `${siteUrl()}/store/plugins`,
     })
 
     return Response.json({ url: session.url })
