@@ -154,7 +154,7 @@ for (const src of chosen) {
       category: src.family,
       // Articulation belongs in the folder — see folderFor(). A folder is one
       // instrument in one articulation, or the thing it builds is a chimera.
-      subcategory: folderFor(instrument, isNonNote(f.path) ? `Releases/${variant}` : variant),
+      subcategory: folderFor(instrument, variant, isNonNote(f.path)),
       group: `${src.family}/${src.id}`,
       title: instrument + (meta.note ? ` ${meta.note}` : ''),
       instrument,

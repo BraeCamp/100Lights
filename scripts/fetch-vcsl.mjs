@@ -186,7 +186,7 @@ const rows = picked.map(x => {
     // folderFor(). A tenor saxophone whose Vibrato, Non-Vibrato and Staccato
     // share one folder builds an instrument that is staccato on some notes and
     // sustained on others, and nothing about it looks wrong.
-    subcategory: folderFor(x.instrument, isNonNote(x.path) ? `Releases/${variant}` : variant),
+    subcategory: folderFor(x.instrument, variant, isNonNote(x.path)),
     group: x.group,
     title: x.instrument + (meta.note ? ` ${meta.note}` : ''),
     instrument: x.instrument,

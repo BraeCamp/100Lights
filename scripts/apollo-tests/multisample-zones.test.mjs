@@ -30,6 +30,12 @@ check('C4 is 60', midiFromNoteName('C4') === 60, String(midiFromNoteName('C4')))
 check('A4 is 69', midiFromNoteName('A4') === 69, String(midiFromNoteName('A4')))
 check('A#3 is 58', midiFromNoteName('A#3') === 58, String(midiFromNoteName('A#3')))
 check('Bb3 is A#3', midiFromNoteName('Bb3') === midiFromNoteName('A#3'))
+// The importer upper-cases note tags, so flats arrive as "EB3". Rejecting that
+// dropped every black key on every guitar and bass — 47 pitches, 28 zones.
+check('EB3 is Eb3 (upper-case flat)', midiFromNoteName('EB3') === midiFromNoteName('eb3'),
+  `${midiFromNoteName('EB3')} vs ${midiFromNoteName('eb3')}`)
+check('AB4 parses too', midiFromNoteName('AB4') === 68, String(midiFromNoteName('AB4')))
+check('and B3 is still the note B, not a flat', midiFromNoteName('B3') === 59)
 check('G9 is 127', midiFromNoteName('G9') === 127, String(midiFromNoteName('G9')))
 
 // The match is anchored on purpose. A matcher loose enough to read the pitch

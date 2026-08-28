@@ -67,7 +67,12 @@ eq('cryptic codes are translated', folderFor('Cello Section', 'pizzT'), 'Cello S
 eq('and so is susNV', variantSuffix('susNV'), 'Sustain Non-Vibrato')
 eq('wrapper folders are dropped', variantSuffix('Sustains/Normal'), 'Normal')
 eq('releases are labelled', variantSuffix('Releases/Lute'), 'Releases Lute')
-eq('a noises folder counts as releases', variantSuffix('arco/noises'), 'Releases Arco')
+// Non-note buckets keep their own name: collapsing "noises" and "extra" both
+// to "Releases" merged two different sets of sounds into one folder.
+eq('a noises folder says Noises', variantSuffix('arco/noises'), 'Noises Arco')
+eq('and an extra folder says Extra', variantSuffix('arco/extra'), 'Extra Arco')
+check('so the two do not share a folder',
+  folderFor('Double Bass', 'arco/noises') !== folderFor('Double Bass', 'arco/extra'))
 eq('a repeated word is not said twice', variantSuffix('Sustains/Sus'), 'Sustain')
 eq('unknown codes survive, title-cased', variantSuffix('fake_det'), 'Fake Det')
 eq('organ stops are left alone', variantSuffix("4'"), "4'")

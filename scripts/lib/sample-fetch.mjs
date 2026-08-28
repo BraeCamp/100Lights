@@ -137,20 +137,35 @@ const VARIANT_LABEL = {
 const prettyPart = p =>
   VARIANT_LABEL[p.toLowerCase()] ?? p.replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 
-export function variantSuffix(variant) {
+/** Non-note buckets keep their OWN name. Collapsing "arco/noises" and
+ *  "arco/extra" both to "Releases Arco" merged two different sets of sounds
+ *  into one folder — the exact thing this function exists to prevent. */
+const NON_NOTE_LABEL = {
+  rel: 'Releases', release: 'Releases', releases: 'Releases',
+  noise: 'Noises', noises: 'Noises', extra: 'Extra', fx: 'FX',
+}
+
+/**
+ * @param forceNonNote  the FILENAME says this is a release/noise even though no
+ *   folder does. Only a fallback: a variant naming its own bucket ("arco/noises")
+ *   keeps that name. Prepending "Releases/" instead shadowed the specific word
+ *   and merged arco/noises with arco/extra.
+ */
+export function variantSuffix(variant, forceNonNote = false) {
   const parts = String(variant || '').split('/').filter(Boolean)
-  const release = parts.some(p => RELEASE_WORD.test(p))
+  const nonNote = parts.map(p => NON_NOTE_LABEL[p.toLowerCase()]).find(Boolean)
+    ?? (forceNonNote ? 'Releases' : null)
   const rest = parts.filter(p => !WRAPPER.test(p) && !RELEASE_WORD.test(p)).map(prettyPart)
   // Two folder levels can say the same thing ("Sustains/Sus"); saying it twice
   // in the instrument list just looks like a mistake.
   const seen = new Set()
   const uniq = rest.filter(p => (seen.has(p) ? false : (seen.add(p), true)))
-  return [release ? 'Releases' : null, ...uniq].filter(Boolean).join(' ')
+  return [nonNote, ...uniq].filter(Boolean).join(' ')
 }
 
 /** "<family>/<Instrument> (<Articulation>)" — the importer's folder column. */
-export function folderFor(instrument, variant) {
-  const suffix = variantSuffix(variant)
+export function folderFor(instrument, variant, forceNonNote = false) {
+  const suffix = variantSuffix(variant, forceNonNote)
   return suffix ? `${instrument} (${suffix})` : instrument
 }
 
@@ -194,26 +209,36 @@ export async function download(rows, out, { concurrency = 12, urlOf, log = conso
 
 // ── Manifest ────────────────────────────────────────────────────────────────
 
-/** Seconds, from the WAV header — a 4 KB read, not a decode. */
+/**
+ * Seconds, from the WAV header — a 4 KB read, not a decode.
+ *
+ * Both numbers are found by WALKING the chunk list, never at a fixed offset.
+ * A WAV is only guaranteed to start "RIFF….WAVE"; what follows is chunks in
+ * whatever order the encoder felt like. Karoryfer's bass releases open with a
+ * 28-byte JUNK chunk (alignment padding) before `fmt `, so reading the byte
+ * rate from offset 28 — the position it occupies in the common layout — reads
+ * JUNK's zero bytes instead and every one of those 168 files reported 0:00.
+ */
 export function wavSeconds(path) {
   try {
     const fd = openSync(path, 'r')
     const head = Buffer.alloc(4096)
     const n = readSync(fd, head, 0, 4096, 0)
     closeSync(fd)
-    if (n < 44 || head.toString('ascii', 0, 4) !== 'RIFF') return 0
-    const byteRate = head.readUInt32LE(28)
-    if (!byteRate) return 0
-    // Walk the chunk list rather than assuming data starts at 44: some files
-    // carry LIST/INFO first, and a fixed offset reads their bytes as audio.
+    if (n < 12 || head.toString('ascii', 0, 4) !== 'RIFF') return 0
+
+    let byteRate = 0, dataSize = 0
     let off = 12
     while (off + 8 <= n) {
       const id = head.toString('ascii', off, off + 4)
       const size = head.readUInt32LE(off + 4)
-      if (id === 'data') return Number((size / byteRate).toFixed(3))
-      off += 8 + size + (size % 2)
+      const body = off + 8
+      if (id === 'fmt ' && body + 16 <= n) byteRate = head.readUInt32LE(body + 8)
+      if (id === 'data') { dataSize = size; break }
+      off = body + size + (size % 2)          // chunks are word-aligned
     }
-    return 0
+    if (!byteRate || !dataSize) return 0
+    return Number((dataSize / byteRate).toFixed(3))
   } catch { return 0 }
 }
 

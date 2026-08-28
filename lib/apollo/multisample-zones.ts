@@ -22,14 +22,24 @@ export interface SampleLike {
 
 const SEMIS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-/** "A#3" → 58. Exact match only: this is a note name, not a name containing one. */
+/**
+ * "A#3" → 58. Exact match only: this is a note name, not a name containing one.
+ *
+ * The accidental is matched case-INSENSITIVELY, and that is load-bearing. The
+ * importer normalises note tags to upper case, so a flat arrives as "EB3"; a
+ * matcher that only knows lower-case `b` returns null for it, and null means
+ * the sample is dropped from the instrument entirely. That silently cost every
+ * black key on every guitar and bass — 47 sampled pitches building 28 zones,
+ * with no error anywhere. An upper-case B in second position is unambiguous:
+ * no note letter is ever followed by another note letter.
+ */
 export function midiFromNoteName(name: string): number | null {
-  const m = name.trim().match(/^([A-Ga-g])(#|b)?(-?\d+)$/)
+  const m = name.trim().match(/^([A-Ga-g])([#bB])?(-?\d+)$/)
   if (!m) return null
   let semis = SEMIS.indexOf(m[1].toUpperCase())
   if (semis < 0) return null
   if (m[2] === '#') semis += 1
-  if (m[2] === 'b') semis -= 1
+  if (m[2] === 'b' || m[2] === 'B') semis -= 1
   // C-1 is MIDI 0, so the octave is offset by one. Flats and sharps are
   // allowed to fall off either end of their octave (Cb3, B#3) and wrap.
   return (Number(m[3]) + 1) * 12 + semis
