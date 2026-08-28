@@ -10,7 +10,11 @@ import { listCatalog } from '@/lib/catalog'
  *
  * They stay in the database, which is where a reorganisation runs anyway.
  */
-const HEAVY = /^(labels|desc|url|src):/
+// `inst:` repeats the folder name on all 351 samples of one piano, and
+// `var:`/`grp:`/`fam:` are groupings only a reorganisation reads. `note:`,
+// `rr:` and `mic:` stay: Apollo reads all three in the browser to build key
+// zones and to pick which take of a pitch to load.
+const HEAVY = /^(labels|desc|url|src|inst|var|grp|fam):/
 function displayTags(tags: string[] | undefined): string[] | undefined {
   if (!tags) return tags
   return tags.filter(t => !HEAVY.test(t))

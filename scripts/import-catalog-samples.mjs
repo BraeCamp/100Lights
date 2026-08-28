@@ -200,6 +200,18 @@ async function worker() {
         r.all_labels && `labels:${r.all_labels}`,
         r.pp_verified && `pp:${r.pp_verified}`,
         r.ambience_hint && `amb:${r.ambience_hint}`,
+        // A multisampled instrument is only playable if the NOTE survives the
+        // import. Apollo reads `note:` back off the tags to build key zones —
+        // scraping it out of the display name instead would mean guessing, and
+        // guessing wrong on any sound whose name happens to end in "B3".
+        r.note && `note:${r.note}`,
+        r.instrument && `inst:${r.instrument}`,
+        r.articulation && `art:${r.articulation}`,
+        r.round_robin && `rr:${r.round_robin}`,
+        r.mic && `mic:${r.mic}`,
+        r.variant && `var:${r.variant}`,
+        r.group && `grp:${r.group}`,
+        r.family && `fam:${r.family}`,
         r.tags && `kw:${r.tags}`,
         r.description && `desc:${r.description}`,
         r.author && `by:${r.author}`,
