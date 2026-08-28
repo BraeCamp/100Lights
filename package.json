@@ -17,6 +17,7 @@
     "check:catalog": "node scripts/check-catalog-in-app.mjs",
     "check:instruments": "node scripts/check-instruments.mjs",
     "check:plugin-menu": "node scripts/check-plugin-menu.mjs",
+    "check:load-speed": "node scripts/check-load-speed.mjs",
     "check:public-api": "node scripts/check-public-api.mjs",
     "check:add-project": "node scripts/check-module-add-project.mjs",
     "test:modules": "tsc -p tsconfig.test.json && node scripts/apollo-modules.test.mjs",
