@@ -37,6 +37,8 @@ export function preloadDrumInstrument(ctx: BaseAudioContext, instrument: TrackIn
 }
 import { playWavetableNote } from './wavetable-synth'
 import { playApolloNote } from './apollo/daw-instrument'
+import { playPluginNote } from './beacon-plugins/host'
+import type { PluginInstrumentParams } from './beacon-plugins/types'
 
 // Reserved implicit choke group so hi-hats cut each other by default without
 // the user configuring anything. Kept out of the 1..8 range users pick from.
@@ -399,6 +401,13 @@ export function playInstrumentNote(
     // Apollo runs a persistent AudioWorklet engine per track destination and
     // schedules note on/off at absolute context time (offline-render safe).
     playApolloNote(ctx, dest, instrument.params as ApolloInstrumentParams, pitch, velocity, when, duration)
+    return
+  }
+
+  if (instrument.type === 'plugin') {
+    // A Beacon plugin — same absolute-time contract as Apollo, but the engine
+    // is whatever the plugin brought with it (JS or WASM in a worklet).
+    playPluginNote(ctx, dest, instrument.params as PluginInstrumentParams, pitch, velocity, when, duration)
     return
   }
 }

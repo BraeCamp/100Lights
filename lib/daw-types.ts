@@ -11,6 +11,8 @@ export type Fm4OpOperator             = FMOperator
 export type WavetableInstrumentParams = WavetablePatch
 // Apollo hybrid synth (wavetable/sample/granular/spectral engine at /apollo)
 export type ApolloInstrumentParams = import('./apollo/patch').ApolloPatch
+/** A Beacon plugin on a track. See lib/beacon-plugins/. */
+export type PluginTrackParams = import('./beacon-plugins/types').PluginInstrumentParams
 
 export type TrackType = 'audio'
 
@@ -336,7 +338,7 @@ export function defaultArpMidi(): ArpMidiParams { return { enabled: true, style:
 
 // ── Instruments ───────────────────────────────────────────────────────────────
 
-export type InstrumentType = 'none' | 'drum' | 'fm' | 'poly' | 'sampler' | 'fm4op' | 'wavetable' | 'apollo'
+export type InstrumentType = 'none' | 'drum' | 'fm' | 'poly' | 'sampler' | 'fm4op' | 'wavetable' | 'apollo' | 'plugin'
 
 export interface DrumPadSettings {
   sampleId?: string   // library preset id or custom sample id
@@ -433,7 +435,7 @@ export function polyOscLayers(p: PolyInstrumentParams): PolyOscLayer[] {
   return [defaultOscLayer({ waveform: p.waveform, detune: p.detune })]
 }
 
-export type InstrumentParams = DrumInstrumentParams | FmInstrumentParams | PolyInstrumentParams | Fm4OpInstrumentParams | WavetableInstrumentParams | ApolloInstrumentParams | Record<string, never>
+export type InstrumentParams = DrumInstrumentParams | FmInstrumentParams | PolyInstrumentParams | Fm4OpInstrumentParams | WavetableInstrumentParams | ApolloInstrumentParams | PluginTrackParams | Record<string, never>
 
 export interface TrackInstrument {
   type: InstrumentType
