@@ -33,6 +33,15 @@ export async function POST(request: Request) {
       if (session.payment_status !== 'paid')
         return Response.json({ received: true, skipped: 'not paid yet' });
 
+      // Only plugin purchases mint a plug-in licence. This endpoint lives in
+      // the same Stripe account as memberships, Lumens and module purchases,
+      // and Stripe sends checkout.session.completed for ALL of them to EVERY
+      // endpoint subscribed to it. Without this guard, buying credits would
+      // also mint a Luz licence and email it to the customer — a stranger's
+      // top-up would hand them the synth for free.
+      if (session.metadata?.kind !== 'plugin')
+        return Response.json({ received: true, skipped: 'not a plugin purchase' });
+
       const email = session.customer_details?.email ?? session.customer_email;
       if (!email) return Response.json({ received: true, skipped: 'no email' });
 
