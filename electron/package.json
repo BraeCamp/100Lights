@@ -13,6 +13,7 @@
     "postinstall": "node scripts/patch-check-signature.js",
     "dev": "NODE_ENV=development electron .",
     "build": "tsc -p tsconfig.json",
+    "build:bridge": "cmake -B ../bridge/build -S ../bridge -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build ../bridge/build",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win",
     "dist:all": "npm run build && electron-builder --mac --win",
@@ -41,6 +42,15 @@
     },
     "files": [
       "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../bridge/build/BeaconBridge_artefacts/Release/Beacon Bridge.app",
+        "to": "Beacon Bridge.app",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "mac": {
       "category": "public.app-category.music",

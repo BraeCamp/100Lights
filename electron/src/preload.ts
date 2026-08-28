@@ -21,6 +21,14 @@ export interface SaveFileOptions {
   title?: string
 }
 
+export interface BridgeStatus {
+  installed: boolean
+  running: boolean
+  port: number | null
+  version: string | null
+  error: string
+}
+
 export interface ElectronAPI {
   // Native file dialogs — enhancement over <input type="file">
   openFileDialog: (options?: OpenFileOptions) => Promise<string[] | null>
@@ -41,6 +49,11 @@ export interface ElectronAPI {
   // Window state — lets the renderer drop traffic-light padding in fullscreen
   isFullScreen: () => Promise<boolean>
   onFullScreenChanged: (cb: (fullscreen: boolean) => void) => () => void
+
+  // Beacon Bridge (native AU / VST3 hosting)
+  bridgeStatus: () => Promise<BridgeStatus>
+  startBridge: () => Promise<BridgeStatus>
+  stopBridge: () => Promise<BridgeStatus>
 
   // App metadata
   platform: NodeJS.Platform
@@ -63,6 +76,9 @@ const electronAPI: ElectronAPI = {
   openModule: (moduleKey) => ipcRenderer.invoke('module:open', moduleKey),
   focusModule: (moduleKey) => ipcRenderer.invoke('module:focus', moduleKey),
   showLauncher: () => ipcRenderer.invoke('launcher:show'),
+  bridgeStatus: () => ipcRenderer.invoke('bridge:status') as Promise<BridgeStatus>,
+  startBridge: () => ipcRenderer.invoke('bridge:start') as Promise<BridgeStatus>,
+  stopBridge: () => ipcRenderer.invoke('bridge:stop') as Promise<BridgeStatus>,
   platform: process.platform,
   appVersion: ipcRenderer.sendSync('app:version') as string,
   isElectron: true,

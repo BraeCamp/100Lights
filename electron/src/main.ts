@@ -4,6 +4,7 @@ import log from 'electron-log'
 import { setupMenu } from './menu'
 import { setupUpdater } from './updater'
 import { setupIpc } from './ipc'
+import { disposeBridge } from './bridge'
 
 log.transports.file.level = 'info'
 log.info('100Lights starting', app.getVersion())
@@ -496,6 +497,10 @@ if (!gotLock) {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+// The plug-in host is a child process, not a service: it goes when we go, so
+// quitting never leaves something running that can still open windows.
+app.on('will-quit', () => { disposeBridge() })
 
 // macOS: re-create launcher when dock icon is clicked and no windows exist
 app.on('activate', () => {

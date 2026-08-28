@@ -14,6 +14,8 @@ import { translateInstrument } from './apollo/daw-synth'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
+import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam } from './beacon-plugins/host'
+import type { PluginInstrumentParams } from './beacon-plugins/types'
 import { combined, combinedStale, combinedStamp, requestCombine, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
 import { fatPatch } from './apollo/patch-diff'
@@ -1076,6 +1078,7 @@ export class DawEngine extends EventTarget {
     // Pre-warm sample-oscillator buffers for poly instruments — same reason as
     // preset buffers: a lazily-loaded sample would miss its first note.
     setApolloCtxTempo(this.ctx, project.tempo)
+    setPluginCtxTempo(this.ctx, project.tempo)
     // Uncombined synths load SEPARATELY, not up front: a project with several
     // Apollo tracks was building every one of them at load time, which is a
     // large fixed cost paid before a single note plays and a big part of why a
@@ -1086,6 +1089,15 @@ export class DawEngine extends EventTarget {
     const warmApollo  = apolloCount <= 2
     for (const track of project.tracks) {
       if (track.instrument?.type === 'drum') void preloadDrumInstrument(this.ctx, track.instrument)
+      if (track.instrument?.type === 'plugin') {
+        // Warm the worklet module and any wasm before the transport rolls, or
+        // the first notes are queued against an engine that is not up yet.
+        void preloadPluginInstrument(
+          this.ctx,
+          this.trackNodes.get(track.id)?.midiInput,
+          track.instrument.params as PluginInstrumentParams,
+        )
+      }
       if (!warmApollo && this._resolveInstrument(track)?.type === 'apollo') { /* lazy */ }
       else if (track.instrument?.type === 'apollo') {
         void preloadApolloInstrument(this.ctx, this.trackNodes.get(track.id)?.midiInput, track.instrument.params as ApolloInstrumentParams)
@@ -2344,6 +2356,15 @@ export class DawEngine extends EventTarget {
     this.dispatchEvent(new CustomEvent('tick', { detail: { beat: now } }))
   }
 
+  /** Push a plugin parameter straight to the running worklet, so turning a
+      knob is heard on a note that is already sounding rather than only on the
+      next one. The project state is updated separately by the panel. */
+  setPluginParamLive(trackId: string, paramId: string, value: number | boolean) {
+    const nodes = this.trackNodes.get(trackId)
+    if (!nodes) return
+    setPluginParam(nodes.midiInput, paramId, value)
+  }
+
   private _applyAutomation(trackId: string, parameter: string, value: number) {
     const nodes = this.trackNodes.get(trackId)
     if (!nodes) return
@@ -2363,6 +2384,13 @@ export class DawEngine extends EventTarget {
     // (and mirrored onto the card's knobs by the UI).
     if (parameter.startsWith('apollo:')) {
       setApolloTrackParam(nodes.midiInput, parameter.slice(7), value)
+      return
+    }
+    // Beacon plugin params: 'plugin:{paramId}'. Same idea as apollo: recorded
+    // by moving a control on the plugin panel, played straight back into the
+    // running worklet.
+    if (parameter.startsWith('plugin:')) {
+      setPluginParam(nodes.midiInput, parameter.slice(7), value)
       return
     }
     // Effects params: 'fx:{effectId}:{paramKey}'
@@ -3631,6 +3659,7 @@ export class DawEngine extends EventTarget {
     // Apollo worklet instruments: silence + discard (the midiInput bus swap
     // below orphans their connection; they rebuild on the next play)
     apolloStopAll(this.ctx)
+    pluginStopAll(this.ctx)
     const now      = this.ctx.currentTime
     const stopAt   = now + 0.015  // 15 ms fade window — inaudible but click-free
     for (const { source, gainNode, tailNodes, tailOscs, tailTimerId } of this.scheduledSources) {

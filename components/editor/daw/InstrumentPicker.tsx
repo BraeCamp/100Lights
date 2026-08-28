@@ -26,6 +26,9 @@ import dynamic from 'next/dynamic'
 import type { ApolloCardScope } from '@/components/apps/apollo/ApolloCard'
 // Lazy: the full Apollo UI only loads when a card is actually opened.
 const ApolloCard = dynamic(() => import('@/components/apps/apollo/ApolloCard'), { ssr: false })
+// Lazy for the same reason: the plugin registry fetches manifests, and a
+// track that is not using a plugin should never pay for that.
+const PluginPanel = dynamic(() => import('./PluginPanel'), { ssr: false })
 
 const C = {
   bgBase:      '#141414',
@@ -917,6 +920,7 @@ const TYPE_BUTTONS: { label: string; value: InstrumentType }[] = [
   { label: 'Wavetable',  value: 'wavetable' },
   { label: 'Poly',       value: 'poly'      },
   { label: 'Apollo',     value: 'apollo'    },
+  { label: 'Plugin',     value: 'plugin'    },
 ]
 
 export default memo(function InstrumentPicker({ trackId }: { trackId: string }) {
@@ -939,6 +943,9 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
     else if (next === 'fm4op')     newInstr = defaultFm4opInstrument()
     else if (next === 'wavetable') newInstr = defaultWavetableInstrument()
     else if (next === 'apollo')    newInstr = { type: 'apollo', params: initApolloPatch() }
+    // An empty pluginId means "not chosen yet", which is what makes the panel
+    // show its picker instead of an error.
+    else if (next === 'plugin')    newInstr = { type: 'plugin', params: { pluginId: '', values: {} } }
     else newInstr = { type: 'none', params: {} }
     dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: newInstr })
   }, [dispatch, trackId])
@@ -1008,6 +1015,7 @@ export default memo(function InstrumentPicker({ trackId }: { trackId: string }) 
       {instrType === 'poly'      && <PolyPanel      instrument={instrument} onSet={setPoly} />}
       {instrType === 'fm4op'     && <Fm4OpPanel     instrument={instrument} onSet={setFm4op} />}
       {instrType === 'wavetable' && <WavetablePanel instrument={instrument} onSet={setWavetable} />}
+      {instrType === 'plugin' && <PluginPanel trackId={trackId} instrument={instrument} />}
       {instrType === 'apollo'    && <ApolloPanel    instrument={instrument} trackId={trackId} />}
     </div>
   )
