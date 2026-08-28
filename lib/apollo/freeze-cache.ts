@@ -486,16 +486,18 @@ function idle(): Promise<void> {
 // small, and the work is yielded through, so it can run while you listen. Which
 // it must: rendering ahead of the playhead is the entire point.
 let playheadBeat = 0
-let lastLookaheadAsk = 0
 
 export function setPlayhead(beat: number): void {
   if (!Number.isFinite(beat)) return
   playheadBeat = beat
-  // Deliberately does NOT ask for a render any more. It used to, to keep a
-  // lookahead window topped up during playback — but nothing renders during
-  // playback now, so waking the baker here would only put the freeze back.
-  // The playhead still matters: byUrgency() sorts by distance from it, so
-  // baking on pause starts with whatever you are about to hear.
+  // Deliberately does not ask for a render here, even though baking now runs
+  // during playback again. It does not need to: the scheduler already asks for
+  // a combine whenever it meets a clip that is not baked, which is exactly when
+  // there is something to do and no more often. Waking the baker on every
+  // playhead tick as well would only add asks that the in-flight guard drops.
+  //
+  // The playhead matters for ORDER: byUrgency() sorts by distance from it, so
+  // each layer that gets baked is the one you are about to hear.
 }
 
 /**
@@ -511,6 +513,20 @@ export function setPlayhead(beat: number): void {
  * matters any more, because the first sound arrives in half a second either way.
  */
 let transportPlaying = false
+
+/**
+ * How long a single render may take while the transport is running before this
+ * machine is judged unable to do both.
+ *
+ * Baking during playback competes with the note scheduler, which is a real cost
+ * on a slow machine and none at all on a fast one. Rather than pick a side, the
+ * first over-long render sets `slowWhilePlaying` and baking goes back to
+ * waiting for the pause. It is cleared on stop, so the next take is judged on
+ * its own merits — a machine that was busy once is not condemned for the
+ * session.
+ */
+const WHILE_PLAYING_LIMIT_MS = 1500
+let slowWhilePlaying = false
 export function setTransportPlaying(v: boolean): void {
   const was = transportPlaying
   transportPlaying = v
@@ -520,6 +536,10 @@ export function setTransportPlaying(v: boolean): void {
   // way back, so without this the cache would only ever be filled by whatever
   // happened to be running when play was pressed — the song would stay live
   // forever and never get cheaper on the second pass.
+  // Stopping clears the "this machine cannot bake while playing" judgement, so
+  // the next take gets to try layering again rather than inheriting one bad
+  // render from earlier.
+  if (was && !v) slowWhilePlaying = false
   if (was && !v && lastGroups && pendingWhilePlaying) {
     pendingWhilePlaying = false
     requestCombine(lastBpm, lastGroups)
@@ -656,18 +676,15 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!groups.length) return
   lastGroups = groups
   lastBpm = bpm
-  // ── Playing means playing ──────────────────────────────────────────────
-  //
-  // Park before doing ANY work, not once the render loop is reached. The
-  // engine asks for a combine on every clip that is not yet baked, so during
-  // playback this is called constantly — and everything above the render loop
-  // (stamping every clip, sizing the cache, a disk lookup per missing clip)
-  // would run every time for a job that is only going to stop anyway. Parking
-  // late turned that into a busy loop and made the stalls worse, not better:
-  // measured 179ms worst frame against 133ms before the change.
-  //
-  // So remember that someone asked, and serve it on pause.
-  if (transportPlaying) { pendingWhilePlaying = true; return }
+  // Pressing play no longer stops the baking — it changes its shape. See
+  // "Baking in layers" at the render loop.
+
+  // Cheap repeat asks. The scheduler calls this for EVERY clip that is not yet
+  // baked, on every pass — dozens of times a second during playback. Everything
+  // below is O(clips) and pointless while a job is already running, so the
+  // in-flight check comes first rather than after the prologue.
+  const jobKey = 'project-combine'
+  if (inFlight.has(jobKey)) return
 
   const wanted = groups.flatMap(g => g.clips
     .filter(c => c.notes.length > 0)
@@ -680,8 +697,6 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   setProgress({ done: wanted.length - missing().length, total: wanted.length, phase: 'idle', active: false })
   if (!missing().length) return
 
-  const jobKey = 'project-combine'
-  if (inFlight.has(jobKey)) return
   inFlight.add(jobKey)
   queue.push({
     stamp: jobKey,
@@ -740,6 +755,9 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // one silent pass is usually contention and the next load should try
         // them again.
         const silentThisJob = new Set<string>()
+        // Clips that have come back silent ONCE in this job. A first silence
+        // buys a longer rest and a retry; a second sets the clip aside.
+        const silentOnce = new Set<string>()
         const renderable = () => missing().filter(w => !bad.has(w.key) && !silentThisJob.has(w.key))
         const tRender = Date.now()
 
@@ -853,40 +871,44 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // So: small while it matters, then big. And bigger still when the
         // transport is stopped, because then there is no deadline to miss — that
         // is Brae's "load the full thing in the background when it's paused".
-        // ── While playing, DO NOT RENDER ───────────────────────────────────
+        // ── Baking in layers, including while you play ─────────────────────
         //
-        // This started as "render the whole song", then became "render 14
-        // seconds ahead of the playhead". Brae, on the second one: "it says
-        // (loading ahead of playhead) but it loads far ahead instead of just
-        // right in front of it. Can we change the loading type to the one that
-        // plays real time when the user hits play?" — and before that, three
-        // times, some version of the same request.
+        // Brae: "When I hit play it should still render. In layers so that it
+        // at least plays something if the loading is too slow."
         //
-        // He is right, and a smaller window was never going to be the answer.
-        // Chrome runs an OfflineAudioContext carrying JS worklets ON THE MAIN
-        // THREAD, so every render is a main-thread block — and the note
-        // scheduler runs there too. Rendering while playing therefore competes
-        // with the very thing it is trying to serve: the studio goes quiet
-        // because nothing is left to schedule the notes. Fourteen seconds of
-        // lookahead is just a shorter freeze than the whole song.
+        // This code previously stopped dead on play. That rule was written
+        // because Chrome runs an OfflineAudioContext carrying JS worklets on the
+        // MAIN THREAD, so a render competes with the note scheduler — and a big
+        // enough render silenced the studio. That is true, and it is still why
+        // windows are small. But it was generalised too far, and a diagnose
+        // capture from the real failing session says so:
         //
-        // Apollo already has a real-time path — its DSP is an AudioWorklet on
-        // the audio thread, which is what real-time synthesis IS. Pressing play
-        // now uses it: whatever is already baked plays from the cache, and
-        // everything else is synthesised live. Baking resumes on pause, which
-        // is when there is nothing to interrupt, and is what makes the second
-        // pass over a section instant.
-        const stopWhilePlaying = () => transportPlaying
+        //     longestStallMs   47      <- the main thread is FINE
+        //     audioClockRate   0.35    <- the AUDIO thread is drowning
+        //     ready            0       <- nothing baked, so 7 tracks play live
+        //
+        // Nothing was baked, so every track was being synthesised live and the
+        // audio clock fell to a third of real time. Refusing to bake while
+        // playing is what guarantees that state persists: the only thing that
+        // reduces the live voice count is baking, and it was switched off for
+        // the whole time anyone was listening.
+        //
+        // So it bakes during playback now, in layers: one clip per pass,
+        // nearest the playhead first, with a rest proportional to the work just
+        // done. Every clip that lands moves off the live synth and hands the
+        // audio thread back some headroom, so the song gets cheaper to play the
+        // longer it plays.
+        //
+        // The old evidence is not thrown away, it is measured instead of
+        // assumed: if a single render while the transport is running exceeds
+        // WHILE_PLAYING_LIMIT_MS, this machine has just shown it cannot bake
+        // without hurting playback, and baking waits for the pause exactly as
+        // it used to. Machines that can do it get layers; machines that cannot
+        // get the old behaviour. Neither is a guess.
         let headStartDone = false
         while (renderable().length) {
-          // Someone pressed play. Stop, and let the audio thread have the
-          // machine — a render in flight cannot be cancelled, but no new one
-          // starts. setTransportPlaying(false) wakes this again on pause.
-          if (stopWhilePlaying()) {
-            // Play was pressed while this job was running. Stop, and make sure
-            // pausing picks the work back up — the entry guard above never saw
-            // this request, so without this the remaining clips would never be
-            // baked and every pass over them would stay live.
+          const playing = transportPlaying
+          if (playing && slowWhilePlaying) {
             pendingWhilePlaying = true
             setProgress({ ...progress, active: false, phase: 'paused' })
             break
@@ -927,8 +949,10 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           // an expensive clip alone plus per-pass overhead. 900/450/250 is the
           // measured floor for this shape of work; going below it trades total
           // time for nothing.
-          const timeBudget = userIsBusy() ? 250 : 900
-          const maxClips = phase === 'head' ? 2 : 8
+          // While playing: ONE clip and a tight deadline. The point is to add a
+          // layer without ever holding the thread long enough to be heard.
+          const timeBudget = playing ? 400 : userIsBusy() ? 250 : 900
+          const maxClips = playing ? 1 : phase === 'head' ? 2 : 8
           for (const w of queue2) {
             const vs = clipVoiceSeconds(w.clip, w.patch, spb2)
             // TWO independent limits, because they guard different failures.
@@ -961,7 +985,11 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           // separate speed test: the work we want to predict is the work we just
           // did, so measuring it is both free and exactly on-target — and it
           // keeps tracking the machine as it throttles or gets busy.
-          learnRenderCost(windowVoiceSec + SPAN_WEIGHT * spanSeconds(window), Date.now() - tWin)
+          const winMs = Date.now() - tWin
+          learnRenderCost(windowVoiceSec + SPAN_WEIGHT * spanSeconds(window), winMs)
+          // Measured, not assumed: one over-long render while the transport is
+          // running is this machine saying it cannot bake and play at once.
+          if (playing && winMs > WHILE_PLAYING_LIMIT_MS) slowWhilePlaying = true
           await keep(rendered, window)
           timings.batches++
           // A window that lands nothing must not stop the job.
@@ -979,9 +1007,29 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           // clips, not to abandon the other twenty-one. They are set aside for
           // this job and the loop carries on down the song.
           if (buffers.size === before) {
-            for (const w of window) silentThisJob.add(w.key)
-            rememberBad(window.map(w => w.key))
-            await gap(Date.now() - tWin)
+            // A silent render is usually NOT the clip's fault. This file says so
+            // a few hundred lines up, on `gap`: each render builds an offline
+            // context and registers the worklet in it, and back-to-back the
+            // later ones come back silent because the finished contexts have
+            // not been reclaimed yet. It is resource exhaustion, and the
+            // treatment is to wait longer — not to give up on the clip.
+            //
+            // Brae's capture showed `ready: 0` with a completed pass: every
+            // render coming back silent, on a machine 2.6x slower than the one
+            // these numbers were tuned on, so contexts are reclaimed later
+            // there and the old fixed gap was not enough.
+            //
+            // So: rest properly, then try the SAME clips once more. Only if
+            // they come back silent a second time are they set aside for this
+            // job and given a strike.
+            const keys = window.map(w => w.key)
+            const secondTime = keys.every(k => silentOnce.has(k))
+            for (const k of keys) silentOnce.add(k)
+            if (secondTime) {
+              for (const k of keys) silentThisJob.add(k)
+              rememberBad(keys)
+            }
+            await new Promise(r => setTimeout(r, Math.max(1200, Date.now() - tWin)))
             continue
           }
           await gap(Date.now() - tWin)

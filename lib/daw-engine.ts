@@ -1781,7 +1781,30 @@ export class DawEngine extends EventTarget {
   }
 
   /** Every Apollo track with notes, as render groups. */
-  private _apolloGroups() {
+  /**
+   * The Apollo render groups — memoised, because this sits on the scheduler's
+   * hot path.
+   *
+   * _tryScheduleCombined asks for a combine for every clip that is not yet
+   * baked, on every scheduler pass, and passes this in as an ARGUMENT — so it
+   * was rebuilt even when the request was going to be dropped immediately.
+   * Rebuilding means walking every track and re-filtering every clip
+   * (O(tracks x clips)) and allocating a fresh array per group, dozens of times
+   * a second, right next to the code whose job is to be ready on time.
+   *
+   * The cache is keyed on IDENTITY, not contents: _midiClips and _tracks are
+   * each reassigned wholesale when the project changes, and the resolved patch
+   * objects are compared too — an edited patch must produce new groups or the
+   * next render bakes the old sound.
+   */
+  private _apolloGroupsCache: {
+    clips: MidiClip[]
+    tracks: DawTrack[]
+    patches: unknown[]
+    groups: ReturnType<DawEngine['_buildApolloGroups']>
+  } | null = null
+
+  private _buildApolloGroups() {
     return this._tracks
       .map(t => ({ trackId: t.id, inst: this._resolveInstrument(t) }))
       .filter(x => x.inst?.type === 'apollo')
@@ -1791,6 +1814,18 @@ export class DawEngine extends EventTarget {
         clips: this._midiClips.filter(c => c.trackId === x.trackId && c.notes.length > 0),
       }))
       .filter(g => g.clips.length > 0)
+  }
+
+  private _apolloGroups() {
+    const patches = this._tracks.map(t => this._resolveInstrument(t)?.params)
+    const c = this._apolloGroupsCache
+    if (c && c.clips === this._midiClips && c.tracks === this._tracks
+      && c.patches.length === patches.length && c.patches.every((p, i) => p === patches[i])) {
+      return c.groups
+    }
+    const groups = this._buildApolloGroups()
+    this._apolloGroupsCache = { clips: this._midiClips, tracks: this._tracks, patches, groups }
+    return groups
   }
 
   /** The Apollo render groups, for benchmarking the render strategy from a test. */
@@ -1846,7 +1881,8 @@ export class DawEngine extends EventTarget {
     // Ask for the up-to-date render whenever the exact one is missing — INCLUDING
     // when a stale one is about to cover for it. Falling back without asking
     // would mean the new sound never gets built at all, and the old one plays
-    // forever.
+    // forever. Asked ONCE: the miss path below used to ask a second time for the
+    // same clip in the same pass.
     if (!exact) requestCombine(this.tempo, this._apolloGroups())
     const buf = exact ?? combinedStale(clip.id)
     if (!buf) {
@@ -1854,10 +1890,9 @@ export class DawEngine extends EventTarget {
       // for it and let this pass play live. The whole track goes in one request:
       // it renders in a single offline pass, which is what stopped most of the
       // renders coming back silent.
-      // Hand over EVERY Apollo track, not just this clip's: they render in one
-      // offline pass together, because a browser will not give us a fresh audio
-      // context per clip and the extras come back silent.
-      requestCombine(this.tempo, this._apolloGroups())
+      // (The request was already made above when `exact` was missing, and every
+      // path that reaches here has been through that. Asking twice for the same
+      // clip in the same pass only rebuilt the groups again.)
       // This clip is about to be scheduled note-by-note; remember that, so a
       // render finishing seconds from now does not start a second copy on top.
       if (clip.startBeat <= windowEnd && clip.startBeat + clip.durationBeats >= now) {
