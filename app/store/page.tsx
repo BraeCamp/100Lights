@@ -3,6 +3,8 @@ import SiteHeader from '@/components/site/SiteHeader'
 import SiteFooter from '@/components/site/SiteFooter'
 import PricingSection from '@/components/PricingSection'
 import StoreModules from '@/components/site/StoreModules'
+import Link from 'next/link'
+import { PLUGINS, formatPrice } from '@/lib/plugins-catalog'
 import CreditsPricing from '@/components/CreditsPricing'
 import { CREDITS_ENABLED } from '@/lib/credits'
 
@@ -50,6 +52,47 @@ export default function StorePage() {
             sub="Not a subscription person? Buy a studio once and it's yours for good — every future update included."
           />
           <StoreModules />
+        </section>
+
+        {/* ── Plugins ── */}
+        <section aria-labelledby="plugins-heading" className="max-w-4xl mx-auto px-6 pb-16 sm:pb-24">
+          <SectionHeading
+            title="Plugins for your DAW"
+            sub="The studio does not have to be the browser. These run in Logic, Ableton, Reaper and anything else that loads AU, VST3 or CLAP."
+          />
+          <div style={{ display: 'grid', gap: 12 }}>
+            {PLUGINS.map(plugin => (
+              <Link
+                key={plugin.slug}
+                href={`/store/plugins`}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 16, textDecoration: 'none',
+                  border: '1px solid var(--border)', borderRadius: 14,
+                  background: 'var(--bg-card)', padding: '18px 20px',
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>
+                    {plugin.name} — {plugin.tagline}
+                  </span>
+                  <span style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginTop: 4, lineHeight: 1.55 }}>
+                    {plugin.summary}
+                  </span>
+                  <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    {plugin.formats.join(' · ')}
+                  </span>
+                </span>
+                <span style={{ flexShrink: 0, textAlign: 'right' }}>
+                  <span style={{ display: 'block', fontSize: 20, fontWeight: 800, color: 'var(--text-primary)' }}>
+                    {formatPrice(plugin.priceCents, plugin.currency)}
+                  </span>
+                  <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {plugin.available ? 'one time' : 'coming soon'}
+                  </span>
+                </span>
+              </Link>
+            ))}
+          </div>
         </section>
 
         {/* ── Lumens ── */}
