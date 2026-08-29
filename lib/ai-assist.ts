@@ -5,6 +5,8 @@
 
 const MODEL = process.env.AI_ASSIST_MODEL || 'claude-sonnet-5'
 
+import { MUSIC_TOOLS, MUSIC_SYSTEM_HINT } from './voice/music-tools'
+
 export interface AssistMessage { role: 'user' | 'assistant'; content: string }
 export interface AssistAction { name: string; input: Record<string, unknown> }
 export interface AssistResult {
@@ -81,7 +83,28 @@ const TOOLS = [
   },
 ] as const
 
+/**
+ * The tools for the module the user is actually in.
+ *
+ * These used to be one flat list, and it was entirely video: stock footage,
+ * multicam, export. Someone speaking a command in Beacon had nothing to call,
+ * so the assistant could only describe what it would do. Music is its own set
+ * because the two share no verbs — "auto_edit" means nothing to a bassline and
+ * "loop_clip" means nothing to a video.
+ */
+function toolsFor(moduleName: string) {
+  return moduleName === 'music' ? MUSIC_TOOLS : TOOLS
+}
+
 function systemPrompt(moduleName: string, stateSummary?: string): string {
+  if (moduleName === 'music') {
+    return [
+      'You are the 100Lights assistant, working hands-on inside Beacon, the music studio.',
+      'You take actions by calling the provided tools; the app executes them for real on the user\'s song. Prefer doing the work over describing it.',
+      MUSIC_SYSTEM_HINT,
+      stateSummary ? `Current song: ${stateSummary}` : '',
+    ].filter(Boolean).join('\n\n')
+  }
   return [
     `You are the 100Lights assistant — you help people make music and videos INSIDE the app, working hands-on with its modules. The user is currently in the ${moduleName} module.`,
     `You can take actions by calling the provided tools; the app executes them for real on the user's project. Prefer doing the work over describing it: if the user asks for a music video of "a rainy city", search_and_add_stock for the footage, import_audio if they gave a track, then auto_edit — then tell them what you did in one or two sentences.`,
@@ -108,7 +131,7 @@ export async function runAssist(opts: {
       model: MODEL,
       max_tokens: opts.maxTokens ?? 1200,
       system: systemPrompt(opts.module ?? 'video', opts.stateSummary),
-      tools: TOOLS,
+      tools: toolsFor(opts.module ?? 'video'),
       messages: opts.messages.map(m => ({ role: m.role, content: m.content })),
     }),
     signal: AbortSignal.timeout(60_000),
