@@ -644,6 +644,20 @@ async function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip;
     for (let i = 0; i < d.length; i += 256) { const v = Math.abs(d[i]); if (v > peak) peak = v }
     if (peak < 1e-4) continue
     buffers.set(w.key, buf)
+    // A clip holds ONE render, never two.
+    //
+    // Layers cache each rung under its own stamp, so without this a clip keeps
+    // its dry copy alongside its filtered one, and a song sized for one render
+    // per clip goes over budget the moment the second rung starts. Eviction
+    // then takes the OLDEST buffers — the opening of the song, the part someone
+    // is most likely to be listening to — and those clips drop back to the live
+    // synth. Measured before this line existed: `ready` fell by 3 mid-load on a
+    // 42-clip song.
+    //
+    // Dropping here rather than at the end of a rung also matters: a
+    // whole-rung sweep would keep only the CURRENT rung's keys, and a clip that
+    // failed to render in this rung would lose the only audio it had.
+    dropSupersededLayers([w.key])
     landed.push(w.key)
     // A clip becomes playable the moment it is in `buffers`; persisting it is
     // for the NEXT page load and nobody is waiting on it. So the write is handed
@@ -715,6 +729,33 @@ let lastBpm = 120
 /** Someone asked for a render while the transport was running. Served on pause. */
 let pendingWhilePlaying = false
 
+/**
+ * Book a follow-up for work a job left unfinished.
+ *
+ * Cleared whenever a job completes the song, so a run of bad luck early on does
+ * not eat the budget for a later, legitimate retry.
+ */
+let retryAttempt = 0
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+const RETRY_DELAYS_MS = [2000, 4000, 8000, 16000, 32000, 60000]
+
+function scheduleRetry(): void {
+  if (retryTimer) return
+  const delay = RETRY_DELAYS_MS[retryAttempt]
+  if (delay == null) return          // genuinely given up; say so rather than spin
+  retryAttempt++
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    if (lastGroups) requestCombine(lastBpm, lastGroups)
+  }, delay)
+}
+
+/** A new project, or a reset, deserves a full set of attempts again. */
+export function resetCombineRetries(): void {
+  retryAttempt = 0
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
+}
+
 export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!groups.length) return
   lastGroups = groups
@@ -744,6 +785,11 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   queue.push({
     stamp: jobKey,
     run: async () => {
+      // How much was still owed when this job ended, so `finally` can decide
+      // whether anyone needs to come back for it. Starts pessimistic: a throw
+      // before the loop leaves the whole song outstanding, and that is exactly
+      // the case that must be retried.
+      let leftAtEnd = -1
       try {
         // Renders of Apollo instruments are NOT deterministic: the same project
         // rendered three times gave peaks of 0.202, 0 and 0.0657, with no error
@@ -1116,10 +1162,9 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           }
           await gap(Date.now() - tWin)
         }
-          // This rung is done. Drop the rung below it for every clip that got
-          // better, or the cache holds four renders of every clip and evicts
-          // the start of the song to make room for lower-quality copies of it.
-          if (li > 0) dropSupersededLayers(layerWanted.map(w => w.key))
+          // (Superseding is done per clip in keep(), as each better render
+          // lands. A sweep here would keep only THIS rung's keys and so delete
+          // the only copy held by any clip that failed to render in it.)
           // Stop climbing if play was pressed and this machine cannot bake
           // while playing — the rung it reached is what plays until the pause.
           if (transportPlaying && slowWhilePlaying) break
@@ -1164,7 +1209,8 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // Say which it was. "Would not render" was reported for clips that had
         // rendered perfectly and were then evicted, and that wrong label cost
         // real time chasing a rendering bug that did not exist.
-        const left = missingIn().length
+        leftAtEnd = missingIn().length
+        const left = leftAtEnd
         const atCeiling = MAX_FRAMES >= DEVICE_CEILING && projectFrames > DEVICE_CEILING
         lastError = !left ? null
           : atCeiling
@@ -1174,6 +1220,31 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         lastError = e instanceof Error ? e.message : String(e)
       } finally {
         inFlight.delete(jobKey)
+        // ── Nobody else is coming ───────────────────────────────────────────
+        //
+        // This block used to be one line, and that was a hole big enough to
+        // park Brae's "it sat for a few minutes and only got 7 of 23" in.
+        //
+        // A job can end with the song unfinished for reasons that are nobody's
+        // fault and nobody's cue: a throw out of renderApolloProject kills the
+        // whole job, and a pass where every remaining clip came back silent
+        // sets them all aside and leaves the loop with nothing it is allowed to
+        // render. In both cases the work is still owed — and the only things
+        // that ever asked again were the scheduler hitting a miss DURING
+        // playback, and pausing. Load a song, do not press play, and nothing in
+        // the system would ever pick it up again. The bar just stops.
+        //
+        // So the job books its own follow-up. Backed off, and capped, because a
+        // song that genuinely cannot render must not spin: six attempts at
+        // 2s, 4s, 8s, 16s, 32s, 60s, and then it really has given up. Each
+        // retry is a NEW job, so `silentThisJob` starts empty and clips set
+        // aside by contention get another go — which is the point.
+        const stoppedForPlayback = transportPlaying && slowWhilePlaying
+        if (leftAtEnd !== 0 && !stoppedForPlayback) {
+          scheduleRetry()
+        } else if (leftAtEnd === 0) {
+          retryAttempt = 0
+        }
       }
     },
   })
@@ -1183,6 +1254,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
 /** Drop everything (project close / user reset). */
 export function clearCombined(): void {
   buffers.clear(); inFlight.clear(); failures.clear(); queue.length = 0
+  resetCombineRetries()
 }
 
 /** Memory AND disk. Clearing only memory left the next request pulling every

@@ -26,6 +26,7 @@
 
 import { chromium } from 'playwright'
 import { importTs } from './lib/ts-import.mjs'
+import { slowDown, slowLabel } from './lib/slow-browser.mjs'
 
 const { initPatch } = await importTs('lib/apollo/patch.ts')
 const { defaultProject } = await importTs('lib/daw-types.ts')
@@ -91,6 +92,7 @@ function buildProject() {
 
 async function openStudio(browser) {
   const page = await browser.newPage({ viewport: { width: 1500, height: 900 } })
+  await slowDown(page)
   page.on('pageerror', e => console.log('  page error:', String(e).slice(0, 140)))
   await page.goto(`${BASE}/create?modules=audio&audioMode=music`, {
     waitUntil: 'domcontentloaded', timeout: 180000,
@@ -142,7 +144,8 @@ async function runOnce(project, { watching }) {
 
 const project = buildProject()
 const clipCount = project.arrangementClips.length
-console.log(`song: ${TRACKS} Apollo tracks, ${clipCount} clips, ${project.tempo}bpm\n`)
+console.log(`song: ${TRACKS} Apollo tracks, ${clipCount} clips, ${project.tempo}bpm`)
+console.log(`machine: ${slowLabel()}\n`)
 
 const still = await runOnce(project, { watching: false })
 console.log(`  pointer still    ${(still.ms / 1000).toFixed(1)}s  ${still.stats?.batches} passes  ${still.stats?.ready} ready`)
