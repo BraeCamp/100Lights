@@ -63,6 +63,22 @@ export async function requestMic(): Promise<{ ok: boolean; message?: string }> {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
     return { ok: false, message: 'This browser will not give the page a microphone.' }
   }
+  // Already granted? Then do NOT touch the microphone.
+  //
+  // Opening a capture and closing it again a millisecond later, immediately
+  // before SpeechRecognition opens its own, is asking two things to take the
+  // same device in quick succession — and when that loses, recognition ends the
+  // moment it starts, which surfaces as "I didn't catch that" before anyone has
+  // said a word. The permission prompt is the only reason to call getUserMedia
+  // at all, so once permission exists this path should do nothing.
+  try {
+    const perm = await navigator.permissions?.query?.({ name: 'microphone' as PermissionName })
+    if (perm?.state === 'granted') return { ok: true }
+    if (perm?.state === 'denied') {
+      return { ok: false, message: 'Microphone blocked. Allow it for this site in your browser settings, then try again.' }
+    }
+  } catch { /* Permissions API missing or does not know 'microphone' — ask properly below */ }
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     for (const t of stream.getTracks()) t.stop()
@@ -125,31 +141,86 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
     opts.onPartial?.((finalText + interim).trim())
   }
 
+  // ── Staying open ────────────────────────────────────────────────────────────
+  //
+  // `continuous` does NOT mean "listen until told to stop". Chrome ends the
+  // session on its own after a stretch of quiet — sometimes within a second of
+  // starting, before anyone has spoken — and `onend` then delivered an empty
+  // transcript, which is the "I didn't catch that" that appears the instant the
+  // button is pressed. In toggle mode especially, the button is a promise that
+  // it is still listening, and it was not.
+  //
+  // So an end that the CALLER did not ask for restarts the recognition instead
+  // of reporting. Bounded, because a microphone that cannot open would
+  // otherwise spin forever: a fatal error stops it, and so do the caps below.
+  let fatal = false
+  let restarts = 0
+  let delivered = false
+  const MAX_RESTARTS = 40
+  const DEADLINE_MS = 3 * 60 * 1000
+  const startedAt = Date.now()
+
+  /** Hand the caller the result, exactly once. */
+  const deliver = () => {
+    if (delivered || aborted) return
+    delivered = true
+    const text = finalText.trim()
+    if (text) opts.onFinal(text)
+    // Only say "I didn't catch that" when nothing was heard AND nothing else
+    // has already been reported — a fatal error has its own, better message.
+    else if (!fatal) opts.onError?.('I didn\'t catch that.')
+  }
+
   rec.onerror = (e: unknown) => {
     const err = (e as { error?: string }).error ?? 'unknown'
-    // "no-speech" and "aborted" are ordinary: the user held the button and said
-    // nothing, or let go early. Reporting those as failures trains people to
-    // ignore the error line, which is where the real ones appear.
+    // "no-speech" and "aborted" are ordinary: the user pressed the button and
+    // said nothing yet, or let go early. Reporting those as failures trains
+    // people to ignore the error line, which is where the real ones appear —
+    // and no-speech in particular is exactly what a restart is for.
     if (err === 'no-speech' || err === 'aborted') return
+    // Everything else is worth stopping for. Retrying a denied microphone or a
+    // missing speech service just loops.
+    fatal = true
     opts.onError?.(err === 'not-allowed'
       ? 'Microphone permission is off for this site.'
-      : `Speech recognition failed (${err}).`)
+      : err === 'audio-capture'
+        ? 'No microphone available.'
+        : `Speech recognition failed (${err}).`)
   }
 
   rec.onend = () => {
     if (aborted) return
-    // Fires whether the caller stopped it or the browser gave up on its own, so
-    // this is the one place the final transcript is delivered.
-    if (!stopped) stopped = true
-    const text = finalText.trim()
-    if (text) opts.onFinal(text)
-    else opts.onError?.('I didn\'t catch that.')
+    if (!stopped && !fatal && restarts < MAX_RESTARTS && Date.now() - startedAt < DEADLINE_MS) {
+      restarts++
+      // A short gap: calling start() from inside onend can throw
+      // InvalidStateError because the previous session is still tearing down.
+      setTimeout(() => {
+        if (stopped || aborted || fatal) return
+        try { rec.start() } catch { /* it really is finished — deliver below */ }
+      }, 120)
+      return
+    }
+    // Either the caller stopped it, or it is genuinely over.
+    stopped = true
+    deliver()
   }
 
   try { rec.start() } catch { opts.onError?.('Could not start listening.'); return null }
 
   return {
-    stop: () => { if (!stopped) { stopped = true; try { rec.stop() } catch { /* already stopping */ } } },
+    stop: () => {
+      stopped = true
+      try { rec.stop() } catch { /* already stopping */ }
+      // Deliver even if `onend` never comes.
+      //
+      // Between sessions there IS no live recognition — the restart above is
+      // waiting on a timer — so rec.stop() has nothing to end and fires no
+      // event. Without this the transcript is never handed over and the button
+      // sits on "Listening…" forever, which is the restart loop trading one
+      // stuck state for another. deliver() is idempotent, so the ordinary path
+      // (onend arrives first) is unaffected.
+      setTimeout(deliver, 300)
+    },
     abort: () => { aborted = true; try { rec.abort() } catch { /* already gone */ } },
   }
 }
