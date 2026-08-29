@@ -58,6 +58,64 @@ different every time.
 
 ---
 
+## How long a song should take
+
+**Brae's rule: a song takes time.** The fifteen-second render above is what makes
+that possible, not what makes it unnecessary. The tools got fast so the thinking
+could get slow — so that being wrong twenty times costs nothing and is therefore
+allowed. A song written in one pass and shipped on its first clean verdict is a
+song nobody thought about.
+
+Three things have to happen, in this order, and none of them is optional.
+
+### 1. Think about it before writing a line of it
+
+Most of what makes a song good is decided before any code exists. Answer these
+first, in the script's header comment, where the next person can read them:
+
+- **What is this song?** One sentence about the feeling, not the parts list.
+  "Slow, heavy, patient" is an answer; "sub, bass, piano, pad, kick, clap, hats"
+  is not. A template is a CHARACTER, never a parts-list.
+- **Why this tempo, key and length?** Against the style profile, with the number
+  it came from. If it sits at the profile's median, say so. If it sits at an
+  extreme, say what this song wants that the median could not give it.
+- **What does each instrument DO?** Not which one it is — what its job is, and
+  what it refuses to do. The bass in "the quiet part" stays or falls and never
+  rises; that decision is worth more than the patch playing it.
+- **Where does the arc go?** Which section is sparsest, which is densest, what
+  leaves before the last chorus and what comes back.
+- **What have the last songs already done?** Check tempo, key, kit and
+  progression against the existing scripts before choosing. Nine songs with swing
+  exactly zero is what happens when nobody looks.
+
+If a decision has no reason behind it, it is a default — and defaults are how
+every song ends up being the same song.
+
+### 2. Test it more than once, and believe the numbers over yourself
+
+`listen` is the floor, not the finish. A song is not tested until:
+
+- every track has been heard **alone**. A silent or wrong part improves most
+  whole-mix meters, which is the most repeated failure in this document;
+- `check-tuning` has run, because a mislabelled sample root is invisible on paper
+  and sounds like a wrong note;
+- the section report shows the arc actually moving, rather than the plan merely
+  saying it should;
+- a browser bounce has been taken before delivering, because the offline renderer
+  is an approximation and says so.
+
+### 3. Edit it after it works
+
+The first version that passes is a draft. Go back to it: cut a section that earns
+nothing, take a part out of the busiest bar, lengthen a note that is short only
+because it was convenient. **Removing something is an edit.** Most improvements
+to songs here have come from taking a part away — Brae, on the bass figure: it
+went "2 low and 1 high", and deleting the high note made it stronger.
+
+Ship when it is finished, not when it renders.
+
+---
+
 ## What actually separates our music from the reference
 
 Measured, not guessed: `build-targets.mjs` ran the ElevenLabs corpus through the

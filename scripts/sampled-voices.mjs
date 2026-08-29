@@ -105,40 +105,51 @@ export const sKick = (kit = 'techno', o = {}) => patch(`${kit} kick`, p => {
   p.fxMain.push(fxUnit(FX_DEFS, 'compressor', { threshold: -18, ratio: 4 }, { mix: 1 }))
 })
 
+// A one-shot is a mono recording, and panning one does not widen anything — it
+// changes level, not correlation. `verb` puts a reverb INSIDE the Apollo patch,
+// which is the difference that matters: a trackhead effect is not applied by the
+// offline renderer (`listen` calls that a render fault), so width added there is
+// invisible to every measurement taken before delivery. In the patch it renders.
 export const sSnare = (kit = 'studio', o = {}) => patch(`${kit} snare`, p => {
   sampleOsc(p, 0, drumId(kit, 'snare'), { level: 1 })
   env(p, 0, { attack: 0.0005, decay: o.decay ?? 0.30, sustain: 0, release: 0.09 })
   filt(p, 0, { enabled: true, type: 'lp12', cutoff: o.cutoff ?? 0.94, res: 0.04, drive: o.drive ?? 0.12 })
+  if (o.verb) p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: o.verb }))
 })
 
 export const sClap = (kit = 'techno', o = {}) => patch(`${kit} clap`, p => {
   sampleOsc(p, 0, drumId(kit, 'clap'), { level: 1 })
   env(p, 0, { attack: 0.0005, decay: o.decay ?? 0.34, sustain: 0, release: 0.12 })
   filt(p, 0, { enabled: true, type: 'hp12', cutoff: o.cutoff ?? 0.22, res: 0.05, drive: 0.06 })
+  if (o.verb) p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: o.verb }))
 })
 
 export const sHat = (kit = 'techno', o = {}) => patch(`${kit} hat`, p => {
   sampleOsc(p, 0, drumId(kit, 'hat'), { level: 1 })
   env(p, 0, { attack: 0.0004, decay: o.decay ?? 0.11, sustain: 0, release: 0.05 })
   filt(p, 0, { enabled: true, type: 'hp12', cutoff: o.cutoff ?? 0.30, res: 0.04, drive: 0 })
+  if (o.verb) p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: o.verb }))
 })
 
 export const sOpenHat = (kit = 'techno', o = {}) => patch(`${kit} open hat`, p => {
   sampleOsc(p, 0, drumId(kit, 'openHat'), { level: 1 })
   env(p, 0, { attack: 0.0004, decay: o.decay ?? 0.42, sustain: 0, release: 0.16 })
   filt(p, 0, { enabled: true, type: 'hp12', cutoff: o.cutoff ?? 0.28, res: 0.04, drive: 0 })
+  if (o.verb) p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: o.verb }))
 })
 
 export const sRim = (kit = 'studio', o = {}) => patch(`${kit} rim`, p => {
   sampleOsc(p, 0, drumId(kit, 'rim'), { level: 1 })
   env(p, 0, { attack: 0.0004, decay: o.decay ?? 0.14, sustain: 0, release: 0.05 })
   filt(p, 0, { enabled: true, type: 'hp12', cutoff: o.cutoff ?? 0.45, res: 0.06, drive: 0.05 })
+  if (o.verb) p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: o.verb }))
 })
 
 export const sCrash = (kit = 'studio', o = {}) => patch(`${kit} crash`, p => {
   sampleOsc(p, 0, drumId(kit, 'crash'), { level: 1 })
   env(p, 0, { attack: 0.001, decay: o.decay ?? 1.6, sustain: 0, release: 0.5 })
   filt(p, 0, { enabled: true, type: 'hp12', cutoff: o.cutoff ?? 0.20, res: 0.03, drive: 0 })
+  if (o.verb) p.fxMain.push(fxUnit(FX_DEFS, 'reverb', {}, { mix: o.verb }))
 })
 
 /** A tuned one-shot: the kick sample played as a pitched sub. */
