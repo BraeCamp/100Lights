@@ -67,6 +67,17 @@ export function collectFxRanges(units: FxUnit[], out: Record<string, [number, nu
 }
 
 export class ApolloEngine extends EventTarget {
+  /**
+   * Exceptions the audio thread caught and recovered from.
+   *
+   * `count` is every one, not the five that get reported: the difference
+   * between "it threw once on a stale patch" and "it is throwing 128 times a
+   * second and the song is silent" is the whole diagnosis, and both look
+   * identical from a console that stops after five.
+   */
+  readonly procErrors: { count: number; first: string; last: string; lastAt: number } =
+    { count: 0, first: '', last: '', lastAt: 0 }
+
   ctx: AudioContext | null = null
   node: AudioWorkletNode | null = null
   analyser: AnalyserNode | null = null
@@ -135,6 +146,17 @@ export class ApolloEngine extends EventTarget {
       } else if (m.type === 'procError') {
         // the engine caught an exception in process() and recovered (killed
         // voices, kept the processor alive) — surface it for diagnosis
+        //
+        // Kept on the engine as well as logged, because the console is not in
+        // a bug report. An exception that recurs on EVERY block is heard as a
+        // crackle and then silence that never comes back — the armour keeps the
+        // processor alive but every block it produces is zeros — and until this
+        // was recorded, a diagnose capture of exactly that said nothing at all
+        // about it.
+        this.procErrors.count++
+        if (!this.procErrors.first) this.procErrors.first = String(m.message).slice(0, 400)
+        this.procErrors.last = String(m.message).slice(0, 400)
+        this.procErrors.lastAt = Date.now()
         console.warn('[apollo] engine recovered from a processing error:', m.message)
         void import('@sentry/nextjs')
           .then(S => S.captureException(new Error(`Apollo engine process() threw (v${ENGINE_VERSION}, #${m.count}): ${String(m.message).slice(0, 400)}`)))

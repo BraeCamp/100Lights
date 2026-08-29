@@ -58,7 +58,7 @@ const hasFilters = (p: ApolloPatch): boolean => (p.filters ?? []).some(f => f?.e
  * every layer is skipped still renders exactly once, at full quality — the
  * behaviour before any of this existed.
  */
-export function layersFor(patches: ApolloPatch[]): RenderLayer[] {
+export function layersFor(patches: ApolloPatch[], opts: { detailed?: boolean } = {}): RenderLayer[] {
   const anyFilters = patches.some(hasFilters)
   const anyFx = patches.some(hasFx)
   const anySends = patches.some(hasSends)
@@ -66,12 +66,32 @@ export function layersFor(patches: ApolloPatch[]): RenderLayer[] {
   // Nothing to strip: one pass, the real patch.
   if (!anyFilters && !anyFx && !anySends) return [{ ...LADDER[3], label: 'Loading the song' }]
 
+  // ── Two rungs, not four ───────────────────────────────────────────────────
+  //
+  // Brae: "Does it have loading redundancies? That would be a problem that we
+  // need to fix." It did, and this was the biggest one — mine.
+  //
+  // Every rung re-renders the WHOLE song. Four rungs is four times the render
+  // work for the same final audio, and on a machine a third the speed of the
+  // one this was designed on, that is the difference between a song that loads
+  // and a song that never finishes. The intermediate rungs were also the least
+  // valuable: "with filters but no effects" is not a state anyone asked to
+  // hear. What was asked for is hearing the song at all, immediately, and then
+  // hearing it properly.
+  //
+  // So: dry, then the real patch. Half the work of the four-rung ladder, and it
+  // keeps the whole point of it. `detailed` restores the full climb for anyone
+  // who wants to watch the effects arrive one at a time.
+  const finalRung: RenderLayer = anySends
+    ? LADDER[3]
+    : { ...LADDER[3], id: 'sends', label: 'Adding the effects', full: true }
+
+  if (!opts.detailed) return [LADDER[0], finalRung]
+
   const out: RenderLayer[] = [LADDER[0]]
   if (anyFilters) out.push(LADDER[1])
   if (anyFx) out.push(LADDER[2])
-  // The final rung is always present and always full, whatever it is called.
-  out.push(anySends ? LADDER[3] : { ...LADDER[3], id: 'sends', label: 'Finishing', full: true })
-  // Collapse a duplicate final rung (e.g. sends-only patches).
+  out.push(finalRung)
   return out.filter((l, i, a) => i === 0 || l.id !== a[i - 1].id)
 }
 

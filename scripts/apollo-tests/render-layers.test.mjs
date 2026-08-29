@@ -42,16 +42,26 @@ const plainLayers = layersFor([plain])
 check('a song with no filters or FX gets a single layer', plainLayers.length === 1, `${plainLayers.length}`)
 check('and that layer is the full patch', plainLayers[0].full === true)
 
-check('a filtered song gets dry then filters then full',
-  layersFor([withFilter]).map(l => l.id).join(' → ') === 'dry → filters → sends',
+// The DEFAULT is two rungs, and that is a deliberate reversal. Every rung
+// re-renders the whole song, so four rungs is four times the work for the same
+// final audio — the biggest redundancy in the loader, and mine. "With filters
+// but no effects" is also not a state anyone asked to hear; what was asked for
+// is hearing the song at all, then hearing it properly.
+check('a filtered song gets dry then the real thing',
+  layersFor([withFilter]).map(l => l.id).join(' → ') === 'dry → sends',
   layersFor([withFilter]).map(l => l.id).join(' → '))
 
-check('an FX song gets dry then effects then full',
-  layersFor([withFx]).map(l => l.id).join(' → ') === 'dry → effects → sends',
+check('an FX song too',
+  layersFor([withFx]).map(l => l.id).join(' → ') === 'dry → sends',
   layersFor([withFx]).map(l => l.id).join(' → '))
 
-const all = layersFor([everything])
-check('a song with everything climbs the whole ladder',
+check('and a song with everything is still only two passes',
+  layersFor([everything]).length === 2,
+  layersFor([everything]).map(l => l.id).join(' → '))
+
+// The full climb is still available for watching the effects arrive one by one.
+const all = layersFor([everything], { detailed: true })
+check('detailed mode climbs the whole ladder',
   all.map(l => l.id).join(' → ') === 'dry → filters → effects → sends',
   all.map(l => l.id).join(' → '))
 check('exactly one layer is the full patch', all.filter(l => l.full).length === 1)
@@ -96,6 +106,9 @@ check('reducing a patch does not mutate the original',
 // ── What the bar says ───────────────────────────────────────────────────────
 check('the label counts the layers', layerLabel(all, 0) === 'The song, no effects (1 of 4)',
   layerLabel(all, 0))
+check('and counts two when there are two',
+  layerLabel(layersFor([everything]), 0) === 'The song, no effects (1 of 2)',
+  layerLabel(layersFor([everything]), 0))
 check('a single-layer song gets no count', layerLabel(plainLayers, 0) === 'Loading the song',
   layerLabel(plainLayers, 0))
 check('an out-of-range index still says something', typeof layerLabel(all, 99) === 'string')

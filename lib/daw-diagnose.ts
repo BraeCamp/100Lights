@@ -35,6 +35,8 @@ interface Diagnostic {
   tracks: Record<string, { everSounded: boolean; peak: number; soundedPct: number }>
   master: { everSounded: boolean; peak: number }
   combine: unknown
+  /** Exceptions the audio thread caught — silence with a cause. */
+  engineErrors: unknown
 }
 
 type Watch = {
@@ -198,6 +200,11 @@ export function installDawDiagnose(
       tracks,
       master: { everSounded: w.master.peak > NOISE, peak: +w.master.peak.toFixed(4) },
       combine: (window as unknown as { __combineStats?: () => unknown }).__combineStats?.() ?? null,
+      // The audio thread's own failures. A song that crackles and then goes
+      // quiet for good is process() throwing on every block: the armour keeps
+      // the processor alive, so nothing else in this report would show it.
+      engineErrors: (window as unknown as { __apolloEngineSingleton?: { procErrors?: unknown } })
+        .__apolloEngineSingleton?.procErrors ?? null,
     }
   }
 
