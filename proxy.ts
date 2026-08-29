@@ -12,6 +12,16 @@ const isPublicRoute = createRouteMatcher([
   '/share/(.*)',
   '/api/webhooks/(.*)',
   '/api/webhook/(.*)',
+  // Plug-in commerce. NONE of these callers can hold a Clerk session: Stripe
+  // posts the webhook, and the licence endpoints are called by a native plug-in
+  // running inside somebody's DAW. Left off this list, auth.protect() 404s them
+  // — which reads exactly like the route was never deployed, and cost an
+  // afternoon of looking at Vercel builds that were perfectly fine.
+  // Each one carries its own authentication: the webhook checks a Stripe
+  // signature, /license/batch a bearer token, and the rest a licence key or a
+  // hashed API key.
+  '/api/plugins/(.*)',
+  '/api/luz/(.*)',
   '/api/share/(.*)',
   '/api/platform-flags',
   // The sound catalog ships to EVERY user — syncCatalog says "signed in or
