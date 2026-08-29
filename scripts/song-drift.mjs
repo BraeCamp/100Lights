@@ -163,12 +163,29 @@ export function build() {
     // "Metallic Pluck") never made a sound, because a headless browser's library
     // is empty. A song written to TEST the studio must not depend on what is
     // installed, so both pitched parts are oscillators, which always sound.
+    // TRIANGLE, not sine, and a little drive — because a pure sine down here is
+    // inaudible on anything most people own.
+    //
+    // The first version of this track was a sine at 41-62 Hz behind a 140 Hz
+    // lowpass. It measured enormous (28-36% of the mix in the sub band, 56-59%
+    // in the breakdowns) and could not be heard at all on a laptop: every one of
+    // those Hz sits below what the speaker can move, and a sine has nothing
+    // above the fundamental to carry it. "Present in the file" and "audible" are
+    // not the same measurement, and only one of them matters.
+    //
+    // A triangle adds odd harmonics — at 41 Hz the third is 123 Hz and the fifth
+    // 205 Hz, both comfortably in range — and the saturator adds a few more
+    // without touching the fundamental. That is the trick the original Artemas
+    // recreation used, and dropping it was a regression, not a simplification.
+    // The lowpass opens to 400 Hz so those harmonics survive the filter.
     { key: 'sub', id: uid(), name: 'Sub', presetId: null, volume: 0.50, color: '#4c1d95',
       instrument: { type: 'poly', params: {
-        waveform: 'sine', attack: 0.006, decay: 0.0, sustain: 1.0, release: 0.12,
-        detune: 0, filterType: 'lowpass', filterCutoff: 140, filterResonance: 0.6,
+        waveform: 'triangle', attack: 0.006, decay: 0.0, sustain: 1.0, release: 0.12,
+        detune: 0, filterType: 'lowpass', filterCutoff: 400, filterResonance: 0.6,
         lfoEnabled: false, lfoRate: 4, lfoDepth: 0, lfoTarget: 'filter', lfoWaveform: 'sine' } },
-      effects: [eq3(5, -9, -14, 90, 500, 4000), compressor(-21, 4, 1)] },
+      effects: [
+        { id: uid(), type: 'saturator', params: { enabled: true, drive: 0.18, color: 0.3, output: -1 } },
+        eq3(4, -6, -14, 90, 500, 4000), compressor(-21, 4, 1)] },
     { key: 'pad', id: uid(), name: 'Pad', presetId: null, volume: 0.19, pan: 0.13, color: '#7c3aed',
       instrument: { type: 'poly', params: {
         waveform: 'sawtooth', attack: 1.1, decay: 1.0, sustain: 0.62, release: 2.8,

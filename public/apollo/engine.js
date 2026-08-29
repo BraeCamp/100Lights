@@ -1710,8 +1710,33 @@ function processFxUnitInner(engine, unit, st, L, R, n) {
             : Math.max(Math.abs(L[i]), Math.abs(R[i]))
           const db = 20 * Math.log10(inLvl + 1e-9)
           const over = db - th
-          const targetGr = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
+          let targetGr = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
+          // ── A compressor must not be able to latch a track off ────────────
+          //
+          // envG is gain reduction in dB and it is a feedback accumulator: the
+          // next value is computed from the previous one. Feed it one Infinity
+          // — from a spike, a broken upstream unit, a detector that saw a
+          // non-finite sample — and targetGr is -Infinity, envG becomes
+          // -Infinity, and it STAYS there for good, because
+          // rel * -Infinity + anything is still -Infinity.
+          //
+          // dbToLin(-Infinity) is exactly 0, so the output is a perfectly valid
+          // block of silence. That is what makes this one nasty: the non-finite
+          // guard at processFxUnit checks for NaN and Inf in the OUTPUT and
+          // sees clean, finite zeros. It never fires, and the track is muted for
+          // the life of the node.
+          //
+          // Measured on Drift's Sub: with the compressor alone the render played
+          // the first clip and was digital silence for the remaining 96 seconds,
+          // while live playback of the same track was fine throughout.
+          //
+          // 90 dB is past any musical use — a compressor asking for more than
+          // that is broken, not working hard — so clamping there costs nothing
+          // real and leaves the envelope able to recover.
+          if (!Number.isFinite(targetGr)) targetGr = 0
           st.envG = targetGr < st.envG ? atk * st.envG + (1 - atk) * targetGr : rel * st.envG + (1 - rel) * targetGr
+          if (!Number.isFinite(st.envG)) st.envG = 0
+          else if (st.envG < -90) st.envG = -90
           const g = dbToLin(st.envG) * makeup
           L[i] = lerp(L[i], L[i] * g, mix); R[i] = lerp(R[i], R[i] * g, mix)
         }
@@ -1734,8 +1759,12 @@ function processFxUnitInner(engine, unit, st, L, R, n) {
             const bs = st.bands[b]
             const db = 20 * Math.log10(Math.max(Math.abs(bl), Math.abs(br)) + 1e-9)
             const over = db - th
-            const tg = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
+            let tg = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
+            // Same accumulator, same latch — see the single-band branch above.
+            if (!Number.isFinite(tg)) tg = 0
             bs.envG = tg < bs.envG ? atk * bs.envG + (1 - atk) * tg : rel * bs.envG + (1 - rel) * tg
+            if (!Number.isFinite(bs.envG)) bs.envG = 0
+            else if (bs.envG < -90) bs.envG = -90
             const g = dbToLin(bs.envG)
             outL2 += bl * g; outR2 += br * g
           }
