@@ -97,9 +97,35 @@ function getDbName() {
   return _userId ? `contentforge-sound-library-${_userId}` : 'contentforge-sound-library'
 }
 
+// ── One connection, not one per operation ───────────────────────────────────
+//
+// Every function below used to call this, and this opened a NEW connection each
+// time. `indexedDB.open()` is not free: it is a round trip to the storage
+// thread that re-reads the database's metadata and runs the version check
+// before it hands anything back, and the cost grows with what the database
+// holds. With 12,949 catalog entries it is the single most expensive thing on
+// the main thread.
+//
+// A V8 CPU profile of a 6-track song (3x throttled) put `open` at the TOP of
+// self time in all three phases — 250ms during load and 99ms while the studio
+// was sitting completely still. It is invisible in every other measurement
+// because it is not a render, not a note, and not a paint; it just makes
+// everything that touches storage slow, and Apollo touches storage once per
+// sample id and once per clip. A 40-zone instrument is 40 opens.
+//
+// So the connection is opened once and reused. Dropped on close or a version
+// change from another tab, so the next caller reopens rather than using a
+// handle the browser has already invalidated.
+let dbPromise: Promise<IDBDatabase> | null = null
+let dbPromiseName = ''
+
 function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(getDbName(), DB_VERSION)
+  const name = getDbName()
+  // Signing in or out switches databases; the cached handle is for the old one.
+  if (dbPromise && dbPromiseName === name) return dbPromise
+  dbPromiseName = name
+  dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open(name, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
       if (!db.objectStoreNames.contains(STORE)) {
@@ -108,9 +134,18 @@ function openDB(): Promise<IDBDatabase> {
         store.createIndex('addedAt',  'addedAt',  { unique: false })
       }
     }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror   = () => reject(req.error)
+    req.onsuccess = () => {
+      const db = req.result
+      const forget = () => { if (dbPromiseName === name) { dbPromise = null; dbPromiseName = '' } }
+      db.onclose = forget
+      // Another tab upgrading the schema: close so it is not blocked, and let
+      // the next call reopen at the new version.
+      db.onversionchange = () => { try { db.close() } catch { /* already gone */ } forget() }
+      resolve(db)
+    }
+    req.onerror = () => { dbPromise = null; dbPromiseName = ''; reject(req.error) }
   })
+  return dbPromise
 }
 
 function tx<T>(

@@ -1104,6 +1104,39 @@ export class DawEngine extends EventTarget {
     // So: warm them all. Playing is the default again, and combining goes back
     // to being an optimisation nobody has to wait for.
     for (const track of project.tracks) {
+      // ── The node has to exist before we can warm an instrument onto it ────
+      //
+      // This loop reads `trackNodes.get(track.id)?.midiInput`, and the loop
+      // that CREATES those nodes ("Pass 1", below) runs about forty lines
+      // later. So on a fresh LOAD_PROJECT every destination here was undefined,
+      // and preloadApolloInstrument takes an early return when it has no
+      // destination: it warms the worklet module and returns, never building an
+      // engine and never loading the patch's samples.
+      //
+      // Nothing reported it. The track still plays, because playApolloNote
+      // builds the engine lazily on its first note — but that means the engine
+      // is created, the patch sent, and every sample fetched and decoded DURING
+      // playback, one track at a time as each first note arrives. A sampled
+      // instrument is one id per zone, so that is dozens of serial round trips
+      // on the main thread while the transport runs. It is the best explanation
+      // yet for "it only played one instrument even though it was loading the
+      // other ones" and for audio that degrades as more parts come in.
+      //
+      // It also silently defeated warming every Apollo track instead of two:
+      // the extra tracks reached this line and warmed nothing at all.
+      //
+      // ensureTrack is idempotent (`if (!this.trackNodes.has(id))`), so calling
+      // it here costs nothing on the passes where the node already exists, and
+      // Pass 1 still does the routing and preferences it owns.
+      //
+      // The Helios preference goes FIRST, exactly as Pass 1 orders it, because
+      // ensureTrack reads it when it builds the effects chain. Setting it after
+      // would build the chain against the wrong preference and then invalidate
+      // it (setHeliosFxPref clears the chain signature), costing a wasted
+      // rebuild on every track that turns Helios off. Ordering it this way
+      // makes Pass 1 a genuine no-op instead of a correction.
+      this.setHeliosFxPref(track.id, track.heliosFx !== false)
+      this.ensureTrack(track.id, track.effects)
       if (track.instrument?.type === 'drum') void preloadDrumInstrument(this.ctx, track.instrument)
       if (track.instrument?.type === 'plugin') {
         // Warm the worklet module and any wasm before the transport rolls, or

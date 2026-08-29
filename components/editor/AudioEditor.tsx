@@ -2866,8 +2866,17 @@ export default function AudioEditor(props: AudioEditorProps) {
           <div
             data-ui-el="load-progress"
             style={{
-              position: 'absolute', top: 0, left: 0, right: 0, zIndex: 940,
-              pointerEvents: 'none', display: 'flex', flexDirection: 'column', gap: 0,
+              // Along the BOTTOM, not the top. Brae asked for it there, and it
+              // is the better place for it: the top edge is where the transport
+              // and the toolbar live, so a strip that appears and disappears
+              // there nudges the eye to exactly the controls someone is
+              // reaching for. Loading is status, not a control.
+              //
+              // column-reverse keeps the reading order intact once flipped: the
+              // label sits above the hairline bar, and the bar hugs the very
+              // bottom edge of the window.
+              position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 940,
+              pointerEvents: 'none', display: 'flex', flexDirection: 'column-reverse', gap: 0,
             }}
           >
             <div style={{ height: 2, background: 'transparent' }}>
@@ -2880,7 +2889,7 @@ export default function AudioEditor(props: AudioEditorProps) {
             </div>
             <div style={{ display: 'flex', justifyContent: 'center' }}>
               <div style={{
-                marginTop: 4, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 600,
+                marginBottom: 4, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 600,
                 background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
                 color: 'var(--text-muted)', letterSpacing: '0.02em',
               }}>

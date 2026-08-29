@@ -35,6 +35,15 @@ interface Diagnostic {
   tracks: Record<string, { everSounded: boolean; peak: number; soundedPct: number }>
   master: { everSounded: boolean; peak: number }
   combine: unknown
+  /**
+   * What loading the SAMPLES cost — fetch + decode, before a note can sound.
+   *
+   * Missing from every earlier report, and it is the one cost that scales with
+   * how many sampled instruments a song uses rather than with anything the
+   * loader measures. A multisample is one id per zone, so this can be hundreds
+   * of round trips on a song the combine stats describe as nearly idle.
+   */
+  samples: unknown
   /** Exceptions the audio thread caught — silence with a cause. */
   engineErrors: unknown
 }
@@ -200,6 +209,7 @@ export function installDawDiagnose(
       tracks,
       master: { everSounded: w.master.peak > NOISE, peak: +w.master.peak.toFixed(4) },
       combine: (window as unknown as { __combineStats?: () => unknown }).__combineStats?.() ?? null,
+      samples: (window as unknown as { __sampleStats?: () => unknown }).__sampleStats?.() ?? null,
       // The audio thread's own failures. A song that crackles and then goes
       // quiet for good is process() throwing on every block: the armour keeps
       // the processor alive, so nothing else in this report would show it.

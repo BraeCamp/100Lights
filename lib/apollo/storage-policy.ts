@@ -164,10 +164,24 @@ async function flushPending(): Promise<void> {
     while (pending.length && !transportPlaying) {
       const burst = pending.splice(0, burstSize())
       const t = performance.now()
+      let done = 0
       for (const p of burst) {
+        // Checked per WRITE, not per burst. The loop condition above only ran
+        // between bursts, so pressing play in the middle of one let the whole
+        // burst finish — and saveCombined converts both channels to Int16
+        // synchronously before its first await, so that is heard.
+        //
+        // A CPU profile put `transaction` (483ms) and `put` (105ms) at the top
+        // of the main thread DURING playback, above everything the transport
+        // itself does. Whatever has not been written yet goes back on the queue
+        // and waits for the pause; it costs nothing to defer, because these
+        // writes only matter to the NEXT visit.
+        if (transportPlaying) break
         try { await writer(p.stamp, p.buf) } catch { /* a failed write costs nothing that matters */ }
+        done++
       }
-      learnWrite((performance.now() - t) / burst.length)
+      if (done < burst.length) pending.unshift(...burst.slice(done))
+      if (done) learnWrite((performance.now() - t) / done)
       // Hand the browser a turn between bursts, always — this runs while the
       // user is doing something else, and "paused" does not mean "idle".
       await new Promise(r => setTimeout(r, 0))

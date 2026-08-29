@@ -26,7 +26,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Mic, Loader2, X, Settings2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
-import { isSpeechAvailable, listen, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
+import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 
@@ -120,18 +120,42 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     }
   }, [project, dispatch, engine])
 
-  const start = useCallback(() => {
+  // Does the user still want to be listening? Asking for the microphone is
+  // asynchronous and the first ask shows a dialog, so in hold-to-talk the
+  // button can easily be released before permission resolves. Without this the
+  // recognition would start after the release and never be stopped — the
+  // microphone stays open with nothing watching it.
+  const wanted = useRef(false)
+
+  const start = useCallback(async () => {
     if (listening || busy) return
+    wanted.current = true
     setHeard(''); setSaid(''); setProblem('')
+    // Ask for the microphone BEFORE starting recognition. Relying on
+    // SpeechRecognition to raise its own prompt left the button doing nothing
+    // at all on a machine that had never granted access — see requestMic().
+    // Said out loud here, because a permission dialog appearing with no
+    // explanation is its own kind of broken.
+    setProblem('Waiting for microphone permission…')
+    const mic = await requestMic()
+    if (!wanted.current) { setProblem(''); return }
+    if (!mic.ok) { setProblem(mic.message ?? 'No microphone.'); return }
+    setProblem('')
     const h = listen({
       onPartial: setHeard,
       onFinal: t => { setListening(false); void run(t) },
       onError: m => { setListening(false); setProblem(m) },
     })
-    if (h) { handle.current = h; setListening(true) }
+    if (!h) return
+    handle.current = h
+    // Released while the recognition was being built: stop it immediately
+    // rather than leaving it open.
+    if (!wanted.current) { h.abort(); handle.current = null; return }
+    setListening(true)
   }, [listening, busy, run])
 
   const finish = useCallback(() => {
+    wanted.current = false
     handle.current?.stop()
     handle.current = null
     setListening(false)
@@ -150,7 +174,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         || el.getAttribute('role') === 'textbox')
       if (typing) return
       if (listening) { e.preventDefault(); finish() }
-      else if (!busy) { e.preventDefault(); start() }
+      else if (!busy) { e.preventDefault(); void start() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -161,8 +185,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
   const hold = mode === 'hold'
   const press = hold
-    ? { onPointerDown: start, onPointerUp: finish, onPointerLeave: () => { if (listening) finish() } }
-    : { onClick: () => (listening ? finish() : start()) }
+    ? { onPointerDown: () => void start(), onPointerUp: finish, onPointerLeave: finish }
+    : { onClick: () => { if (listening) finish(); else void start() } }
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', ...style }}>

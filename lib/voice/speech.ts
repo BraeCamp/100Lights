@@ -42,6 +42,46 @@ export function isSpeechAvailable(): boolean {
   return ctor() != null
 }
 
+// ── Asking for the microphone ───────────────────────────────────────────────
+//
+// SpeechRecognition is SUPPOSED to prompt for the microphone by itself, and
+// that is what this relied on. It is not dependable: Chrome will only raise its
+// own prompt in some circumstances, and when it declines to, `start()` either
+// throws nothing useful or ends immediately with `not-allowed` — a button that
+// lights up, hears nothing, and reports no reason. Brae: "the voice thing isn't
+// connect. It needs to request audio."
+//
+// So ask for the microphone explicitly first. getUserMedia is the call browsers
+// treat as a real permission request, tied to the user gesture that started it,
+// and once it resolves the recognition service has the access it needs.
+//
+// The stream is stopped immediately. We do not want the audio — SpeechRecognition
+// opens its own capture — and holding it would leave the tab's recording
+// indicator on for as long as the studio is open. The PERMISSION survives being
+// granted; only the capture stops.
+export async function requestMic(): Promise<{ ok: boolean; message?: string }> {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+    return { ok: false, message: 'This browser will not give the page a microphone.' }
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    for (const t of stream.getTracks()) t.stop()
+    return { ok: true }
+  } catch (e) {
+    const name = (e as { name?: string })?.name ?? ''
+    // Say which it is. "Denied" and "there is no microphone" need different
+    // things from the user, and one message for both sends people to the wrong
+    // settings page.
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      return { ok: false, message: 'Microphone blocked. Allow it for this site in your browser settings, then try again.' }
+    }
+    if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+      return { ok: false, message: 'No microphone found.' }
+    }
+    return { ok: false, message: 'Could not open the microphone.' }
+  }
+}
+
 export interface ListenOptions {
   /** Words as they arrive, including the unfinished tail — for showing live. */
   onPartial?: (text: string) => void

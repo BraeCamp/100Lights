@@ -406,8 +406,17 @@ export class ApolloEngine extends EventTarget {
       const built = user ? userTableWithMips(user.data, user.frames) : factoryTableWithMips(id)
       if (built) post({ type: 'table', id, ...copyBuilt(built) })
     }
-    // samples + spectral
-    for (const [id, smp] of this.samples) {
+    // samples + spectral — only the ones THIS patch plays.
+    //
+    // The sibling path (renderManyToBuffer) was fixed for this and this one was
+    // missed, which is the worse half: it copied every sample loaded in the
+    // engine into the render, so the cost scaled with the size of the user's
+    // library rather than with the clip being rendered. One multisampled piano
+    // is dozens of buffers, and none of them are audible in a render of a bass
+    // line.
+    for (const id of samplesUsedBy(patch)) {
+      const smp = this.samples.get(id)
+      if (!smp) continue
       post({ type: 'sample', id, sr: smp.sr, len: smp.len, l: new Float32Array(smp.l), r: smp.r ? new Float32Array(smp.r) : null })
       const an = this.spectralCache.get(id)
       if (an) post({ type: 'spectral', id, frames: an.frames, bins: an.bins, hop: an.hop, sr: an.sr, mags: new Float32Array(an.mags), phases: new Float32Array(an.phases), onsets: new Uint8Array(an.onsets) })

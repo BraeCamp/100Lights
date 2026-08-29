@@ -105,5 +105,61 @@ check('and lands as soon as the song stops', written.includes('during-playback')
   writeDelayMs = 0
 }
 
+// ── Play pressed in the MIDDLE of a burst ───────────────────────────────────
+//
+// Every case above turns the transport on BEFORE queueing, so the flush loop
+// always meets the change at its `while` condition — between bursts, where it
+// was already handled. The gap was inside a burst: the loop checked "is it
+// playing" once per burst and then wrote the whole thing, so pressing play
+// after the first write let the remaining eleven run. saveCombined converts
+// both channels to Int16 synchronously before its first await, so those are
+// heard.
+//
+// A CPU profile of a playing studio put `transaction` (483ms) and `put` (105ms)
+// at the top of the main thread — above everything the transport itself does.
+//
+// The setup is fiddly and it matters: queue while PLAYING so nothing flushes
+// and the queue fills, then pause so the flush takes a full burst, then press
+// play one write in. Queueing while stopped instead starts a flush on the very
+// first item, so the burst is a burst of one and this never reproduces.
+{
+  written.length = 0
+  writeDelayMs = 10
+  let playing = true
+  let began = 0
+  mod.setCombineWriter(async (stamp) => {
+    if (playing) began++
+    await new Promise(r => setTimeout(r, writeDelayMs))
+    written.push(stamp)
+  })
+
+  mod.setStorageTransportPlaying(true)
+  for (let i = 0; i < 40; i++) await mod.keepForNextTime(`burst-${i}`, fakeBuf)
+  check('queueing while playing writes nothing', written.length === 0, `${written.length} written`)
+
+  playing = false
+  mod.setStorageTransportPlaying(false)       // a full burst is taken here
+  await new Promise(r => setTimeout(r, 15))   // one write goes through
+  playing = true
+  mod.setStorageTransportPlaying(true)        // ...play lands mid-burst
+  await new Promise(r => setTimeout(r, 400))
+
+  check('pressing play stops the burst it is in the middle of', began <= 1,
+    `${began} write(s) began after play`)
+  check('and what it did not write is still queued', mod.storageStats().pending > 0,
+    `${mod.storageStats().pending} pending`)
+
+  const held = mod.storageStats().pending
+  playing = false
+  mod.setStorageTransportPlaying(false)
+  await new Promise(r => setTimeout(r, 2000))
+  check('pausing writes down everything that was held back',
+    mod.storageStats().pending === 0, `${mod.storageStats().pending} left of ${held}`)
+  check('and every clip was written exactly once',
+    written.length === 40 && new Set(written).size === 40,
+    `${written.length} writes, ${new Set(written).size} unique`)
+  writeDelayMs = 0
+}
+
 console.log(failures ? `\n${failures} failing` : '\nrenders are kept only when keeping them is free')
 assert.equal(failures, 0)

@@ -24,16 +24,28 @@ interface StoredClip {
   savedAt: number
 }
 
+// One connection, reused — see the note in lib/sound-library.ts. This store is
+// read once per clip and written once per clip, so a 42-clip song opened the
+// database 84 times to do 84 operations.
+let dbPromise: Promise<IDBDatabase> | null = null
+
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise
+  dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'stamp' })
     }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    req.onsuccess = () => {
+      const db = req.result
+      db.onclose = () => { dbPromise = null }
+      db.onversionchange = () => { try { db.close() } catch { /* already gone */ } dbPromise = null }
+      resolve(db)
+    }
+    req.onerror = () => { dbPromise = null; reject(req.error) }
   })
+  return dbPromise
 }
 
 const toPcm16 = (f: Float32Array): ArrayBuffer => {
