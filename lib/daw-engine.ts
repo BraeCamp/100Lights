@@ -1685,6 +1685,9 @@ export class DawEngine extends EventTarget {
               this._warnedMissingPreset.add(clip.presetId)
               console.warn(`[daw] preset "${clip.presetId}" has no samples in this library — ` +
                 'playing its notes on a synth voice instead of dropping them')
+              void import('@/lib/diag-journal').then(m => m.diag('load',
+                `preset "${clip.presetId}" has no samples — falling back to a synth voice`,
+                { track: track.name, pitch: note.pitch })).catch(() => {})
             }
             playInstrumentNote(this.ctx, noteDest, fallback, note.pitch, note.velocity,
               noteStartAt, noteDur + sustainSec)

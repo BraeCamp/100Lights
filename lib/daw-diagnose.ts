@@ -44,6 +44,16 @@ interface Diagnostic {
    * of round trips on a song the combine stats describe as nearly idle.
    */
   samples: unknown
+  /**
+   * The flight recorder: everything that went wrong this session, and what the
+   * PREVIOUS session left behind.
+   *
+   * A report used to describe only the moment it was taken, so a failure that
+   * happened thirty seconds earlier — the render that came back silent, the
+   * preset that had no samples — was already gone. These ride along, which is
+   * what makes a pasted report enough to work from on its own.
+   */
+  journal: unknown
   /** Exceptions the audio thread caught — silence with a cause. */
   engineErrors: unknown
 }
@@ -210,6 +220,13 @@ export function installDawDiagnose(
       master: { everSounded: w.master.peak > NOISE, peak: +w.master.peak.toFixed(4) },
       combine: (window as unknown as { __combineStats?: () => unknown }).__combineStats?.() ?? null,
       samples: (window as unknown as { __sampleStats?: () => unknown }).__sampleStats?.() ?? null,
+      journal: (() => {
+        const d = (window as unknown as { __diag?: { trouble?: () => unknown[]; previous?: () => unknown[] } }).__diag
+        if (!d) return null
+        // Trouble only, and capped: a report gets pasted into a message, and a
+        // full log would bury the lines that matter.
+        return { thisSession: d.trouble?.().slice(-30) ?? [], lastSession: d.previous?.().slice(-10) ?? [] }
+      })(),
       // The audio thread's own failures. A song that crackles and then goes
       // quiet for good is process() throwing on every block: the armour keeps
       // the processor alive, so nothing else in this report would show it.

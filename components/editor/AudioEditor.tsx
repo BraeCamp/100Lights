@@ -151,6 +151,11 @@ type MicPermState = 'checking' | 'granted' | 'denied' | 'prompt' | 'unavailable'
 function UnsavedShareButton({ onShare }: { onShare: () => Promise<void> }) {
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   const [busy, setBusy] = useState(false)
+  // Start the flight recorder before anything else can fail. Everything that
+  // goes wrong from here — a render that comes back silent, a preset with no
+  // samples, a worklet that throws — is written down and survives a reload.
+  useEffect(() => { void import('@/lib/diag-journal').then(m => m.installDiag()) }, [])
+
   useEffect(() => {
     const find = () => {
       const el = document.getElementById('transport-collab-slot')

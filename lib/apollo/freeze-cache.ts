@@ -84,6 +84,14 @@ const FAILURE_KINDS = new Set<LoadEventKind>(
   ['silent', 'window-error', 'layer-error', 'job-error', 'stall', 'reset', 'gave-up'])
 
 function logEvent(kind: LoadEventKind, e: Omit<LoadEvent, 't' | 'kind'> = {}): void {
+  // Mirror the bad ones into the journal so they outlive this module's ring and
+  // land in the file. Only failures — the window-by-window timings are useful
+  // live and would drown the log.
+  if (FAILURE_KINDS.has(kind)) {
+    void import('@/lib/diag-journal').then(m => m.diag('render', `loader ${kind}`, {
+      layer: e.layer, detail: e.detail, done: e.done, total: e.total, ms: e.ms,
+    })).catch(() => {})
+  }
   eventLog.push({ t: Math.round(typeof performance !== 'undefined' ? performance.now() : Date.now()), kind, ...e })
   if (eventLog.length > LOG_MAX) eventLog.splice(0, eventLog.length - LOG_MAX)
   // Surface it the moment it happens, rather than waiting for someone to ask

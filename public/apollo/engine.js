@@ -1435,6 +1435,74 @@ class FxState {
 }
 
 function processFxUnit(engine, unit, st, L, R, n) {
+  // A unit that could not be stabilised is SKIPPED, not run and cleaned up
+  // after. Returning here leaves L/R holding the input, so the effect becomes a
+  // no-op and the track keeps playing dry — which is the correct failure for an
+  // effect. It also costs nothing: no processing, no copy, no per-block scan.
+  if (st.__fxBypass) return
+  return guardFinite(engine, unit, st, L, R, n, processFxUnitInner)
+}
+
+// ── An effect must never be able to silence a track forever ─────────────────
+//
+// Several of these effects are feedback loops — a reverb tank, a delay, a
+// phaser, a flanger. Feed a non-finite value into one and it NEVER leaves: NaN
+// times anything is NaN, so the loop stays poisoned for the life of the node,
+// the track goes silent, and every downstream mix goes silent with it. There is
+// no error and nothing in the console; the meter simply reads zero.
+//
+// That is not hypothetical. Sweeping the reverb across its whole parameter
+// range found exactly one silencing value — decay 1.5 (and only on this path;
+// the plain WebAudio route was fine at every value):
+//
+//     decay  1.2  ok      1.5  MUTE      1.8  ok      2.0  ok
+//
+// A single value between two working neighbours is a resonance, not a range
+// problem: 1.5 maps to size exactly 0.25 and the tank's delay multiplier to
+// exactly 0.55, and at that alignment the figure-8 runs away. Chasing which
+// multiplier resonates would fix one value and leave the next one to be found
+// by a user, so the guard is here instead, where it covers every unit that has
+// state: if a block comes out non-finite, the unit is rebuilt from scratch and
+// the block is silenced. One bad block instead of a dead track.
+//
+// The cost is a sum over the block — a few hundred adds against a DSP pass that
+// is orders of magnitude larger — and it runs only on the FX path, never per
+// voice.
+function guardFinite(engine, unit, st, L, R, n, inner) {
+  const out = inner(engine, unit, st, L, R, n)
+  let acc = 0
+  for (let i = 0; i < n; i++) acc += L[i] + R[i]
+  if (Number.isFinite(acc)) { if (st.__fxBad) st.__fxBad = 0; return out }
+  // Poisoned. Rebuild this unit's state and let the next block be clean.
+  for (let i = 0; i < n; i++) { L[i] = 0; R[i] = 0 }
+  // FxState builds its state in the constructor, so re-running that on the
+  // existing object is the reset: every delay line, filter and accumulator is
+  // replaced with a fresh one, and the poisoned values are gone with them.
+  try {
+    FxState.call(st, unit.type, engine.sr, engine.bpm)
+  } catch (e) {
+    void e   // if it cannot be rebuilt the block is still silenced, which is the point
+  }
+  engine.fxNonFinite = (engine.fxNonFinite || 0) + 1
+  engine.fxNonFiniteLast = unit.type
+  // Rebuilding is enough when a stray value got in. It is NOT enough when the
+  // unit's own parameters are what blow it up: it re-poisons on the very next
+  // block, every block gets zeroed, and "recovering" forever is indistinguishable
+  // from being dead. Measured exactly that way — the reverb at decay 1.5 stayed
+  // silent with the rebuild in place. So after a few consecutive failures, stop
+  // trying and get out of the signal's way.
+  st.__fxBad = (st.__fxBad || 0) + 1
+  if (st.__fxBad >= 3) st.__fxBypass = true
+  // Say so once per unit, so this stops being invisible the way it has been.
+  if (!engine._warnedNonFinite) engine._warnedNonFinite = new Set()
+  if (!engine._warnedNonFinite.has(unit.id)) {
+    engine._warnedNonFinite.add(unit.id)
+    engine.port.postMessage({ type: 'procError', message: `fx ${unit.type} (${unit.id}) produced a non-finite block — state rebuilt`, count: engine.fxNonFinite })
+  }
+  return out
+}
+
+function processFxUnitInner(engine, unit, st, L, R, n) {
   const p = unit.params
   const sr = engine.sr
   const mixKey = `fx.${unit.id}.mix`
