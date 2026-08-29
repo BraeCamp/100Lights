@@ -4144,6 +4144,17 @@ export class DawEngine extends EventTarget {
         const dest = this.trackNodes.get(track.id)?.midiInput
         thunks.push(() => preloadApolloInstrument(this.ctx, dest, patch))
       }
+      if (track.instrument?.type === 'plugin') {
+        // Same reason as Apollo above, and it bit in exactly the same way: a
+        // Beacon plugin's worklet module and its wasm load asynchronously, while
+        // the offline scheduler makes ONE pass and then renders. Without this
+        // await the notes are posted to a processor that does not exist yet and
+        // the bounce comes out silent — silent with no warning, because the
+        // readiness timeout lives inside the preload that nothing was calling.
+        const dest = this.trackNodes.get(track.id)?.midiInput
+        const params = track.instrument.params as PluginInstrumentParams
+        thunks.push(() => preloadPluginInstrument(this.ctx, dest, params))
+      }
       if (track.instrument?.type !== 'poly') continue
       const oscs = (track.instrument.params as PolyInstrumentParams).oscillators
       if (!oscs) continue
