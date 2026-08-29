@@ -91,6 +91,47 @@ const { listen } = await importTs('lib/voice/speech.ts')
   check('and no spurious error', errors === 0, `${errors} error(s)`)
 }
 
+// ── A network blip is not the end ───────────────────────────────────────────
+//
+// Chrome's recognition is not local: it streams audio to Google and gets words
+// back, so `network` is an ordinary transient — a VPN, a firewall, a slow
+// connection, a service hiccup — and it arrives IMMEDIATELY, before a word has
+// been spoken. Treating it like a denied microphone is what produced "it said
+// speech recognition failed right off the bat before I could even say
+// anything".
+{
+  built.length = 0
+  const msgs = []
+  let finals = 0
+  const h = listen({ onFinal: t => { finals++; void t }, onError: m => msgs.push(m) })
+  const rec = built[0]
+  rec.fail('network')
+  rec.endNaturally()
+  await tick(250)
+  check('a network blip does not report a failure', msgs.length === 0, msgs.join(' | '))
+  check('and it keeps listening', rec.started === 2, `started ${rec.started}`)
+
+  // ...and the words still arrive afterwards.
+  rec.say('set the tempo to 120')
+  h.stop()
+  await tick(400)
+  check('and the command still lands after a blip', finals === 1, `${finals} final(s)`)
+}
+
+// ── ...but a service that never works must say so ───────────────────────────
+{
+  built.length = 0
+  const msgs = []
+  const h = listen({ onFinal: () => {}, onError: m => msgs.push(m) })
+  const rec = built[0]
+  // Twelve in a row is not a blip.
+  for (let i = 0; i < 14; i++) { rec.fail('network'); rec.endNaturally(); await tick(150) }
+  check('a service that never answers is eventually reported',
+    msgs.some(m => /speech service|type the command/i.test(m)), msgs.slice(-1).join(''))
+  check('and it stops retrying', rec.started < 14, `started ${rec.started}`)
+  h.abort()
+}
+
 // ── A fatal error must not spin ─────────────────────────────────────────────
 {
   built.length = 0

@@ -155,6 +155,11 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
   // otherwise spin forever: a fatal error stops it, and so do the caps below.
   let fatal = false
   let restarts = 0
+  // A network blip is worth retrying; twelve of them in a row means the speech
+  // service is genuinely unreachable from here and saying so is more useful
+  // than retrying forever.
+  let transientErrs = 0
+  const MAX_TRANSIENT = 12
   let delivered = false
   const MAX_RESTARTS = 40
   const DEADLINE_MS = 3 * 60 * 1000
@@ -173,19 +178,54 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
 
   rec.onerror = (e: unknown) => {
     const err = (e as { error?: string }).error ?? 'unknown'
+    // Record every one, even the ordinary ones. This is the single hardest
+    // thing to diagnose remotely — the error code says exactly what went wrong
+    // and it was previously visible only as a sentence in the UI, which is not
+    // something anyone thinks to copy.
+    void import('@/lib/diag-journal').then(m => m.diag('audio', `speech error: ${err}`)).catch(() => {})
+
     // "no-speech" and "aborted" are ordinary: the user pressed the button and
     // said nothing yet, or let go early. Reporting those as failures trains
     // people to ignore the error line, which is where the real ones appear —
     // and no-speech in particular is exactly what a restart is for.
     if (err === 'no-speech' || err === 'aborted') return
-    // Everything else is worth stopping for. Retrying a denied microphone or a
-    // missing speech service just loops.
+
+    // ── Not every failure is permanent, and treating them alike broke this ───
+    //
+    // Chrome's SpeechRecognition is not local: it streams audio to Google and
+    // gets words back. So `network` is a NORMAL transient — a slow connection,
+    // a VPN, a firewall, a service hiccup — and it arrives immediately, before
+    // a word has been spoken. Every non-fatal code used to set `fatal` and stop
+    // everything, which is exactly "it said speech recognition failed right off
+    // the bat before I could even say anything".
+    //
+    // Transient codes now fall through to onend, which restarts, so a blip
+    // costs a moment instead of the session. Only a genuinely unrecoverable
+    // condition stops it: permission refused, or a speech service that will not
+    // serve this browser at all.
+    if (err === 'network' || err === 'audio-capture') {
+      transientErrs++
+      // Say something after a few, because silence while nothing works is worse
+      // than a warning — but do NOT stop; the restart may well succeed.
+      if (transientErrs === 3) {
+        opts.onError?.(err === 'network'
+          ? 'Trouble reaching the speech service — still trying. If this persists, type the command instead.'
+          : 'Trouble reading the microphone — still trying.')
+      }
+      if (transientErrs < MAX_TRANSIENT) return
+      fatal = true
+      opts.onError?.(err === 'network'
+        ? 'Speech recognition needs to reach Google\'s speech service and cannot. Type the command instead.'
+        : 'Could not read the microphone.')
+      return
+    }
+
     fatal = true
     opts.onError?.(err === 'not-allowed'
       ? 'Microphone permission is off for this site.'
-      : err === 'audio-capture'
-        ? 'No microphone available.'
-        : `Speech recognition failed (${err}).`)
+      : err === 'service-not-allowed'
+        ? 'This browser will not allow speech recognition. Type the command instead.'
+        : `Speech recognition failed (${err}). Type the command instead.`)
   }
 
   rec.onend = () => {

@@ -61,6 +61,20 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [mode, setMode] = useState<VoiceMode>('hold')
   const [enterRuns, setEnterRuns] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
+  // ── Typing is a first-class way in, not a consolation prize ───────────────
+  //
+  // Chrome's speech recognition is not local: it streams audio to Google and
+  // gets words back, so it can be unavailable for reasons that have nothing to
+  // do with this app — a VPN, a firewall, a region, a service hiccup, or a
+  // browser that never had it. Firefox has none at all.
+  //
+  // Everything downstream of the words is text: musicStateSummary, the
+  // assistant, planVoiceCalls, the reducer actions. The microphone was only
+  // ever a way to produce a sentence, so a text box is the SAME feature with
+  // one less dependency — and it is the difference between "voice control does
+  // not work here" and "voice control is one keystroke slower here".
+  const [typed, setTyped] = useState('')
+  const [showType, setShowType] = useState(false)
   const handle = useRef<SpeechHandle | null>(null)
   const available = useRef(false)
 
@@ -144,7 +158,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const h = listen({
       onPartial: setHeard,
       onFinal: t => { setListening(false); void run(t) },
-      onError: m => { setListening(false); setProblem(m) },
+      onError: m => {
+        setListening(false); setProblem(m)
+        // A failure that names typing as the way forward should OPEN the box,
+        // not just mention it. Being told what to do instead and then having to
+        // find it is its own small failure.
+        if (/type the command/i.test(m)) setShowType(true)
+      },
     })
     if (!h) return
     handle.current = h
@@ -211,6 +231,23 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         {label}
       </button>
 
+      {/* Type instead. Always available — not only after something has failed,
+          because a typed command is often simply faster, and because a control
+          that appears only in an error state is one nobody knows exists. */}
+      <button
+        onClick={e => { e.stopPropagation(); setShowType(v => !v); setProblem('') }}
+        title="Type a command instead of speaking"
+        style={{
+          marginLeft: 4, height: 22, padding: '0 7px', borderRadius: 5,
+          border: `1px solid ${showType ? C.accent : C.border}`,
+          background: showType ? `${C.accent}22` : 'transparent',
+          color: showType ? C.accent : C.textMuted,
+          fontSize: 10, fontWeight: 800, letterSpacing: 0.4, cursor: 'pointer',
+        }}
+      >
+        TYPE
+      </button>
+
       <button
         onClick={e => { e.stopPropagation(); setShowSettings(v => !v) }}
         data-voice-settings
@@ -257,6 +294,45 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               </span>
             </span>
           </label>
+        </div>
+      )}
+
+      {showType && (
+        <div
+          style={{
+            position: 'absolute', top: 26, right: 0, zIndex: 60,
+            minWidth: 300, padding: 8, background: C.bgSurface,
+            border: `1px solid ${C.border}`, borderRadius: 6,
+            boxShadow: '0 10px 28px rgba(0,0,0,.5)',
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <input
+            autoFocus
+            value={typed}
+            onChange={e => setTyped(e.target.value)}
+            onKeyDown={e => {
+              // Enter runs it. Stopped here so the studio's own Enter binding —
+              // and the voice shortcut — never see a keystroke meant for this
+              // field.
+              e.stopPropagation()
+              if (e.key === 'Enter' && typed.trim() && !busy) {
+                const t = typed.trim()
+                setTyped(''); setShowType(false)
+                void run(t)
+              }
+              if (e.key === 'Escape') { setShowType(false); setTyped('') }
+            }}
+            placeholder='e.g. loop bass 2 three more times'
+            style={{
+              width: '100%', height: 26, padding: '0 8px', boxSizing: 'border-box',
+              background: '#141414', border: `1px solid ${C.border}`, borderRadius: 4,
+              color: C.textPrimary, fontSize: 11, outline: 'none',
+            }}
+          />
+          <div style={{ color: C.textMuted, fontSize: 10, marginTop: 5 }}>
+            Enter to run · Esc to close — same commands as speaking
+          </div>
         </div>
       )}
 
