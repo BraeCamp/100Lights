@@ -21,6 +21,7 @@
 // changing either produces a new stamp, which misses, which re-renders.
 
 import type { MidiClip } from '@/lib/daw-types'
+import { layersFor, patchForLayer, layerLabel } from './render-layers'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { renderApolloProject, freezeStamp, type TrackRenderGroup } from '@/lib/apollo/daw-freeze'
 import { loadCombined, saveCombined, clearStoredCombines } from '@/lib/apollo/combine-store'
@@ -460,6 +461,25 @@ export function combinedStale(clipId: string): AudioBuffer | null {
 /** True while anything is still being combined — useful for a UI hint. */
 export function combining(): boolean { return inFlight.size > 0 || queue.length > 0 }
 
+/**
+ * Forget lower rungs of the ladder once a better one has landed.
+ *
+ * Each fidelity layer caches under its own stamp, so without this a four-rung
+ * song holds four renders of every clip — four times the memory, and
+ * evictIfNeeded starts throwing away the beginning of the song to make room for
+ * worse copies of it. `keep` is the set of keys for the rung that just
+ * finished; anything else for those same clips is now superseded.
+ */
+function dropSupersededLayers(keep: string[]): void {
+  const keepSet = new Set(keep)
+  const clipIds = new Set(keep.map(k => k.slice(0, k.indexOf('|'))))
+  for (const key of [...buffers.keys()]) {
+    if (keepSet.has(key)) continue
+    const clipId = key.slice(0, key.indexOf('|'))
+    if (clipIds.has(clipId)) buffers.delete(key)
+  }
+}
+
 function evictIfNeeded(): void {
   let frames = 0
   for (const b of buffers.values()) frames += b.length
@@ -658,6 +678,17 @@ export interface CombineProgress {
   active: boolean
   /** 'head' = racing to first sound; 'fill' = filling the rest in behind you. */
   phase: 'head' | 'fill' | 'idle' | 'paused'
+  /**
+   * Which pass of the fidelity ladder is being built — "Adding filters (2 of 4)".
+   *
+   * The song is rendered dry first and the effects are layered over it, so
+   * "17 of 23 clips" was answering a question nobody asked: every clip is
+   * already audible, what is arriving is the SOUND. Brae: "We would need to
+   * change the loading bar to Layers instead of track items."
+   */
+  layer?: string
+  layerIndex?: number
+  layerCount?: number
 }
 
 let progress: CombineProgress = { done: 0, total: 0, active: false, phase: 'idle' }
@@ -770,8 +801,38 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // Clips that have come back silent ONCE in this job. A first silence
         // buys a longer rest and a retry; a second sets the clip aside.
         const silentOnce = new Set<string>()
-        const renderable = () => missing().filter(w => !bad.has(w.key) && !silentThisJob.has(w.key))
         const tRender = Date.now()
+
+        // ── The fidelity ladder ────────────────────────────────────────────
+        //
+        // Brae: "loads the song without any filters or changes then loads
+        // filters over the song one or a few at a time."
+        //
+        // Each rung renders the WHOLE song at a lower fidelity than the last:
+        // dry, then filters, then effects, then the real patch. Reducing the
+        // patch changes its stamp, so every rung caches under its own key —
+        // and combinedStale() hands playback the most recently written render
+        // of a clip, which is by construction the best rung so far. That is
+        // why this needs no new playback path: the fallback that already
+        // existed for "the patch just changed" is exactly this.
+        //
+        // A song with nothing to strip gets ONE rung, so it renders once at
+        // full quality, as it always did.
+        const layers = layersFor(groups.map(g => g.patch))
+        let layerGroups = groups
+        let layerWanted = wanted
+        const missingIn = () => layerWanted.filter(w => !buffers.has(w.key))
+        const renderable = () => missingIn().filter(w => !bad.has(w.key) && !silentThisJob.has(w.key))
+
+        for (let li = 0; li < layers.length; li++) {
+          const layer = layers[li]
+          layerGroups = layer.full
+            ? groups
+            : groups.map(g => ({ ...g, patch: patchForLayer(g.patch, layer) }))
+          layerWanted = layerGroups.flatMap(g => g.clips
+            .filter(c => c.notes.length > 0)
+            .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
+          const layerName = layerLabel(layers, li)
 
         // ── Render in a WINDOW that follows the playhead ────────────────────
         //
@@ -983,14 +1044,23 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           }
           headStartDone = true
           setProgress({
-            done: wanted.length - missing().length, total: wanted.length,
+            done: layerWanted.length - missingIn().length, total: layerWanted.length,
             active: true, phase,
+            layer: layerName, layerIndex: li, layerCount: layers.length,
           })
           if (!window.length) break
           timings.attempts++
-          const before = buffers.size
+          // Asked about THIS window, not about the cache's size.
+          //
+          // It used to compare buffers.size before and after. keep() evicts
+          // when the cache is at MAX_FRAMES, so on a song big enough to fill it
+          // every successful render adds one buffer and drops another and the
+          // size does not move — a working render read as a total failure,
+          // which struck the clips and stopped the pass. Exactly the "it stops
+          // abruptly and is stuck on incomplete" that only shows up on the big
+          // songs, because only they reach the cap.
           const tWin = Date.now()
-          const rendered = await renderApolloProject(groups, bpm, {
+          const rendered = await renderApolloProject(layerGroups, bpm, {
             only: new Set(window.map(w => w.clip.id)),
           })
           // Every render is a calibration sample. This is why there is no
@@ -1018,7 +1088,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           // loop never ends. But the fix for that is to stop asking for THOSE
           // clips, not to abandon the other twenty-one. They are set aside for
           // this job and the loop carries on down the song.
-          if (buffers.size === before) {
+          if (!window.some(w => buffers.has(w.key))) {
             // A silent render is usually NOT the clip's fault. This file says so
             // a few hundred lines up, on `gap`: each render builds an offline
             // context and registers the worklet in it, and back-to-back the
@@ -1046,6 +1116,15 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           }
           await gap(Date.now() - tWin)
         }
+          // This rung is done. Drop the rung below it for every clip that got
+          // better, or the cache holds four renders of every clip and evicts
+          // the start of the song to make room for lower-quality copies of it.
+          if (li > 0) dropSupersededLayers(layerWanted.map(w => w.key))
+          // Stop climbing if play was pressed and this machine cannot bake
+          // while playing — the rung it reached is what plays until the pause.
+          if (transportPlaying && slowWhilePlaying) break
+        }
+
         // (The measurements that shaped the two-phase loop above are recorded
         // there, at the point where the window is sized. They used to live down
         // here, describing a strategy the code no longer followed — which is how
@@ -1085,7 +1164,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // Say which it was. "Would not render" was reported for clips that had
         // rendered perfectly and were then evicted, and that wrong label cost
         // real time chasing a rendering bug that did not exist.
-        const left = missing().length
+        const left = missingIn().length
         const atCeiling = MAX_FRAMES >= DEVICE_CEILING && projectFrames > DEVICE_CEILING
         lastError = !left ? null
           : atCeiling
@@ -1115,7 +1194,7 @@ export async function clearCombinedEverywhere(): Promise<void> {
 
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
-export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number; loader: string; playingBake: string } {
+export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number; loader: string; playingBake: string; progress: CombineProgress } {
   // Peak of each cached render: a buffer that exists but is silent looks
   // identical to a working one from the outside, and silently-empty renders are
   // exactly the failure mode this cache can hide.
@@ -1129,6 +1208,10 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
   const s = strikes()
   const struck = Object.values(s)
   return {
+    // The progress object the loading bar renders from. Exposed because a bar
+    // that never appears and a bar that appears empty look identical from the
+    // outside, and only one of them is a UI bug.
+    progress: { ...progress },
     // Which loader this capture came from, and what it is doing right now.
     loader: LOADER_MODE,
     // 'layers' while it bakes during playback; 'paused-only' once this machine

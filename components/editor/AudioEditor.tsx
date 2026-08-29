@@ -992,8 +992,12 @@ export default function AudioEditor(props: AudioEditorProps) {
   const AUTO_FREEZE_ON_LOAD = false
 
   // Loading progress, for the bar at the top of the studio.
-  const [loadProgress, setLoadProgress] = useState<{ done: number; total: number; active: boolean; phase: 'head' | 'fill' | 'idle' | 'paused' }>(
-    { done: 0, total: 0, active: false, phase: 'idle' })
+  const [loadProgress, setLoadProgress] = useState<{
+    done: number; total: number; active: boolean
+    phase: 'head' | 'fill' | 'idle' | 'paused'
+    /** "Adding filters (2 of 4)" — the fidelity rung being built. */
+    layer?: string; layerIndex?: number; layerCount?: number
+  }>({ done: 0, total: 0, active: false, phase: 'idle' })
   useEffect(() => {
     let stop: (() => void) | undefined
     let cancelled = false
@@ -2878,18 +2882,23 @@ export default function AudioEditor(props: AudioEditorProps) {
                 background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
                 color: 'var(--text-muted)', letterSpacing: '0.02em',
               }}>
-                {/* Say what is actually happening, and it has changed twice.
-                    First it claimed loading was paused while playing when it
-                    was not; then it said "ahead of the playhead" while
-                    rendering fourteen seconds of song, which Brae read as
-                    loading far ahead because that is what it was. Now playing
-                    really does stop the work — the song is synthesised live —
-                    so the honest thing to say is that it is playing. */}
-                {playing
-                  ? 'Playing live — the rest loads when you pause'
+                {/* Say what is actually happening, and it has changed several
+                    times as the loader has. It claimed loading was paused while
+                    playing when it was not; then "ahead of the playhead" while
+                    rendering fourteen seconds of song; then that playing stops
+                    the work, which it no longer does.
+
+                    It now counts LAYERS, not clips. Brae: "We would need to
+                    change the loading bar to Layers instead of track items."
+                    He is right, and not only for wording: the song is rendered
+                    dry first and the effects are layered over it, so every clip
+                    is audible almost immediately and "17 of 23" was answering a
+                    question nobody had. What arrives is the SOUND. */}
+                {loadProgress.layer
+                  ? loadProgress.layer
                   : loadProgress.phase === 'head'
                     ? 'Getting the sound ready…'
-                    : `Loading the rest of the song — ${loadProgress.done}/${loadProgress.total}`}
+                    : `Loading the song — ${loadProgress.done}/${loadProgress.total}`}
               </div>
             </div>
           </div>
