@@ -167,7 +167,19 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       })
       if (!res.ok) {
         const e = await res.json().catch(() => ({} as { error?: string; needCredits?: boolean }))
-        setProblem(e.needCredits ? 'Out of AI credits.' : (e.error || `Couldn't reach the assistant (${res.status}).`))
+        // 401 is the route's own answer; 404 is Clerk's middleware refusing an
+        // unauthenticated request BEFORE the route runs, which it does with a
+        // 404 rather than a 401. Both mean the same thing to a person, and
+        // "Couldn't reach the assistant (404)" reads like an outage rather than
+        // like "sign in" — which sends people looking for a fault that is not
+        // there. The local resolver still handles the common commands either
+        // way, so this is a partial loss, not a dead feature.
+        const signedOut = res.status === 401 || res.status === 404
+        setProblem(
+          e.needCredits ? 'Out of AI credits.'
+            : signedOut ? 'Sign in to use the assistant. Simple commands still work without it.'
+              : (e.error || `Couldn't reach the assistant (${res.status}).`))
+        markFailed(e.error || `http ${res.status}`)
         return
       }
       const data = await res.json() as { message?: string; actions?: VoiceCall[] }
