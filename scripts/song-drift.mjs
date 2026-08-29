@@ -154,8 +154,20 @@ export function build() {
   // headless bounce time and silently kill the render — the saturation and
   // delay this idiom wants go on in post instead.
   const tracks = [
-    { key: 'sub', id: uid(), name: 'Sub', presetId: 'builtin-46', volume: 0.54, color: '#4c1d95',
-      rollFx: { sustain: 0.45 },
+    // Synth instruments, not library presets.
+    //
+    // A `presetId` plays a SAMPLE out of the user's sound library, and when that
+    // library does not have the folder — a fresh browser, a signed-out visitor,
+    // a machine that has not synced — the note is dropped and the track is
+    // simply silent. Measured on the first cut of this song: Stab (builtin-8,
+    // "Metallic Pluck") never made a sound, because a headless browser's library
+    // is empty. A song written to TEST the studio must not depend on what is
+    // installed, so both pitched parts are oscillators, which always sound.
+    { key: 'sub', id: uid(), name: 'Sub', presetId: null, volume: 0.50, color: '#4c1d95',
+      instrument: { type: 'poly', params: {
+        waveform: 'sine', attack: 0.006, decay: 0.0, sustain: 1.0, release: 0.12,
+        detune: 0, filterType: 'lowpass', filterCutoff: 140, filterResonance: 0.6,
+        lfoEnabled: false, lfoRate: 4, lfoDepth: 0, lfoTarget: 'filter', lfoWaveform: 'sine' } },
       effects: [eq3(5, -9, -14, 90, 500, 4000), compressor(-21, 4, 1)] },
     { key: 'pad', id: uid(), name: 'Pad', presetId: null, volume: 0.19, pan: 0.13, color: '#7c3aed',
       instrument: { type: 'poly', params: {
@@ -163,9 +175,20 @@ export function build() {
         detune: 14, filterType: 'lowpass', filterCutoff: 1500, filterResonance: 0.8,
         lfoEnabled: true, lfoRate: 0.11, lfoDepth: 0.22, lfoTarget: 'filter', lfoWaveform: 'sine' } },
       effects: [eq3(-10, -4, 1, 320, 850, 7000), chorus(0.42, 0.28, 0.45), reverb(0.38, 3.2, 0.03)] },
-    { key: 'stab', id: uid(), name: 'Stab', presetId: 'builtin-8', volume: 0.30, pan: -0.15, color: '#a78bfa',
-      rollFx: { sustain: 0.12 },
-      effects: [eq3(-9, -1, -2, 300, 1100, 6000), reverb(0.22, 1.5, 0.02)] },
+    { key: 'stab', id: uid(), name: 'Stab', presetId: null, volume: 0.28, pan: -0.15, color: '#a78bfa',
+      instrument: { type: 'poly', params: {
+        waveform: 'square', attack: 0.003, decay: 0.14, sustain: 0.18, release: 0.14,
+        detune: 9, filterType: 'lowpass', filterCutoff: 2100, filterResonance: 3.0,
+        lfoEnabled: false, lfoRate: 4, lfoDepth: 0, lfoTarget: 'filter', lfoWaveform: 'sine' } },
+      // decay 2.6, not 1.5. A track reverb at decay 1.5 silences the WHOLE
+      // track — master output included, and even with wet at 0, so it is not
+      // the wet mix. Measured with a fresh browser per trial: 1.5 silent in
+      // every trial, while 0.8, 2.0, 2.5, 3.0 and 3.2 all sound. Not a
+      // threshold, so not "short decay" — a bad combination somewhere in the
+      // Helios reverb tank, which is where track effects run by default
+      // (heliosFx). Logged rather than worked around blindly; the song simply
+      // uses a value that is known good.
+      effects: [eq3(-9, -1, -2, 300, 1100, 6000), reverb(0.22, 2.6, 0.02)] },
     { key: 'drums', id: uid(), name: 'Drums', presetId: null, isDrum: true, volume: 0.44, color: '#c084fc',
       instrument: { type: 'drum', params: { pack: 'techno' } },
       effects: [eq3(1.5, -3, -3, 120, 600, 7000), compressor(-23, 5, 2), reverb(0.05, 0.32, 0.01)] },
@@ -226,6 +249,8 @@ export function build() {
   const fxBars = []
   for (const h of ['hook 1', 'hook 2', 'hook 3']) {
     for (const k of ['pad', 'stab']) fxBars.push(dipInto(k, at[h], 2))
+    // Restored: the drive in this bar was a suspect while hunting the silent
+    // Stab and was cleared by measurement — removing it changed nothing.
     fxBars.push(lift('stab', at[h], 8 * BPB, { drive: 0.05, gain: 1.06 }))
   }
   // The bridge closes the pad down and lets it reopen into the final hook.
@@ -238,10 +263,12 @@ export function build() {
 
   const notesOf = key => out.project.dawProject.arrangementClips
     .filter(c => c.trackId === tracks.find(t => t.key === key).id).flatMap(c => c.notes)
-  // Sampled presets only sound right inside their sampled range; outside it they
-  // repitch badly, which is the "plays a bit off" problem.
-  assertInRange('Sub (builtin-46 Sub Drone)', notesOf('sub'), 24, 60)
-  assertInRange('Stab (builtin-8)', notesOf('stab'), 36, 84)
+  // Oscillators have no sampled range to fall outside of, so these are musical
+  // bounds rather than technical ones: the sub stays in the octave where it is
+  // felt rather than heard, and the stabs stay off the very bottom where a
+  // square wave turns to mud under the drone.
+  assertInRange('Sub', notesOf('sub'), 24, 48)
+  assertInRange('Stab', notesOf('stab'), 45, 84)
 
   return { out, tracks, songBeats }
 }

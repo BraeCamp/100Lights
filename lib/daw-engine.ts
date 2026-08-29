@@ -2,7 +2,7 @@
 
 import { midiToNoteName } from './scale-constants'
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
-import { isAudioClip, isMidiClip } from './daw-types'
+import { isAudioClip, isMidiClip, POLY_PRESETS } from './daw-types'
 import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
 import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
@@ -193,6 +193,8 @@ export class DawEngine extends EventTarget {
   // MIDI preset playback
   private _presets:         MidiPreset[] = []
   private _presetBufCache = new Map<string, AudioBuffer | null>()   // key: `${presetId}:${pitch}`
+  /** Presets already reported as having no samples — warn once, not per note. */
+  private _warnedMissingPreset = new Set<string>()
   private _presetLoading  = new Map<string, Promise<void>>()   // key → in-flight load, so awaiters share the same decode
 
   setPresets(presets: MidiPreset[]) { this._presets = presets }
@@ -1655,6 +1657,37 @@ export class DawEngine extends EventTarget {
               src.stop(noteStartAt + noteDur + 0.01)
             }
             src.onended = () => { src.disconnect(); velGain.disconnect(); vibLfo?.disconnect() }
+          } else if (buf === null) {
+            // ── A preset with no sample must not be silence ──────────────────
+            //
+            // `null` is the SETTLED answer from _loadPresetBuffer: this preset
+            // has no audio for this note and will not get any this session —
+            // usually because the library holds no entries for its folder (a
+            // fresh browser, a signed-out visitor, a machine that has not
+            // synced). `undefined` means "still loading" and is deliberately
+            // NOT this branch; that note simply arrived before its buffer.
+            //
+            // Until now `null` fell off the end of the `if` and the note was
+            // dropped with nothing logged, so a whole instrument vanished and
+            // every other explanation looked more likely — Brae: "it's only
+            // rendering 2 of the four instruments". Measured on a song whose
+            // Stab used builtin-8 ("Metallic Pluck"): track peak exactly 0,
+            // with every note present, in range, and on time.
+            //
+            // A synth voice is wrong in timbre and right in every way that
+            // matters here — the part is audible, in time and at pitch — and
+            // the reason goes to the console instead of nowhere.
+            const resolved = this._resolveInstrument(track)
+            const fallback: TrackInstrument = resolved.type === 'none'
+              ? { type: 'poly', params: POLY_PRESETS['Cold Pad'] }
+              : resolved
+            if (!this._warnedMissingPreset.has(clip.presetId)) {
+              this._warnedMissingPreset.add(clip.presetId)
+              console.warn(`[daw] preset "${clip.presetId}" has no samples in this library — ` +
+                'playing its notes on a synth voice instead of dropping them')
+            }
+            playInstrumentNote(this.ctx, noteDest, fallback, note.pitch, note.velocity,
+              noteStartAt, noteDur + sustainSec)
           }
         } else {
           const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, noteStartAt, noteDur + sustainSec)

@@ -148,7 +148,7 @@ function openDB(): Promise<IDBDatabase> {
   return dbPromise
 }
 
-function tx<T>(
+function txOn<T>(
   db:    IDBDatabase,
   mode:  IDBTransactionMode,
   fn:    (store: IDBObjectStore) => IDBRequest<T>,
@@ -159,6 +159,36 @@ function tx<T>(
     req.onsuccess = () => resolve(req.result)
     req.onerror   = () => reject(req.error)
   })
+}
+
+/**
+ * Run a transaction, reopening once if the cached connection has gone stale.
+ *
+ * Caching the connection (see openDB) removed the per-operation `open` that
+ * dominated the main thread, and introduced this: a connection that is CLOSING
+ * is still handed out, because `onclose` only fires once it has finished
+ * closing. Calling transaction() on it throws
+ * `InvalidStateError: The database connection is closing`.
+ *
+ * It showed up under fast repeated project loads. The fix is not to stop
+ * caching — the open really is that expensive — but to treat a dead handle as
+ * what it is: drop it and reopen. Once only, so a genuinely broken database
+ * fails rather than looping.
+ */
+async function tx<T>(
+  db:    IDBDatabase,
+  mode:  IDBTransactionMode,
+  fn:    (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  try {
+    return await txOn(db, mode, fn)
+  } catch (e) {
+    const name = (e as { name?: string })?.name
+    if (name !== 'InvalidStateError' && name !== 'TransactionInactiveError') throw e
+    dbPromise = null
+    dbPromiseName = ''
+    return txOn(await openDB(), mode, fn)
+  }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
