@@ -94,6 +94,7 @@ await page.waitForTimeout(1200)
 // stop the loader dead.
 const readyAtPlay = await page.evaluate(async () => {
   const s = window.__combineStats?.()
+  window.__passesAtPlay = s?.batches ?? 0
   // Headless starts the context suspended (autoplay policy). Without this the
   // transport reports playing while the audio clock never moves, and the beat
   // sits at 0 — which looks like a stuck playhead but is only the test.
@@ -118,10 +119,16 @@ for (let i = 0; i < WATCH_SEC; i++) {
   if (row.ready >= clipCount) break
 }
 const whilePlaying = samples.filter(s => s.playing)
-const gained = (whilePlaying.at(-1)?.ready ?? 0) - readyAtPlay
+const passesAtPlay = await page.evaluate(() => window.__passesAtPlay ?? 0)
+// A render already RUNNING when play is pressed cannot be stopped — an
+// OfflineAudioContext has no cancel, and the loop only reaches its
+// transportPlaying check once the await returns. So that one is expected, and
+// counting it as a violation would be asking for something unimplementable.
+// What must be zero is renders STARTED after play: passes flat from the first
+// sample to the last.
+const inFlightAtPlay = (whilePlaying[0]?.batches ?? passesAtPlay) - passesAtPlay
+const passesWhilePlaying = (whilePlaying.at(-1)?.batches ?? 0) - (whilePlaying[0]?.batches ?? 0)
 const stillPlaying = whilePlaying.length > 0
-await page.evaluate(() => window.__dawEngine?.stop?.())
-await browser.close()
 
 console.log()
 check('the transport actually ran', stillPlaying, `${whilePlaying.length} samples while playing`)
@@ -132,11 +139,42 @@ check('the transport actually ran', stillPlaying, `${whilePlaying.length} sample
 // feature actually depends on is transportPlaying being true, which is what
 // gates the baking path, and that is asserted above.
 console.log(`  (playhead reached beat ${(whilePlaying.at(-1)?.beat ?? 0).toFixed(1)} — headless has no audio clock, so 0 is expected here)`)
-// The property Brae asked for: layers keep arriving while you listen.
-check('clips keep baking WHILE playing', gained > 0,
-  `${readyAtPlay} -> ${whilePlaying.at(-1)?.ready ?? 0} (+${gained})`)
+// ── The contract changed, on evidence ───────────────────────────────────────
+//
+// This used to assert that baking CONTINUES during playback, because a song
+// that never baked was a song you could not hear. That is no longer true:
+// every Apollo track is warmed now, and eight heavy tracks hold the audio clock
+// at 1.000 with nothing baked. So playing is served by the live engine, and
+// rendering — which runs on the MAIN thread and starved the note scheduler down
+// to 0.35 of real time — deliberately stops while the transport runs.
+//
+// What matters now is the opposite property: pressing play must not leave the
+// song stranded. Baking parks, and the pause picks it straight back up.
+//
+// Asserted on RENDER PASSES, not on `ready`. Clips can still arrive during
+// playback by being read off disk, which costs the audio thread nothing — it is
+// the renders that ran on the main thread and took the audio clock to 0.35.
+// Counting `ready` would call a healthy disk read a violation.
+check('no render is STARTED while the transport is playing', passesWhilePlaying === 0,
+  `${passesWhilePlaying} new pass(es) over ${whilePlaying.length}s of playback`)
+check('and at most the one already in flight finishes', inFlightAtPlay <= 1,
+  `${inFlightAtPlay} landed right after play; ready ${readyAtPlay} -> ${whilePlaying.at(-1)?.ready ?? 0}`)
 
+// The real assertion: after the pause, it finishes.
+await page.evaluate(() => window.__dawEngine?.stop?.())
+let after = null
+for (let i = 0; i < 120; i++) {
+  await page.waitForTimeout(500)
+  after = await page.evaluate(() => window.__combineStats?.() ?? null)
+  if ((after?.ready ?? 0) >= clipCount) break
+}
+check('and the pause picks it straight back up', (after?.ready ?? 0) === clipCount,
+  `${after?.ready} of ${clipCount} after pausing`)
+check('with nothing condemned along the way', (after?.setAside ?? 0) === 0,
+  `${after?.setAside} set aside`)
+
+await browser.close()
 console.log(failures
   ? `\n${failures} failing`
-  : `\nit bakes in layers while it plays (+${gained} clips during playback)`)
+  : '\nplaying is served live, and baking resumes the moment you pause')
 process.exit(failures ? 1 : 0)

@@ -123,7 +123,7 @@ console.log(`lastError: ${stats?.lastError ?? 'none'}\n`)
 
 check('the song finished despite being interrupted',
   (stats?.ready ?? 0) === clipCount, `${stats?.ready} of ${clipCount}`)
-check('nothing was condemned along the way', (stats?.givenUp ?? 0) === 0, `${stats?.givenUp} given up`)
+check('nothing was left to play live along the way', (stats?.setAside ?? 0) === 0, `${stats?.setAside} set aside`)
 check('it did not sit stuck', stuckFor <= 90, `no progress for ${stuckFor}s`)
 
 console.log(failures ? `\n${failures} failing` : '\nplay, pause and play again, and it still finishes the song')

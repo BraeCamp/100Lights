@@ -161,8 +161,11 @@ check('every clip is baked, not left playing live',
   still.stats?.ready === clipCount, `${still.stats?.ready} of ${clipCount}`)
 check('and it does not give up part-way when watched either',
   watched.stats?.ready === clipCount, `${watched.stats?.ready} of ${clipCount}`)
-check('no clip was condemned as unrenderable',
-  (still.stats?.givenUp ?? 0) === 0, `${still.stats?.givenUp} given up`)
+// `givenUp` is structurally zero now — nothing is condemned across sessions.
+// `setAside` is the live equivalent: clips this pass gave up on and left to the
+// live engine, which the NEXT pass will ask for again.
+check('no clip was left to play live',
+  (still.stats?.setAside ?? 0) === 0, `${still.stats?.setAside} set aside`)
 
 const penalty = watched.ms / Math.max(1, still.ms)
 check(`watching the loader does not slow it down (< ${MAX_WATCH_PENALTY}x)`,

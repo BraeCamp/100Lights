@@ -132,7 +132,7 @@ check('the cache actually filled (or this test proves nothing)',
   (stats?.frames ?? 0) > (stats?.maxFrames ?? Infinity) * 0.5,
   `${stats?.frames} of ${stats?.maxFrames}`)
 check('the song finished', (stats?.ready ?? 0) === clipCount, `${stats?.ready} of ${clipCount}`)
-check('nothing was condemned as unrenderable', (stats?.givenUp ?? 0) === 0, `${stats?.givenUp} given up`)
+check('nothing was left to play live', (stats?.setAside ?? 0) === 0, `${stats?.setAside} set aside`)
 // Eviction taking work back is the failure this test exists for.
 check('baked clips were not evicted while still loading', worstDrop === 0,
   worstDrop ? `ready fell by ${worstDrop} at its worst` : 'ready never fell')

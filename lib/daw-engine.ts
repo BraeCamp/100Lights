@@ -1085,8 +1085,24 @@ export class DawEngine extends EventTarget {
     // seven-track piece opened silent. Past a couple of tracks, let them be
     // created on demand instead (playApolloNote does it lazily) — combined
     // playback means most are never needed.
-    const apolloCount = project.tracks.filter(t => this._resolveInstrument(t)?.type === 'apollo').length
-    const warmApollo  = apolloCount <= 2
+    // ── Every Apollo track is warmed, however many there are ──────────────
+    //
+    // This used to warm at most two, on the theory that Apollo is too heavy to
+    // play live and "combined playback means most are never needed". Measured,
+    // that theory is wrong: eight live Apollo tracks with every oscillator on,
+    // unison 4, a filter and a reverb/delay/EQ chain hold the audio clock at
+    // 1.000 with nothing baked at all — at full speed and throttled.
+    //
+    // The cost of being wrong about it was severe, because it made BAKING a
+    // prerequisite for hearing a song rather than an optimisation. Every
+    // weakness of the render path — serialised offline contexts, main-thread
+    // contention, renders that come back silent — turned into "the audio does
+    // not work", on a song that would have played live perfectly well. Brae:
+    // "it used to play 6 tracks real time and now I need to wait on a big
+    // buffer."
+    //
+    // So: warm them all. Playing is the default again, and combining goes back
+    // to being an optimisation nobody has to wait for.
     for (const track of project.tracks) {
       if (track.instrument?.type === 'drum') void preloadDrumInstrument(this.ctx, track.instrument)
       if (track.instrument?.type === 'plugin') {
@@ -1098,8 +1114,7 @@ export class DawEngine extends EventTarget {
           track.instrument.params as PluginInstrumentParams,
         )
       }
-      if (!warmApollo && this._resolveInstrument(track)?.type === 'apollo') { /* lazy */ }
-      else if (track.instrument?.type === 'apollo') {
+      if (track.instrument?.type === 'apollo') {
         void preloadApolloInstrument(this.ctx, this.trackNodes.get(track.id)?.midiInput, track.instrument.params as ApolloInstrumentParams)
       } else if (track.instrument && (track.instrument.type === 'poly' || track.instrument.type === 'wavetable')) {
         const resolved = this._resolveInstrument(track)

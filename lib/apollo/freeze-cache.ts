@@ -120,80 +120,38 @@ export function loadTrouble(): string {
   return `${Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(', ')} — last: ${last.kind}${last.layer ? ` in ${last.layer}` : ''}${last.detail ? ` (${last.detail})` : ''} at ${(last.t / 1000).toFixed(1)}s`
 }
 
-// Clips that would not render, remembered ACROSS sessions — as STRIKES, not a
-// verdict on the first miss.
+// ── Nothing is remembered as unrenderable ───────────────────────────────────
 //
-// The original version condemned a clip the first time a session ended without
-// it, which was right for the case it was written for: ONE clip of Filament's 23
-// never comes back with audio, and chasing it cost 25 seconds on every reload.
+// There used to be a ledger here: clips that failed to render, counted as
+// strikes in localStorage, given up on permanently at three. It is gone, and
+// this note is what stands in its place because the reasoning matters.
 //
-// But it was reading a non-deterministic failure as a permanent property. A miss
-// usually means the offline contexts ran out mid-batch — the same reason
-// RENDER_GAP_MS exists — not that the clip is unrenderable. Winter Drift came
-// out of one cold load with 10 of its 31 clips condemned FOREVER on that
-// browser, none of which have groove or volGraph and all of which render fine
-// with room to breathe. Those 10 then play live on every future load, which is
-// the lag that never goes away.
+// It could not tell the two cases apart. The render loop did not only exit when
+// the song was finished — it broke when PLAY was pressed, and it broke when no
+// window fit the budget, and on either of those every clip it had not reached
+// was still "renderable" and so got struck. Press play while a song is baking,
+// which is what everybody does, and clips that had never been attempted were
+// condemned. Three sessions of that and they were condemned forever, on that
+// browser: a progress bar stuck at 2 of 23, six clips reported as given up, and
+// four tracks of live Apollo for the rest of the session.
 //
-// So: a miss is a strike. Give up only on a clip that has missed in three
-// separate sessions — contention won't reproduce that reliably, a genuinely
-// silent clip will. A clip that does render has its record cleared.
-// v2, and the version bump IS the migration.
+// The premise underneath it was that a clip which will not render is a clip you
+// cannot hear, so chasing it was expensive and giving up was a saving. That
+// premise is false — see the bench at "The loader" below — so the saving buys
+// nothing and the cost is real. A clip that will not render now simply plays
+// live, and is asked again next time.
 //
-// Every strike written before this version is untrustworthy, because the loop
-// used to condemn every clip it had not reached whenever it broke early — and
-// it breaks early every time PLAY is pressed. Three sessions of pressing play
-// while a song was still baking was enough to give up on clips that had never
-// been attempted, permanently, on that browser. Those clips then played live
-// forever: a progress bar that will not move on pause, and enough live voices
-// at four tracks to drop out.
-//
-// The ledger cannot distinguish those false strikes from real ones, so the
-// whole thing is discarded once. This is the same call the line below already
-// made about the even older one-strike list, for the same reason.
-const STRIKE_KEY = 'apollo-combine-strikes-v2'
-const LEGACY_STRIKE_KEYS = ['apollo-combine-strikes', 'apollo-combine-unrenderable']
-const STRIKES_TO_GIVE_UP = 3
-const MAX_TRACKED = 300
-
-type Strikes = Record<string, number>
-
-function strikes(): Strikes {
-  try {
-    const s = JSON.parse(localStorage.getItem(STRIKE_KEY) ?? '{}') as Strikes
-    return s && typeof s === 'object' ? s : {}
-  } catch { return {} }
-}
-
-function writeStrikes(s: Strikes): void {
-  try {
-    const entries = Object.entries(s)
-    localStorage.setItem(STRIKE_KEY, JSON.stringify(Object.fromEntries(entries.slice(-MAX_TRACKED))))
-    // Older ledgers are verdicts we no longer trust — drop them so anyone
-    // carrying false condemnations gets those clips back.
-    for (const k of LEGACY_STRIKE_KEYS) localStorage.removeItem(k)
-  } catch { /* private mode */ }
-}
-
-function knownBad(): Set<string> {
-  const s = strikes()
-  return new Set(Object.keys(s).filter(k => (s[k] ?? 0) >= STRIKES_TO_GIVE_UP))
-}
-
-function rememberBad(stamps: string[]): void {
-  if (!stamps.length) return
-  const s = strikes()
-  for (const k of stamps) s[k] = (s[k] ?? 0) + 1
-  writeStrikes(s)
-}
-
-/** It rendered — so it was never the clip's fault. Clear its record. */
-function forgiveBad(stamps: string[]): void {
-  if (!stamps.length) return
-  const s = strikes()
-  let changed = false
-  for (const k of stamps) if (k in s) { delete s[k]; changed = true }
-  if (changed) writeStrikes(s)
+// The keys are removed on load so anyone carrying old condemnations gets those
+// clips back on their next visit.
+const LEGACY_STRIKE_KEYS = [
+  'apollo-combine-strikes-v2', 'apollo-combine-strikes', 'apollo-combine-unrenderable',
+]
+// Guarded on `window`, not on `localStorage`. Node exposes a localStorage
+// global that warns and throws unless the process was started with
+// --localstorage-file, so testing for it directly puts a warning in every
+// static-generation worker for a browser-only cleanup.
+if (typeof window !== 'undefined') {
+  try { for (const k of LEGACY_STRIKE_KEYS) localStorage.removeItem(k) } catch { /* private mode */ }
 }
 
 type Job = { stamp: string; run: () => Promise<void> }
@@ -303,33 +261,6 @@ function clipVoiceSeconds(clip: MidiClip, patch: ApolloPatch, spb: number): numb
   let held = 0
   for (const n of clip.notes) held += n.durationBeats * spb
   return per * held
-}
-
-/**
- * How long a window may take to render.
- *
- * While the transport runs this is the thing that decides whether the renderer
- * stays ahead of the listener: a window that takes longer than the music it
- * covers loses ground. Kept well under that so there is margin on a busy
- * machine. With nobody listening there is no deadline, only responsiveness.
- */
-function renderTimeBudgetMs(): number {
-  // Three paces, not two.
-  //
-  // Playing: stay ahead of the playhead — that is a deadline, and the window has
-  // to be big enough to make progress against it.
-  //
-  // Idle but the user is TOUCHING something: the smallest windows we do. They
-  // are dragging a clip or turning a knob and every millisecond of main thread
-  // we take is felt directly. Rendering ahead is worth nothing if it makes the
-  // thing they are doing right now feel bad.
-  //
-  // Idle and untouched: work properly. This is the case that used to be missing
-  // — combining began the moment a project loaded and went at full tilt whether
-  // or not anyone was interacting, which is lag before you have even pressed
-  // play.
-  if (transportPlaying) return 1500
-  return userIsBusy() ? 400 : 5000
 }
 
 /**
@@ -607,17 +538,6 @@ export function setPlayhead(beat: number): void {
 let transportPlaying = false
 
 /**
- * How long a single render may take while the transport is running before this
- * machine is judged unable to do both.
- *
- * Baking during playback competes with the note scheduler, which is a real cost
- * on a slow machine and none at all on a fast one. Rather than pick a side, the
- * first over-long render sets `slowWhilePlaying` and baking goes back to
- * waiting for the pause. It is cleared on stop, so the next take is judged on
- * its own merits — a machine that was busy once is not condemned for the
- * session.
- */
-/**
  * What the loader is, in one string, reported by combineStats().
  *
  * Minifiers strip comments and mangle identifiers, so neither can tell you
@@ -627,10 +547,8 @@ let transportPlaying = false
  * This also lands in the diagnose report, so a capture from a user says which
  * loader produced it instead of leaving that to be guessed.
  */
-export const LOADER_MODE = 'layers-1'
+export const LOADER_MODE = 'live-first-1'
 
-const WHILE_PLAYING_LIMIT_MS = 1500
-let slowWhilePlaying = false
 export function setTransportPlaying(v: boolean): void {
   const was = transportPlaying
   transportPlaying = v
@@ -640,10 +558,6 @@ export function setTransportPlaying(v: boolean): void {
   // way back, so without this the cache would only ever be filled by whatever
   // happened to be running when play was pressed — the song would stay live
   // forever and never get cheaper on the second pass.
-  // Stopping clears the "this machine cannot bake while playing" judgement, so
-  // the next take gets to try layering again rather than inheriting one bad
-  // render from earlier.
-  if (was && !v) slowWhilePlaying = false
   if (was && !v && lastGroups && pendingWhilePlaying) {
     pendingWhilePlaying = false
     requestCombine(lastBpm, lastGroups)
@@ -745,7 +659,6 @@ async function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip;
     void keepForNextTime(w.key, buf)
     await breathe()
   }
-  forgiveBad(landed)   // it rendered, so any earlier strike was contention
   evictIfNeeded()
 }
 
@@ -902,547 +815,387 @@ export function resetCombineRetries(): void {
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  The loader
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Brae: "Can we start over with how this loads and create the loading system
+// from scratch?"
+//
+// Yes — because one measurement overturned the premise the old one was built
+// on, and almost everything in it existed to prop that premise up.
+//
+// The old loader treated baking as a PREREQUISITE for hearing a song. Beacon
+// only warmed a live Apollo engine for the first two Apollo tracks, so a clip
+// on the third track that had not been rendered yet was a clip you could not
+// hear at all. Everything followed from that: baking during playback (which
+// runs on the MAIN thread, and starved the note scheduler down to 0.35 of real
+// time), a ledger of clips to permanently give up on, a retry ladder, a
+// watchdog — machinery for making a mandatory step survive its own cost.
+//
+// scripts/bench-idle-engines.mjs asked what a live Apollo engine actually
+// costs, with heavy presets (every oscillator, unison 4, filter, reverb + delay
+// + EQ) and the CPU throttled to a third of this machine:
+//
+//     live Apollo tracks, nothing baked, 6s each
+//      engines  audio clock  fps   verdict
+//            1       1.000    60  fine
+//            2       1.000    60  fine
+//            4       0.999    60  fine
+//            6       0.999    60  fine
+//            8       1.000    60  fine
+//
+// Eight heavy tracks play live with no headroom problem whatsoever. Freezing is
+// not how a song becomes audible; it is an optimisation that makes an
+// already-audible song cheaper. Three rules follow, and this section is short
+// because they are the entire design:
+//
+//   1. PLAYING ALWAYS WINS. No render is started while the transport runs, and
+//      a render loop that finds the transport running parks. An optimisation
+//      does not get to degrade the thing it optimises.
+//
+//   2. NOTHING IS EVER CONDEMNED. A clip that will not render plays live, and
+//      is asked again from scratch next pass. The cross-session strike ledger
+//      is gone: it could not tell a clip that had failed from a clip that had
+//      never been attempted, and the loop abandoned clips it had never reached
+//      every time play was pressed. That is Brae's song stuck at 2 of 23 with
+//      six clips "given up".
+//
+//   3. A WINDOW IS THE UNIT OF FAILURE. One bad render loses one window, says
+//      so in the log, and the loop carries on down the song.
+
+interface Want { clip: MidiClip; patch: ApolloPatch; key: string }
+
+/** The clips these groups want baked, each with the stamp it will cache under. */
+function wantsOf(groups: TrackRenderGroup[], bpm: number): Want[] {
+  return groups.flatMap(g => g.clips
+    .filter(c => c.notes.length > 0)
+    .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
+}
+
+/**
+ * Clips set aside by the job now running. Transient by construction: it lives
+ * in a module variable rather than localStorage, so the next job starts with a
+ * clean slate and every clip gets asked again. Reported by combineStats() so a
+ * capture can distinguish "still working" from "playing these live for now".
+ */
+let asideNow = 0
+
+/**
+ * Anything rendered in a previous session comes off disk instead of being
+ * re-rendered — the difference between a reload costing a minute of synthesis
+ * and costing nothing.
+ *
+ * In PARALLEL, because these are independent reads whose cost is latency, not
+ * work: serially, twenty-one clips measured 1.6–2.8s of waiting in front of the
+ * first sound. And skipped entirely where there is no storage, because asking
+ * for thirty-nine clips that cannot exist is thirty-nine round trips to a
+ * database that will answer "no".
+ */
+async function loadFromDisk(wants: Want[]): Promise<number> {
+  const policy = await storagePolicy()
+  if (policy.mode === 'none') return 0
+  const pending = wants.filter(w => !buffers.has(w.key))
+  if (!pending.length) return 0
+  const WIDTH = 6
+  let next = 0
+  let got = 0
+  await Promise.all(Array.from({ length: Math.min(WIDTH, pending.length) }, async () => {
+    for (;;) {
+      const w = pending[next++]
+      if (!w) return
+      try {
+        const stored = await loadCombined(w.key, alloc())
+        if (stored) { buffers.set(w.key, stored); got++; lastProgressAt = Date.now() }
+      } catch { /* a clip that will not load simply renders instead */ }
+    }
+  }))
+  return got
+}
+
+/**
+ * Bake one rung of the fidelity ladder, in windows that follow the playhead.
+ *
+ * Clips are taken nearest-the-playhead first, so at load this renders the
+ * opening of the song and after a seek it re-sorts around wherever you landed.
+ * A window is sized by two independent limits, because they guard different
+ * failures: BYTES, because renderManyToBuffer allocates one buffer spanning the
+ * whole window and a badly shaped one reached 119 MB — desktop shrugs, iOS
+ * kills the tab; and TIME, because a render blocks the main thread for its
+ * entire duration and an unbounded window is an unbounded freeze.
+ *
+ * Returns false if it parked for playback rather than finishing the rung.
+ */
+async function bakeLayer(
+  layerGroups: TrackRenderGroup[],
+  bpm: number,
+  label: string,
+  layerIndex: number,
+  layerCount: number,
+  aside: Set<string>,
+  silentOnce: Set<string>,
+): Promise<boolean> {
+  const wants = wantsOf(layerGroups, bpm)
+  logEvent('layer-start', { layer: label, total: wants.length })
+
+  const spb = 60 / bpm
+  const budgetBytes = renderBudgetBytes()
+  if (!msPerUnit) msPerUnit = initialMsPerUnit()
+
+  const missing = (): Want[] => wants.filter(w => !buffers.has(w.key))
+  const renderable = (): Want[] => missing().filter(w => !aside.has(w.key))
+  const doneCount = (): number => wants.length - missing().length
+
+  /** The span a set of clips forces the renderer to cover, in seconds. */
+  const spanSeconds = (set: Want[]): number => {
+    if (!set.length) return 0
+    const first = Math.min(...set.map(w => w.clip.startBeat))
+    const last = Math.max(...set.map(w => w.clip.startBeat + w.clip.durationBeats))
+    return (last - first) * spb + 2
+  }
+  /** What renderManyToBuffer will allocate for this set of clips. */
+  const impliedBytes = (set: Want[]): number => {
+    if (!set.length) return 0
+    const tracks = new Set(set.map(w =>
+      layerGroups.find(g => g.clips.some(c => c.id === w.clip.id))?.trackId)).size || 1
+    return tracks * 2 * spanSeconds(set) * 48_000 * 4
+  }
+  /** Predicted render time: the synthesis plus the span it runs FX over. */
+  const estimateMs = (set: Want[], voiceSec: number): number =>
+    (voiceSec + SPAN_WEIGHT * spanSeconds(set)) * msPerUnit
+
+  /** Clips ordered by how soon the playhead reaches them. */
+  const byUrgency = (): Want[] => {
+    const head = playheadBeat
+    return [...renderable()].sort((a, b) => {
+      // Anything the playhead has already passed goes last: it is only wanted
+      // if the user scrolls back, and by then it can be fetched.
+      const da = a.clip.startBeat + a.clip.durationBeats < head ? Infinity : Math.abs(a.clip.startBeat - head)
+      const db = b.clip.startBeat + b.clip.durationBeats < head ? Infinity : Math.abs(b.clip.startBeat - head)
+      if (da !== db) return da - db
+      return a.clip.startBeat - b.clip.startBeat
+    })
+  }
+
+  // The first window is small and the rest are wide. Time-to-first-sound is all
+  // that matters at the start — nobody cares that bar 40 is missing when they
+  // have not heard bar 1 — and after that, fewer bigger passes win, because
+  // every render builds an offline context that is not reclaimed promptly and
+  // so each pass costs more than the last.
+  let headStartDone = false
+
+  while (renderable().length) {
+    // Rule 1, checked every pass: play may have been pressed while the last
+    // render was running.
+    if (transportPlaying) {
+      setProgress({ ...progress, active: false, phase: 'paused' })
+      logEvent('paused', { layer: label, detail: 'playing live — baking resumes on pause' })
+      return false
+    }
+
+    const order = byUrgency()
+    if (!order.length) break
+
+    const phase: 'head' | 'fill' = headStartDone ? 'fill' : 'head'
+    // Measured floor for this shape of work. Tightening it further does not
+    // keep shrinking the stall, because a window always takes at least one clip
+    // and a single clip's render is atomic — the budget only decides whether a
+    // SECOND one joins it. Rest longer while the user is dragging something:
+    // the point of rendering ahead is that it stays invisible.
+    const timeBudget = userIsBusy() ? 250 : 900
+    const maxClips = phase === 'head' ? 2 : 8
+
+    const window: Want[] = []
+    let voiceSec = 0
+    for (const w of order) {
+      const vs = clipVoiceSeconds(w.clip, w.patch, spb)
+      if (window.length) {
+        if (impliedBytes([...window, w]) > budgetBytes) break
+        if (estimateMs([...window, w], voiceSec + vs) > timeBudget) break
+      }
+      window.push(w)
+      voiceSec += vs
+      if (window.length >= maxClips) break
+    }
+    headStartDone = true
+    if (!window.length) break
+
+    setProgress({
+      done: doneCount(), total: wants.length, active: true, phase,
+      layer: label, layerIndex, layerCount,
+    })
+
+    timings.attempts++
+    const t0 = Date.now()
+    let rendered: Map<string, AudioBuffer>
+    try {
+      rendered = await renderApolloProject(layerGroups, bpm, {
+        only: new Set(window.map(w => w.clip.id)),
+      })
+    } catch (err) {
+      // Rule 3. The whole job used to sit inside a single try, so one bad clip
+      // ended every remaining layer with no retry booked and no record of it.
+      const why = err instanceof Error ? err.message : String(err)
+      logEvent('window-error', {
+        layer: label, ms: Date.now() - t0, done: doneCount(), total: wants.length,
+        detail: `${window.length} clip(s): ${why.slice(0, 120)}`,
+      })
+      for (const w of window) if (!aside.has(w.key)) { aside.add(w.key); asideNow++ }
+      lastError = why
+      await gap(Date.now() - t0)
+      continue
+    }
+
+    const ms = Date.now() - t0
+    logEvent('window', {
+      layer: label, ms, done: doneCount(), total: wants.length,
+      detail: `${window.length} clip(s)`,
+    })
+    // Every render is a calibration sample, which is why there is no separate
+    // speed test: the work we want to predict is the work we just did.
+    learnRenderCost(voiceSec + SPAN_WEIGHT * spanSeconds(window), ms)
+    await keep(rendered, window)
+    timings.batches++
+
+    // A window that lands nothing must not stop the job. A silent render is
+    // usually not the clip's fault — back-to-back offline contexts come back
+    // silent because the finished ones have not been reclaimed yet — so rest
+    // properly and try the same clips once more. Only a second silence sets
+    // them aside, and only for this pass.
+    if (!window.some(w => buffers.has(w.key))) {
+      const keys = window.map(w => w.key)
+      const secondTime = keys.every(k => silentOnce.has(k))
+      logEvent('silent', {
+        layer: label, ms, done: doneCount(), total: wants.length,
+        detail: secondTime
+          ? `${keys.length} clip(s), silent twice — playing live for this pass`
+          : `${keys.length} clip(s), resting and retrying`,
+      })
+      for (const k of keys) silentOnce.add(k)
+      if (secondTime) for (const k of keys) if (!aside.has(k)) { aside.add(k); asideNow++ }
+      await new Promise(r => setTimeout(r, Math.max(1200, ms)))
+      continue
+    }
+
+    await gap(ms)
+  }
+
+  logEvent('layer-done', { layer: label, done: doneCount(), total: wants.length })
+  return true
+}
+
+/** One job: read what is already on disk, then climb the fidelity ladder. */
+async function bake(bpm: number, groups: TrackRenderGroup[], wanted: Want[], jobKey: string): Promise<void> {
+  const missing = (): Want[] => wanted.filter(w => !buffers.has(w.key))
+  let owed = wanted.length
+  let parked = false
+  logEvent('job-start', { total: wanted.length, done: wanted.length - missing().length })
+
+  try {
+    const tDisk = Date.now()
+    timings.fromDisk = await loadFromDisk(wanted)
+    timings.diskMs = Date.now() - tDisk
+    timings.renderMs = 0
+    timings.attempts = 0
+
+    // Rule 2: both of these are per-JOB, and neither is persisted.
+    const aside = new Set<string>()
+    const silentOnce = new Set<string>()
+    asideNow = 0
+
+    const tRender = Date.now()
+    // The fidelity ladder: render the WHOLE song dry, then again at its real
+    // sound. Each rung caches under its own stamp, and combinedStale() hands
+    // playback the most recently written render of a clip — which is by
+    // construction the best rung so far, so this needs no new playback path.
+    const layers = layersFor(groups.map(g => g.patch))
+    for (let li = 0; li < layers.length; li++) {
+      const layer = layers[li]
+      const layerGroups = layer.full
+        ? groups
+        : groups.map(g => ({ ...g, patch: patchForLayer(g.patch, layer) }))
+      const finished = await bakeLayer(
+        layerGroups, bpm, layerLabel(layers, li), li, layers.length, aside, silentOnce,
+      )
+      if (!finished) { parked = true; break }
+    }
+    timings.renderMs = Date.now() - tRender
+
+    owed = missing().length
+    setProgress({
+      done: wanted.length - owed, total: wanted.length,
+      active: false, phase: parked ? 'paused' : 'idle',
+    })
+
+    // Say WHICH it was. "Would not render" was once reported for clips that had
+    // rendered perfectly and were then evicted, and that wrong label cost real
+    // time chasing a rendering bug that did not exist.
+    //
+    // A PARKED job is not a failed one, and must not be reported as one. It
+    // stopped because someone pressed play, with every clip it had not reached
+    // still perfectly renderable — it will finish them on the pause. Reporting
+    // "25 of 25 clips play live" there is the same mistake in a new place, and
+    // it is exactly the kind of wrong label that sends someone hunting a
+    // rendering bug that does not exist.
+    const atCeiling = MAX_FRAMES >= DEVICE_CEILING && projectFrames > DEVICE_CEILING
+    lastError = !owed || parked ? null
+      : atCeiling
+        ? `${owed} of ${wanted.length} clips play live (song needs ${(projectFrames / 48_000) | 0}s of cache, device allows ${(DEVICE_CEILING / 48_000) | 0}s)`
+        : `${owed} of ${wanted.length} clips play live`
+  } catch (e) {
+    lastError = e instanceof Error ? e.message : String(e)
+    logEvent('job-error', { detail: lastError.slice(0, 160) })
+  } finally {
+    inFlight.delete(jobKey)
+    if (parked || transportPlaying) { parked = true; pendingWhilePlaying = true }
+    logEvent('job-end', {
+      done: wanted.length - owed, total: wanted.length,
+      detail: parked ? 'waiting for the pause' : owed === 0 ? 'complete' : `${owed} still owed`,
+    })
+    // A job books its own follow-up when it ends with work still owed, because
+    // nothing else will: the only other things that ever ask again are the
+    // scheduler hitting a miss during playback, and pausing. Load a song, never
+    // press play, and without this the bar simply stops.
+    if (owed === 0) retryAttempt = 0
+    else if (!parked) scheduleRetry()
+  }
+}
+
+/**
+ * Ask for this project to be baked. Cheap and idempotent — the scheduler calls
+ * it on every pass for every clip that is not yet cached, dozens of times a
+ * second, so it returns immediately unless there is new work to start.
+ */
 export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!groups.length) return
   lastGroups = groups
   lastBpm = bpm
-  // Pressing play no longer stops the baking — it changes its shape. See
-  // "Baking in layers" at the render loop.
 
-  // Cheap repeat asks. The scheduler calls this for EVERY clip that is not yet
-  // baked, on every pass — dozens of times a second during playback. Everything
-  // below is O(clips) and pointless while a job is already running, so the
-  // in-flight check comes first rather than after the prologue.
   const jobKey = 'project-combine'
   if (inFlight.has(jobKey)) return
 
-  const wanted = groups.flatMap(g => g.clips
-    .filter(c => c.notes.length > 0)
-    .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
+  // Rule 1, at the door. During playback this is the path taken on every
+  // scheduler pass, and all it does is write down that there is work waiting.
+  // Refusing to START is stronger than parking mid-job: it means play can never
+  // be pressed into a render that has already begun.
+  if (transportPlaying) {
+    pendingWhilePlaying = true
+    if (progress.active) setProgress({ ...progress, active: false, phase: 'paused' })
+    return
+  }
+
+  const wanted = wantsOf(groups, bpm)
   // Size the cache to this song before rendering into it, or it evicts the
   // opening of the song to make room for the end of it.
   const spb = 60 / bpm
   setProjectNeed(wanted.reduce((n, w) => n + Math.ceil(w.clip.durationBeats * spb * 48_000), 0))
-  const missing = () => wanted.filter(w => !buffers.has(w.key))
-  setProgress({ done: wanted.length - missing().length, total: wanted.length, phase: 'idle', active: false })
-  if (!missing().length) return
+  const done = wanted.filter(w => buffers.has(w.key)).length
+  setProgress({ done, total: wanted.length, phase: 'idle', active: false })
+  if (done === wanted.length) { retryAttempt = 0; return }
 
   inFlight.add(jobKey)
   startWatchdog()
-  queue.push({
-    stamp: jobKey,
-    run: async () => {
-      // How much was still owed when this job ended, so `finally` can decide
-      // whether anyone needs to come back for it. Starts pessimistic: a throw
-      // before the loop leaves the whole song outstanding, and that is exactly
-      // the case that must be retried.
-      let leftAtEnd = -1
-      logEvent('job-start', { total: wanted.length, done: wanted.length - missing().length })
-      try {
-        // Renders of Apollo instruments are NOT deterministic: the same project
-        // rendered three times gave peaks of 0.202, 0 and 0.0657, with no error
-        // anywhere. One pass typically lands 22 of 23 clips. So run it again for
-        // whatever is still missing and keep the good ones — the union across a
-        // few attempts covers everything, and a clip that never renders simply
-        // keeps playing live.
-        // Anything rendered in a PREVIOUS session comes off disk instead of
-        // being re-rendered. This is the difference between a reload costing a
-        // minute of synthesis and costing nothing: the work is deterministic
-        // over data that has not changed.
-        const tDisk = Date.now()
-        let fromDisk = 0
-        // Skip the disk entirely where there is none. Asking for thirty-nine
-        // clips that cannot exist is thirty-nine round trips to a database that
-        // will answer "no" — pure latency in front of the first sound, on
-        // exactly the devices that can least afford it.
-        const policy = await storagePolicy()
-        if (policy.mode !== 'none') {
-          // In PARALLEL, because these are independent reads and the cost is
-          // latency, not work. Serially, twenty-one clips measured 1.6-2.8s of
-          // waiting in front of the first sound — one round trip at a time, on
-          // the path where nothing can be heard yet. The allocator is a single
-          // OfflineAudioContext used only to mint buffers, which is safe to
-          // call concurrently; a small width keeps the peak allocation bounded
-          // on a phone.
-          const pending = missing()
-          const WIDTH = 6
-          let next = 0
-          await Promise.all(Array.from({ length: Math.min(WIDTH, pending.length) }, async () => {
-            for (;;) {
-              const w = pending[next++]
-              if (!w) return
-              try {
-                const stored = await loadCombined(w.key, alloc())
-                if (stored) { buffers.set(w.key, stored); fromDisk++ }
-              } catch { /* a clip that will not load simply renders instead */ }
-            }
-          }))
-        }
-        timings.diskMs = Date.now() - tDisk
-        timings.fromDisk = fromDisk
-        timings.renderMs = 0
-        timings.attempts = 0
-
-        // Anything already known not to render is left to play live rather than
-        // re-attempted on every page load.
-        const bad = knownBad()
-        // Clips that came back SILENT during this job. Excluded from the rest
-        // of it so the loop moves on to the other clips instead of meeting the
-        // same ones again — but deliberately not persisted as a verdict, because
-        // one silent pass is usually contention and the next load should try
-        // them again.
-        const silentThisJob = new Set<string>()
-        // Clips that have come back silent ONCE in this job. A first silence
-        // buys a longer rest and a retry; a second sets the clip aside.
-        const silentOnce = new Set<string>()
-        const tRender = Date.now()
-
-        // ── The fidelity ladder ────────────────────────────────────────────
-        //
-        // Brae: "loads the song without any filters or changes then loads
-        // filters over the song one or a few at a time."
-        //
-        // Each rung renders the WHOLE song at a lower fidelity than the last:
-        // dry, then filters, then effects, then the real patch. Reducing the
-        // patch changes its stamp, so every rung caches under its own key —
-        // and combinedStale() hands playback the most recently written render
-        // of a clip, which is by construction the best rung so far. That is
-        // why this needs no new playback path: the fallback that already
-        // existed for "the patch just changed" is exactly this.
-        //
-        // A song with nothing to strip gets ONE rung, so it renders once at
-        // full quality, as it always did.
-        const layers = layersFor(groups.map(g => g.patch))
-        let layerGroups = groups
-        let layerWanted = wanted
-        const missingIn = () => layerWanted.filter(w => !buffers.has(w.key))
-        const renderable = () => missingIn().filter(w => !bad.has(w.key) && !silentThisJob.has(w.key))
-
-        for (let li = 0; li < layers.length; li++) {
-          const layer = layers[li]
-          layerGroups = layer.full
-            ? groups
-            : groups.map(g => ({ ...g, patch: patchForLayer(g.patch, layer) }))
-          layerWanted = layerGroups.flatMap(g => g.clips
-            .filter(c => c.notes.length > 0)
-            .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
-          const layerName = layerLabel(layers, li)
-          logEvent('layer-start', { layer: layerName, total: layerWanted.length })
-
-        // ── Render in a WINDOW that follows the playhead ────────────────────
-        //
-        // The old shape was "one opening batch, then the whole project". That
-        // renders the end of a song before anyone has heard the middle, and it
-        // means the first thing you do after pressing play is a minute of work
-        // for audio that is two minutes away.
-        //
-        // Instead: always render what is about to be HEARD. Clips are ordered by
-        // how soon the playhead reaches them, nearest first, and taken a window
-        // at a time. At load the playhead is at 0, so this naturally renders the
-        // opening first — the old opening batch falls out of the ordering rather
-        // than being a special case. Press play and the window moves with you;
-        // seek somewhere else and the next window re-sorts around where you
-        // landed, because the ordering is recomputed every pass.
-        //
-        // Whether this can outrun playback is the whole question, and it can:
-        // Undertow renders ~16 clip-seconds per second of wall time, while
-        // playing one second of an 8-track song consumes 8. Two times headroom,
-        // so the buffer grows while you listen. If a heavy patch or a slow
-        // machine ever drops that below 1x you simply hear the live synth for a
-        // moment, which is exactly what happens today — the failure mode is the
-        // current behaviour, not a broken one.
-        //
-        // Small windows only became viable once renders stopped coming back
-        // silent. Batching was abandoned before because ten small passes landed
-        // 21 of 31 clips against 26 for one big pass; that was the message-port
-        // race, and with the ping/ready handshake a small render is now as
-        // reliable as a large one.
-        // A window is sized by the MEMORY it implies, not by a clip count.
-        //
-        // Counting clips was wrong and it cost Brae a working phone: renderMany
-        // ToBuffer allocates one buffer of (tracks x 2 channels x span), and a
-        // window is chosen in urgency order, so four clips that happen to sit
-        // far apart span the song between them. Measured on Undertow, four clips
-        // meant a 70 MB allocation, and a badly shaped window reached 119 MB.
-        // Desktop shrugs; iOS kills the tab, which is exactly the "page keeps
-        // reloading after a few seconds" report.
-        //
-        // So: take clips in urgency order and stop before the implied buffer
-        // crosses a device-sized budget. Always take at least one, or a song
-        // whose single clip exceeds the budget would never render at all.
-        const budgetBytes = renderBudgetBytes()
-        const spb2 = 60 / bpm
-
-        /** What renderManyToBuffer will allocate for this set of clips. */
-        const impliedBytes = (set: { clip: MidiClip }[]): number => {
-          if (!set.length) return 0
-          const first = Math.min(...set.map(w => w.clip.startBeat))
-          const last = Math.max(...set.map(w => w.clip.startBeat + w.clip.durationBeats))
-          const tracks = new Set(set.map(w => groups.find(g => g.clips.some(c => c.id === w.clip.id))?.trackId)).size || 1
-          return tracks * 2 * ((last - first) * spb2 + 2) * 48_000 * 4
-        }
-
-        /** The span a set of clips forces the renderer to cover, in seconds. */
-        const spanSeconds = (set: { clip: MidiClip }[]): number => {
-          if (!set.length) return 0
-          const first = Math.min(...set.map(w => w.clip.startBeat))
-          const last = Math.max(...set.map(w => w.clip.startBeat + w.clip.durationBeats))
-          return (last - first) * spb2 + 2
-        }
-
-        /** Predicted render time: the synthesis plus the span it runs FX over. */
-        const estimateMs = (set: { clip: MidiClip }[], voiceSec: number): number =>
-          (voiceSec + SPAN_WEIGHT * spanSeconds(set)) * msPerUnit
-
-        /** Clips ordered by how soon the playhead reaches them. */
-        const byUrgency = () => {
-          const head = playheadBeat
-          return [...renderable()].sort((a, b) => {
-            // Anything the playhead has already passed goes last: it is only
-            // wanted if the user scrolls back, and by then it can be fetched.
-            const da = a.clip.startBeat + a.clip.durationBeats < head ? Infinity : Math.abs(a.clip.startBeat - head)
-            const db = b.clip.startBeat + b.clip.durationBeats < head ? Infinity : Math.abs(b.clip.startBeat - head)
-            if (da !== db) return da - db
-            return a.clip.startBeat - b.clip.startBeat
-          })
-        }
-
-        if (!msPerUnit) msPerUnit = initialMsPerUnit()
-
-        // ── Head start first, then fill ─────────────────────────────────────
-        //
-        // Two phases, because the first few seconds and the rest of the song are
-        // different problems:
-        //
-        //   HEAD START — the smallest useful window, right where the playhead
-        //   is. The only thing that matters is time-to-first-sound; nobody cares
-        //   that bar 40 is not ready when they have not heard bar 1.
-        //
-        //   FILL — everything else, in AS FEW PASSES as memory allows.
-        //
-        // The fill phase is deliberately the opposite of the head start, and it
-        // is the fix for "it's just slow". This loop used to run the whole song
-        // in head-start-sized windows: at most four clips, time-budgeted, over
-        // and over. That is the exact pattern this file already had a
-        // measurement against, a few lines below —
-        //
-        //     ten batches + a full pass   128s, 21 of 31 landed
-        //     a single full pass           17s, 26 of 31 landed
-        //
-        // — and the same thing measured again on freezing this week: four clips
-        // per render took 66s where one clip per render took 123s. Every render
-        // builds an offline context that is not reclaimed promptly, so each pass
-        // costs more than the last. Many small passes do not merely fail to
-        // help, they roughly double the work. The comment survived; the code had
-        // drifted back into the shape the comment warns about.
-        //
-        // So: small while it matters, then big. And bigger still when the
-        // transport is stopped, because then there is no deadline to miss — that
-        // is Brae's "load the full thing in the background when it's paused".
-        // ── Baking in layers, including while you play ─────────────────────
-        //
-        // Brae: "When I hit play it should still render. In layers so that it
-        // at least plays something if the loading is too slow."
-        //
-        // This code previously stopped dead on play. That rule was written
-        // because Chrome runs an OfflineAudioContext carrying JS worklets on the
-        // MAIN THREAD, so a render competes with the note scheduler — and a big
-        // enough render silenced the studio. That is true, and it is still why
-        // windows are small. But it was generalised too far, and a diagnose
-        // capture from the real failing session says so:
-        //
-        //     longestStallMs   47      <- the main thread is FINE
-        //     audioClockRate   0.35    <- the AUDIO thread is drowning
-        //     ready            0       <- nothing baked, so 7 tracks play live
-        //
-        // Nothing was baked, so every track was being synthesised live and the
-        // audio clock fell to a third of real time. Refusing to bake while
-        // playing is what guarantees that state persists: the only thing that
-        // reduces the live voice count is baking, and it was switched off for
-        // the whole time anyone was listening.
-        //
-        // So it bakes during playback now, in layers: one clip per pass,
-        // nearest the playhead first, with a rest proportional to the work just
-        // done. Every clip that lands moves off the live synth and hands the
-        // audio thread back some headroom, so the song gets cheaper to play the
-        // longer it plays.
-        //
-        // The old evidence is not thrown away, it is measured instead of
-        // assumed: if a single render while the transport is running exceeds
-        // WHILE_PLAYING_LIMIT_MS, this machine has just shown it cannot bake
-        // without hurting playback, and baking waits for the pause exactly as
-        // it used to. Machines that can do it get layers; machines that cannot
-        // get the old behaviour. Neither is a guess.
-        let headStartDone = false
-        while (renderable().length) {
-          const playing = transportPlaying
-          if (playing && slowWhilePlaying) {
-            pendingWhilePlaying = true
-            setProgress({ ...progress, active: false, phase: 'paused' })
-            break
-          }
-          const queue2 = byUrgency()
-          if (!queue2.length) break
-          const window: typeof queue2 = []
-          let windowVoiceSec = 0
-          const phase: 'head' | 'fill' = headStartDone ? 'fill' : 'head'
-          // A deadline only exists while the transport is running. Stopped, the
-          // only limit is memory, so the fill goes as wide as the device allows.
-          // ALWAYS bounded, and bounded tightly.
-          //
-          // This previously used renderTimeBudgetMs() x 3 while playing and
-          // Infinity while paused, on the theory that fewer, bigger passes are
-          // faster. Two measurements killed that theory:
-          //
-          //   Total time barely moved. 4-clip windows: 39.4s in 12 passes.
-          //   Unbounded windows: 38.5s in 8. Within noise.
-          //
-          //   And a render BLOCKS THE MAIN THREAD for its entire duration —
-          //   Chrome runs an OfflineAudioContext carrying JS worklets there. So
-          //   an unbounded window is an unbounded freeze. Playing Hallway Light
-          //   from a cold cache, the playhead jumped from beat 4.8 to 25.5
-          //   between two samples one second apart: audio carried on from the
-          //   audio thread while the interface was gone for thirteen seconds.
-          //   That is Brae's "super slow, and the bar appears and disappears".
-          //
-          // So the window is sized to stay under a human's patience rather than
-          // to minimise passes. Costing nothing in total time, it is the whole
-          // difference between a studio that works while it loads and one that
-          // locks up.
-          // Measured. Tightening these does NOT keep shrinking the stall, because a
-          // window always takes at least one clip and a single clip's render is
-          // atomic — the budget only decides whether a SECOND one joins it. At
-          // 500ms idle the worst stall measured 1820ms (three over a second),
-          // worse than at 900ms, because more passes means more chances to meet
-          // an expensive clip alone plus per-pass overhead. 900/450/250 is the
-          // measured floor for this shape of work; going below it trades total
-          // time for nothing.
-          // While playing: ONE clip and a tight deadline. The point is to add a
-          // layer without ever holding the thread long enough to be heard.
-          const timeBudget = playing ? 400 : userIsBusy() ? 250 : 900
-          const maxClips = playing ? 1 : phase === 'head' ? 2 : 8
-          for (const w of queue2) {
-            const vs = clipVoiceSeconds(w.clip, w.patch, spb2)
-            // TWO independent limits, because they guard different failures.
-            // Bytes is memory: exceed it and a phone reloads the tab. Time is
-            // the deadline: exceed it and the render falls behind the playhead,
-            // which is what made dense passages lag. A window has to satisfy
-            // both, and neither one implies the other — a long quiet clip is
-            // big and cheap, a short dense chord is small and expensive.
-            if (window.length) {
-              if (impliedBytes([...window, w]) > budgetBytes) break
-              if (estimateMs([...window, w], windowVoiceSec + vs) > timeBudget) break
-            }
-            window.push(w)
-            windowVoiceSec += vs
-            if (window.length >= maxClips) break
-          }
-          headStartDone = true
-          setProgress({
-            done: layerWanted.length - missingIn().length, total: layerWanted.length,
-            active: true, phase,
-            layer: layerName, layerIndex: li, layerCount: layers.length,
-          })
-          if (!window.length) break
-          timings.attempts++
-          // Asked about THIS window, not about the cache's size.
-          //
-          // It used to compare buffers.size before and after. keep() evicts
-          // when the cache is at MAX_FRAMES, so on a song big enough to fill it
-          // every successful render adds one buffer and drops another and the
-          // size does not move — a working render read as a total failure,
-          // which struck the clips and stopped the pass. Exactly the "it stops
-          // abruptly and is stuck on incomplete" that only shows up on the big
-          // songs, because only they reach the cap.
-          const tWin = Date.now()
-          // ── One window, on its own ────────────────────────────────────────
-          //
-          // The whole job used to sit inside a single try. One render throwing
-          // — one bad clip, one exhausted context — ended everything: every
-          // remaining layer, every remaining clip, with no retry booked and no
-          // record of what happened. That is Brae's "it stops loading all of a
-          // sudden".
-          //
-          // A window is the unit of failure now. A throw here is logged, the
-          // clips are set aside for this job, and the loop moves on to the next
-          // window — so a song with one unrenderable clip loads the other
-          // twenty-two.
-          let rendered: Map<string, AudioBuffer>
-          try {
-            rendered = await renderApolloProject(layerGroups, bpm, {
-              only: new Set(window.map(w => w.clip.id)),
-            })
-          } catch (err) {
-            const why = err instanceof Error ? err.message : String(err)
-            logEvent('window-error', {
-              layer: layerName, ms: Date.now() - tWin,
-              done: layerWanted.length - missingIn().length, total: layerWanted.length,
-              detail: `${window.length} clip(s): ${why.slice(0, 120)}`,
-            })
-            for (const w of window) silentThisJob.add(w.key)
-            lastError = why
-            await gap(Date.now() - tWin)
-            continue
-          }
-          // Every render is a calibration sample. This is why there is no
-          // separate speed test: the work we want to predict is the work we just
-          // did, so measuring it is both free and exactly on-target — and it
-          // keeps tracking the machine as it throttles or gets busy.
-          const winMs = Date.now() - tWin
-          logEvent('window', {
-            layer: layerName, ms: winMs,
-            done: layerWanted.length - missingIn().length, total: layerWanted.length,
-            detail: `${window.length} clip(s)`,
-          })
-          learnRenderCost(windowVoiceSec + SPAN_WEIGHT * spanSeconds(window), winMs)
-          // Measured, not assumed: one over-long render while the transport is
-          // running is this machine saying it cannot bake and play at once.
-          if (playing && winMs > WHILE_PLAYING_LIMIT_MS) slowWhilePlaying = true
-          await keep(rendered, window)
-          timings.batches++
-          // A window that lands nothing must not stop the job.
-          //
-          // This used to `break`, and that is the whole of "it gets stuck on
-          // 2/23 and I never even pressed play". The head phase bakes its two
-          // clips, the first fill window comes back silent — renders are not
-          // deterministic, and a patch whose sample has not loaded yet renders
-          // silence — and the entire job gave up there, with twenty-one clips
-          // it had never tried. The bar stops, and every remaining clip plays
-          // live for the rest of the session.
-          //
-          // The original worry was real: retry the same window forever and the
-          // loop never ends. But the fix for that is to stop asking for THOSE
-          // clips, not to abandon the other twenty-one. They are set aside for
-          // this job and the loop carries on down the song.
-          if (!window.some(w => buffers.has(w.key))) {
-            // A silent render is usually NOT the clip's fault. This file says so
-            // a few hundred lines up, on `gap`: each render builds an offline
-            // context and registers the worklet in it, and back-to-back the
-            // later ones come back silent because the finished contexts have
-            // not been reclaimed yet. It is resource exhaustion, and the
-            // treatment is to wait longer — not to give up on the clip.
-            //
-            // Brae's capture showed `ready: 0` with a completed pass: every
-            // render coming back silent, on a machine 2.6x slower than the one
-            // these numbers were tuned on, so contexts are reclaimed later
-            // there and the old fixed gap was not enough.
-            //
-            // So: rest properly, then try the SAME clips once more. Only if
-            // they come back silent a second time are they set aside for this
-            // job and given a strike.
-            const keys = window.map(w => w.key)
-            const secondTime = keys.every(k => silentOnce.has(k))
-            logEvent('silent', {
-              layer: layerName, ms: Date.now() - tWin,
-              done: layerWanted.length - missingIn().length, total: layerWanted.length,
-              detail: secondTime ? `${keys.length} clip(s), second time — setting aside` : `${keys.length} clip(s), retrying`,
-            })
-            for (const k of keys) silentOnce.add(k)
-            if (secondTime) {
-              for (const k of keys) silentThisJob.add(k)
-              rememberBad(keys)
-            }
-            await new Promise(r => setTimeout(r, Math.max(1200, Date.now() - tWin)))
-            continue
-          }
-          await gap(Date.now() - tWin)
-        }
-          // (Superseding is done per clip in keep(), as each better render
-          // lands. A sweep here would keep only THIS rung's keys and so delete
-          // the only copy held by any clip that failed to render in it.)
-          logEvent('layer-done', {
-            layer: layerName,
-            done: layerWanted.length - missingIn().length, total: layerWanted.length,
-          })
-          // Stop climbing if play was pressed and this machine cannot bake
-          // while playing — the rung it reached is what plays until the pause.
-          if (transportPlaying && slowWhilePlaying) break
-        }
-
-        // (The measurements that shaped the two-phase loop above are recorded
-        // there, at the point where the window is sized. They used to live down
-        // here, describing a strategy the code no longer followed — which is how
-        // the loop drifted back into many-small-passes without anyone noticing
-        // it contradicted its own evidence.)
-        timings.renderMs = Date.now() - tRender
-        setProgress({ done: wanted.length - missing().length, total: wanted.length, active: false, phase: 'idle' })
-
-        // NOTHING is condemned here, and that is the fix for "the bar doesn't
-        // move when paused" and "it cuts out at four tracks" — one bug wearing
-        // two faces.
-        //
-        // This used to read:
-        //
-        //     const stubborn = renderable().map(w => w.key)
-        //     rememberBad(stubborn)     // do not chase these again next time
-        //
-        // The loop above does not only exit when the work is done. It breaks
-        // when PLAY IS PRESSED, and it breaks when no window fits the budget.
-        // On either of those every clip not yet rendered is still renderable,
-        // so all of them were marked permanently bad — and `renderable()`
-        // filters known-bad clips out forever. Press play once while a song is
-        // still baking, which is what everybody does, and the whole remainder
-        // of that song was condemned: on pause the loop woke up with nothing
-        // left it was allowed to render (a progress bar that never moves), and
-        // every one of those clips stayed on the live synth for the rest of the
-        // session (four tracks of live Apollo, and the audio drops out).
-        //
-        // The giveaway is that on a NORMAL finish the while condition is false
-        // because renderable() is empty — so `stubborn` is empty and the call
-        // does nothing at all. Every time it marked something, it was marking
-        // clips that had never been attempted.
-        //
-        // A clip that genuinely will not render is still remembered, one window
-        // at a time, at the `buffers.size === before` check inside the loop.
-        // That one has evidence: it just tried, and nothing came back.
-        // Say which it was. "Would not render" was reported for clips that had
-        // rendered perfectly and were then evicted, and that wrong label cost
-        // real time chasing a rendering bug that did not exist.
-        leftAtEnd = missingIn().length
-        const left = leftAtEnd
-        const atCeiling = MAX_FRAMES >= DEVICE_CEILING && projectFrames > DEVICE_CEILING
-        lastError = !left ? null
-          : atCeiling
-            ? `${left} of ${wanted.length} clips play live (song needs ${(projectFrames / 48_000) | 0}s of cache, device allows ${(DEVICE_CEILING / 48_000) | 0}s)`
-            : `${left} of ${wanted.length} clips play live (would not render)`
-      } catch (e) {
-        lastError = e instanceof Error ? e.message : String(e)
-        logEvent('job-error', { detail: lastError.slice(0, 160) })
-      } finally {
-        inFlight.delete(jobKey)
-        // ── Nobody else is coming ───────────────────────────────────────────
-        //
-        // This block used to be one line, and that was a hole big enough to
-        // park Brae's "it sat for a few minutes and only got 7 of 23" in.
-        //
-        // A job can end with the song unfinished for reasons that are nobody's
-        // fault and nobody's cue: a throw out of renderApolloProject kills the
-        // whole job, and a pass where every remaining clip came back silent
-        // sets them all aside and leaves the loop with nothing it is allowed to
-        // render. In both cases the work is still owed — and the only things
-        // that ever asked again were the scheduler hitting a miss DURING
-        // playback, and pausing. Load a song, do not press play, and nothing in
-        // the system would ever pick it up again. The bar just stops.
-        //
-        // So the job books its own follow-up. Backed off, and capped, because a
-        // song that genuinely cannot render must not spin: six attempts at
-        // 2s, 4s, 8s, 16s, 32s, 60s, and then it really has given up. Each
-        // retry is a NEW job, so `silentThisJob` starts empty and clips set
-        // aside by contention get another go — which is the point.
-        const stoppedForPlayback = transportPlaying && slowWhilePlaying
-        logEvent('job-end', {
-          done: wanted.length - (leftAtEnd < 0 ? wanted.length : leftAtEnd),
-          total: wanted.length,
-          detail: stoppedForPlayback ? 'waiting for the pause' : leftAtEnd === 0 ? 'complete' : `${leftAtEnd} still owed`,
-        })
-        if (leftAtEnd !== 0 && !stoppedForPlayback) {
-          scheduleRetry()
-        } else if (leftAtEnd === 0) {
-          retryAttempt = 0
-        }
-      }
-    },
-  })
+  queue.push({ stamp: jobKey, run: () => bake(bpm, groups, wanted, jobKey) })
   void drain()
 }
 
@@ -1461,7 +1214,7 @@ export async function clearCombinedEverywhere(): Promise<void> {
 
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
-export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number; loader: string; playingBake: string; progress: CombineProgress; log: LoadEvent[]; trouble: string } {
+export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; setAside: number; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number; loader: string; playingBake: string; progress: CombineProgress; log: LoadEvent[]; trouble: string } {
   // Peak of each cached render: a buffer that exists but is silent looks
   // identical to a working one from the outside, and silently-empty renders are
   // exactly the failure mode this cache can hide.
@@ -1472,8 +1225,6 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
     for (let i = 0; i < d.length; i += 512) p = Math.max(p, Math.abs(d[i]))
     peaks.push(+p.toFixed(4))
   }
-  const s = strikes()
-  const struck = Object.values(s)
   return {
     // What the loader has been doing, and what has gone wrong — the answer to
     // "why, where and when".
@@ -1488,19 +1239,21 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
     progress: { ...progress },
     // Which loader this capture came from, and what it is doing right now.
     loader: LOADER_MODE,
-    // 'layers' while it bakes during playback; 'paused-only' once this machine
-    // has shown that a render mid-playback costs too much (WHILE_PLAYING_LIMIT_MS).
-    playingBake: slowWhilePlaying ? 'paused-only' : 'layers',
+    // Baking never runs during playback: playing is served by the live engine.
+    playingBake: 'paused-only',
     ready: buffers.size, inFlight: inFlight.size, queued: queue.length,
     failed: [...failures], lastError, peaks,
-    // Strikes are the difference between "missed once, will retry" and "given
-    // up on" — without them a retry-forever bug and a condemn-forever bug look
-    // exactly the same from out here.
-    striking: struck.filter(n => n < STRIKES_TO_GIVE_UP).length,
+    // Clips this pass is playing live rather than baking. Transient: the next
+    // job asks for all of them again. Kept distinct from `failed` because a
+    // clip set aside for contention is not a clip that is broken.
+    setAside: asideNow,
+    // Nothing is condemned across sessions any more, so these are structurally
+    // zero. Kept so an old capture and a new one can still be read side by side.
+    striking: 0,
     // What the cost model currently believes about this machine.
     msPerUnit: +msPerUnit.toFixed(2),
     renderSamples,
-    givenUp: struck.filter(n => n >= STRIKES_TO_GIVE_UP).length,
+    givenUp: 0,
     // Held vs allowed. A clip that rendered fine and was then evicted is
     // indistinguishable from one that never rendered, from the outside — both
     // just play live — so make the budget visible.

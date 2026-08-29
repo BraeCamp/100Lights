@@ -2896,13 +2896,21 @@ export default function AudioEditor(props: AudioEditorProps) {
                     dry first and the effects are layered over it, so every clip
                     is audible almost immediately and "17 of 23" was answering a
                     question nobody had. What arrives is the SOUND. */}
-                {loadProgress.trouble
-                  ? `${loadProgress.layer ?? 'Loading'} — ${loadProgress.trouble}`
-                  : loadProgress.layer
-                    ? loadProgress.layer
-                    : loadProgress.phase === 'head'
-                      ? 'Getting the sound ready…'
-                      : `Loading the song — ${loadProgress.done}/${loadProgress.total}`}
+                {loadProgress.phase === 'paused'
+                  /* Baking is an OPTIMISATION now, and it stands aside while you
+                     listen: rendering runs on the main thread and competes with
+                     the note scheduler. The song plays live either way, so this
+                     has to read as a deliberate wait rather than as a stall —
+                     the previous wording left it showing a layer name that was
+                     not being worked on. */
+                  ? 'Playing live — loading continues when you pause'
+                  : loadProgress.trouble
+                    ? `${loadProgress.layer ?? 'Loading'} — ${loadProgress.trouble}`
+                    : loadProgress.layer
+                      ? loadProgress.layer
+                      : loadProgress.phase === 'head'
+                        ? 'Getting the sound ready…'
+                        : `Loading the song — ${loadProgress.done}/${loadProgress.total}`}
               </div>
             </div>
           </div>
