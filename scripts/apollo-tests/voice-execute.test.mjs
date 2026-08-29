@@ -47,7 +47,7 @@ const project = {
 const types = plan => plan.actions.map(a => a.type)
 
 // ── "loop bass 2 three more times" ──────────────────────────────────────────
-const loop = planVoiceCall({ name: 'loop_clip', input: { clip: 'bass 2', times: 'three' } }, project)
+const loop = planVoiceCall({ name: 'duplicate_clip', input: { target: 'bass 2', count: 'three' } }, project)
 check('loop resolves the track by spoken name', !loop.problem, loop.problem ?? '')
 check('and adds one clip per repeat', types(loop).join() === 'ADD_CLIP,ADD_CLIP,ADD_CLIP', types(loop).join())
 check('placed back to back after the original',
@@ -57,20 +57,20 @@ check('every copy is a NEW clip, not the same id',
   new Set(loop.actions.map(a => a.clip.id)).size === 3 && !loop.actions.some(a => a.clip.id === 'cb2'))
 check('and its notes are new too — sharing note ids corrupts the original',
   new Set(loop.actions.flatMap(a => a.clip.notes.map(n => n.id))).size === 3)
-check('it says what it did', /Looped/.test(loop.say), loop.say)
+check('it says what it did, in bars', /Duplicated/.test(loop.say) && /bar /.test(loop.say), loop.say)
 
 // The negative that matters most.
-const ambiguous = planVoiceCall({ name: 'loop_clip', input: { clip: 'bass', times: 2 } }, project)
+const ambiguous = planVoiceCall({ name: 'duplicate_clip', input: { target: 'bass', count: 2 } }, project)
 check('an ambiguous name refuses rather than picking a bass', !!ambiguous.problem, ambiguous.problem ?? 'no problem raised')
 check('and nothing is applied', ambiguous.actions.length === 0)
 
-const missing = planVoiceCall({ name: 'loop_clip', input: { clip: 'trombone', times: 2 } }, project)
+const missing = planVoiceCall({ name: 'duplicate_clip', input: { target: 'trombone', count: 2 } }, project)
 check('an unknown name refuses', !!missing.problem, missing.problem ?? '')
 
 // ── "an ascending low pass filter from 80% to 0% over the first 8 seconds" ──
 const sweep = planVoiceCall({
-  name: 'filter_sweep',
-  input: { clip: 'bass 2', type: 'lowpass', from: '80%', to: '0%', seconds: 8 },
+  name: 'automate_parameter',
+  input: { target: 'bass 2', parameter: 'lowpass', from: 80, to: 0, length: { seconds: 8 } },
 }, project)
 check('the sweep resolves', !sweep.problem, sweep.problem ?? '')
 check('it adds a filter, a lane and two points',
@@ -89,11 +89,11 @@ check('sweeping 80% down to 0%', p1.point.value === 0.8 && p2.point.value === 0,
 check('both points belong to the lane it just made',
   p1.laneId === lane.lane.id && p2.laneId === lane.lane.id)
 
-const noRange = planVoiceCall({ name: 'filter_sweep', input: { clip: 'bass 2', type: 'lowpass' } }, project)
+const noRange = planVoiceCall({ name: 'automate_parameter', input: { target: 'bass 2', parameter: 'lowpass' } }, project)
 check('a sweep with no range refuses', !!noRange.problem, noRange.problem ?? '')
 
 // ── "move everything over by one bar" ───────────────────────────────────────
-const shift = planVoiceCall({ name: 'shift_all', input: { bars: 1 } }, project)
+const shift = planVoiceCall({ name: 'move_clips', input: { by: { bars: 1 } } }, project)
 check('every clip moves', shift.actions.length === 3, String(shift.actions.length))
 check('by one bar — four beats at 4/4',
   shift.actions.every(a => {
@@ -101,10 +101,10 @@ check('by one bar — four beats at 4/4',
     return a.startBeat === before.startBeat + 4
   }))
 check('nothing is moved before the start of the song',
-  planVoiceCall({ name: 'shift_all', input: { bars: -99 } }, project).actions.every(a => a.startBeat >= 0))
+  planVoiceCall({ name: 'move_clips', input: { by: { bars: -99 } } }, project).actions.every(a => a.startBeat >= 0))
 
 // ── "a 1 bar long crash at the beginning" ───────────────────────────────────
-const crash = planVoiceCall({ name: 'add_drum_hit', input: { sound: 'crash', atBar: 1, bars: 1 } }, project)
+const crash = planVoiceCall({ name: 'insert_clip', input: { sound: 'crash', at: { bar: 1 }, length: { bars: 1 } } }, project)
 check('a crash with no existing track makes one', types(crash).join() === 'ADD_TRACK,ADD_CLIP', types(crash).join())
 check('it lands at the beginning', crash.actions[1].clip.startBeat === 0, String(crash.actions[1].clip.startBeat))
 check('and is one bar long', crash.actions[1].clip.durationBeats === 4, String(crash.actions[1].clip.durationBeats))
@@ -113,14 +113,14 @@ check('the clip is on the track it just created',
 
 // If a matching track already exists, use it rather than making a second one.
 const withCrash = { ...project, tracks: [...project.tracks, { id: 'tc', name: 'Crash' }] }
-const crash2 = planVoiceCall({ name: 'add_drum_hit', input: { sound: 'crash', atBar: 1, bars: 1 } }, withCrash)
+const crash2 = planVoiceCall({ name: 'insert_clip', input: { sound: 'crash', at: { bar: 1 }, length: { bars: 1 } } }, withCrash)
 check('an existing Crash track is reused', types(crash2).join() === 'ADD_CLIP', types(crash2).join())
 check('and the clip goes on it', crash2.actions[0].clip.trackId === 'tc')
 
 // ── Whole sentences ─────────────────────────────────────────────────────────
 const sentence = planVoiceCalls([
-  { name: 'shift_all', input: { bars: 1 } },
-  { name: 'add_drum_hit', input: { sound: 'crash', atBar: 1, bars: 1 } },
+  { name: 'move_clips', input: { by: { bars: 1 } } },
+  { name: 'insert_clip', input: { sound: 'crash', at: { bar: 1 }, length: { bars: 1 } } },
   { name: 'transport', input: { action: 'restart' } },
 ], project)
 check('a three-part sentence plans in order',
@@ -131,11 +131,65 @@ check('and reads back everything it did', /Moved/.test(sentence.say) && /crash/i
 
 // All-or-nothing: half a command is worse than none.
 const halfBad = planVoiceCalls([
-  { name: 'shift_all', input: { bars: 1 } },
-  { name: 'loop_clip', input: { clip: 'bass', times: 2 } },     // ambiguous
+  { name: 'move_clips', input: { by: { bars: 1 } } },
+  { name: 'duplicate_clip', input: { target: 'bass', count: 2 } },   // ambiguous
 ], project)
 check('one bad call abandons the whole sentence', halfBad.actions.length === 0, `${halfBad.actions.length} actions`)
 check('and says why', !!halfBad.problem, halfBad.problem ?? '')
+
+// ── The rest of the vocabulary ──────────────────────────────────────────────
+// Each of these is an "official term" command, and the thing worth checking is
+// that a POSITION lands where a musician would expect it to.
+
+const tsig = planVoiceCall({ name: 'set_time_signature', input: { numerator: 3, denominator: 4 } }, project)
+check('a time signature for the whole song', types(tsig).join() === 'SET_TIME_SIG', types(tsig).join())
+check('with the meter they said', tsig.actions[0].num === 3 && tsig.actions[0].den === 4)
+
+const tsigAt = planVoiceCall({ name: 'set_time_signature', input: { numerator: 6, denominator: 8, at: { bar: 5 } } }, project)
+check('a meter change mid-song becomes a marker', types(tsigAt).join() === 'ADD_METER_MARKER', types(tsigAt).join())
+check('placed at the right beat — bar 5 is beat 16 in 4/4', tsigAt.actions[0].marker.beat === 16,
+  String(tsigAt.actions[0].marker.beat))
+check('and read back as a bar, not a beat', /bar 5/.test(tsigAt.say), tsigAt.say)
+
+const tempoAt = planVoiceCall({ name: 'set_tempo', input: { bpm: 90, at: { bar: 9 } } }, project)
+check('a tempo change mid-song becomes a marker', types(tempoAt).join() === 'ADD_TEMPO_MARKER', types(tempoAt).join())
+check('at bar 9 — beat 32', tempoAt.actions[0].marker.beat === 32, String(tempoAt.actions[0].marker.beat))
+check('a whole-song tempo does not', types(planVoiceCall({ name: 'set_tempo', input: { bpm: 128 } }, project)).join() === 'SET_TEMPO')
+
+const loopRegion = planVoiceCall({ name: 'set_loop_region', input: { start: { bar: 5 }, end: { bar: 9 } } }, project)
+check('a loop brace sets the region and turns looping on',
+  types(loopRegion).join() === 'SET_LOOP,SET_LOOP_ENABLED', types(loopRegion).join())
+check('from bar 5 to bar 9 — beats 16 to 32',
+  loopRegion.actions[0].start === 16 && loopRegion.actions[0].end === 32,
+  `${loopRegion.actions[0].start}..${loopRegion.actions[0].end}`)
+// A loop given as a length rather than an end point.
+const loopLen = planVoiceCall({ name: 'set_loop_region', input: { start: { bar: 5 }, length: { bars: 4 } } }, project)
+check('a loop can be given as a length', loopLen.actions[0].end === 32, String(loopLen.actions[0]?.end))
+check('a backwards loop refuses',
+  !!planVoiceCall({ name: 'set_loop_region', input: { start: { bar: 9 }, end: { bar: 5 } } }, project).problem)
+
+const up = planVoiceCall({ name: 'transpose', input: { target: 'bass 2', semitones: 12 } }, project)
+check('transpose moves every note in the clip', types(up).join() === 'UPDATE_MIDI_NOTE', types(up).join())
+check('by an octave', up.actions[0].patch.pitch === 55, String(up.actions[0].patch.pitch))
+check('and says which way', /up/.test(up.say), up.say)
+check('transposing off the keyboard is clamped, not wrapped',
+  planVoiceCall({ name: 'transpose', input: { target: 'bass 2', semitones: 999 } }, project)
+    .actions.every(a => a.patch.pitch <= 127))
+
+// Moving one track rather than everything.
+const moveOne = planVoiceCall({ name: 'move_clips', input: { target: 'Kick', by: { bars: 2 } } }, project)
+check('a named target moves only that track', moveOne.actions.length === 1, String(moveOne.actions.length))
+check('by two bars', moveOne.actions[0].startBeat === 8, String(moveOne.actions[0].startBeat))
+
+// Volume automation needs no filter — it is the track's own parameter.
+const fade = planVoiceCall({
+  name: 'automate_parameter',
+  input: { target: 'bass 2', parameter: 'volume', from: 100, to: 0, length: { bars: 2 } },
+}, project)
+check('automating volume adds no effect',
+  types(fade).join() === 'ADD_AUTOMATION_LANE,ADD_AUTOMATION_POINT,ADD_AUTOMATION_POINT', types(fade).join())
+check('and targets the track parameter directly', fade.actions[0].lane.parameter === 'volume',
+  fade.actions[0].lane.parameter)
 
 // ── Unknown tools are reported, never silently dropped ──────────────────────
 const unknown = planVoiceCall({ name: 'make_it_funkier', input: {} }, project)

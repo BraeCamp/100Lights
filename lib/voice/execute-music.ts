@@ -1,75 +1,76 @@
 // What a spoken command actually DOES to the project.
 //
-// Brae: "Hey Light, could you loop 'bass 2' 3 more times and add an ascending
-// low pass filter from 80% to 0% over the first 8 seconds of it" — one sentence
-// that is two edits, on a named clip, in two different units.
+// One validated tool call in, the DAW actions that perform it out. PURE — no
+// dispatch, no engine, no clock — so every command can be tested by reading the
+// actions it produces, which is the only way to know a voice system does what it
+// says before letting it touch someone's song.
 //
-// This turns one validated tool call into the DAW actions that perform it. It
-// is a PURE function of (call, project): no dispatch, no engine, no clock — so
-// every command in this file can be tested by reading the actions it produces,
-// which is the only way to know a voice system does what it says before letting
-// it loose on someone's song.
+// Four rules:
 //
-// Three rules:
+//   Say what you did, in bars. Every plan carries `say`, and positions in it
+//   read as "bar 5 beat 3", never as an absolute beat number, because nobody
+//   counts a song that way and the read-back is the whole safety story.
 //
-//   Say what you did. Every plan carries `say`, the sentence the UI reads back.
-//   A voice edit the user cannot see is one they cannot catch.
+//   Refuse rather than guess. If "bass" matches two tracks the plan is empty
+//   and `problem` explains why.
 //
-//   Refuse rather than guess. If "bass" matches two tracks, the plan is empty
-//   and `problem` explains why. Editing the wrong track silently is the worst
-//   thing this file could do.
+//   Every position and length goes through the tempo and meter maps. A bar is
+//   as long as the meter says at that point; a second is as long as the tempo
+//   says at that point.
 //
-//   Never invent an id. Everything the actions reference is either resolved
-//   from the project or freshly minted here.
+//   Never invent an id. Everything referenced is resolved from the project or
+//   freshly minted here.
 
-import type { DawProject, DawTrack, MidiClip, AudioClip, DawClip } from '../daw-types'
-import { findByName, spokenNumber, spokenFraction, durationToBeats, type Timing } from './resolve'
+import type { DawProject, DawTrack, MidiClip, DawClip } from '../daw-types'
+import { findByName, spokenNumber, spokenFraction } from './resolve'
+import {
+  musicMaps, positionToBeat, durationToBeats, describeBeat, describeDuration,
+  type MusicMaps, type MusicPosition, type MusicDuration,
+} from './position'
 
-/** One tool call from the assistant. Names are a contract with lib/voice/music-tools. */
 export interface VoiceCall { name: string; input: Record<string, unknown> }
 
 export interface VoicePlan {
-  /** DAW actions to dispatch, in order. Empty when the command could not run. */
   actions: unknown[]
-  /** What to tell the user, in their own terms: "Looped Bass 2 three more times." */
   say: string
-  /** Why nothing happened, when nothing did. */
   problem?: string
 }
 
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `v${Math.random().toString(36).slice(2)}`)
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const fail = (problem: string): VoicePlan => ({ actions: [], say: '', problem })
+const pos = (v: unknown): MusicPosition | null => (v && typeof v === 'object' ? v as MusicPosition : null)
+const len = (v: unknown): MusicDuration | null => (v && typeof v === 'object' ? v as MusicDuration : null)
 
-function timingOf(p: DawProject): Timing {
-  return { tempo: p.tempo || 120, beatsPerBar: p.timeSignatureNum || 4 }
-}
-
-const midiClips = (p: DawProject): MidiClip[] =>
-  (p.arrangementClips ?? []).filter((c): c is MidiClip => (c as MidiClip).kind === 'midi')
-
-/** Every clip, whatever kind — "move everything" means everything. */
 const allClips = (p: DawProject): DawClip[] => p.arrangementClips ?? []
+
+function mapsOf(p: DawProject): MusicMaps {
+  return musicMaps({
+    tempo: p.tempo,
+    timeSignatureNum: p.timeSignatureNum,
+    timeSignatureDen: p.timeSignatureDen,
+    tempoMarkers: (p as { tempoMarkers?: { id: string; beat: number; tempo: number }[] }).tempoMarkers,
+    meterMarkers: (p as { meterMarkers?: { id: string; beat: number; num: number; den: number }[] }).meterMarkers,
+  })
+}
 
 /**
  * Find the clip someone named.
  *
- * A clip can be named directly ("Bass Drone") or by its TRACK ("bass 2"), and
- * people say the track far more often — so a track match falls through to that
- * track's clips. With several, the earliest is the one they mean, because that
- * is the one they are looking at when they say "loop it".
+ * A clip can be named directly, or by its TRACK — and people say the track far
+ * more often, so a track match falls through to that track's clips. With
+ * several, the earliest is the one they mean, because that is the one in front
+ * of them when they say "loop it".
  */
 function resolveClip(spoken: string, p: DawProject): { clip: DawClip; how: string } | null {
   const byClip = findByName(spoken, allClips(p) as unknown as { id: string; name?: string }[])
   if (byClip) {
     const clip = allClips(p).find(c => c.id === byClip.item.id)
-    if (clip) return { clip, how: `clip "${clip.name ?? clip.id}" (${byClip.how})` }
+    if (clip) return { clip, how: `"${clip.name ?? clip.id}"` }
   }
   const byTrack = findByName(spoken, p.tracks as unknown as { id: string; name?: string }[])
   if (byTrack) {
-    const onTrack = allClips(p)
-      .filter(c => c.trackId === byTrack.item.id)
-      .sort((a, b) => a.startBeat - b.startBeat)
+    const onTrack = allClips(p).filter(c => c.trackId === byTrack.item.id).sort((a, b) => a.startBeat - b.startBeat)
     if (onTrack.length) {
       const t = p.tracks.find(x => x.id === byTrack.item.id)
       return { clip: onTrack[0], how: `the first clip on "${t?.name ?? ''}"` }
@@ -83,118 +84,118 @@ function resolveTrack(spoken: string, p: DawProject): DawTrack | null {
   return m ? (p.tracks.find(t => t.id === m.item.id) ?? null) : null
 }
 
-// ── The commands ────────────────────────────────────────────────────────────
-
-/** Turn one tool call into actions. Unknown names are reported, never ignored. */
 export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
-  const t = timingOf(project)
+  const maps = mapsOf(project)
   const i = call.input ?? {}
+  const target = str(i.target)
 
   switch (call.name) {
-    // "loop bass 2 three more times"
-    case 'loop_clip': {
-      const target = str(i.clip || i.track)
+    // DUPLICATE — "loop bass 2 three more times"
+    case 'duplicate_clip': {
       const found = resolveClip(target, project)
       if (!found) return fail(`I couldn't find "${target || 'that'}" — say the track or clip name.`)
-      const times = spokenNumber(i.times as string) ?? 1
-      if (times < 1) return fail(`"${times}" is not a number of repeats.`)
+      const count = spokenNumber(i.count as string) ?? 1
+      if (count < 1) return fail('Say how many more times to repeat it.')
       const { clip } = found
-      const actions = []
-      for (let n = 1; n <= times; n++) {
-        actions.push({
-          type: 'ADD_CLIP',
-          clip: {
-            ...clip,
-            id: newId(),
-            // Copies follow on, back to back, which is what "loop it N more
-            // times" means to a person looking at the arrangement.
-            startBeat: clip.startBeat + clip.durationBeats * n,
-            ...(('notes' in clip) ? { notes: (clip as MidiClip).notes.map(nt => ({ ...nt, id: newId() })) } : {}),
-          },
-        })
+      const actions = Array.from({ length: count }, (_, n) => ({
+        type: 'ADD_CLIP',
+        clip: {
+          ...clip,
+          id: newId(),
+          startBeat: clip.startBeat + clip.durationBeats * (n + 1),
+          ...('notes' in clip ? { notes: (clip as MidiClip).notes.map(nt => ({ ...nt, id: newId() })) } : {}),
+        },
+      }))
+      const endBeat = clip.startBeat + clip.durationBeats * (count + 1)
+      return {
+        actions,
+        say: `Duplicated ${found.how} ${count} more time${count === 1 ? '' : 's'} — now runs to ${describeBeat(endBeat, maps)}.`,
       }
-      return { actions, say: `Looped ${found.how} ${times} more time${times === 1 ? '' : 's'}.` }
     }
 
-    // "an ascending low pass filter from 80% to 0% over the first 8 seconds of it"
-    case 'filter_sweep': {
-      const target = str(i.clip || i.track)
+    // AUTOMATION — "an ascending low pass filter from 80% to 0% over the first 8 seconds"
+    case 'automate_parameter': {
       const found = resolveClip(target, project)
-      if (!found) return fail(`I couldn't find "${target || 'that'}" to put a filter on.`)
+      if (!found) return fail(`I couldn't find "${target || 'that'}" to automate.`)
       const clip = found.clip
       const track = project.tracks.find(x => x.id === clip.trackId)
       if (!track) return fail('That clip is not on a track any more.')
 
       const from = spokenFraction(i.from as string)
       const to = spokenFraction(i.to as string)
-      if (from == null || to == null) return fail('Say what the filter should sweep from and to.')
+      if (from == null || to == null) return fail('Say what it should sweep from and to.')
 
-      const startBeat = clip.startBeat + (durationToBeats(
-        { seconds: i.startSeconds as number, bars: i.startBars as number, beats: i.startBeats as number }, t) ?? 0)
-      const lengthBeats = durationToBeats(
-        { seconds: i.seconds as number, bars: i.bars as number, beats: i.beats as number }, t)
-        ?? clip.durationBeats
+      const startBeat = positionToBeat(pos(i.start), maps) ?? clip.startBeat
+      const lengthBeats = durationToBeats(len(i.length), startBeat, maps) ?? clip.durationBeats
+      if (lengthBeats <= 0) return fail('That sweep has no length.')
 
-      const kind = str(i.type || 'lowpass') as 'lowpass' | 'highpass'
-      const effectId = newId()
+      const param = str(i.parameter || 'lowpass')
+      const actions: unknown[] = []
       const laneId = newId()
-      // The filter itself, then a lane on its cutoff, then the two ends of the
-      // sweep. Automation values are normalised 0..1, which is exactly the
-      // "80% to 0%" the user said — no Hz conversion, no guessing a curve.
+      let parameter: string
+      let label: string
+
+      if (param === 'volume' || param === 'pan') {
+        // The track's own parameter — no effect needed.
+        parameter = param
+        label = param === 'volume' ? 'Volume' : 'Pan'
+      } else {
+        const kind = param === 'highpass' ? 'highpass' : 'lowpass'
+        const effectId = newId()
+        actions.push({
+          type: 'ADD_EFFECT', trackId: track.id,
+          effect: { id: effectId, type: 'filter', params: { enabled: true, type: kind, frequency: 8000, q: 1 } },
+        })
+        parameter = `fx:${effectId}:frequency`
+        label = kind === 'lowpass' ? 'Low-pass cutoff' : 'High-pass cutoff'
+      }
+
+      actions.push({
+        type: 'ADD_AUTOMATION_LANE',
+        lane: { id: laneId, trackId: track.id, parameter, label, min: 0, max: 1, defaultValue: from, points: [], expanded: true },
+      })
+      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat, value: from } })
+      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat + lengthBeats, value: to } })
+
+      const spoken = len(i.length)
       return {
-        actions: [
-          {
-            type: 'ADD_EFFECT', trackId: track.id,
-            effect: { id: effectId, type: 'filter', params: { enabled: true, type: kind, frequency: 8000, q: 1 } },
-          },
-          {
-            type: 'ADD_AUTOMATION_LANE',
-            lane: {
-              id: laneId, trackId: track.id,
-              parameter: `fx:${effectId}:frequency`,
-              label: `${kind === 'lowpass' ? 'Low-pass' : 'High-pass'} cutoff`,
-              min: 0, max: 1, defaultValue: from, points: [], expanded: true,
-            },
-          },
-          { type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat, value: from } },
-          { type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat + lengthBeats, value: to } },
-        ],
-        say: `Added a ${kind === 'lowpass' ? 'low-pass' : 'high-pass'} sweep from ${Math.round(from * 100)}% to ${Math.round(to * 100)}% over ${(+(lengthBeats * 60 / t.tempo).toFixed(1))}s of ${found.how}.`,
+        actions,
+        say: `${label} from ${Math.round(from * 100)}% to ${Math.round(to * 100)}% over ${spoken ? describeDuration(spoken, lengthBeats) : `${+lengthBeats.toFixed(2)} beats`}, starting ${describeBeat(startBeat, maps)}, on ${found.how}.`,
       }
     }
 
-    // "move everything over by one bar"
-    case 'shift_all': {
-      const bars = spokenNumber(i.bars as string)
-      const beats = bars != null ? bars * t.beatsPerBar : spokenNumber(i.beats as string)
-      if (beats == null || !Number.isFinite(beats)) return fail('Say how far to move everything.')
-      const clips = allClips(project)
-      if (!clips.length) return fail('There is nothing in the arrangement to move.')
-      // Moving right is applied FROM THE END so two clips never occupy the same
-      // beat mid-way through; the reducer sees each clip once either way, but
-      // the order keeps the arrangement sane if it is ever applied optimistically.
-      const ordered = [...clips].sort((a, b) => (beats > 0 ? b.startBeat - a.startBeat : a.startBeat - b.startBeat))
+    // MOVE — "move everything over by one bar"
+    case 'move_clips': {
+      const clips = target
+        ? (() => {
+          const track = resolveTrack(target, project)
+          if (track) return allClips(project).filter(c => c.trackId === track.id)
+          const one = resolveClip(target, project)
+          return one ? [one.clip] : []
+        })()
+        : allClips(project)
+      if (!clips.length) {
+        return fail(target ? `I couldn't find "${target}" to move.` : 'There is nothing in the arrangement to move.')
+      }
+      const first = Math.min(...clips.map(c => c.startBeat))
+      const by = durationToBeats(len(i.by), first, maps)
+      if (by == null) return fail('Say how far to move it.')
+      // Moving later is applied from the END so two clips never briefly share a
+      // beat if this is ever applied optimistically.
+      const ordered = [...clips].sort((a, b) => (by > 0 ? b.startBeat - a.startBeat : a.startBeat - b.startBeat))
+      const spoken = len(i.by)
       return {
-        actions: ordered.map(c => ({
-          type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, c.startBeat + beats),
-        })),
-        say: `Moved ${clips.length} clip${clips.length === 1 ? '' : 's'} ${Math.abs(beats / t.beatsPerBar)} bar${Math.abs(beats / t.beatsPerBar) === 1 ? '' : 's'} ${beats > 0 ? 'later' : 'earlier'}.`,
+        actions: ordered.map(c => ({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, c.startBeat + by) })),
+        say: `Moved ${target ? `${clips.length} clip${clips.length === 1 ? '' : 's'} on ${target}` : `all ${clips.length} clips`} ${spoken ? describeDuration(spoken, Math.abs(by)) : `${Math.abs(by)} beats`} ${by > 0 ? 'later' : 'earlier'}.`,
       }
     }
 
-    // "have a 1 bar long crash at the beginning"
-    case 'add_drum_hit': {
+    // INSERT — "a 1 bar long crash at the beginning"
+    case 'insert_clip': {
       const sound = str(i.sound || 'crash')
-      // Bars are counted from ONE by every musician and every ruler in the
-      // app, so "at bar 1" is beat 0. Written as `?? 1 - 1` this parsed as
-      // `?? 0` and only subtracted when the bar was NOT given — so an explicit
-      // "at the beginning" landed a whole bar late.
-      const atBar = spokenNumber(i.atBar as string) ?? 1
-      const atBeat = (atBar - 1) * t.beatsPerBar
-      const lengthBeats = durationToBeats(
-        { bars: i.bars as number, beats: i.beats as number, seconds: i.seconds as number }, t) ?? t.beatsPerBar
-      // Put it on a track whose name matches the sound if there is one, so a
-      // "crash" lands on the Crash track rather than making a second one.
+      const atBeat = positionToBeat(pos(i.at), maps) ?? 0
+      const lengthBeats = durationToBeats(len(i.length), atBeat, maps)
+        ?? durationToBeats({ bars: 1 }, atBeat, maps) ?? 4
       const existing = resolveTrack(sound, project)
       const trackId = existing?.id ?? newId()
       const actions: unknown[] = []
@@ -203,24 +204,63 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
         type: 'ADD_CLIP',
         clip: {
           id: newId(), trackId, kind: 'midi', name: sound,
-          startBeat: Math.max(0, atBeat), durationBeats: lengthBeats,
+          startBeat: atBeat, durationBeats: lengthBeats, loopEnabled: false,
           notes: [{ id: newId(), pitch: 49, startBeat: 0, durationBeats: Math.min(1, lengthBeats), velocity: 110 }],
         } as unknown as MidiClip,
       })
+      const spoken = len(i.length)
       return {
         actions,
-        say: `Added a ${lengthBeats / t.beatsPerBar} bar ${sound}${existing ? ` on ${existing.name}` : ' on a new track'}.`,
+        say: `Added a ${spoken ? describeDuration(spoken, lengthBeats) : `${lengthBeats}-beat`} ${sound} at ${describeBeat(atBeat, maps)}${existing ? ` on ${existing.name}` : ' on a new track'}.`,
       }
     }
 
     case 'set_tempo': {
       const bpm = spokenNumber(i.bpm as string)
       if (bpm == null || bpm < 20 || bpm > 300) return fail('Say a tempo between 20 and 300.')
-      return { actions: [{ type: 'SET_TEMPO', tempo: bpm }], say: `Tempo set to ${bpm}.` }
+      const at = positionToBeat(pos(i.at), maps)
+      if (at == null) return { actions: [{ type: 'SET_TEMPO', tempo: bpm }], say: `Tempo set to ${bpm} bpm.` }
+      return {
+        actions: [{ type: 'ADD_TEMPO_MARKER', marker: { id: newId(), beat: at, tempo: bpm } }],
+        say: `Tempo changes to ${bpm} bpm at ${describeBeat(at, maps)}.`,
+      }
+    }
+
+    case 'set_time_signature': {
+      const num = spokenNumber(i.numerator as string)
+      const den = spokenNumber(i.denominator as string)
+      if (num == null || den == null || num < 1 || den < 1) return fail('Say a time signature, like 3/4.')
+      const at = positionToBeat(pos(i.at), maps)
+      if (at == null) {
+        return { actions: [{ type: 'SET_TIME_SIG', num, den }], say: `Time signature set to ${num}/${den}.` }
+      }
+      return {
+        actions: [{ type: 'ADD_METER_MARKER', marker: { id: newId(), beat: at, num, den } }],
+        say: `Time signature changes to ${num}/${den} at ${describeBeat(at, maps)}.`,
+      }
+    }
+
+    case 'set_loop_region': {
+      if (i.start == null && i.end == null && i.length == null && i.enabled != null) {
+        return { actions: [{ type: 'SET_LOOP_ENABLED', enabled: !!i.enabled }], say: `Loop ${i.enabled ? 'on' : 'off'}.` }
+      }
+      const start = positionToBeat(pos(i.start), maps)
+      if (start == null) return fail('Say where the loop should start.')
+      const end = positionToBeat(pos(i.end), maps)
+        ?? (durationToBeats(len(i.length), start, maps) != null
+          ? start + (durationToBeats(len(i.length), start, maps) as number)
+          : null)
+      if (end == null || end <= start) return fail('Say where the loop should end.')
+      return {
+        actions: [
+          { type: 'SET_LOOP', start, end },
+          { type: 'SET_LOOP_ENABLED', enabled: i.enabled == null ? true : !!i.enabled },
+        ],
+        say: `Looping ${describeBeat(start, maps)} to ${describeBeat(end, maps)}.`,
+      }
     }
 
     case 'set_track': {
-      const target = str(i.track)
       const track = resolveTrack(target, project)
       if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
       const patch: Record<string, unknown> = {}
@@ -229,20 +269,44 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
       if (i.solo != null) { patch.solo = !!i.solo; said.push(i.solo ? 'soloed' : 'unsoloed') }
       const vol = spokenFraction(i.volume as string)
       if (vol != null) { patch.volume = Math.max(0, Math.min(1, vol)); said.push(`volume ${Math.round(vol * 100)}%`) }
+      const pan = spokenNumber(i.pan as string)
+      if (pan != null) { patch.pan = Math.max(-1, Math.min(1, pan / 100)); said.push(`pan ${pan > 0 ? 'right' : 'left'} ${Math.abs(pan)}%`) }
       if (!said.length) return fail('Say what to change about that track.')
+      return { actions: [{ type: 'UPDATE_TRACK', trackId: track.id, patch }], say: `${track.name}: ${said.join(', ')}.` }
+    }
+
+    case 'transpose': {
+      const found = resolveClip(target, project)
+      if (!found) return fail(`I couldn't find "${target || 'that'}" to transpose.`)
+      const semis = spokenNumber(i.semitones as string)
+      if (semis == null || semis === 0) return fail('Say how many semitones to move it.')
+      const clip = found.clip
+      if (!('notes' in clip)) return fail('That is an audio clip — transposing audio is not supported yet.')
+      const notes = (clip as MidiClip).notes
+      if (!notes.length) return fail('That clip has no notes.')
       return {
-        actions: [{ type: 'UPDATE_TRACK', trackId: track.id, patch }],
-        say: `${track.name}: ${said.join(', ')}.`,
+        actions: notes.map(n => ({
+          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+          patch: { pitch: Math.max(0, Math.min(127, n.pitch + semis)) },
+        })),
+        say: `Transposed ${found.how} ${Math.abs(semis)} semitone${Math.abs(semis) === 1 ? '' : 's'} ${semis > 0 ? 'up' : 'down'}.`,
       }
     }
 
-    // "then restart" — transport is handled by the caller, which owns the engine.
     case 'transport': {
       const action = str(i.action || 'play').toLowerCase()
-      if (!['play', 'stop', 'pause', 'restart', 'toggle'].includes(action)) {
+      if (!['play', 'stop', 'pause', 'restart', 'toggle', 'locate'].includes(action)) {
         return fail(`I don't know how to "${action}".`)
       }
-      return { actions: [{ type: 'TRANSPORT', action }], say: action === 'restart' ? 'Restarted.' : `${action[0].toUpperCase()}${action.slice(1)}.` }
+      if (action === 'locate') {
+        const at = positionToBeat(pos(i.at), maps)
+        if (at == null) return fail('Say where to move the playhead.')
+        return { actions: [{ type: 'TRANSPORT', action: 'locate', beat: at }], say: `Moved to ${describeBeat(at, maps)}.` }
+      }
+      return {
+        actions: [{ type: 'TRANSPORT', action }],
+        say: action === 'restart' ? 'Restarted from the top.' : `${action[0].toUpperCase()}${action.slice(1)}.`,
+      }
     }
 
     default:
@@ -251,11 +315,11 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
 }
 
 /**
- * Plan a whole spoken sentence — several tool calls, in order.
+ * Plan a whole spoken sentence — several calls, in order.
  *
- * One command that half-works is worse than one that does not: if any call
- * cannot be resolved, nothing is applied and the problem is reported. "Loop
- * bass 2 and add a filter" should not leave the loop without the filter.
+ * All or nothing: if any call cannot be resolved, none are applied. "Loop bass 2
+ * and add a filter" leaving the loop without the filter is worse than doing
+ * nothing and saying why.
  */
 export function planVoiceCalls(calls: VoiceCall[], project: DawProject): VoicePlan {
   const actions: unknown[] = []

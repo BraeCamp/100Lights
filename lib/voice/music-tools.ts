@@ -1,142 +1,255 @@
-// What the assistant is allowed to do to a song.
+// The command vocabulary — the official name for each thing you can say.
 //
-// These are the tools Claude may call when someone speaks a command in Beacon,
-// and they are the security boundary of the whole voice feature: free-form text
-// goes IN, and only a call to one of these names, with these fields, comes out.
-// The executor (lib/voice/execute-music.ts) refuses anything else by name, so a
-// model that invents `delete_everything` gets an error message rather than an
-// effect.
+// Brae: "Let's start with the official terms for each command, and keep in mind
+// time signatures, bpm, locations (which bar, what time)."
 //
-// They are deliberately shaped like the sentence a musician says, not like the
-// reducer underneath. Brae's example is "loop 'bass 2' 3 more times and add an
-// ascending low pass filter from 80% to 0% over the first 8 seconds of it" —
-// that is two calls, and each field is a thing he actually said. Anything the
-// app has to work out (which clip, how many beats 8 seconds is, whether a Crash
-// track already exists) is the executor's job, because it can be tested and a
-// language model cannot.
+// Two decisions run through the whole list.
 //
-// Every duration accepts seconds OR bars OR beats, because people mix them
-// freely in one breath — "eight seconds", "one bar", "two beats".
+// THE NAMES ARE THE DAW'S, NOT THE SENTENCE'S. People say "loop the bass three
+// more times", but in every DAW ever made that operation is DUPLICATE — "loop"
+// means a loop brace or a clip's loop flag, which are different things you can
+// also ask for. Naming the tool `duplicate_clip` and letting the model map
+// "loop it again" onto it keeps one honest name per operation; naming it
+// `loop_clip` would leave nothing to call the real loop with.
+//
+// EVERY PLACE AND LENGTH IS MUSICAL. A position is `{ bar, beat }` or
+// `{ seconds }`, a length is `{ bars }` or `{ beats }` or `{ seconds }`, and
+// both are resolved through the song's tempo and meter maps (lib/voice/position)
+// rather than multiplied by one BPM. Bars and beats are counted from 1, the way
+// they are spoken and the way the ruler prints them.
+//
+// The glossary below is the contract. Adding a command means adding an entry
+// here and a case in lib/voice/execute-music, and both are tested.
+
+/** Shared JSON-schema fragments, so every command speaks the same dialect. */
+const POSITION = {
+  type: 'object',
+  description: 'A place in the song. Give bar (+ optional beat), or seconds. Bars and beats count from 1.',
+  properties: {
+    bar: { type: 'number', description: 'Bar number, counting from 1. "the beginning" is bar 1.' },
+    beat: { type: 'number', description: 'Beat within that bar, counting from 1.' },
+    seconds: { type: 'number', description: 'Seconds from the start, if they gave a time instead.' },
+  },
+} as const
+
+const LENGTH = {
+  type: 'object',
+  description: 'A length of time. Give bars, beats, or seconds — whichever they said.',
+  properties: {
+    bars: { type: 'number' },
+    beats: { type: 'number' },
+    seconds: { type: 'number' },
+  },
+} as const
+
+const TARGET = {
+  type: 'string',
+  description: 'What they called it — a track or clip name, exactly as spoken ("bass 2"). The app resolves it.',
+} as const
 
 export const MUSIC_TOOLS = [
   {
-    name: 'loop_clip',
+    name: 'duplicate_clip',
     description:
-      'Repeat a clip N more times, back to back, immediately after itself. Use for "loop the bass 3 more times", "double that", "repeat it twice".',
+      'DUPLICATE — repeat a clip N more times, back to back after itself. This is what "loop it 3 more times", "repeat that twice", "double it" mean. For an actual loop brace use set_loop_region; for a clip\'s own loop flag use set_clip_loop.',
     input_schema: {
       type: 'object',
       properties: {
-        clip: { type: 'string', description: 'What the user called it — a clip name or a track name, exactly as spoken ("bass 2").' },
-        times: { type: 'number', description: 'How many EXTRA copies. "3 more times" is 3.' },
+        target: TARGET,
+        count: { type: 'number', description: 'How many EXTRA copies. "3 more times" is 3.' },
       },
-      required: ['clip', 'times'],
+      required: ['target', 'count'],
     },
   },
   {
-    name: 'filter_sweep',
+    name: 'automate_parameter',
     description:
-      'Add a filter to a clip\'s track and automate its cutoff from one value to another over a span of time. Use for "a low pass sweep from 80% to 0% over the first 8 seconds", "open the filter up across the intro".',
+      'AUTOMATION — write a ramp on a parameter over a span of the song. This is what "an ascending low pass filter from 80% to 0% over the first 8 seconds", "fade the volume out over the last 2 bars", "open the filter across the intro" mean.',
     input_schema: {
       type: 'object',
       properties: {
-        clip: { type: 'string', description: 'Clip or track name as spoken.' },
-        type: { type: 'string', enum: ['lowpass', 'highpass'], description: 'Defaults to lowpass.' },
-        from: { type: 'number', description: 'Starting cutoff as a percentage, 0-100. "from 80%" is 80.' },
-        to: { type: 'number', description: 'Ending cutoff as a percentage, 0-100.' },
-        seconds: { type: 'number', description: 'How long the sweep lasts, in seconds.' },
-        bars: { type: 'number', description: 'How long the sweep lasts, in bars (instead of seconds).' },
-        startSeconds: { type: 'number', description: 'Offset from the start of the clip. Omit for "the first N seconds of it".' },
+        target: TARGET,
+        parameter: {
+          type: 'string',
+          enum: ['lowpass', 'highpass', 'volume', 'pan'],
+          description: 'lowpass/highpass add a filter and automate its cutoff; volume and pan automate the track itself.',
+        },
+        from: { type: 'number', description: 'Starting value as a percentage, 0-100.' },
+        to: { type: 'number', description: 'Ending value as a percentage, 0-100.' },
+        start: { ...POSITION, description: 'Where the ramp begins. Omit for the start of the target clip.' },
+        length: LENGTH,
       },
-      required: ['clip', 'from', 'to'],
+      required: ['target', 'parameter', 'from', 'to'],
     },
   },
   {
-    name: 'shift_all',
+    name: 'move_clips',
     description:
-      'Move every clip in the arrangement later or earlier. Use for "move everything over by one bar", "push it all back 2 bars". Negative moves earlier.',
-    input_schema: {
-      type: 'object',
-      properties: { bars: { type: 'number', description: 'Bars to move by. Negative moves earlier.' } },
-      required: ['bars'],
-    },
-  },
-  {
-    name: 'add_drum_hit',
-    description:
-      'Put a drum sound in the arrangement — a crash, a kick, a snare. Reuses a track of that name if one exists. Use for "have a 1 bar long crash at the beginning".',
+      'MOVE — shift clips later or earlier by a length. "move everything over by one bar", "push the drums back 2 bars". Negative moves earlier. Omit target to move the whole arrangement.',
     input_schema: {
       type: 'object',
       properties: {
-        sound: { type: 'string', description: 'crash, kick, snare, hat …' },
-        atBar: { type: 'number', description: 'Bar to place it at, counting from 1. "at the beginning" is 1.' },
-        bars: { type: 'number', description: 'How long it lasts, in bars.' },
+        target: { ...TARGET, description: 'A track or clip name; omit to move EVERYTHING.' },
+        by: LENGTH,
       },
-      required: ['sound'],
+      required: ['by'],
+    },
+  },
+  {
+    name: 'insert_clip',
+    description:
+      'INSERT — put a new clip in the arrangement at a position. Use for "have a 1 bar long crash at the beginning", "put a kick on bar 9". Reuses a track whose name matches the sound.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sound: { type: 'string', description: 'crash, kick, snare, hat, or an instrument name.' },
+        at: POSITION,
+        length: LENGTH,
+      },
+      required: ['sound', 'at'],
     },
   },
   {
     name: 'set_tempo',
-    description: 'Change the song tempo. Use for "take it to 128", "slow it down to 90".',
+    description: 'TEMPO — change the song tempo in BPM. "take it to 128", "slow down to 90".',
     input_schema: {
       type: 'object',
-      properties: { bpm: { type: 'number' } },
+      properties: {
+        bpm: { type: 'number' },
+        at: { ...POSITION, description: 'Omit to change the song tempo; give a position to add a tempo change there.' },
+      },
       required: ['bpm'],
+    },
+  },
+  {
+    name: 'set_time_signature',
+    description:
+      'TIME SIGNATURE — change the meter. "put it in 3/4", "switch to 6/8 at bar 17". A change mid-song starts a new bar there.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        numerator: { type: 'number', description: 'Beats per bar — the 3 in 3/4.' },
+        denominator: { type: 'number', description: 'Which note gets the beat — the 4 in 3/4.' },
+        at: { ...POSITION, description: 'Omit for the whole song.' },
+      },
+      required: ['numerator', 'denominator'],
+    },
+  },
+  {
+    name: 'set_loop_region',
+    description:
+      'LOOP BRACE — set the loop start and end, the region the transport repeats. "loop bars 9 to 17", "loop the chorus". This is NOT duplicating a clip.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        start: POSITION,
+        end: { ...POSITION, description: 'Where the loop ends. Give this or length.' },
+        length: LENGTH,
+        enabled: { type: 'boolean', description: 'Turn looping on or off without changing the region.' },
+      },
     },
   },
   {
     name: 'set_track',
     description:
-      'Mute, solo or set the volume of one track. Use for "mute the hats", "bring the bass up", "solo the vocal".',
+      'MIXER — mute, solo, set volume or pan on one track. "mute the hats", "bring the bass up", "pan the guitar left".',
     input_schema: {
       type: 'object',
       properties: {
-        track: { type: 'string', description: 'Track name as spoken.' },
+        target: TARGET,
         muted: { type: 'boolean' },
         solo: { type: 'boolean' },
-        volume: { type: 'number', description: 'Volume as a percentage, 0-100.' },
+        volume: { type: 'number', description: 'Percentage, 0-100.' },
+        pan: { type: 'number', description: '-100 (hard left) to 100 (hard right).' },
       },
-      required: ['track'],
+      required: ['target'],
+    },
+  },
+  {
+    name: 'transpose',
+    description:
+      'TRANSPOSE — move the notes of a clip up or down in semitones. "take the bass up an octave" is 12, "down a fifth" is -7.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        semitones: { type: 'number', description: 'Positive is up. An octave is 12.' },
+      },
+      required: ['target', 'semitones'],
     },
   },
   {
     name: 'transport',
-    description: 'Play, stop or restart playback. Use for "then restart", "play it", "stop".',
+    description:
+      'TRANSPORT — play, stop, or return to the start. ALWAYS call this when the sentence ends with "then restart", "then play it", "and play it back", or similar: "restart" means go back to the beginning and play, and it is a real request like any other, not a closing remark. "go to bar 9" moves the playhead.',
     input_schema: {
       type: 'object',
-      properties: { action: { type: 'string', enum: ['play', 'stop', 'pause', 'restart', 'toggle'] } },
+      properties: {
+        action: { type: 'string', enum: ['play', 'stop', 'pause', 'restart', 'toggle', 'locate'] },
+        at: { ...POSITION, description: 'For "locate" — where to put the playhead.' },
+      },
       required: ['action'],
     },
   },
 ] as const
 
+/** Every command name, for the executor to check itself against. */
+export const MUSIC_TOOL_NAMES = MUSIC_TOOLS.map(t => t.name)
+
 /**
- * What the model needs to know about the song to resolve a name.
+ * What the model needs to know about the song to resolve a name or a bar.
  *
- * Deliberately small: names, tempo, and where the clips are. It goes into every
- * request, and a whole project would be both expensive and worse — the model
- * does not need note data to work out which track "bass 2" is, and sending it
- * invites the model to reason about music it cannot hear.
+ * Deliberately small — names, tempo, meter, and where the clips are. It goes
+ * into every request, and a whole project would be both expensive and worse:
+ * the model does not need note data to work out which track "bass 2" is, and
+ * sending it invites reasoning about music it cannot hear.
+ *
+ * Clip positions are given in BARS, because that is the unit every instruction
+ * comes back in. Handing the model raw beats would make it do arithmetic that
+ * lib/voice/position already does correctly, including across meter changes.
  */
 export function musicStateSummary(p: {
   tempo?: number
   timeSignatureNum?: number
+  timeSignatureDen?: number
+  tempoMarkers?: { beat: number; tempo: number }[]
+  meterMarkers?: { beat: number; num: number; den: number }[]
   tracks?: { id: string; name?: string }[]
   arrangementClips?: { trackId: string; name?: string; startBeat: number; durationBeats: number }[]
 }): string {
-  const tempo = p.tempo ?? 120
-  const sig = p.timeSignatureNum ?? 4
+  const num = p.timeSignatureNum ?? 4
+  const den = p.timeSignatureDen ?? 4
+  const bar = (beat: number) => Math.floor(beat / Math.max(1, num)) + 1
   const tracks = (p.tracks ?? []).map(t => {
     const clips = (p.arrangementClips ?? []).filter(c => c.trackId === t.id)
-    const where = clips.length
-      ? clips.map(c => `bar ${Math.round(c.startBeat / sig) + 1}+${Math.round(c.durationBeats / sig)}`).join(', ')
-      : 'empty'
-    return `"${t.name ?? t.id}" (${clips.length} clip${clips.length === 1 ? '' : 's'}: ${where})`
+    if (!clips.length) return `"${t.name ?? t.id}" (empty)`
+    const where = clips
+      .slice()
+      .sort((a, b) => a.startBeat - b.startBeat)
+      .map(c => `${c.name ? `"${c.name}" ` : ''}bar ${bar(c.startBeat)}–${bar(c.startBeat + c.durationBeats)}`)
+      .join(', ')
+    return `"${t.name ?? t.id}": ${where}`
   })
+  const changes = [
+    ...(p.tempoMarkers ?? []).map(m => `tempo ${m.tempo} at bar ${bar(m.beat)}`),
+    ...(p.meterMarkers ?? []).map(m => `${m.num}/${m.den} at bar ${bar(m.beat)}`),
+  ]
   return [
-    `${tempo} bpm, ${sig}/4.`,
-    tracks.length ? `Tracks: ${tracks.join('; ')}.` : 'No tracks yet.',
-  ].join(' ')
+    `${p.tempo ?? 120} bpm, ${num}/${den}.`,
+    changes.length ? `Changes: ${changes.join('; ')}.` : '',
+    tracks.length ? `Tracks — ${tracks.join(' | ')}.` : 'No tracks yet.',
+  ].filter(Boolean).join(' ')
 }
 
-export const MUSIC_SYSTEM_HINT =
-  'The user is speaking commands out loud while making music, so the transcript may be casual, may include "Hey Light", and may run several requests into one sentence — call one tool per request, in the order they said them. Use the names they used; the app resolves them against the real project. Percentages are 0-100. Bars count from 1. If a request is ambiguous or you cannot do it with the tools, say so briefly instead of guessing.'
+export const MUSIC_SYSTEM_HINT = [
+  'The user is speaking commands out loud while making music, so the transcript may be casual and may include "Hey Light".',
+  // Measured: "move everything over by one bar and have a 1 bar long crash at
+  // the beginning, then restart" came back as ONE call — the move — silently
+  // dropping two thirds of the sentence. A spoken sentence is often three
+  // instructions joined by "and" and "then", and a half-performed command is
+  // worse than a refused one, so this says it twice and gives the example.
+  'ONE SENTENCE OFTEN CONTAINS SEVERAL REQUESTS. Emit a tool call for EVERY request in it, in the order they were said, all in this one reply. "Move everything over by one bar and have a 1 bar long crash at the beginning, then restart" is THREE calls: move_clips, insert_clip, transport. Do not stop after the first.',
+  'Use the names they used for tracks and clips; the app resolves them against the real project and will refuse rather than guess if a name is ambiguous.',
+  'Positions are bars and beats counting from 1 ("the beginning" is bar 1). Lengths can be bars, beats or seconds — pass whichever unit they said and let the app convert, because the song may change tempo or time signature part way through.',
+  'Percentages are 0-100. If a request is ambiguous or no tool fits, say so in one short sentence instead of guessing.',
+].join(' ')
