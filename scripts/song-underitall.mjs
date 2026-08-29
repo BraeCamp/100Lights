@@ -68,6 +68,34 @@
 //          there so the chords exist, not so they are heard.
 //   clap   the drops only. It is the thing that says "this is the loud part".
 //
+// ── THE OFFLINE AND BROWSER RENDERS DISAGREE ABOUT THIS SONG ────────────────
+//
+// Worth knowing before trusting a number about it. `listen` reports sub 58.8% /
+// bass 24.9%; a real browser bounce of the same file reports 39.6% / 39.9%. Both
+// agree the record is about 80% low end — they disagree about where the line
+// between the two bands falls, and 19 points of energy sit on the wrong side of
+// it depending on which renderer you ask.
+//
+// What it is NOT, each ruled out by measurement rather than by argument:
+//   · the mp3. Encoding the offline wav through the identical libmp3lame -q:a 2
+//     round trip and re-measuring returns 58.8% — unchanged to four figures.
+//   · the glide. The sub reads MIDI 30.00 then 28.00 in BOTH renders during the
+//     four-bar intro where nothing else sounds. The curve is exact in both.
+//   · the master limiter, which was the obvious suspect since the browser bounce
+//     peaks at −0.2 dBFS. Dropping masterVolume from 0.84 to 0.62 — 2.6 dB less
+//     drive — moved the figure from 39.6% to 39.5%. Not it.
+//
+// What is left is the filter. The band edge is 60 Hz; these roots are 52/46/41 Hz
+// with second harmonics at 104/92/82 Hz, and glideSub's lowpass sits at 84 Hz —
+// so the harmonic that decides the split lands ON the cutoff, where a 12 dB/oct
+// filter's transcription differs most between daw-engine and its offline copy.
+// MUSIC.md's "every band within 0.5%" was established against "Iced", which has
+// no part in this register. Trust the browser bounce for this song.
+//
+// masterVolume is 0.74 rather than the catalogue's 0.84 for a plain reason: at
+// 0.84 the browser bounce peaks at −0.2 dBFS, and an unmastered bounce should
+// not be sitting on the ceiling. It costs nothing — the balance is identical.
+//
 // ── ONE MEASUREMENT THAT IS NOT ACTIONABLE, AND WHY ─────────────────────────
 //
 // `listen` warns that the mix is near-mono at 0.973, against the references'
@@ -261,7 +289,7 @@ const bars = [
 const built = assemble({
   name: 'under it all',
   bpm: BPM, bpb: BPB, key: KEY, scale: SCALE,
-  swing: 0, tracks: TRACKS, sections, bars, masterVolume: 0.84,
+  swing: 0, tracks: TRACKS, sections, bars, masterVolume: 0.74,
 })
 
 import { writeFileSync } from 'node:fs'

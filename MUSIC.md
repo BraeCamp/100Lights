@@ -352,6 +352,19 @@ browser bounce of Iced it lands every band within 0.5%, crest within 0.6 dB and
 correlation within 0.004, sitting 1.8 dB low overall. Trust it for musical
 decisions; take a browser bounce before delivering.
 
+**That 0.5% does not hold for everything, and "under it all" is where it broke.**
+On that song `listen` reports sub 58.8% / bass 24.9% and a browser bounce of the
+identical file reports 39.6% / 39.9% — nineteen points across a band edge. The
+mp3, the glide curve and the master limiter were each ruled out by measurement
+(the round trip returns 58.8% unchanged; the sub reads MIDI 30.00 then 28.00 in
+both; 2.6 dB less master drive moved it by 0.1). What is left is the filter: the
+band edge is 60 Hz, that song's roots are 41–52 Hz, and its lowpass sits at 84 Hz
+— so the second harmonic deciding the split lands *on* the cutoff, where the two
+biquad implementations diverge most. Iced has nothing in that register, which is
+why the figure looked universal. **The agreement is good in the middle and
+fragile at a band edge**; a song whose character depends on the sub/bass split
+has to be judged from a browser bounce, not from `listen` alone.
+
 **`__dawRenderOffline` in the app silently drops layers.** Measured on the same
 project: sub and bass entirely absent, 11.6 dB quieter than the real-time path.
 Do not use `hear-ai --offline` for verification. (Worth fixing in the app — its
