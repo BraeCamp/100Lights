@@ -19,6 +19,24 @@
 
 'use strict'
 
+/* AudioWorkletGlobalScope has no TextEncoder, so UTF-8 is encoded by hand.
+   This is the whole reason Luz loaded but never sounded in the browser. */
+function encodeUtf8 (str) {
+  const out = []
+  for (let i = 0; i < str.length; i++) {
+    let c = str.charCodeAt(i)
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+      const lo = str.charCodeAt(i + 1)
+      if (lo >= 0xdc00 && lo <= 0xdfff) { c = 0x10000 + ((c - 0xd800) << 10) + (lo - 0xdc00); i++ }
+    }
+    if (c < 0x80) out.push(c)
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63))
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+  }
+  return new Uint8Array(out)
+}
+
 const RENDER_QUANTUM = 128
 
 class LuzProcessor extends AudioWorkletProcessor {
@@ -56,7 +74,7 @@ class LuzProcessor extends AudioWorkletProcessor {
   }
 
   writeCString(str) {
-    const bytes = new TextEncoder().encode(str)
+    const bytes = encodeUtf8(str)
     const ptr = this.exports.malloc(bytes.length + 1)
     this.heapU8.set(bytes, ptr)
     this.heapU8[ptr + bytes.length] = 0
