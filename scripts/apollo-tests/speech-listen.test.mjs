@@ -107,8 +107,16 @@ const { listen } = await importTs('lib/voice/speech.ts')
   const rec = built[0]
   rec.fail('network')
   rec.endNaturally()
+  // The retry after an error BACKS OFF — every restart re-opens the microphone,
+  // and restarting every 120ms against a failing service shows up as the
+  // recording indicator flashing on and off once a second. So it should NOT
+  // have restarted yet at 250ms...
   await tick(250)
   check('a network blip does not report a failure', msgs.length === 0, msgs.join(' | '))
+  check('and it does not re-open the microphone immediately', rec.started === 1,
+    `started ${rec.started}`)
+  // ...but it does come back.
+  await tick(500)
   check('and it keeps listening', rec.started === 2, `started ${rec.started}`)
 
   // ...and the words still arrive afterwards.

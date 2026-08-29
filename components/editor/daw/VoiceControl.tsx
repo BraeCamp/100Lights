@@ -31,6 +31,7 @@ import { musicStateSummary } from '@/lib/voice/music-tools'
 import { hearBetter } from '@/lib/voice/hear-better'
 import { resolveLocally, confidentEnough } from '@/lib/voice/local-resolve'
 import { remember, markFailed } from '@/lib/voice/voice-memory'
+import { startRecording, preferredTranscriber, setPreferredTranscriber, type Recording } from '@/lib/voice/record'
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 
 const C = {
@@ -94,6 +95,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [typed, setTyped] = useState('')
   const [showType, setShowType] = useState(false)
   const handle = useRef<SpeechHandle | null>(null)
+  /** Set when recording instead of using the browser's recogniser. */
+  const recorder = useRef<Recording | null>(null)
   const available = useRef(false)
 
   useEffect(() => {
@@ -239,6 +242,30 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // microphone stays open with nothing watching it.
   const wanted = useRef(false)
 
+  /** A finished sentence, from either transcriber. Same treatment either way:
+   *  choose among alternatives using the project's real names, repair them,
+   *  then run it. */
+  const heardSentence = useCallback((text: string, alternatives: string[][], confidence: number) => {
+    setListening(false)
+    const heardBest = alternatives.length
+      ? alternatives.map(a => hearBetter(a, project.tracks ?? [])).join(' ')
+      : hearBetter([text], project.tracks ?? [])
+    setHeard(heardBest)
+    void run(heardBest || text, confidence)
+  }, [project, run])
+
+  /** Record and transcribe on the server — the path that does not go through
+   *  the browser's speech service. */
+  const startRecorded = useCallback(async () => {
+    setProblem('Listening…')
+    const rec = await startRecording()
+    if (!rec) { setProblem('Could not open the microphone.'); return }
+    if (!wanted.current) { rec.cancel(); setProblem(''); return }
+    recorder.current = rec
+    setProblem('')
+    setListening(true)
+  }, [])
+
   const start = useCallback(async () => {
     if (listening || busy) return
     wanted.current = true
@@ -253,21 +280,34 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     if (!wanted.current) { setProblem(''); return }
     if (!mic.ok) { setProblem(mic.message ?? 'No microphone.'); return }
     setProblem('')
+
+    // ── Which ear to use ─────────────────────────────────────────────────────
+    //
+    // The browser's recogniser is preferred: it is instant, free, and shows the
+    // words as they are spoken. But it streams audio to Google, and on a
+    // machine that cannot reach that service it never works — so once that has
+    // been established, stop trying it and record instead. Rediscovering the
+    // failure on every command, twelve retries at a time, is its own kind of
+    // broken.
+    if (preferredTranscriber() === 'server' || !available.current) {
+      await startRecorded()
+      return
+    }
+
     const h = listen({
       onPartial: setHeard,
-      onFinal: (t, alts, heardConfidence) => {
-        setListening(false)
-        // Choose between the recogniser's guesses using the names actually in
-        // this project, then repair those names in the winning sentence, before
-        // anything downstream sees it.
-        const heardBest = alts.length
-          ? alts.map(a => hearBetter(a, project.tracks ?? [])).join(' ')
-          : hearBetter([t], project.tracks ?? [])
-        setHeard(heardBest)
-        void run(heardBest || t, heardConfidence)
-      },
+      onFinal: heardSentence,
       onError: m => {
-        setListening(false); setProblem(m)
+        setListening(false)
+        // The browser told us it cannot reach its speech service. Switch to
+        // recording permanently on this browser and say so once — the next
+        // command will simply work rather than failing the same way again.
+        if (/speech service/i.test(m)) {
+          setPreferredTranscriber('server')
+          setProblem('Your browser can\'t reach its speech service — switched to recording. Try again.')
+          return
+        }
+        setProblem(m)
         // A failure that names typing as the way forward should OPEN the box,
         // not just mention it. Being told what to do instead and then having to
         // find it is its own small failure.
@@ -284,10 +324,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
   const finish = useCallback(() => {
     wanted.current = false
+    if (recorder.current) {
+      const rec = recorder.current
+      recorder.current = null
+      setListening(false)
+      setBusy(true)
+      void rec.stop().then(r => {
+        setBusy(false)
+        if (!r || !r.text) { setProblem('I didn\'t catch that.'); return }
+        heardSentence(r.text, r.alternatives.length ? [r.alternatives] : [], r.confidence)
+      })
+      return
+    }
     handle.current?.stop()
     handle.current = null
     setListening(false)
-  }, [])
+  }, [heardSentence])
 
   // Enter runs the command — but only when Enter is not doing something else.
   // A DAW binds Enter (rename a track, confirm a field), and stealing it would

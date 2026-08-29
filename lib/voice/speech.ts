@@ -194,11 +194,19 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
   // otherwise spin forever: a fatal error stops it, and so do the caps below.
   let fatal = false
   let restarts = 0
-  // A network blip is worth retrying; twelve of them in a row means the speech
-  // service is genuinely unreachable from here and saying so is more useful
-  // than retrying forever.
+  // ── Retry a blip, not an outage ──────────────────────────────────────────
+  //
+  // Three, not twelve. Every restart re-opens the microphone, and the operating
+  // system shows that: Brae, on a machine that cannot reach the speech service,
+  // "the microphone symbol on my computer is showing up and disappearing once a
+  // second". Twelve retries against a service that is not there is a flashing
+  // recording indicator and nothing else.
+  //
+  // Three failures in a row is already not a blip. After that the caller is
+  // told, and it switches to recording — which is the path that actually works
+  // on such a machine.
   let transientErrs = 0
-  const MAX_TRANSIENT = 12
+  const MAX_TRANSIENT = 3
   let delivered = false
   const MAX_RESTARTS = 40
   const DEADLINE_MS = 3 * 60 * 1000
@@ -251,11 +259,6 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
       transientErrs++
       // Say something after a few, because silence while nothing works is worse
       // than a warning — but do NOT stop; the restart may well succeed.
-      if (transientErrs === 3) {
-        opts.onError?.(err === 'network'
-          ? 'Trouble reaching the speech service — still trying. If this persists, type the command instead.'
-          : 'Trouble reading the microphone — still trying.')
-      }
       if (transientErrs < MAX_TRANSIENT) return
       fatal = true
       opts.onError?.(err === 'network'
@@ -276,12 +279,18 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
     if (aborted) return
     if (!stopped && !fatal && restarts < MAX_RESTARTS && Date.now() - startedAt < DEADLINE_MS) {
       restarts++
-      // A short gap: calling start() from inside onend can throw
+      // A short gap normally: calling start() from inside onend can throw
       // InvalidStateError because the previous session is still tearing down.
+      //
+      // But BACK OFF once errors have started. Restarting every 120ms against a
+      // service that is failing re-opens the microphone that often, which the
+      // operating system shows as an indicator flashing on and off — alarming,
+      // and it makes a broken feature look like a spying one.
+      const gap = transientErrs > 0 ? 500 * transientErrs : 120
       setTimeout(() => {
         if (stopped || aborted || fatal) return
         try { rec.start() } catch { /* it really is finished — deliver below */ }
-      }, 120)
+      }, gap)
       return
     }
     // Either the caller stopped it, or it is genuinely over.
