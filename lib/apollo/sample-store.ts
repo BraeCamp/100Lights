@@ -166,9 +166,29 @@ async function decodeOnce(id: string): Promise<Decoded | null> {
  *  turned a 40-zone instrument into 40 consecutive round trips before the track
  *  could make a sound. The width is small deliberately: the point is to overlap
  *  the waiting, not to start forty decodes at once on a phone. */
-export async function restorePatchSamples(patch: ApolloPatch, engine: ApolloEngine): Promise<string[]> {
+export async function restorePatchSamples(
+  patch: ApolloPatch,
+  engine: ApolloEngine,
+  // ── Why "ready" is optional ────────────────────────────────────────────────
+  //
+  // A LIVE engine must be up before its samples are sent, because loadSample
+  // posts them into the worklet and there is no worklet until init() runs.
+  //
+  // An OFFLINE render engine is the opposite case. daw-freeze builds a
+  // throwaway `new ApolloEngine()` and hands it straight to renderManyToBuffer,
+  // which creates its own OfflineAudioContext internally — so the engine is
+  // never init()ed and `ready` is never true. It reads `this.samples` when it
+  // builds each node, and nothing had ever put anything there: every render of
+  // a sampled instrument came back silent, and a silent render is discarded as
+  // a failure, so those clips never baked and played live forever.
+  //
+  // loadSample populates the map first and posts second, and post() is a no-op
+  // without a node, so filling an un-inited engine is safe and is exactly what
+  // the render path needs.
+  { requireReady = true }: { requireReady?: boolean } = {},
+): Promise<string[]> {
   sampleStats.calls++
-  if (!engine.ready) { sampleStats.notReady++; return [] }
+  if (requireReady && !engine.ready) { sampleStats.notReady++; return [] }
   const referenced = referencedSampleIds(patch)
   sampleStats.referenced += referenced.length
   const ids = referenced.filter(id => !engine.samples.has(id) && !engine.getSpectral(id))

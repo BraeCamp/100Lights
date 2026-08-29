@@ -30,7 +30,7 @@
 import type { DawProject, DawClip, MidiClip, AudioClip, ApolloInstrumentParams } from '@/lib/daw-types'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { ApolloEngine } from '@/lib/apollo/engine-client'
-import { saveBounceToLibrary } from '@/lib/apollo/sample-store'
+import { restorePatchSamples, saveBounceToLibrary } from '@/lib/apollo/sample-store'
 
 /** What a frozen clip remembers so it can be thawed back exactly. */
 export interface FrozenSource {
@@ -141,8 +141,11 @@ export async function renderApolloClip(
   const lastEnd = notes.reduce((m, n) => Math.max(m, n.t + n.dur), 0)
   const seconds = Math.max(clip.durationBeats * secPerBeat, lastEnd) + tailSec
   // A throwaway engine: renderToBuffer builds its own OfflineAudioContext, so
-  // this never touches the live audio graph.
+  // this never touches the live audio graph. Its sample map starts empty, and
+  // renderToBuffer sends the node whatever is in it — so without this a sampled
+  // instrument renders silence. Same fix, same reason as renderApolloProject.
   const engine = new ApolloEngine()
+  await restorePatchSamples(patch, engine, { requireReady: false }).catch(() => [])
   return engine.renderToBuffer(patch, notes, seconds)
 }
 
@@ -252,6 +255,26 @@ export async function renderApolloProject(
   }))
 
   const engine = new ApolloEngine()
+  // ── Give the render its samples ─────────────────────────────────────────
+  //
+  // This engine is brand new, so its `samples` map is empty — and
+  // renderManyToBuffer sends each node the samples it finds THERE. Nothing ever
+  // filled it, so every render of a sampled instrument was silent. A silent
+  // render is discarded as a failure (a combined buffer replaces live playback,
+  // and an empty one is worse than slow), so those clips never baked: they
+  // played live for the whole session, on every session, and the loader
+  // reported them as clips that "would not render".
+  //
+  // It went unnoticed because the synth patches everything was tested with have
+  // no samples at all, so the map being empty was correct for them.
+  //
+  // Affordable now: the decode is global and deduplicated (sample-store), so
+  // the audio a live track already loaded is handed over without touching the
+  // disk or decoding anything twice.
+  await Promise.all(
+    [...new Set(live.map(g => g.patch))].map(p =>
+      restorePatchSamples(p, engine, { requireReady: false }).catch(() => [])),
+  )
   // One merged buffer, track i on channels i*2 and i*2+1. Slices are cut
   // straight out of it — see renderManyToBuffer for why it isn't split first.
   const merged = await engine.renderManyToBuffer(items, seconds)
@@ -348,6 +371,9 @@ export async function renderApolloTrack(
   }
   const seconds = (lastBeat - firstBeat) * spb + tailSec
   const engine = new ApolloEngine()
+  // Third of three: a fresh engine has no samples, and a render sends the node
+  // only what its map holds. See renderApolloProject.
+  await restorePatchSamples(patch, engine, { requireReady: false }).catch(() => [])
   const full = await engine.renderToBuffer(patch, notes, seconds)
 
   // Cut each clip out, keeping a tail so releases and FX are not clipped off.

@@ -112,10 +112,10 @@ for (let t = 0; t < TRACKS; t++) {
   const p = initPatch()
   const base = SHARED ? 0 : t * ZONES
   p.oscs[0].enabled = true
-  p.oscs[0].engine = 'ms'
+  p.oscs[0].engine = 'multisample'
   p.oscs[0].ms.zones = Array.from({ length: ZONES }, (_, z) => ({
-    sampleId: seeded[base + z], lo: 24 + z * 2, hi: 25 + z * 2, root: 24 + z * 2,
-    loVel: 0, hiVel: 127, gain: 1, tune: 0,
+    sampleId: seeded[base + z], loKey: 24 + z * 2, hiKey: 25 + z * 2, rootKey: 24 + z * 2,
+    loVel: 0, hiVel: 127, gain: 0, tune: 0, loopMode: 'off', loopStart: 0, loopEnd: 0,
   }))
   const id = `t${t}`
   tracks.push(makeTrack({ id, name: `T${t}`, instrument: { type: 'apollo', params: p } }))
