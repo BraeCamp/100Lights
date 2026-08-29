@@ -29,6 +29,8 @@ import { useDaw } from '@/lib/daw-state'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { hearBetter } from '@/lib/voice/hear-better'
+import { resolveLocally, confidentEnough } from '@/lib/voice/local-resolve'
+import { remember, markFailed } from '@/lib/voice/voice-memory'
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 
 const C = {
@@ -100,11 +102,59 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     setEnterRuns(readVoiceEnter())
   }, [])
 
+  /** Apply one planned action. Transport is the engine, everything else the
+   *  reducer — shared so the local and assistant paths cannot drift apart. */
+  const runAction = useCallback((a: unknown) => {
+    const act = a as { type: string; action?: string }
+    if (act.type === 'TRANSPORT') {
+      if (act.action === 'stop' || act.action === 'pause') engine?.stop?.()
+      else if (act.action === 'restart') { engine?.stop?.(); engine?.play?.() }
+      else if (act.action === 'toggle') { if (engine?.isPlaying) engine.stop?.(); else engine?.play?.() }
+      else engine?.play?.()
+      return
+    }
+    dispatch(act as never)
+  }, [dispatch, engine])
+
   /** Send a finished sentence to the assistant and run whatever comes back. */
-  const run = useCallback(async (spoken: string) => {
+  const run = useCallback(async (spoken: string, heardConfidence = 1) => {
     const text = stripWakeWord(spoken)
     if (!text) { setProblem('I didn\'t catch that.'); return }
     setBusy(true); setProblem(''); setSaid(''); setAsking('')
+
+    // ── Try to answer it here first ──────────────────────────────────────────
+    //
+    // The assistant is the current implementation of this step, not the
+    // feature. Everything downstream consumes VoiceCall[], and a regular
+    // expression produces exactly the same shape a model does — so the common
+    // commands ("play", "mute the pad", "set the tempo to 128") can be answered
+    // locally, instantly and for nothing, while the assistant keeps the ones
+    // that need judgement.
+    //
+    // BOTH confidences have to hold. Badly heard and badly understood are
+    // different failures with the same cure, and a wrong local answer is worse
+    // than a slow correct one: it is silent, free, and therefore frequent.
+    const local = resolveLocally(text, { tracks: project.tracks ?? [] })
+    if (confidentEnough(local, heardConfidence)) {
+      const plan = planVoiceCalls(local.calls, project)
+      if (!plan.problem) {
+        for (const a of plan.actions) runAction(a)
+        remember({
+          said: text, heard: heardConfidence, by: 'local',
+          matched: local.matched, understood: local.confidence,
+          calls: local.calls, said_back: plan.say,
+        })
+        history.current = []
+        setAsking('')
+        setSaid(plan.say)
+        setBusy(false)
+        return
+      }
+      // Local built something the executor rejected — fall through to the
+      // assistant rather than reporting, since that is precisely a case local
+      // does not yet understand well enough.
+    }
+
     try {
       const res = await fetch('/api/ai/assist', {
         method: 'POST',
@@ -134,24 +184,30 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         history.current = [...history.current,
           { role: 'user' as const, content: text },
           { role: 'assistant' as const, content: reply }].slice(-8)
+        remember({
+          said: text, heard: heardConfidence, by: 'assistant',
+          matched: local.matched, understood: local.confidence,
+          calls: [], asked: reply,
+        })
         setAsking(reply)
         setShowType(true)
         return
       }
       const plan = planVoiceCalls(calls, project)
-      if (plan.problem) { setProblem(plan.problem); return }
-      for (const a of plan.actions) {
-        const act = a as { type: string; action?: string }
-        // Transport is not a reducer action — it is the engine.
-        if (act.type === 'TRANSPORT') {
-          if (act.action === 'stop' || act.action === 'pause') engine?.stop?.()
-          else if (act.action === 'restart') { engine?.stop?.(); engine?.play?.() }
-          else if (act.action === 'toggle') { engine?.isPlaying ? engine.stop?.() : engine?.play?.() }
-          else engine?.play?.()
-          continue
-        }
-        dispatch(act as never)
+      if (plan.problem) {
+        markFailed(plan.problem)
+        setProblem(plan.problem)
+        return
       }
+      for (const a of plan.actions) runAction(a)
+      // Every assistant answer is a worked example of a sentence the local
+      // resolver could not handle. Sorted by frequency these become the build
+      // order for replacing it — the phrasings actually used, ranked by use.
+      remember({
+        said: text, alternatives: undefined, heard: heardConfidence, by: 'assistant',
+        matched: local.matched, understood: local.confidence,
+        calls, said_back: plan.say,
+      })
       // Done — the exchange is closed, so the next command starts clean rather
       // than inheriting the last one's context.
       history.current = []
@@ -162,7 +218,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     } finally {
       setBusy(false)
     }
-  }, [project, dispatch, engine])
+  }, [project, runAction])
 
   // Does the user still want to be listening? Asking for the microphone is
   // asynchronous and the first ask shows a dialog, so in hold-to-talk the
@@ -187,7 +243,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     setProblem('')
     const h = listen({
       onPartial: setHeard,
-      onFinal: (t, alts) => {
+      onFinal: (t, alts, heardConfidence) => {
         setListening(false)
         // Choose between the recogniser's guesses using the names actually in
         // this project, then repair those names in the winning sentence, before
@@ -196,7 +252,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           ? alts.map(a => hearBetter(a, project.tracks ?? [])).join(' ')
           : hearBetter([t], project.tracks ?? [])
         setHeard(heardBest)
-        void run(heardBest || t)
+        void run(heardBest || t, heardConfidence)
       },
       onError: m => {
         setListening(false); setProblem(m)

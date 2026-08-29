@@ -107,8 +107,14 @@ export interface ListenOptions {
    * `alternatives` holds the recogniser's other guesses for each phrase, best
    * first — the caller can score them against what is actually in the project
    * rather than trusting the top guess on proper nouns.
+   *
+   * `confidence` is the recogniser's own 0–1 rating of its best guess, averaged
+   * over the phrases. It is the first of the two signals that decide whether a
+   * sentence is safe to act on directly or should be handed to the assistant:
+   * badly-heard speech and a badly-understood command need the same escape
+   * hatch, and this is the half the browser can tell us.
    */
-  onFinal: (text: string, alternatives: string[][]) => void
+  onFinal: (text: string, alternatives: string[][], confidence: number) => void
   onError?: (message: string) => void
   lang?: string
 }
@@ -138,13 +144,15 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
   let finalText = ''
   /** Per finished phrase: every transcript the recogniser offered, best first. */
   const finalAlternatives: string[][] = []
+  /** The recogniser's own confidence in each finished phrase, 0–1. */
+  const confidences: number[] = []
   let stopped = false
   let aborted = false
 
   rec.onresult = (e: unknown) => {
     const ev = e as {
       resultIndex: number
-      results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean; length: number }>
+      results: ArrayLike<ArrayLike<{ transcript: string; confidence?: number }> & { isFinal: boolean; length: number }>
     }
     let interim = ''
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
@@ -161,6 +169,12 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
           if (t) alts.push(t)
         }
         if (alts.length > 1) finalAlternatives.push(alts)
+        // Chrome reports a confidence for the top alternative. It is not always
+        // present, and 0 is a real value, so an absent one is recorded as 1
+        // rather than as certainty-of-nothing — a missing rating should not by
+        // itself send a good sentence to the assistant.
+        const c = r[0]?.confidence
+        confidences.push(typeof c === 'number' && c > 0 ? c : 1)
       } else interim += text
     }
     opts.onPartial?.((finalText + interim).trim())
@@ -195,7 +209,12 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
     if (delivered || aborted) return
     delivered = true
     const text = finalText.trim()
-    if (text) opts.onFinal(text, finalAlternatives)
+    if (text) {
+      const conf = confidences.length
+        ? confidences.reduce((a, b) => a + b, 0) / confidences.length
+        : 1
+      opts.onFinal(text, finalAlternatives, conf)
+    }
     // Only say "I didn't catch that" when nothing was heard AND nothing else
     // has already been reported — a fatal error has its own, better message.
     else if (!fatal) opts.onError?.('I didn\'t catch that.')
