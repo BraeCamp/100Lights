@@ -101,8 +101,14 @@ export async function requestMic(): Promise<{ ok: boolean; message?: string }> {
 export interface ListenOptions {
   /** Words as they arrive, including the unfinished tail — for showing live. */
   onPartial?: (text: string) => void
-  /** The finished sentence. Fires once, when listening ends. */
-  onFinal: (text: string) => void
+  /**
+   * The finished sentence. Fires once, when listening ends.
+   *
+   * `alternatives` holds the recogniser's other guesses for each phrase, best
+   * first — the caller can score them against what is actually in the project
+   * rather than trusting the top guess on proper nouns.
+   */
+  onFinal: (text: string, alternatives: string[][]) => void
   onError?: (message: string) => void
   lang?: string
 }
@@ -123,20 +129,39 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
   rec.continuous = true
   rec.interimResults = true
   rec.lang = opts.lang ?? 'en-US'
-  rec.maxAlternatives = 1
+  // Several guesses, not one. The recogniser has already computed them, and the
+  // caller can score them against the names in the open project — which is a far
+  // easier problem than general transcription and is the one that decides
+  // whether "loop base two" reaches the right track. See lib/voice/hear-better.
+  rec.maxAlternatives = 5
 
   let finalText = ''
+  /** Per finished phrase: every transcript the recogniser offered, best first. */
+  const finalAlternatives: string[][] = []
   let stopped = false
   let aborted = false
 
   rec.onresult = (e: unknown) => {
-    const ev = e as { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }
+    const ev = e as {
+      resultIndex: number
+      results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean; length: number }>
+    }
     let interim = ''
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const r = ev.results[i]
       const text = r[0]?.transcript ?? ''
-      if (r.isFinal) finalText += text
-      else interim += text
+      if (r.isFinal) {
+        finalText += text
+        // Keep the runners-up for the caller to choose between. The top guess is
+        // wrong often enough on proper nouns — a track called "Bass 2" arrives
+        // as "base two" — and the right one is frequently already in this list.
+        const alts: string[] = []
+        for (let k = 0; k < (r.length ?? 1); k++) {
+          const t = r[k]?.transcript?.trim()
+          if (t) alts.push(t)
+        }
+        if (alts.length > 1) finalAlternatives.push(alts)
+      } else interim += text
     }
     opts.onPartial?.((finalText + interim).trim())
   }
@@ -170,7 +195,7 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
     if (delivered || aborted) return
     delivered = true
     const text = finalText.trim()
-    if (text) opts.onFinal(text)
+    if (text) opts.onFinal(text, finalAlternatives)
     // Only say "I didn't catch that" when nothing was heard AND nothing else
     // has already been reported — a fatal error has its own, better message.
     else if (!fatal) opts.onError?.('I didn\'t catch that.')

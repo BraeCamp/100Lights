@@ -28,6 +28,7 @@ import { Mic, Loader2, X, Settings2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { musicStateSummary } from '@/lib/voice/music-tools'
+import { hearBetter } from '@/lib/voice/hear-better'
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 
 const C = {
@@ -73,6 +74,21 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // ever a way to produce a sentence, so a text box is the SAME feature with
   // one less dependency — and it is the difference between "voice control does
   // not work here" and "voice control is one keystroke slower here".
+  // ── A conversation, not a series of one-shot commands ────────────────────
+  //
+  // Every request used to be sent as `messages: [{ role: 'user', ... }]` — one
+  // message, no history — so the assistant could ASK "which bass track?" and
+  // never hear the answer: the reply arrived as a fresh conversation with no
+  // memory of the question. /api/ai/assist has always accepted up to 40
+  // messages with user/assistant roles; the client simply never sent them.
+  //
+  // Kept short on purpose. This is a command line, not a chat log: enough turns
+  // to finish a clarification, few enough that an old misunderstanding cannot
+  // steer a new command. Cleared when a command completes, because at that
+  // point the exchange is closed.
+  const history = useRef<{ role: 'user' | 'assistant'; content: string }[]>([])
+  /** The assistant asked something and is waiting — a question, not a failure. */
+  const [asking, setAsking] = useState('')
   const [typed, setTyped] = useState('')
   const [showType, setShowType] = useState(false)
   const handle = useRef<SpeechHandle | null>(null)
@@ -88,14 +104,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const run = useCallback(async (spoken: string) => {
     const text = stripWakeWord(spoken)
     if (!text) { setProblem('I didn\'t catch that.'); return }
-    setBusy(true); setProblem(''); setSaid('')
+    setBusy(true); setProblem(''); setSaid(''); setAsking('')
     try {
       const res = await fetch('/api/ai/assist', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           module: 'music',
-          messages: [{ role: 'user', content: text }],
+          messages: [...history.current, { role: 'user', content: text }],
           stateSummary: musicStateSummary(project),
         }),
       })
@@ -107,9 +123,19 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const data = await res.json() as { message?: string; actions?: VoiceCall[] }
       const calls = data.actions ?? []
       if (!calls.length) {
-        // The model chose to answer rather than act — usually because the
-        // request was ambiguous. Its sentence is more useful than ours.
-        setProblem(data.message?.trim() || 'I couldn\'t turn that into an edit.')
+        // The model answered rather than acted — usually a clarifying question,
+        // sometimes a plain answer. Either way it is NOT an error, and showing
+        // it as one was the reason clarification could never work: a question
+        // styled like a failure invites you to give up, not to reply.
+        //
+        // So it becomes a question, the exchange is remembered, and the reply
+        // box opens focused. Answering continues the same conversation.
+        const reply = data.message?.trim() || 'I couldn\'t turn that into an edit.'
+        history.current = [...history.current,
+          { role: 'user' as const, content: text },
+          { role: 'assistant' as const, content: reply }].slice(-8)
+        setAsking(reply)
+        setShowType(true)
         return
       }
       const plan = planVoiceCalls(calls, project)
@@ -126,6 +152,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         }
         dispatch(act as never)
       }
+      // Done — the exchange is closed, so the next command starts clean rather
+      // than inheriting the last one's context.
+      history.current = []
+      setAsking('')
       setSaid(plan.say)
     } catch {
       setProblem('Couldn\'t reach the assistant.')
@@ -157,7 +187,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     setProblem('')
     const h = listen({
       onPartial: setHeard,
-      onFinal: t => { setListening(false); void run(t) },
+      onFinal: (t, alts) => {
+        setListening(false)
+        // Choose between the recogniser's guesses using the names actually in
+        // this project, then repair those names in the winning sentence, before
+        // anything downstream sees it.
+        const heardBest = alts.length
+          ? alts.map(a => hearBetter(a, project.tracks ?? [])).join(' ')
+          : hearBetter([t], project.tracks ?? [])
+        setHeard(heardBest)
+        void run(heardBest || t)
+      },
       onError: m => {
         setListening(false); setProblem(m)
         // A failure that names typing as the way forward should OPEN the box,
@@ -297,10 +337,30 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         </div>
       )}
 
+      {asking && (
+        <div
+          style={{
+            position: 'absolute', top: 26, right: 0, zIndex: 61,
+            minWidth: 300, maxWidth: 360, padding: '8px 10px',
+            background: C.bgSurface, border: `1px solid ${C.accent}`, borderRadius: 6,
+            boxShadow: '0 10px 28px rgba(0,0,0,.5)',
+            fontSize: 11, lineHeight: 1.45, color: C.textPrimary,
+          }}
+        >
+          <div style={{ color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 3 }}>
+            ASKING
+          </div>
+          {asking}
+          <div style={{ color: C.textMuted, marginTop: 5, fontSize: 10 }}>
+            Answer below, or hold the mic and say it.
+          </div>
+        </div>
+      )}
+
       {showType && (
         <div
           style={{
-            position: 'absolute', top: 26, right: 0, zIndex: 60,
+            position: 'absolute', top: asking ? 104 : 26, right: 0, zIndex: 60,
             minWidth: 300, padding: 8, background: C.bgSurface,
             border: `1px solid ${C.border}`, borderRadius: 6,
             boxShadow: '0 10px 28px rgba(0,0,0,.5)',
@@ -323,7 +383,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               }
               if (e.key === 'Escape') { setShowType(false); setTyped('') }
             }}
-            placeholder='e.g. loop bass 2 three more times'
+            placeholder={asking ? 'your answer…' : 'e.g. loop bass 2 three more times'}
             style={{
               width: '100%', height: 26, padding: '0 8px', boxSizing: 'border-box',
               background: '#141414', border: `1px solid ${C.border}`, borderRadius: 4,
