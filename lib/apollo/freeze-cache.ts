@@ -48,6 +48,78 @@ const failures = new Map<string, number>()
 let lastError: string | null = null
 const timings = { diskMs: 0, renderMs: 0, fromDisk: 0, attempts: 0, batches: 0 }
 
+// ── Why, where and when it broke ────────────────────────────────────────────
+//
+// Brae: "a mechanism to tell when anything breaks ... This should also give us
+// more information on why, where, and when it has been breaking."
+//
+// Every diagnosis in this file so far has been reconstructed after the fact
+// from a count that stopped moving, which is how a session goes into debugging
+// the wrong thing. The loader now says what it is doing as it does it, and the
+// last 200 events ride along in the diagnose report — so a capture from a
+// stuck song carries its own history instead of one final number.
+//
+// Deliberately a ring buffer and deliberately small: this runs during playback,
+// and an unbounded log on the audio path would become the next performance bug.
+export type LoadEventKind =
+  | 'job-start' | 'job-end' | 'layer-start' | 'layer-done'
+  | 'window' | 'silent' | 'window-error' | 'layer-error' | 'job-error'
+  | 'retry' | 'stall' | 'reset' | 'paused' | 'resumed' | 'gave-up'
+
+export interface LoadEvent {
+  t: number             // ms since the page loaded — comparable with everything else
+  kind: LoadEventKind
+  layer?: string
+  /** Clips finished / clips wanted, at the moment this happened. */
+  done?: number
+  total?: number
+  ms?: number
+  detail?: string
+}
+
+const LOG_MAX = 200
+const eventLog: LoadEvent[] = []
+
+const FAILURE_KINDS = new Set<LoadEventKind>(
+  ['silent', 'window-error', 'layer-error', 'job-error', 'stall', 'reset', 'gave-up'])
+
+function logEvent(kind: LoadEventKind, e: Omit<LoadEvent, 't' | 'kind'> = {}): void {
+  eventLog.push({ t: Math.round(typeof performance !== 'undefined' ? performance.now() : Date.now()), kind, ...e })
+  if (eventLog.length > LOG_MAX) eventLog.splice(0, eventLog.length - LOG_MAX)
+  // Surface it the moment it happens, rather than waiting for someone to ask
+  // for a diagnose report after the fact.
+  if (FAILURE_KINDS.has(kind)) setProgress({ trouble: shortTrouble(kind, e.detail) })
+  // A clean finish clears the warning, so a recovered stall stops nagging.
+  else if (kind === 'job-end' && e.detail === 'complete') setProgress({ trouble: undefined })
+}
+
+/** The one-line version a loading bar has room for. */
+function shortTrouble(kind: LoadEventKind, detail?: string): string {
+  const what = kind === 'silent' ? 'a render came back silent'
+    : kind === 'window-error' ? 'a render failed'
+      : kind === 'layer-error' ? 'a layer failed'
+        : kind === 'job-error' ? 'loading errored'
+          : kind === 'stall' ? 'loading stalled, retrying'
+            : kind === 'reset' ? 'loading was restarted'
+              : 'gave up retrying'
+  return detail ? `${what} (${detail.slice(0, 60)})` : what
+}
+
+/** The recent history of the loader, newest last. */
+export function loadLog(): LoadEvent[] { return eventLog.slice() }
+
+/** A one-line summary of what has gone wrong, for a report or a toast. */
+export function loadTrouble(): string {
+  const bad = eventLog.filter(e =>
+    e.kind === 'silent' || e.kind === 'window-error' || e.kind === 'layer-error'
+    || e.kind === 'job-error' || e.kind === 'stall' || e.kind === 'gave-up')
+  if (!bad.length) return 'no failures recorded'
+  const counts: Record<string, number> = {}
+  for (const e of bad) counts[e.kind] = (counts[e.kind] ?? 0) + 1
+  const last = bad[bad.length - 1]
+  return `${Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(', ')} — last: ${last.kind}${last.layer ? ` in ${last.layer}` : ''}${last.detail ? ` (${last.detail})` : ''} at ${(last.t / 1000).toFixed(1)}s`
+}
+
 // Clips that would not render, remembered ACROSS sessions — as STRIKES, not a
 // verdict on the first miss.
 //
@@ -659,6 +731,7 @@ async function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip;
     // failed to render in this rung would lose the only audio it had.
     dropSupersededLayers([w.key])
     landed.push(w.key)
+    lastProgressAt = Date.now()      // the watchdog's only definition of alive
     // A clip becomes playable the moment it is in `buffers`; persisting it is
     // for the NEXT page load and nobody is waiting on it. So the write is handed
     // to the storage policy, which holds it until the transport is stopped and
@@ -703,6 +776,16 @@ export interface CombineProgress {
   layer?: string
   layerIndex?: number
   layerCount?: number
+  /**
+   * Set as soon as anything goes wrong, and shown in the loading bar.
+   *
+   * Brae: "a mechanism to tell when anything breaks". Everything this file has
+   * ever got wrong looked, from the outside, exactly like slow — a count that
+   * moved and then did not. A failure that the interface never mentions is one
+   * the user reports as "it's just slow", weeks later, without the detail that
+   * would have found it in a minute.
+   */
+  trouble?: string
 }
 
 let progress: CombineProgress = { done: 0, total: 0, active: false, phase: 'idle' }
@@ -739,11 +822,74 @@ let retryAttempt = 0
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 const RETRY_DELAYS_MS = [2000, 4000, 8000, 16000, 32000, 60000]
 
+// ── When nothing is happening and something should be ───────────────────────
+//
+// Brae: "Can we set fallbacks so that it doesn't stop loading all of a sudden?
+// Perhaps modular loading with a reset on break".
+//
+// The retry ladder covers a job that ENDED early. It cannot help a job that is
+// still nominally alive — one awaiting a render that will never return, or a
+// drain loop that lost its queue — because from the outside those look exactly
+// like slow progress. So a watchdog watches the only thing that matters: has
+// any clip landed lately.
+//
+// Two levels, because they are different faults. If nothing is running, the ask
+// was simply dropped and re-asking is free. If something IS running and has
+// produced nothing for a long time, that job is wedged; the in-flight flag is
+// cleared so a fresh one can start. The wedged render cannot be cancelled — it
+// finishes into a cache that no longer expects it, which is harmless — but the
+// song stops being held hostage by it.
+let lastProgressAt = Date.now()
+let watchdog: ReturnType<typeof setInterval> | null = null
+const STALL_MS = 25_000
+const WEDGED_MS = 75_000
+
+function startWatchdog(): void {
+  if (watchdog || typeof setInterval !== 'function') return
+  watchdog = setInterval(() => {
+    const owed = lastGroups ? true : false
+    if (!owed) return
+    const quiet = Date.now() - lastProgressAt
+    if (quiet < STALL_MS) return
+    // Nothing outstanding? Then quiet is just "finished", not "stuck".
+    if (!inFlight.size && !queue.length) {
+      const stillMissing = lastWantedMissing()
+      if (stillMissing <= 0) return
+      logEvent('stall', { detail: `${stillMissing} clip(s) owed, nothing running for ${(quiet / 1000) | 0}s` })
+      lastProgressAt = Date.now()
+      if (lastGroups) requestCombine(lastBpm, lastGroups)
+      return
+    }
+    if (quiet > WEDGED_MS) {
+      logEvent('reset', { detail: `a job produced nothing for ${(quiet / 1000) | 0}s — starting a fresh one` })
+      inFlight.clear()
+      queue.length = 0
+      draining = false
+      lastProgressAt = Date.now()
+      if (lastGroups) requestCombine(lastBpm, lastGroups)
+    }
+  }, 5000)
+}
+
+/** How many clips the last request still owes, for the watchdog. */
+function lastWantedMissing(): number {
+  if (!lastGroups) return 0
+  let owed = 0
+  for (const g of lastGroups) {
+    for (const c of g.clips) {
+      if (!c.notes.length) continue
+      if (!buffers.has(combinedStamp(c, g.patch, lastBpm))) owed++
+    }
+  }
+  return owed
+}
+
 function scheduleRetry(): void {
   if (retryTimer) return
   const delay = RETRY_DELAYS_MS[retryAttempt]
-  if (delay == null) return          // genuinely given up; say so rather than spin
+  if (delay == null) { logEvent('gave-up', { detail: `${RETRY_DELAYS_MS.length} retries exhausted` }); return }
   retryAttempt++
+  logEvent('retry', { detail: `attempt ${retryAttempt} in ${delay / 1000}s` })
   retryTimer = setTimeout(() => {
     retryTimer = null
     if (lastGroups) requestCombine(lastBpm, lastGroups)
@@ -782,6 +928,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!missing().length) return
 
   inFlight.add(jobKey)
+  startWatchdog()
   queue.push({
     stamp: jobKey,
     run: async () => {
@@ -790,6 +937,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
       // before the loop leaves the whole song outstanding, and that is exactly
       // the case that must be retried.
       let leftAtEnd = -1
+      logEvent('job-start', { total: wanted.length, done: wanted.length - missing().length })
       try {
         // Renders of Apollo instruments are NOT deterministic: the same project
         // rendered three times gave peaks of 0.202, 0 and 0.0657, with no error
@@ -879,6 +1027,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
             .filter(c => c.notes.length > 0)
             .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
           const layerName = layerLabel(layers, li)
+          logEvent('layer-start', { layer: layerName, total: layerWanted.length })
 
         // ── Render in a WINDOW that follows the playhead ────────────────────
         //
@@ -1106,14 +1255,45 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           // abruptly and is stuck on incomplete" that only shows up on the big
           // songs, because only they reach the cap.
           const tWin = Date.now()
-          const rendered = await renderApolloProject(layerGroups, bpm, {
-            only: new Set(window.map(w => w.clip.id)),
-          })
+          // ── One window, on its own ────────────────────────────────────────
+          //
+          // The whole job used to sit inside a single try. One render throwing
+          // — one bad clip, one exhausted context — ended everything: every
+          // remaining layer, every remaining clip, with no retry booked and no
+          // record of what happened. That is Brae's "it stops loading all of a
+          // sudden".
+          //
+          // A window is the unit of failure now. A throw here is logged, the
+          // clips are set aside for this job, and the loop moves on to the next
+          // window — so a song with one unrenderable clip loads the other
+          // twenty-two.
+          let rendered: Map<string, AudioBuffer>
+          try {
+            rendered = await renderApolloProject(layerGroups, bpm, {
+              only: new Set(window.map(w => w.clip.id)),
+            })
+          } catch (err) {
+            const why = err instanceof Error ? err.message : String(err)
+            logEvent('window-error', {
+              layer: layerName, ms: Date.now() - tWin,
+              done: layerWanted.length - missingIn().length, total: layerWanted.length,
+              detail: `${window.length} clip(s): ${why.slice(0, 120)}`,
+            })
+            for (const w of window) silentThisJob.add(w.key)
+            lastError = why
+            await gap(Date.now() - tWin)
+            continue
+          }
           // Every render is a calibration sample. This is why there is no
           // separate speed test: the work we want to predict is the work we just
           // did, so measuring it is both free and exactly on-target — and it
           // keeps tracking the machine as it throttles or gets busy.
           const winMs = Date.now() - tWin
+          logEvent('window', {
+            layer: layerName, ms: winMs,
+            done: layerWanted.length - missingIn().length, total: layerWanted.length,
+            detail: `${window.length} clip(s)`,
+          })
           learnRenderCost(windowVoiceSec + SPAN_WEIGHT * spanSeconds(window), winMs)
           // Measured, not assumed: one over-long render while the transport is
           // running is this machine saying it cannot bake and play at once.
@@ -1152,6 +1332,11 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
             // job and given a strike.
             const keys = window.map(w => w.key)
             const secondTime = keys.every(k => silentOnce.has(k))
+            logEvent('silent', {
+              layer: layerName, ms: Date.now() - tWin,
+              done: layerWanted.length - missingIn().length, total: layerWanted.length,
+              detail: secondTime ? `${keys.length} clip(s), second time — setting aside` : `${keys.length} clip(s), retrying`,
+            })
             for (const k of keys) silentOnce.add(k)
             if (secondTime) {
               for (const k of keys) silentThisJob.add(k)
@@ -1165,6 +1350,10 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
           // (Superseding is done per clip in keep(), as each better render
           // lands. A sweep here would keep only THIS rung's keys and so delete
           // the only copy held by any clip that failed to render in it.)
+          logEvent('layer-done', {
+            layer: layerName,
+            done: layerWanted.length - missingIn().length, total: layerWanted.length,
+          })
           // Stop climbing if play was pressed and this machine cannot bake
           // while playing — the rung it reached is what plays until the pause.
           if (transportPlaying && slowWhilePlaying) break
@@ -1218,6 +1407,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
             : `${left} of ${wanted.length} clips play live (would not render)`
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e)
+        logEvent('job-error', { detail: lastError.slice(0, 160) })
       } finally {
         inFlight.delete(jobKey)
         // ── Nobody else is coming ───────────────────────────────────────────
@@ -1240,6 +1430,11 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         // retry is a NEW job, so `silentThisJob` starts empty and clips set
         // aside by contention get another go — which is the point.
         const stoppedForPlayback = transportPlaying && slowWhilePlaying
+        logEvent('job-end', {
+          done: wanted.length - (leftAtEnd < 0 ? wanted.length : leftAtEnd),
+          total: wanted.length,
+          detail: stoppedForPlayback ? 'waiting for the pause' : leftAtEnd === 0 ? 'complete' : `${leftAtEnd} still owed`,
+        })
         if (leftAtEnd !== 0 && !stoppedForPlayback) {
           scheduleRetry()
         } else if (leftAtEnd === 0) {
@@ -1266,7 +1461,7 @@ export async function clearCombinedEverywhere(): Promise<void> {
 
 /** What the cache is doing. A combine that quietly fails looks exactly like one
  *  that has not happened yet — both play live — so make the difference visible. */
-export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number; loader: string; playingBake: string; progress: CombineProgress } {
+export function combineStats(): { ready: number; inFlight: number; queued: number; failed: [string, number][]; lastError: string | null; peaks: number[]; striking: number; givenUp: number; msPerUnit: number; renderSamples: number; frames: number; maxFrames: number; diskMs: number; renderMs: number; fromDisk: number; attempts: number; batches: number; loader: string; playingBake: string; progress: CombineProgress; log: LoadEvent[]; trouble: string } {
   // Peak of each cached render: a buffer that exists but is silent looks
   // identical to a working one from the outside, and silently-empty renders are
   // exactly the failure mode this cache can hide.
@@ -1280,6 +1475,13 @@ export function combineStats(): { ready: number; inFlight: number; queued: numbe
   const s = strikes()
   const struck = Object.values(s)
   return {
+    // What the loader has been doing, and what has gone wrong — the answer to
+    // "why, where and when".
+    // The last 40 only. The ring holds 200 for a live look, but a diagnose
+    // report gets pasted into a message, and 200 lines of window timings would
+    // bury the one line that matters.
+    log: loadLog().slice(-40),
+    trouble: loadTrouble(),
     // The progress object the loading bar renders from. Exposed because a bar
     // that never appears and a bar that appears empty look identical from the
     // outside, and only one of them is a UI bug.

@@ -141,5 +141,30 @@ check('it finished on the last rung',
   layerish.at(-1)?.text ?? '')
 check('and every clip ended up baked', (stats?.ready ?? 0) === clipCount, `${stats?.ready} of ${clipCount}`)
 
+// ── Does every track actually make a sound? ─────────────────────────────────
+//
+// Brae: "it only played one instrument even though it was loading the other
+// ones". Baking a clip and hearing it are different claims: keep() only rejects
+// a render under a peak of 1e-4, so a buffer can be cached, count towards
+// `ready`, and still be inaudible. `peaks` is the peak of every cached render,
+// so a pile of near-zero entries is exactly that failure.
+const peaks = stats?.peaks ?? []
+const audible = peaks.filter(p => p > 0.01)
+const nearSilent = peaks.filter(p => p <= 0.01)
+console.log(`\npeaks: ${peaks.length} cached, ${audible.length} audible (>0.01), ${nearSilent.length} near-silent`)
+if (peaks.length) {
+  console.log(`  loudest ${Math.max(...peaks).toFixed(4)}, quietest ${Math.min(...peaks).toFixed(4)}`)
+}
+check('most cached renders are actually audible',
+  peaks.length > 0 && audible.length >= peaks.length * 0.75,
+  `${audible.length} of ${peaks.length}`)
+console.log(`\ntrouble: ${stats?.trouble ?? '(no log)'}`)
+const log = stats?.log ?? []
+const bad = log.filter(e => /error|silent|stall|reset|gave-up/.test(e.kind))
+if (bad.length) {
+  console.log('recorded failures:')
+  for (const e of bad.slice(-8)) console.log(`  ${(e.t / 1000).toFixed(1)}s ${e.kind} ${e.layer ?? ''} ${e.detail ?? ''}`)
+}
+
 console.log(failures ? `\n${failures} failing` : '\nthe song renders dry first and gains its effects in layers')
 process.exit(failures ? 1 : 0)

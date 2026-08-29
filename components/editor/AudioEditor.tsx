@@ -997,6 +997,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     phase: 'head' | 'fill' | 'idle' | 'paused'
     /** "Adding filters (2 of 4)" — the fidelity rung being built. */
     layer?: string; layerIndex?: number; layerCount?: number
+    /** Set when the loader has recorded a failure — shown so a stall is never silent. */
+    trouble?: string
   }>({ done: 0, total: 0, active: false, phase: 'idle' })
   useEffect(() => {
     let stop: (() => void) | undefined
@@ -2894,11 +2896,13 @@ export default function AudioEditor(props: AudioEditorProps) {
                     dry first and the effects are layered over it, so every clip
                     is audible almost immediately and "17 of 23" was answering a
                     question nobody had. What arrives is the SOUND. */}
-                {loadProgress.layer
-                  ? loadProgress.layer
-                  : loadProgress.phase === 'head'
-                    ? 'Getting the sound ready…'
-                    : `Loading the song — ${loadProgress.done}/${loadProgress.total}`}
+                {loadProgress.trouble
+                  ? `${loadProgress.layer ?? 'Loading'} — ${loadProgress.trouble}`
+                  : loadProgress.layer
+                    ? loadProgress.layer
+                    : loadProgress.phase === 'head'
+                      ? 'Getting the sound ready…'
+                      : `Loading the song — ${loadProgress.done}/${loadProgress.total}`}
               </div>
             </div>
           </div>

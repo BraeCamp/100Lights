@@ -7,6 +7,7 @@ import { ApolloPatch, FxUnit, LfoPoint, PARAMS, FX_DEFS } from '@/lib/apollo/pat
 import { buildTableMips, factoryTableWithMips, userTableWithMips, copyBuilt } from '@/lib/apollo/tables'
 import { analyzeSpectralInWorker, SpectralAnalysis } from '@/lib/apollo/spectral'
 import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
+import { samplesUsedBy } from '@/lib/apollo/samples-used'
 
 export interface ApolloMeters {
   peak: number
@@ -459,7 +460,21 @@ export class ApolloEngine extends EventTarget {
         const built = user ? userTableWithMips(user.data, user.frames) : factoryTableWithMips(id)
         if (built) post({ type: 'table', id, ...copyBuilt(built) })
       }
-      for (const [id, smp] of this.samples) {
+      // ── Only the samples THIS patch plays ─────────────────────────────
+      //
+      // This used to send every sample the engine had loaded, to every node, on
+      // every render — and each is a full Float32Array copy of the audio. The
+      // cost scaled with the user's LIBRARY rather than with the song: harmless
+      // when a patch meant one drum hit, ruinous once multisampled instruments
+      // arrived, because one piano is 42 buffers and a two-clip render copied
+      // all of them twice.
+      //
+      // That is the shape of the report it came from — "two tracks without any
+      // effects takes a LONG time", "it loaded perfectly fine before we
+      // implemented Apollo" — because the work was never about those two tracks.
+      for (const id of samplesUsedBy(patch)) {
+        const smp = this.samples.get(id)
+        if (!smp) continue
         post({ type: 'sample', id, sr: smp.sr, len: smp.len, l: new Float32Array(smp.l), r: smp.r ? new Float32Array(smp.r) : null })
         const an = this.spectralCache.get(id)
         if (an) post({ type: 'spectral', id, frames: an.frames, bins: an.bins, hop: an.hop, sr: an.sr, mags: new Float32Array(an.mags), phases: new Float32Array(an.phases), onsets: new Uint8Array(an.onsets) })
