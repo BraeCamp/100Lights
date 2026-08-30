@@ -275,6 +275,20 @@ await say('mark bar 3 as the chorus')
     after.tracks.map(t => t.name).join(','))
 }
 
+// ── Undo, which is what someone says after confirming too quickly ──────────
+{
+  const before = (await state()).tracks.map(t => t.name)
+  await say('mute the bass 2')
+  check('a change to undo', trackNamed(await state(), 'Bass 2')?.mute === true)
+  await say('undo that')
+  check('"undo that" takes it back', trackNamed(await state(), 'Bass 2')?.mute === false,
+    JSON.stringify(trackNamed(await state(), 'Bass 2')))
+  await say('redo that')
+  check('"redo that" puts it back', trackNamed(await state(), 'Bass 2')?.mute === true)
+  await say('undo that')
+  check('and the track list is where it was', (await state()).tracks.map(t => t.name).join(',') === before.join(','))
+}
+
 // ── And none of it cost anything ───────────────────────────────────────────
 check('not one command reached the assistant', assistCalls === 0, `${assistCalls} calls`)
 

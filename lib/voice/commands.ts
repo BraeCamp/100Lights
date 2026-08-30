@@ -80,6 +80,17 @@ export interface VoiceCommand {
    * opposite.
    */
   destructive?: boolean
+  /**
+   * Carried out by the studio rather than by the executor.
+   *
+   * Almost every command becomes reducer actions, which is what makes them
+   * testable in isolation. Undo is not one: it needs the editor's own history
+   * stack, which is not in the project and cannot be. Declaring the exception
+   * keeps it honest — the conformance suite checks that UI-handled commands are
+   * the ones that skip the executor, rather than quietly excusing any command
+   * that fails to plan.
+   */
+  handledBy?: 'ui'
   /** Read the sentence, or decline. */
   match(w: Words, ctx: InterpretContext): Match | null
 }
@@ -948,6 +959,34 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
 
+  {
+    id: 'undo',
+    tool: 'undo',
+    group: 'Project',
+    what: 'Take back the last change',
+    say: ['undo that', 'undo', 'take that back'],
+    handledBy: 'ui',
+    match(w) {
+      if (!w.has('undo', 'revert')) {
+        if (!(w.has('take') && w.has('back'))) return null
+      }
+      if (w.has('redo')) return null
+      return { calls: [{ name: 'undo', input: {} }], confidence: 0.93 }
+    },
+  },
+  {
+    id: 'redo',
+    tool: 'redo',
+    group: 'Project',
+    what: 'Put back what you just undid',
+    say: ['redo that', 'redo'],
+    handledBy: 'ui',
+    match(w) {
+      if (!w.has('redo')) return null
+      return { calls: [{ name: 'redo', input: {} }], confidence: 0.93 }
+    },
+  },
+
   // ── Transport ────────────────────────────────────────────────────────────
   //
   // Last, because these words turn up inside sentences that are about something
@@ -1081,6 +1120,10 @@ const PRECEDENCE: string[] = [
   'set_tempo',
   'set_tempo.relative',
   'set_time_signature',
+  // Undo before the transport: "take that back" contains no transport word, but
+  // keeping the pair together is clearer than scattering them.
+  'undo',
+  'redo',
   // Transport last — its words appear inside sentences about everything else.
   'transport.restart',
   'transport.locate',

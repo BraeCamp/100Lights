@@ -2205,22 +2205,27 @@ export default function AudioEditor(props: AudioEditorProps) {
   // footprint (computed against CURRENT state, so a collaborator's concurrent
   // edits survive) and broadcast the patch so the room follows along instead of
   // self-healing the undo away.
-  const doUndo = useCallback(() => {
+  const doUndo = useCallback((): boolean => {
     const entry = historyRef.current.pop()
-    if (!entry) return
+    // Reports whether it actually did anything. A caller that says "Undone."
+    // when the stack was empty is lying, and voice is the caller most likely to
+    // be believed without looking.
+    if (!entry) return false
     redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
     const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, projectRef.current, entry.action) }
     rawDispatch(patchAction)
     if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+    return true
   }, [rawDispatch])
 
-  const doRedo = useCallback(() => {
+  const doRedo = useCallback((): boolean => {
     const entry = redoRef.current.pop()
-    if (!entry) return
+    if (!entry) return false
     historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
     const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, projectRef.current, entry.action) }
     rawDispatch(patchAction)
     if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+    return true
   }, [rawDispatch])
 
   useEffect(() => {
@@ -2350,6 +2355,13 @@ export default function AudioEditor(props: AudioEditorProps) {
     // so replay works without a save+reopen round-trip.
     getBuildHistory: () => buildLogRef.current,
     consolidateBuildHistory,
+    // Undo and redo, which the context has always declared and only mobile ever
+    // filled in — "the desktop editor has its own undo" was true and meant that
+    // anything inside the studio wanting to undo had no way to reach it. Voice
+    // needs it more than most: every destructive command now confirms, and
+    // "undo that" is what someone says when they confirmed too quickly.
+    undo: doUndo,
+    redo: doRedo,
     view,
     setView,
     editTarget,

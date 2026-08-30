@@ -58,7 +58,7 @@ function writeVoiceMode(m: VoiceMode) { try { localStorage.setItem(MODE_KEY, m) 
 function writeVoiceEnter(on: boolean) { try { localStorage.setItem(ENTER_KEY, on ? 'on' : 'off') } catch { /* private mode */ } }
 
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
-  const { project, dispatch, engine } = useDaw()
+  const { project, dispatch, engine, undo, redo } = useDaw()
   const [listening, setListening] = useState(false)
   const [busy, setBusy] = useState(false)
   const [heard, setHeard] = useState('')
@@ -214,6 +214,28 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the recogniser was unsure of, which is the difference between recovering
     // a mishearing and reporting one.
     const local = heard ? resolveHeard(heard, ctx) : resolveLocally(text, ctx)
+
+    // ── The commands the editor carries out itself ───────────────────────────
+    //
+    // Undo needs the editor's history stack, which is not part of the project
+    // and cannot be — so it is the one family that does not become reducer
+    // actions. Intercepted here rather than pretended at in the executor.
+    if (confidentEnough(local, heardConfidence)) {
+      const name = local.calls[0]?.name
+      if (name === 'undo' || name === 'redo') {
+        const step = name === 'undo' ? undo : redo
+        const did = step?.()
+        setBusy(false)
+        // Reports what actually happened. Saying "Undone." over an empty stack
+        // is the kind of small lie that teaches someone to stop trusting the
+        // read-back, and the read-back is the whole safety story here.
+        if (did === false) setProblem(name === 'undo' ? 'Nothing to undo.' : 'Nothing to redo.')
+        else if (!step) setProblem('Undo is not available here.')
+        else setSaid(name === 'undo' ? 'Undone.' : 'Redone.')
+        return
+      }
+    }
+
     if (confidentEnough(local, heardConfidence)) {
       const plan = planVoiceCalls(local.calls, project)
       if (!plan.problem && local.destructive && !confirmed) {

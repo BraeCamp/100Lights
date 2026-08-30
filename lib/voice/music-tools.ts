@@ -305,6 +305,16 @@ export const MUSIC_TOOLS = [
       required: ['target', 'effect', 'amount'],
     },
   },
+  {
+    name: 'undo',
+    description: 'UNDO — take back the last change. Carried out by the editor, which owns the history.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'redo',
+    description: 'REDO — put back what was just undone.',
+    input_schema: { type: 'object', properties: {} },
+  },
 ] as const
 
 /** Every command name, for the executor to check itself against. */

@@ -801,9 +801,10 @@ export interface DawContextValue {
   /** Collapse repeated same-control tweaks in the build log to their net value
    *  (the History panel's "Consolidate" button). Returns the new step count. */
   consolidateBuildHistory?: () => number
-  // Optional history (mobile provides these; the desktop editor has its own undo)
-  undo?: () => void
-  redo?: () => void
+  // History. Both editors provide these now; they return whether there was
+  // anything to undo, so a caller can report honestly instead of assuming.
+  undo?: () => boolean | void
+  redo?: () => boolean | void
   canUndo?: boolean
   canRedo?: boolean
   // UI state (not in reducer — ephemeral)

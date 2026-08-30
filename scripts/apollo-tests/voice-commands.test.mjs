@@ -105,6 +105,12 @@ for (const command of VOICE_COMMANDS) {
     }
     resolved++
 
+    // A UI-handled command deliberately does not reach the executor — undo
+    // needs the editor's history stack, which is not in the project. The
+    // exception is declared on the command, so it is checked rather than
+    // assumed: anything else that fails to plan still fails here.
+    if (command.handledBy === 'ui') { planned++; continue }
+
     // And the call it produced is one the executor can actually carry out.
     // `problem` is the executor's way of saying "I understood the shape but
     // could not act on it", which is precisely the failure that was invisible.
@@ -129,6 +135,11 @@ check('every command says what it does', VOICE_COMMANDS.every(c => c.what.length
 check('every command names a real tool',
   VOICE_COMMANDS.every(c => MUSIC_TOOL_NAMES.includes(c.tool)),
   VOICE_COMMANDS.filter(c => !MUSIC_TOOL_NAMES.includes(c.tool)).map(c => c.tool).join(',') || 'all valid')
+
+// Only the declared exceptions skip the executor.
+check('every command that skips the executor says so',
+  VOICE_COMMANDS.filter(c => c.handledBy === 'ui').every(c => ['undo', 'redo'].includes(c.tool)),
+  VOICE_COMMANDS.filter(c => c.handledBy === 'ui').map(c => c.id).join(',') || 'none')
 
 // ── Coverage: what can the studio be told to do, and what can it not? ──────
 //
