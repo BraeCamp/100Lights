@@ -336,6 +336,9 @@ export default function VoicePanel({
   // operable by whoever is paying. Shown rather than hidden: a control you
   // cannot see is not a decision you know you could have made.
   const { isPro, loading: planLoading } = usePlan()
+  // A calibrated sensitivity is a measured number and will almost never be one
+  // of the four presets, so the preset row would show nothing selected.
+  const calibrated = ![0.7, 1, 1.5, 2.2].some(v => Math.abs(sensitivity - v) < 0.01)
   const [tab, setTab] = React.useState<'talk' | 'settings' | 'help'>(initialTab)
   const [find, setFind] = useState('')
 
@@ -782,8 +785,27 @@ export default function VoicePanel({
               C={C}
               icon={<Gauge size={11} />}
               title="How easily it triggers"
-              note="Watch the meter at the top while you talk, and while the room does. The red line is the bar — set this so your voice crosses it and the room does not."
+              note="Run the check below and it sets this from your own room and your own voice, which is better than any of the presets can be. Or set it by hand: watch the meter at the top while you talk and while the room does, and put the red line between the two."
             >
+              {/* A measured setting is not one of these four, so it gets a place
+                  of its own rather than leaving every button unlit and the
+                  panel looking broken. It is listed first because it is the
+                  one to prefer: the right bar is a property of a room, a
+                  microphone and a voice, and none of the presets knows any of
+                  the three. */}
+              {calibrated && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px',
+                  borderRadius: 5, border: `1px solid ${C.accent}`,
+                  background: `${C.accent}18`, color: C.accent,
+                }}>
+                  <Gauge size={11} />
+                  <span style={{ fontWeight: 700 }}>Calibrated to your voice</span>
+                  <span style={{ marginLeft: 'auto', color: C.textMuted, fontVariantNumeric: 'tabular-nums' }}>
+                    {sensitivity.toFixed(2)}
+                  </span>
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 3 }}>
                 {([
                   [0.7, 'Quick', 'picks up quiet speech, and more of the room'],
@@ -830,8 +852,10 @@ export default function VoicePanel({
                       border: `1px solid ${C.border}`, background: 'transparent',
                       color: C.textPrimary, fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
                     }}
+                    // The recommended path, so it looks like one. Everything
+                    // above it is the manual fallback.
                   >
-                    Check the microphone
+                    Calibrate to my voice
                   </button>
                   {/* What it will do, before it does it. Dropped in the first
                       pass of this redesign and put back: a button that opens a
@@ -839,7 +863,8 @@ export default function VoicePanel({
                       is the problem" is the reason anybody would press it. */}
                   <div style={{ color: C.textMuted, marginTop: 5, lineHeight: 1.45 }}>
                     Measures the room, then asks you to say one sentence, then says which
-                    part is the problem — and sets the sensitivity to match.
+                    part is the problem — and sets the bar from what it measured, a third
+                    of the way up from your room to your voice.
                   </div>
                 </div>
               )}

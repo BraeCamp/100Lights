@@ -138,12 +138,79 @@ const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
     lateRun.floor < REAL_ROOM * 1.5, lateRun.floor.toFixed(4))
 }
 
+// ── Once you are talking, stop measuring ────────────────────────────────────
+//
+// Brae, after the two-bar gate still was not enough: "It still can't understand
+// me. I think there's a volume cutoff. Can we get rid of that while I'm talking
+// and add it again once there hasn't been talking for 2-4 seconds?"
+//
+// The two-bar gate lowered the cutoff. He is asking for it to be GONE while he
+// is mid-sentence, which is a different thing: a latch, not a gate. Once
+// somebody has started, everything they say belongs to the take — the quiet
+// consonants, the trailing vowels, the breath between clauses — and the cutoff
+// only comes back once they have genuinely stopped.
+{
+  const REAL_ROOM = 0.02
+  const LOUD = 0.11
+
+  // A sentence with a real thinking pause in the middle of it. This is the case
+  // that made him repeat himself: "add a descending low pass filter to..." —
+  // pause while deciding which track — "...pad A". A gate re-arms during that
+  // pause and cuts the sentence in half; both halves are then nonsense.
+  const sentence = [
+    ...rep(CALIBRATION_SAMPLES, REAL_ROOM),
+    ...speech(30, LOUD, 0.05),        // 1.5s: "add a descending low pass filter to"
+    ...rep(24, REAL_ROOM * 1.1),      // 1.2s of thinking
+    ...speech(10, LOUD, 0.05),        // 0.5s: "pad A"
+    ...rep(80, REAL_ROOM),
+  ]
+  const run1 = run(sentence, { continuous: true })
+  const pauseEndsAt = (CALIBRATION_SAMPLES + 30 + 24) * 50
+  check('a thinking pause mid-sentence does not end the take',
+    run1.endedAt === null || run1.endedAt > pauseEndsAt,
+    `ended at ${run1.endedAt}, pause ran to ${pauseEndsAt}`)
+
+  // And the quiet parts inside it count as speech rather than as gaps to be
+  // measured. Every syllable trough in `speech()` sits at 0.05, well under the
+  // opening bar of ~0.068.
+  check('the quiet parts of words are inside the take, not silence',
+    run1.speakingMs >= 1200, `${run1.speakingMs}ms of speech`)
+
+  // The cutoff has to come back, or the take never ends and nothing is ever
+  // sent. Brae asked for two to four seconds; what matters here is that it is
+  // in that region rather than the fifth of a second a gate uses.
+  const quietFrom = (CALIBRATION_SAMPLES + 30 + 24 + 10) * 50
+  check('and it comes back once the talking really stops',
+    run1.endedAt !== null && run1.endedAt - quietFrom >= 1500
+    && run1.endedAt - quietFrom <= 4000,
+    `ended ${run1.endedAt === null ? 'never' : run1.endedAt - quietFrom}ms after the last word`)
+
+  // But a one-word command must still answer immediately. Brae, earlier: "When
+  // I said 'stop', it didn't recognize it as a command for 6 or 7 seconds ... I
+  // want the voice controls to respond in real time." Somebody who says one
+  // word is finished when it stops; somebody mid-sentence is not.
+  const oneWord = [
+    ...rep(CALIBRATION_SAMPLES, REAL_ROOM),
+    0.11, 0.085, 0.06, 0.045, 0.032, 0.024,
+    ...rep(80, REAL_ROOM),
+  ]
+  const run2 = run(oneWord, { continuous: true })
+  const wordEndsAt = (CALIBRATION_SAMPLES + 6) * 50
+  check('one word still answers straight away',
+    run2.endedAt !== null && run2.endedAt - wordEndsAt < 1000,
+    `${run2.endedAt === null ? 'never ended' : `${run2.endedAt - wordEndsAt}ms after the word`}`)
+}
+
 // ── The case that was broken ────────────────────────────────────────────────
 {
   const take = [
     ...rep(CALIBRATION_SAMPLES, MUSIC),
     ...speech(20, SPEECH_OVER_MUSIC, MUSIC),
-    ...rep(40, MUSIC),
+    // 4s of mix, not 2s. A sentence is now given 2.2s of silence (2.6s over
+    // music) before the take is cut, so a fixture that stops listening after 2s
+    // ends before the studio has decided anything — which reads as "the take
+    // never ends" rather than as "the fixture is too short".
+    ...rep(80, MUSIC),
   ]
   const withFix = run(take, { playing: true })
   check('speech over playing music is heard', withFix.everSpoke)
@@ -159,7 +226,7 @@ const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
 
 // ── And the quiet room still works ─────────────────────────────────────────
 {
-  const take = [...rep(CALIBRATION_SAMPLES, ROOM), ...speech(20, SPEECH, ROOM), ...rep(40, ROOM)]
+  const take = [...rep(CALIBRATION_SAMPLES, ROOM), ...speech(20, SPEECH, ROOM), ...rep(80, ROOM)]
   const quiet = run(take)
   check('speech in a quiet room is heard', quiet.everSpoke)
   check('and that take ends too', quiet.endedAt !== null)

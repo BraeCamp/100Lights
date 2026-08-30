@@ -90,6 +90,28 @@ export interface VadState {
   /** The last sample that cleared the HIGH bar, so the low bar knows how long
    *  it has been holding the gate open on its own. */
   lastOpenAt: number | null
+  /**
+   * Is a sentence in progress?
+   *
+   * Separate from `heard`, which records that this take contains speech and
+   * must survive to the end so the audio is actually sent. This is the LATCH —
+   * the reason the bar is currently on the floor — and it has to be droppable
+   * the moment the thing holding it open turns out to be a section of music,
+   * without also forgetting that somebody spoke before the chorus arrived.
+   */
+  latched: boolean
+  /**
+   * Has this level been judged a sustained one — a section of music rather than
+   * a person?
+   *
+   * Set when the sustained-level rule fires, cleared by a real dip. It exists
+   * because clearing the latch once is not enough: while the floor climbs to
+   * meet a chorus there is a window where the level no longer clears the rising
+   * bar, so the sustained rule stops firing, and the ordinary hysteresis
+   * re-opens the gate and re-latches on the very thing that was just identified
+   * as music. It went quiet at 3.0s and started "speaking" again at 3.75s.
+   */
+  sustained: boolean
 }
 
 export interface VadStep {
@@ -106,7 +128,7 @@ export function newVad(): VadState {
   return {
     floor: 0, calibrated: 0, heard: false, lastLoudAt: 0,
     unbrokenSince: null, activeSince: null, belowSince: null, spokeSince: null,
-    lastOpenAt: null,
+    lastOpenAt: null, latched: false, sustained: false,
   }
 }
 
@@ -205,10 +227,45 @@ export const FLOOR_MARGIN = 1.15
  */
 export const RELEASE_HOLD_MS = 400
 
-/** How long a gap ends the take. Longer over music, where the level falls back
- *  to a moving target rather than to silence and the decision is noisier. */
-export const SILENCE_MS = 1100
-export const SILENCE_MS_PLAYING = 1500
+/**
+ * Where the bar goes once somebody is definitely talking.
+ *
+ * Brae, after the two-bar gate still was not enough: "It still can't understand
+ * me. I think there's a volume cutoff. Can we get rid of that while I'm talking
+ * and add it again once there hasn't been talking for 2-4 seconds?"
+ *
+ * He is right, and it is a different thing from a lower bar. A gate — however
+ * many bars it has — asks the same question of every sample: is THIS loud
+ * enough. Speech does not work like that. Once somebody has started a sentence,
+ * everything until they finish it belongs to that sentence: the unvoiced
+ * consonants, the trailing vowels, the breath between clauses. None of it is
+ * loud, and all of it is speech.
+ *
+ * So once the take has latched, the bar drops to just above the room — enough
+ * to tell talking from not-talking, not enough to tell loud from quiet. The
+ * cutoff comes back when the take ends, which is what re-arms it.
+ */
+export const PRESENCE_FRACTION = 0.15
+
+/**
+ * How long a gap ends the take.
+ *
+ * 2.2s for a sentence — Brae's "2-4 seconds", at the responsive end of it. The
+ * old 1.1s cut people off mid-thought: "add a descending low pass filter to…"
+ * then a pause to decide which track, and the two halves arrive as separate
+ * takes that are both nonsense. A pause inside a sentence is longer than people
+ * think it is, and the cost of waiting is a second of latency on a command that
+ * is already finished, while the cost of cutting is having to say it all again.
+ *
+ * Note this only applies to a sentence. One word still ends in SILENCE_MS_SHORT
+ * below, because somebody who says "stop" is finished when it stops — and
+ * making THAT wait two seconds was a complaint of its own.
+ *
+ * Longer again over music, where the level falls back to a moving target rather
+ * than to silence and the decision is noisier.
+ */
+export const SILENCE_MS = 2200
+export const SILENCE_MS_PLAYING = 2600
 
 /**
  * How long a burst has to be before it might be a SENTENCE.
@@ -320,16 +377,32 @@ export function vadStep(
   // of a word holds the gate open, counts towards the minimum duration, and
   // keeps the silence clock from starting at the loudest moment instead of at
   // the end of the word.
+  // Three bars, and which one applies says what the studio currently believes.
+  //
+  //   threshold  somebody might be starting to talk
+  //   release    a word is still going (its tail, its decay)
+  //   presence   somebody is mid-sentence and has not stopped
+  //
+  // The last one is the latch. Once a take has heard speech, measuring loudness
+  // is the wrong question — the only question left is whether they have
+  // stopped — so the bar drops to just above the room until the take ends.
   const release = Math.max(state.floor * FLOOR_MARGIN, state.floor + (threshold - state.floor) * RELEASE_FRACTION)
+  const presence = Math.max(state.floor * FLOOR_MARGIN, state.floor + (threshold - state.floor) * PRESENCE_FRACTION)
   const opening = rms > threshold
   // Already open — within the dip grace that carries the gate across a word
   // boundary — still above the low bar, and not held there for longer than a
   // word's tail could last. `opening` alone stays the test for everything that
   // decides what KIND of sound this is; only the gate is hysteretic.
-  const held = state.activeSince != null
+  const held = !state.sustained
+    && state.activeSince != null
     && state.lastOpenAt != null
     && now - state.lastOpenAt <= RELEASE_HOLD_MS
-  const above = opening || (held && rms > release)
+  // The time limit is deliberately NOT applied once latched. It exists so a mix
+  // sitting between the bars cannot hold the gate open forever, and a mix
+  // cannot latch: latching needs a rise that clears the high bar, and a mix
+  // that does that becomes the floor within SUSTAINED_MS and stops clearing it.
+  const latched = !state.sustained && state.latched && rms > presence
+  const above = opening || latched || (held && rms > release)
 
   if (above) {
     // Strictly the high bar. This clock is the music test — a mix sits up
@@ -353,7 +426,18 @@ export function vadStep(
     // they speak in the first second; the test below speaks a minute in.
     if (unbrokenSince != null && now - unbrokenSince > SUSTAINED_MS) {
       return {
-        state: { ...base, floor: state.floor * (1 - FLOOR_FOLLOW * 4) + rms * FLOOR_FOLLOW * 4 },
+        // The latch goes with it. Whatever this is, it has been up without a
+        // gap for longer than a person can talk without one, so it is a section
+        // of music — and a latch held open by music is a take that never ends.
+        // `heard` is deliberately left alone: somebody may well have said
+        // something before the chorus landed, and that take still has to be
+        // sent.
+        state: {
+          ...base,
+          latched: false,
+          sustained: true,
+          floor: state.floor * (1 - FLOOR_FOLLOW * 4) + rms * FLOOR_FOLLOW * 4,
+        },
         speaking: false,
         ended: false,
         threshold,
@@ -366,10 +450,26 @@ export function vadStep(
       return { state: base, speaking: false, ended: false, threshold }
     }
     return {
-      // The floor is deliberately NOT updated here. Following the level while
-      // somebody is talking raises the bar under them until they fall below it,
-      // and the symptom of that is a speaker being cut off mid-sentence.
-      state: { ...base, heard: true, lastLoudAt: now, spokeSince: state.spokeSince ?? now },
+      // The floor is not updated while somebody is actually ABOVE the bar:
+      // following the level while they talk raises it under them until they
+      // fall below it, and the symptom of that is a speaker cut off
+      // mid-sentence.
+      //
+      // It IS updated, slowly, while the latch is holding the take open on
+      // something quieter than the bar. Without that, a latch is a trap: a
+      // sustained tone that clears the high bar once — a chorus arriving — then
+      // sits above the presence bar forever, and with the floor frozen it can
+      // never rise to release it. The take runs until the recorder gives up.
+      // Following here is safe precisely because it only happens while the
+      // level is BELOW the speaking bar, which is where the room lives anyway.
+      state: {
+        ...base,
+        floor: opening ? state.floor : state.floor * (1 - FLOOR_FOLLOW) + rms * FLOOR_FOLLOW,
+        heard: true,
+        latched: true,
+        lastLoudAt: now,
+        spokeSince: state.spokeSince ?? now,
+      },
       speaking: true,
       ended: false,
       threshold,
@@ -393,7 +493,16 @@ export function vadStep(
   return {
     // Any dip at all breaks the unbroken clock — that is what makes it a test
     // for music. The lenient one survives a word boundary.
-    state: { ...state, floor, unbrokenSince: null, activeSince, belowSince },
+    state: {
+      ...state, floor, unbrokenSince: null, activeSince, belowSince,
+      // Cleared by a genuine dip — down to near the room — not merely by
+      // falling under the bar. Those are different events, and using the wrong
+      // one put this straight back where it started: while the floor climbs to
+      // meet a chorus, the mix IS under the (rising) bar the whole way, so
+      // every sample of it looked like a dip and re-armed the latch on the
+      // music it had just identified.
+      sustained: rms > presence ? state.sustained : false,
+    },
     speaking: false,
     ended,
     threshold,

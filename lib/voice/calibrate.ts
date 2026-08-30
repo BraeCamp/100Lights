@@ -79,6 +79,57 @@ export function phraseAccuracy(asked: string, heard: string): number {
  * everything else, so it is said first and alone — telling somebody to speak up
  * while their headset is resampling them to 16 kHz is advice that cannot work.
  */
+/**
+ * Where to put the bar, as a fraction of the way from this room to this voice.
+ *
+ * A third. Low enough that the ONSET of an ordinary word clears it comfortably,
+ * which is all the bar has to catch now — once a word has started, the latch
+ * holds the take open on much less, so the bar no longer has to sit under the
+ * quietest part of somebody's speech. High enough that room tone, which lives
+ * near the floor, does not reach it.
+ */
+export const AIM = 0.35
+
+/** The clamp. Outside this the answer is not a sensitivity setting, it is a
+ *  room or a microphone problem, and the verdict says so in words. */
+export const SENSITIVITY_MIN = 0.25
+export const SENSITIVITY_MAX = 4
+
+/**
+ * The sensitivity that puts the bar where this person's voice actually is.
+ *
+ * Brae: "I think the volume sensitivity needs to be higher, or even better we
+ * have a sensitivity calibration that the user can use to calibrate to their
+ * volume."
+ *
+ * The second one, because the first cannot be right for everybody: the correct
+ * bar is a property of a room, a microphone and a voice, and no default chosen
+ * here knows any of the three. Calibration already measured all three — it just
+ * threw the numbers away and picked one of four preset multipliers, which is a
+ * strange thing to do with a measurement.
+ *
+ * So it is solved rather than guessed. The detector's bar is
+ *
+ *     floor * (1 + (ratio - 1) * strictness)
+ *
+ * and what we want is a bar sitting AIM of the way from the measured room to
+ * the measured voice. Rearranged for the one unknown, that is the sensitivity
+ * to store. Solved for the HELD-OPEN case, which applies the extra strictness
+ * and is therefore the harder of the two: a setting that works there works
+ * push-to-talk as well.
+ */
+export function sensitivityFor(floor: number, peak: number, opts: {
+  ratio?: number; continuousStrictness?: number
+} = {}): number {
+  const ratio = opts.ratio ?? 2.5                 // RATIO_QUIET
+  const strict = opts.continuousStrictness ?? 1.6 // CONTINUOUS_STRICTNESS
+  if (!(floor > 0) || !(peak > floor)) return 1
+  const want = AIM * (peak - floor)
+  const per = floor * (ratio - 1) * strict
+  if (!(per > 0)) return 1
+  return Math.max(SENSITIVITY_MIN, Math.min(SENSITIVITY_MAX, +(want / per).toFixed(2)))
+}
+
 export function verdictFor(m: {
   floor: number
   peak: number
@@ -88,44 +139,48 @@ export function verdictFor(m: {
   micLabel: string
 }): { verdict: string; suggested: number } {
   const headroom = m.floor > 0 ? m.peak / m.floor : m.peak > 0 ? 99 : 0
+  // Measured, not chosen. Every branch below returns this: the verdicts differ
+  // because they diagnose different problems, but none of them knows the right
+  // bar better than the arithmetic on the numbers just taken from this room.
+  const measured = sensitivityFor(m.floor, m.peak)
 
   if (m.sampleRate != null && m.sampleRate < 24_000) {
     return {
-      suggested: 1,
+      suggested: measured,
       verdict: `${m.micLabel || 'That microphone'} is running at ${Math.round(m.sampleRate / 100) / 10} kHz — a call profile. Nothing else will help much until the monitoring and the microphone are different devices.`,
     }
   }
 
   if (m.peak < 0.02) {
     return {
-      suggested: 0.7,
+      suggested: measured,
       verdict: 'Barely anything reached the microphone. Check it is the right input, and move closer.',
     }
   }
 
   if (headroom < 2) {
     return {
-      suggested: 0.7,
+      suggested: measured,
       verdict: `Your voice is only ${headroom.toFixed(1)}x the room. Move closer to the microphone, or quieten the room — at this distance the studio cannot tell you apart from it.`,
     }
   }
 
   if (m.accuracy < 0.5) {
     return {
-      suggested: headroom > 6 ? 1.5 : 1,
+      suggested: measured,
       verdict: `The level is fine (${headroom.toFixed(1)}x the room) but only ${Math.round(m.accuracy * 100)}% of the words came back. That is the recogniser struggling, not the microphone — speak a little more deliberately, and keep track names short and distinct.`,
     }
   }
 
   if (headroom > 8) {
     return {
-      suggested: 2.2,
+      suggested: measured,
       verdict: `Clear and loud — ${headroom.toFixed(1)}x the room, ${Math.round(m.accuracy * 100)}% of the words. You can afford the strictest setting, which will ignore most of the room.`,
     }
   }
 
   return {
-    suggested: headroom > 5 ? 1.5 : 1,
+    suggested: measured,
     verdict: `Good — ${headroom.toFixed(1)}x the room and ${Math.round(m.accuracy * 100)}% of the words came back.`,
   }
 }

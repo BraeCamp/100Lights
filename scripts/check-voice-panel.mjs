@@ -134,7 +134,9 @@ await page.waitForTimeout(300)
   await panel.getByText('Settings', { exact: false }).click()
   await page.waitForTimeout(300)
   const text = await panel.innerText()
-  check('the panel offers a microphone check', /Check the microphone/i.test(text))
+  // Renamed from "Check the microphone" when it stopped picking one of four
+  // presets and started setting the bar from what it actually measured.
+  check('the panel offers a microphone check', /Calibrate to my voice/i.test(text))
   check('and says what it is for',
     /which part is the problem/i.test(text), text.slice(0, 120))
 }
