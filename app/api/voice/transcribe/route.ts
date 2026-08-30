@@ -38,6 +38,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Voice transcription is not configured (DEEPGRAM_API_KEY).' }, { status: 501 })
   }
 
+  const url = new URL(req.url)
   const contentType = req.headers.get('content-type') || 'audio/webm'
   const audio = await req.arrayBuffer().catch(() => null)
   if (!audio || audio.byteLength < 512) {
@@ -66,7 +67,36 @@ export async function POST(req: Request) {
   const params = new URLSearchParams({
     model: 'nova-3',
     smart_format: 'true',
+    // Digits, not words — the command parser wants "128", not "one twenty
+    // eight", and a number spelled out is one more thing to get wrong.
+    numerals: 'true',
+    // "um", "uh" and friends carry no instruction and only get in the way of
+    // matching a short command.
+    filler_words: 'false',
   })
+
+  // ── Tell it which words to expect ────────────────────────────────────────
+  //
+  // Brae: "it can't hear what I'm saying very well while there's conversations
+  // in the background."
+  //
+  // Background speech is the hardest case for a recogniser, because the
+  // interference is exactly the thing it is trained to find. It cannot be
+  // filtered out the way a hum can — but the decision can be made easier. A
+  // recogniser choosing between "mute" and "moot" in a noisy room is guessing
+  // against a dictionary of every English word; told that "mute" and the names
+  // of the tracks in the open project are likely here, it is choosing from a
+  // few dozen.
+  //
+  // Nova-3 calls this keyterm prompting. Verified against the API, because the
+  // obvious-looking `keywords` is REFUSED by Nova-3 — "Keywords are not
+  // supported for Nova-3. Please use `keyterm` instead" — and guessing a
+  // parameter from memory is what 400'd every command last time.
+  const vocabulary = url.searchParams.getAll('kt')
+    .map(t => t.trim())
+    .filter(t => t && t.length <= 40)
+    .slice(0, 40)          // a hint, not a dictionary
+  for (const term of vocabulary) params.append('keyterm', term)
 
   let res: Response
   try {

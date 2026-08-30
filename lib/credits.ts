@@ -8,6 +8,7 @@
 // ⚠️ SET-THESE: the numbers below are safe defaults. Finalize the tier prices + credit rates,
 // create the matching Stripe products/prices, and map price IDs → tiers in TIER_BY_PRICE.
 import { sql } from '@/lib/db'
+import { creditAlertFor, type CreditAlert } from '@/lib/credit-alerts'
 
 // ── Tiers ────────────────────────────────────────────────────────────────────────────────────
 // The tier / cost / top-up numbers live in the isomorphic ./credit-tiers (client + server share the
@@ -56,6 +57,12 @@ async function ensure(): Promise<void> {
       free_cycle_start     TIMESTAMPTZ,
       updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`
+  // The highest usage threshold already reported this cycle (0, 50, 75, 90,
+  // 100). Kept in the row rather than in the client so the warning is not
+  // repeated on another device, and so it survives a reload — a person should
+  // hear "you have used half your credits" once, not on every command that
+  // keeps them above half.
+  await sql`ALTER TABLE user_credits ADD COLUMN IF NOT EXISTS alert_level INTEGER NOT NULL DEFAULT 0`
   await sql`
     CREATE TABLE IF NOT EXISTS credit_ledger (
       id         TEXT PRIMARY KEY,
@@ -113,6 +120,10 @@ export async function grantCredits(userId: string, amount: number, reason: strin
   await sql`
     INSERT INTO user_credits (user_id, balance) VALUES (${userId}, ${amount})
     ON CONFLICT (user_id) DO UPDATE SET balance = user_credits.balance + ${amount}, updated_at = NOW()`
+  // More credits start the cycle's journey again, so the thresholds must be
+  // able to speak a second time. Without this a user who topped up after a
+  // "90% used" warning would never be warned again.
+  try { await sql`UPDATE user_credits SET alert_level = 0 WHERE user_id = ${userId}` } catch { /* courtesy only */ }
   await record(userId, amount, reason)
 }
 
@@ -127,7 +138,7 @@ export async function applyTierGrant(userId: string, tier: CreditTier): Promise<
 }
 
 /** Spend credits atomically. Returns { ok:false } (no deduction) when the balance is short. */
-export async function spendCredits(userId: string, amount: number, reason: string): Promise<{ ok: boolean; balance: number }> {
+export async function spendCredits(userId: string, amount: number, reason: string): Promise<{ ok: boolean; balance: number; alert?: CreditAlert | null }> {
   if (amount <= 0) { const c = await getCredits(userId); return { ok: true, balance: c.balance } }
   await ensure()
   const r = await sql`
@@ -135,7 +146,33 @@ export async function spendCredits(userId: string, amount: number, reason: strin
     WHERE user_id = ${userId} AND balance >= ${amount} RETURNING balance`
   if (!r.length) { const c = await getCredits(userId); return { ok: false, balance: c.balance } }
   await record(userId, -amount, reason)
-  return { ok: true, balance: Number(r[0].balance) }
+  const balance = Number(r[0].balance)
+  return { ok: true, balance, alert: await noteUsage(userId, balance) }
+}
+
+/**
+ * Did this spend cross a usage threshold worth telling someone about?
+ *
+ * Brae: "a notification when they hit 50%, 75%, 90%, and 100% of their allowed
+ * balance used." An allowance that disappears silently and then refuses a
+ * command mid-session is a bad surprise, and by then it is too late to do
+ * anything about it.
+ *
+ * Best-effort throughout: a failure here must never turn a successful spend
+ * into a failed one. The work was done and paid for; the warning is a courtesy.
+ */
+async function noteUsage(userId: string, balanceAfter: number): Promise<CreditAlert | null> {
+  try {
+    const rows = await sql`SELECT monthly_grant, alert_level FROM user_credits WHERE user_id = ${userId}`
+    const monthlyGrant = Number(rows[0]?.monthly_grant ?? 0)
+    const alreadyReported = Number(rows[0]?.alert_level ?? 0)
+    const alert = creditAlertFor({
+      balanceBefore: balanceAfter, balanceAfter, monthlyGrant, alreadyReported,
+    })
+    if (!alert) return null
+    await sql`UPDATE user_credits SET alert_level = ${alert.level} WHERE user_id = ${userId}`
+    return alert
+  } catch { return null }
 }
 
 /** Consume free-tier transcription seconds (rolling 30-day window); false when the 5 min is spent. */
@@ -164,7 +201,7 @@ export async function useFreeTranscribe(userId: string, seconds: number): Promis
  */
 export async function meterAI(
   userId: string, credits: number, reason: string, opts?: { freeSeconds?: number },
-): Promise<{ ok: boolean; balance: number; usedFree?: boolean }> {
+): Promise<{ ok: boolean; balance: number; usedFree?: boolean; alert?: CreditAlert | null }> {
   if (opts?.freeSeconds && opts.freeSeconds > 0) {
     // Not a React hook — `useFreeTranscribe` is a DB helper; the use* name just trips the linter's heuristic.
     // eslint-disable-next-line react-hooks/rules-of-hooks

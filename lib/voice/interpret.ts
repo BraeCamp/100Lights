@@ -98,6 +98,20 @@ function near(a: string, b: string): boolean {
   return edits + (a.length - i) + (b.length - j) <= 1
 }
 
+/**
+ * The words this parser acts on — handed to the transcriber as a hint.
+ *
+ * A recogniser choosing between "mute" and "moot" in a noisy room is guessing
+ * from a dictionary of everything. Telling it which words are actually likely
+ * here turns that into a much easier decision, and these are exactly the words
+ * that decide whether a command lands at all.
+ */
+export const COMMAND_VOCABULARY: readonly string[] = [
+  'play', 'stop', 'pause', 'restart', 'beginning', 'top',
+  'mute', 'unmute', 'solo', 'unsolo',
+  'tempo', 'bpm', 'loop', 'bar', 'volume', 'percent',
+]
+
 export interface InterpretContext {
   tracks: { id: string; name?: string }[]
 }

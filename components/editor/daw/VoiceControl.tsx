@@ -30,6 +30,7 @@ import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { hearBetter } from '@/lib/voice/hear-better'
 import { resolveLocally, confidentEnough } from '@/lib/voice/local-resolve'
+import { COMMAND_VOCABULARY } from '@/lib/voice/interpret'
 import { remember, markFailed } from '@/lib/voice/voice-memory'
 import { startRecording, preferredTranscriber, setPreferredTranscriber, type Recording } from '@/lib/voice/record'
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
@@ -94,6 +95,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [asking, setAsking] = useState('')
   const [typed, setTyped] = useState('')
   const [showType, setShowType] = useState(false)
+  /** 0–1 microphone loudness while recording, for the meter on the button. */
+  const [level, setLevel] = useState(0)
+  /** Always the current finish(), so a take that ends itself uses the live one. */
+  const finishRef = useRef<(() => void) | null>(null)
   const handle = useRef<SpeechHandle | null>(null)
   /** Set when recording instead of using the browser's recogniser. */
   const recorder = useRef<Recording | null>(null)
@@ -276,13 +281,32 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    *  the browser's speech service. */
   const startRecorded = useCallback(async () => {
     setProblem('Listening…')
-    const rec = await startRecording()
+    // Hand the transcriber the words that are actually likely here — the
+    // commands it can act on, and the names of the tracks in this project.
+    const vocabulary = [
+      ...COMMAND_VOCABULARY,
+      ...(project.tracks ?? []).map(t => t.name).filter((n): n is string => !!n),
+    ]
+    const rec = await startRecording({
+      vocabulary,
+      // A live meter, because "is it even hearing me" is the first question
+      // when this goes wrong and it should not need asking twice.
+      onLevel: setLevel,
+      onSpeechStart: () => setProblem(''),
+      // It ends itself once talking stops, so the trailing room does not get
+      // recorded. finish() is what turns the take into a command.
+      // Through a ref: finish() is defined below this callback, and the take
+      // can end itself at any moment, so capturing it directly would either
+      // read a stale closure or force an ordering that has nothing to do with
+      // how the code is best read.
+      onSilence: () => { finishRef.current?.() },
+    })
     if (!rec) { setProblem('Could not open the microphone.'); return }
     if (!wanted.current) { rec.cancel(); setProblem(''); return }
     recorder.current = rec
     setProblem('')
     setListening(true)
-  }, [])
+  }, [project])
 
   const start = useCallback(async () => {
     if (listening || busy) return
@@ -352,6 +376,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
   const finish = useCallback(() => {
     wanted.current = false
+    setLevel(0)
     if (recorder.current) {
       const rec = recorder.current
       recorder.current = null
@@ -372,6 +397,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     handle.current = null
     setListening(false)
   }, [heardSentence])
+
+  // The recorder can finish a take on its own when talking stops; keep the ref
+  // pointing at the current handler so it never calls a stale one.
+  useEffect(() => { finishRef.current = finish }, [finish])
 
   // Enter runs the command — but only when Enter is not doing something else.
   // A DAW binds Enter (rename a track, confirm a field), and stealing it would
@@ -421,6 +450,27 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       >
         {busy ? <Loader2 size={12} className="spin" /> : <Mic size={12} />}
         {label}
+        {/* A live level meter while recording.
+            "Is it even hearing me" is the first question when voice goes wrong,
+            and until now the only answer was to speak and wait. A bar that
+            moves with your voice answers it before the command is finished —
+            and if it stays flat, the problem is the microphone rather than
+            anything downstream. */}
+        {listening && (
+          <span
+            aria-hidden
+            style={{
+              width: 22, height: 4, borderRadius: 2, marginLeft: 2,
+              background: `${C.accent}33`, overflow: 'hidden', display: 'inline-block',
+            }}
+          >
+            <span style={{
+              display: 'block', height: '100%', borderRadius: 2, background: C.accent,
+              width: `${Math.round(Math.min(1, level) * 100)}%`,
+              transition: 'width 80ms linear',
+            }} />
+          </span>
+        )}
       </button>
 
       {/* Type instead. Always available — not only after something has failed,
