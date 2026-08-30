@@ -43,6 +43,18 @@ export interface InterpretContext {
   tracks: { id: string; name?: string; volume?: number; pan?: number }[]
   /** Current song tempo, for "a bit faster". */
   tempo?: number
+  /**
+   * The track currently selected in the studio.
+   *
+   * The largest gap in the language: nobody working on one track keeps saying
+   * its name. They say "louder", "mute this", "pan it left" — and every one of
+   * those resolved to nothing, because every rule demanded a name and the
+   * sentence contained a pronoun instead.
+   *
+   * Used ONLY when the sentence names nothing at all, or names only a word like
+   * "this" or "it". A sentence that names a track always means that track.
+   */
+  selectedTrackName?: string
 }
 
 export interface Match {
@@ -146,6 +158,48 @@ export function nameWords(ctx: InterpretContext): Set<string> {
  * rather than acted on. Muting the wrong track is quiet and easy to miss, which
  * is exactly why this refuses instead of picking a best effort.
  */
+/**
+ * Words that point at something without naming it.
+ *
+ * Stripped as filler everywhere else, which is right — but their PRESENCE is
+ * evidence that the speaker meant the thing in front of them, so a rule that
+ * finds no name checks for them before falling back.
+ */
+const DEICTIC = ['this', 'that', 'it', 'here', 'there', 'them', 'these', 'those', 'current', 'selected']
+
+/**
+ * The track a sentence means, including when it does not say.
+ *
+ * A named track always wins. Failing that, a sentence that pointed ("mute
+ * this") or simply gave an instruction with no object at all ("louder") means
+ * the track the person is looking at.
+ *
+ * Confidence is lower for the implicit case and deliberately so: it is inferred
+ * from the studio's state rather than from anything that was said, and if the
+ * selection is not what they thought, the wrong track moves.
+ */
+function nameOrSelected(
+  w: Words,
+  ctx: InterpretContext,
+  remove: string[],
+  opts: { dropNums?: boolean } = {},
+): { name: string; score: number } | null {
+  const named = nameFrom(w, ctx, remove, opts)
+  if (named) return named
+  if (!ctx.selectedTrackName) return null
+
+  // Only when nothing else could have been the object. Leftover words that are
+  // neither command words nor pointers mean the speaker named something this
+  // parser failed to find, and acting on the selection instead would be acting
+  // on the wrong thing while appearing to understand.
+  const leftover = w.all.filter(x =>
+    !remove.includes(x)
+    && !DEICTIC.includes(x)
+    && !(opts.dropNums && spokenNumber(x) != null))
+  if (leftover.length) return null
+  return { name: ctx.selectedTrackName, score: 0.8 }
+}
+
 function nameFrom(
   w: Words,
   ctx: InterpretContext,
@@ -315,7 +369,7 @@ const COMMANDS: VoiceCommand[] = [
       const on = w.has('mute', 'silence')
       const off = w.has('unmute') || (on && w.has('un'))
       if (!on && !off) return null
-      const hit = nameFrom(w, ctx, ['mute', 'unmute', 'silence', 'track'])
+      const hit = nameOrSelected(w, ctx, ['mute', 'unmute', 'silence', 'track'])
       // A mixer verb with no findable track is exactly the ambiguity worth
       // asking about, so decline rather than guess which track was meant.
       if (!hit) return null
@@ -336,7 +390,7 @@ const COMMANDS: VoiceCommand[] = [
       const on = w.has('solo')
       const off = w.has('unsolo')
       if (!on && !off) return null
-      const hit = nameFrom(w, ctx, ['solo', 'unsolo', 'track'])
+      const hit = nameOrSelected(w, ctx, ['solo', 'unsolo', 'track'])
       if (!hit) return null
       return {
         calls: [{ name: 'set_track', input: { target: hit.name, solo: !off } }],
@@ -357,7 +411,7 @@ const COMMANDS: VoiceCommand[] = [
       if (EFFECTS.some(e => w.has(e))) return null
       // The name is resolved BEFORE the number is read, because which numbers
       // are arguments depends on which are part of the name.
-      const hit = nameFrom(w, ctx, ['percent', 'volume', 'level', 'set', 'put', 'track'], { dropNums: true })
+      const hit = nameOrSelected(w, ctx, ['percent', 'volume', 'level', 'set', 'put', 'track'], { dropNums: true })
       if (!hit) return null
       const n = argNumbers(w, hit.name)[0]
       if (n == null || n < 0 || n > 100) return null
@@ -381,7 +435,7 @@ const COMMANDS: VoiceCommand[] = [
       // Both directions in one sentence is not a nudge, it is a sentence this
       // parser has misread. Saying so costs nothing; guessing costs a mix.
       if (up === down) return null
-      const hit = nameFrom(w, ctx, [...UP, ...DOWN, 'turn', 'bring', 'make', 'bit', 'touch', 'little',
+      const hit = nameOrSelected(w, ctx, [...UP, ...DOWN, 'turn', 'bring', 'make', 'bit', 'touch', 'little',
           'slightly', 'hair', 'lot', 'way', 'much', 'loads', 'track', 'volume'])
       if (!hit) return null
       // Relative needs somewhere to start from. Without the current level this
@@ -409,7 +463,7 @@ const COMMANDS: VoiceCommand[] = [
       if (!centre && !left && !right) return null
       if (!centre && !w.has('pan', 'panned')) return null
       if (left && right) return null
-      const hit = nameFrom(w, ctx, ['pan', 'panned', 'left', 'right', 'hard', 'center', 'centre',
+      const hit = nameOrSelected(w, ctx, ['pan', 'panned', 'left', 'right', 'hard', 'center', 'centre',
           'middle', 'track', 'percent'], { dropNums: true })
       if (!hit) return null
       const n = argNumbers(w, hit.name)[0]
@@ -959,6 +1013,94 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
 
+  // ── Everything at once ───────────────────────────────────────────────────
+  {
+    id: 'set_all_tracks.solo_off',
+    tool: 'set_all_tracks',
+    group: 'Mixer',
+    what: 'Clear the solo on every track',
+    say: ['clear the solo', 'unsolo everything', 'turn off solo'],
+    match(w) {
+      if (!w.has('solo', 'unsolo', 'soloed')) return null
+      if (!w.has('clear', 'everything', 'all', 'off', 'unsolo', 'no')) return null
+      return { calls: [{ name: 'set_all_tracks', input: { solo: false } }], confidence: 0.92 }
+    },
+  },
+  {
+    id: 'set_all_tracks.mute',
+    tool: 'set_all_tracks',
+    group: 'Mixer',
+    what: 'Mute or unmute every track',
+    say: ['mute everything', 'unmute everything', 'unmute all the tracks'],
+    match(w) {
+      const on = w.has('mute', 'silence')
+      const off = w.has('unmute')
+      if (!on && !off) return null
+      if (!w.has('everything', 'all')) return null
+      return {
+        calls: [{ name: 'set_all_tracks', input: { muted: !off } }],
+        confidence: 0.92,
+      }
+    },
+  },
+
+  // ── Key ──────────────────────────────────────────────────────────────────
+  {
+    id: 'set_key_scale',
+    tool: 'set_key_scale',
+    group: 'Timing',
+    what: 'Set the key and scale',
+    say: ['put it in f minor', 'set the key to d major', 'change the key to a minor'],
+    match(w) {
+      // Read from the RAW sentence, not the content words.
+      //
+      // "A minor" is the commonest key in popular music and its note name is
+      // the indefinite article, so the filter that makes every other command
+      // robust deletes it. So do "a" in "in a major key" — which is why the
+      // note has to be read as part of a PHRASE with the scale rather than
+      // hunted for on its own. A bare letter is a note only when a scale word
+      // is standing next to it.
+      const NOTES: Record<string, number> = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }
+      const m = /\b([a-g])\s*(sharp|flat|#)?\s+(major|minor|dorian|chromatic)\b/i.exec(w.raw)
+      if (!m) return null
+      const base = NOTES[m[1].toLowerCase()]
+      if (base == null) return null
+      const accidental = (m[2] ?? '').toLowerCase()
+      const key = accidental === 'flat' ? (base + 11) % 12
+        : accidental ? (base + 1) % 12
+          : base
+      // Everything the phrase covers is read, so a sentence that is only this
+      // scores as fully explained.
+      for (const word of w.all) w.markWord(word, 0)
+      return {
+        calls: [{ name: 'set_key_scale', input: { key, scale: m[3].toLowerCase() } }],
+        confidence: 0.9,
+      }
+  },
+  },
+
+  // ── Deleting a clip ──────────────────────────────────────────────────────
+  {
+    id: 'remove_clip',
+    tool: 'remove_clip',
+    group: 'Arrangement',
+    what: 'Delete a clip',
+    say: ['delete the bass 2 clip', 'remove the drums clip'],
+    destructive: true,
+    match(w, ctx) {
+      if (!w.has('clip', 'item')) return null
+      if (!w.has('delete', 'remove', 'get')) return null
+      const hit = nameFrom(w, ctx, ['delete', 'remove', 'get', 'rid', 'clip', 'item'],
+        { dropNums: true })
+      if (!hit) return null
+      return {
+        calls: [{ name: 'remove_clip', input: { target: hit.name } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+
   // ── Questions ────────────────────────────────────────────────────────────
   //
   // These answer instead of acting. They barely existed as a category before
@@ -1040,6 +1182,51 @@ const COMMANDS: VoiceCommand[] = [
         confidence: hit ? nameConfidence(hit.score) : 0.88,
         needsName: !!hit,
       }
+    },
+  },
+  {
+    id: 'describe.key',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask what key the song is in',
+    say: ['what key is this', 'what key is the song in'],
+    match(w) {
+      if (!w.has('key')) return null
+      if (!w.has('what', 'which')) return null
+      return { calls: [{ name: 'describe', input: { topic: 'key' } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'describe.volume',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask where a track is set',
+    say: ['how loud is the bass 2', 'how loud is the drums'],
+    match(w, ctx) {
+      // "set" is deliberately not a trigger. It made this collide with "what is
+      // the loop SET to", and two questions that are equally good readings of
+      // one sentence is a question the studio has to ask rather than answer.
+      if (!w.has('loud', 'volume', 'level')) return null
+      if (!w.has('how', 'where', 'what')) return null
+      const hit = nameOrSelected(w, ctx, ['loud', 'volume', 'level', 'how',
+        'where', 'what', 'track'], { dropNums: true })
+      return {
+        calls: [{ name: 'describe', input: { topic: 'volume', ...(hit ? { target: hit.name } : {}) } }],
+        confidence: hit ? nameConfidence(hit.score) : 0.86,
+        needsName: !!hit,
+      }
+    },
+  },
+  {
+    id: 'describe.position',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask where the loop is',
+    say: ['where is the loop', 'what is the loop set to'],
+    match(w) {
+      if (!w.has('loop', 'looping')) return null
+      if (!w.has('where', 'what')) return null
+      return { calls: [{ name: 'describe', input: { topic: 'position' } }], confidence: 0.88 }
     },
   },
   {
@@ -1199,6 +1386,10 @@ const COMMANDS: VoiceCommand[] = [
 // Listed explicitly, and asserted to name every command exactly once, so adding
 // a rule forces a decision about where it sits rather than silently landing last.
 const PRECEDENCE: string[] = [
+  // Everything-at-once before the single-track rules: "mute everything" is not
+  // an instruction about a track called everything.
+  'set_all_tracks.solo_off',
+  'set_all_tracks.mute',
   // Mixer — all of these name a track, so they go first.
   'set_track.mute',
   'set_track.solo',
@@ -1221,6 +1412,9 @@ const PRECEDENCE: string[] = [
   // an effect's name, "master", "swing" — so they are unambiguous enough to sit
   // ahead of the general timing rules.
   'rename_track',
+  // Deleting a CLIP before deleting a track: both say "delete", and only one
+  // of them says "clip".
+  'remove_clip',
   'remove_track',
   'duplicate_track',
   'add_track',
@@ -1241,6 +1435,10 @@ const PRECEDENCE: string[] = [
   'describe.muted',
   'describe.length',
   'describe.clips',
+  'describe.key',
+  'describe.volume',
+  'describe.position',
+  'set_key_scale',
   'rename_clip',
   // Undo before the transport: "take that back" contains no transport word, but
   // keeping the pair together is clearer than scattering them.
@@ -1301,6 +1499,30 @@ export const COMMAND_VOCABULARY: readonly string[] = (() => {
   }
   return [...seen].sort()
 })()
+
+/**
+ * Words the transcriber may be PRIMED with but which must never be substituted
+ * INTO.
+ *
+ * The two vocabularies look like one and are not. Hinting "how" to a recogniser
+ * is free and occasionally helps. Allowing the hypothesis search to rewrite some
+ * other word INTO "how" is a different act entirely: it changes the mood of the
+ * sentence, and a statement rewritten into a question is a command nobody gave.
+ *
+ * It was doing exactly that — "the drums are too loud in the room" became "the
+ * drums are HOW loud in the room" for the cost of two letters, and the studio
+ * answered a question that had not been asked.
+ *
+ * So: interrogatives, quantifiers and the commonest function words are
+ * off-limits as substitution targets. They are cheap to reach from almost
+ * anything and almost never what was actually said.
+ */
+export const NEVER_SUBSTITUTE: readonly string[] = [
+  'how', 'what', 'where', 'which', 'when', 'why', 'who',
+  'all', 'any', 'no', 'not', 'is', 'are', 'was', 'be',
+  'the', 'and', 'or', 'to', 'in', 'on', 'at', 'of', 'for', 'with',
+  'this', 'that', 'it', 'them', 'more', 'less',
+]
 
 /** The help panel's contents, grouped the way it displays them. */
 export function commandHelp(): { group: string; items: { what: string; say: string }[] }[] {

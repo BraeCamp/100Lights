@@ -314,9 +314,9 @@ export const MUSIC_TOOLS = [
       properties: {
         topic: {
           type: 'string',
-          enum: ['tempo', 'tracks', 'muted', 'length', 'clips'],
+          enum: ['tempo', 'tracks', 'muted', 'length', 'clips', 'key', 'volume', 'position', 'help'],
         },
-        target: { ...TARGET, description: 'For "clips" — which track they asked about.' },
+        target: { ...TARGET, description: 'For "clips" and "volume" — which track they asked about.' },
       },
       required: ['topic'],
     },
@@ -329,6 +329,41 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: { target: TARGET, name: { type: 'string' } },
       required: ['target', 'name'],
+    },
+  },
+  {
+    name: 'set_key_scale',
+    description:
+      'KEY — the key and scale the song is in. "put it in F minor", "set the key to D major". Affects the scale highlighting and the note grid, not the notes already written.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        key: { type: 'number', description: 'Semitone from C, 0-11. C=0, C#=1, D=2 ... B=11.' },
+        scale: { type: 'string', enum: ['major', 'minor', 'penta-maj', 'penta-min', 'dorian', 'chromatic'] },
+      },
+      required: ['key', 'scale'],
+    },
+  },
+  {
+    name: 'remove_clip',
+    description:
+      'DELETE A CLIP — remove one clip from the arrangement. Destructive: the caller confirms before this runs.',
+    input_schema: {
+      type: 'object',
+      properties: { target: TARGET },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'set_all_tracks',
+    description:
+      'EVERY TRACK AT ONCE — "mute everything", "unmute everything", "clear the solo". A forgotten solo is the most common way to lose a track, and clearing it is worth being able to say.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        muted: { type: 'boolean' },
+        solo: { type: 'boolean', description: 'Only false is useful — soloing everything is soloing nothing.' },
+      },
     },
   },
   {

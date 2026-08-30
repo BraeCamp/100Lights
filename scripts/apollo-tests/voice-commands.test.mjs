@@ -60,10 +60,10 @@ const notes = (n, pitch) => Array.from({ length: n }, (_, i) => ({
   id: `n${pitch}-${i}`, pitch, startBeat: i, durationBeats: 1, velocity: 100,
 }))
 
-const track = (id, name, volume = 0.8) => ({
+const track = (id, name, volume = 0.8, extra = {}) => ({
   id, name, type: 'midi', color: '#888', volume, pan: 0,
   mute: false, solo: false, armed: false, height: 80,
-  effects: [], instrument: { type: 'poly', params: {} },
+  effects: [], instrument: { type: 'poly', params: {} }, ...extra,
 })
 
 const clip = (id, trackId, name, startBeat, pitch) => ({
@@ -73,8 +73,12 @@ const clip = (id, trackId, name, startBeat, pitch) => ({
 
 const PROJECT = {
   id: 'p', name: 'Fixture', tempo: 120, timeSignatureNum: 4, timeSignatureDen: 4,
+  // One soloed and one muted, because a fixture where nothing is soloed cannot
+  // tell a working "clear the solo" from a broken one — it correctly does
+  // nothing either way, and the suite would bless the broken version.
   tracks: [track('t1', 'Bass 2'), track('t2', 'Pad', 0.5), track('t3', 'Drums'),
-    track('t4', 'Guitar'), track('t5', 'Vocals'), track('t6', 'Lead')],
+    track('t4', 'Guitar', 0.8, { mute: true }), track('t5', 'Vocals'),
+    track('t6', 'Lead', 0.8, { solo: true })],
   arrangementClips: [
     clip('c1', 't1', 'Bass 2 clip', 0, 40),
     clip('c2', 't2', 'Pad clip', 0, 60),

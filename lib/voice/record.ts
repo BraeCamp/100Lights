@@ -67,9 +67,18 @@ export interface Recording {
    * indistinguishable, and the caller reported all three as "I didn't catch
    * that" — blaming the speaker for a server problem.
    */
-  stop: () => Promise<{ ok: true; result: Transcript | null } | { ok: false; error: string }>
+  stop: () => Promise<StopResult>
   /** Throw it away. */
   cancel: () => void
+  /**
+   * Stop listening to the room for a moment.
+   *
+   * Used while the studio is speaking. With the microphone held open across
+   * commands it would otherwise hear its own read-back, transcribe it, and act
+   * on it — and "Bass 2 muted" is a perfectly good command. Audio recorded
+   * while muted is discarded rather than buffered.
+   */
+  setMuted: (muted: boolean) => void
 }
 
 export interface RecordOptions {
@@ -97,7 +106,27 @@ export interface RecordOptions {
   onSpeechStart?: () => void
   /** Fires when speech has stopped long enough that the take ends itself. */
   onSilence?: () => void
+  /**
+   * Keep the microphone open across several commands.
+   *
+   * Brae: "Can you set the voice command up to be able to execute commands
+   * while still listening for more commands? ... This way the user can do
+   * multiple things while only clicking Voice once."
+   *
+   * The obvious way to build this is to start a new recording after each
+   * command, and it is wrong: re-opening a microphone renegotiates the audio
+   * device, which is the very thing that was making playback crackle. So the
+   * stream is opened ONCE and cut into utterances, and the device is never
+   * touched again until the user is finished.
+   */
+  continuous?: boolean
+  /** Each finished utterance, while continuous. */
+  onUtterance?: (r: StopResult) => void
 }
+
+export type StopResult =
+  | { ok: true; result: Transcript | null }
+  | { ok: false; error: string }
 
 /** The first container this browser will actually produce. Safari and Chrome
  *  disagree, and an unsupported mimeType makes MediaRecorder throw at
@@ -112,6 +141,10 @@ function pickMime(): string | undefined {
 
 // The longest a single command may run before it ends itself.
 const MAX_MS = 15_000
+
+/** How long a held-open microphone may record nothing before the clip is
+ *  started over. Bounds the blob without interrupting anybody. */
+const IDLE_RESET_MS = 12_000
 
 /**
  * Start recording. Call `stop()` to transcribe, or let it end itself once the
@@ -203,9 +236,11 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
     return null
   }
 
-  const chunks: BlobPart[] = []
+  let chunks: BlobPart[] = []
   rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data) }
   rec.start()
+
+  let muted = false
 
   let vad = newVad()
   let heardSpeech = false
@@ -223,17 +258,77 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
       o.onLevel?.(Math.min(1, rms * 8))
 
       const now = Date.now()
-      const step = vadStep(vad, rms, now, { playing: o.playing })
+      // While the studio is talking, the room is not evidence of anything.
+      if (muted) return
+      const step = vadStep(vad, rms, now, { playing: o.playing, continuous: o.continuous })
       vad = step.state
       if (step.speaking && !heardSpeech) { heardSpeech = true; o.onSpeechStart?.() }
       if (step.ended) {
         // Finished talking. Ending here rather than on release keeps the
         // trailing room — and whoever is talking in it — out of the clip.
         o.onSilence?.()
-        autoStop?.()
+        if (o.continuous) { void cutUtterance() } else { autoStop?.() }
+        return
+      }
+      if (o.continuous) {
+        // Nobody has said anything for a long time and the recorder has been
+        // accumulating the room. Start it over so the next command is not
+        // appended to two minutes of nothing.
+        if (!heardSpeech && now - segmentStartedAt > IDLE_RESET_MS) restartSegment()
+        return
       }
       if (now - startedAt > MAX_MS) autoStop?.()
     }, 50)
+  }
+
+  let segmentStartedAt = Date.now()
+
+  /** Throw away what has been recorded and start a fresh clip on the same
+   *  stream. The DEVICE is never reopened — only the recorder. */
+  function restartSegment(): void {
+    try { rec.stop() } catch { /* already stopped */ }
+    chunks = []
+    vad = newVad()
+    heardSpeech = false
+    segmentStartedAt = Date.now()
+    try {
+      rec = new MediaRecorder(processed, mimeType ? { mimeType } : undefined)
+      rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data) }
+      rec.start()
+    } catch { /* the take is over; stop() will report it */ }
+  }
+
+  /**
+   * End one utterance, transcribe it, and immediately start listening for the
+   * next.
+   *
+   * The new recorder is started BEFORE the transcription is awaited, so the
+   * gap between "finished talking" and "listening again" is a few
+   * milliseconds rather than a network round trip. Somebody giving three
+   * commands in a row should not have to wait for the first to come back.
+   */
+  async function cutUtterance(): Promise<void> {
+    const finished = chunks
+    const hadSpeech = heardSpeech
+    const type = mimeType || 'audio/webm'
+    await new Promise<void>(resolve => {
+      rec.onstop = () => resolve()
+      try { rec.stop() } catch { resolve() }
+    })
+    chunks = []
+    vad = newVad()
+    heardSpeech = false
+    segmentStartedAt = Date.now()
+    try {
+      rec = new MediaRecorder(processed, mimeType ? { mimeType } : undefined)
+      rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data) }
+      rec.start()
+    } catch { /* cannot continue; the caller's stop() will notice */ }
+
+    if (!hadSpeech && !o.playing) return
+    const blob = new Blob(finished, { type })
+    if (blob.size < 1200) return
+    o.onUtterance?.(await transcribe(blob))
   }
 
   const release = () => {
@@ -242,7 +337,47 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
     void ctx?.close()
   }
 
-  const finish = (): Promise<{ ok: true; result: Transcript | null } | { ok: false; error: string }> =>
+  /** Send one clip and read the answer. Shared by both modes, so a fix to one
+   *  is a fix to the other. */
+  async function transcribe(blob: Blob): Promise<StopResult> {
+    try {
+      // The words likely in THIS project, as a hint to the recogniser.
+      const qs = new URLSearchParams()
+      for (const term of (o.vocabulary ?? []).slice(0, 40)) if (term.trim()) qs.append('kt', term.trim())
+      const res = await fetch(`/api/voice/transcribe${qs.toString() ? `?${qs}` : ''}`, {
+        method: 'POST',
+        headers: { 'content-type': blob.type || 'audio/webm' },
+        body: blob,
+      })
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({} as { error?: string }))
+        throw new Error(e.error || `transcribe ${res.status}`)
+      }
+      const data = await res.json() as {
+        text?: string
+        alternatives?: string[]
+        words?: { word: string; confidence: number }[]
+        confidence?: number
+      }
+      return {
+        ok: true,
+        result: {
+          text: (data.text ?? '').trim(),
+          alternatives: data.alternatives ?? [],
+          words: data.words ?? [],
+          confidence: typeof data.confidence === 'number' ? data.confidence : 1,
+        },
+      }
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err)
+      void import('@/lib/diag-journal')
+        .then(m => m.diag('audio', `server transcribe failed: ${why}`))
+        .catch(() => {})
+      return { ok: false, error: why }
+    }
+  }
+
+  const finish = (): Promise<StopResult> =>
     new Promise(resolve => {
       rec.onstop = async () => {
         release()
@@ -257,41 +392,7 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
         // there is music in the room the clip goes to the transcriber and the
         // transcriber decides.
         if (analyser && !heardSpeech && !o.playing) { resolve({ ok: true, result: null }); return }
-        try {
-          // The words likely in THIS project, as a hint to the recogniser.
-          const qs = new URLSearchParams()
-          for (const term of (o.vocabulary ?? []).slice(0, 40)) if (term.trim()) qs.append('kt', term.trim())
-          const res = await fetch(`/api/voice/transcribe${qs.toString() ? `?${qs}` : ''}`, {
-            method: 'POST',
-            headers: { 'content-type': blob.type || 'audio/webm' },
-            body: blob,
-          })
-          if (!res.ok) {
-            const e = await res.json().catch(() => ({} as { error?: string }))
-            throw new Error(e.error || `transcribe ${res.status}`)
-          }
-          const data = await res.json() as {
-            text?: string
-            alternatives?: string[]
-            words?: { word: string; confidence: number }[]
-            confidence?: number
-          }
-          resolve({
-            ok: true,
-            result: {
-              text: (data.text ?? '').trim(),
-              alternatives: data.alternatives ?? [],
-              words: data.words ?? [],
-              confidence: typeof data.confidence === 'number' ? data.confidence : 1,
-            },
-          })
-        } catch (err) {
-          const why = err instanceof Error ? err.message : String(err)
-          void import('@/lib/diag-journal')
-            .then(m => m.diag('audio', `server transcribe failed: ${why}`))
-            .catch(() => {})
-          resolve({ ok: false, error: why })
-        }
+        resolve(await transcribe(blob))
       }
       try { rec.stop() } catch { release(); resolve({ ok: false, error: 'Recording stopped unexpectedly.' }) }
     })
@@ -304,5 +405,12 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
   return {
     cancel: () => { try { rec.stop() } catch { /* already stopped */ } release() },
     stop: stopOnce,
+    setMuted: (m: boolean) => {
+      const wasMuted = muted
+      muted = m
+      // Coming back from muted, throw away whatever was captured while the
+      // studio was talking rather than transcribing its own voice.
+      if (wasMuted && !m && o.continuous) restartSegment()
+    },
   }
 }

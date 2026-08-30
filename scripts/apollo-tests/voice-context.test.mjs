@@ -252,6 +252,73 @@ const read = (s, ctx) => interpret(s, ctx)
     JSON.stringify(r.calls[0]?.input))
 }
 
+// ── A sentence that names nothing means the track in front of you ─────────
+//
+// The largest gap in the language. Nobody working on one track keeps saying its
+// name — they say "louder", "mute this", "pan it left" — and every one of those
+// resolved to nothing, because every rule demanded a name and the sentence
+// offered a pronoun.
+{
+  const withSel = { ...WITH_BASS, selectedTrackName: 'Pad' }
+  for (const [phrase, expect] of [
+    ['mute this', { target: 'Pad', muted: true }],
+    ['solo it', { target: 'Pad', solo: true }],
+    ['louder', null],
+    ['pan it left', null],
+  ]) {
+    const r = read(phrase, withSel)
+    const ok = expect
+      ? JSON.stringify(r.calls[0]?.input) === JSON.stringify(expect)
+      : r.calls[0]?.input?.target === 'Pad'
+    check(`"${phrase}" means the selected track`, ok,
+      `${r.matched} → ${JSON.stringify(r.calls[0]?.input)}`)
+  }
+}
+{
+  // ...but only when the sentence names nothing. A named track always wins,
+  // whatever is selected.
+  const r = read('mute the drums', { ...WITH_BASS, selectedTrackName: 'Pad' })
+  check('a named track beats the selection',
+    r.calls[0]?.input?.target === 'Drums', JSON.stringify(r.calls[0]?.input))
+}
+{
+  // And a name it could not find is NOT quietly turned into the selection —
+  // that would act on the wrong track while appearing to understand.
+  const r = read('mute the trombone', { ...WITH_BASS, selectedTrackName: 'Pad' })
+  check('an unfound name does not fall back to the selection',
+    r.calls.length === 0, `${r.matched} → ${JSON.stringify(r.calls[0]?.input)}`)
+}
+{
+  // With nothing selected there is nothing to fall back to.
+  const r = read('mute this', WITH_BASS)
+  check('and with no selection it declines', r.calls.length === 0, r.matched)
+}
+
+// ── The commands that act on everything ───────────────────────────────────
+{
+  const r = read('mute everything', WITH_BASS)
+  check('"mute everything" is not a track called everything',
+    r.matched === 'set_all_tracks.mute' && r.calls[0]?.input?.muted === true,
+    `${r.matched} → ${JSON.stringify(r.calls[0]?.input)}`)
+}
+{
+  const r = read('clear the solo', WITH_BASS)
+  check('"clear the solo" clears every solo',
+    r.matched === 'set_all_tracks.solo_off', r.matched)
+}
+{
+  // The key of half of popular music, whose note name is the indefinite
+  // article and therefore gets deleted as filler by everything else here.
+  const r = read('put it in a minor', WITH_BASS)
+  check('"a minor" is a key, not an article',
+    r.calls[0]?.input?.key === 9 && r.calls[0]?.input?.scale === 'minor',
+    JSON.stringify(r.calls[0]?.input))
+  const sharp = read('set the key to f sharp major', WITH_BASS)
+  check('and "f sharp major" is read as one thing',
+    sharp.calls[0]?.input?.key === 6 && sharp.calls[0]?.input?.scale === 'major',
+    JSON.stringify(sharp.calls[0]?.input))
+}
+
 // ── Ambiguity is noticed rather than decided by a hair ─────────────────────
 {
   // Every example in the registry is meant to be unmistakable. If any of them

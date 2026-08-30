@@ -44,8 +44,20 @@ export interface SpeakOptions {
   kind?: SpeechKind
   /** True while the transport is running. */
   playing?: boolean
-  /** True while the microphone is open. */
+  /**
+   * True while the microphone is open AND cannot be deafened.
+   *
+   * A one-command take is over by the time there is anything to say, so this
+   * is simply false. A microphone held open across commands is a different
+   * matter: it is still listening, and it would hear the read-back. That case
+   * is handled by deafening the recorder for the duration instead of staying
+   * silent — see onDone — because a continuous session that never speaks is a
+   * conversation with one participant.
+   */
   listening?: boolean
+  /** Called when the utterance finishes, or immediately if nothing was said.
+   *  Used to stop ignoring the room again. */
+  onDone?: () => void
 }
 
 /** Is the studio allowed to talk? Off until asked for — a studio that starts
@@ -119,8 +131,10 @@ export function preferredVoice(): SpeechSynthesisVoice | null {
  * guessing.
  */
 export function speak(text: string, opts: SpeakOptions = {}): boolean {
-  if (!speechEnabled() || !speechAvailable()) return false
-  if (!shouldSpeak(text, opts)) return false
+  if (!speechEnabled() || !speechAvailable() || !shouldSpeak(text, opts)) {
+    opts.onDone?.()
+    return false
+  }
   try {
     // Replace rather than queue: the answer to what you just asked matters, the
     // four before it do not.
@@ -132,11 +146,17 @@ export function speak(text: string, opts: SpeakOptions = {}): boolean {
     // mid-task, not an audiobook.
     utterance.rate = 1.08
     utterance.pitch = 1
+    // Both, because a browser that fails to speak still owes the caller its
+    // callback — a session that stays deaf because an utterance never ended is
+    // a worse failure than one that never spoke.
+    utterance.onend = () => opts.onDone?.()
+    utterance.onerror = () => opts.onDone?.()
     window.speechSynthesis.speak(utterance)
     return true
   } catch {
     // A browser that refuses to speak is not a reason to fail a command that
     // already ran.
+    opts.onDone?.()
     return false
   }
 }

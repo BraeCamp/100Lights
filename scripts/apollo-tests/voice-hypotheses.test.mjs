@@ -186,6 +186,27 @@ for (const text of NONSENSE) {
     `${wide.matched} → ${JSON.stringify(wide.calls[0]?.input ?? null)}`)
 }
 
+// ── A statement is never rewritten into a question ────────────────────────
+//
+// The cheapest and worst rewrite available: "too" is two letters from "how", so
+// "the drums are too loud in the room" became "the drums are HOW loud in the
+// room" and the studio answered a question nobody asked. Interrogatives are
+// reachable from almost any word and are almost never what was said, so they
+// are hinted to the transcriber and forbidden as substitution targets.
+{
+  const { NEVER_SUBSTITUTE } = await importTs('lib/voice/commands.ts')
+  check('interrogatives cannot be substituted into',
+    ['how', 'what', 'where', 'which'].every(w => NEVER_SUBSTITUTE.includes(w)))
+  const wide = interpretHeard(
+    { text: 'the drums are too loud in the room', confidence: 0.2 }, CTX)
+  check('so a remark about the mix stays a remark',
+    wide.calls.length === 0, `${wide.matched} — ${JSON.stringify(wide.text)}`)
+  // And the substitutions that matter still happen.
+  const still = interpretHeard({ text: 'moot the drums', confidence: 0.5 }, CTX)
+  check('while a real mishearing is still recovered',
+    still.calls[0]?.input?.muted === true, still.rewriteReason)
+}
+
 // ── It stays cheap enough to run on every utterance ───────────────────────
 {
   const long = { text: 'could you please take the bass and move it back about two bars for me', confidence: 0.4 }

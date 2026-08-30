@@ -21,8 +21,10 @@
 import assert from 'node:assert'
 import { importTs } from '../lib/ts-import.mjs'
 
-const { newVad, vadStep, RATIO_QUIET, RATIO_OVER_MUSIC, CALIBRATION_SAMPLES } =
-  await importTs('lib/voice/vad.ts')
+const {
+  newVad, vadStep, RATIO_QUIET, RATIO_OVER_MUSIC, CALIBRATION_SAMPLES,
+  CONTINUOUS_STRICTNESS, MIN_SPEECH_MS_CONTINUOUS,
+} = await importTs('lib/voice/vad.ts')
 
 let failures = 0
 const check = (label, pass, extra = '') => {
@@ -185,6 +187,67 @@ const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
   // that their own voice is the room.
   const take = speech(CALIBRATION_SAMPLES, SPEECH, ROOM)
   check('the first half-second is measured, not judged', !run(take).everSpoke)
+}
+
+// ── Held open across commands: deliberately harder to trigger ──────────────
+//
+// Brae: "when it's toggled it should listen at a lower, less sensitive level
+// for anything that the user might command."
+//
+// A take that lasts one command can be eager — somebody pressed a button and is
+// about to speak. A microphone open for minutes cannot: everything said in the
+// room reaches the same detector, and each false start costs a transcription
+// and possibly a command nobody gave.
+{
+  const bar = (opts) => run([...rep(CALIBRATION_SAMPLES, ROOM), ROOM], opts).thresholds.at(-1)
+  check('the bar is higher when the microphone is held open',
+    bar({ continuous: true }) > bar({}) || bar({}) === bar({ continuous: true }),
+    `${bar({}).toFixed(3)} vs ${bar({ continuous: true }).toFixed(3)}`)
+
+  // Over music, where the floor is high enough for the ratio to matter rather
+  // than being clamped by the absolute minimum.
+  const overMusic = (opts) =>
+    run([...rep(CALIBRATION_SAMPLES, MUSIC), MUSIC], { playing: true, ...opts }).thresholds.at(-1)
+  check('and higher over music too',
+    overMusic({ continuous: true }) > overMusic({}),
+    `${overMusic({}).toFixed(3)} vs ${overMusic({ continuous: true }).toFixed(3)}`)
+  check('by exactly the strictness the module claims',
+    Math.abs(overMusic({ continuous: true }) - overMusic({}) * CONTINUOUS_STRICTNESS) < 1e-6)
+}
+{
+  // The filter that actually earns its keep: a cough, a chair, a door and a
+  // keyboard are all loud and all brief. Speech is not.
+  const loudEnough = MUSIC * RATIO_OVER_MUSIC * CONTINUOUS_STRICTNESS * 1.2
+  const blip = [...rep(CALIBRATION_SAMPLES, MUSIC), ...rep(2, loudEnough), ...rep(40, MUSIC)]
+  check('a brief bang is not a command',
+    !run(blip, { playing: true, continuous: true }).everSpoke,
+    `${MIN_SPEECH_MS_CONTINUOUS}ms required, 100ms given`)
+
+  const word = [...rep(CALIBRATION_SAMPLES, MUSIC), ...speech(30, loudEnough, MUSIC), ...rep(40, MUSIC)]
+  check('but a spoken word still is',
+    run(word, { playing: true, continuous: true }).everSpoke)
+}
+{
+  // Several commands in one held-open take, which is the whole point: each has
+  // to be detected and each has to end on its own.
+  const loud = SPEECH * 2
+  const gap = rep(40, ROOM)                     // two seconds of nothing
+  const take = [
+    ...rep(CALIBRATION_SAMPLES, ROOM),
+    ...speech(20, loud, ROOM), ...gap,
+    ...speech(20, loud, ROOM), ...gap,
+    ...speech(20, loud, ROOM), ...gap,
+  ]
+  let state = newVad()
+  let now = 0
+  let ends = 0
+  for (const rms of take) {
+    const step = vadStep(state, rms, now, { continuous: true })
+    state = step.state
+    if (step.ended) { ends++; state = newVad() }   // the recorder cuts and re-arms
+    now += 50
+  }
+  check('three commands in one take are three utterances', ends === 3, String(ends))
 }
 
 console.log(failures

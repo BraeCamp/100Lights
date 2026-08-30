@@ -29,6 +29,20 @@
 export interface VadOptions {
   /** True while the transport is running — the loud case. */
   playing?: boolean
+  /**
+   * True when the microphone is being held open across several commands.
+   *
+   * Brae: "when it's toggled it should listen at a lower, less sensitive level
+   * for anything that the user might command."
+   *
+   * A take that lasts one command can afford to be eager — somebody pressed a
+   * button and is about to speak. A microphone held open for minutes cannot:
+   * everything said in the room, every cough and every chair, arrives at the
+   * same detector, and each false start costs a transcription and possibly a
+   * command nobody gave. So the bar goes up, and a rise has to HOLD before it
+   * counts as somebody talking.
+   */
+  continuous?: boolean
 }
 
 export interface VadState {
@@ -40,8 +54,27 @@ export interface VadState {
   heard: boolean
   /** When the level was last above the bar. */
   lastLoudAt: number
-  /** When the level FIRST went above the bar without coming back down. */
-  aboveSince: number | null
+  /**
+   * When the level went above the bar and has NOT dipped once since.
+   *
+   * Strict on purpose: any sample below the bar clears it. This is the clock
+   * that identifies a mix, which sits up without gaps.
+   */
+  unbrokenSince: number | null
+  /**
+   * When the level went above the bar allowing for the gaps inside speech.
+   *
+   * A brief dip does not clear it. This is the clock that identifies a person,
+   * who is up most of the time and down between words.
+   *
+   * Two clocks because they answer two different questions, and one clock
+   * answered them both wrongly: strict, and speech could never hold long enough
+   * to pass the minimum-duration filter; lenient, and a five-second sentence
+   * looked exactly like a chorus arriving and got cut off.
+   */
+  activeSince: number | null
+  /** When it most recently dropped below. Null while it is up. */
+  belowSince: number | null
 }
 
 export interface VadStep {
@@ -55,7 +88,10 @@ export interface VadStep {
 }
 
 export function newVad(): VadState {
-  return { floor: 0, calibrated: 0, heard: false, lastLoudAt: 0, aboveSince: null }
+  return {
+    floor: 0, calibrated: 0, heard: false, lastLoudAt: 0,
+    unbrokenSince: null, activeSince: null, belowSince: null,
+  }
 }
 
 /** Samples of the room taken before any judging starts. 10 x 50ms = half a
@@ -73,6 +109,42 @@ export const CALIBRATION_SAMPLES = 10
  */
 export const RATIO_QUIET = 2.5
 export const RATIO_OVER_MUSIC = 1.3
+
+/**
+ * How much higher the bar sits when the microphone is held open.
+ *
+ * Applied on top of whichever ratio is in play, so continuous listening is
+ * less sensitive in a quiet room AND over music, without either case having to
+ * know about the other.
+ */
+export const CONTINUOUS_STRICTNESS = 1.6
+
+/**
+ * How long a rise has to hold before it is somebody talking.
+ *
+ * The single most effective filter for a microphone left open: a cough, a
+ * chair, a door and a keyboard are all loud and all brief. Speech is not — even
+ * one word occupies a couple of hundred milliseconds. Requiring the level to
+ * STAY up costs a fifth of a second of responsiveness and removes almost every
+ * false start, which is a trade worth making only when the mic is open long
+ * enough for false starts to happen. In a single-command take it is zero.
+ */
+export const MIN_SPEECH_MS_CONTINUOUS = 220
+
+/**
+ * How long the level must stay down before the rise before it is forgotten.
+ *
+ * Speech is not a plateau, it is a picket fence: the meter drops between words
+ * and between syllables, several times a second. Treating any single dip as the
+ * end of the rise made the minimum-duration filter above impossible to satisfy
+ * BY SPEECH — every word restarted the clock, so a person talking never held
+ * long enough to count while a steady tone would have.
+ *
+ * A fifth of a second is longer than the gaps inside a sentence and far shorter
+ * than the pause between one command and the next, so it joins up words without
+ * joining up commands.
+ */
+const DIP_GRACE_MS = 200
 
 /** Below this, nothing counts as speech however quiet the room is — otherwise a
  *  silent room triggers on its own noise floor. */
@@ -131,33 +203,38 @@ export function vadStep(
     }
   }
 
-  const ratio = opts.playing ? RATIO_OVER_MUSIC : RATIO_QUIET
+  const ratio = (opts.playing ? RATIO_OVER_MUSIC : RATIO_QUIET)
+    * (opts.continuous ? CONTINUOUS_STRICTNESS : 1)
   const threshold = Math.max(MIN_SPEECH_LEVEL, state.floor * ratio)
   const above = rms > threshold
 
   if (above) {
-    const aboveSince = state.aboveSince ?? now
-    // Up for too long without a single dip: this is a section, not a sentence.
-    // The level becomes the floor — quickly, because the longer this is left
-    // the longer everything else is judged against a bar that belongs to a
-    // quieter part of the song.
-    if (now - aboveSince > SUSTAINED_MS) {
+    const unbrokenSince = state.unbrokenSince ?? now
+    const activeSince = state.activeSince ?? now
+    const base = { ...state, unbrokenSince, activeSince, belowSince: null }
+
+    // Up for this long without a single dip: a section, not a sentence. The
+    // level becomes the floor — quickly, because until it does, everything else
+    // is judged against a bar belonging to a quieter part of the song.
+    if (now - unbrokenSince > SUSTAINED_MS) {
       return {
-        state: {
-          ...state,
-          floor: state.floor * (1 - FLOOR_FOLLOW * 4) + rms * FLOOR_FOLLOW * 4,
-          aboveSince,
-        },
+        state: { ...base, floor: state.floor * (1 - FLOOR_FOLLOW * 4) + rms * FLOOR_FOLLOW * 4 },
         speaking: false,
         ended: false,
         threshold,
       }
     }
+    // Loud, but not yet for long enough to be a word. Nothing is decided: the
+    // clock keeps running, the floor stays put, and if it holds it becomes
+    // speech on a later sample.
+    if (opts.continuous && now - activeSince < MIN_SPEECH_MS_CONTINUOUS) {
+      return { state: base, speaking: false, ended: false, threshold }
+    }
     return {
       // The floor is deliberately NOT updated here. Following the level while
       // somebody is talking raises the bar under them until they fall below it,
       // and the symptom of that is a speaker being cut off mid-sentence.
-      state: { ...state, heard: true, lastLoudAt: now, aboveSince },
+      state: { ...base, heard: true, lastLoudAt: now },
       speaking: true,
       ended: false,
       threshold,
@@ -167,6 +244,17 @@ export function vadStep(
   const floor = state.floor * (1 - FLOOR_FOLLOW) + rms * FLOOR_FOLLOW
   const gap = opts.playing ? SILENCE_MS_PLAYING : SILENCE_MS
   const ended = state.heard && now - state.lastLoudAt > gap
-  // A dip resets the clock: the next rise is a fresh word, not a continuation.
-  return { state: { ...state, floor, aboveSince: null }, speaking: false, ended, threshold }
+  // A dip only ends the rise once it has lasted longer than the gaps inside
+  // speech. Anything shorter is a word boundary, and the rise continues through
+  // it.
+  const belowSince = state.belowSince ?? now
+  const activeSince = now - belowSince > DIP_GRACE_MS ? null : state.activeSince
+  return {
+    // Any dip at all breaks the unbroken clock — that is what makes it a test
+    // for music. The lenient one survives a word boundary.
+    state: { ...state, floor, unbrokenSince: null, activeSince, belowSince },
+    speaking: false,
+    ended,
+    threshold,
+  }
 }

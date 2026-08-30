@@ -33,7 +33,10 @@ import { resolveLocally, resolveHeard, confidentEnough } from '@/lib/voice/local
 import type { Heard } from '@/lib/voice/hypotheses'
 import { COMMAND_VOCABULARY, commandHelp } from '@/lib/voice/interpret'
 import { remember, markFailed } from '@/lib/voice/voice-memory'
-import { startRecording, preferredTranscriber, setPreferredTranscriber, type Recording } from '@/lib/voice/record'
+import {
+  startRecording, preferredTranscriber, setPreferredTranscriber,
+  type Recording, type StopResult,
+} from '@/lib/voice/record'
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
@@ -61,7 +64,7 @@ function writeVoiceMode(m: VoiceMode) { try { localStorage.setItem(MODE_KEY, m) 
 function writeVoiceEnter(on: boolean) { try { localStorage.setItem(ENTER_KEY, on ? 'on' : 'off') } catch { /* private mode */ } }
 
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
-  const { project, dispatch, engine, undo, redo } = useDaw()
+  const { project, dispatch, engine, undo, redo, selectedTrackId } = useDaw()
   const [listening, setListening] = useState(false)
   const [busy, setBusy] = useState(false)
   const [heard, setHeard] = useState('')
@@ -101,6 +104,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [showType, setShowType] = useState(false)
   /** 0–1 microphone loudness while recording, for the meter on the button. */
   const [level, setLevel] = useState(0)
+  /** The mode as it is NOW. The recorder's callbacks outlive the render that
+   *  created them, and a stale mode would decide whether to keep listening. */
+  const modeRef = useRef<VoiceMode>('hold')
+  const continuousRef = useRef(false)
+
   /** Always the current finish(), so a take that ends itself uses the live one. */
   const finishRef = useRef<(() => void) | null>(null)
   // ── Nothing is spent without being asked ─────────────────────────────────
@@ -171,7 +179,19 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // isPlaying is a PROPERTY, not a method. Calling it threw, which left the
     // control stuck busy and silently blocked every command after the first —
     // a one-character mistake that looked like the whole feature had broken.
-    speak(text, { kind, playing: !!engine?.isPlaying, listening })
+    //
+    // With the microphone held open across commands it is still listening when
+    // there is something to say, so staying silent would mean never speaking at
+    // all in the mode where speaking is most useful. It is deafened for the
+    // duration instead — audio captured while the studio talks is discarded, so
+    // it cannot transcribe its own read-back and act on it.
+    const held = recorder.current
+    if (held) {
+      held.setMuted(true)
+      speak(text, { kind, playing: !!engine?.isPlaying, onDone: () => held.setMuted(false) })
+    } else {
+      speak(text, { kind, playing: !!engine?.isPlaying, listening })
+    }
   }, [engine, listening])
   const handle = useRef<SpeechHandle | null>(null)
   /** Set when recording instead of using the browser's recogniser. */
@@ -182,6 +202,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     available.current = isSpeechAvailable()
     setMode(readVoiceMode())
     setSpeaks(speechEnabled())
+    modeRef.current = readVoiceMode()
     setEnterRuns(readVoiceEnter())
   }, [])
 
@@ -339,7 +360,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the tempo (so "a bit faster" has something to be faster than). A reading
     // that cannot see these has to guess, and guessing is what this whole path
     // exists to avoid.
-    const ctx = { tracks: project.tracks ?? [], tempo: project.tempo }
+    const ctx = {
+      tracks: project.tracks ?? [],
+      tempo: project.tempo,
+      // So "louder" and "mute this" mean the track being worked on. Nobody
+      // says a track's name twenty times in a row.
+      selectedTrackName: (project.tracks ?? []).find(t => t.id === selectedTrackId)?.name,
+    }
     // resolveHeard when the utterance came from a microphone: it can weigh what
     // the recogniser was unsure of, which is the difference between recovering
     // a mishearing and reporting one.
@@ -531,7 +558,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // them this closure captures the question as it was when the callback was
     // built — which is null — so the answer to a question the studio had just
     // asked was parsed as a fresh command and did nothing at all.
-  }, [project, runAction, pendingAsk2, pendingOffer, pendingName, respond, undo, redo])
+  }, [project, runAction, pendingAsk2, pendingOffer, pendingName, respond, undo, redo, selectedTrackId])
 
   // Does the user still want to be listening? Asking for the microphone is
   // asynchronous and the first ask shows a dialog, so in hold-to-talk the
@@ -549,7 +576,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     confidence: number,
     words?: { word: string; confidence: number }[],
   ) => {
-    setListening(false)
+    // A continuous session is still listening: the sentence ended, the take did
+    // not. Clearing it here made the button claim to be off while the
+    // microphone was open, which is the one thing a microphone indicator must
+    // never get wrong.
+    if (!continuousRef.current) setListening(false)
     // hearBetter repairs the project's own nouns — "base two" into "Bass 2" —
     // which is the single most valuable correction available, because a general
     // recogniser has never seen these names and mangles them constantly.
@@ -575,6 +606,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    *  the browser's speech service. */
   const startRecorded = useCallback(async () => {
     setProblem('Listening…')
+    // Decided once, here, and read by callbacks that outlive this render.
+    // Toggling the setting mid-session must not change what the take already
+    // running is doing.
+    continuousRef.current = modeRef.current === 'toggle'
     // Hand the transcriber the words that are actually likely here — the
     // commands it can act on, and the names of the tracks in this project.
     const vocabulary = [
@@ -588,6 +623,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // what rate it is running at.
       playing: !!engine?.isPlaying,
       sampleRate: engine?.ctx?.sampleRate,
+      // Brae: "This way the user can do multiple things while only clicking
+      // Voice once." Only in toggle mode — holding a button to talk already
+      // says when you are finished, and holding it for a session would be an
+      // odd way to ask for one.
+      continuous: continuousRef.current,
+      onUtterance: r => handleTake(r),
       // A live meter, because "is it even hearing me" is the first question
       // when this goes wrong and it should not need asking twice.
       onLevel: setLevel,
@@ -693,6 +734,25 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     void run(words, 1)
   }, [run])
 
+  /**
+   * What to do with a finished take.
+   *
+   * Shared by the one-shot path and the continuous one, because they differ in
+   * exactly one thing — whether the microphone closes afterwards — and every
+   * other difference between them would be a bug.
+   */
+  const handleTake = useCallback((r: StopResult) => {
+    // A server fault is not the speaker's fault. "I didn't catch that" is
+    // only correct when the recording genuinely held no words.
+    if (!r.ok) { setProblem(r.error); markFailed(r.error); return }
+    if (!r.result || !r.result.text) { setProblem('I didn\'t catch that.'); return }
+    const { text, alternatives, confidence, words } = r.result
+    // Per-word confidence is the most useful thing in the response: it says
+    // WHICH word the recogniser struggled with, so only that word needs
+    // reconsidering and the rest can be taken at face value.
+    heardSentence(text, alternatives.length ? [alternatives] : [], confidence, words)
+  }, [heardSentence, markFailed])
+
   const finish = useCallback(() => {
     wanted.current = false
     setLevel(0)
@@ -701,24 +761,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       recorder.current = null
       setListening(false)
       setBusy(true)
+      const wasContinuous = continuousRef.current
+      continuousRef.current = false
       void rec.stop().then(r => {
         setBusy(false)
-        // A server fault is not the speaker's fault. "I didn't catch that" is
-        // only correct when the recording genuinely held no words.
-        if (!r.ok) { setProblem(r.error); markFailed(r.error); return }
-        if (!r.result || !r.result.text) { setProblem('I didn\'t catch that.'); return }
-        const { text, alternatives, confidence, words } = r.result
-        // Per-word confidence is the most useful thing in the response and was
-        // being dropped on the floor here: it says WHICH word the recogniser
-        // struggled with, so only that word needs reconsidering and the rest
-        // can be taken at face value.
-        heardSentence(text, alternatives.length ? [alternatives] : [], confidence, words)
+        // Nothing left to transcribe when the session was continuous: every
+        // utterance was already handled as it happened, and the final stop is
+        // just the microphone closing.
+        if (r.ok && !r.result && wasContinuous) return
+        handleTake(r)
       })
       return
     }
     handle.current?.stop()
     handle.current = null
     setListening(false)
+    continuousRef.current = false
   }, [heardSentence])
 
   // The recorder can finish a take on its own when talking stops; keep the ref
@@ -840,7 +898,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             <label key={m} style={{ display: 'flex', gap: 7, alignItems: 'center', padding: '3px 0', cursor: 'pointer' }}>
               <input
                 type="radio" name="voice-mode" checked={mode === m}
-                onChange={() => { setMode(m); writeVoiceMode(m) }}
+                onChange={() => { setMode(m); modeRef.current = m; writeVoiceMode(m) }}
               />
               {m === 'hold' ? 'Hold the button to speak' : 'Click to start, click to run'}
             </label>

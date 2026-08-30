@@ -433,6 +433,70 @@ await say('mark bar 3 as the chorus')
   check('"what is the tempo" answers in words', /\d+\s*BPM/i.test(answer), answer)
 }
 
+// ── The gaps that were filled ──────────────────────────────────────────────
+{
+  await page.evaluate(p => window.__dawDispatch({ type: 'LOAD_PROJECT', project: p }), {
+    ...PROJECT,
+    id: 'gaps', name: 'Gaps',
+    tracks: [track('t1', 'Bass 2'), track('t2', 'Pad'), track('t3', 'Drums')],
+    arrangementClips: [
+      { kind: 'midi', id: 'g1', trackId: 't1', name: 'Bass 2 clip', startBeat: 0, durationBeats: 4, isDrumClip: false, notes: notes(4, 40) },
+    ],
+  })
+  await page.waitForTimeout(1200)
+
+  await say('mute everything')
+  {
+    const s = await state()
+    check('"mute everything" mutes every track', s.tracks.every(t => t.mute),
+      s.tracks.map(t => `${t.name}:${t.mute}`).join(' '))
+  }
+  await say('unmute everything')
+  check('"unmute everything" brings them all back',
+    (await state()).tracks.every(t => !t.mute))
+
+  await say('solo the pad')
+  await say('clear the solo')
+  check('"clear the solo" clears it', (await state()).tracks.every(t => !t.solo))
+
+  await say('put it in a minor')
+  {
+    const k = await page.evaluate(() => ({
+      key: window.__dawProject().key, scale: window.__dawProject().scale,
+    }))
+    check('"put it in a minor" sets the key — A is a note, not an article',
+      k.key === 9 && k.scale === 'minor', JSON.stringify(k))
+  }
+
+  await say('what key is this')
+  {
+    const shown = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('div')]
+        .find(d => /minor|major/i.test(d.textContent || '') && (d.textContent || '').length < 60)
+      return el?.textContent ?? ''
+    })
+    check('and it can say the key back', /A\s*minor/i.test(shown), shown)
+  }
+}
+
+// ── A sentence that names nothing means the selected track ────────────────
+{
+  await page.evaluate(() => {
+    const p = window.__dawProject()
+    window.__dawSelectTrack?.(p.tracks[1].id)
+  })
+  // Selecting through the UI, since the studio owns that state: click the
+  // track's header row.
+  const padRow = page.getByText('Pad', { exact: true }).first()
+  if (await padRow.count()) { await padRow.click(); await page.waitForTimeout(500) }
+
+  await say('mute this')
+  const muted = (await state()).tracks.find(t => t.name === 'Pad')?.mute
+  check('"mute this" mutes the selected track', muted === true,
+    (await state()).tracks.map(t => `${t.name}:${t.mute}`).join(' '))
+  await say('unmute this')
+}
+
 // ── And none of it cost anything ───────────────────────────────────────────
 check('not one command reached the assistant', assistCalls === 0, `${assistCalls} calls`)
 

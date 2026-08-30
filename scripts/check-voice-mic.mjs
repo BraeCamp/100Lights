@@ -116,6 +116,41 @@ check('and none of the voice-processing modes are requested',
   && playing?.audio?.voiceIsolation === undefined,
   JSON.stringify(playing?.audio))
 
+// ── One click, one microphone, held open ───────────────────────────────────
+//
+// Brae: "This way the user can do multiple things while only clicking Voice
+// once."
+//
+// The obvious implementation — start a new recording after each command — is
+// wrong, because re-opening a microphone renegotiates the audio device, which
+// is the very thing that was making playback crackle. The claim being checked
+// is therefore structural: the session stays open by itself, and the DEVICE is
+// touched exactly once however long it runs.
+await page.evaluate(() => window.__daw?.stop?.())
+await page.waitForTimeout(500)
+const before = (await micRequests()).length
+
+await voiceBtn.click()
+await page.waitForFunction(
+  () => document.querySelector('button[data-voice-control]')?.getAttribute('aria-pressed') === 'true',
+  null, { timeout: 15000 },
+)
+// Long enough for several commands to have come and gone.
+await page.waitForTimeout(6000)
+
+const stillOpen = await page.evaluate(() =>
+  document.querySelector('button[data-voice-control]')?.getAttribute('aria-pressed') === 'true')
+check('in toggle mode the microphone stays open on its own', stillOpen)
+check('and the device was opened exactly once for the session',
+  (await micRequests()).length === before + 1,
+  `${(await micRequests()).length - before} opens`)
+
+await voiceBtn.click()
+await page.waitForTimeout(1200)
+const closed = await page.evaluate(() =>
+  document.querySelector('button[data-voice-control]')?.getAttribute('aria-pressed') !== 'true')
+check('and a second click ends the session', closed)
+
 // ── And the audio context cannot fight the engine over the device rate ─────
 const rates = await page.evaluate(() => window.__contextRates)
 const engineRate = await page.evaluate(() => window.__daw?.ctx?.sampleRate)

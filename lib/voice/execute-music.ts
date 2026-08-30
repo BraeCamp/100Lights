@@ -654,8 +654,90 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
           return { actions: [], say: `${clips.length} clip${clips.length === 1 ? '' : 's'} in the arrangement.` }
         }
 
+        case 'key': {
+          const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+          const key = (project as { key?: number }).key ?? 0
+          const scale = (project as { scale?: string }).scale ?? 'major'
+          return { actions: [], say: `${NAMES[key % 12]} ${scale}.` }
+        }
+
+        case 'volume': {
+          const named = str(i.target).trim()
+          if (!named) {
+            return { actions: [], say: `The master is at ${Math.round((project.masterVolume ?? 1) * 100)}%.` }
+          }
+          const track = resolveTrack(named, project)
+          if (!track) return fail(`I couldn't find a track called "${named}".`)
+          const bits = [`${Math.round((track.volume ?? 0) * 100)}%`]
+          if (track.mute) bits.push('muted')
+          if (track.solo) bits.push('soloed')
+          const pan = Math.round((track.pan ?? 0) * 100)
+          if (pan !== 0) bits.push(`panned ${Math.abs(pan)}% ${pan < 0 ? 'left' : 'right'}`)
+          return { actions: [], say: `"${track.name}" is at ${bits.join(', ')}.` }
+        }
+
+        case 'position': {
+          // Where the loop is, since the playhead is not in the project — it
+          // lives in the engine, and a pure planner cannot see it. Saying so is
+          // better than guessing at it.
+          const from = describeBeat(project.loopStart ?? 0, maps)
+          const to = describeBeat(project.loopEnd ?? 0, maps)
+          return {
+            actions: [],
+            say: project.loopEnabled
+              ? `Looping ${from} to ${to}.`
+              : `The loop is set from ${from} to ${to}, but looping is off.`,
+          }
+        }
+
         default:
           return fail('I don\'t know how to answer that.')
+      }
+    }
+
+    case 'set_key_scale': {
+      const key = spokenNumber(i.key as string)
+      const scale = str(i.scale).toLowerCase() || 'major'
+      if (key == null || key < 0 || key > 11) return fail('Say a key, like F minor.')
+      const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+      return {
+        actions: [{ type: 'SET_KEY_SCALE', key, scale }],
+        say: `Key set to ${NAMES[key]} ${scale}.`,
+      }
+    }
+
+    case 'remove_clip': {
+      const found = resolveClip(target, project)
+      if (!found) return fail(`I couldn't find "${target || 'that'}" to delete.`)
+      const track = project.tracks.find(t => t.id === found.clip.trackId)
+      return {
+        actions: [{ type: 'REMOVE_CLIP', clipId: found.clip.id }],
+        say: `Deleted the clip at ${describeBeat(found.clip.startBeat, maps)}${track ? ` on "${track.name}"` : ''}.`,
+      }
+    }
+
+    case 'set_all_tracks': {
+      const tracks = project.tracks ?? []
+      if (!tracks.length) return fail('There are no tracks.')
+      if (i.solo === false) {
+        const soloed = tracks.filter(t => t.solo)
+        if (!soloed.length) return { actions: [], say: 'Nothing was soloed.' }
+        return {
+          actions: soloed.map(t => ({ type: 'UPDATE_TRACK', trackId: t.id, patch: { solo: false } })),
+          say: `Cleared the solo on ${soloed.map(t => t.name).join(' and ')}.`,
+        }
+      }
+      if (i.muted == null) return fail('Say what to change about every track.')
+      const wanted = !!i.muted
+      const changing = tracks.filter(t => t.mute !== wanted)
+      if (!changing.length) {
+        return { actions: [], say: wanted ? 'Everything is already muted.' : 'Nothing was muted.' }
+      }
+      return {
+        actions: changing.map(t => ({ type: 'UPDATE_TRACK', trackId: t.id, patch: { mute: wanted } })),
+        say: wanted
+          ? `Muted all ${changing.length} track${changing.length === 1 ? '' : 's'}.`
+          : `Unmuted ${changing.length} track${changing.length === 1 ? '' : 's'}.`,
       }
     }
 
