@@ -314,7 +314,12 @@ export const MUSIC_TOOLS = [
       properties: {
         topic: {
           type: 'string',
-          enum: ['tempo', 'tracks', 'muted', 'length', 'clips', 'key', 'volume', 'position', 'help'],
+          enum: [
+            'tempo', 'tracks', 'muted', 'length', 'clips', 'key', 'volume', 'position', 'help',
+            // What a part is actually playing, and what is on it. Answerable
+            // from the project alone — every note, effect and lane is here.
+            'notes', 'effects', 'instrument', 'automation',
+          ],
         },
         target: { ...TARGET, description: 'For "clips" and "volume" — which track they asked about.' },
       },
@@ -364,6 +369,86 @@ export const MUSIC_TOOLS = [
         muted: { type: 'boolean' },
         solo: { type: 'boolean', description: 'Only false is useful — soloing everything is soloing nothing.' },
       },
+    },
+  },
+  // ── Editing the notes themselves ─────────────────────────────────────────
+  //
+  // Brae: "I need to be able to fully edit using voice controls."
+  //
+  // Everything above changes arrangement or mix. These change the PERFORMANCE,
+  // which is the half a musician spends most of their time on and the half the
+  // studio had no words for.
+  {
+    name: 'quantize',
+    description:
+      'QUANTIZE — pull the notes onto the grid. "quantize the drums", "quantize the bass to eighth notes". Strength 100 snaps exactly; less moves them part of the way, which keeps the feel.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        division: { type: 'number', description: 'Grid in beats: 1 is a quarter note, 0.5 an eighth, 0.25 a sixteenth.' },
+        strength: { type: 'number', description: 'Percentage, 0-100. Omit for 100.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'set_velocity',
+    description:
+      'VELOCITY — how hard the notes are played. "make the drums softer", "set the bass velocity to 100", "play it harder".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        velocity: { type: 'number', description: 'Absolute, 1-127.' },
+        scale: { type: 'number', description: 'Or a percentage change: 80 makes everything 80% as hard.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'split_clip',
+    description:
+      'SPLIT — cut one clip into two at a position. "split the bass at bar 9", "cut the pad in half".',
+    input_schema: {
+      type: 'object',
+      properties: { target: TARGET, at: POSITION },
+      required: ['target', 'at'],
+    },
+  },
+  {
+    name: 'resize_clip',
+    description:
+      'LENGTH — make a clip longer or shorter. "make the pad 8 bars long". Notes past the new end are left alone; the clip simply stops there.',
+    input_schema: {
+      type: 'object',
+      properties: { target: TARGET, length: LENGTH },
+      required: ['target', 'length'],
+    },
+  },
+  {
+    name: 'remove_effect',
+    description:
+      'TAKE AN EFFECT OFF — remove it from the track entirely, rather than turning it down. "take the reverb off the vocals".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        effect: {
+          type: 'string',
+          enum: ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'eq3', 'limiter'],
+        },
+      },
+      required: ['target', 'effect'],
+    },
+  },
+  {
+    name: 'remove_marker',
+    description: 'REMOVE A MARKER — "delete the chorus marker".',
+    input_schema: {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: ['name'],
     },
   },
   {

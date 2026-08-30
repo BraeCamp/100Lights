@@ -216,6 +216,148 @@ for (const nonsense of [
     `${r.matched} ${JSON.stringify(r.input ?? null)}`)
 }
 
+// ── Asking about the music ────────────────────────────────────────────────
+//
+// Brae: "I want to be able to ask questions about the track. Things like 'What
+// note is pad a playing in?' or 'What are the filters on bass 1?'. Is voice
+// control wired in enough to see and respond to things like this?"
+//
+// It is, and it always was: the executor is handed the whole project — every
+// note with its pitch and timing, every effect with its parameters, every
+// automation lane — so these are arithmetic on data already in the room. What
+// was missing was somebody asking.
+{
+  const RICH = {
+    ...PROJECT,
+    tracks: [
+      { ...track('t1', 'Pad A') },
+      {
+        ...track('t2', 'Bass 1'),
+        effects: [
+          { id: 'e1', type: 'filter', params: { enabled: true, type: 'lowpass', frequency: 820, q: 1 } },
+          { id: 'e2', type: 'reverb', params: { enabled: true, wet: 0.3, decay: 2, preDelay: 0.02 } },
+        ],
+      },
+    ],
+    arrangementClips: [
+      // An A-minor triad, then F major.
+      {
+        kind: 'midi', id: 'k1', trackId: 't1', name: 'Wash', startBeat: 0,
+        durationBeats: 8, isDrumClip: false,
+        notes: [
+          { id: 'a', pitch: 57, startBeat: 0, durationBeats: 4, velocity: 100 },
+          { id: 'b', pitch: 60, startBeat: 0, durationBeats: 4, velocity: 100 },
+          { id: 'c', pitch: 64, startBeat: 0, durationBeats: 4, velocity: 100 },
+          { id: 'd', pitch: 53, startBeat: 4, durationBeats: 4, velocity: 100 },
+          { id: 'e', pitch: 57, startBeat: 4, durationBeats: 4, velocity: 100 },
+          { id: 'f', pitch: 60, startBeat: 4, durationBeats: 4, velocity: 100 },
+        ],
+      },
+      // A bass on one note.
+      {
+        kind: 'midi', id: 'k2', trackId: 't2', name: 'Body 1', startBeat: 0,
+        durationBeats: 8, isDrumClip: false,
+        notes: [
+          { id: 'g', pitch: 33, startBeat: 0, durationBeats: 1, velocity: 100 },
+          { id: 'h', pitch: 33, startBeat: 2, durationBeats: 1, velocity: 100 },
+        ],
+      },
+    ],
+    automationLanes: [{
+      id: 'l1', trackId: 't1', parameter: 'volume', label: 'Volume',
+      min: 0, max: 1, defaultValue: 0.8, expanded: false,
+      points: [{ id: 'p1', beat: 0, value: 0 }, { id: 'p2', beat: 8, value: 1 }],
+    }],
+  }
+  const rich = {
+    tracks: RICH.tracks, tempo: 120,
+    clips: RICH.arrangementClips.map(c => ({ id: c.id, name: c.name, trackId: c.trackId })),
+  }
+  const ask = q => {
+    const r = interpretHeard({ text: q, confidence: 0.95 }, rich)
+    return {
+      matched: r.matched,
+      say: r.calls.length ? (planVoiceCall(r.calls[0], RICH).say || planVoiceCall(r.calls[0], RICH).problem) : '',
+    }
+  }
+
+  {
+    // His first question, and the analysis is real: three notes starting
+    // together are a chord, and the studio names it.
+    const a = ask('what note is pad a playing')
+    check('"what note is pad a playing" is answered',
+      a.matched === 'describe.notes', a.matched)
+    check('and it names the chords, not a list of pitches',
+      /Am/.test(a.say) && /F/.test(a.say), a.say)
+    check('with the range it covers', /F3 to E4/.test(a.say), a.say)
+  }
+  {
+    // His second, and the useful part is the SETTING — "there is a filter" is
+    // not what anybody means by the question.
+    const b = ask('what are the filters on bass 1')
+    check('"what are the filters on bass 1" is answered',
+      b.matched === 'describe.effects', b.matched)
+    check('and it says what the filter is doing, not just that it exists',
+      /lowpass at 820/.test(b.say), b.say)
+    check('and everything else on the track', /reverb at 30%/.test(b.say), b.say)
+  }
+  {
+    const c = ask('what notes are in the bass 1')
+    check('a part on one note says so rather than giving a range',
+      /plays A/.test(c.say), c.say)
+  }
+  {
+    const d = ask('what automation is on the pad a')
+    check('automation is answerable too',
+      d.matched === 'describe.automation' && /Volume with 2 points/.test(d.say),
+      `${d.matched} — ${d.say}`)
+  }
+  {
+    const e = ask('what is on the bass 1')
+    check('and the loose form of the question still finds the rack',
+      e.matched === 'describe.effects' && /lowpass/.test(e.say), `${e.matched} — ${e.say}`)
+  }
+}
+
+// ── Editing the performance ───────────────────────────────────────────────
+//
+// Brae: "I need to be able to fully edit using voice controls." Arrangement and
+// mix were covered; the performance — what the notes actually do — was not.
+{
+  const off = { ...PROJECT }
+  const edits = q => {
+    const r = interpretHeard({ text: q, confidence: 0.95 }, CTX)
+    return { matched: r.matched, input: r.calls[0]?.input }
+  }
+  for (const [phrase, id] of [
+    ['quantize the drums', 'quantize'],
+    ['tighten up the drums', 'quantize'],
+    ['make the drums softer', 'set_velocity'],
+    ['play the bass 2 harder', 'set_velocity'],
+    ['split the bass 2 at bar 3', 'split_clip'],
+    ['make the pad 8 bars long', 'resize_clip'],
+    ['take the reverb off the drums', 'remove_effect'],
+    ['delete the chorus marker', 'remove_marker'],
+  ]) {
+    check(`"${phrase}" → ${id}`, edits(phrase).matched === id, edits(phrase).matched)
+  }
+  {
+    // "Softer" belongs to the performance, "quieter" to the fader. They are
+    // different edits with different results, and the studio used to treat both
+    // as the fader.
+    check('"softer" moves the notes, not the fader',
+      edits('make the drums softer').matched === 'set_velocity')
+    check('while "quieter" still moves the fader',
+      edits('make the drums quieter').matched === 'set_track.volume.relative',
+      edits('make the drums quieter').matched)
+  }
+  {
+    const q = edits('quantize the bass 2 to eighth notes')
+    check('an eighth-note grid is read as one', q.input?.division === 0.5,
+      JSON.stringify(q.input))
+  }
+}
+
 // ── The splitting itself stays modest ──────────────────────────────────────
 check('a short sentence is not split at all', clauseCandidates('mute the drums').length === 0)
 check('and a long one yields a handful, not a cross-product',

@@ -56,8 +56,12 @@ const check = (label, pass, extra = '') => {
 // `durationBeats` are what the reducer actually reads; a fixture using `type`
 // and `duration` still plans actions here — the executor is pure and never
 // looks — while the real studio silently ignores every one of them.
+// Slightly OFF the grid, and deliberately: notes sitting exactly on integer
+// beats are already quantized, so a fixture built from them cannot tell a
+// working quantize from one that does nothing at all.
 const notes = (n, pitch) => Array.from({ length: n }, (_, i) => ({
-  id: `n${pitch}-${i}`, pitch, startBeat: i, durationBeats: 1, velocity: 100,
+  id: `n${pitch}-${i}`, pitch, startBeat: i + (i % 2 ? 0.07 : -0.05),
+  durationBeats: 1, velocity: 100,
 }))
 
 const track = (id, name, volume = 0.8, extra = {}) => ({
@@ -66,9 +70,12 @@ const track = (id, name, volume = 0.8, extra = {}) => ({
   effects: [], instrument: { type: 'poly', params: {} }, ...extra,
 })
 
+// Twenty-four beats — six bars — because the studio can now split a clip at a
+// bar and resize it, and neither is testable against a clip that ends before
+// the bar being named.
 const clip = (id, trackId, name, startBeat, pitch) => ({
-  kind: 'midi', id, trackId, name, startBeat, durationBeats: 4,
-  isDrumClip: false, notes: notes(4, pitch),
+  kind: 'midi', id, trackId, name, startBeat, durationBeats: 24,
+  isDrumClip: false, notes: notes(8, pitch),
 })
 
 const PROJECT = {
@@ -78,7 +85,21 @@ const PROJECT = {
   // nothing either way, and the suite would bless the broken version.
   tracks: [track('t1', 'Bass 2'), track('t2', 'Pad', 0.5), track('t3', 'Drums'),
     track('t4', 'Guitar', 0.8, { mute: true }), track('t5', 'Vocals'),
-    track('t6', 'Lead', 0.8, { solo: true })],
+    track('t6', 'Lead', 0.8, { solo: true })].map(t =>
+    // Effects on SOME tracks, not all. Both cases have to exist in one project:
+    // "take the reverb off the drums" needs a reverb to take off, and "put
+    // reverb on the vocals" needs a track that has not got one — a fixture
+    // where every track has everything fails the second half as surely as an
+    // empty one fails the first.
+    (['Drums', 'Pad'].includes(t.name)
+      ? {
+        ...t,
+        effects: [
+          { id: `${t.id}-rv`, type: 'reverb', params: { enabled: true, wet: 0.25, decay: 2, preDelay: 0.02 } },
+          { id: `${t.id}-dl`, type: 'delay', params: { enabled: true, wet: 0.2, time: 0.375, feedback: 0.4, syncToTempo: true, syncBeats: 0.5 } },
+        ],
+      }
+      : t)),
   arrangementClips: [
     clip('c1', 't1', 'Bass 2 clip', 0, 40),
     clip('c2', 't2', 'Pad clip', 0, 60),
@@ -89,7 +110,12 @@ const PROJECT = {
   ],
   scenes: [], sessionGrid: {}, loopStart: 0, loopEnd: 16, loopEnabled: false,
   masterVolume: 1, automationLanes: [], clipEffects: [], returnTracks: [],
-  takeLanes: [], crossfaderValue: 0.5, waveformZoom: 1, swing: 0, cueMarkers: [],
+  takeLanes: [], crossfaderValue: 0.5, waveformZoom: 1, swing: 0,
+  // Markers, so removing one is testable.
+  cueMarkers: [
+    { id: 'm1', beat: 32, name: 'Chorus' },
+    { id: 'm2', beat: 64, name: 'Drop' },
+  ],
 }
 
 const CTX = { tracks: PROJECT.tracks, tempo: PROJECT.tempo }

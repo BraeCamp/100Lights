@@ -33,6 +33,7 @@ import {
   type MusicMaps, type MusicPosition, type MusicDuration,
 } from './position'
 import { beatToSeconds } from '../tempo-map'
+import { nameChord, groupIntoChords } from '../chord-analysis'
 
 export interface VoiceCall { name: string; input: Record<string, unknown> }
 
@@ -691,6 +692,142 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
           return { actions: [], say: `${clips.length} clip${clips.length === 1 ? '' : 's'} in the arrangement.` }
         }
 
+        // ── What is it playing? ──────────────────────────────────────────
+        //
+        // Brae: "What note is pad a playing in?" and "What are the filters on
+        // bass 1?"
+        //
+        // Both were already answerable and neither was being asked. The
+        // executor is handed the whole project — every note with its pitch and
+        // timing, every effect with its parameters — so these are arithmetic on
+        // data already in the room, not a new capability.
+        case 'notes': {
+          const named = str(i.target).trim()
+          if (!named) return fail('Say which track or clip you mean.')
+          const found = resolveClip(named, project)
+          if (!found) return fail(`I couldn't find "${named}".`)
+          const clip = found.clip
+          if (!('notes' in clip)) return { actions: [], say: `${found.how} is audio, not notes.` }
+          const notes = (clip as MidiClip).notes
+          if (!notes.length) return { actions: [], say: `${found.how} has no notes.` }
+
+          const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+          const pitches = notes.map(n => n.pitch)
+          const low = Math.min(...pitches)
+          const high = Math.max(...pitches)
+          const spell = (p: number) => `${NAMES[((p % 12) + 12) % 12]}${Math.floor(p / 12) - 1}`
+
+          // One pitch class throughout is a part on one note, and saying "C2 to
+          // C2" would be a strange way to put that.
+          const classes = [...new Set(pitches.map(p => ((p % 12) + 12) % 12))]
+          if (classes.length === 1) {
+            return {
+              actions: [],
+              say: `${found.how} plays ${NAMES[classes[0]]} — ${notes.length} note${notes.length === 1 ? '' : 's'}${low === high ? ` at ${spell(low)}` : `, ${spell(low)} to ${spell(high)}`}.`,
+            }
+          }
+
+          // Chords where there are chords: notes that start together are a
+          // chord, and naming them is far more use than listing pitches.
+          const chords = groupIntoChords(notes).filter(c => c.pitches.length > 1)
+          if (chords.length) {
+            const names = [...new Set(chords.map(c => nameChord(c.pitches)))].filter(Boolean)
+            return {
+              actions: [],
+              say: `${found.how}: ${names.slice(0, 6).join(', ')}${names.length > 6 ? `, and ${names.length - 6} more` : ''} — ${spell(low)} to ${spell(high)}.`,
+            }
+          }
+
+          const heard = [...new Set(classes.map(c => NAMES[c]))]
+          return {
+            actions: [],
+            say: `${found.how} plays ${heard.join(', ')} — ${notes.length} notes from ${spell(low)} to ${spell(high)}.`,
+          }
+        }
+
+        case 'effects': {
+          const named = str(i.target).trim()
+          if (!named) return fail('Say which track you mean.')
+          const track = resolveTrack(named, project)
+          if (!track) return fail(`I couldn't find a track called "${named}".`)
+          const fx = track.effects ?? []
+          if (!fx.length) return { actions: [], say: `"${track.name}" has no effects on it.` }
+
+          // The parameter that actually matters, per effect. A list of names
+          // answers "is there a filter"; the setting answers "what is it
+          // doing", which is the question people mean.
+          const describeOne = (e: TrackEffect): string => {
+            const px = e.params as unknown as Record<string, unknown>
+            const num = (k: string) => (typeof px[k] === 'number' ? px[k] as number : null)
+            switch (e.type) {
+              case 'filter': {
+                const hz = num('frequency')
+                const kind = typeof px.type === 'string' ? px.type : 'lowpass'
+                return `a ${kind} at ${hz != null ? (hz >= 1000 ? `${(hz / 1000).toFixed(1)}k` : Math.round(hz)) : '?'} hertz`
+              }
+              case 'reverb': case 'delay': {
+                const wet = num('wet')
+                return `${e.type} at ${wet != null ? Math.round(wet * 100) : '?'}%`
+              }
+              case 'compressor': case 'limiter': {
+                const th = num('threshold')
+                return `a ${e.type} at ${th != null ? Math.round(th) : '?'} dB`
+              }
+              case 'saturator': {
+                const d = num('drive')
+                return `saturation at ${d != null ? Math.round(d * 100) : '?'}%`
+              }
+              case 'eq3': return 'a three-band EQ'
+              default: return e.type
+            }
+          }
+          const disabled = fx.filter(e => (e.params as { enabled?: boolean })?.enabled === false).length
+          return {
+            actions: [],
+            say: `"${track.name}" has ${fx.map(describeOne).join(', ')}.${disabled ? ` ${disabled} bypassed.` : ''}`,
+          }
+        }
+
+        case 'instrument': {
+          const named = str(i.target).trim()
+          if (!named) return fail('Say which track you mean.')
+          const track = resolveTrack(named, project)
+          if (!track) return fail(`I couldn't find a track called "${named}".`)
+          const clips = allClips(project).filter(c => c.trackId === track.id)
+          const presets = [...new Set(clips.map(c => (c as { presetId?: string }).presetId).filter(Boolean))]
+          const kind = track.instrument?.type ?? 'none'
+          const what = presets.length ? presets.join(', ')
+            : kind === 'none' ? 'no instrument of its own' : kind
+          return {
+            actions: [],
+            say: `"${track.name}" is ${what}, with ${clips.length} clip${clips.length === 1 ? '' : 's'}.`,
+          }
+        }
+
+        case 'automation': {
+          const named = str(i.target).trim()
+          const lanes = project.automationLanes ?? []
+          if (named) {
+            const track = resolveTrack(named, project)
+            if (!track) return fail(`I couldn't find a track called "${named}".`)
+            const mine = lanes.filter(l => l.trackId === track.id && l.points?.length)
+            if (!mine.length) return { actions: [], say: `Nothing is automated on "${track.name}".` }
+            return {
+              actions: [],
+              say: `"${track.name}" has ${mine.map(l => `${l.label || l.parameter} with ${l.points.length} points`).join(', ')}.`,
+            }
+          }
+          const active = lanes.filter(l => l.points?.length)
+          if (!active.length) return { actions: [], say: 'Nothing is automated yet.' }
+          const byTrack = new Map<string, number>()
+          for (const l of active) byTrack.set(l.trackId, (byTrack.get(l.trackId) ?? 0) + 1)
+          const named2 = [...byTrack.entries()].map(([id, n]) => {
+            const t = project.tracks.find(x => x.id === id)
+            return `${t?.name ?? 'a track'} (${n})`
+          })
+          return { actions: [], say: `Automation on ${named2.join(', ')}.` }
+        }
+
         case 'key': {
           const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
           const key = (project as { key?: number }).key ?? 0
@@ -775,6 +912,145 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
         say: wanted
           ? `Muted all ${changing.length} track${changing.length === 1 ? '' : 's'}.`
           : `Unmuted ${changing.length} track${changing.length === 1 ? '' : 's'}.`,
+      }
+    }
+
+    // ── The performance, not the arrangement ─────────────────────────────
+    case 'quantize': {
+      const found = resolveClip(target, project)
+      if (!found) return fail(`I couldn't find "${target || 'that'}" to quantize.`)
+      const clip = found.clip
+      if (!('notes' in clip)) return fail('That is an audio clip — there are no notes to move.')
+      const notes = (clip as MidiClip).notes
+      if (!notes.length) return fail('That clip has no notes.')
+
+      // A quarter note by default: the grid people mean when they do not say.
+      const division = spokenNumber(i.division as string) ?? 1
+      if (!(division > 0)) return fail('That is not a grid I can quantize to.')
+      const pct = spokenNumber(i.strength as string)
+      const strength = pct == null ? 1 : Math.max(0, Math.min(1, pct / 100))
+
+      // Partial strength moves notes PART of the way, which is the difference
+      // between tightening a performance and flattening it. At 100 it is a
+      // snap; below, the feel survives.
+      const moved = notes
+        .map(n => {
+          const grid = Math.round(n.startBeat / division) * division
+          const to = n.startBeat + (grid - n.startBeat) * strength
+          return { n, to }
+        })
+        .filter(({ n, to }) => Math.abs(to - n.startBeat) > 1e-6)
+      if (!moved.length) return { actions: [], say: `${found.how} is already on the grid.` }
+      return {
+        actions: moved.map(({ n, to }) => ({
+          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+          patch: { startBeat: Math.max(0, +to.toFixed(4)) },
+        })),
+        say: `Quantized ${moved.length} note${moved.length === 1 ? '' : 's'} on ${found.how}${strength < 1 ? ` ${Math.round(strength * 100)}% of the way` : ''}.`,
+      }
+    }
+
+    case 'set_velocity': {
+      const found = resolveClip(target, project)
+      if (!found) return fail(`I couldn't find "${target || 'that'}".`)
+      const clip = found.clip
+      if (!('notes' in clip)) return fail('That is an audio clip — velocity is a note thing.')
+      const notes = (clip as MidiClip).notes
+      if (!notes.length) return fail('That clip has no notes.')
+
+      const absolute = spokenNumber(i.velocity as string)
+      const pct = spokenNumber(i.scale as string)
+      if (absolute == null && pct == null) return fail('Say how hard, or by how much.')
+
+      const next = (v: number) => {
+        const raw = absolute != null ? absolute : v * ((pct ?? 100) / 100)
+        // Never to zero: a note at velocity 0 is a note that does not sound,
+        // which is a deletion wearing a dynamics command's clothes.
+        return Math.max(1, Math.min(127, Math.round(raw)))
+      }
+      const changed = notes.filter(n => next(n.velocity) !== n.velocity)
+      if (!changed.length) return { actions: [], say: 'Those notes are already there.' }
+      return {
+        actions: changed.map(n => ({
+          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+          patch: { velocity: next(n.velocity) },
+        })),
+        say: absolute != null
+          ? `${found.how}: velocity ${absolute}.`
+          : `${found.how}: ${pct}% of the velocity.`,
+      }
+    }
+
+    case 'split_clip': {
+      const found = resolveClip(target, project)
+      if (!found) return fail(`I couldn't find "${target || 'that'}" to split.`)
+      const clip = found.clip
+      const at = pos(i.at)
+      const beat = at ? positionToBeat(at, maps) : null
+      if (beat == null) return fail('Say where to split it.')
+      const offset = beat - clip.startBeat
+      if (offset <= 0 || offset >= clip.durationBeats) {
+        return fail(`${describeBeat(beat, maps)} is not inside ${found.how}.`)
+      }
+
+      // Rebuilt as two rather than trimmed and added, so both halves are
+      // ordinary clips with ordinary ids and nothing downstream has to know one
+      // of them used to be the other.
+      const left = { ...clip, id: newId(), durationBeats: offset }
+      const right = { ...clip, id: newId(), startBeat: beat, durationBeats: clip.durationBeats - offset }
+      if ('notes' in clip) {
+        const notes = (clip as MidiClip).notes
+        ;(left as MidiClip).notes = notes
+          .filter(n => n.startBeat < offset)
+          .map(n => ({ ...n, id: newId() }))
+        ;(right as MidiClip).notes = notes
+          .filter(n => n.startBeat >= offset)
+          .map(n => ({ ...n, id: newId(), startBeat: n.startBeat - offset }))
+      }
+      return {
+        actions: [
+          { type: 'REMOVE_CLIP', clipId: clip.id },
+          { type: 'ADD_CLIP', clip: left },
+          { type: 'ADD_CLIP', clip: right },
+        ],
+        say: `Split ${found.how} at ${describeBeat(beat, maps)}.`,
+      }
+    }
+
+    case 'resize_clip': {
+      const found = resolveClip(target, project)
+      if (!found) return fail(`I couldn't find "${target || 'that'}".`)
+      const clip = found.clip
+      const beats = durationToBeats(len(i.length), clip.startBeat, maps)
+      if (beats == null || beats <= 0) return fail('Say how long it should be.')
+      return {
+        actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: beats } }],
+        say: `${found.how} is now ${describeDuration(len(i.length)!, beats)} long.`,
+      }
+    }
+
+    case 'remove_effect': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const kind = str(i.effect).toLowerCase()
+      const existing = (track.effects ?? []).find(e => e.type === kind)
+      if (!existing) return fail(`There is no ${kind || 'effect'} on "${track.name}".`)
+      return {
+        actions: [{ type: 'REMOVE_EFFECT', trackId: track.id, effectId: existing.id }],
+        say: `Took the ${kind} off "${track.name}".`,
+      }
+    }
+
+    case 'remove_marker': {
+      const wanted = foldName(str(i.name))
+      const markers = project.cueMarkers ?? []
+      if (!wanted) return fail('Say which marker.')
+      const hit = markers.find(m => foldName(m.name) === wanted)
+        ?? markers.find(m => foldName(m.name).includes(wanted))
+      if (!hit) return fail(`I couldn't find a marker called "${str(i.name)}".`)
+      return {
+        actions: [{ type: 'REMOVE_CUE_MARKER', markerId: hit.id }],
+        say: `Removed the "${hit.name}" marker.`,
       }
     }
 

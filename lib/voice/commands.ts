@@ -452,7 +452,12 @@ const THE_SONG = [
 
 /** Words that mean "make it bigger" and "make it smaller". */
 const UP = ['up', 'louder', 'boost', 'raise', 'increase', 'higher', 'more']
-const DOWN = ['down', 'quieter', 'lower', 'reduce', 'decrease', 'softer', 'less']
+// "Softer" is deliberately NOT here. On a fader it means quieter; on a MIDI
+// part it means played more gently, and those are different edits with
+// different results — one moves a level, the other moves every note's velocity
+// and changes the sound of the instrument. Musicians mean the second, so it
+// belongs to set_velocity and "quieter" is left to mean the fader.
+const DOWN = ['down', 'quieter', 'lower', 'reduce', 'decrease', 'less']
 
 /** Named intervals, so "up an octave" and "down a fifth" work as spoken. */
 const INTERVALS: Record<string, number> = {
@@ -1140,6 +1145,11 @@ const COMMANDS: VoiceCommand[] = [
       if (w.has('descending', 'ascending', 'rising', 'falling', 'opening', 'closing', 'sweep')) {
         return null
       }
+      // And TAKING something off is not turning it down. "Turn the reverb off"
+      // is this rule at zero; "take the reverb off the pad" removes it, and the
+      // two were scoring within a hair of each other — which would have made
+      // the studio stop and ask about a sentence that means one thing.
+      if (w.has('remove', 'delete', 'lose') || (w.has('take') && w.said('off'))) return null
       const hit = nameFrom(w, ctx, [...EFFECTS, 'more', 'less', 'percent', 'track',
         'take', 'off', 'up', 'down'], { dropNums: true })
       if (!hit) return null
@@ -1248,6 +1258,168 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
 
+  // ── The performance ──────────────────────────────────────────────────────
+  {
+    id: 'quantize',
+    tool: 'quantize',
+    group: 'Notes',
+    what: 'Pull the notes onto the grid',
+    say: ['quantize the drums', 'quantize the bass 2 to eighth notes', 'tighten up the drums'],
+    match(w, ctx) {
+      if (!w.has('quantize', 'quantise') && !w.hasPhrase('tighten', 'up') && !w.has('tighten')) {
+        return null
+      }
+      const hit = clipOrSelected(w, ctx, ['quantize', 'quantise', 'tighten', 'up', 'grid',
+        'note', 'notes', 'to', 'track', 'clip', 'eighth', 'sixteenth', 'quarter',
+        'half', 'percent', 'by'], { dropNums: true })
+      if (!hit) return null
+      // The grid, said the way musicians say it. A quarter note is the default
+      // because it is what "quantize this" means when nobody specifies.
+      const division = w.has('sixteenth', 'sixteenths') ? 0.25
+        : w.has('eighth', 'eighths') ? 0.5
+          : w.has('half') ? 2
+            : 1
+      const n = argNumbers(w, hit.name)[0]
+      const strength = n != null && n > 0 && n <= 100 && w.has('percent') ? n : undefined
+      return {
+        calls: [{
+          name: 'quantize',
+          input: { target: hit.name, division, ...(strength != null ? { strength } : {}) },
+        }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'set_velocity',
+    tool: 'set_velocity',
+    group: 'Notes',
+    what: 'Play a part harder or softer',
+    say: ['make the drums softer', 'play the bass 2 harder', 'set the pad velocity to 90'],
+    match(w, ctx) {
+      const softer = w.has('softer', 'gentler', 'lighter')
+      const harder = w.has('harder', 'stronger', 'punchier')
+      const named = w.has('velocity')
+      if (!softer && !harder && !named) return null
+      if (softer && harder) return null
+      const hit = clipOrSelected(w, ctx, ['softer', 'gentler', 'lighter', 'harder',
+        'stronger', 'punchier', 'velocity', 'make', 'play', 'set', 'track', 'clip',
+        'bit', 'lot'], { dropNums: true })
+      if (!hit) return null
+      const n = argNumbers(w, hit.name)[0]
+      if (named && n != null && n > 0 && n <= 127) {
+        return {
+          calls: [{ name: 'set_velocity', input: { target: hit.name, velocity: n } }],
+          confidence: nameConfidence(hit.score),
+          needsName: true,
+        }
+      }
+      if (!softer && !harder) return null
+      // A proportion rather than a fixed amount, so a quiet part and a loud one
+      // both move by something that means the same to each.
+      const step = w.has('bit', 'little', 'touch') ? 10 : w.has('lot', 'way', 'much') ? 30 : 20
+      return {
+        calls: [{
+          name: 'set_velocity',
+          input: { target: hit.name, scale: softer ? 100 - step : 100 + step },
+        }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+
+  // ── Clip surgery ─────────────────────────────────────────────────────────
+  {
+    id: 'split_clip',
+    tool: 'split_clip',
+    group: 'Arrangement',
+    what: 'Cut a clip in two',
+    say: ['split the bass 2 at bar 3', 'cut the pad at bar 5'],
+    match(w, ctx) {
+      if (!w.has('split', 'cut', 'divide', 'slice')) return null
+      if (!w.has('bar', 'measure', 'beat')) return null
+      const hit = clipOrSelected(w, ctx, ['split', 'cut', 'divide', 'slice', 'bar',
+        'bars', 'measure', 'beat', 'beats', 'track', 'clip', 'at', 'in'], { dropNums: true })
+      if (!hit) return null
+      const n = argNumbers(w, hit.name)[0]
+      if (n == null || n <= 0) return null
+      const at = w.has('beat') && !w.has('bar', 'measure') ? { beat: n } : { bar: n }
+      return {
+        calls: [{ name: 'split_clip', input: { target: hit.name, at } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'resize_clip',
+    tool: 'resize_clip',
+    group: 'Arrangement',
+    what: 'Make a clip longer or shorter',
+    say: ['make the pad 8 bars long', 'make the bass 2 four bars long'],
+    match(w, ctx) {
+      if (!w.has('long', 'length', 'longer', 'shorter')) return null
+      if (!w.has('bar', 'bars', 'beat', 'beats', 'measure', 'measures')) return null
+      const hit = clipOrSelected(w, ctx, ['make', 'long', 'length', 'longer', 'shorter',
+        'bar', 'bars', 'beat', 'beats', 'measure', 'measures', 'track', 'clip'],
+        { dropNums: true })
+      if (!hit) return null
+      const n = argNumbers(w, hit.name)[0]
+      if (n == null || n <= 0) return null
+      const length = w.has('beat', 'beats') && !w.has('bar', 'bars') ? { beats: n } : { bars: n }
+      return {
+        calls: [{ name: 'resize_clip', input: { target: hit.name, length } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+
+  // ── Taking things off ────────────────────────────────────────────────────
+  {
+    id: 'remove_effect',
+    tool: 'remove_effect',
+    group: 'Mixer',
+    what: 'Take an effect off a track',
+    say: ['take the reverb off the drums', 'remove the delay from the pad'],
+    match(w, ctx) {
+      const effect = EFFECTS.find(e => w.has(e))
+      if (!effect) return null
+      if (!w.has('off', 'remove', 'delete', 'lose')) return null
+      // "Turn the reverb off" is set_effect at zero; "take the reverb OFF the
+      // pad" removes it. The difference is whether a track is named after it.
+      const hit = nameOrSelected(w, ctx, [...EFFECTS, 'take', 'off', 'remove', 'delete',
+        'lose', 'from', 'track'], { dropNums: true })
+      if (!hit) return null
+      return {
+        calls: [{ name: 'remove_effect', input: { target: hit.name, effect } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'remove_marker',
+    tool: 'remove_marker',
+    group: 'Arrangement',
+    what: 'Remove a marker',
+    say: ['delete the chorus marker', 'remove the drop marker'],
+    match(w) {
+      if (!w.has('marker', 'markers')) return null
+      if (!w.has('delete', 'remove', 'lose', 'clear')) return null
+      const left = w.all.filter(x =>
+        !['delete', 'remove', 'lose', 'clear', 'marker', 'markers', 'the'].includes(x))
+      if (!left.length) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return {
+        calls: [{ name: 'remove_marker', input: { name: left.join(' ') } }],
+        confidence: 0.88,
+      }
+    },
+  },
+
   // ── Questions ────────────────────────────────────────────────────────────
   //
   // These answer instead of acting. They barely existed as a category before
@@ -1331,6 +1503,111 @@ const COMMANDS: VoiceCommand[] = [
       }
     },
   },
+  {
+    id: 'describe.notes',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask what a part is playing',
+    say: [
+      'what note is the pad playing',
+      'what notes are in the bass 2',
+      'what chord is the pad playing',
+      'what is the drums playing',
+    ],
+    match(w, ctx) {
+      // The musical nouns. "Note", "chord" and "key" are what people ask about
+      // a part; "playing" alone is enough when it follows a question word,
+      // which is how "what is the pad playing" reads.
+      const asks = w.has('note', 'notes', 'chord', 'chords', 'pitch', 'pitches')
+        || (w.has('playing', 'play') && w.has('what', 'which'))
+      if (!asks) return null
+      if (!w.has('what', 'which')) return null
+      const hit = nameOrSelected(w, ctx, ['note', 'notes', 'chord', 'chords', 'pitch',
+        'pitches', 'playing', 'play', 'what', 'which', 'track', 'clip', 'item'],
+        { dropNums: true })
+      if (!hit) return null
+      return {
+        calls: [{ name: 'describe', input: { topic: 'notes', target: hit.name } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'describe.effects',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask what effects are on a track',
+    say: [
+      'what are the filters on the bass 2',
+      'what effects are on the pad',
+      'what is on the drums',
+    ],
+    match(w, ctx) {
+      // Asking about a specific effect by name is asking what is on the track:
+      // "what are the FILTERS on bass 1" wants the rack, not a filter.
+      // A more specific noun means a more specific question. This rule's
+      // trigger is the loosest of the questions ("what ... on ..."), so it has
+      // to stand aside for anything that names what it is actually about.
+      if (w.has('automation', 'automated', 'note', 'notes', 'chord', 'chords',
+        'instrument', 'sound', 'preset')) return null
+      const asks = w.has('effect', 'effects', 'fx', 'rack', 'chain')
+        || EFFECTS.some(e => w.has(e))
+        // said() pads what it is given, so the argument is the bare word.
+        || (w.has('what') && w.said('on'))
+      if (!asks) return null
+      if (!w.has('what', 'which')) return null
+      const hit = nameOrSelected(w, ctx, [...EFFECTS, 'effect', 'effects', 'fx', 'rack',
+        'chain', 'what', 'which', 'track', 'filters'], { dropNums: true })
+      if (!hit) return null
+      // An amount makes it an instruction rather than a question — but only a
+      // number that is not part of the NAME. "What are the filters on bass 2"
+      // has a number in it and is still a question.
+      if (argNumbers(w, hit.name).length) return null
+      return {
+        calls: [{ name: 'describe', input: { topic: 'effects', target: hit.name } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'describe.instrument',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask what a track is',
+    say: ['what instrument is the bass 2', 'what sound is the pad'],
+    match(w, ctx) {
+      if (!w.has('instrument', 'sound', 'preset', 'patch')) return null
+      if (!w.has('what', 'which')) return null
+      const hit = nameOrSelected(w, ctx, ['instrument', 'sound', 'preset', 'patch',
+        'what', 'which', 'track'], { dropNums: true })
+      if (!hit) return null
+      return {
+        calls: [{ name: 'describe', input: { topic: 'instrument', target: hit.name } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'describe.automation',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask what is automated',
+    say: ['what is automated', 'is anything automated', 'what automation is on the pad'],
+    match(w, ctx) {
+      if (!w.has('automated', 'automation', 'automating')) return null
+      const hit = nameFrom(w, ctx, ['automated', 'automation', 'automating', 'what',
+        'which', 'anything', 'any', 'track'], { dropNums: true })
+      return {
+        calls: [{ name: 'describe', input: { topic: 'automation', ...(hit ? { target: hit.name } : {}) } }],
+        confidence: hit ? nameConfidence(hit.score) : 0.9,
+        needsName: !!hit,
+      }
+    },
+  },
+
   {
     id: 'describe.key',
     tool: 'describe',
@@ -1573,6 +1850,14 @@ const PRECEDENCE: string[] = [
   // an effect's name, "master", "swing" — so they are unambiguous enough to sit
   // ahead of the general timing rules.
   'rename_track',
+  // The performance and clip surgery, before the general mixer rules: they all
+  // name a track and several share a verb with something else.
+  'quantize',
+  'set_velocity',
+  'split_clip',
+  'resize_clip',
+  'remove_effect',
+  'remove_marker',
   // Deleting a CLIP before deleting a track: both say "delete", and only one
   // of them says "clip".
   'remove_clip',
@@ -1597,6 +1882,16 @@ const PRECEDENCE: string[] = [
   'describe.length',
   'describe.clips',
   'describe.key',
+  // The musical questions before the general ones: "what note is the pad
+  // playing" contains a track name, and a rule that only wants a topic would
+  // otherwise take it first.
+  'describe.notes',
+  'describe.instrument',
+  'describe.automation',
+  // Effects LAST of the musical questions: its trigger is the loosest of them
+  // ("what ... on ..."), so "what automation is on the pad" reached it first
+  // and answered about the rack.
+  'describe.effects',
   'describe.volume',
   'describe.position',
   'set_key_scale',
