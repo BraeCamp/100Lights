@@ -47,7 +47,16 @@ function buildProject() {
   return makeProject(defaultProject, { tempo: 120, tracks, clips })
 }
 
-const browser = await chromium.launch()
+// A microphone, or every listening check fails with "Could not open the
+// microphone" and says nothing about the feature. Fake-device gives
+// getUserMedia something to hand back; fake-ui answers the permission prompt.
+const browser = await chromium.launch({
+  args: [
+    '--use-fake-device-for-media-stream',
+    '--use-fake-ui-for-media-stream',
+    '--autoplay-policy=no-user-gesture-required',
+  ],
+})
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 } })
 page.on('pageerror', e => console.log('  page error:', String(e).slice(0, 160)))
 
@@ -114,7 +123,10 @@ const btn = page.locator('[data-voice-control]')
 check('the voice button is in the transport', await btn.count() > 0, `${await btn.count()} found`)
 
 if (await btn.count()) {
-  const before = await page.evaluate(() => window.__dawEngine?.projectForTest?.()?.arrangementClips?.length ?? null)
+  // window.__dawProject() — not __dawEngine.projectForTest, which does not
+  // exist and never did: it read as undefined, `before` was null, and the
+  // comparison below could not fail no matter what the command did.
+  const before = await page.evaluate(() => window.__dawProject?.()?.arrangementClips?.length ?? null)
 
   // Hold to speak, exactly as a person would.
   const box = await btn.first().boundingBox()
@@ -124,43 +136,46 @@ if (await btn.count()) {
   await page.mouse.up()
   await page.waitForTimeout(2500)
 
+  // This check was written when every sentence went to the assistant, and it
+  // asserted that one had been sent. That is now the FAILURE case: "loop bass 2
+  // three more times" is understood by the rules, which cost nothing, and a
+  // paid call here would mean the local reading had stopped working. The
+  // assertion is inverted rather than deleted, because "did this quietly start
+  // costing money again" is worth watching forever.
   const sent = await page.evaluate(() => window.__assistCalls ?? [])
-  check('holding it sent the transcript to the assistant', sent.length > 0, `${sent.length} calls`)
-  if (sent.length) {
-    const msg = sent[0]?.messages?.[0]?.content ?? ''
-    check('the wake word and politeness are stripped',
-      !/hey light/i.test(msg) && !/please/i.test(msg), `"${msg}"`)
-    check('it asked as the music module', sent[0]?.module === 'music', String(sent[0]?.module))
-    check('and told it about the song', /Bass 2/.test(sent[0]?.stateSummary ?? ''),
-      (sent[0]?.stateSummary ?? '').slice(0, 80))
-  }
+  check('a command the rules understand costs nothing', sent.length === 0, `${sent.length} paid calls`)
 
-  // The point of the whole feature: the song actually changed.
-  const readback = await page.locator('[data-voice-readback]').textContent().catch(() => '')
-  check('it read back what it did', /Looped/i.test(readback ?? ''), (readback ?? '').trim().slice(0, 90))
+  // The point of the whole feature: the song actually changed. The transcript
+  // is not evidence — it shows what was HEARD, and it says "loop bass 2" whether
+  // or not anything looped. Ask the project.
+  const after = await page.evaluate(() => window.__dawProject?.()?.arrangementClips?.length ?? null)
+  check('the song actually changed', before !== null && after !== null && after > before,
+    `${before} clips → ${after}`)
 
-  const clips = await page.evaluate(() => {
-    const el = document.querySelector('[data-voice-readback]')
-    return { text: el?.textContent ?? '' }
-  })
-  check('and said which clip', /Bass 2/i.test(clips.text), clips.text.slice(0, 90))
+  const readback = (await page.locator('[data-voice-readback]').textContent().catch(() => '')) ?? ''
+  check('and it said so, naming the clip', /Bass 2/i.test(readback), readback.trim().slice(0, 90))
 }
 
 // The settings Brae asked for: hold vs toggle, and whether Enter runs a command.
+//
+// These used to live in a popover of their own. They now live in the voice
+// card's Settings tab — the popover was removed when the card was built, and
+// this check went on hunting for it and failing for reasons that had nothing to
+// do with the settings working. Same assertions, current door.
 const gear = page.locator('[data-voice-settings]')
 check('there is a settings control', await gear.count() > 0, `${await gear.count()} found`)
 if (await gear.count()) {
   await gear.first().click()
-  await page.waitForTimeout(400)
-  const panel = page.locator('[data-voice-settings-panel]')
-  check('it opens a settings panel', await panel.count() > 0)
+  await page.waitForTimeout(600)
+  const panel = page.locator('[data-voice-panel]')
+  check('it opens the voice card', await panel.count() > 0)
   const text = (await panel.textContent().catch(() => '')) ?? ''
-  check('offering hold and toggle', /Hold the button/i.test(text) && /Click to start/i.test(text), text.slice(0, 80))
-  check('and the Enter setting', /Enter/i.test(text), text.slice(0, 120))
+  check('offering hold and toggle', /Hold the button/i.test(text) && /Click once/i.test(text), text.slice(0, 80))
+  check('and the Enter setting', /Enter/i.test(text), text.slice(0, 200))
 
   // Switching to toggle has to persist, or the setting is decoration.
   await page.evaluate(() => {
-    const radios = [...document.querySelectorAll('[data-voice-settings-panel] input[type=radio]')]
+    const radios = [...document.querySelectorAll('[data-voice-panel] input[type=radio]')]
     radios[1]?.click()
   })
   await page.waitForTimeout(300)

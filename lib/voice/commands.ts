@@ -370,6 +370,37 @@ function nameFrom(
       if (narrowed && narrowed.score >= 0.6) { hit = narrowed; used = named }
     }
   }
+
+  // ── Last resort: the number was part of the name after all ───────────────
+  //
+  // dropNums exists so "loop the bass 3 more times" does not go looking for a
+  // track called "Bass 3". It has the opposite failure too: "duplicate Bass 2"
+  // becomes "bass", which matches Bass 1 and Bass 2 equally well and therefore
+  // matches NOTHING — every numbered track was unreachable for these commands,
+  // including the phrasings the rules list as their own examples.
+  //
+  // The compound path above already had to learn this for clips ("Body 2"), and
+  // this is the same lesson for tracks. Tried only after the dropped-number
+  // reading has failed outright, so the ordinary case is untouched: a sentence
+  // whose number really is an argument still resolves by name first, and only a
+  // sentence left with no track at all asks whether the digit was the name.
+  if ((!hit || hit.score < 0.6) && opts.dropNums) {
+    const asName = w.all.filter(x => protect.has(x) || !isUnitWord(x))
+    const digits = asName.filter(x => spokenNumber(x) != null)
+    // "loop bass 2 3 more times" carries two numbers and only ONE of them is
+    // the name — keeping both looks for a track called "Bass 2 3". So each
+    // number is tried as the name's number in turn, with the others dropped,
+    // and the project says which reading is real. argNumbers then takes the
+    // leftover digit back as the argument, which is what it was written for.
+    const tries = [asName, ...digits.map(d => {
+      let kept = false
+      return asName.filter(x => spokenNumber(x) == null || (x === d && !kept && (kept = true)))
+    })]
+    for (const attempt of tries) {
+      const exact = findByName(attempt.join(' '), ctx.tracks)
+      if (exact && exact.score >= 0.6 && exact.score > (hit?.score ?? 0)) { hit = exact; used = attempt }
+    }
+  }
   if (!hit || hit.score < 0.6) return null
 
   // Only the words actually used for the name count as explained. The stray
