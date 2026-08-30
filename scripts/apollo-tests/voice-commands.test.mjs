@@ -91,6 +91,12 @@ const PROJECT = {
     // reverb on the vocals" needs a track that has not got one — a fixture
     // where every track has everything fails the second half as surely as an
     // empty one fails the first.
+    // MIDI effects on the two tracks the examples take them OFF, for the same
+    // reason the audio effects are only on some: both halves have to be
+    // testable in one project.
+    (['Bass 2'].includes(t.name)
+      ? { ...t, midiEffects: [{ id: `${t.id}-arp`, type: 'arp', params: { enabled: true, style: 'up', rate: 0.25, octaves: 1, gate: 0.9 } }] }
+      : t)).map(t =>
     (['Drums', 'Pad'].includes(t.name)
       ? {
         ...t,
@@ -118,7 +124,18 @@ const PROJECT = {
   ],
 }
 
-const CTX = { tracks: PROJECT.tracks, tempo: PROJECT.tempo }
+const CTX = {
+  tracks: PROJECT.tracks,
+  tempo: PROJECT.tempo,
+  clips: PROJECT.arrangementClips.map(c => ({ id: c.id, name: c.name, trackId: c.trackId })),
+  // The sound library. It is not part of the song — it lives on the machine —
+  // so the rules resolve a name against it and hand the executor an id.
+  library: [
+    { id: 'p-violin', name: 'Violin', group: 'Strings' },
+    { id: 'p-piano', name: 'Piano', group: 'Piano' },
+    { id: 'p-cello', name: 'Cello', group: 'Strings' },
+  ],
+}
 
 console.log(`${VOICE_COMMANDS.length} commands, ${VOICE_COMMANDS.reduce((n, c) => n + c.say.length, 0)} example phrasings\n`)
 

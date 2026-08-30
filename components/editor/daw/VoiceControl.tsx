@@ -28,6 +28,7 @@ import { Mic, Loader2, X, Settings2 } from 'lucide-react'
 import { useDaw, reducer as dawReducer, type DawAction } from '@/lib/daw-state'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { musicStateSummary } from '@/lib/voice/music-tools'
+import { combinePresets } from '@/lib/midi-presets'
 import { hearBetter } from '@/lib/voice/hear-better'
 import { resolveLocally, resolveHeard, confidentEnough } from '@/lib/voice/local-resolve'
 import type { Heard } from '@/lib/voice/hypotheses'
@@ -453,6 +454,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // one form the rules could not see.
       clips: (project.arrangementClips ?? []).map(c => ({
         id: c.id, name: c.name, trackId: c.trackId,
+      })),
+      // The sound library, so "make the bass a violin" can find the violin. It
+      // is not part of the song — it lives on this machine — which is why the
+      // rules resolve the name here and hand the executor an id.
+      library: combinePresets(project.presets).map(p => ({
+        id: p.id, name: p.name, group: p.group,
       })),
     }
 

@@ -25,6 +25,7 @@ import type { DawProject, DawTrack, MidiClip, DawClip, EffectType, TrackEffect }
 import {
   defaultReverb, defaultDelay, defaultFilter, defaultCompressor,
   defaultSaturator, defaultChorus, defaultEq3, defaultLimiter,
+  defaultVelocityMidi, defaultScaleMidi, defaultChordMidi, defaultArpMidi,
 } from '../daw-types'
 import { findByName, foldName, spokenNumber, spokenFraction } from './resolve'
 import type { VoiceAsk, AskOption } from './ask'
@@ -71,6 +72,30 @@ const EFFECT_DEFAULTS: Partial<Record<EffectType, () => TrackEffect['params']>> 
   reverb: defaultReverb, delay: defaultDelay, filter: defaultFilter,
   compressor: defaultCompressor, saturator: defaultSaturator,
   chorus: defaultChorus, eq3: defaultEq3, limiter: defaultLimiter,
+}
+
+/**
+ * The sound-shaping fields an effect BAR can dial, and what a percentage means
+ * for each.
+ *
+ * Taken from the same set the piano-roll FX cascade uses, so a bar made by
+ * speaking is the same object as one drawn by hand. Only the fields worth
+ * naming out loud are here — the full list runs to dozens, most of which nobody
+ * asks for by name.
+ *
+ * Each carries its own mapping because a percentage means something different
+ * per field: a filter sweeps logarithmically over a range where the top is
+ * "off", drive is already a fraction, and gain is a multiplier around unity.
+ */
+const CLIP_FX_FIELDS: Record<string, { key: string; label: string; at: (unit: number) => number }> = {
+  filterHz: { key: 'filterHz', label: 'Low-pass', at: u => Math.round(200 * Math.pow(90, 1 - u)) },
+  highpassHz: { key: 'highpassHz', label: 'High-pass', at: u => Math.round(20 * Math.pow(100, u)) },
+  drive: { key: 'drive', label: 'Drive', at: u => u },
+  distortion: { key: 'distortion', label: 'Distortion', at: u => u },
+  bitcrush: { key: 'bitcrush', label: 'Bitcrush', at: u => u },
+  reverbWet: { key: 'reverbWet', label: 'Reverb', at: u => u },
+  delayWet: { key: 'delayWet', label: 'Delay', at: u => u },
+  gain: { key: 'gain', label: 'Level', at: u => 0.5 + u * 1.5 },
 }
 
 /**
@@ -1051,6 +1076,136 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
       return {
         actions: [{ type: 'REMOVE_CUE_MARKER', markerId: hit.id }],
         say: `Removed the "${hit.name}" marker.`,
+      }
+    }
+
+    // ── The library ──────────────────────────────────────────────────────
+    case 'set_instrument': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const presetId = str(i.presetId)
+      if (!presetId) return fail('I could not find that sound in the library.')
+      const name = str(i.presetName) || 'that sound'
+
+      // A sampled instrument lives on the CLIPS, not on the track: a preset is
+      // what a clip plays through, and the track's own instrument is the
+      // fallback for clips that name none. Setting it clip by clip is therefore
+      // the honest edit — and it means a track whose clips deliberately differ
+      // is not flattened by a command about the track.
+      const clips = allClips(project).filter(c => c.trackId === track.id)
+      if (!clips.length) return fail(`"${track.name}" has no clips to put ${name} on.`)
+      return {
+        actions: clips.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: { presetId } })),
+        say: `"${track.name}" is ${name} now — ${clips.length} clip${clips.length === 1 ? '' : 's'}.`,
+      }
+    }
+
+    // ── The note stream, before it reaches the instrument ────────────────
+    case 'add_midi_effect': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const kind = str(i.effect).toLowerCase()
+      const make: Record<string, () => unknown> = {
+        arp: defaultArpMidi, chord: defaultChordMidi,
+        scale: defaultScaleMidi, velocity: defaultVelocityMidi,
+      }
+      if (!make[kind]) return fail(`I don't know a MIDI effect called "${str(i.effect) || 'that'}".`)
+      if ((track.midiEffects ?? []).some(e => e.type === kind)) {
+        return fail(`"${track.name}" already has ${kind === 'arp' ? 'an arpeggiator' : `a ${kind} effect`}.`)
+      }
+      const params = make[kind]() as Record<string, unknown>
+      if (kind === 'arp') {
+        const rate = spokenNumber(i.rate as string)
+        if (rate != null && rate > 0) params.rate = rate
+        const style = str(i.style)
+        if (style) params.style = style
+      }
+      return {
+        actions: [{
+          type: 'ADD_MIDI_EFFECT', trackId: track.id,
+          effect: { id: newId(), type: kind, params },
+        }],
+        say: kind === 'arp'
+          ? `Arpeggiating "${track.name}".`
+          : `Added a ${kind} effect to "${track.name}".`,
+      }
+    }
+
+    case 'remove_midi_effect': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const kind = str(i.effect).toLowerCase()
+      const existing = (track.midiEffects ?? []).find(e => e.type === kind)
+      if (!existing) return fail(`There is no ${kind} on "${track.name}".`)
+      return {
+        actions: [{ type: 'REMOVE_MIDI_EFFECT', trackId: track.id, effectId: existing.id }],
+        say: `Stopped ${kind === 'arp' ? 'arpeggiating' : `the ${kind} effect on`} "${track.name}".`,
+      }
+    }
+
+    // ── A stretch of the timeline with a parameter dialled in ────────────
+    case 'add_clip_effect': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const field = str(i.parameter)
+      const spec = CLIP_FX_FIELDS[field]
+      if (!spec) return fail(`I don't know how to shape "${field || 'that'}".`)
+
+      const pct = spokenNumber(i.amount as string)
+      const amount = pct == null ? 1 : Math.max(0, Math.min(1, pct / 100))
+      const at = pos(i.at)
+      const startBeat = at ? positionToBeat(at, maps) ?? 0 : 0
+      const beats = durationToBeats(len(i.length), startBeat, maps)
+        // A bar with no stated length covers the track's clips, which is what
+        // "over the chorus" means when the chorus is what is on the track.
+        ?? (() => {
+          const mine = allClips(project).filter(c => c.trackId === track.id)
+          if (!mine.length) return 8
+          const end = Math.max(...mine.map(c => c.startBeat + c.durationBeats))
+          return Math.max(1, end - startBeat)
+        })()
+      if (beats <= 0) return fail('That bar has no length.')
+
+      return {
+        actions: [{
+          type: 'ADD_CLIP_EFFECT',
+          effect: {
+            id: newId(), trackId: track.id, startBeat, durationBeats: beats,
+            fx: { [spec.key]: spec.at(amount) },
+            // In and back out across the region, which is what makes it a bar
+            // rather than a setting — a flat graph would be an effect that
+            // simply turns on, and the track rack already does that.
+            graph: [
+              { beat: 0, value: 0 },
+              { beat: 0.5, value: 1 },
+              { beat: 1, value: 0 },
+            ],
+          },
+        }],
+        say: `${spec.label} bar on "${track.name}" from ${describeBeat(startBeat, maps)}, ${describeDuration({ bars: 0 }, beats)}.`,
+      }
+    }
+
+    // ── Folders in the mixer ─────────────────────────────────────────────
+    case 'group_tracks': {
+      const names = Array.isArray(i.targets) ? (i.targets as unknown[]).map(str) : []
+      if (names.length < 2) return fail('Say at least two tracks to group.')
+      const found: DawTrack[] = []
+      for (const n of names) {
+        const t = resolveTrack(n, project)
+        if (!t) return fail(`I couldn't find a track called "${n}".`)
+        if (t.kind === 'group') return fail(`"${t.name}" is already a group.`)
+        if (!found.some(x => x.id === t.id)) found.push(t)
+      }
+      if (found.length < 2) return fail('That is one track, not a group.')
+      return {
+        actions: [{
+          type: 'GROUP_TRACKS',
+          trackIds: found.map(t => t.id),
+          groupId: newId(),
+          ...(str(i.name) ? { name: str(i.name) } : {}),
+        }],
+        say: `Grouped ${found.map(t => `"${t.name}"`).join(' and ')}${str(i.name) ? ` as "${str(i.name)}"` : ''}.`,
       }
     }
 

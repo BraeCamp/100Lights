@@ -76,6 +76,16 @@ export interface InterpretContext {
    * made it unambiguous.
    */
   clips?: { id: string; name?: string; trackId: string }[]
+  /**
+   * The sound library, as far as this machine has one.
+   *
+   * Resolved HERE rather than in the executor because the library is not part
+   * of the song — it lives in local storage and differs per machine, while the
+   * executor is pure and sees only the project. So the rule turns "a violin"
+   * into an id and the executor applies it, which keeps the executor honest and
+   * the library where it actually is.
+   */
+  library?: { id: string; name: string; group?: string }[]
 }
 
 export interface Match {
@@ -1420,6 +1430,197 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
 
+  // ── The library ──────────────────────────────────────────────────────────
+  {
+    id: 'set_instrument',
+    tool: 'set_instrument',
+    group: 'Project',
+    what: 'Put a library instrument on a track',
+    say: ['make the bass 2 a violin', 'put a piano on the pad', 'change the drums to a cello'],
+    match(w, ctx) {
+      if (!ctx.library?.length) return null
+      if (!w.has('make', 'put', 'change', 'use', 'load', 'swap')) return null
+
+      // The instrument is whichever library name the sentence contains. Matched
+      // against the library rather than guessed at, so "a violin" only means
+      // something when there is a violin to mean.
+      let sound: { id: string; name: string } | null = null
+      let soundWords: string[] = []
+      for (const preset of ctx.library) {
+        const folded = foldName(preset.name)
+        if (!folded) continue
+        const parts = folded.split(' ').filter(Boolean)
+        if (parts.every(part => w.all.includes(part))) {
+          if (!sound || parts.length > soundWords.length) {
+            sound = { id: preset.id, name: preset.name }
+            soundWords = parts
+          }
+        }
+      }
+      if (!sound) return null
+
+      // The TRACK is what is left once the instrument's own words are out of
+      // the way — otherwise "make the bass a violin" looks for a track called
+      // "bass violin".
+      const hit = nameOrSelected(w, ctx, ['make', 'put', 'change', 'use', 'load', 'swap',
+        'into', 'onto', 'track', 'sound', 'instrument', ...soundWords], { dropNums: true })
+      if (!hit) return null
+      return {
+        calls: [{
+          name: 'set_instrument',
+          input: { target: hit.name, presetId: sound.id, presetName: sound.name },
+        }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+
+  // ── The note stream ──────────────────────────────────────────────────────
+  {
+    id: 'add_midi_effect',
+    tool: 'add_midi_effect',
+    group: 'Notes',
+    what: 'Shape the notes before the instrument',
+    say: ['arpeggiate the pad', 'put a chord effect on the bass 2', 'snap the pad to the scale'],
+    match(w, ctx) {
+      const kind = w.has('arpeggiate', 'arpeggiator', 'arp') ? 'arp'
+        : w.has('chord', 'chords') && w.has('effect', 'put', 'add') ? 'chord'
+          : w.has('scale') && w.has('snap', 'lock', 'force', 'put') ? 'scale'
+            : null
+      if (!kind) return null
+      if (w.has('stop', 'remove', 'take', 'off', 'delete')) return null
+      const hit = nameOrSelected(w, ctx, ['arpeggiate', 'arpeggiator', 'arp', 'chord',
+        'chords', 'scale', 'snap', 'lock', 'force', 'effect', 'put', 'add', 'track',
+        'sixteenth', 'eighth', 'quarter', 'notes', 'note'], { dropNums: true })
+      if (!hit) return null
+      const rate = w.has('sixteenth', 'sixteenths') ? 0.25
+        : w.has('eighth', 'eighths') ? 0.5
+          : w.has('quarter', 'quarters') ? 1
+            : undefined
+      const style = w.has('down') ? 'down' : w.has('random') ? 'random'
+        : w.hasPhrase('up', 'down') ? 'updown' : undefined
+      return {
+        calls: [{
+          name: 'add_midi_effect',
+          input: {
+            target: hit.name, effect: kind,
+            ...(rate != null ? { rate } : {}),
+            ...(style ? { style } : {}),
+          },
+        }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'remove_midi_effect',
+    tool: 'remove_midi_effect',
+    group: 'Notes',
+    what: 'Stop shaping the notes',
+    say: ['stop arpeggiating the bass 2', 'remove the arpeggiator from the bass 2'],
+    match(w, ctx) {
+      const kind = w.has('arpeggiate', 'arpeggiating', 'arpeggiator', 'arp') ? 'arp'
+        : w.has('chord', 'chords') ? 'chord'
+          : w.has('scale') ? 'scale'
+            : null
+      if (!kind) return null
+      if (!w.has('stop', 'remove', 'take', 'delete', 'lose')) return null
+      const hit = nameOrSelected(w, ctx, ['stop', 'remove', 'take', 'delete', 'lose',
+        'arpeggiate', 'arpeggiating', 'arpeggiator', 'arp', 'chord', 'chords', 'scale',
+        'effect', 'off', 'from', 'track'], { dropNums: true })
+      if (!hit) return null
+      return {
+        calls: [{ name: 'remove_midi_effect', input: { target: hit.name, effect: kind } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+
+  // ── A stretch of timeline with a parameter dialled in ────────────────────
+  {
+    id: 'add_clip_effect',
+    tool: 'add_clip_effect',
+    group: 'Arrangement',
+    what: 'Dial a parameter in and out over a stretch',
+    say: [
+      'put a low pass bar on the bass 2 for 4 bars',
+      'add a drive bar on the drums for 2 bars',
+    ],
+    match(w, ctx) {
+      if (!w.has('bar', 'bars')) return null
+      if (!w.has('put', 'add', 'draw')) return null
+      // The bar's PARAMETER. Without one of these the sentence is about the
+      // loop, the transport or a length, all of which also say "bars".
+      const field = w.said('low pass') || w.has('lowpass') ? 'filterHz'
+        : w.said('high pass') || w.has('highpass') ? 'highpassHz'
+          : w.has('drive') ? 'drive'
+            : w.has('distortion') ? 'distortion'
+              : w.has('bitcrush', 'crush') ? 'bitcrush'
+                : w.has('reverb') ? 'reverbWet'
+                  : w.has('delay') ? 'delayWet'
+                    : null
+      if (!field) return null
+      const hit = nameOrSelected(w, ctx, ['put', 'add', 'draw', 'bar', 'bars', 'for',
+        'over', 'low', 'pass', 'lowpass', 'high', 'highpass', 'drive', 'distortion',
+        'bitcrush', 'crush', 'reverb', 'delay', 'track', 'percent'], { dropNums: true })
+      if (!hit) return null
+      const nums = argNumbers(w, hit.name)
+      const length = nums[0] != null && nums[0] > 0 ? { bars: nums[0] } : undefined
+      const amount = w.has('percent') && nums[1] != null ? nums[1] : undefined
+      return {
+        calls: [{
+          name: 'add_clip_effect',
+          input: {
+            target: hit.name, parameter: field,
+            ...(length ? { length } : {}),
+            ...(amount != null ? { amount } : {}),
+          },
+        }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+
+  // ── Folders in the mixer ─────────────────────────────────────────────────
+  {
+    id: 'group_tracks',
+    tool: 'group_tracks',
+    group: 'Project',
+    what: 'Fold tracks into one group',
+    say: ['group the drums and the bass 2', 'group the pad and the drums'],
+    match(w, ctx) {
+      if (!w.has('group', 'bus', 'folder')) return null
+      if (w.has('ungroup')) return null
+      // Every track the sentence names, in the order it names them. A group is
+      // the one command whose target is plural, so it cannot use the shared
+      // name resolution — that answers "which ONE".
+      const named: string[] = []
+      for (const track of ctx.tracks) {
+        const parts = foldName(track.name ?? '').split(' ').filter(Boolean)
+        if (parts.length && parts.every(part => w.all.includes(part))) {
+          named.push(track.name ?? '')
+        }
+      }
+      if (named.length < 2) return null
+      for (const word of w.all) w.markWord(word, 0)
+      // "as Backing" names the group; without it the studio names it itself.
+      const as = /\bas\s+([a-z0-9 '-]+)$/i.exec(w.raw)
+      const label = as ? as[1].trim().replace(/\b[a-z]/g, c => c.toUpperCase()) : ''
+      return {
+        calls: [{
+          name: 'group_tracks',
+          input: { targets: named, ...(label ? { name: label } : {}) },
+        }],
+        confidence: 0.9,
+        needsName: true,
+      }
+    },
+  },
+
   // ── Questions ────────────────────────────────────────────────────────────
   //
   // These answer instead of acting. They barely existed as a category before
@@ -1852,6 +2053,13 @@ const PRECEDENCE: string[] = [
   'rename_track',
   // The performance and clip surgery, before the general mixer rules: they all
   // name a track and several share a verb with something else.
+  // Grouping and the library first: both name tracks, and grouping is the only
+  // command whose target is plural.
+  'group_tracks',
+  'set_instrument',
+  'add_midi_effect',
+  'remove_midi_effect',
+  'add_clip_effect',
   'quantize',
   'set_velocity',
   'split_clip',

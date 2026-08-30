@@ -358,6 +358,121 @@ for (const nonsense of [
   }
 }
 
+// ── The library, the note stream, and folders ─────────────────────────────
+//
+// Brae: "Wire library access into the voice controls, as well as per clip
+// effects, midi effects, and track grouping."
+//
+// The library is the odd one of the four: it is not part of the song. It lives
+// on the machine, differs per person, and the executor is pure and sees only
+// the project — so the RULE resolves a spoken name against it and hands an id
+// on, which keeps the executor honest and the library where it actually is.
+{
+  const WITH_LIB = {
+    ...CTX,
+    library: [
+      { id: 'p-violin', name: 'Violin', group: 'Strings' },
+      { id: 'p-piano', name: 'Piano', group: 'Piano' },
+      { id: 'p-rhodes', name: 'Electric Piano', group: 'Piano' },
+    ],
+  }
+  const lib = q => {
+    const r = interpretHeard({ text: q, confidence: 0.95 }, WITH_LIB)
+    return { matched: r.matched, input: r.calls[0]?.input }
+  }
+
+  {
+    const r = lib('make the bass a violin')
+    check('a library instrument is found by name',
+      r.matched === 'set_instrument' && r.input?.presetId === 'p-violin',
+      `${r.matched} ${JSON.stringify(r.input)}`)
+    check('and the TRACK is what is left over, not "bass violin"',
+      r.input?.target === 'Bass', JSON.stringify(r.input))
+  }
+  {
+    // A two-word instrument name has to beat the one-word one inside it, or
+    // "electric piano" becomes "piano".
+    const r = lib('put an electric piano on the pad')
+    check('the longest matching instrument name wins',
+      r.input?.presetId === 'p-rhodes', JSON.stringify(r.input))
+    check('and it still finds the track', r.input?.target === 'Pad', JSON.stringify(r.input))
+  }
+  {
+    // An instrument nobody has is not an instrument. The studio does not invent
+    // one, and it does not silently do something else either.
+    const r = lib('make the bass a harpsichord')
+    check('an instrument not in the library is refused', r.matched !== 'set_instrument',
+      `${r.matched} ${JSON.stringify(r.input)}`)
+  }
+  {
+    const bare = interpretHeard({ text: 'make the bass a violin', confidence: 0.95 }, CTX)
+    check('and with no library at all it declines rather than guessing',
+      bare.matched !== 'set_instrument', bare.matched)
+  }
+}
+
+// ── MIDI effects change WHAT is played ───────────────────────────────────
+{
+  const midi = q => {
+    const r = interpretHeard({ text: q, confidence: 0.95 }, CTX)
+    return { matched: r.matched, input: r.calls[0]?.input }
+  }
+  check('"arpeggiate the pad" arpeggiates it',
+    midi('arpeggiate the pad').matched === 'add_midi_effect'
+    && midi('arpeggiate the pad').input?.effect === 'arp',
+    JSON.stringify(midi('arpeggiate the pad').input))
+  {
+    const r = midi('arpeggiate the pad in sixteenth notes')
+    check('and the rate is read', r.input?.rate === 0.25, JSON.stringify(r.input))
+  }
+  check('"stop arpeggiating the pad" takes it off',
+    midi('stop arpeggiating the pad').matched === 'remove_midi_effect',
+    midi('stop arpeggiating the pad').matched)
+  {
+    // Adding and removing share every content word but one, and getting them
+    // the wrong way round is the difference between a part that plays and one
+    // that does not.
+    check('adding and removing are told apart by one word',
+      midi('arpeggiate the pad').matched !== midi('stop arpeggiating the pad').matched)
+  }
+}
+
+// ── An effect BAR is a region, not a setting ─────────────────────────────
+{
+  const r = interpretHeard(
+    { text: 'put a low pass bar on the drums for 4 bars', confidence: 0.95 }, CTX)
+  check('a low-pass bar is a clip effect, not a track effect',
+    r.matched === 'add_clip_effect' && r.calls[0]?.input?.parameter === 'filterHz',
+    `${r.matched} ${JSON.stringify(r.calls[0]?.input)}`)
+  check('and it takes its length',
+    JSON.stringify(r.calls[0]?.input?.length) === '{"bars":4}',
+    JSON.stringify(r.calls[0]?.input))
+
+  // "Loop bars 1 to 4" also says "bars" and is not this.
+  const loop = interpretHeard({ text: 'loop bars 1 to 4', confidence: 0.95 }, CTX)
+  check('while an ordinary sentence about bars is not a bar',
+    loop.matched === 'set_loop_region.range', loop.matched)
+}
+
+// ── Grouping is the one command with a plural target ─────────────────────
+{
+  const g = interpretHeard({ text: 'group the drums and the pad', confidence: 0.95 }, CTX)
+  check('two tracks are grouped',
+    g.matched === 'group_tracks' && (g.calls[0]?.input?.targets ?? []).length === 2,
+    JSON.stringify(g.calls[0]?.input))
+  check('and both are named',
+    ['Drums', 'Pad'].every(n => (g.calls[0]?.input?.targets ?? []).includes(n)),
+    JSON.stringify(g.calls[0]?.input?.targets))
+
+  const named = interpretHeard(
+    { text: 'group the drums and the pad as Backing', confidence: 0.95 }, CTX)
+  check('a group can be named as it is made',
+    named.calls[0]?.input?.name === 'Backing', JSON.stringify(named.calls[0]?.input))
+
+  const one = interpretHeard({ text: 'group the drums', confidence: 0.95 }, CTX)
+  check('one track is not a group', one.matched !== 'group_tracks', one.matched)
+}
+
 // ── The splitting itself stays modest ──────────────────────────────────────
 check('a short sentence is not split at all', clauseCandidates('mute the drums').length === 0)
 check('and a long one yields a handful, not a cross-product',

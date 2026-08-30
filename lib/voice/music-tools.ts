@@ -451,6 +451,80 @@ export const MUSIC_TOOLS = [
       required: ['name'],
     },
   },
+  // ── The library, the note stream, and the mixer's folders ────────────────
+  {
+    name: 'set_instrument',
+    description:
+      'SOUND — put a library instrument on a track. "make the bass a violin", "put a piano on the pad". The caller resolves the name against the library and passes the id, because the library lives on the machine rather than in the song.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        presetId: { type: 'string', description: 'Library preset id, already resolved.' },
+        presetName: { type: 'string', description: 'What it is called, for the read-back.' },
+      },
+      required: ['target', 'presetId'],
+    },
+  },
+  {
+    name: 'add_midi_effect',
+    description:
+      'MIDI EFFECT — shapes the NOTES before they reach the instrument, so it changes what is played rather than how it sounds. arp turns held notes into a pattern, chord adds harmony notes above each one, scale snaps everything into key, velocity reshapes dynamics. "arpeggiate the pad", "put a chord effect on the keys".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        effect: { type: 'string', enum: ['arp', 'chord', 'scale', 'velocity'] },
+        rate: { type: 'number', description: 'For arp — in beats. 0.25 is a sixteenth.' },
+        style: { type: 'string', enum: ['up', 'down', 'updown', 'random'], description: 'For arp.' },
+      },
+      required: ['target', 'effect'],
+    },
+  },
+  {
+    name: 'remove_midi_effect',
+    description: 'Take a MIDI effect off a track. "stop arpeggiating the pad".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        effect: { type: 'string', enum: ['arp', 'chord', 'scale', 'velocity'] },
+      },
+      required: ['target', 'effect'],
+    },
+  },
+  {
+    name: 'add_clip_effect',
+    description:
+      'EFFECT BAR — a stretch of the timeline over which one sound parameter is dialled in and back out. Not an effect on the track: a region on it. "put a low-pass bar on the bass for 4 bars", "add drive over the chorus". The parameter follows a shape across the region, which is what makes it a bar rather than a setting.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        parameter: {
+          type: 'string',
+          description: 'A sound-shaping field: filterHz, highpassHz, drive, reverbWet, delayWet, bitcrush, gain, distortion.',
+        },
+        amount: { type: 'number', description: 'How far it is dialled in, 0-100.' },
+        at: POSITION,
+        length: LENGTH,
+      },
+      required: ['target', 'parameter'],
+    },
+  },
+  {
+    name: 'group_tracks',
+    description:
+      'GROUP — fold tracks into one folder so their volume, mute and effects apply to all of them. "group the drums and the bass", "put the vocals in a group called Backing".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        targets: { type: 'array', items: { type: 'string' }, description: 'Track names.' },
+        name: { type: 'string', description: 'What to call the group.' },
+      },
+      required: ['targets'],
+    },
+  },
   {
     name: 'undo',
     description: 'UNDO — take back the last change. Carried out by the editor, which owns the history.',
