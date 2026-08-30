@@ -58,6 +58,29 @@ export interface Transcript {
   confidence: number
 }
 
+/**
+ * What the microphone actually turned out to be.
+ *
+ * Asking for a raw input is a request, not a guarantee, and the difference
+ * matters: some devices cannot give one. A headset that carries both the
+ * microphone and the monitoring — anything Bluetooth, most obviously — switches
+ * itself into a hands-free profile the moment an input opens, and everything it
+ * plays drops to a narrow, grainy 16 kHz. No constraint can prevent that from a
+ * browser, and it produces the same symptom as the bug above.
+ *
+ * So the granted settings are reported. It is the difference between "the studio
+ * did something wrong" and "this headset cannot do both jobs at once", which are
+ * fixed in completely different places.
+ */
+export interface MicReport {
+  label: string
+  /** What the input is actually running at. 16000 or 8000 means a call profile. */
+  sampleRate: number | null
+  echoCancellation: boolean | null
+  /** True when the device looks like it has dropped into a call profile. */
+  degraded: boolean
+}
+
 export interface Recording {
   /**
    * Stop capturing and hand back what was said.
@@ -79,6 +102,8 @@ export interface Recording {
    * while muted is discarded rather than buffered.
    */
   setMuted: (muted: boolean) => void
+  /** What the device actually gave us. */
+  mic: MicReport
 }
 
 export interface RecordOptions {
@@ -95,11 +120,25 @@ export interface RecordOptions {
   /**
    * The studio's own sample rate.
    *
-   * A second AudioContext at a different rate can make the browser renegotiate
-   * the output device mid-playback, which is heard as a glitch. Matching the
-   * engine costs nothing and removes the possibility.
+   * Only used when there is no context to borrow. A second AudioContext at a
+   * different rate can make the browser renegotiate the output device
+   * mid-playback, which is heard as a glitch.
    */
   sampleRate?: number
+  /**
+   * The studio's own AudioContext, to build the microphone graph inside.
+   *
+   * Strongly preferred over making another. A second context is a second output
+   * stream on the same hardware, opened and closed underneath a session that is
+   * now held open for minutes — two clients negotiating one device is a
+   * standing invitation to the crackle this feature keeps producing. Borrowing
+   * the engine's removes the question: one context, one device, one rate, by
+   * construction.
+   *
+   * Nothing is ever connected to its destination, so the microphone cannot
+   * reach the mix.
+   */
+  audioContext?: AudioContext
   /** Called ~20x a second with 0–1 loudness, for a level meter. */
   onLevel?: (level: number) => void
   /** Fires once when speech is first detected. */
@@ -181,15 +220,33 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
   const raw: MediaTrackConstraints = {
     echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1,
   }
-  const base = o.playing ? raw : voiceProcessed
+  // ── A held-open session is ALWAYS playing, eventually ────────────────────
+  //
+  // Brae: "While the voice toggle is on, it has a LOT of static. It sounds like
+  // I'm washing rice in a sieve."
+  //
+  // This condition was read once, when the microphone opened, and that was fine
+  // while a take lasted one command: the transport either was or was not running
+  // for those two seconds. A toggled session outlives the condition entirely.
+  // You click Voice with the transport stopped, so the processed microphone is
+  // opened and the device drops into the system's voice-processing mode — and
+  // then you press play, and everything you hear for the rest of the session is
+  // coming through a mode designed for phone calls. It never recovers, because
+  // the microphone never closes.
+  //
+  // So a session that is held open takes the raw microphone unconditionally.
+  // There is no moment at which it is safe to assume no music will play.
+  const wantsRaw = o.playing || o.continuous
+  const base = wantsRaw ? raw : voiceProcessed
 
   let stream: MediaStream | null = null
   try {
     // voiceIsolation targets background SPEECH, which is exactly the case
     // noiseSuppression cannot help with — and it is part of the same
-    // voice-processing mode, so it is only asked for when nothing is playing.
+    // voice-processing mode, so it is only asked for when nothing can be
+    // playing and the microphone is closing again in a moment.
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: o.playing ? raw : ({ ...base, voiceIsolation: true } as MediaTrackConstraints),
+      audio: wantsRaw ? raw : ({ ...base, voiceIsolation: true } as MediaTrackConstraints),
     })
   } catch {
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: base }) } catch { return null }
@@ -201,15 +258,25 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
   // touching a word. A gentle compressor evens out how close the speaker is to
   // the microphone, which matters more than it sounds when a recogniser is
   // choosing between a quiet real word and a loud background one.
+  /** Every node this added, so a borrowed context can be handed back clean. */
+  const built: AudioNode[] = []
   let ctx: AudioContext | null = null
+  // Borrowed contexts must NOT be closed when the take ends — the studio is
+  // still using it to make sound.
+  let ownsContext = false
   let processed: MediaStream = stream
   let analyser: AnalyserNode | null = null
   try {
-    // Matched to the engine, so opening this cannot make the browser
-    // renegotiate the output device in the middle of a bar.
-    ctx = new AudioContext(o.sampleRate
-      ? { sampleRate: o.sampleRate, latencyHint: 'interactive' }
-      : { latencyHint: 'interactive' })
+    if (o.audioContext && o.audioContext.state !== 'closed') {
+      ctx = o.audioContext
+    } else {
+      // Nothing to borrow. Matched to the engine's rate at least, so opening
+      // this cannot make the browser renegotiate the device mid-bar.
+      ctx = new AudioContext(o.sampleRate
+        ? { sampleRate: o.sampleRate, latencyHint: 'interactive' }
+        : { latencyHint: 'interactive' })
+      ownsContext = true
+    }
     const src = ctx.createMediaStreamSource(stream)
     const hp = ctx.createBiquadFilter()
     hp.type = 'highpass'; hp.frequency.value = 85; hp.Q.value = 0.7
@@ -220,10 +287,14 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
     analyser.fftSize = 1024
     const dest = ctx.createMediaStreamDestination()
     src.connect(hp); hp.connect(comp); comp.connect(analyser); analyser.connect(dest)
+    // Nothing reaches ctx.destination: the microphone is analysed and recorded,
+    // never monitored. In a borrowed context that is the difference between a
+    // voice command and a feedback loop through the speakers.
+    built.push(src, hp, comp, analyser, dest)
     processed = dest.stream
   } catch {
     // No processing available — record the raw stream rather than nothing.
-    ctx = null; analyser = null; processed = stream
+    ctx = null; analyser = null; ownsContext = false; processed = stream
   }
 
   const mimeType = pickMime()
@@ -334,7 +405,10 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
   const release = () => {
     if (watcher) { clearInterval(watcher); watcher = null }
     for (const t of stream.getTracks()) t.stop()
-    void ctx?.close()
+    // Disconnect what was added either way; only close what was created here.
+    for (const node of built) { try { node.disconnect() } catch { /* already gone */ } }
+    built.length = 0
+    if (ownsContext) void ctx?.close()
   }
 
   /** Send one clip and read the answer. Shared by both modes, so a fix to one
@@ -402,7 +476,20 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
   const stopOnce = () => (pending ??= finish())
   autoStop = () => { void stopOnce() }
 
+  const track0 = stream.getAudioTracks()[0]
+  const granted = track0?.getSettings?.() ?? {}
+  const grantedRate = typeof granted.sampleRate === 'number' ? granted.sampleRate : null
+  const mic: MicReport = {
+    label: track0?.label ?? '',
+    sampleRate: grantedRate,
+    echoCancellation: typeof granted.echoCancellation === 'boolean' ? granted.echoCancellation : null,
+    // A call profile, whoever asked for it. Under 24 kHz no music is being
+    // monitored properly, and the cause is the device rather than the studio.
+    degraded: grantedRate != null && grantedRate < 24_000,
+  }
+
   return {
+    mic,
     cancel: () => { try { rec.stop() } catch { /* already stopped */ } release() },
     stop: stopOnce,
     setMuted: (m: boolean) => {

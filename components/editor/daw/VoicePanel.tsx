@@ -61,6 +61,15 @@ export interface VoicePanelProps {
   canSpeak: boolean
   /** Which tab to open on. */
   initialTab?: 'talk' | 'settings' | 'help'
+  /**
+   * What the microphone actually turned out to be.
+   *
+   * Shown because the commonest cause of bad monitoring while voice is on is
+   * not the studio at all — it is a headset that cannot record and play music
+   * at the same time and quietly drops to call quality. Printing the rate turns
+   * "it sounds like static" into a number that says whose problem it is.
+   */
+  mic?: { label: string; sampleRate: number | null; echoCancellation: boolean | null; degraded: boolean } | null
   colors: {
     bgSurface: string
     border: string
@@ -74,7 +83,7 @@ export default function VoicePanel({
   turns, listening, attentive, continuous, level, hud,
   onHud, onClose, onClear, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak,
-  initialTab = 'talk',
+  initialTab = 'talk', mic,
 }: VoicePanelProps) {
   const [tab, setTab] = React.useState<'talk' | 'settings' | 'help'>(initialTab)
   React.useEffect(() => { setTab(initialTab) }, [initialTab])
@@ -252,6 +261,27 @@ export default function VoicePanel({
                 </span>
               </span>
             </label>
+
+            {mic && (
+              <div style={{
+                borderTop: `1px solid ${C.border}`, paddingTop: 9, lineHeight: 1.5,
+                color: mic.degraded ? '#e0776b' : C.textMuted,
+              }}>
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 3 }}>
+                  MICROPHONE
+                </div>
+                {mic.label || 'default input'}
+                {mic.sampleRate ? ` · ${(mic.sampleRate / 1000).toFixed(1)} kHz` : ''}
+                {mic.echoCancellation ? ' · echo cancelling' : ' · raw'}
+                {mic.degraded && (
+                  <div style={{ marginTop: 4 }}>
+                    This device dropped to call quality when the microphone opened, which
+                    is what makes playback sound grainy. It is the headset switching
+                    profiles, not the studio — monitor on something else while voice is on.
+                  </div>
+                )}
+              </div>
+            )}
 
             <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
               <input type="checkbox" checked={hud} onChange={e => onHud(e.target.checked)} style={{ marginTop: 2 }} />

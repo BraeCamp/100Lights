@@ -35,7 +35,7 @@ import { COMMAND_VOCABULARY, commandHelp } from '@/lib/voice/interpret'
 import { remember, markFailed } from '@/lib/voice/voice-memory'
 import {
   startRecording, preferredTranscriber, setPreferredTranscriber,
-  type Recording, type StopResult,
+  type Recording, type StopResult, type MicReport,
 } from '@/lib/voice/record'
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
@@ -132,6 +132,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelTab, setPanelTab] = useState<'talk' | 'settings' | 'help'>('talk')
   const [hud, setHudState] = useState(false)
+  /** What the microphone turned out to be, for the panel and for diagnosing a
+   *  device that cannot record and monitor at the same time. */
+  const [mic, setMic] = useState<MicReport | null>(null)
 
   const addTurn = useCallback((by: VoiceTurn['by'], text: string, ignored = false) => {
     if (!text?.trim()) return
@@ -752,6 +755,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // what rate it is running at.
       playing: !!engine?.isPlaying,
       sampleRate: engine?.ctx?.sampleRate,
+      // Borrow the studio's own context rather than opening a second one on the
+      // same hardware. Two clients negotiating one audio device is where the
+      // crackle comes from, and a held-open session gives it minutes to happen.
+      audioContext: engine?.ctx,
       // Brae: "This way the user can do multiple things while only clicking
       // Voice once." Only in toggle mode — holding a button to talk already
       // says when you are finished, and holding it for a session would be an
@@ -771,6 +778,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       onSilence: () => { finishRef.current?.() },
     })
     if (!rec) { setProblem('Could not open the microphone.'); return }
+    setMic(rec.mic)
+    if (rec.mic.degraded) {
+      // Not our doing, and not fixable from a browser: a headset that carries
+      // both the microphone and the monitoring switches itself into a
+      // hands-free profile when an input opens, and everything it plays drops
+      // to a narrow, grainy 16 kHz. Saying so is the only useful thing
+      // available, and it beats leaving somebody to conclude the studio is
+      // broken.
+      setProblem(`${rec.mic.label || 'That device'} switched to call quality (${rec.mic.sampleRate} Hz) — monitor on something else while voice is on.`)
+    }
     if (!wanted.current) { rec.cancel(); setProblem(''); return }
     recorder.current = rec
     setProblem('')
@@ -1051,6 +1068,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           onSpeaks={on => { setSpeaks(on); setSpeechEnabled(on) }}
           canSpeak={speechAvailable()}
           onHud={on => { setHudState(on); setHud(on) }}
+          mic={mic}
           onClose={() => setPanelOpen(false)}
           onClear={() => setTurns([])}
           colors={{

@@ -89,12 +89,10 @@ async function tapVoice() {
   await page.waitForTimeout(900)
 }
 
-// ── Stopped: the processed microphone is the right one to ask for ──────────
+// ── A microphone opens at all ──────────────────────────────────────────────
 await tapVoice()
 const stopped = (await micRequests()).at(-1)
 check('a microphone was actually opened', !!stopped, JSON.stringify(stopped))
-check('with the transport stopped, voice processing is asked for',
-  stopped?.audio?.echoCancellation === true, JSON.stringify(stopped?.audio))
 
 // ── Playing: leave the output alone ────────────────────────────────────────
 // Started on the ENGINE, not through the reducer: TRANSPORT is carried out by
@@ -115,6 +113,55 @@ check('and none of the voice-processing modes are requested',
   && playing?.audio?.autoGainControl === false
   && playing?.audio?.voiceIsolation === undefined,
   JSON.stringify(playing?.audio))
+
+// ── The case that made it crackle ──────────────────────────────────────────
+//
+// Brae: "While the voice toggle is on, it has a LOT of static. It sounds like
+// I'm washing rice in a sieve."
+//
+// The transport state was read ONCE, when the microphone opened. Fine while a
+// take lasted one command; useless for a session that outlives the condition.
+// You click Voice with the transport stopped, so the PROCESSED microphone is
+// opened and the device drops into voice-processing mode — then you press play,
+// and everything you hear for the rest of the session comes through a mode
+// designed for phone calls. It never recovers, because the microphone never
+// closes.
+//
+// So: start a toggled session while stopped, and check what was asked for.
+await page.evaluate(() => window.__daw?.stop?.())
+await page.waitForTimeout(600)
+{
+  const before = (await micRequests()).length
+  await voiceBtn.click()
+  await page.waitForFunction(
+    () => document.querySelector('button[data-voice-control]')?.getAttribute('aria-pressed') === 'true',
+    null, { timeout: 15000 },
+  )
+  await page.waitForTimeout(800)
+  const asked = (await micRequests()).at(-1)
+  check('a held-open session opens raw even with the transport stopped',
+    asked?.audio?.echoCancellation === false,
+    JSON.stringify(asked?.audio))
+  check('and asks for no voice-processing mode at all',
+    asked?.audio?.noiseSuppression === false && asked?.audio?.voiceIsolation === undefined,
+    JSON.stringify(asked?.audio))
+  check('one device open', (await micRequests()).length === before + 1)
+  await voiceBtn.click()
+  await page.waitForTimeout(900)
+}
+
+// ── And it does not open a second audio context on the same hardware ───────
+{
+  const rates = await page.evaluate(() => window.__contextRates)
+  const engineRate = await page.evaluate(() => window.__daw?.ctx?.sampleRate)
+  // Borrowing the engine's context means no NEW context is created for the
+  // microphone at all. Two clients negotiating one device is where the crackle
+  // comes from, and a held-open session gives it minutes to happen.
+  const madeForMic = rates.filter(r => r.asked !== null)
+  check('the microphone borrows the studio\'s audio context',
+    madeForMic.length === 0,
+    madeForMic.length ? `made ${madeForMic.length} of its own` : `engine stays at ${engineRate}`)
+}
 
 // ── One click, one microphone, held open ───────────────────────────────────
 //
@@ -151,15 +198,37 @@ const closed = await page.evaluate(() =>
   document.querySelector('button[data-voice-control]')?.getAttribute('aria-pressed') !== 'true')
 check('and a second click ends the session', closed)
 
-// ── And the audio context cannot fight the engine over the device rate ─────
-const rates = await page.evaluate(() => window.__contextRates)
-const engineRate = await page.evaluate(() => window.__daw?.ctx?.sampleRate)
-const micContexts = rates.filter(r => r.asked !== null)
-check('the mic context is opened at the studio\'s own rate',
-  micContexts.length > 0 && micContexts.every(r => r.asked === engineRate),
-  `engine ${engineRate}, asked ${micContexts.map(r => r.asked).join(',') || 'nothing'}`)
-
 await page.evaluate(() => window.__daw?.stop?.())
+// ── Push-to-talk still gets the processed microphone ───────────────────────
+//
+// The only case where voice processing is still the right thing to ask for: the
+// take lasts one sentence, the button is held down for it, and the transport
+// cannot start underneath it. Everything above is about the session that CAN.
+// Set through a LATER init script, not through evaluate: the first init script
+// runs again on every navigation and would put the mode straight back to
+// toggle, so the reload would quietly test the case that was already tested.
+// Init scripts accumulate and run in order, so this one wins.
+await page.addInitScript(() => {
+  try { localStorage.setItem('beacon.voice.mode', 'hold') } catch { /* private mode */ }
+})
+await page.reload({ waitUntil: 'domcontentloaded' })
+await page.waitForFunction(() => !!window.__dawDispatch, null, { timeout: 240000 })
+await page.waitForTimeout(2000)
+{
+  // Real mouse input through the browser, not a dispatched event: hold-to-talk
+  // listens for pointer events the page actually receives, and a synthetic one
+  // never reaches it.
+  const btn = page.locator('button[data-voice-control]').first()
+  await btn.hover()
+  await page.mouse.down()
+  await page.waitForTimeout(2200)
+  await page.mouse.up()
+  await page.waitForTimeout(1000)
+  const held = (await micRequests()).at(-1)
+  check('holding the button asks for voice processing',
+    held?.audio?.echoCancellation === true, JSON.stringify(held?.audio))
+}
+
 await browser.close()
 console.log(failures
   ? `\n${failures} failing — opening the mic still disturbs playback`
