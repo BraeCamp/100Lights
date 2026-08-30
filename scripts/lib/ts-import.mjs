@@ -15,7 +15,7 @@
 // A renderer that hardcodes its own copy of "low-pass is log from 40 to 18000"
 // will quietly disagree with the app the first time someone edits that table.
 
-import { readFileSync, writeFileSync, mkdtempSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdtempSync, existsSync, symlinkSync } from 'node:fs'
 import { join, dirname, basename, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -32,6 +32,13 @@ function ensureDir() {
   // Without this every re-parsed .ts prints a MODULE_TYPELESS_PACKAGE_JSON
   // warning, which is several lines of noise in front of real output.
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}')
+  // The copies live outside the repo, so a BARE import — '@neondatabase/
+  // serverless', 'pg' — had nowhere to resolve from. Only relative and aliased
+  // imports were ever rewritten, so any module that reached a real package
+  // failed at import time with ERR_MODULE_NOT_FOUND, and everything that
+  // touches the database reaches one. A link is enough: Node walks up from the
+  // importing file looking for node_modules, and finds this.
+  try { symlinkSync(join(REPO, 'node_modules'), join(dir, 'node_modules'), 'dir') } catch { /* already there */ }
   return dir
 }
 

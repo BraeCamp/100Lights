@@ -2,6 +2,7 @@ import { isAdmin } from '@/lib/admin-auth'
 import { listAllObjects, objectInfo } from '@/lib/r2'
 import { voiceKey, normaliseSpoken, looksSpeakable } from '@/lib/voice/voice-cache'
 import phrases from '@/lib/voice/phrases.json'
+import { listGaps } from '@/lib/voice-gaps-db'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -104,6 +105,11 @@ export async function GET() {
     spoken.push(...batch)
   }
 
+  // The other half of the same question. This page lists what the studio CAN
+  // say; the gaps are what people said to it that it could not read — the queue
+  // of phrasings that cost a model call today and could be free tomorrow.
+  const gaps = await listGaps()
+
   const fixedBought = fixed.filter(p => p.bought)
   const fixedPending = fixed.filter(p => !p.bought && p.speakable)
 
@@ -132,9 +138,12 @@ export async function GET() {
       bytes: objects.reduce((n, o) => n + o.size, 0),
       spokenCount: unknown.length,
       spokenShown: spoken.length,
+      gaps: gaps.length,
+      gapsNew: gaps.filter(g => g.status === 'new').length,
     },
     fixed,
     shapes,
     spoken,
+    gaps,
   })
 }

@@ -22,10 +22,19 @@ function makeLocalSql(connString: string): SqlTag {
   }
 
   class LocalFragment {
-    constructor(
-      public strings: TemplateStringsArray,
-      public values: unknown[],
-    ) {}
+    // Declared and assigned rather than written as constructor parameter
+    // properties. Identical at runtime, and the only form Node's own
+    // type-stripping can parse — which is what every check script in scripts/
+    // uses to import a module directly. With the shorthand, anything that
+    // touched the database was simply untestable from a script: importing it
+    // threw ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX before a single assertion ran.
+    strings: TemplateStringsArray
+    values: unknown[]
+
+    constructor(strings: TemplateStringsArray, values: unknown[]) {
+      this.strings = strings
+      this.values = values
+    }
 
     /** Flattens this fragment (and any nested ones) into text + params. */
     compile(params: unknown[]): string {

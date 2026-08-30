@@ -24,6 +24,12 @@ interface Phrase {
   modified: string | null
 }
 interface Spoken { text: string | null; key: string; size: number; modified: string | null }
+/** A phrasing somebody used that the built-in commands could not read, and what
+ *  the assistant decided it meant. The queue for writing new commands. */
+interface Gap {
+  said: string; count: number; lastAt: number; say: string
+  calls: unknown; source: string; status: string; ids: string[]
+}
 interface Data {
   voiceId: string
   configured: { elevenlabs: boolean; storage: boolean }
@@ -33,10 +39,12 @@ interface Data {
     fixed: number; shapes: number; bought: number; pending: number
     pendingCost: number; spentSoFar: number
     inStorage: number; bytes: number; spokenCount: number; spokenShown: number
+    gaps: number; gapsNew: number
   }
   fixed: Phrase[]
   shapes: Phrase[]
   spoken: Spoken[]
+  gaps: Gap[]
 }
 
 function bytes(n: number): string {
@@ -47,7 +55,7 @@ function bytes(n: number): string {
   return `${n.toFixed(n >= 100 ? 0 : 1)} ${u[i]}`
 }
 
-type Tab = 'fixed' | 'shapes' | 'spoken'
+type Tab = 'fixed' | 'shapes' | 'spoken' | 'gaps'
 
 export default function VoicePhrasesPanel() {
   const [data, setData] = useState<Data | null>(null)
@@ -70,13 +78,16 @@ export default function VoicePhrasesPanel() {
   const rows = useMemo(() => {
     if (!data) return []
     const needle = q.trim().toLowerCase()
-    const list: (Phrase | Spoken)[] =
-      tab === 'fixed' ? data.fixed : tab === 'shapes' ? data.shapes : data.spoken
+    const list: (Phrase | Spoken | Gap)[] =
+      tab === 'fixed' ? data.fixed
+        : tab === 'shapes' ? data.shapes
+          : tab === 'gaps' ? data.gaps
+            : data.spoken
     if (!needle) return list
     return list.filter(r => {
-      const text = 'display' in r ? r.display : (r.text ?? '')
-      const where = 'where' in r ? r.where : ''
-      return text.toLowerCase().includes(needle) || where.toLowerCase().includes(needle)
+      const text = 'display' in r ? r.display : 'said' in r ? r.said : (r.text ?? '')
+      const where = 'where' in r ? r.where : 'say' in r ? r.say : ''
+      return text.toLowerCase().includes(needle) || String(where).toLowerCase().includes(needle)
     })
   }, [data, tab, q])
 
@@ -122,6 +133,8 @@ export default function VoicePhrasesPanel() {
             sub="carry a name — bought as said" accent="#a78bfa" />
           <Stat label="Said by people" value={t.spokenCount}
             sub={t.spokenCount > t.spokenShown ? `newest ${t.spokenShown} listed` : 'all listed'} accent="#38bdf8" />
+          <Stat label="Gaps to close" value={t.gapsNew}
+            sub={t.gapsNew ? 'phrasings the AI had to read' : 'nothing outstanding'} accent="#f472b6" />
         </div>
       )}
 
@@ -138,7 +151,7 @@ export default function VoicePhrasesPanel() {
       )}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        {(['fixed', 'shapes', 'spoken'] as Tab[]).map(id => (
+        {(['fixed', 'shapes', 'spoken', 'gaps'] as Tab[]).map(id => (
           <button key={id} onClick={() => setTab(id)}
             style={{
               fontSize: 12, fontWeight: 600, padding: '4px 11px', borderRadius: 7, cursor: 'pointer',
@@ -148,7 +161,8 @@ export default function VoicePhrasesPanel() {
             }}>
             {id === 'fixed' ? `Fixed (${data?.totals.fixed ?? 0})`
               : id === 'shapes' ? `Templated (${data?.totals.shapes ?? 0})`
-                : `Said by people (${data?.totals.spokenShown ?? 0})`}
+                : id === 'gaps' ? `Gaps (${data?.totals.gaps ?? 0})`
+                  : `Said by people (${data?.totals.spokenShown ?? 0})`}
           </button>
         ))}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 'auto', border: '1px solid var(--border)', borderRadius: 7, padding: '3px 9px', background: 'var(--bg-card)' }}>
@@ -162,6 +176,7 @@ export default function VoicePhrasesPanel() {
         {tab === 'fixed' && 'Said word-for-word every time, so each one is recorded once and then costs nothing forever.'}
         {tab === 'shapes' && 'These carry a track name, so they have no single recording — each distinct final sentence is bought the first time somebody says it. Names overlap heavily between users, so these converge too.'}
         {tab === 'spoken' && 'Recordings people have actually caused, read back from what was stored alongside each one. The key is a hash of the text, which is what lets two users share a recording without either knowing about the other.'}
+        {tab === 'gaps' && 'What people said that the built-in commands could not read, and what the assistant decided it meant. Each row is a phrasing the studio pays a model to understand today and could understand for free tomorrow — this is the build order for new commands, ranked by how often it actually came up.'}
       </p>
 
       {!data && !err && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Reading storage…</p>}
@@ -171,11 +186,45 @@ export default function VoicePhrasesPanel() {
           <table className="w-full text-sm">
             <tbody>
               {rows.map((r, i) => {
+                const stripe = {
+                  borderTop: i ? '1px solid var(--border)' : 'none',
+                  background: i % 2 ? 'var(--bg-surface)' : 'var(--bg-card)',
+                }
+
+                // ── A gap: what somebody said, and what it turned out to mean ──
+                //
+                // Given its own row shape rather than squeezed into the phrase
+                // columns, because it is the opposite kind of fact. The other
+                // tabs list things the studio can say; this lists things it
+                // could not understand, and the useful pairing is the wording
+                // against its meaning, with the count as the argument for
+                // writing a rule.
+                if ('said' in r) {
+                  return (
+                    <tr key={r.said} style={stripe}>
+                      <td className="px-3 py-2" style={{ width: 24, verticalAlign: 'top' }}>
+                        <span style={{ fontSize: 10, color: r.status === 'new' ? '#f472b6' : 'var(--text-muted)' }}>
+                          {r.status === 'new' ? '●' : '✓'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2 text-xs" colSpan={2}>
+                        <div style={{ color: 'var(--text-primary)' }}>&ldquo;{r.said}&rdquo;</div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                          became: {r.say || '(no read-back recorded)'}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        {r.count}&times; · {r.source}
+                        <div>{new Date(r.lastAt).toISOString().slice(0, 10)}</div>
+                      </td>
+                    </tr>
+                  )
+                }
+
                 const isPhrase = 'display' in r
                 const text = isPhrase ? r.display : (r.text ?? '(recorded before the text was stored)')
                 return (
-                  <tr key={isPhrase ? r.text : r.key}
-                    style={{ borderTop: i ? '1px solid var(--border)' : 'none', background: i % 2 ? 'var(--bg-surface)' : 'var(--bg-card)' }}>
+                  <tr key={isPhrase ? r.text : r.key} style={stripe}>
                     <td className="px-3 py-2" style={{ width: 24 }}>
                       {isPhrase && r.kind === 'fixed'
                         ? (r.bought
@@ -183,7 +232,7 @@ export default function VoicePhrasesPanel() {
                           : <Circle size={11} style={{ color: 'var(--text-muted)' }} aria-label="not bought yet" />)
                         : !isPhrase
                           ? <Check size={13} style={{ color: '#38bdf8' }} aria-label="stored" />
-                          : <span style={{ fontSize: 10, color: '#a78bfa' }}>◆</span>}
+                          : <span style={{ fontSize: 10, color: '#a78bfa' }}>&#9670;</span>}
                     </td>
                     <td className="px-2 py-2 text-xs" style={{
                       color: isPhrase && !r.speakable ? 'var(--text-muted)' : 'var(--text-primary)',
@@ -209,7 +258,10 @@ export default function VoicePhrasesPanel() {
               })}
               {rows.length === 0 && (
                 <tr><td className="px-4 py-4 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {tab === 'spoken' ? 'Nobody has caused a recording yet.' : q ? 'Nothing matches that.' : 'Nothing here.'}
+                  {tab === 'gaps'
+                    ? 'Nothing outstanding — every sentence people have used, the built-in commands could read.'
+                    : tab === 'spoken' ? 'Nobody has caused a recording yet.'
+                      : q ? 'Nothing matches that.' : 'Nothing here.'}
                 </td></tr>
               )}
             </tbody>
