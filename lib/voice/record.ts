@@ -33,6 +33,8 @@
 // route): in a noisy room the decision between "mute" and "moot" is much easier
 // when the likely words are known.
 
+import { newVad, vadStep } from './vad'
+
 const PREFER_KEY = 'beacon.voice.transcriber'
 
 export type Transcriber = 'browser' | 'server'
@@ -73,6 +75,22 @@ export interface Recording {
 export interface RecordOptions {
   /** Words likely in this project — commands and track names. */
   vocabulary?: string[]
+  /**
+   * Is the transport running?
+   *
+   * Changes almost everything about how the microphone is opened, because a
+   * studio that is playing is a different acoustic situation AND a different
+   * risk: the monitor path must not be touched.
+   */
+  playing?: boolean
+  /**
+   * The studio's own sample rate.
+   *
+   * A second AudioContext at a different rate can make the browser renegotiate
+   * the output device mid-playback, which is heard as a glitch. Matching the
+   * engine costs nothing and removes the possibility.
+   */
+  sampleRate?: number
   /** Called ~20x a second with 0–1 loudness, for a level meter. */
   onLevel?: (level: number) => void
   /** Fires once when speech is first detected. */
@@ -92,16 +110,7 @@ function pickMime(): string | undefined {
   return undefined
 }
 
-// ── Deciding whether anyone is talking ──────────────────────────────────────
-//
-// Adaptive rather than a fixed number, because a threshold that works in a
-// quiet room mutes someone in a loud one and vice versa. The floor is learned
-// from the first half-second — whatever this room happens to sound like — and
-// speech is anything comfortably above it, with an absolute minimum so that a
-// silent room cannot trigger on its own hiss.
-const SPEECH_OVER_FLOOR = 2.5
-const MIN_SPEECH_LEVEL = 0.012
-const SILENCE_MS = 1100
+// The longest a single command may run before it ends itself.
 const MAX_MS = 15_000
 
 /**
@@ -116,15 +125,38 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return null
   if (typeof MediaRecorder === 'undefined') return null
 
-  const base: MediaTrackConstraints = {
+  // ── What opening the microphone does to the SPEAKERS ─────────────────────
+  //
+  // Brae: "when I hit voice control during playback, the audio starts becoming
+  // staticy. It loads fine, just bad static."
+  //
+  // Asking for echoCancellation is not a request about the microphone. On macOS
+  // it switches the whole device into the system's voice-processing mode, and
+  // that mode owns the OUTPUT as well — it resamples, ducks and filters
+  // everything the browser plays so a voice call sounds clean. In a phone call
+  // that is the entire point. Over a mix it is heard as static, and it arrives
+  // the instant the mic opens, which is exactly what he described.
+  //
+  // Nothing about a microphone is worth degrading the monitor path in a studio,
+  // so while the transport runs the microphone is opened RAW. The cost is that
+  // the mix ends up in the recording, and that cost is paid where it can be
+  // paid — a gentler speech threshold below, and a transcriber that is good at
+  // finding words in a noisy clip.
+  const voiceProcessed: MediaTrackConstraints = {
     echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1,
   }
+  const raw: MediaTrackConstraints = {
+    echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1,
+  }
+  const base = o.playing ? raw : voiceProcessed
+
   let stream: MediaStream | null = null
   try {
     // voiceIsolation targets background SPEECH, which is exactly the case
-    // noiseSuppression cannot help with.
+    // noiseSuppression cannot help with — and it is part of the same
+    // voice-processing mode, so it is only asked for when nothing is playing.
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { ...base, voiceIsolation: true } as MediaTrackConstraints,
+      audio: o.playing ? raw : ({ ...base, voiceIsolation: true } as MediaTrackConstraints),
     })
   } catch {
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: base }) } catch { return null }
@@ -140,7 +172,11 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
   let processed: MediaStream = stream
   let analyser: AnalyserNode | null = null
   try {
-    ctx = new AudioContext()
+    // Matched to the engine, so opening this cannot make the browser
+    // renegotiate the output device in the middle of a bar.
+    ctx = new AudioContext(o.sampleRate
+      ? { sampleRate: o.sampleRate, latencyHint: 'interactive' }
+      : { latencyHint: 'interactive' })
     const src = ctx.createMediaStreamSource(stream)
     const hp = ctx.createBiquadFilter()
     hp.type = 'highpass'; hp.frequency.value = 85; hp.Q.value = 0.7
@@ -171,10 +207,8 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
   rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data) }
   rec.start()
 
+  let vad = newVad()
   let heardSpeech = false
-  let lastLoudAt = 0
-  let floor = 0
-  let floorSamples = 0
   let watcher: ReturnType<typeof setInterval> | null = null
   const startedAt = Date.now()
   let autoStop: (() => void) | null = null
@@ -188,19 +222,11 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
       const rms = Math.sqrt(sum / buf.length)
       o.onLevel?.(Math.min(1, rms * 8))
 
-      // The first half-second is taken as the room, whatever the room is.
-      if (floorSamples < 10) {
-        floor = (floor * floorSamples + rms) / (floorSamples + 1)
-        floorSamples++
-        return
-      }
-
-      const threshold = Math.max(MIN_SPEECH_LEVEL, floor * SPEECH_OVER_FLOOR)
       const now = Date.now()
-      if (rms > threshold) {
-        if (!heardSpeech) { heardSpeech = true; o.onSpeechStart?.() }
-        lastLoudAt = now
-      } else if (heardSpeech && now - lastLoudAt > SILENCE_MS) {
+      const step = vadStep(vad, rms, now, { playing: o.playing })
+      vad = step.state
+      if (step.speaking && !heardSpeech) { heardSpeech = true; o.onSpeechStart?.() }
+      if (step.ended) {
         // Finished talking. Ending here rather than on release keeps the
         // trailing room — and whoever is talking in it — out of the clip.
         o.onSilence?.()
@@ -224,7 +250,13 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
         if (blob.size < 1200) { resolve({ ok: true, result: null }); return }
         // Nothing ever rose above the room. Sending it means paying to be told
         // there were no words in it, and then telling the speaker they mumbled.
-        if (analyser && !heardSpeech) { resolve({ ok: true, result: null }); return }
+        //
+        // Not while the transport is running, though. Over a mix the meter is a
+        // much weaker witness — this is the check that turned "I spoke and it
+        // did not hear me" into a confident refusal to even look — so when
+        // there is music in the room the clip goes to the transcriber and the
+        // transcriber decides.
+        if (analyser && !heardSpeech && !o.playing) { resolve({ ok: true, result: null }); return }
         try {
           // The words likely in THIS project, as a hint to the recogniser.
           const qs = new URLSearchParams()

@@ -583,6 +583,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     ]
     const rec = await startRecording({
       vocabulary,
+      // Both of these change how the microphone is opened, and both are things
+      // only the studio knows: whether the monitor path must be left alone, and
+      // what rate it is running at.
+      playing: !!engine?.isPlaying,
+      sampleRate: engine?.ctx?.sampleRate,
       // A live meter, because "is it even hearing me" is the first question
       // when this goes wrong and it should not need asking twice.
       onLevel: setLevel,
@@ -603,7 +608,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // itself — and "Bass 2 muted" reads as a plausible command.
     stopSpeaking()
     setListening(true)
-  }, [project])
+    // `engine` matters here now: whether the transport is running decides how
+    // the microphone is opened, and a stale engine would decide it wrongly.
+  }, [project, engine])
 
   const start = useCallback(async () => {
     if (listening || busy) return
