@@ -32,6 +32,28 @@
 
 const ENABLED_KEY = 'beacon.voice.speak'
 const SENSITIVITY_KEY = 'beacon.voice.sensitivity'
+const AI_AUTO_KEY = 'beacon.voice.ai-auto'
+
+/**
+ * May the assistant act without being asked first?
+ *
+ * Brae, earlier: "I'm worried that AI will mishear things and create commands
+ * and use credits accidentally... every single time it should get confirmation
+ * first." And then: "Full AI integration will be in the highest tier and only
+ * when activated."
+ *
+ * Those are not in conflict, they are a default and an override. Confirmation
+ * stays the default for everybody, and this is the activation — off unless
+ * somebody deliberately turns it on, because it is the switch that lets a
+ * misheard sentence spend money without anybody seeing it first.
+ */
+export function aiActs(): boolean {
+  try { return localStorage.getItem(AI_AUTO_KEY) === 'on' } catch { return false }
+}
+
+export function setAiActs(on: boolean): void {
+  try { localStorage.setItem(AI_AUTO_KEY, on ? 'on' : 'off') } catch { /* private mode */ }
+}
 
 /**
  * How hard it should be to trigger while the microphone is held open.

@@ -53,7 +53,7 @@ import {
 import VoicePanel, { type VoiceTurn } from './VoicePanel'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
-  voiceSensitivity, setVoiceSensitivity,
+  voiceSensitivity, setVoiceSensitivity, aiActs, setAiActs,
 } from '@/lib/voice/speak'
 
 const C = {
@@ -172,6 +172,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   /** The last microphone check, and whether one is running. */
   const [calibration, setCalibration] = useState<CalibrationResult | null>(null)
   const [calibrating, setCalibrating] = useState<null | 'room' | 'voice'>(null)
+  const [aiAuto, setAiAutoState] = useState(false)
+  const aiAutoRef = useRef(false)
+  /** What the last assistant turn cost, and what is left. Shown while testing,
+   *  because a balance nobody can see is a balance nobody notices draining. */
+  const [credits, setCredits] = useState<{ spent: number; left: number } | null>(null)
   // Read by the recorder's callbacks, which outlive the render that made them.
   const sensitivityRef = useRef(1)
 
@@ -300,6 +305,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const sens = voiceSensitivity()
     setSensitivityState(sens)
     sensitivityRef.current = sens
+    const auto = aiActs()
+    setAiAutoState(auto)
+    aiAutoRef.current = auto
     setEnterRuns(readVoiceEnter())
   }, [])
 
@@ -741,17 +749,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // what it heard. Every time — not the first time, not when unsure: the
     // whole point is that a wrong transcript is indistinguishable from a right
     // one until a person reads it.
-    if (!confirmed) {
+    if (!confirmed && !aiAutoRef.current) {
       setBusy(false)
       setPendingAsk(text)
       return
     }
-    // Brae also said: "Full AI integration will be in the highest tier and only
-    // when activated." That is a mode where this check is SKIPPED, and it is
-    // deliberately not built yet — it needs the paid tiers to exist, and it
-    // contradicts "every single time" until someone has explicitly turned it on.
-    // When it arrives it belongs here, as an extra condition on `confirmed`,
-    // and nowhere else.
+    // That is the activation Brae described — "full AI integration ... only when
+    // activated" — and it is the only thing that skips this. Off unless
+    // somebody deliberately turns it on, because it is the switch that lets a
+    // misheard sentence spend money without anybody seeing it first.
 
     try {
       const res = await fetch('/api/ai/assist', {
@@ -780,7 +786,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         markFailed(e.error || `http ${res.status}`)
         return
       }
-      const data = await res.json() as { message?: string; actions?: VoiceCall[] }
+      const data = await res.json() as {
+        message?: string; actions?: VoiceCall[]; credits?: number; balance?: number
+      }
+      if (typeof data.credits === 'number') {
+        setCredits({ spent: data.credits, left: data.balance ?? 0 })
+      }
       const calls = data.actions ?? []
       if (!calls.length) {
         // The model answered rather than acted — usually a clarifying question,
@@ -1359,6 +1370,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           onHud={on => { setHudState(on); setHud(on) }}
           mic={mic}
           threshold={threshold}
+          aiAuto={aiAuto}
+          onAiAuto={on => { setAiAutoState(on); aiAutoRef.current = on; setAiActs(on) }}
+          credits={credits}
           calibration={calibration}
           calibrating={calibrating}
           calibrationPhrase={CALIBRATION_PHRASE}

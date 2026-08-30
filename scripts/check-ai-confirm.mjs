@@ -132,6 +132,41 @@ if (await confirmPanel.count()) {
 check('pressing the button is what sends it', assistCalls === before + 1,
   `assist calls: ${assistCalls}`)
 
+// ── And the activation, which is the only thing that skips it ──────────────
+//
+// Brae: "Full AI integration will be in the highest tier and only when
+// activated." That is a default and an override, not a contradiction with
+// "every single time it should get confirmation first" — so the override has to
+// be provably OFF unless somebody turns it on, and provably effective when they
+// do.
+{
+  const before = assistCalls
+  await page.evaluate(() => {
+    try { localStorage.setItem('beacon.voice.ai-auto', 'on') } catch { /* private mode */ }
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await typeBtn.waitFor({ state: 'visible', timeout: 240000 })
+  await page.waitForTimeout(2500)
+
+  await say('write me a bassline in the style of a march')
+  await page.waitForTimeout(1500)
+  check('once activated, the assistant is reached without asking',
+    assistCalls === before + 1, `${assistCalls - before} calls`)
+  check('and no confirmation was shown', (await confirmPanel.count()) === 0)
+
+  // Off again, and the barrier is back — the setting is the whole difference.
+  await page.evaluate(() => {
+    try { localStorage.setItem('beacon.voice.ai-auto', 'off') } catch { /* private mode */ }
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await typeBtn.waitFor({ state: 'visible', timeout: 240000 })
+  await page.waitForTimeout(2500)
+  const after = assistCalls
+  await say('write me a bassline in the style of a march')
+  check('turning it off puts the barrier back', assistCalls === after,
+    `${assistCalls - after} calls`)
+}
+
 await browser.close()
 console.log(failures
   ? `\n${failures} failing — a command could spend credits unconfirmed`

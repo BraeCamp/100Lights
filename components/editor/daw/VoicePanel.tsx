@@ -93,6 +93,17 @@ export interface VoicePanelProps {
     accuracy: number; micLabel: string; sampleRate: number | null
     suggested: number; verdict: string
   } | null
+  /**
+   * Whether the assistant may act without being asked first.
+   *
+   * The activation, not the default. Confirmation stays on for everybody until
+   * somebody deliberately turns this off, because it is the switch that lets a
+   * misheard sentence spend money without anybody seeing it first.
+   */
+  aiAuto?: boolean
+  onAiAuto?: (on: boolean) => void
+  /** What the last assistant turn cost, and what is left. */
+  credits?: { spent: number; left: number } | null
   calibrating?: null | 'room' | 'voice'
   calibrationPhrase?: string
   onCalibrate?: () => void
@@ -157,7 +168,7 @@ export default function VoicePanel({
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
-  calibration, calibrating, calibrationPhrase, onCalibrate,
+  calibration, calibrating, calibrationPhrase, onCalibrate, aiAuto, onAiAuto, credits,
 }: VoicePanelProps) {
   const [tab, setTab] = React.useState<'talk' | 'settings' | 'help'>(initialTab)
   React.useEffect(() => { setTab(initialTab) }, [initialTab])
@@ -528,6 +539,33 @@ export default function VoicePanel({
                 Watch the meter above while you talk and while the room does. The red
                 line is the bar — set this so your voice crosses it and the room does not.
               </div>
+            </div>
+
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 9 }}>
+              <div style={{ color: C.textMuted, marginBottom: 5, letterSpacing: 0.3, fontSize: 9, fontWeight: 800 }}>
+                THE ASSISTANT
+              </div>
+              <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
+                <input
+                  type="checkbox" checked={!!aiAuto}
+                  onChange={e => onAiAuto?.(e.target.checked)} style={{ marginTop: 2 }}
+                />
+                <span>
+                  Let the assistant act without asking
+                  <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
+                    Off by default. Anything the studio cannot work out itself goes
+                    straight to the assistant and spends credits — including a
+                    sentence it misheard.
+                  </span>
+                </span>
+              </label>
+              {credits && (
+                <div style={{ color: C.textMuted, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>
+                  Last turn cost {credits.spent.toLocaleString()} credits ·
+                  {' '}{credits.left.toLocaleString()} left
+                  {' '}(about ${(credits.left / 5000).toFixed(2)})
+                </div>
+              )}
             </div>
 
             <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 9 }}>
