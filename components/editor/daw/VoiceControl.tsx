@@ -108,10 +108,28 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   /** Apply one planned action. Transport is the engine, everything else the
    *  reducer — shared so the local and assistant paths cannot drift apart. */
   const runAction = useCallback((a: unknown) => {
-    const act = a as { type: string; action?: string }
+    const act = a as { type: string; action?: string; beat?: number }
     if (act.type === 'TRANSPORT') {
+      // ── stop() is a PAUSE, and locate carries a beat ────────────────────
+      //
+      // Two commands were reporting work they had not done.
+      //
+      // RESTART said "Restarted from the top" and did not go to the top.
+      // daw-engine's stop() says so itself — "preserve position (pause, not
+      // rewind)" — so stop-then-play resumes exactly where it was. A rewind
+      // needs seek(0) between them.
+      //
+      // LOCATE said "Moved to bar 9" and started playing from wherever the
+      // playhead already was. The planner emits { action: 'locate', beat },
+      // and the beat fell into an `else` that just called play(), so the one
+      // piece of information in the command was dropped.
+      //
+      // Both are the same fault and the worse kind: the read-back was right
+      // and the action was wrong, so the studio told Brae it had done
+      // something it had not.
       if (act.action === 'stop' || act.action === 'pause') engine?.stop?.()
-      else if (act.action === 'restart') { engine?.stop?.(); engine?.play?.() }
+      else if (act.action === 'restart') { engine?.stop?.(); engine?.seek?.(0); engine?.play?.() }
+      else if (act.action === 'locate') { engine?.seek?.(act.beat ?? 0) }
       else if (act.action === 'toggle') { if (engine?.isPlaying) engine.stop?.(); else engine?.play?.() }
       else engine?.play?.()
       return

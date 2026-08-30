@@ -61,6 +61,40 @@ check('solo the drums', call('solo the drums').input.solo === true)
 check('unmute', call('unmute the pad').input.muted === false)
 check('set the pad to 80 percent', call('set the pad to 80 percent').input.volume === 80)
 
+// ── Sentences, not incantations ─────────────────────────────────────────────
+//
+// Brae: "the voice detection is pretty bad... can we have the machine interpret
+// sentences?" Those are the same problem. A transcript arrives with a filler
+// word in front, a politeness on the end, or a swallowed article, and an
+// anchored pattern turns every one of those into no match — which then costs a
+// paid round trip to answer a command the studio already knew.
+check('politeness in front', call('hey could you please play')?.input.action === 'play',
+  JSON.stringify(call('hey could you please play')?.input))
+check('politeness behind', call('stop it please')?.input.action === 'stop')
+check('a whole sentence for restart',
+  call('okay can you restart it from the top')?.input.action === 'restart',
+  JSON.stringify(call('okay can you restart it from the top')?.input))
+check('"go back to the beginning"',
+  call('go back to the beginning')?.input.action === 'restart')
+check('tempo said loosely',
+  call('can you set the tempo to 128 please')?.input.bpm === 128)
+check('bpm said the other way round', call('make the tempo 90')?.input.bpm === 90,
+  JSON.stringify(call('make the tempo 90')?.input))
+check('a bar said loosely',
+  JSON.stringify(call('jump to bar nine')?.input) === '{"action":"locate","at":{"bar":9}}',
+  JSON.stringify(call('jump to bar nine')?.input))
+check('loop said loosely',
+  JSON.stringify(call('can you loop from bar 9 to bar 17')?.input) === '{"start":{"bar":9},"end":{"bar":17}}',
+  JSON.stringify(call('can you loop from bar 9 to bar 17')?.input))
+check('a mixer command in a sentence',
+  call('could you mute the pad for me')?.input.target.name === 'Pad',
+  JSON.stringify(call('could you mute the pad for me')?.input))
+// A misheard content word should still land — the small words are what a
+// transcript mangles, and those were never load-bearing.
+check('one letter wrong on the verb still lands',
+  call('loup bars 9 to 17')?.name === 'set_loop_region',
+  String(call('loup bars 9 to 17')?.name))
+
 // ── Declining, which is the part that matters ───────────────────────────────
 check('an ambiguous track name is left to the assistant',
   r('mute the bass', AMBIGUOUS).calls.length === 0, r('mute the bass', AMBIGUOUS).matched)
