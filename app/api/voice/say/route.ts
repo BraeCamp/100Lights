@@ -93,7 +93,10 @@ export async function POST(req: Request) {
   if (!audio.length) return Response.json({ error: 'The voice service returned nothing.' }, { status: 502 })
 
   try {
-    await putObject(key, audio, 'audio/mpeg')
+    // The text goes with it. The key is a hash, so without this the bucket
+    // holds a pile of recordings that nothing can read back — including the
+    // admin panel whose entire job is to list what the studio has bought.
+    await putObject(key, audio, 'audio/mpeg', { phrase: text, voice: VOICE_ID })
   } catch {
     // Storing failed, so the next person pays again — but this person still
     // gets their audio. Returning the bytes rather than an error means a

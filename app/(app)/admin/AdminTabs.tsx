@@ -6,7 +6,7 @@ import {
   Sunrise, LayoutDashboard, Users, TrendingUp, BarChart3, Eye, Megaphone, BookOpen, Ticket, ListChecks,
   MessageSquare, Flag, Activity, Webhook, HardDrive, ScrollText, Link as LinkIcon,
   Library, Music, Piano, Package, Drum, Film, Image as ImageIcon, Circle, Search,
-  LayoutGrid, AppWindow, Target,
+  LayoutGrid, AppWindow, Target, MessagesSquare,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -35,6 +35,7 @@ const ICONS: Record<string, LucideIcon> = {
   'sample-packs': Package, 'beat-corrections': Drum,
   apps: LayoutGrid, inventory: AppWindow, targets: Target, corrections: MessageSquare,
   usage: BarChart3, formats: LayoutGrid, 'shorts-export': Film,
+  'voice-phrases': MessagesSquare,
 }
 function iconFor(tabId: string, subId: string): LucideIcon {
   if (ICONS[subId]) return ICONS[subId]

@@ -22,7 +22,7 @@
  */
 
 import { readFileSync } from 'node:fs'
-import path from 'node:path'
+import path, { join } from 'node:path'
 import { voiceKey, normaliseSpoken, looksSpeakable } from '../lib/voice/voice-cache.ts'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
@@ -47,42 +47,15 @@ const MODEL = 'eleven_turbo_v2_5'
 
 // ── What the studio says that never varies ─────────────────────────────────
 //
-// Read out of the source rather than listed here, because a list here would
-// drift the first time somebody rewords a response, and nobody would notice —
-// the studio would simply start sounding different for that one sentence.
+// From lib/voice/phrases.json, which the build generates by reading the source.
+// This script used to re-extract them itself, with its own copy of the same
+// regexes — two extractors for one question, free to disagree, and one of them
+// silently truncating any response that contained a nested template literal.
+// One source, generated, checked in.
 
-const FILES = [
-  'lib/voice/execute-music.ts',
-  'lib/voice/queue.ts',
-  'lib/voice/calibrate.ts',
-  'lib/voice/ask.ts',
-  'lib/voice/notices.ts',
-  'components/editor/daw/VoiceControl.tsx',
-  'components/editor/daw/VoicePanel.tsx',
-]
-const fixed = new Set()
-for (const f of FILES) {
-  let src
-  try { src = readFileSync(path.join(ROOT, f), 'utf8') } catch { continue }
-  for (const re of [
-    /\bsay:\s*(`[^`]*`|'[^']*')/g,
-    /\bfail\(\s*(`[^`]*`|'[^']*')/g,
-    /\brespond\(\s*(`[^`]*`|'[^']*')/g,
-    /\bsetSaid\(\s*(`[^`]*`|'[^']*')/g,
-    /\bsetProblem\(\s*(`[^`]*`|'[^']*')/g,
-  ]) {
-    for (const m of src.matchAll(re)) {
-      const lit = m[1].slice(1, -1).trim()
-      // A string with an interpolation in it is a SHAPE, not a phrase — its
-      // final form depends on a track name, so it cannot be rendered until
-      // somebody actually says it. Those stay lazy.
-      if (!lit || lit.includes('${')) continue
-      if (looksSpeakable(lit)) fixed.add(lit)
-    }
-  }
-}
+const { fixed } = JSON.parse(readFileSync(join(ROOT, 'lib/voice/phrases.json'), 'utf8'))
 
-const phrases = [...fixed].sort().slice(0, LIMIT)
+const phrases = fixed.map(p => p.text).filter(looksSpeakable).sort().slice(0, LIMIT)
 const chars = phrases.reduce((n, p) => n + normaliseSpoken(p).length, 0)
 console.log(`${phrases.length} fixed phrases, ${chars.toLocaleString()} characters`)
 console.log(`voice ${VOICE_ID}, model ${MODEL}\n`)
@@ -132,6 +105,10 @@ for (const phrase of phrases) {
     // These never change — the key IS the text — so they may be held as long as
     // anything is willing to hold them.
     CacheControl: 'public, max-age=31536000, immutable',
+    // The same metadata the endpoint writes. If only one writer recorded the
+    // text, the admin panel would list the lazily-bought phrases and show the
+    // pre-rendered ones as anonymous hashes — the wrong half.
+    Metadata: { phrase: encodeURIComponent(phrase), voice: encodeURIComponent(VOICE_ID) },
   }))
   made++
   spentChars += normaliseSpoken(phrase).length

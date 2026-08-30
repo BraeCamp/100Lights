@@ -58,9 +58,51 @@ export async function presignedRedirect(key: string, cacheSeconds = 3600, staleS
   })
 }
 
-export async function putObject(key: string, body: Uint8Array | ArrayBuffer, contentType: string) {
+export async function putObject(
+  key: string,
+  body: Uint8Array | ArrayBuffer,
+  contentType: string,
+  /**
+   * Small facts to store alongside the object.
+   *
+   * Used by the voice cache, whose keys are hashes: without this, storage holds
+   * a few hundred recordings and nothing anywhere can say what any of them
+   * SAYS. Values are percent-encoded because S3 metadata is ASCII-only and a
+   * track name is not — an unencoded "Café" fails the whole upload.
+   */
+  meta?: Record<string, string>,
+) {
   const bytes = body instanceof Uint8Array ? body : new Uint8Array(body)
-  await client().send(new PutObjectCommand({ Bucket: BUCKET(), Key: key, Body: bytes, ContentType: contentType }))
+  await client().send(new PutObjectCommand({
+    Bucket: BUCKET(), Key: key, Body: bytes, ContentType: contentType,
+    Metadata: meta && Object.fromEntries(
+      Object.entries(meta).map(([k, v]) => [k, encodeURIComponent(v)]),
+    ),
+  }))
+}
+
+/**
+ * Everything stored about one object, metadata included.
+ *
+ * ListObjectsV2 does not return metadata — only keys, sizes and dates — so
+ * reading what a hash-keyed object says costs one HEAD each. Fine for an admin
+ * panel that scans on open; not something to do per request.
+ */
+export async function objectInfo(key: string): Promise<
+  { size: number; modified?: Date; meta: Record<string, string> } | null
+> {
+  try {
+    const r = await client().send(new HeadObjectCommand({ Bucket: BUCKET(), Key: key }))
+    const meta: Record<string, string> = {}
+    for (const [k, v] of Object.entries(r.Metadata ?? {})) {
+      // Percent-decoding can throw on a malformed value; a bad metadata string
+      // should cost that one field, not the whole listing.
+      try { meta[k] = decodeURIComponent(v) } catch { meta[k] = v }
+    }
+    return { size: r.ContentLength ?? 0, modified: r.LastModified, meta }
+  } catch {
+    return null
+  }
 }
 
 /**

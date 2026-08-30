@@ -33,6 +33,7 @@ import ShortsExportPanel from './ShortsExportPanel'
 import AppTargetsPanel from './AppTargetsPanel'
 import AppCorrectionsPanel from './AppCorrectionsPanel'
 import TestRecipesPanel from './TestRecipesPanel'
+import VoicePhrasesPanel from './VoicePhrasesPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -774,6 +775,19 @@ export default async function AdminPage() {
                 description="Candidate chord progressions, bass lines, and motifs mined from public-domain sheet music, extracted as editable MIDI (the sheet itself isn't kept). Review each, then Integrate to ship it into the Sound Library recipe catalog every user sees, or Delete to discard it. Only you can see this."
               />
               <TestRecipesPanel />
+            </>
+          ),
+        },
+        {
+          id: 'voice-phrases',
+          label: 'Voice Phrases',
+          content: (
+            <>
+              <PanelIntro
+                title="Voice Phrases"
+                description="Everything Beacon's voice control can say aloud, and which of it has been recorded. Each recording is shared by every user — a phrase is paid for by whoever says it first and is then free forever — so this is a one-time bill measured in distinct sentences, not a running cost per person. Scans storage on open."
+              />
+              <VoicePhrasesPanel />
             </>
           ),
         },
