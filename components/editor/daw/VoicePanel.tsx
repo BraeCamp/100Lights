@@ -17,8 +17,8 @@
 // voice interface with no history is one you cannot check up on, and checking up
 // on it is exactly what you want to do while you are learning to trust it.
 
-import React, { useEffect, useRef } from 'react'
-import { X, Mic, Maximize2, ListChecks } from 'lucide-react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { X, Mic, Maximize2, ListChecks, GripVertical } from 'lucide-react'
 import { commandHelp } from '@/lib/voice/interpret'
 import { WAKE_WORDS } from '@/lib/voice/attention'
 
@@ -81,6 +81,21 @@ export interface VoicePanelProps {
    * committing, and a list you can only hear is a list you cannot check at your
    * own pace.
    */
+  /**
+   * The last microphone check.
+   *
+   * A calibration that ends in "your headphones are the problem" is worth ten
+   * that end in a progress bar, so what it measured is shown alongside what it
+   * concluded — the numbers are the argument.
+   */
+  calibration?: {
+    floor: number; peak: number; headroom: number; heard: string
+    accuracy: number; micLabel: string; sampleRate: number | null
+    suggested: number; verdict: string
+  } | null
+  calibrating?: null | 'room' | 'voice'
+  calibrationPhrase?: string
+  onCalibrate?: () => void
   queue: { text: string; say: string }[]
   collecting: boolean
   onCollecting: (on: boolean) => void
@@ -96,16 +111,124 @@ export interface VoicePanelProps {
   }
 }
 
+const POSITION_KEY = 'beacon.voice.panel-position'
+
+/**
+ * Where the card was left.
+ *
+ * Brae: "let's move the voice dropdown so that it's a card that can be moved."
+ *
+ * A dropdown is anchored to the button that opened it, which is fine for a menu
+ * and wrong for something you read while you work — it sits over the
+ * arrangement, in the one place you cannot move it away from. A card goes where
+ * it is put and stays there.
+ *
+ * Remembered per browser, and clamped on load: a position saved on a wide screen
+ * would otherwise put the card off the edge of a narrow one, where it cannot be
+ * dragged back.
+ */
+function readPosition(): { x: number; y: number } | null {
+  try {
+    const raw = localStorage.getItem(POSITION_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw) as { x: number; y: number }
+    if (typeof p?.x !== 'number' || typeof p?.y !== 'number') return null
+    return p
+  } catch { return null }
+}
+
+function writePosition(p: { x: number; y: number }): void {
+  try { localStorage.setItem(POSITION_KEY, JSON.stringify(p)) } catch { /* private mode */ }
+}
+
+/** Keep it on screen, whatever screen this turns out to be. */
+function clamp(p: { x: number; y: number }): { x: number; y: number } {
+  if (typeof window === 'undefined') return p
+  const pad = 24
+  return {
+    x: Math.max(pad - 360, Math.min(window.innerWidth - pad, p.x)),
+    y: Math.max(0, Math.min(window.innerHeight - pad * 2, p.y)),
+  }
+}
+
 export default function VoicePanel({
   turns, listening, attentive, continuous, level, hud,
   onHud, onClose, onClear, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
+  calibration, calibrating, calibrationPhrase, onCalibrate,
 }: VoicePanelProps) {
   const [tab, setTab] = React.useState<'talk' | 'settings' | 'help'>(initialTab)
   React.useEffect(() => { setTab(initialTab) }, [initialTab])
   const log = useRef<HTMLDivElement>(null)
+
+  // ── Dragging ─────────────────────────────────────────────────────────────
+  //
+  // Pointer events on the window rather than on the card, and capture on the
+  // title bar, so a fast drag that outruns the element does not drop it — the
+  // classic way a hand-rolled drag feels broken.
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const drag = useRef<{ dx: number; dy: number } | null>(null)
+  /**
+   * The position as it is RIGHT NOW.
+   *
+   * Saving from inside a setPos updater looked tidy and was a race: React defers
+   * the updater, so releasing the pointer wrote the old position back AFTER a
+   * double-press had just cleared it, and the card would not go home.
+   */
+  const posRef = useRef<{ x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    const saved = readPosition()
+    if (saved) { const p = clamp(saved); setPos(p); posRef.current = p }
+  }, [])
+
+  /**
+   * A double press, detected here rather than by onDoubleClick.
+   *
+   * Starting a drag calls preventDefault and captures the pointer, and both of
+   * those stop a dblclick event ever being dispatched — so the handler that
+   * puts the card back never ran. Two presses close together, with the pointer
+   * in much the same place, is the same gesture and does not depend on an event
+   * the drag has already swallowed.
+   */
+  const lastPress = useRef(0)
+
+  const onDragStart = useCallback((e: React.PointerEvent) => {
+    // Only the title bar itself, never a button inside it.
+    if ((e.target as HTMLElement).closest('button')) return
+    const now = Date.now()
+    if (now - lastPress.current < 350) {
+      lastPress.current = 0
+      drag.current = null
+      setPos(null)
+      posRef.current = null
+      try { localStorage.removeItem(POSITION_KEY) } catch { /* private mode */ }
+      return
+    }
+    lastPress.current = now
+    const card = (e.currentTarget as HTMLElement).parentElement
+    if (!card) return
+    const box = card.getBoundingClientRect()
+    drag.current = { dx: e.clientX - box.left, dy: e.clientY - box.top }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    e.preventDefault()
+  }, [])
+
+  const onDragMove = useCallback((e: React.PointerEvent) => {
+    if (!drag.current) return
+    const next = clamp({ x: e.clientX - drag.current.dx, y: e.clientY - drag.current.dy })
+    posRef.current = next
+    setPos(next)
+  }, [])
+
+  const onDragEnd = useCallback((e: React.PointerEvent) => {
+    if (!drag.current) return
+    drag.current = null
+    ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+    if (posRef.current) writePosition(posRef.current)
+  }, [])
 
   // Stick to the bottom as it fills, the way every transcript should.
   useEffect(() => {
@@ -121,7 +244,12 @@ export default function VoicePanel({
     <div
       data-voice-panel
       style={{
-        position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 80,
+        // Fixed once it has been moved, so it stays where it was put rather
+        // than following the button that opened it.
+        ...(pos
+          ? { position: 'fixed' as const, left: pos.x, top: pos.y }
+          : { position: 'absolute' as const, top: 'calc(100% + 8px)', right: 0 }),
+        zIndex: 80,
         width: 380, maxHeight: 460, display: 'flex', flexDirection: 'column',
         background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 8,
         boxShadow: '0 18px 48px rgba(0,0,0,.55)', overflow: 'hidden',
@@ -130,10 +258,20 @@ export default function VoicePanel({
       onClick={e => e.stopPropagation()}
     >
       {/* ── Title bar: what it is doing, always visible ──────────────────── */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
-        borderBottom: `1px solid ${C.border}`, background: 'rgba(255,255,255,.02)',
-      }}>
+      <div
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onPointerCancel={onDragEnd}
+        title="Drag to move · double-click to put it back"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+          borderBottom: `1px solid ${C.border}`, background: 'rgba(255,255,255,.02)',
+          cursor: drag.current ? 'grabbing' : 'grab', touchAction: 'none',
+          userSelect: 'none',
+        }}
+      >
+        <GripVertical size={11} color={C.textMuted} style={{ flex: '0 0 auto' }} />
         <Mic size={13} color={state === 'attentive' || state === 'listening' ? C.accent : C.textMuted} />
         <span style={{ fontWeight: 800, letterSpacing: 0.3, fontSize: 10 }}>
           {state === 'off' && 'VOICE'}
@@ -390,6 +528,49 @@ export default function VoicePanel({
                 Watch the meter above while you talk and while the room does. The red
                 line is the bar — set this so your voice crosses it and the room does not.
               </div>
+            </div>
+
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 9 }}>
+              <div style={{ color: C.textMuted, marginBottom: 5, letterSpacing: 0.3, fontSize: 9, fontWeight: 800 }}>
+                CHECK THE MICROPHONE
+              </div>
+              {calibrating ? (
+                <div style={{ lineHeight: 1.5 }}>
+                  {calibrating === 'room'
+                    ? 'Listening to the room — say nothing for a moment…'
+                    : <>Now say: <span style={{ color: C.accent }}>&ldquo;{calibrationPhrase}&rdquo;</span></>}
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={onCalibrate}
+                    style={{
+                      width: '100%', height: 26, borderRadius: 4, cursor: 'pointer',
+                      border: `1px solid ${C.border}`, background: 'transparent',
+                      color: C.textPrimary, fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                    }}
+                  >
+                    RUN A CHECK
+                  </button>
+                  <div style={{ color: C.textMuted, marginTop: 4, lineHeight: 1.45 }}>
+                    Measures the room, then asks you to say one sentence, then says which
+                    part is the problem — and sets the sensitivity to match.
+                  </div>
+                </>
+              )}
+
+              {calibration && !calibrating && (
+                <div style={{ marginTop: 8, lineHeight: 1.5 }}>
+                  <div style={{ color: C.textPrimary }}>{calibration.verdict}</div>
+                  <div style={{ color: C.textMuted, marginTop: 5 }}>
+                    Heard: &ldquo;{calibration.heard}&rdquo;
+                  </div>
+                  <div style={{ color: C.textMuted, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
+                    room {calibration.floor.toFixed(3)} · voice {calibration.peak.toFixed(3)} ·
+                    {' '}{calibration.headroom.toFixed(1)}x · {Math.round(calibration.accuracy * 100)}% of the words
+                  </div>
+                </div>
+              )}
             </div>
 
             {mic && (

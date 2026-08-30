@@ -34,14 +34,14 @@
 // one.
 
 import {
-  VOICE_COMMANDS, nameWords, COMMAND_VOCABULARY, NEVER_SUBSTITUTE,
+  VOICE_COMMANDS, nameWords, SUBSTITUTION_VOCABULARY, NEVER_SUBSTITUTE,
   type InterpretContext,
 } from './commands'
 import { hypotheses, type Heard, type Hypothesis } from './hypotheses'
 import { Words } from './words'
 import type { VoiceCall } from './execute-music'
 
-export { COMMAND_VOCABULARY, NEVER_SUBSTITUTE, commandHelp, VOICE_COMMANDS, COMMANDS_BY_ID, UNORDERED_COMMANDS } from './commands'
+export { COMMAND_VOCABULARY, SUBSTITUTION_VOCABULARY, NEVER_SUBSTITUTE, commandHelp, VOICE_COMMANDS, COMMANDS_BY_ID, UNORDERED_COMMANDS } from './commands'
 export { contentWords, FILLER } from './words'
 export { hypotheses, phoneticKey, editDistance } from './hypotheses'
 export type { Heard, Hypothesis } from './hypotheses'
@@ -261,8 +261,11 @@ export function interpretHeard(heard: Heard, ctx: InterpretContext): Interpretat
   // are exactly the words a general-purpose recogniser has never seen and is
   // most likely to have mangled, and the only place they exist is here.
   const banned = new Set(NEVER_SUBSTITUTE)
+  // The SUBSTITUTION list, not the priming one. Rewriting a word into another
+  // is a far stronger act than telling a recogniser to expect it, and the two
+  // lists are different sizes for that reason.
   const vocabulary = [
-    ...COMMAND_VOCABULARY,
+    ...SUBSTITUTION_VOCABULARY,
     ...[...nameWords(ctx)],
   ].filter(word => !banned.has(word))
   const options: Hypothesis[] = hypotheses(heard, vocabulary)

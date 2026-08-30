@@ -207,6 +207,38 @@ for (const text of NONSENSE) {
     still.calls[0]?.input?.muted === true, still.rewriteReason)
 }
 
+// ── Priming and substituting are different lists ──────────────────────────
+//
+// They were one list, and widening it to cover every word the rules react to —
+// so the recogniser would be told "descending" and "lowpass" are likely — also
+// widened what a misheard word could be rewritten INTO. "What time is it"
+// promptly became "halt time is it" and stopped the transport.
+//
+// Telling a recogniser to expect a word costs nothing: it either heard it or it
+// did not. Rewriting some other word into it invents a command nobody said.
+{
+  const { COMMAND_VOCABULARY, SUBSTITUTION_VOCABULARY } = await importTs('lib/voice/commands.ts')
+  check('the priming list is the larger of the two',
+    COMMAND_VOCABULARY.length > SUBSTITUTION_VOCABULARY.length,
+    `${COMMAND_VOCABULARY.length} primed vs ${SUBSTITUTION_VOCABULARY.length} substitutable`)
+  check('it primes words the rules react to but no example uses',
+    ['descending', 'ascending', 'lowpass'].every(w => COMMAND_VOCABULARY.includes(w)),
+    'the words that turned into "muscle pain"')
+  check('and phrases, which are far stronger hints than their words apart',
+    COMMAND_VOCABULARY.includes('low pass'))
+  // "halt" IS substitutable and should be — it is a word the studio advertises,
+  // so somebody might say it. The distinction is about words the rules react to
+  // that nobody is invited to say: they are worth HEARING and not worth
+  // guessing towards.
+  check('while a word the rules react to but never advertise is not a target',
+    ['descending', 'ascending', 'lowpass'].every(w => !SUBSTITUTION_VOCABULARY.includes(w)),
+    ['descending', 'ascending', 'lowpass'].filter(w => SUBSTITUTION_VOCABULARY.includes(w)).join(',') || 'none of them')
+
+  const wide = interpretHeard({ text: 'what time is it', confidence: 0.2 }, CTX)
+  check('so the clock question stays a clock question',
+    wide.calls.length === 0, `${wide.matched} — ${JSON.stringify(wide.text)}`)
+}
+
 // ── It stays cheap enough to run on every utterance ───────────────────────
 {
   const long = { text: 'could you please take the bass and move it back about two bars for me', confidence: 0.4 }

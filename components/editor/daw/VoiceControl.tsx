@@ -46,6 +46,9 @@ import {
   readQueueControl, askToImplement, readBack, reportRun, type QueuedCommand,
 } from '@/lib/voice/queue'
 import { hudOn, setHud, applyHud } from '@/lib/voice/hud'
+import {
+  CALIBRATION_PHRASE, phraseAccuracy, verdictFor, type CalibrationResult,
+} from '@/lib/voice/calibrate'
 import VoicePanel, { type VoiceTurn } from './VoicePanel'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
@@ -165,6 +168,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   /** The bar the level is being judged against, drawn on the meter. */
   const [threshold, setThreshold] = useState(0)
   const [sensitivity, setSensitivityState] = useState(1)
+  /** The last microphone check, and whether one is running. */
+  const [calibration, setCalibration] = useState<CalibrationResult | null>(null)
+  const [calibrating, setCalibrating] = useState<null | 'room' | 'voice'>(null)
   // Read by the recorder's callbacks, which outlive the render that made them.
   const sensitivityRef = useRef(1)
 
@@ -355,7 +361,21 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // an unambiguous act of addressing the studio — demanding its name from
     // somebody using the keyboard would be asking them to prove something they
     // just did.
-    if (heard && continuousRef.current && !confirmed && !pendingAsk2 && !pendingOffer && !pendingName) {
+    // ── Collecting listens freely, because collecting does nothing ──────────
+    //
+    // Brae: "I have to say Light before it acts upon anything", and then, on
+    // saying "start": "it responded with 'Not acted on'. Why?"
+    //
+    // Because the session had gone quiet and the name is what wakes it. That
+    // guard exists to stop the room executing commands — and while collecting,
+    // NOTHING executes. Every command is written down, read back and waits for
+    // "execute", so the worst a stray sentence can do is add a line to a list
+    // somebody is about to read. Asking for the name to add to a list nobody
+    // has approved is a toll on the safe half of the feature.
+    //
+    // Executing still asks. That is where the risk actually lives.
+    const guarded = heard && continuousRef.current && !collectingRef.current
+    if (guarded && !confirmed && !pendingAsk2 && !pendingOffer && !pendingName) {
       const verdict = considerUtterance({
         text: spoken,
         confidence: heardConfidence,
@@ -386,7 +406,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         }).calls.length > 0
         if (looksLikeCommand) {
           setHeard(spoken)
-          setProblem(`Say "${WAKE_WORDS[0]}" first — listening, but not acting.`)
+          // Spoken, not merely displayed. "It did nothing and I do not know
+          // why" is the complaint this is answering, and a line of grey text
+          // beside a button is not an answer when you are looking at the
+          // arrangement.
+          respond(
+            `Say "${WAKE_WORDS[0]}" first, or start collecting and nothing will run until you say execute.`,
+            'problem',
+          )
         }
         return
       }
@@ -861,13 +888,29 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     lastAcceptedAt.current = Date.now()
     // Hand the transcriber the words that are actually likely here — the
     // commands it can act on, and the names of the tracks in this project.
-    const vocabulary = [
-      ...COMMAND_VOCABULARY,
-      // Its own name, which is now load-bearing: a session that cannot hear
-      // "light" over a mix is a session that never wakes up.
+    // ── In the order the hints matter ────────────────────────────────────────
+    //
+    // Any cap cuts the tail, so the tail must be the least valuable part.
+    //
+    // NAMES FIRST. A recogniser has never seen this project and cannot guess
+    // "Bass 2" or "Body 1" from anything; every other word here it has at least
+    // met before.
+    //
+    // THEN THE NAME IT ANSWERS TO, which is load-bearing — a session that
+    // cannot hear "light" over a mix never wakes up.
+    //
+    // THEN PHRASES, because "low pass" as a unit is unmistakable where "low"
+    // and "pass" apart are two of the commonest words in English.
+    const named = [
+      ...(project.tracks ?? []).map(t => t.name),
+      ...(project.arrangementClips ?? []).map(c => c.name),
+    ].filter((n): n is string => !!n && n.trim().length > 1)
+    const vocabulary = [...new Set([
+      ...named,
       ...WAKE_WORDS,
-      ...(project.tracks ?? []).map(t => t.name).filter((n): n is string => !!n),
-    ]
+      ...COMMAND_VOCABULARY.filter(t => t.includes(' ')),
+      ...COMMAND_VOCABULARY.filter(t => !t.includes(' ')),
+    ])]
     const rec = await startRecording({
       vocabulary,
       // Both of these change how the microphone is opened, and both are things
@@ -1049,6 +1092,76 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   }, [queue, project, runAction, respond])
 
   useEffect(() => { runQueueRef.current = runQueue }, [runQueue])
+
+  /**
+   * Measure the room, then the voice, then say which of them is the problem.
+   *
+   * Runs its own recording rather than borrowing the session's, so it can be
+   * done before ever starting one — somebody whose first attempt produced
+   * nonsense should not have to get a session working in order to find out why
+   * it will not.
+   */
+  const calibrate = useCallback(async () => {
+    if (calibrating) return
+    setCalibration(null)
+    setCalibrating('room')
+
+    let floor = 0
+    let samples = 0
+    let peak = 0
+    let phase: 'room' | 'voice' = 'room'
+
+    const rec = await startRecording({
+      vocabulary: [...WAKE_WORDS, ...COMMAND_VOCABULARY],
+      playing: !!engine?.isPlaying,
+      sampleRate: engine?.ctx?.sampleRate,
+      audioContext: engine?.ctx,
+      // Deliberately NOT continuous: this is one take of a known phrase, and
+      // the strictness that suits a held-open microphone would measure the
+      // wrong thing.
+      onLevel: level => {
+        setLevel(level)
+        // Two seconds of room first, whatever is in it, then whatever is said.
+        if (phase === 'room') { floor = (floor * samples + level) / (samples + 1); samples++ }
+        else if (level > peak) peak = level
+      },
+    })
+    if (!rec) {
+      setCalibrating(null)
+      setProblem('Could not open the microphone.')
+      return
+    }
+
+    await new Promise(r => setTimeout(r, 2000))
+    phase = 'voice'
+    setCalibrating('voice')
+    // Long enough to read the phrase without hurrying.
+    await new Promise(r => setTimeout(r, 6000))
+
+    const out = await rec.stop()
+    setLevel(0)
+    setCalibrating(null)
+
+    const heard = out.ok ? (out.result?.text ?? '') : ''
+    const confidence = out.ok ? (out.result?.confidence ?? 0) : 0
+    const accuracy = phraseAccuracy(CALIBRATION_PHRASE, heard)
+    const { verdict, suggested } = verdictFor({
+      floor, peak, accuracy, confidence,
+      sampleRate: rec.mic.sampleRate, micLabel: rec.mic.label,
+    })
+    setCalibration({
+      floor, peak, headroom: floor > 0 ? peak / floor : 0,
+      heard: out.ok ? heard : (out.error || 'nothing came back'),
+      accuracy, confidence,
+      micLabel: rec.mic.label, sampleRate: rec.mic.sampleRate,
+      suggested, verdict,
+    })
+    // Measured, so applied. Leaving somebody to copy a number from a report
+    // into a setting is asking them to do the last step by hand for no reason.
+    setSensitivityState(suggested)
+    sensitivityRef.current = suggested
+    setVoiceSensitivity(suggested)
+  }, [calibrating, engine])
 
   const finish = useCallback(() => {
     wanted.current = false
@@ -1239,6 +1352,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           onHud={on => { setHudState(on); setHud(on) }}
           mic={mic}
           threshold={threshold}
+          calibration={calibration}
+          calibrating={calibrating}
+          calibrationPhrase={CALIBRATION_PHRASE}
+          onCalibrate={() => { void calibrate() }}
           queue={queue}
           collecting={collecting}
           onCollecting={on => { setCollecting(on); collectingRef.current = on }}

@@ -96,6 +96,47 @@ await page.waitForTimeout(300)
     /TRANSPORT/i.test(text) && /QUESTIONS/i.test(text), text.slice(0, 100))
 }
 
+// ── It is a card, and it moves ─────────────────────────────────────────────
+//
+// Brae: "let's move the voice dropdown so that it's a card that can be moved."
+//
+// A dropdown is anchored to the button that opened it, which is fine for a menu
+// and wrong for something read while working: it sits over the arrangement, in
+// the one place it cannot be moved away from.
+{
+  const bar = panel.locator('div').first()
+  const before = await panel.boundingBox()
+  await bar.hover()
+  await page.mouse.down()
+  await page.mouse.move(300, 400, { steps: 12 })
+  await page.mouse.up()
+  await page.waitForTimeout(400)
+  const after = await panel.boundingBox()
+  check('the card can be dragged somewhere else',
+    !!before && !!after && Math.abs(after.x - before.x) > 40,
+    `${Math.round(before?.x ?? 0)} → ${Math.round(after?.x ?? 0)}`)
+
+  // Remembered, or moving it is something you do once per page load.
+  const moved = await page.evaluate(() => localStorage.getItem('beacon.voice.panel-position'))
+  check('and where it was left is remembered', !!moved, String(moved))
+
+  // Double-click puts it back, for a card dragged somewhere unhelpful.
+  await bar.dblclick()
+  await page.waitForTimeout(400)
+  const home = await page.evaluate(() => localStorage.getItem('beacon.voice.panel-position'))
+  check('double-clicking the bar puts it back', home === null, String(home))
+}
+
+// ── The microphone check ───────────────────────────────────────────────────
+{
+  await panel.getByText('Settings', { exact: false }).click()
+  await page.waitForTimeout(300)
+  const text = await panel.innerText()
+  check('the panel offers a microphone check', /RUN A CHECK/i.test(text))
+  check('and says what it is for',
+    /which part is the problem/i.test(text), text.slice(0, 120))
+}
+
 // ── HUD ────────────────────────────────────────────────────────────────────
 const sidebar = page.locator('[data-hud-hide]').first()
 check('the studio chrome is there to begin with', await sidebar.isVisible())

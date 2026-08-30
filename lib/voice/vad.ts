@@ -84,6 +84,9 @@ export interface VadState {
   activeSince: number | null
   /** When it most recently dropped below. Null while it is up. */
   belowSince: number | null
+  /** When somebody started talking in this take, so a short command can be
+   *  answered quickly and a long one is given room to breathe. */
+  spokeSince: number | null
 }
 
 export interface VadStep {
@@ -99,7 +102,7 @@ export interface VadStep {
 export function newVad(): VadState {
   return {
     floor: 0, calibrated: 0, heard: false, lastLoudAt: 0,
-    unbrokenSince: null, activeSince: null, belowSince: null,
+    unbrokenSince: null, activeSince: null, belowSince: null, spokeSince: null,
   }
 }
 
@@ -163,6 +166,28 @@ export const MIN_SPEECH_LEVEL = 0.012
  *  to a moving target rather than to silence and the decision is noisier. */
 export const SILENCE_MS = 1100
 export const SILENCE_MS_PLAYING = 1500
+
+/**
+ * How long a burst has to be before it might be a SENTENCE.
+ *
+ * Brae: "When I said 'stop', it didn't recognize it as a command for 6 or 7
+ * seconds. When I say stop, it should almost immediately stop it."
+ *
+ * A second and a half of silence before believing somebody has finished is
+ * right for a sentence — people pause to think mid-instruction, and cutting
+ * them off there loses the end of the command. It is absurd for the word
+ * "stop", which was over before the timer started.
+ *
+ * So the wait depends on what was said. A burst under this long cannot have
+ * been a sentence with a pause in it; it was one word, and one word is finished
+ * when it stops.
+ */
+export const SHORT_UTTERANCE_MS = 900
+
+/** The wait after a short burst. Long enough to not clip "stop it", short
+ *  enough to feel like a button. */
+export const SILENCE_MS_SHORT = 420
+export const SILENCE_MS_SHORT_PLAYING = 550
 
 /** How fast the floor follows the room while nobody is talking. Slow enough
  *  that a held note does not become the new floor; fast enough to keep up with
@@ -257,7 +282,7 @@ export function vadStep(
       // The floor is deliberately NOT updated here. Following the level while
       // somebody is talking raises the bar under them until they fall below it,
       // and the symptom of that is a speaker being cut off mid-sentence.
-      state: { ...base, heard: true, lastLoudAt: now },
+      state: { ...base, heard: true, lastLoudAt: now, spokeSince: state.spokeSince ?? now },
       speaking: true,
       ended: false,
       threshold,
@@ -265,7 +290,13 @@ export function vadStep(
   }
 
   const floor = state.floor * (1 - FLOOR_FOLLOW) + rms * FLOOR_FOLLOW
-  const gap = opts.playing ? SILENCE_MS_PLAYING : SILENCE_MS
+  // How long they talked for decides how long to wait before believing they
+  // stopped. One word is finished when it stops; a sentence gets room to pause.
+  const burst = state.spokeSince ? state.lastLoudAt - state.spokeSince : 0
+  const short = state.heard && burst < SHORT_UTTERANCE_MS
+  const gap = short
+    ? (opts.playing ? SILENCE_MS_SHORT_PLAYING : SILENCE_MS_SHORT)
+    : (opts.playing ? SILENCE_MS_PLAYING : SILENCE_MS)
   const ended = state.heard && now - state.lastLoudAt > gap
   // A dip only ends the rise once it has lasted longer than the gaps inside
   // speech. Anything shorter is a word boundary, and the rise continues through

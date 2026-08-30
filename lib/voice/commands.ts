@@ -1643,6 +1643,64 @@ export const COMMANDS_BY_ID: Record<string, VoiceCommand> =
  * out because hinting "the" helps nobody; what earns its place is a word the
  * recogniser would otherwise have to guess at, like "unsolo" or "semitones".
  */
+/**
+ * Every word the matchers react to, harvested from the rules above.
+ *
+ * Kept as a list rather than derived at runtime because the rules hold them as
+ * arguments, not as data — but a test scans this file and fails if a rule reacts
+ * to a word that is not here. That is what stops the transcriber being primed
+ * for the examples while the parser listens for something else.
+ */
+const TRIGGER_WORDS: readonly string[] = [
+  'add', 'again', 'all', 'another', 'any', 'anything', 'arrangement', 'ascending', 'away',
+  'back', 'bar', 'bars', 'beat', 'beats', 'beginning', 'bit', 'boost', 'bpm', 'call',
+  'center', 'centre', 'change', 'chorus', 'clear', 'clip', 'clips', 'clone', 'close',
+  'closes', 'closing', 'compressor', 'copy', 'create', 'current', 'cutoff', 'decrease',
+  'delay', 'delete', 'descending', 'disable', 'double', 'down', 'drop', 'duplicate',
+  'earlier', 'everything', 'fade', 'falling', 'fast', 'faster', 'fifth', 'filter', 'first',
+  'forward', 'fourth', 'from', 'full', 'get', 'give', 'go', 'groove', 'hair', 'halt',
+  'hard', 'here', 'higher', 'hold on', 'how', 'in', 'increase', 'insert', 'it', 'item',
+  'items', 'key', 'label', 'left', 'less', 'level', 'limiter', 'list', 'little', 'loads',
+  'long', 'loop', 'looping', 'lot', 'loud', 'louder', 'lower', 'lowpass', 'make', 'many',
+  'mark', 'marker', 'master', 'measure', 'measures', 'meter', 'middle', 'more', 'move',
+  'much', 'music', 'mute', 'muted', 'new', 'no', 'nudge', 'octave', 'off', 'open',
+  'opening', 'opens', 'out', 'over', 'pan', 'panned', 'pause', 'percent', 'place', 'play',
+  'playback', 'project', 'push', 'put', 'quicker', 'quieter', 'raise', 'redo', 'reduce',
+  'remove', 'rename', 'repeat', 'restart', 'reverb', 'revert', 'right', 'rising',
+  'saturator', 'second', 'seconds', 'selected', 'semitone', 'semitones', 'set', 'shift',
+  'shuffle', 'signature', 'silence', 'slide', 'slightly', 'slow', 'slower', 'softer',
+  'solo', 'soloed', 'some', 'song', 'sooner', 'speed', 'start', 'step', 'steps', 'stick',
+  'stop', 'straight', 'straighten', 'sweep', 'swing', 'switch', 'take', 'tempo', 'that',
+  'them', 'there', 'these', 'thing', 'third', 'this', 'those', 'time', 'times', 'top',
+  'touch', 'track', 'tracks', 'transpose', 'tune', 'twice', 'un', 'undo', 'unmute',
+  'unsolo', 'up', 'volume', 'way', 'what', 'where', 'which', 'whole',
+]
+
+/**
+ * Phrases worth telling the transcriber to expect.
+ *
+ * Brae: "'Light, add a descending low pass filter to pad A' turned into 'I'd
+ * like to have some muscle pain'."
+ *
+ * Not a parsing failure — the words never arrived. The vocabulary was built from
+ * the EXAMPLE phrasings, so a word the rules match on but no example happens to
+ * use was never sent: "descending", "ascending", "low pass" and "lowpass" were
+ * all missing, which is most of that sentence. A general recogniser hearing
+ * "descending low pass filter" over a mix, with no reason to think those words
+ * are likely, will produce something like "muscle pain", and it is hard to say
+ * it was wrong to.
+ *
+ * Multi-word entries are here because Deepgram takes phrases, and a phrase is a
+ * far stronger hint than its words apart: "low pass" as a unit is unmistakable
+ * where "low" and "pass" are two of the commonest words in English.
+ */
+const KEY_PHRASES: readonly string[] = [
+  'low pass', 'high pass', 'lowpass', 'highpass', 'band pass',
+  'descending filter', 'ascending filter', 'filter sweep',
+  'fade in', 'fade out', 'time signature', 'tap tempo',
+  'go ahead', 'read them back', 'start collecting',
+]
+
 export const COMMAND_VOCABULARY: readonly string[] = (() => {
   const skip = new Set([
     'the', 'a', 'an', 'to', 'it', 'in', 'on', 'at', 'of', 'by', 'me', 'over',
@@ -1650,12 +1708,50 @@ export const COMMAND_VOCABULARY: readonly string[] = (() => {
     'down', 'off', 'on', 'all', 'one', 'two', 'three', 'four', 'five',
   ])
   const seen = new Set<string>()
-  for (const c of VOICE_COMMANDS) {
-    for (const phrase of c.say) {
-      for (const word of phrase.toLowerCase().split(/[^a-z0-9]+/)) {
-        if (!word || skip.has(word) || /^\d+$/.test(word)) continue
-        seen.add(word)
-      }
+  const add = (word: string) => {
+    const w = word.toLowerCase().trim()
+    if (!w || skip.has(w) || /^\d+$/.test(w)) return
+    seen.add(w)
+  }
+  for (const c of VOICE_COMMANDS) for (const phrase of c.say) {
+    for (const word of phrase.toLowerCase().split(/[^a-z0-9]+/)) add(word)
+  }
+  // The words the rules actually REACT to, which is not the same set as the
+  // words the examples happen to contain — and the difference is exactly what
+  // went missing.
+  for (const word of TRIGGER_WORDS) add(word)
+  for (const phrase of KEY_PHRASES) seen.add(phrase)
+  return [...seen].sort()
+})()
+
+/**
+ * What a misheard word may be rewritten INTO. A much shorter list than the one
+ * above, and deliberately so.
+ *
+ * Priming and substituting are opposite risks and were sharing a list. Telling
+ * the recogniser that "halt" is a likely word costs nothing — it either heard it
+ * or it did not. Allowing the parser to rewrite some other word INTO "halt" is a
+ * different act: it invents a command that was never said. Widening the priming
+ * list to cover every word the rules react to therefore widened the rewriting
+ * net at the same time, and "what time is it" promptly became "halt time is it"
+ * and stopped the transport.
+ *
+ * So substitution stays with the words that appear in the ADVERTISED phrasings.
+ * Those are the words people actually say to the studio, which is exactly the
+ * set worth guessing towards; the harvested trigger words are for hearing, not
+ * for guessing.
+ */
+export const SUBSTITUTION_VOCABULARY: readonly string[] = (() => {
+  const skip = new Set([
+    'the', 'a', 'an', 'to', 'it', 'in', 'on', 'at', 'of', 'by', 'me', 'over',
+    'and', 'from', 'put', 'take', 'is', 'that', 'this', 'more', 'out', 'up',
+    'down', 'off', 'all', 'one', 'two', 'three', 'four', 'five',
+  ])
+  const seen = new Set<string>()
+  for (const c of VOICE_COMMANDS) for (const phrase of c.say) {
+    for (const word of phrase.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (!word || skip.has(word) || /^\d+$/.test(word)) continue
+      seen.add(word)
     }
   }
   return [...seen].sort()

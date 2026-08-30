@@ -199,9 +199,20 @@ function pickMime(): string | undefined {
 // The longest a single command may run before it ends itself.
 const MAX_MS = 15_000
 
-/** How long a held-open microphone may record nothing before the clip is
- *  started over. Bounds the blob without interrupting anybody. */
-const IDLE_RESET_MS = 12_000
+/**
+ * How long a held-open microphone may record nothing before the clip is started
+ * over.
+ *
+ * This was twelve seconds, and it was most of the delay Brae reported on
+ * "stop". The clip holds everything since the last cut, so a command spoken
+ * after a quiet minute arrived as twelve seconds of room with one word at the
+ * end — uploaded in full, and transcribed in full, to find it.
+ *
+ * Two and a half seconds keeps a little pre-roll, so nothing is clipped off the
+ * front of a word that begins just as the timer fires, while keeping what
+ * crosses the network to about the length of the command itself.
+ */
+const IDLE_RESET_MS = 2_500
 
 /**
  * Start recording. Call `stop()` to transcribe, or let it end itself once the
@@ -378,7 +389,12 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
         // Nobody has said anything for a long time and the recorder has been
         // accumulating the room. Start it over so the next command is not
         // appended to two minutes of nothing.
-        if (!heardSpeech && now - segmentStartedAt > IDLE_RESET_MS) restartSegment()
+        // Not while the level is up: somebody may be a hundred milliseconds into
+        // a word that has not yet cleared the bar, and restarting here would cut
+        // its beginning off.
+        if (!heardSpeech && !vad.activeSince && now - segmentStartedAt > IDLE_RESET_MS) {
+          restartSegment()
+        }
         return
       }
       if (now - startedAt > MAX_MS) autoStop?.()
@@ -450,7 +466,11 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
     try {
       // The words likely in THIS project, as a hint to the recogniser.
       const qs = new URLSearchParams()
-      for (const term of (o.vocabulary ?? []).slice(0, 40)) if (term.trim()) qs.append('kt', term.trim())
+      // Raised from 40. The list is now built from what the rules actually
+      // react to rather than from the example phrasings, and forty was cutting
+      // it off long before the words that matter — the caller sorts it so the
+      // most valuable hints survive any cap at all.
+      for (const term of (o.vocabulary ?? []).slice(0, 100)) if (term.trim()) qs.append('kt', term.trim())
       const res = await fetch(`/api/voice/transcribe${qs.toString() ? `?${qs}` : ''}`, {
         method: 'POST',
         headers: { 'content-type': blob.type || 'audio/webm' },
