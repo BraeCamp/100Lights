@@ -53,6 +53,16 @@ export interface LocalResult {
   rewriteReason?: string
   /** The sentence the winning reading is of. */
   text?: string
+  /**
+   * Does this destroy work?
+   *
+   * Deleting a track cannot be undone by saying the opposite, and voice is
+   * exactly the input that arrives misheard — so the caller reads it back and
+   * waits for a press. Same shape as the credit barrier, same reasoning.
+   */
+  destructive?: boolean
+  /** How much the reading had to assume to get there. */
+  corrections?: number
 }
 
 export type ResolveContext = InterpretContext
@@ -116,6 +126,21 @@ export function confidentEnough(local: LocalResult, heardConfidence: number): bo
   // as a decision. The alternatives are surfaced instead, so the choice goes to
   // the person who knows which they meant.
   if (local.alternatives?.length) return false
+
+  // ── A reading built on bending a name is not a confident reading ──────────
+  //
+  // Brae: "nothing will correct to another word without a context check."
+  //
+  // Bending a word that names a real track costs three corrections — enough
+  // that any competing reading wins, but a sentence can arrive with no
+  // competitor at all. "sole the vocals", in a project that has a track called
+  // Sole, has exactly one reading: solo the vocals, reached by deciding that
+  // "Sole" was a mispronounced "solo". That may well be right, and it is not
+  // something to do silently while a track by that name sits in the project.
+  //
+  // So the cost is checked as well as compared. Above the price of one bent
+  // name, the reading is offered rather than performed.
+  if ((local.corrections ?? 0) >= 2) return false
 
   return true
 }

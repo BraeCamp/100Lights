@@ -70,6 +70,15 @@ export interface Interpretation {
   /** True when the command destroys work and should be confirmed first. */
   destructive?: boolean
   /**
+   * How much this reading had to assume.
+   *
+   * Surfaced because it is a different question from confidence. A rule can be
+   * perfectly certain of what it read while having reached that reading only by
+   * discarding a word that names a real track — and a reading built on bending
+   * a name is exactly the one to ask about rather than act on.
+   */
+  corrections: number
+  /**
    * Other readings that were nearly as good.
    *
    * Present only when the decision was CLOSE. An empty list means the winner
@@ -96,7 +105,7 @@ export interface Interpretation {
 
 const NOTHING: Interpretation = {
   calls: [], confidence: 0, matched: 'none', needsName: false,
-  alternatives: [], candidates: [],
+  corrections: 0, alternatives: [], candidates: [],
 }
 
 /**
@@ -192,6 +201,7 @@ export function interpret(sentence: string, ctx: InterpretContext): Interpretati
     confidence: best.confidence,
     matched: best.id,
     needsName: best.needsName,
+    corrections: best.corrections,
     destructive: command?.destructive,
     alternatives: runnersUp,
     candidates,

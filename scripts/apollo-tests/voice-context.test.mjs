@@ -29,6 +29,7 @@ import assert from 'node:assert'
 import { importTs } from '../lib/ts-import.mjs'
 
 const { interpret } = await importTs('lib/voice/interpret.ts')
+const { confidentEnough } = await importTs('lib/voice/local-resolve.ts')
 const { VOICE_COMMANDS } = await importTs('lib/voice/commands.ts')
 
 let failures = 0
@@ -106,10 +107,24 @@ const read = (s, ctx) => interpret(s, ctx)
   // ...but not when the word it would be bent FROM names a real track. Here
   // "sole" is a track, so reading it as "solo" throws away a name.
   const r = read('sole the vocals', tracks('Sole', 'Vocals', 'Drums'))
-  const bentAnyway = r.matched === 'set_track.solo' && r.calls[0]?.input?.target === 'Vocals'
-  check('a word that names a real track is not quietly bent into a command',
-    !bentAnyway || r.alternatives.length > 0,
-    `${r.matched} → ${JSON.stringify(r.calls[0]?.input)}, ${r.alternatives.length} alternatives`)
+  // It may still reach the right answer — "Sole" probably WAS a mispronounced
+  // "solo". The requirement is that it does not do so SILENTLY while a track by
+  // that name sits in the project, so the reading is offered rather than run.
+  check('a word that names a real track is never bent silently',
+    !confidentEnough(r, 1),
+    `${r.matched} → ${JSON.stringify(r.calls[0]?.input)}, ${r.corrections} corrections`)
+  check('and the cost of that bend is recorded', r.corrections >= 2, String(r.corrections))
+}
+{
+  // The mirror case, and the one that made this necessary: a new track is
+  // called "Track 2" by default, which makes the word "track" name something
+  // real. Every "the X track" phrasing has to keep working anyway.
+  const r = read('delete the drums track', tracks('Drums', 'Bass 2', 'Track 2'))
+  check('"the X track" still works in a project with a track called Track 2',
+    r.matched === 'remove_track' && r.calls[0]?.input?.target === 'Drums',
+    `${r.matched} → ${JSON.stringify(r.calls[0]?.input)}`)
+  check('and it runs without asking, because nothing was bent far',
+    confidentEnough(r, 1), `${r.corrections} corrections`)
 }
 
 // ── Coverage decides between overlapping readings ──────────────────────────
@@ -183,6 +198,57 @@ const read = (s, ctx) => interpret(s, ctx)
   const r = read('set the bass 2 to 2 percent', WITH_BASS)
   check('a repeated number still leaves one for the argument',
     r.calls[0]?.input?.volume === 2 && r.calls[0]?.input?.target === 'Bass 2',
+    JSON.stringify(r.calls[0]?.input))
+}
+
+// ── The studio commands, and the one that destroys work ───────────────────
+{
+  const r = read('delete the pad track', WITH_BASS)
+  check('deleting a track is marked destructive',
+    r.matched === 'remove_track' && r.destructive === true,
+    `${r.matched}, destructive=${r.destructive}`)
+  check('and nothing else is',
+    read('mute the pad', WITH_BASS).destructive !== true)
+}
+{
+  // "delete" and "duplicate" differ by a lot, but both name a track, and
+  // getting them the wrong way round is the difference between a copy and a
+  // loss.
+  const r = read('duplicate the pad track', WITH_BASS)
+  check('duplicating a track is not deleting one',
+    r.matched === 'duplicate_track' && r.destructive !== true, r.matched)
+}
+{
+  const r = read('rename the pad to strings', WITH_BASS)
+  check('"rename the pad to strings" reads both halves',
+    r.calls[0]?.input?.target === 'Pad' && r.calls[0]?.input?.name === 'Strings',
+    JSON.stringify(r.calls[0]?.input))
+}
+{
+  const r = read('put reverb on the drums', WITH_BASS)
+  check('"put reverb on the drums" adds an effect',
+    r.matched === 'add_effect' && r.calls[0]?.input?.effect === 'reverb'
+    && r.calls[0]?.input?.target === 'Drums',
+    JSON.stringify(r.calls[0]?.input))
+}
+{
+  // The sentence has a number, a percent and a track name, so the plain volume
+  // rule reads it perfectly and answers a different question. Naming an effect
+  // is what settles it.
+  const r = read('reverb on the drums 40 percent', WITH_BASS)
+  check('naming an effect beats a plain volume reading',
+    r.matched === 'set_effect' && r.calls[0]?.input?.amount === 40,
+    `${r.matched} → ${JSON.stringify(r.calls[0]?.input)}`)
+}
+{
+  const r = read('turn everything down', WITH_BASS)
+  check('"turn everything down" is the master, not a track',
+    r.matched === 'set_master_volume', r.matched)
+}
+{
+  const r = read('mark bar 17 as the drop', WITH_BASS)
+  check('"mark bar 17 as the drop" names a place',
+    r.calls[0]?.input?.name === 'Drop' && r.calls[0]?.input?.at?.bar === 17,
     JSON.stringify(r.calls[0]?.input))
 }
 

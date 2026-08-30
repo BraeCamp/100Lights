@@ -142,15 +142,38 @@ function nameFrom(
   opts: { dropNums?: boolean } = {},
 ): { name: string; score: number } | null {
   const protect = nameWords(ctx)
-  const kept = w.all
-    .filter(x => !(opts.dropNums && spokenNumber(x) != null))
-    .filter(x => protect.has(x) || !remove.some(t =>
-      x === t || (t.length >= 4 && Math.abs(x.length - t.length) <= 1 && near(x, t))))
+  const words = w.all.filter(x => !(opts.dropNums && spokenNumber(x) != null))
+  const isUnitWord = (x: string) => remove.some(t =>
+    x === t || (t.length >= 4 && Math.abs(x.length - t.length) <= 1 && near(x, t)))
+
+  // ── Two readings of the leftover, not one ────────────────────────────────
+  //
+  // Protecting name words is what stops "bass" being deleted as "bars". But
+  // protection alone breaks the opposite case, and it broke it in the most
+  // ordinary project imaginable: a new track is called "Track 2" by default, so
+  // the word "track" becomes a name word, so "delete the drums track" keeps
+  // "track" in the leftover, looks for a track called "drums track", and finds
+  // nothing. One added track and every "the X track" phrasing stops working.
+  //
+  // Neither rule is right on its own, so both readings are produced and the
+  // project picks — the same argument as everywhere else here. The protected
+  // reading is preferred on a tie, and the unprotected one carries a small cost
+  // for having discarded a word that names something.
+  const kept = words.filter(x => protect.has(x) || !isUnitWord(x))
+  const stripped = words.filter(x => !isUnitWord(x))
   const rest = kept.join(' ').trim()
-  if (!rest) return null
+  if (!rest && !stripped.length) return null
 
   let used = kept
   let hit = findByName(rest, ctx.tracks)
+  if (stripped.length && stripped.length < kept.length) {
+    const bare = findByName(stripped.join(' '), ctx.tracks)
+    if (bare && bare.score > (hit?.score ?? 0)) {
+      hit = bare
+      used = stripped
+      w.corrections += 0.5
+    }
+  }
 
   // A word the rule did not think to remove will otherwise destroy the lookup,
   // because findByName requires every spoken word to appear in the name: "play
@@ -223,6 +246,16 @@ function nudgeSize(w: Words): number {
   if (w.has('lot', 'way', 'much', 'loads')) return 25
   return 15
 }
+
+/**
+ * The effects reachable by name.
+ *
+ * Hoisted because two rules build commands from it and two more must DECLINE
+ * when one appears: "reverb on the drums 40 percent" has a number, a percent
+ * and a track name, so the plain volume rule reads it perfectly and answers the
+ * wrong question. Naming an effect settles what the sentence is about.
+ */
+const EFFECTS = ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'limiter']
 
 /** Words that mean "make it bigger" and "make it smaller". */
 const UP = ['up', 'louder', 'boost', 'raise', 'increase', 'higher', 'more']
@@ -309,6 +342,8 @@ const COMMANDS: VoiceCommand[] = [
     say: ['set the bass to 50 percent', 'drums volume 70', 'put the pad at 30 percent'],
     match(w, ctx) {
       if (!w.has('percent', 'volume', 'level')) return null
+      // A named effect makes this a different command entirely.
+      if (EFFECTS.some(e => w.has(e))) return null
       // The name is resolved BEFORE the number is read, because which numbers
       // are arguments depends on which are part of the name.
       const hit = nameFrom(w, ctx, ['percent', 'volume', 'level', 'set', 'put', 'track'], { dropNums: true })
@@ -329,6 +364,7 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Nudge a track louder or quieter',
     say: ['turn the bass up', 'bring the drums down a bit', 'make the pad louder'],
     match(w, ctx) {
+      if (EFFECTS.some(e => w.has(e))) return null
       const up = w.has(...UP)
       const down = w.has(...DOWN)
       // Both directions in one sentence is not a nudge, it is a sentence this
@@ -700,6 +736,218 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
 
+  // ── The studio around the song ───────────────────────────────────────────
+  {
+    id: 'set_master_volume',
+    tool: 'set_master_volume',
+    group: 'Mixer',
+    what: 'Set the level of the whole mix',
+    say: ['master volume 80 percent', 'turn everything down', 'set the master to 100 percent'],
+    match(w) {
+      const named = w.has('master', 'everything')
+      if (!named) return null
+      const n = w.num()
+      if (n != null && n >= 0 && n <= 100) {
+        return { calls: [{ name: 'set_master_volume', input: { volume: n } }], confidence: 0.92 }
+      }
+      // "turn everything down" has no number and still means something
+      // definite. A fixed step rather than a guess at how much they meant.
+      const up = w.has(...UP)
+      const down = w.has(...DOWN)
+      if (up === down) return null
+      return {
+        calls: [{ name: 'set_master_volume', input: { volume: up ? 90 : 60 } }],
+        confidence: 0.86,
+      }
+    },
+  },
+  {
+    id: 'set_swing',
+    tool: 'set_swing',
+    group: 'Timing',
+    what: 'Swing the offbeats, or straighten them',
+    say: ['add some swing', 'swing 30 percent', 'straighten it out'],
+    match(w) {
+      if (w.has('straighten', 'straight')) {
+        return { calls: [{ name: 'set_swing', input: { amount: 0 } }], confidence: 0.9 }
+      }
+      if (!w.has('swing', 'shuffle', 'groove')) return null
+      const n = w.num()
+      const amount = n != null && n >= 0 && n <= 100 ? n : w.has('some', 'add', 'bit') ? 25 : null
+      if (amount == null) return null
+      return { calls: [{ name: 'set_swing', input: { amount } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'add_track',
+    tool: 'add_track',
+    group: 'Project',
+    what: 'Add a new empty track',
+    say: ['add a track', 'add a new track', 'give me another track'],
+    match(w) {
+      if (!w.has('track')) return null
+      if (!w.has('add', 'new', 'another', 'create', 'make')) return null
+      // "add a kick on bar 9" is an insert, and "add a track" is this. The
+      // difference is the word "track", which is why it is required above.
+      if (w.has('delete', 'remove', 'duplicate', 'rename', 'copy')) return null
+      return { calls: [{ name: 'add_track', input: {} }], confidence: 0.88 }
+    },
+  },
+  {
+    id: 'duplicate_track',
+    tool: 'duplicate_track',
+    group: 'Project',
+    what: 'Copy a whole track',
+    say: ['duplicate the drums track', 'copy the pad track'],
+    match(w, ctx) {
+      if (!w.has('track')) return null
+      if (!w.has('duplicate', 'copy', 'clone')) return null
+      const hit = nameFrom(w, ctx, ['duplicate', 'copy', 'clone', 'track'], { dropNums: true })
+      if (!hit) return null
+      return {
+        calls: [{ name: 'duplicate_track', input: { target: hit.name } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'rename_track',
+    tool: 'rename_track',
+    group: 'Project',
+    what: 'Rename a track',
+    say: ['rename the pad to strings', 'rename the drums to beats'],
+    match(w, ctx) {
+      if (!w.has('rename', 'call')) return null
+      // "rename X to Y" — the target is before "to" and the new name after it,
+      // and "to" is filler everywhere else, so the raw sentence is the only
+      // place that split survives.
+      const parts = w.raw.toLowerCase().split(/\s+to\s+/)
+      if (parts.length !== 2) return null
+      const fresh = parts[1].trim().replace(/[^a-z0-9\s'-]/g, '').trim()
+      if (!fresh) return null
+      const hit = findByName(
+        parts[0].replace(/\b(rename|call|the|track|please|can|you)\b/g, ' ').trim(),
+        ctx.tracks,
+      )
+      if (!hit || hit.score < 0.6) return null
+      // Every word counts as read: the target, the new name, and the verb.
+      for (const word of w.all) w.markWord(word, 0)
+      return {
+        calls: [{
+          name: 'rename_track',
+          input: {
+            target: hit.item.name ?? '',
+            // Title case, because it becomes a label people read.
+            name: fresh.replace(/\b[a-z]/g, c => c.toUpperCase()),
+          },
+        }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'remove_track',
+    tool: 'remove_track',
+    group: 'Project',
+    what: 'Delete a track and everything on it',
+    say: ['delete the pad track', 'remove the guitar track'],
+    // Confirmed before it runs. A mishearing that deletes a track is not
+    // undone by saying the opposite.
+    destructive: true,
+    match(w, ctx) {
+      if (!w.has('track')) return null
+      if (!w.has('delete', 'remove', 'get')) return null
+      const hit = nameFrom(w, ctx, ['delete', 'remove', 'get', 'rid', 'track'], { dropNums: true })
+      if (!hit) return null
+      return {
+        calls: [{ name: 'remove_track', input: { target: hit.name } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'add_marker',
+    tool: 'add_marker',
+    group: 'Arrangement',
+    what: 'Name a place in the song',
+    say: ['mark this as the chorus', 'mark bar 17 as the drop'],
+    match(w) {
+      if (!w.has('mark', 'marker', 'label')) return null
+      // "mark X as Y" — the name is what follows "as".
+      const after = w.raw.toLowerCase().split(/\s+as\s+/)[1]
+      const name = (after ?? '').trim().replace(/[^a-z0-9\s'-]/g, '').replace(/^the\s+/, '').trim()
+      if (!name) return null
+      const bar = w.has('bar', 'measure') ? w.num() : null
+      for (const word of w.all) w.markWord(word, 0)
+      return {
+        calls: [{
+          name: 'add_marker',
+          input: {
+            name: name.replace(/\b[a-z]/g, c => c.toUpperCase()),
+            ...(bar != null && bar > 0 ? { at: { bar } } : {}),
+          },
+        }],
+        confidence: 0.88,
+      }
+    },
+  },
+  {
+    id: 'add_effect',
+    tool: 'add_effect',
+    group: 'Mixer',
+    what: 'Put an effect on a track',
+    say: ['put reverb on the vocals', 'add delay to the guitar'],
+    match(w, ctx) {
+      const effect = EFFECTS.find(e => w.has(e))
+      if (!effect) return null
+      if (!w.has('put', 'add', 'give', 'stick')) return null
+      const hit = nameFrom(w, ctx, [...EFFECTS, 'put', 'add', 'give', 'stick', 'some',
+        'percent', 'track'], { dropNums: true })
+      if (!hit) return null
+      const n = argNumbers(w, hit.name)[0]
+      if (n != null) w.has('percent')
+      return {
+        calls: [{
+          name: 'add_effect',
+          input: { target: hit.name, effect, ...(n != null && n >= 0 && n <= 100 ? { amount: n } : {}) },
+        }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'set_effect',
+    tool: 'set_effect',
+    group: 'Mixer',
+    what: 'Change how much of an effect a track has',
+    say: ['more reverb on the pad', 'less delay on the guitar', 'reverb on the drums 40 percent'],
+    match(w, ctx) {
+      const effect = EFFECTS.find(e => w.has(e))
+      if (!effect) return null
+      const hit = nameFrom(w, ctx, [...EFFECTS, 'more', 'less', 'percent', 'track',
+        'take', 'off', 'up', 'down'], { dropNums: true })
+      if (!hit) return null
+      const n = argNumbers(w, hit.name)[0]
+      // Reading "40 percent" means reading the unit as well as the number.
+      if (n != null) w.has('percent')
+      const amount = n != null && n >= 0 && n <= 100 ? n
+        : w.has('off', 'remove') ? 0
+          : w.has('more', 'up', 'louder') ? 60
+            : w.has('less', 'down', 'quieter') ? 15
+              : null
+      if (amount == null) return null
+      return {
+        calls: [{ name: 'set_effect', input: { target: hit.name, effect, amount } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+
   // ── Transport ────────────────────────────────────────────────────────────
   //
   // Last, because these words turn up inside sentences that are about something
@@ -816,6 +1064,18 @@ const PRECEDENCE: string[] = [
   'set_loop_region.range',
   'set_loop_region.first',
   'set_loop_region.on',
+  // The studio around the song. These all carry a distinctive noun — "track",
+  // an effect's name, "master", "swing" — so they are unambiguous enough to sit
+  // ahead of the general timing rules.
+  'rename_track',
+  'remove_track',
+  'duplicate_track',
+  'add_track',
+  'add_effect',
+  'set_effect',
+  'set_master_volume',
+  'add_marker',
+  'set_swing',
   // Timing. The meter comes after the loop rules because "loop bars 4 to 8" is
   // a pair of numbers that would otherwise read as 4/8.
   'set_tempo',

@@ -21,8 +21,12 @@
 //   Never invent an id. Everything referenced is resolved from the project or
 //   freshly minted here.
 
-import type { DawProject, DawTrack, MidiClip, DawClip } from '../daw-types'
-import { findByName, spokenNumber, spokenFraction } from './resolve'
+import type { DawProject, DawTrack, MidiClip, DawClip, EffectType, TrackEffect } from '../daw-types'
+import {
+  defaultReverb, defaultDelay, defaultFilter, defaultCompressor,
+  defaultSaturator, defaultChorus, defaultEq3, defaultLimiter,
+} from '../daw-types'
+import { findByName, foldName, spokenNumber, spokenFraction } from './resolve'
 import {
   musicMaps, positionToBeat, durationToBeats, describeBeat, describeDuration,
   type MusicMaps, type MusicPosition, type MusicDuration,
@@ -43,6 +47,44 @@ const pos = (v: unknown): MusicPosition | null => (v && typeof v === 'object' ? 
 const len = (v: unknown): MusicDuration | null => (v && typeof v === 'object' ? v as MusicDuration : null)
 
 const allClips = (p: DawProject): DawClip[] => p.arrangementClips ?? []
+
+/**
+ * The effects a spoken command can reach, and how to build one.
+ *
+ * Deliberately a short list. Every entry here is an effect somebody asks for by
+ * name in ordinary speech ("put some reverb on it"); the rest of the rack is
+ * reached by hand, where the parameter that matters can actually be seen.
+ */
+const EFFECT_DEFAULTS: Partial<Record<EffectType, () => TrackEffect['params']>> = {
+  reverb: defaultReverb, delay: defaultDelay, filter: defaultFilter,
+  compressor: defaultCompressor, saturator: defaultSaturator,
+  chorus: defaultChorus, eq3: defaultEq3, limiter: defaultLimiter,
+}
+
+/**
+ * "More reverb" means different things to different effects.
+ *
+ * There is no shared "amount" parameter, and pretending otherwise would set a
+ * field that does not exist and report success. So each effect says which of
+ * its own parameters the word maps to: the wet/dry mix for the ones people
+ * think of as an amount, drive for saturation, cutoff for a filter — where
+ * "more" sensibly means "more open" rather than "more filtered".
+ */
+function applyAmount(params: Record<string, unknown>, kind: EffectType, pct: number): void {
+  const unit = Math.max(0, Math.min(1, pct / 100))
+  switch (kind) {
+    case 'reverb': case 'delay': params.wet = unit; break
+    case 'chorus': params.mix = unit; break
+    case 'saturator': params.drive = unit; break
+    // 20 Hz to 20 kHz, logarithmically, so "the filter at 50%" lands around
+    // 600 Hz where a person hears half-closed rather than at 10 kHz where a
+    // linear reading would put it and nothing would appear to have happened.
+    case 'filter': params.frequency = Math.round(20 * Math.pow(1000, unit)); break
+    case 'compressor': case 'limiter': params.threshold = Math.round(-60 + unit * 60); break
+    case 'eq3': params.midGain = Math.round(-12 + unit * 24); break
+    default: break
+  }
+}
 
 function mapsOf(p: DawProject): MusicMaps {
   return musicMaps({
@@ -290,6 +332,124 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
           patch: { pitch: Math.max(0, Math.min(127, n.pitch + semis)) },
         })),
         say: `Transposed ${found.how} ${Math.abs(semis)} semitone${Math.abs(semis) === 1 ? '' : 's'} ${semis > 0 ? 'up' : 'down'}.`,
+      }
+    }
+
+    // ── The studio around the song ───────────────────────────────────────
+    case 'set_master_volume': {
+      const pct = spokenNumber(i.volume as string)
+      if (pct == null) return fail('Say what to set the master to, as a percentage.')
+      const v = Math.max(0, Math.min(1, pct / 100))
+      return {
+        actions: [{ type: 'SET_MASTER_VOLUME', volume: v }],
+        say: `Master volume ${Math.round(v * 100)}%.`,
+      }
+    }
+
+    case 'set_swing': {
+      const pct = spokenNumber(i.amount as string)
+      if (pct == null) return fail('Say how much swing, as a percentage.')
+      const v = Math.max(0, Math.min(1, pct / 100))
+      return {
+        actions: [{ type: 'SET_SWING', swing: v }],
+        say: v === 0 ? 'Straightened out.' : `Swing ${Math.round(v * 100)}%.`,
+      }
+    }
+
+    case 'add_track': {
+      const name = str(i.name).trim()
+      return {
+        actions: [{ type: 'ADD_TRACK', id: newId(), ...(name ? { name } : {}) }],
+        say: name ? `Added a track called "${name}".` : 'Added a track.',
+      }
+    }
+
+    case 'rename_track': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const name = str(i.name).trim()
+      if (!name) return fail('Say what to call it.')
+      // Renaming onto an existing name makes every later "mute the bass"
+      // ambiguous, and the ambiguity would show up much later as a command that
+      // mysteriously stopped working.
+      if (project.tracks.some(t => t.id !== track.id && foldName(t.name) === foldName(name))) {
+        return fail(`There is already a track called "${name}".`)
+      }
+      return {
+        actions: [{ type: 'UPDATE_TRACK', trackId: track.id, patch: { name } }],
+        say: `"${track.name}" is now "${name}".`,
+      }
+    }
+
+    case 'duplicate_track': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      return {
+        actions: [{ type: 'DUPLICATE_TRACK', trackId: track.id, seed: newId() }],
+        say: `Duplicated "${track.name}".`,
+      }
+    }
+
+    case 'remove_track': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const clips = allClips(project).filter(c => c.trackId === track.id).length
+      return {
+        actions: [{ type: 'REMOVE_TRACK', trackId: track.id }],
+        say: clips
+          ? `Deleted "${track.name}" and its ${clips} clip${clips === 1 ? '' : 's'}.`
+          : `Deleted "${track.name}".`,
+      }
+    }
+
+    case 'add_marker': {
+      const name = str(i.name).trim()
+      if (!name) return fail('Say what to call the marker.')
+      // No position means the start, not "wherever" — a marker that lands
+      // somewhere unstated is worse than one the speaker has to place.
+      const at = pos(i.at)
+      const beat = at ? positionToBeat(at, maps) : 0
+      if (beat == null) return fail('I could not work out where to put that marker.')
+      return {
+        actions: [{ type: 'ADD_CUE_MARKER', marker: { id: newId(), beat, name } }],
+        say: `Marked ${describeBeat(beat, maps)} as "${name}".`,
+      }
+    }
+
+    case 'add_effect':
+    case 'set_effect': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const kind = str(i.effect).toLowerCase() as EffectType
+      const make = EFFECT_DEFAULTS[kind]
+      if (!make) return fail(`I don't know an effect called "${str(i.effect) || 'that'}".`)
+
+      const pct = spokenNumber(i.amount as string)
+      const existing = track.effects.find(e => e.type === kind)
+
+      if (!existing) {
+        if (call.name === 'set_effect' && pct === 0) {
+          return fail(`There is no ${kind} on "${track.name}" to turn down.`)
+        }
+        const params = make() as unknown as Record<string, unknown>
+        if (pct != null) applyAmount(params, kind, pct)
+        return {
+          actions: [{ type: 'ADD_EFFECT', trackId: track.id, effect: { id: newId(), type: kind, params } }],
+          say: pct != null
+            ? `Added ${kind} to "${track.name}" at ${Math.round(pct)}%.`
+            : `Added ${kind} to "${track.name}".`,
+        }
+      }
+
+      if (pct == null) return fail(`"${track.name}" already has ${kind}. Say how much you want.`)
+      const params = { ...(existing.params as unknown as Record<string, unknown>) }
+      applyAmount(params, kind, pct)
+      return {
+        actions: [{
+          type: 'UPDATE_EFFECT', trackId: track.id, effectId: existing.id,
+          patch: { params: params as unknown as TrackEffect['params'] },
+        }],
+        say: `${kind} on "${track.name}" at ${Math.round(pct)}%.`,
       }
     }
 

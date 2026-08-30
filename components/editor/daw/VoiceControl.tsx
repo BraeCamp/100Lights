@@ -127,6 +127,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // words used to report a command that ran. Choosing costs nothing — the
   // readings are already in hand.
   const [choices, setChoices] = useState<{ label: string; calls: VoiceCall[] }[] | null>(null)
+  // ── About to destroy something ───────────────────────────────────────────
+  //
+  // Deleting a track is the one command where being wrong is not recoverable by
+  // saying the opposite, and a voice command is exactly the kind of input that
+  // arrives misheard. So it is read back and confirmed — the same shape as the
+  // credit barrier, for the same reason: the cost of asking is a keystroke, and
+  // the cost of not asking is somebody's work.
+  const [pendingDo, setPendingDo] = useState<{ label: string; calls: VoiceCall[] } | null>(null)
   const handle = useRef<SpeechHandle | null>(null)
   /** Set when recording instead of using the browser's recogniser. */
   const recorder = useRef<Recording | null>(null)
@@ -181,7 +189,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   ) => {
     const text = stripWakeWord(spoken)
     if (!text) { setProblem('I didn\'t catch that.'); return }
-    setBusy(true); setProblem(''); setSaid(''); setAsking(''); setPendingAsk(null); setChoices(null)
+    setBusy(true); setProblem(''); setSaid(''); setAsking(''); setPendingAsk(null)
+    setChoices(null); setPendingDo(null)
 
     // ── Try to answer it here first ──────────────────────────────────────────
     //
@@ -207,6 +216,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const local = heard ? resolveHeard(heard, ctx) : resolveLocally(text, ctx)
     if (confidentEnough(local, heardConfidence)) {
       const plan = planVoiceCalls(local.calls, project)
+      if (!plan.problem && local.destructive && !confirmed) {
+        // Understood perfectly, and still not run: the read-back says exactly
+        // what would be lost, and a person presses the button.
+        setBusy(false)
+        setPendingDo({ label: plan.say, calls: local.calls })
+        return
+      }
       if (!plan.problem) {
         for (const a of plan.actions) runAction(a)
         remember({
@@ -667,6 +683,51 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
                 ))}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {pendingDo && (
+        <div
+          style={{
+            position: 'absolute', top: 26, right: 0, zIndex: 63,
+            width: 340, padding: 10, background: C.bgSurface,
+            border: '1px solid #b4453a', borderRadius: 6,
+            boxShadow: '0 10px 28px rgba(0,0,0,.5)', fontSize: 11, color: C.textPrimary,
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ color: '#e0776b', fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 5 }}>
+            THIS CANNOT BE UNDONE BY SAYING THE OPPOSITE
+          </div>
+          <div style={{ marginBottom: 8, lineHeight: 1.4 }}>{pendingDo.label}</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onClick={() => {
+                const plan = planVoiceCalls(pendingDo.calls, project)
+                setPendingDo(null)
+                if (plan.problem) { setProblem(plan.problem); return }
+                for (const a of plan.actions) runAction(a)
+                setSaid(plan.say)
+              }}
+              style={{
+                flex: 1, height: 26, borderRadius: 4, cursor: 'pointer',
+                border: '1px solid #b4453a', background: 'rgba(180,69,58,.16)', color: '#e0776b',
+                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+              }}
+            >
+              DO IT
+            </button>
+            <button
+              onClick={() => setPendingDo(null)}
+              style={{
+                height: 26, padding: '0 10px', borderRadius: 4, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
+                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+              }}
+            >
+              CANCEL
+            </button>
           </div>
         </div>
       )}

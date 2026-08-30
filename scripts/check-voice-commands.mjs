@@ -42,7 +42,23 @@ await page.addInitScript(() => {
   try { localStorage.setItem('100lights-ui-tier', 'full') } catch { /* private mode */ }
 })
 await page.goto(`${BASE}/create?modules=audio&audioMode=music`, { waitUntil: 'domcontentloaded', timeout: 180000 })
-await page.waitForFunction(() => !!window.__dawDispatch && !!window.__dawProject, null, { timeout: 240000 })
+
+// This one needs the dev hooks: it loads a known song and reads the project
+// back, and neither is possible in a production build. Say so in two seconds
+// rather than timing out in four minutes looking for something that is not
+// coming — a test that fails slowly and vaguely gets ignored.
+const hooked = await page.waitForFunction(
+  () => !!window.__dawDispatch && !!window.__dawProject, null, { timeout: 90000 },
+).then(() => true).catch(() => false)
+if (!hooked) {
+  console.log(`\nThis check drives the studio through window.__dawDispatch and reads it back`)
+  console.log(`through window.__dawProject. Both are development-only, so it needs a dev`)
+  console.log(`server rather than ${BASE}:\n`)
+  console.log(`    PORT=4662 npm run dev`)
+  console.log(`    PORT=4662 node scripts/check-voice-commands.mjs\n`)
+  await browser.close()
+  process.exit(2)
+}
 await page.waitForTimeout(1500)
 
 // ── A song with names worth resolving ───────────────────────────────────────
@@ -177,6 +193,86 @@ check('"turn looping off" disables it', (await state()).loopEnabled === false)
   await say('repeat the drums twice')
   const after = (await state()).clips
   check('"repeat the drums twice" adds clips', after > before, `${before} → ${after} clips`)
+}
+
+// ── The studio around the song ─────────────────────────────────────────────
+await say('put reverb on the pad')
+{
+  const fx = await page.evaluate(() =>
+    window.__dawProject().tracks.find(t => t.name === 'Pad')?.effects.map(e => e.type) ?? [])
+  check('"put reverb on the pad" adds a reverb', fx.includes('reverb'), fx.join(',') || 'none')
+}
+await say('more reverb on the pad')
+{
+  const wet = await page.evaluate(() => {
+    const t = window.__dawProject().tracks.find(x => x.name === 'Pad')
+    return t?.effects.find(e => e.type === 'reverb')?.params?.wet
+  })
+  check('"more reverb on the pad" turns it up, not adds a second one',
+    wet === 0.6, String(wet))
+}
+
+await say('rename the pad to strings')
+{
+  const names = (await state()).tracks.map(t => t.name)
+  check('"rename the pad to strings" renames it',
+    names.includes('Strings') && !names.includes('Pad'), names.join(','))
+}
+
+await say('turn everything down')
+{
+  const master = await page.evaluate(() => window.__dawProject().masterVolume)
+  check('"turn everything down" lowers the master', master < 1, String(master))
+}
+
+await say('add some swing')
+{
+  const swing = await page.evaluate(() => window.__dawProject().swing)
+  check('"add some swing" swings it', swing > 0, String(swing))
+}
+
+await say('mark bar 3 as the chorus')
+{
+  const markers = await page.evaluate(() =>
+    window.__dawProject().cueMarkers.map(m => `${m.name}@${m.beat}`))
+  check('"mark bar 3 as the chorus" names the place',
+    markers.includes('Chorus@8'), markers.join(',') || 'none')
+}
+
+{
+  const before = (await state()).tracks.length
+  await say('add a track')
+  check('"add a track" adds one', (await state()).tracks.length === before + 1)
+}
+
+// ── Deleting asks first ────────────────────────────────────────────────────
+//
+// The one command where being wrong is not recoverable by saying the opposite.
+{
+  const before = (await state()).tracks.length
+  await say('delete the drums track')
+  const confirm = page.getByText('THIS CANNOT BE UNDONE', { exact: false })
+  // Waited for rather than counted immediately: a dev build takes its time, and
+  // a fixed pause that is usually long enough is a test that fails on a busy
+  // machine and gets rerun until it passes, which is worse than no test.
+  const asked = await confirm.first().waitFor({ state: 'visible', timeout: 15000 })
+    .then(() => true).catch(() => false)
+  check('"delete the drums track" asks before doing it', asked)
+  check('and the track is still there while it asks',
+    (await state()).tracks.length === before, `${(await state()).tracks.length} tracks`)
+
+  await page.locator('button', { hasText: 'CANCEL' }).first().click()
+  await page.waitForTimeout(500)
+  check('cancelling keeps the track', (await state()).tracks.length === before)
+
+  await say('delete the drums track')
+  await confirm.first().waitFor({ state: 'visible', timeout: 15000 })
+  await page.locator('button', { hasText: 'DO IT' }).first().click()
+  await page.waitForTimeout(700)
+  const after = await state()
+  check('and confirming deletes it',
+    after.tracks.length === before - 1 && !after.tracks.some(t => t.name === 'Drums'),
+    after.tracks.map(t => t.name).join(','))
 }
 
 // ── And none of it cost anything ───────────────────────────────────────────

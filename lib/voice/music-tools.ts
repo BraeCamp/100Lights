@@ -191,6 +191,120 @@ export const MUSIC_TOOLS = [
       required: ['action'],
     },
   },
+  // ── The studio around the song ───────────────────────────────────────────
+  //
+  // Everything above changes the music. These change the workspace, and people
+  // ask for them just as often — a voice system that can transpose a bassline
+  // but cannot add a track is not a voice system, it is a demo.
+  {
+    name: 'set_master_volume',
+    description:
+      'MASTER — the level of the whole mix. "turn everything down", "master to 80 percent". For one track use set_track.',
+    input_schema: {
+      type: 'object',
+      properties: { volume: { type: 'number', description: 'Percentage, 0-100.' } },
+      required: ['volume'],
+    },
+  },
+  {
+    name: 'set_swing',
+    description:
+      'SWING — how far off the grid the offbeats sit. "add some swing", "swing 30 percent", "straighten it out" is 0.',
+    input_schema: {
+      type: 'object',
+      properties: { amount: { type: 'number', description: 'Percentage, 0 (straight) to 100 (full swing).' } },
+      required: ['amount'],
+    },
+  },
+  {
+    name: 'add_track',
+    description:
+      'ADD A TRACK — a new empty track. "add a bass track", "give me another track called Lead".',
+    input_schema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'What to call it. Omit for a numbered default.' } },
+    },
+  },
+  {
+    name: 'rename_track',
+    description:
+      'RENAME — change what a track is called. "rename the pad to strings", "call track 2 Lead".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        name: { type: 'string', description: 'The new name, as spoken.' },
+      },
+      required: ['target', 'name'],
+    },
+  },
+  {
+    name: 'duplicate_track',
+    description:
+      'DUPLICATE A TRACK — copy a whole track with its clips and effects. Not the same as duplicate_clip, which repeats one clip along the timeline.',
+    input_schema: {
+      type: 'object',
+      properties: { target: TARGET },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'remove_track',
+    description:
+      'DELETE A TRACK — remove it and everything on it. Destructive: the caller confirms before this runs.',
+    input_schema: {
+      type: 'object',
+      properties: { target: TARGET },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'add_marker',
+    description:
+      'MARKER — name a place in the song. "mark this as the chorus", "put a marker at bar 17 called drop".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'What to call the section.' },
+        at: { ...POSITION, description: 'Where. Omit for the playhead.' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'add_effect',
+    description:
+      'EFFECT — put an effect on a track. "put reverb on the vocals", "add a delay to the guitar". Use set_effect to change how much of one already there.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        effect: {
+          type: 'string',
+          enum: ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'eq3', 'limiter'],
+        },
+        amount: { type: 'number', description: 'How much, 0-100. Omit for a sensible default.' },
+      },
+      required: ['target', 'effect'],
+    },
+  },
+  {
+    name: 'set_effect',
+    description:
+      'EFFECT AMOUNT — change how much of an effect a track has. "more reverb on the pad", "less delay on the guitar", "take the reverb off the drums" is 0.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        effect: {
+          type: 'string',
+          enum: ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'eq3', 'limiter'],
+        },
+        amount: { type: 'number', description: 'How much, 0-100.' },
+      },
+      required: ['target', 'effect', 'amount'],
+    },
+  },
 ] as const
 
 /** Every command name, for the executor to check itself against. */
