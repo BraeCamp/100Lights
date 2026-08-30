@@ -50,6 +50,9 @@ export function setPreferredTranscriber(t: Transcriber): void {
 export interface Transcript {
   text: string
   alternatives: string[]
+  /** Per-word confidence, when the recogniser reports it. What the interpreter
+   *  uses to decide WHICH words are worth reconsidering. */
+  words?: { word: string; confidence: number }[]
   confidence: number
 }
 
@@ -235,12 +238,18 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
             const e = await res.json().catch(() => ({} as { error?: string }))
             throw new Error(e.error || `transcribe ${res.status}`)
           }
-          const data = await res.json() as { text?: string; alternatives?: string[]; confidence?: number }
+          const data = await res.json() as {
+            text?: string
+            alternatives?: string[]
+            words?: { word: string; confidence: number }[]
+            confidence?: number
+          }
           resolve({
             ok: true,
             result: {
               text: (data.text ?? '').trim(),
               alternatives: data.alternatives ?? [],
+              words: data.words ?? [],
               confidence: typeof data.confidence === 'number' ? data.confidence : 1,
             },
           })

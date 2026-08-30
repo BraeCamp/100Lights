@@ -29,8 +29,9 @@ import { useDaw } from '@/lib/daw-state'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { hearBetter } from '@/lib/voice/hear-better'
-import { resolveLocally, confidentEnough } from '@/lib/voice/local-resolve'
-import { COMMAND_VOCABULARY } from '@/lib/voice/interpret'
+import { resolveLocally, resolveHeard, confidentEnough } from '@/lib/voice/local-resolve'
+import type { Heard } from '@/lib/voice/hypotheses'
+import { COMMAND_VOCABULARY, commandHelp } from '@/lib/voice/interpret'
 import { remember, markFailed } from '@/lib/voice/voice-memory'
 import { startRecording, preferredTranscriber, setPreferredTranscriber, type Recording } from '@/lib/voice/record'
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
@@ -115,6 +116,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // The local path is deliberately not gated: it spends nothing, so asking
   // permission for it would be a toll booth on a free road.
   const [pendingAsk, setPendingAsk] = useState<string | null>(null)
+  // ── When two readings are equally good ───────────────────────────────────
+  //
+  // Ambiguity is not the same failure as not understanding, and answering it
+  // the same way is wrong twice over: it offers to spend credits on a sentence
+  // that was already understood, and it hides that the studio had two perfectly
+  // good readings of it.
+  //
+  // So an ambiguous command asks WHICH, listing what each would do in the same
+  // words used to report a command that ran. Choosing costs nothing — the
+  // readings are already in hand.
+  const [choices, setChoices] = useState<{ label: string; calls: VoiceCall[] }[] | null>(null)
   const handle = useRef<SpeechHandle | null>(null)
   /** Set when recording instead of using the browser's recogniser. */
   const recorder = useRef<Recording | null>(null)
@@ -159,10 +171,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   }, [dispatch, engine])
 
   /** Send a finished sentence to the assistant and run whatever comes back. */
-  const run = useCallback(async (spoken: string, heardConfidence = 1, confirmed = false) => {
+  const run = useCallback(async (
+    spoken: string,
+    heardConfidence = 1,
+    confirmed = false,
+    /** Everything the recogniser reported, when this came from a microphone.
+     *  Typed commands have no such thing and pass only the words. */
+    heard?: Heard,
+  ) => {
     const text = stripWakeWord(spoken)
     if (!text) { setProblem('I didn\'t catch that.'); return }
-    setBusy(true); setProblem(''); setSaid(''); setAsking(''); setPendingAsk(null)
+    setBusy(true); setProblem(''); setSaid(''); setAsking(''); setPendingAsk(null); setChoices(null)
 
     // ── Try to answer it here first ──────────────────────────────────────────
     //
@@ -176,7 +195,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // BOTH confidences have to hold. Badly heard and badly understood are
     // different failures with the same cure, and a wrong local answer is worse
     // than a slow correct one: it is silent, free, and therefore frequent.
-    const local = resolveLocally(text, { tracks: project.tracks ?? [] })
+    // The context the reading is judged against: the project's real track names,
+    // their current levels (so "turn the bass up" knows where the bass IS), and
+    // the tempo (so "a bit faster" has something to be faster than). A reading
+    // that cannot see these has to guess, and guessing is what this whole path
+    // exists to avoid.
+    const ctx = { tracks: project.tracks ?? [], tempo: project.tempo }
+    // resolveHeard when the utterance came from a microphone: it can weigh what
+    // the recogniser was unsure of, which is the difference between recovering
+    // a mishearing and reporting one.
+    const local = heard ? resolveHeard(heard, ctx) : resolveLocally(text, ctx)
     if (confidentEnough(local, heardConfidence)) {
       const plan = planVoiceCalls(local.calls, project)
       if (!plan.problem) {
@@ -188,12 +216,33 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         })
         history.current = []
         setAsking('')
-        setSaid(plan.say)
+        // A reading of a REWRITTEN sentence says so. Acting silently on words
+        // nobody said is how someone learns not to trust the thing — and if the
+        // rewrite was wrong, seeing it is the only way they find out.
+        setSaid(local.rewrittenFrom
+          ? `${plan.say} (heard "${local.rewrittenFrom}")`
+          : plan.say)
         setBusy(false)
         return
       }
       // Local built something the executor rejected — fall through, since that
       // is precisely a case local does not yet understand well enough.
+    }
+
+    // ── Understood, but two ways ─────────────────────────────────────────────
+    if (local.calls.length && local.alternatives?.length) {
+      const readings = [
+        { id: local.matched, calls: local.calls },
+        ...local.alternatives,
+      ]
+      const offered = readings
+        .map(r => ({ label: planVoiceCalls(r.calls, project).say, calls: r.calls }))
+        .filter(r => r.label)
+      if (offered.length > 1) {
+        setBusy(false)
+        setChoices(offered)
+        return
+      }
     }
 
     // ── The barrier ──────────────────────────────────────────────────────────
@@ -302,13 +351,32 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   /** A finished sentence, from either transcriber. Same treatment either way:
    *  choose among alternatives using the project's real names, repair them,
    *  then run it. */
-  const heardSentence = useCallback((text: string, alternatives: string[][], confidence: number) => {
+  const heardSentence = useCallback((
+    text: string,
+    alternatives: string[][],
+    confidence: number,
+    words?: { word: string; confidence: number }[],
+  ) => {
     setListening(false)
-    const heardBest = alternatives.length
+    // hearBetter repairs the project's own nouns — "base two" into "Bass 2" —
+    // which is the single most valuable correction available, because a general
+    // recogniser has never seen these names and mangles them constantly.
+    //
+    // But it used to REPLACE the transcript, and a correction that replaces its
+    // own evidence cannot be checked against anything afterwards. So it is
+    // demoted to a candidate: it competes with the words actually heard, and
+    // wins on the merits when it fits the project better.
+    const repaired = alternatives.length
       ? alternatives.map(a => hearBetter(a, project.tracks ?? [])).join(' ')
       : hearBetter([text], project.tracks ?? [])
-    setHeard(heardBest)
-    void run(heardBest || text, confidence)
+    const heard: Heard = {
+      text: text || repaired,
+      alternatives: [repaired, ...alternatives.flat()].filter(Boolean),
+      words,
+      confidence,
+    }
+    setHeard(repaired || text)
+    void run(heard.text, confidence, false, heard)
   }, [project, run])
 
   /** Record and transcribe on the server — the path that does not go through
@@ -422,8 +490,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // only correct when the recording genuinely held no words.
         if (!r.ok) { setProblem(r.error); markFailed(r.error); return }
         if (!r.result || !r.result.text) { setProblem('I didn\'t catch that.'); return }
-        const { text, alternatives, confidence } = r.result
-        heardSentence(text, alternatives.length ? [alternatives] : [], confidence)
+        const { text, alternatives, confidence, words } = r.result
+        // Per-word confidence is the most useful thing in the response and was
+        // being dropped on the floor here: it says WHICH word the recogniser
+        // struggled with, so only that word needs reconsidering and the rest
+        // can be taken at face value.
+        heardSentence(text, alternatives.length ? [alternatives] : [], confidence, words)
       })
       return
     }
@@ -570,6 +642,79 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               </span>
             </span>
           </label>
+
+          {/* ── What can I say? ─────────────────────────────────────────────
+              Generated from the command registry rather than written out, so a
+              command cannot be added without appearing here and cannot be
+              listed here without being tested. A voice system whose
+              documentation drifts is one people stop trying things on. */}
+          <div style={{ height: 1, background: C.border, margin: '7px 0' }} />
+          <div style={{ color: C.textMuted, marginBottom: 5, letterSpacing: 0.3 }}>THINGS YOU CAN SAY</div>
+          <div style={{ maxHeight: 280, overflowY: 'auto', paddingRight: 4 }}>
+            {commandHelp().map(group => (
+              <div key={group.group} style={{ marginBottom: 8 }}>
+                <div style={{
+                  color: C.accent, fontSize: 9, fontWeight: 800,
+                  letterSpacing: 0.5, marginBottom: 3,
+                }}>
+                  {group.group.toUpperCase()}
+                </div>
+                {group.items.map(item => (
+                  <div key={item.say} style={{ display: 'flex', gap: 6, padding: '2px 0', lineHeight: 1.35 }}>
+                    <span style={{ color: C.textPrimary, flex: '0 0 auto' }}>&ldquo;{item.say}&rdquo;</span>
+                    <span style={{ color: C.textMuted, flex: 1, textAlign: 'right' }}>{item.what}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {choices && (
+        <div
+          style={{
+            position: 'absolute', top: 26, right: 0, zIndex: 62,
+            width: 340, padding: 10, background: C.bgSurface,
+            border: `1px solid ${C.border}`, borderRadius: 6,
+            boxShadow: '0 10px 28px rgba(0,0,0,.5)', fontSize: 11, color: C.textPrimary,
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ color: C.textMuted, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 6 }}>
+            WHICH DID YOU MEAN?
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {choices.map((choice, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  const plan = planVoiceCalls(choice.calls, project)
+                  setChoices(null)
+                  if (plan.problem) { setProblem(plan.problem); return }
+                  for (const a of plan.actions) runAction(a)
+                  setSaid(plan.say)
+                }}
+                style={{
+                  textAlign: 'left', padding: '7px 9px', borderRadius: 4, cursor: 'pointer',
+                  border: `1px solid ${C.border}`, background: '#141414',
+                  color: C.textPrimary, fontSize: 11, lineHeight: 1.35,
+                }}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setChoices(null)}
+            style={{
+              marginTop: 7, height: 22, padding: '0 9px', borderRadius: 4, cursor: 'pointer',
+              border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
+              fontSize: 10, fontWeight: 700,
+            }}
+          >
+            NEITHER
+          </button>
         </div>
       )}
 

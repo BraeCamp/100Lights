@@ -127,18 +127,41 @@ export async function POST(req: Request) {
   }
 
   const data = await res.json().catch(() => null) as {
-    results?: { channels?: { alternatives?: { transcript?: string; confidence?: number }[] }[] }
+    results?: {
+      channels?: {
+        alternatives?: {
+          transcript?: string
+          confidence?: number
+          words?: { word?: string; punctuated_word?: string; confidence?: number }[]
+        }[]
+      }[]
+    }
   } | null
 
   const alts = data?.results?.channels?.[0]?.alternatives ?? []
   const text = (alts[0]?.transcript ?? '').trim()
-  if (!text) return NextResponse.json({ text: '', alternatives: [], confidence: 0 })
+  if (!text) return NextResponse.json({ text: '', alternatives: [], words: [], confidence: 0 })
 
   return NextResponse.json({
     text,
     // Best first, matching what the browser's recogniser hands back, so the
     // caller's scoring code does not care which one produced them.
     alternatives: alts.map(a => (a.transcript ?? '').trim()).filter(Boolean),
+    // ── Which words it was unsure of ───────────────────────────────────────
+    //
+    // Deepgram scores every word and this used to throw all of it away, keeping
+    // only the single number for the utterance. That discarded the most useful
+    // thing in the response: WHICH word it struggled with.
+    //
+    // Brae: "it's okay to have the system recognize multiple possible words from
+    // the audio instead of deciding on one." Per-word confidence is what makes
+    // that affordable — without it every word in the sentence is equally
+    // suspect and the search has to widen everywhere at once. With it, the one
+    // word it flagged gets reconsidered and the rest are taken at face value.
+    words: (alts[0]?.words ?? []).map(w => ({
+      word: (w.punctuated_word ?? w.word ?? '').trim(),
+      confidence: typeof w.confidence === 'number' ? w.confidence : 1,
+    })).filter(w => w.word),
     confidence: typeof alts[0]?.confidence === 'number' ? alts[0].confidence : 1,
   })
 }

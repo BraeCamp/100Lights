@@ -7,250 +7,276 @@
 // Those two are the same problem. The first resolver matched whole utterances
 // against anchored patterns — /^(restart|start over|from the top)$/ — which
 // works when the transcript is perfect and fails completely when it is not. And
-// a transcript is never perfect: it arrives with a filler word in front ("okay,
-// start from the top"), a politeness on the end ("play it please"), a swallowed
-// article, or a homophone. Every one of those turns an exact match into no
-// match, and no match into a paid round trip that then fails on credits.
+// a transcript is never perfect: it arrives with a filler word in front, a
+// politeness on the end, a swallowed article, a homophone in the middle.
 //
-// So: stop matching, start reading. Throw away the words that carry no meaning,
-// find the VERB, and take the numbers and names near it. That is far more
-// forgiving of a bad transcript, because a bad transcript usually keeps the
-// content words and mangles the small ones — "restart" survives, "could you" was
-// never load-bearing.
+// The second version fixed that by reading content words and bending anything
+// within one edit of a command word. Which introduced the opposite failure, and
+// Brae named it: "I see that words are correcting from other words, but why
+// don't we have overlapping possible changes, a context check between different
+// versions before correction... this way nothing will correct to another word
+// without a context check."
+//
+// The bug that proves the point: "bass" is one edit from "bars". Reading a
+// sentence greedily, the filter rule bent "bass" into "bars", deleted it as a
+// unit of time, and then found no track — while the project sat there with a
+// track called Bass 2 in it. The information needed to reject that correction
+// existed; the parser had already thrown it away.
+//
+// So this file no longer takes the first rule that says yes. EVERY rule reads
+// the sentence, each producing a candidate along with what it had to assume,
+// and the candidates are compared against each other and against the project
+// before any of them is believed. A correction now has to win an argument.
 //
 // It is deliberately not clever. It knows a fixed set of intents and looks for
 // evidence of each; anything it cannot place, it declines and hands on. The rule
 // stays what it always was: a wrong local answer is worse than a slow correct
 // one.
 
-import { findByName, spokenNumber } from './resolve'
+import { VOICE_COMMANDS, nameWords, COMMAND_VOCABULARY, type InterpretContext } from './commands'
+import { hypotheses, type Heard, type Hypothesis } from './hypotheses'
+import { Words } from './words'
 import type { VoiceCall } from './execute-music'
+
+export { COMMAND_VOCABULARY, commandHelp, VOICE_COMMANDS, COMMANDS_BY_ID, UNORDERED_COMMANDS } from './commands'
+export { contentWords, FILLER } from './words'
+export { hypotheses, phoneticKey, editDistance } from './hypotheses'
+export type { Heard, Hypothesis } from './hypotheses'
+export type { InterpretContext } from './commands'
+
+export interface Candidate {
+  /** Which rule read it this way. */
+  id: string
+  calls: VoiceCall[]
+  /** The rule's own certainty. */
+  confidence: number
+  /** How much of the sentence this reading accounts for, 0–1. */
+  coverage: number
+  /** How many words it had to bend, and by how much. */
+  corrections: number
+  /** Everything the reading could not explain. */
+  unexplained: string[]
+  /** The combined judgement the winner is chosen on. */
+  score: number
+  needsName: boolean
+}
 
 export interface Interpretation {
   calls: VoiceCall[]
   confidence: number
+  /** Which rule fired — its id, or 'none'. */
   matched: string
   needsName: boolean
+  /** True when the command destroys work and should be confirmed first. */
+  destructive?: boolean
+  /**
+   * Other readings that were nearly as good.
+   *
+   * Present only when the decision was CLOSE. An empty list means the winner
+   * won clearly; a non-empty one means the sentence was genuinely ambiguous and
+   * the right move is to ask which was meant rather than to act confidently on
+   * a coin flip.
+   */
+  alternatives: Candidate[]
+  /** Every reading, best first. For the log and for tests. */
+  candidates: Candidate[]
+  /**
+   * The sentence this reading is OF.
+   *
+   * Usually the transcript. When a rewritten hypothesis won, this is the
+   * rewritten sentence — and `rewrittenFrom` says what was actually heard, so a
+   * read-back can admit to the substitution rather than quietly acting on a
+   * sentence nobody said.
+   */
+  text?: string
+  rewrittenFrom?: string
+  /** Why the rewrite was proposed, when there was one. */
+  rewriteReason?: string
 }
 
-const NOTHING: Interpretation = { calls: [], confidence: 0, matched: 'none', needsName: false }
-
-/**
- * Words that carry no instruction.
- *
- * Politeness, hedging, and the noises a transcript picks up around a command.
- * Removing them first means "hey, could you please just stop it" and "stop"
- * reach the same place — which is the whole point, since people do not speak
- * the second one.
- */
-const FILLER = new Set([
-  'hey', 'ok', 'okay', 'um', 'uh', 'er', 'please', 'could', 'would', 'can', 'will',
-  'you', 'i', 'want', 'need', 'like', 'just', 'now', 'then', 'and', 'so', 'lets',
-  "let's", 'let', 'us', 'the', 'a', 'an', 'my', 'it', 'its', "it's", 'this', 'that',
-  'to', 'for', 'of', 'on', 'at', 'in', 'be', 'is', 'are', 'do', 'does', 'did',
-  'light', 'lights', 'beacon', 'thanks', 'thank',
-  // Trailing address. "mute the pad for me" left "me" attached to the name, so
-  // the lookup asked for a track called "pad me" and found nothing.
-  'me', 'there', 'here',
-])
-
-/** Split into meaningful words. Punctuation and case are noise here. */
-export function contentWords(sentence: string): string[] {
-  return String(sentence ?? '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s'-]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .filter(w => !FILLER.has(w))
-}
-
-/** The first number anywhere in the sentence, spoken or written. */
-function firstNumber(words: string[]): number | null {
-  for (const w of words) {
-    const n = spokenNumber(w)
-    if (n != null) return n
-  }
-  return null
-}
-
-/** Does the sentence contain this word, or one a letter away from it? A
- *  transcript that heard "loup" for "loop" should still find the intent. */
-function has(words: string[], ...targets: string[]): boolean {
-  for (const t of targets) {
-    for (const w of words) {
-      if (w === t) return true
-      if (t.length >= 4 && Math.abs(w.length - t.length) <= 1 && near(w, t)) return true
-    }
-  }
-  return false
-}
-
-/** One edit apart, no more. */
-function near(a: string, b: string): boolean {
-  let i = 0, j = 0, edits = 0
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) { i++; j++; continue }
-    if (++edits > 1) return false
-    if (a.length > b.length) i++
-    else if (b.length > a.length) j++
-    else { i++; j++ }
-  }
-  return edits + (a.length - i) + (b.length - j) <= 1
+const NOTHING: Interpretation = {
+  calls: [], confidence: 0, matched: 'none', needsName: false,
+  alternatives: [], candidates: [],
 }
 
 /**
- * The words this parser acts on — handed to the transcriber as a hint.
+ * How good is this reading?
  *
- * A recogniser choosing between "mute" and "moot" in a noisy room is guessing
- * from a dictionary of everything. Telling it which words are actually likely
- * here turns that into a much easier decision, and these are exactly the words
- * that decide whether a command lands at all.
+ * Three things, in the order they matter:
+ *
+ *   THE RULE'S OWN CONFIDENCE. Some commands are simply less certain than
+ *   others even when read perfectly.
+ *
+ *   COVERAGE. A reading that explains the whole sentence beats one that
+ *   explains a third of it and shrugs at the rest. This is what stops "play the
+ *   bass louder" being read as "play": both rules match, but one accounts for
+ *   three words and the other for one.
+ *
+ *   CORRECTIONS. Every bent word is evidence against the reading that needed
+ *   it. This is the context check — a reading that takes the sentence at its
+ *   word beats one that had to rewrite it, so a correction only wins when
+ *   nothing truer was available.
+ *
+ * The weights are deliberately gentle. Coverage moves the score by up to 45%
+ * and each correction costs 8%, which is enough to settle a close call and not
+ * enough to let a well-covered wrong reading beat a confident right one.
  */
-export const COMMAND_VOCABULARY: readonly string[] = [
-  'play', 'stop', 'pause', 'restart', 'beginning', 'top',
-  'mute', 'unmute', 'solo', 'unsolo',
-  'tempo', 'bpm', 'loop', 'bar', 'volume', 'percent',
-]
-
-export interface InterpretContext {
-  tracks: { id: string; name?: string }[]
+function scoreOf(confidence: number, coverage: number, corrections: number): number {
+  return confidence * (0.55 + 0.45 * coverage) - 0.08 * corrections
 }
+
+/** Below this gap, two readings are too close to call and the sentence is
+ *  treated as ambiguous rather than decided by a hair. */
+const AMBIGUOUS_MARGIN = 0.05
 
 /**
  * Read a sentence and produce commands, or decline.
  *
- * Ordered by how specific the evidence is: a sentence naming a track and a
- * mixer verb is a mixer command even if it also contains "play", because
- * "play the pad louder" is not the transport.
+ * Every rule gets the sentence. The best-scoring reading wins; if the runner-up
+ * is within a hair of it, both are returned so the caller can ask instead of
+ * guessing.
  */
 export function interpret(sentence: string, ctx: InterpretContext): Interpretation {
-  const w = contentWords(sentence)
-  if (!w.length) return NOTHING
-  const n = firstNumber(w)
+  // Tell the sentence which of its words name something in this project BEFORE
+  // any rule reads it. This is the context check: from here on, a rule that
+  // wants to hear "bass" as "bars" is charged for discarding a real name, and
+  // any reading that keeps the name intact beats it.
+  const words = new Words(sentence).protecting(nameWords(ctx))
+  if (!words.length) return NOTHING
 
-  // ── Mixer, first ─────────────────────────────────────────────────────────
-  // Checked before transport because these sentences often contain a transport
-  // word by accident, and a named track is much stronger evidence of intent
-  // than a loose verb.
-  {
-    const verb = has(w, 'mute') ? 'mute'
-      : has(w, 'unmute') ? 'unmute'
-        : has(w, 'solo') ? 'solo'
-          : has(w, 'unsolo') ? 'unsolo'
-            : null
-    if (verb) {
-      // The track name is whatever is left once the verb and any number are
-      // taken out — which is how "mute the bass two track" still finds "Bass 2".
-      const rest = w.filter(x => !has([x], verb) && x !== 'track').join(' ')
-      const hit = rest ? findByName(rest, ctx.tracks) : null
-      if (hit && hit.score >= 0.6) {
-        const input: Record<string, unknown> = { target: { name: hit.item.name } }
-        if (verb === 'mute') input.muted = true
-        else if (verb === 'unmute') input.muted = false
-        else input.solo = verb === 'solo'
-        return {
-          calls: [{ name: 'set_track', input }],
-          confidence: Math.min(0.93, 0.55 + hit.score * 0.38),
-          matched: `set_track.${verb}`,
-          needsName: true,
-        }
-      }
-      // A mixer verb with no findable track is exactly the ambiguity the
-      // assistant should ask about — declining here is the right answer.
-      return NOTHING
+  const candidates: Candidate[] = []
+  for (const command of VOICE_COMMANDS) {
+    // A fresh tally per rule: what THIS reading consumed and bent, independent
+    // of what every other rule made of the same words.
+    const w = words.fork()
+    let hit
+    try {
+      hit = command.match(w, ctx)
+    } catch {
+      // A rule that throws is a bug in that rule, not a reason to fail the
+      // whole utterance — another reading may well be waiting, and falling
+      // through to a confirmation beats an error where a command should be.
+      continue
     }
+    if (!hit || !hit.calls.length) continue
+    const coverage = w.coverage()
+    candidates.push({
+      id: command.id,
+      calls: hit.calls,
+      confidence: hit.confidence,
+      coverage,
+      corrections: w.corrections,
+      unexplained: w.unexplained(),
+      score: scoreOf(hit.confidence, coverage, w.corrections),
+      needsName: hit.needsName ?? false,
+    })
   }
 
-  // Volume, as an absolute percentage. Relative moves ("a bit louder") are
-  // still declined: how much "a bit" is has not been decided.
-  if (n != null && n >= 0 && n <= 100 && has(w, 'percent', 'volume', 'level')) {
-    const rest = w.filter(x => !/^\d+$/.test(x) && !has([x], 'percent', 'volume', 'level', 'set', 'put')).join(' ')
-    const hit = rest ? findByName(rest, ctx.tracks) : null
-    if (hit && hit.score >= 0.6) {
-      return {
-        calls: [{ name: 'set_track', input: { target: { name: hit.item.name }, volume: n } }],
-        confidence: Math.min(0.9, 0.5 + hit.score * 0.38),
-        matched: 'set_track.volume', needsName: true,
-      }
-    }
+  if (!candidates.length) return NOTHING
+
+  // Best first. Ties break on the registry's declared precedence, which is the
+  // order they were tried in — so an exact tie is resolved the same way every
+  // time rather than by whichever happened to be pushed first.
+  candidates.sort((a, b) => b.score - a.score)
+  const best = candidates[0]
+  const runnersUp = candidates
+    .slice(1)
+    .filter(c => best.score - c.score < AMBIGUOUS_MARGIN)
+    // Two rules that produce the SAME command from the same sentence are not an
+    // ambiguity worth asking about — they agree.
+    .filter(c => JSON.stringify(c.calls) !== JSON.stringify(best.calls))
+
+  const command = VOICE_COMMANDS.find(c => c.id === best.id)
+  return {
+    calls: best.calls,
+    confidence: best.confidence,
+    matched: best.id,
+    needsName: best.needsName,
+    destructive: command?.destructive,
+    alternatives: runnersUp,
+    candidates,
+  }
+}
+
+// ── Reading what was heard, without first deciding what that was ────────────
+
+/**
+ * How much a rewritten sentence is penalised for not being what was heard.
+ *
+ * The transcript is the only direct evidence of what was said. A rewrite has to
+ * be a substantially better fit for the project before it wins, or the system
+ * starts hearing what it expects instead of what it was told — which is a much
+ * worse failure than not understanding, because it is confident and silent.
+ */
+const REWRITE_PENALTY = 0.25
+
+/**
+ * A rewritten sentence must explain nearly all of itself.
+ *
+ * This is the guard that stops a wide net manufacturing commands out of
+ * ordinary speech, and it was found the hard way: "what time is it" became
+ * "halt time is it" and stopped the transport, and "the drums are too loud in
+ * the room" soloed the drums. Both readings were cheap, and both explained
+ * about half the sentence — the other half being the words that made it obvious
+ * nobody was giving a command.
+ *
+ * The rule that separates the two cases cleanly: if a word had to be rewritten
+ * AND the result still cannot account for the rest of the sentence, the reading
+ * is an artefact of the search rather than a recovery of what was said. A real
+ * mishearing — "moot the drums" — explains every word once the one bad word is
+ * put right.
+ */
+const REWRITE_MIN_COVERAGE = 0.7
+
+/**
+ * Interpret an utterance, considering every sentence it might have been.
+ *
+ * Brae: "it's okay to have the system recognize multiple possible words from
+ * the audio instead of deciding on one... the idea of widening the net to find
+ * the solution is there."
+ *
+ * So the recogniser's single answer is treated as its best guess rather than as
+ * the truth. Each plausible sentence is read in full, and the winner is the
+ * reading that best explains a sentence that could plausibly have been said —
+ * with what it cost to assume that sentence counted against it.
+ *
+ * This is the same argument as the rule-level one, one layer up: nothing is
+ * corrected without something else getting the chance to disagree.
+ */
+export function interpretHeard(heard: Heard, ctx: InterpretContext): Interpretation {
+  // The project's own track names belong in the substitution vocabulary. They
+  // are exactly the words a general-purpose recogniser has never seen and is
+  // most likely to have mangled, and the only place they exist is here.
+  const vocabulary = [
+    ...COMMAND_VOCABULARY,
+    ...[...nameWords(ctx)],
+  ]
+  const options: Hypothesis[] = hypotheses(heard, vocabulary)
+  if (!options.length) return NOTHING
+
+  let best: { reading: Interpretation; option: Hypothesis; score: number } | null = null
+  for (const option of options) {
+    const reading = interpret(option.text, ctx)
+    if (!reading.calls.length) continue
+    const top = reading.candidates[0]
+    // A rewrite is held to a higher standard than the words actually heard: it
+    // has to explain the sentence it invented, not merely find a command in it.
+    if (option.cost > 0 && (top?.coverage ?? 0) < REWRITE_MIN_COVERAGE) continue
+    const score = (top?.score ?? 0) - REWRITE_PENALTY * option.cost
+    if (!best || score > best.score) best = { reading, option, score }
+  }
+  if (!best) {
+    // Nothing could be read out of any of them. Return the reading of what was
+    // actually heard, so the caller shows the speaker their own words rather
+    // than a rewrite that also failed.
+    return { ...interpret(heard.text, ctx), text: heard.text }
   }
 
-  // ── Tempo ────────────────────────────────────────────────────────────────
-  if (n != null && n >= 20 && n <= 300 && has(w, 'tempo', 'bpm')) {
-    return {
-      calls: [{ name: 'set_tempo', input: { bpm: n } }],
-      confidence: 0.93, matched: 'set_tempo', needsName: false,
-    }
+  const rewritten = best.option.cost > 0
+  return {
+    ...best.reading,
+    text: best.option.text,
+    rewrittenFrom: rewritten ? heard.text : undefined,
+    rewriteReason: rewritten ? best.option.why : undefined,
   }
-
-  // ── Loop ─────────────────────────────────────────────────────────────────
-  if (has(w, 'loop', 'looping')) {
-    if (has(w, 'off', 'stop', 'disable')) {
-      return {
-        calls: [{ name: 'set_loop_region', input: { enabled: false } }],
-        confidence: 0.92, matched: 'set_loop_enabled', needsName: false,
-      }
-    }
-    const nums = w.map(x => spokenNumber(x)).filter((x): x is number => x != null)
-    if (nums.length >= 2 && nums[1] > nums[0]) {
-      return {
-        calls: [{ name: 'set_loop_region', input: { start: { bar: nums[0] }, end: { bar: nums[1] } } }],
-        confidence: 0.9, matched: 'set_loop_region', needsName: false,
-      }
-    }
-    if (has(w, 'on', 'enable')) {
-      return {
-        calls: [{ name: 'set_loop_region', input: { enabled: true } }],
-        confidence: 0.92, matched: 'set_loop_enabled', needsName: false,
-      }
-    }
-  }
-
-  // ── Transport ────────────────────────────────────────────────────────────
-  // "from the top" and "start over" both mean restart, and so does "restart"
-  // buried in a longer sentence — which is what was failing: the read-back said
-  // it had restarted while an anchored pattern had never matched at all.
-  const fromTheTop = has(w, 'restart', 'beginning', 'top')
-    || (has(w, 'start', 'go', 'back') && has(w, 'over', 'top', 'beginning', 'start'))
-  if (fromTheTop) {
-    return {
-      calls: [{ name: 'transport', input: { action: 'restart' } }],
-      confidence: 0.93, matched: 'transport.restart', needsName: false,
-    }
-  }
-  if (has(w, 'bar', 'measure') && n != null && n > 0) {
-    return {
-      calls: [{ name: 'transport', input: { action: 'locate', at: { bar: n } } }],
-      confidence: 0.9, matched: 'transport.locate', needsName: false,
-    }
-  }
-  if (has(w, 'stop', 'halt')) {
-    return {
-      calls: [{ name: 'transport', input: { action: 'stop' } }],
-      confidence: 0.95, matched: 'transport.stop', needsName: false,
-    }
-  }
-  if (has(w, 'pause')) {
-    return {
-      calls: [{ name: 'transport', input: { action: 'pause' } }],
-      confidence: 0.95, matched: 'transport.pause', needsName: false,
-    }
-  }
-  // Last, and only when the sentence is ENTIRELY about the transport.
-  //
-  // "play" turns up inside sentences that are not the transport at all, and a
-  // loose word count is not enough of a guard: "play the bass louder" is three
-  // content words after filler and was matching as a bare play — caught by the
-  // test that exists for exactly this. Every remaining word has to be part of
-  // saying "play", otherwise the sentence is about something else and belongs
-  // to the assistant.
-  const TRANSPORT_ONLY = new Set(['play', 'start', 'go', 'playing', 'playback', 'begin', 'resume'])
-  if (has(w, 'play', 'start', 'go') && w.every(x => TRANSPORT_ONLY.has(x))) {
-    return {
-      calls: [{ name: 'transport', input: { action: 'play' } }],
-      confidence: 0.94, matched: 'transport.play', needsName: false,
-    }
-  }
-
-  return NOTHING
 }

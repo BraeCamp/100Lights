@@ -20,7 +20,8 @@
 // match, and no match into a paid round trip.
 
 import type { VoiceCall } from './execute-music'
-import { interpret, type InterpretContext } from './interpret'
+import { interpret, interpretHeard, type InterpretContext } from './interpret'
+import type { Heard } from './hypotheses'
 
 export interface LocalResult {
   calls: VoiceCall[]
@@ -37,6 +38,21 @@ export interface LocalResult {
    * only as good as the words it was given.
    */
   needsName: boolean
+  /**
+   * Readings that were nearly as good as the winner.
+   *
+   * A non-empty list means the sentence was genuinely ambiguous. Acting on the
+   * winner would be a coin flip presented as a decision, so the caller asks
+   * instead.
+   */
+  alternatives?: { id: string; calls: VoiceCall[] }[]
+  /** When the winning reading was of a REWRITTEN sentence: what was actually
+   *  heard, and what changed. A read-back that hides a substitution is how a
+   *  system quietly trains someone to distrust it. */
+  rewrittenFrom?: string
+  rewriteReason?: string
+  /** The sentence the winning reading is of. */
+  text?: string
 }
 
 export type ResolveContext = InterpretContext
@@ -44,6 +60,19 @@ export type ResolveContext = InterpretContext
 /** Read a sentence and produce commands, or decline. */
 export function resolveLocally(sentence: string, ctx: ResolveContext): LocalResult {
   return interpret(sentence, ctx)
+}
+
+/**
+ * Read an UTTERANCE — everything the recogniser reported, not just the sentence
+ * it settled on.
+ *
+ * Preferred over resolveLocally wherever the recogniser's own output is to
+ * hand, because the extra information is exactly what makes a mishearing
+ * recoverable: which words it doubted, and what else it considered. Passing
+ * only the text throws that away before anything can use it.
+ */
+export function resolveHeard(heard: Heard, ctx: ResolveContext): LocalResult {
+  return interpretHeard(heard, ctx)
 }
 
 /**
@@ -76,5 +105,17 @@ export function confidentEnough(local: LocalResult, heardConfidence: number): bo
   // "pad", the project has a dozen candidates, and muting the wrong track is
   // quiet and easy to miss. That one still wants the transcriber to be sure.
   const needed = local.needsName ? 0.6 : 0.3
-  return heardConfidence >= needed
+  if (heardConfidence < needed) return false
+
+  // ── A close second reading is a reason to ask ─────────────────────────────
+  //
+  // Confidence answers "how sure am I of this reading". It cannot answer "was
+  // there another reading just as good", and that is a different question with
+  // a different right answer: two readings within a hair of each other mean the
+  // sentence was ambiguous, and acting on the winner is a coin flip dressed up
+  // as a decision. The alternatives are surfaced instead, so the choice goes to
+  // the person who knows which they meant.
+  if (local.alternatives?.length) return false
+
+  return true
 }

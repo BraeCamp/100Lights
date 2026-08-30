@@ -935,7 +935,20 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [engineForRender, project.presets])
 
 
-  useEffect(() => { projectRef.current = project }, [project])
+  useEffect(() => {
+    projectRef.current = project
+    // Dev-only read-back of the live project (window.__dawProject).
+    //
+    // __dawDispatch could already drive the studio from outside; nothing could
+    // read the result, so a test could issue a command and then only check that
+    // it had not thrown. Verifying a voice command means asserting the TRACK IS
+    // MUTED, not that a plausible-looking action was dispatched — the two came
+    // apart badly once already, when every mixer command produced a well-formed
+    // action naming a track called "[object Object]".
+    if (DAW_HOOKS) {
+      (window as unknown as { __dawProject?: () => DawProject }).__dawProject = () => projectRef.current
+    }
+  }, [project])
 
   // Freeze heavy projects by default.
   //

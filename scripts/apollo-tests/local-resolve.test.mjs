@@ -56,7 +56,14 @@ check('loop bars 9 to 17',
 check('loop off', call('turn looping off').input.enabled === false)
 
 check('mute the pad', call('mute the pad').input.muted === true)
-check('and it targets the right track', call('mute the pad').input.target.name === 'Pad')
+// The target is the spoken NAME as a plain string, which is what the tool
+// contract says and what the executor's str() can actually read. It used to be
+// an object, and String({name:'Pad'}) is "[object Object]" — so every mixer
+// command resolved locally with high confidence and then failed to find the
+// track. voice-commands.test.mjs now plans every example through the executor
+// so that a shape the executor cannot read fails here rather than in the studio.
+check('and it targets the right track', call('mute the pad').input.target === 'Pad',
+  JSON.stringify(call('mute the pad').input.target))
 check('solo the drums', call('solo the drums').input.solo === true)
 check('unmute', call('unmute the pad').input.muted === false)
 check('set the pad to 80 percent', call('set the pad to 80 percent').input.volume === 80)
@@ -87,7 +94,7 @@ check('loop said loosely',
   JSON.stringify(call('can you loop from bar 9 to bar 17')?.input) === '{"start":{"bar":9},"end":{"bar":17}}',
   JSON.stringify(call('can you loop from bar 9 to bar 17')?.input))
 check('a mixer command in a sentence',
-  call('could you mute the pad for me')?.input.target.name === 'Pad',
+  call('could you mute the pad for me')?.input.target === 'Pad',
   JSON.stringify(call('could you mute the pad for me')?.input))
 // A misheard content word should still land — the small words are what a
 // transcript mangles, and those were never load-bearing.

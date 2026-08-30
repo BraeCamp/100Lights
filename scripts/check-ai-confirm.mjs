@@ -22,7 +22,10 @@
 
 import { chromium } from 'playwright'
 
-const BASE = `http://localhost:${process.env.PORT || '4700'}`
+// Runs against a dev server by default, or anywhere BASE points — including
+// production, which is safe because the assistant route is intercepted below
+// and never actually reached.
+const BASE = process.env.BASE || `http://localhost:${process.env.PORT || '4700'}`
 
 let failures = 0
 const check = (label, pass, extra = '') => {
@@ -53,10 +56,13 @@ await page.addInitScript(() => {
 })
 
 await page.goto(`${BASE}/create?modules=audio&audioMode=music`, { waitUntil: 'domcontentloaded', timeout: 180000 })
-await page.waitForFunction(() => !!window.__dawDispatch, null, { timeout: 240000 })
-await page.waitForTimeout(1500)
 
 const typeBtn = page.locator('button[title="Type a command instead of speaking"]')
+// Wait for the control under test, not for a dev-only window hook —
+// __dawDispatch does not exist in a production build, so waiting on it made
+// this runnable in exactly one of the two places it is worth running.
+await typeBtn.waitFor({ state: 'visible', timeout: 240000 })
+await page.waitForTimeout(2000)
 const typeField = page.locator('input[placeholder*="loop bass"]').first()
 const confirmPanel = page.getByText("I DON'T KNOW THAT ONE", { exact: false })
 const confirmField = page.locator('input').first()
