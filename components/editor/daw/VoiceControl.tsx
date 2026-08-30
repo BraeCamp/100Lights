@@ -99,6 +99,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [level, setLevel] = useState(0)
   /** Always the current finish(), so a take that ends itself uses the live one. */
   const finishRef = useRef<(() => void) | null>(null)
+  // ── Nothing is spent without being asked ─────────────────────────────────
+  //
+  // Brae: "I'm worried that AI will mishear things and create commands and use
+  // credits accidentally. Can we set a barrier so that it doesn't use credits
+  // before confirming?" And then: "every single time it should get confirmation
+  // first."
+  //
+  // So a command the local rules cannot answer stops here instead of going to
+  // the assistant. What was HEARD is shown — and is editable — because the
+  // worry is a mishearing, and the only way to catch one is to read it before
+  // it is acted on. Correcting the text re-runs the local rules first, so a
+  // fixed sentence usually costs nothing at all.
+  //
+  // The local path is deliberately not gated: it spends nothing, so asking
+  // permission for it would be a toll booth on a free road.
+  const [pendingAsk, setPendingAsk] = useState<string | null>(null)
   const handle = useRef<SpeechHandle | null>(null)
   /** Set when recording instead of using the browser's recogniser. */
   const recorder = useRef<Recording | null>(null)
@@ -143,10 +159,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   }, [dispatch, engine])
 
   /** Send a finished sentence to the assistant and run whatever comes back. */
-  const run = useCallback(async (spoken: string, heardConfidence = 1) => {
+  const run = useCallback(async (spoken: string, heardConfidence = 1, confirmed = false) => {
     const text = stripWakeWord(spoken)
     if (!text) { setProblem('I didn\'t catch that.'); return }
-    setBusy(true); setProblem(''); setSaid(''); setAsking('')
+    setBusy(true); setProblem(''); setSaid(''); setAsking(''); setPendingAsk(null)
 
     // ── Try to answer it here first ──────────────────────────────────────────
     //
@@ -176,10 +192,28 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         setBusy(false)
         return
       }
-      // Local built something the executor rejected — fall through to the
-      // assistant rather than reporting, since that is precisely a case local
-      // does not yet understand well enough.
+      // Local built something the executor rejected — fall through, since that
+      // is precisely a case local does not yet understand well enough.
     }
+
+    // ── The barrier ──────────────────────────────────────────────────────────
+    //
+    // Past this line costs credits. A mishearing that reaches the assistant
+    // spends money to act on a sentence nobody said, so it stops here and shows
+    // what it heard. Every time — not the first time, not when unsure: the
+    // whole point is that a wrong transcript is indistinguishable from a right
+    // one until a person reads it.
+    if (!confirmed) {
+      setBusy(false)
+      setPendingAsk(text)
+      return
+    }
+    // Brae also said: "Full AI integration will be in the highest tier and only
+    // when activated." That is a mode where this check is SKIPPED, and it is
+    // deliberately not built yet — it needs the paid tiers to exist, and it
+    // contradicts "every single time" until someone has explicitly turned it on.
+    // When it arrives it belongs here, as an extra condition on `confirmed`,
+    // and nowhere else.
 
     try {
       const res = await fetch('/api/ai/assist', {
@@ -536,6 +570,66 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               </span>
             </span>
           </label>
+        </div>
+      )}
+
+      {pendingAsk !== null && (
+        <div
+          style={{
+            position: 'absolute', top: 26, right: 0, zIndex: 62,
+            width: 340, padding: 10, background: C.bgSurface,
+            border: `1px solid ${C.accent}`, borderRadius: 6,
+            boxShadow: '0 10px 28px rgba(0,0,0,.5)', fontSize: 11, color: C.textPrimary,
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ color: C.textMuted, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 5 }}>
+            I DON&apos;T KNOW THAT ONE — HEARD:
+          </div>
+          {/* Editable, because the thing being guarded against is a MISHEARING.
+              Reading it back is what catches one; being able to correct it is
+              what makes the catch useful. A corrected sentence is re-tried
+              locally first, so fixing a misheard word usually costs nothing. */}
+          <input
+            autoFocus
+            value={pendingAsk}
+            onChange={e => setPendingAsk(e.target.value)}
+            onKeyDown={e => {
+              e.stopPropagation()
+              if (e.key === 'Enter') { const t = pendingAsk.trim(); setPendingAsk(null); if (t) void run(t, 1, true) }
+              if (e.key === 'Escape') setPendingAsk(null)
+            }}
+            style={{
+              width: '100%', height: 26, padding: '0 8px', boxSizing: 'border-box',
+              background: '#141414', border: `1px solid ${C.border}`, borderRadius: 4,
+              color: C.textPrimary, fontSize: 11, outline: 'none', marginBottom: 8,
+            }}
+          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onClick={() => { const t = pendingAsk.trim(); setPendingAsk(null); if (t) void run(t, 1, true) }}
+              style={{
+                flex: 1, height: 26, borderRadius: 4, cursor: 'pointer',
+                border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent,
+                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+              }}
+            >
+              ASK THE ASSISTANT
+            </button>
+            <button
+              onClick={() => setPendingAsk(null)}
+              style={{
+                height: 26, padding: '0 10px', borderRadius: 4, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
+                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+              }}
+            >
+              CANCEL
+            </button>
+          </div>
+          <div style={{ color: C.textMuted, fontSize: 10, marginTop: 6 }}>
+            Uses AI credits. Fix the words above and press Enter to try again for free.
+          </div>
         </div>
       )}
 
