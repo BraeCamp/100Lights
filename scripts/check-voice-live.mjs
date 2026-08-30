@@ -66,13 +66,24 @@ await say('what is the tempo')
 check('the studio answers a question in words', /\d+\s*BPM/i.test(await onScreen()),
   (await onScreen()).slice(0, 90))
 
-// ── The speech toggle reached production ───────────────────────────────────
+// ── The voice window reached production ────────────────────────────────────
+//
+// The gear used to open a popover with the settings and the command list in it.
+// It opens the window now, and the list lives on its own tab — so this checks
+// the window, not the popover it replaced.
 await page.locator('button[aria-label="Voice settings"]').click()
-await page.waitForTimeout(600)
-const settings = await onScreen()
-check('the "answer out loud" setting is there', /answer out loud/i.test(settings))
-check('and the command list is generated into the panel',
-  /THINGS YOU CAN SAY/i.test(settings) && /QUESTIONS/i.test(settings))
+await page.waitForTimeout(800)
+const panel = page.locator('[data-voice-panel]')
+check('the gear opens the voice window', (await panel.count()) > 0)
+const settings = await panel.innerText().catch(() => '')
+check('with the settings in it', /answer out loud/i.test(settings), settings.slice(0, 90))
+check('and a HUD button', /HUD/.test(settings))
+
+await panel.getByText('What you can say', { exact: false }).click()
+await page.waitForTimeout(400)
+const help = await panel.innerText().catch(() => '')
+check('and the command list on its own tab',
+  /TRANSPORT/i.test(help) && /QUESTIONS/i.test(help), help.slice(0, 90))
 
 await browser.close()
 console.log(failures ? `\n${failures} failing` : '\nthe voice system is live')
