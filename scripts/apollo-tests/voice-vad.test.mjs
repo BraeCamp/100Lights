@@ -211,8 +211,12 @@ const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
   check('and higher over music too',
     overMusic({ continuous: true }) > overMusic({}),
     `${overMusic({}).toFixed(3)} vs ${overMusic({ continuous: true }).toFixed(3)}`)
-  check('by exactly the strictness the module claims',
-    Math.abs(overMusic({ continuous: true }) - overMusic({}) * CONTINUOUS_STRICTNESS) < 1e-6)
+  // Measured on the EXCESS over the floor, which is what strictness scales.
+  // Over a mix the floor is the music itself, so scaling the whole bar would
+  // ask for a shout — see the note in vad.ts.
+  check('by exactly the strictness the module claims, applied to the excess',
+    Math.abs((overMusic({ continuous: true }) - MUSIC) - (overMusic({}) - MUSIC) * CONTINUOUS_STRICTNESS) < 1e-6,
+    `${overMusic({}).toFixed(3)} → ${overMusic({ continuous: true }).toFixed(3)} over a ${MUSIC} floor`)
 }
 {
   // The filter that actually earns its keep: a cough, a chair, a door and a
@@ -248,6 +252,45 @@ const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
     now += 50
   }
   check('three commands in one take are three utterances', ends === 3, String(ends))
+}
+
+// ── Sensitivity is a dial, and it moves the bar ───────────────────────────
+//
+// Brae: "It's also having trouble hearing me and differentiating my voice next
+// to the mic from background talking."
+//
+// No default fixes that — it depends on the room, the distance and the
+// microphone. What the code owes is a bar that MOVES, and a number the meter
+// can draw so somebody can set it by watching.
+{
+  const bar = sens => run(
+    [...rep(CALIBRATION_SAMPLES, MUSIC), MUSIC],
+    { playing: true, continuous: true, sensitivity: sens },
+  ).thresholds.at(-1)
+  check('a firmer setting raises the bar', bar(2) > bar(1), `${bar(1).toFixed(3)} → ${bar(2).toFixed(3)}`)
+  check('and a quicker one lowers it', bar(0.7) < bar(1), `${bar(0.7).toFixed(3)} vs ${bar(1).toFixed(3)}`)
+  // It scales the EXCESS over the floor, not the whole bar: over a mix the
+  // floor IS the music, and doubling the whole thing asks for a shout.
+  check('by scaling how far above the room it sits, not the whole bar',
+    Math.abs((bar(2) - MUSIC) - (bar(1) - MUSIC) * 2) < 1e-6,
+    `floor ${MUSIC}, bars ${bar(1).toFixed(3)} / ${bar(2).toFixed(3)}`)
+  check('and no setting at all is the standing behaviour', bar(undefined) === bar(1))
+}
+{
+  // What it buys: speech that clears the normal bar and not the strict one is
+  // exactly the far-away conversation this is meant to drop.
+  // Comfortably over the normal bar (music + 1.6x the modest excess) and under
+  // the firm one.
+  const acrossTheRoom = MUSIC + (SPEECH_OVER_MUSIC - MUSIC) * 1.1
+  const take = [...rep(CALIBRATION_SAMPLES, MUSIC), ...speech(30, acrossTheRoom, MUSIC), ...rep(40, MUSIC)]
+  check('a quieter voice is heard at the normal setting',
+    run(take, { playing: true, continuous: true, sensitivity: 1 }).everSpoke)
+  check('and dropped at a firm one',
+    !run(take, { playing: true, continuous: true, sensitivity: 2 }).everSpoke)
+  // ...while the near voice still gets through at the firm setting.
+  const closeUp = [...rep(CALIBRATION_SAMPLES, MUSIC), ...speech(30, MUSIC + (SPEECH_OVER_MUSIC - MUSIC) * 2.5, MUSIC), ...rep(40, MUSIC)]
+  check('the voice at the microphone still gets through',
+    run(closeUp, { playing: true, continuous: true, sensitivity: 2 }).everSpoke)
 }
 
 console.log(failures

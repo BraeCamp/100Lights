@@ -31,6 +31,32 @@
 // speaking as a bonus on top of the text, never as the delivery.
 
 const ENABLED_KEY = 'beacon.voice.speak'
+const SENSITIVITY_KEY = 'beacon.voice.sensitivity'
+
+/**
+ * How hard it should be to trigger while the microphone is held open.
+ *
+ * Brae: "It's also having trouble hearing me and differentiating my voice next
+ * to the mic from background talking."
+ *
+ * There is no default that fixes that, because the answer depends on how loud
+ * the room is, how far away the other people are and what microphone is in
+ * front of him — none of which is measurable from here. What IS possible is to
+ * make the bar adjustable and then SHOW it on the meter, so it can be set by
+ * watching one voice cross it and the other not.
+ *
+ * 1 is the standing behaviour. Higher ignores more of the room.
+ */
+export function voiceSensitivity(): number {
+  try {
+    const v = Number(localStorage.getItem(SENSITIVITY_KEY))
+    return Number.isFinite(v) && v > 0 ? v : 1
+  } catch { return 1 }
+}
+
+export function setVoiceSensitivity(v: number): void {
+  try { localStorage.setItem(SENSITIVITY_KEY, String(v)) } catch { /* private mode */ }
+}
 
 export type SpeechKind =
   /** What just happened. Suppressed while the transport runs. */

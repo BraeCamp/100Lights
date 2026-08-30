@@ -150,6 +150,36 @@ await page.waitForTimeout(600)
   await page.waitForTimeout(900)
 }
 
+// ── The button stays lit, and a command runs once ──────────────────────────
+//
+// Brae: "when it's in toggle it stops being lit up after one command even though
+// it's still toggled... the audio is trying to process my commands twice."
+//
+// One line caused both. When an utterance ended, the recorder fired onSilence —
+// which means "this take is over" and is only ever true for push-to-talk. The
+// caller closed the session, so the button went dark while the microphone was
+// still open, AND the closing stop() transcribed the clip a second time, so
+// every command ran twice.
+//
+// The fake device produces a tone rather than speech, so this cannot make the
+// detector fire on demand. What it CAN check is the thing that broke: after a
+// silence long enough to end an utterance, is the session still open and lit?
+{
+  await voiceBtn.click()
+  await page.waitForFunction(
+    () => document.querySelector('button[data-voice-control]')?.getAttribute('aria-pressed') === 'true',
+    null, { timeout: 15000 },
+  )
+  // Well past the utterance-end timer, which is where the session used to close
+  // itself.
+  await page.waitForTimeout(5000)
+  const lit = await page.evaluate(() =>
+    document.querySelector('button[data-voice-control]')?.getAttribute('aria-pressed') === 'true')
+  check('the button is still lit after a silence long enough to end an utterance', lit)
+  await voiceBtn.click()
+  await page.waitForTimeout(900)
+}
+
 // ── And it does not open a second audio context on the same hardware ───────
 {
   const rates = await page.evaluate(() => window.__contextRates)

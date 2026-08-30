@@ -139,8 +139,26 @@ export interface RecordOptions {
    * reach the mix.
    */
   audioContext?: AudioContext
-  /** Called ~20x a second with 0–1 loudness, for a level meter. */
-  onLevel?: (level: number) => void
+  /**
+   * Called ~20x a second with the input level and the bar it is being judged
+   * against, both 0–1.
+   *
+   * The threshold is reported because a meter without one cannot answer the
+   * question people actually have: not "is it hearing something" but "is what
+   * it hears loud enough to count". Seeing your voice cross the line and the
+   * room not cross it is the only way to set the sensitivity for a particular
+   * room, and no default can do that from here.
+   */
+  onLevel?: (level: number, threshold: number) => void
+  /**
+   * How hard it is to trigger while the microphone is held open.
+   *
+   * 1 is the default. Higher ignores more of the room and takes a firmer voice;
+   * lower is quicker to respond and quicker to mistake a conversation for a
+   * command. Exposed because the right value is a property of the room and the
+   * microphone, not of the software.
+   */
+  sensitivity?: number
   /** Fires once when speech is first detected. */
   onSpeechStart?: () => void
   /** Fires when speech has stopped long enough that the take ends itself. */
@@ -326,19 +344,34 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
       let sum = 0
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i]
       const rms = Math.sqrt(sum / buf.length)
-      o.onLevel?.(Math.min(1, rms * 8))
-
       const now = Date.now()
       // While the studio is talking, the room is not evidence of anything.
       if (muted) return
-      const step = vadStep(vad, rms, now, { playing: o.playing, continuous: o.continuous })
+      const step = vadStep(vad, rms, now, {
+        playing: o.playing, continuous: o.continuous, sensitivity: o.sensitivity,
+      })
       vad = step.state
+      // Reported on the same scale as the level, so the meter can draw one
+      // against the other.
+      o.onLevel?.(Math.min(1, rms * 8), Math.min(1, step.threshold * 8))
       if (step.speaking && !heardSpeech) { heardSpeech = true; o.onSpeechStart?.() }
       if (step.ended) {
         // Finished talking. Ending here rather than on release keeps the
         // trailing room — and whoever is talking in it — out of the clip.
-        o.onSilence?.()
-        if (o.continuous) { void cutUtterance() } else { autoStop?.() }
+        if (o.continuous) {
+          // The UTTERANCE ended. The session did not.
+          //
+          // onSilence means "this take is over", which is only ever true for
+          // push-to-talk — and firing it here did exactly what it says: the
+          // caller closed the session after the first command, so the button
+          // went dark while the microphone was still open, AND the closing
+          // stop() transcribed the clip a second time, so every command ran
+          // twice. One line, both symptoms.
+          void cutUtterance()
+        } else {
+          o.onSilence?.()
+          autoStop?.()
+        }
         return
       }
       if (o.continuous) {

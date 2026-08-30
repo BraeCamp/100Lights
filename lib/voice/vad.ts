@@ -43,6 +43,15 @@ export interface VadOptions {
    * counts as somebody talking.
    */
   continuous?: boolean
+  /**
+   * A multiplier on how hard it is to trigger, 1 by default.
+   *
+   * The right value depends on the room, the microphone and how far away the
+   * other people are — none of which this can measure. So it is a dial rather
+   * than a constant, and the meter draws the bar it produces so somebody can
+   * set it by watching their own voice cross it and the room not.
+   */
+  sensitivity?: number
 }
 
 export interface VadState {
@@ -203,9 +212,23 @@ export function vadStep(
     }
   }
 
-  const ratio = (opts.playing ? RATIO_OVER_MUSIC : RATIO_QUIET)
-    * (opts.continuous ? CONTINUOUS_STRICTNESS : 1)
-  const threshold = Math.max(MIN_SPEECH_LEVEL, state.floor * ratio)
+  // ── How far above the floor speech has to sit ────────────────────────────
+  //
+  // Strictness scales the EXCESS over the floor, not the whole threshold, and
+  // the difference is the whole feature over music. Multiplying the threshold
+  // put the bar at 2.08x the mix — around the same ratio a quiet room asks for,
+  // which is a level nobody reaches by talking over their own playback. It is
+  // the arithmetic behind "it's having trouble hearing me": the bar was set
+  // where a shout would be.
+  //
+  // Scaling the excess keeps the shape right in both worlds. In a quiet room
+  // the floor is hiss and the excess is nearly everything, so strictness still
+  // bites hard. Over a mix the excess is a modest rise, and being firmer about
+  // it stays modest.
+  const ratio = opts.playing ? RATIO_OVER_MUSIC : RATIO_QUIET
+  const strictness = (opts.continuous ? CONTINUOUS_STRICTNESS : 1)
+    * (opts.sensitivity && opts.sensitivity > 0 ? opts.sensitivity : 1)
+  const threshold = Math.max(MIN_SPEECH_LEVEL, state.floor * (1 + (ratio - 1) * strictness))
   const above = rms > threshold
 
   if (above) {

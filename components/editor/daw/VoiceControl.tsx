@@ -43,7 +43,10 @@ import { noticeFor } from '@/lib/voice/notices'
 import { considerUtterance, isAttentive, WAKE_WORDS } from '@/lib/voice/attention'
 import { hudOn, setHud, applyHud } from '@/lib/voice/hud'
 import VoicePanel, { type VoiceTurn } from './VoicePanel'
-import { speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable } from '@/lib/voice/speak'
+import {
+  speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
+  voiceSensitivity, setVoiceSensitivity,
+} from '@/lib/voice/speak'
 
 const C = {
   bgSurface: '#1c1c1c',
@@ -135,6 +138,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   /** What the microphone turned out to be, for the panel and for diagnosing a
    *  device that cannot record and monitor at the same time. */
   const [mic, setMic] = useState<MicReport | null>(null)
+  /** The bar the level is being judged against, drawn on the meter. */
+  const [threshold, setThreshold] = useState(0)
+  const [sensitivity, setSensitivityState] = useState(1)
+  // Read by the recorder's callbacks, which outlive the render that made them.
+  const sensitivityRef = useRef(1)
 
   const addTurn = useCallback((by: VoiceTurn['by'], text: string, ignored = false) => {
     if (!text?.trim()) return
@@ -258,6 +266,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const on = hudOn()
     setHudState(on)
     applyHud(on)
+    const sens = voiceSensitivity()
+    setSensitivityState(sens)
+    sensitivityRef.current = sens
     setEnterRuns(readVoiceEnter())
   }, [])
 
@@ -770,10 +781,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // says when you are finished, and holding it for a session would be an
       // odd way to ask for one.
       continuous: continuousRef.current,
+      sensitivity: sensitivityRef.current,
       onUtterance: r => handleTake(r),
       // A live meter, because "is it even hearing me" is the first question
       // when this goes wrong and it should not need asking twice.
-      onLevel: setLevel,
+      onLevel: (l, bar) => { setLevel(l); setThreshold(bar) },
       onSpeechStart: () => setProblem(''),
       // It ends itself once talking stops, so the trailing room does not get
       // recorded. finish() is what turns the take into a command.
@@ -1075,6 +1087,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           canSpeak={speechAvailable()}
           onHud={on => { setHudState(on); setHud(on) }}
           mic={mic}
+          threshold={threshold}
+          sensitivity={sensitivity}
+          onSensitivity={v => {
+            setSensitivityState(v)
+            sensitivityRef.current = v
+            setVoiceSensitivity(v)
+          }}
           onClose={() => setPanelOpen(false)}
           onClear={() => setTurns([])}
           colors={{

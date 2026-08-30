@@ -70,6 +70,10 @@ export interface VoicePanelProps {
    * "it sounds like static" into a number that says whose problem it is.
    */
   mic?: { label: string; sampleRate: number | null; echoCancellation: boolean | null; degraded: boolean } | null
+  /** The bar the level is judged against, 0–1, drawn on the meter. */
+  threshold?: number
+  sensitivity: number
+  onSensitivity: (v: number) => void
   colors: {
     bgSurface: string
     border: string
@@ -83,7 +87,7 @@ export default function VoicePanel({
   turns, listening, attentive, continuous, level, hud,
   onHud, onClose, onClear, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak,
-  initialTab = 'talk', mic,
+  initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
 }: VoicePanelProps) {
   const [tab, setTab] = React.useState<'talk' | 'settings' | 'help'>(initialTab)
   React.useEffect(() => { setTab(initialTab) }, [initialTab])
@@ -128,12 +132,22 @@ export default function VoicePanel({
             first question when this goes wrong, and it should never need
             asking twice. */}
         {listening && (
-          <div style={{ flex: 1, height: 3, background: '#222', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{ flex: 1, height: 5, background: '#222', borderRadius: 2, overflow: 'hidden', position: 'relative' }}>
             <div style={{
               width: `${Math.round(Math.min(1, level) * 100)}%`, height: '100%',
-              background: attentive || !continuous ? C.accent : C.textMuted,
+              background: level > threshold ? C.accent : C.textMuted,
               transition: 'width 80ms linear',
             }} />
+            {/* The bar the level has to cross. A meter without it answers "is
+                it hearing something"; the question people actually have is
+                whether what it hears is loud enough to count. */}
+            {threshold > 0 && threshold < 1 && (
+              <div style={{
+                position: 'absolute', top: 0, bottom: 0,
+                left: `${Math.round(threshold * 100)}%`, width: 2,
+                background: '#e0776b',
+              }} />
+            )}
           </div>
         )}
         {!listening && <div style={{ flex: 1 }} />}
@@ -261,6 +275,38 @@ export default function VoicePanel({
                 </span>
               </span>
             </label>
+
+            <div>
+              <div style={{ color: C.textMuted, marginBottom: 5, letterSpacing: 0.3, fontSize: 9, fontWeight: 800 }}>
+                HOW EASILY IT TRIGGERS
+              </div>
+              <div style={{ display: 'flex', gap: 5 }}>
+                {([
+                  [0.7, 'Quick', 'picks up quiet speech, and more of the room'],
+                  [1, 'Normal', 'the default'],
+                  [1.5, 'Firm', 'ignores conversation further away'],
+                  [2.2, 'Strict', 'only a clear voice close to the microphone'],
+                ] as const).map(([v, label, why]) => (
+                  <button
+                    key={label}
+                    title={why}
+                    onClick={() => onSensitivity(v)}
+                    style={{
+                      flex: 1, padding: '4px 2px', borderRadius: 4, cursor: 'pointer', fontSize: 10,
+                      border: `1px solid ${Math.abs(sensitivity - v) < 0.01 ? C.accent : C.border}`,
+                      background: Math.abs(sensitivity - v) < 0.01 ? `${C.accent}22` : 'transparent',
+                      color: Math.abs(sensitivity - v) < 0.01 ? C.accent : C.textMuted,
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ color: C.textMuted, marginTop: 4, lineHeight: 1.45 }}>
+                Watch the meter above while you talk and while the room does. The red
+                line is the bar — set this so your voice crosses it and the room does not.
+              </div>
+            </div>
 
             {mic && (
               <div style={{
