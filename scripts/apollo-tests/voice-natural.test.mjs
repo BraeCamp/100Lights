@@ -158,6 +158,64 @@ const said = text => {
     plain.matched === 'add_effect', plain.matched)
 }
 
+// ── Naming the object is not a different command ──────────────────────────
+//
+// Brae: "I was telling the voice control to 'Start the song' and it didn't know
+// what that meant, but it understood start."
+//
+// The transport rule demanded every word be one of seven, so the extra word —
+// not a track, not another command, not noise, just the OBJECT — made it
+// refuse. The fix is one shared vocabulary for the thing a transport command
+// acts on: every transport rule gains it at once and no rule gains a phrasing.
+for (const [phrase, action] of [
+  ['start the song', 'play'],
+  ['play the song', 'play'],
+  ['start the track', 'play'],
+  ['play the music', 'play'],
+  ['play it back', 'play'],
+  ['start playback of the song', 'play'],
+  ['play the whole thing', 'play'],
+  ['stop the song', 'stop'],
+  ['pause the song', 'pause'],
+  ['restart the song', 'restart'],
+]) {
+  const r = said(phrase)
+  check(`"${phrase}" is the transport`,
+    r.calls[0]?.name === 'transport' && r.calls[0]?.input?.action === action,
+    `${r.matched} ${JSON.stringify(r.input)}`)
+}
+{
+  // And it EXPLAINS the extra word rather than tolerating it, so the reading
+  // scores like the complete one it is.
+  const r = said('start the song')
+  const win = r.candidates.find(c => c.id === r.matched)
+  check('and the object counts as read', win?.coverage === 1, String(win?.coverage))
+}
+
+// ── Without letting anything else in ──────────────────────────────────────
+//
+// The whole risk of loosening a guard. A word that NAMES something, or belongs
+// to another command, is still a reason to decline.
+{
+  const r = said('play the bass louder')
+  check('a track name still keeps it out of the transport',
+    r.matched !== 'transport.play' && r.input?.target === 'Bass', r.matched)
+}
+{
+  const r = said('play the drums twice')
+  check("and so does another command's work", r.matched !== 'transport.play',
+    `${r.matched} ${JSON.stringify(r.input)}`)
+}
+for (const nonsense of [
+  'play me something jazzy',
+  'play something with more energy',
+  'start writing a bassline',
+]) {
+  const r = said(nonsense)
+  check(`still refuses: "${nonsense}"`, r.calls.length === 0,
+    `${r.matched} ${JSON.stringify(r.input ?? null)}`)
+}
+
 // ── The splitting itself stays modest ──────────────────────────────────────
 check('a short sentence is not split at all', clauseCandidates('mute the drums').length === 0)
 check('and a long one yields a handful, not a cross-product',

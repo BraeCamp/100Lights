@@ -424,6 +424,32 @@ function nudgeSize(w: Words): number {
  */
 const EFFECTS = ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'limiter']
 
+/**
+ * Words that mean THE WHOLE SONG rather than naming a part of it.
+ *
+ * Brae: "I was telling the voice control to 'Start the song' and it didn't know
+ * what that meant, but it understood start. I don't want this kind of issue with
+ * other commands too."
+ *
+ * The transport rule demanded that every word be one of seven, so it heard
+ * "start" and refused "start the song" — the extra word was not a track, not
+ * another command and not noise, it was the OBJECT, and the rule had no idea
+ * such a thing existed.
+ *
+ * The wrong fix is a phrasing per sentence: "start the song", "play the music",
+ * "start the track", and the fifth one still fails. This is the right size of
+ * idea — one shared vocabulary for the thing a transport command acts on, used
+ * by every transport rule at once. Naming the object is not a different command.
+ *
+ * It does NOT loosen anything. A word here is one that names the whole project;
+ * a track name or another rule's verb is still a reason to decline, which is
+ * what keeps "play the bass louder" out of the transport.
+ */
+const THE_SONG = [
+  'song', 'track', 'music', 'tune', 'thing', 'whole', 'everything', 'project',
+  'arrangement', 'playback', 'back', 'again', 'it',
+]
+
 /** Words that mean "make it bigger" and "make it smaller". */
 const UP = ['up', 'louder', 'boost', 'raise', 'increase', 'higher', 'more']
 const DOWN = ['down', 'quieter', 'lower', 'reduce', 'decrease', 'softer', 'less']
@@ -1426,6 +1452,7 @@ const COMMANDS: VoiceCommand[] = [
         || w.hasPhrase('from', 'top')
         || (w.has('top') && w.has('take', 'go', 'start'))
       if (!asked) return null
+      for (const word of THE_SONG) w.has(word)
       return { calls: [{ name: 'transport', input: { action: 'restart' } }], confidence: 0.93 }
     },
   },
@@ -1453,6 +1480,8 @@ const COMMANDS: VoiceCommand[] = [
     say: ['stop', 'halt', 'stop playing'],
     match(w) {
       if (!w.has('stop', 'halt')) return null
+      // The object of the command, read rather than left dangling.
+      for (const word of THE_SONG) w.has(word)
       return { calls: [{ name: 'transport', input: { action: 'stop' } }], confidence: 0.95 }
     },
   },
@@ -1464,6 +1493,8 @@ const COMMANDS: VoiceCommand[] = [
     say: ['pause', 'hold on', 'pause it'],
     match(w) {
       if (!w.has('pause') && !w.said('hold on')) return null
+      // The object of the command, read rather than left dangling.
+      for (const word of THE_SONG) w.has(word)
       return { calls: [{ name: 'transport', input: { action: 'pause' } }], confidence: 0.95 }
     },
   },
@@ -1474,12 +1505,21 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Start playing',
     say: ['play', 'start', 'go', 'play it'],
     match(w) {
-      // Only when the sentence is ENTIRELY about the transport. A loose word
-      // count is not enough of a guard: "play the bass louder" is three content
-      // words after filler and was being heard as a bare play.
-      const ONLY = new Set(['play', 'start', 'go', 'playing', 'playback', 'begin', 'resume'])
+      // Only when the sentence is entirely about the transport — but "about the
+      // transport" includes saying WHAT to play. A loose word count is not
+      // enough of a guard ("play the bass louder" is three content words after
+      // filler and was being heard as a bare play), and a seven-word whitelist
+      // is too tight: it refused "start the song".
+      const ONLY = new Set([
+        'play', 'start', 'go', 'playing', 'playback', 'begin', 'resume',
+        ...THE_SONG,
+      ])
       if (!w.has('play', 'start', 'go')) return null
       if (!w.only(ONLY)) return null
+      // The object is read, not merely tolerated, so the reading explains the
+      // whole sentence and scores like it. One call per word because has()
+      // stops at its first hit.
+      for (const word of THE_SONG) w.has(word)
       return { calls: [{ name: 'transport', input: { action: 'play' } }], confidence: 0.94 }
     },
   },
