@@ -70,32 +70,66 @@ check('the gear opens it', (await panel.count()) > 0)
 // what it OFFERS rather than by one option's old full-sentence label.
 check('and lands on the settings', /Keep listening/i.test(await panel.innerText()))
 
-// ── It shows both sides of the conversation ────────────────────────────────
-await panel.getByText('Conversation', { exact: false }).click()
+// ── It shows what is being said, and what came back ───────────────────────
+//
+// The scrolling transcript is gone. Brae: "change the conversation tab (which
+// is now just the card) so that it only shows what you're saying right now."
+//
+// So the assertion changes with it: the previous exchange is no longer expected
+// to survive, and checking that it does would be pinning behaviour the card
+// deliberately dropped. What must hold is that the CURRENT one is legible.
+await page.evaluate(() => {
+  const p = document.querySelector('[data-voice-panel]')
+  const back = p && [...p.querySelectorAll('button')].find(x => /^Settings$/.test(x.textContent.trim()))
+  back?.click()   // out of help, if a previous block left it there
+})
+await page.evaluate(() => {
+  const p = document.querySelector('[data-voice-panel]')
+  const gear = p && p.querySelector('button[aria-label="Back"]')
+  gear?.click()   // the gear toggles back to the live view
+})
 await page.waitForTimeout(300)
 await say('set the tempo to 132')
 {
   const text = await panel.innerText()
-  check('what you said is in the window', /set the tempo to 132/i.test(text), text.slice(0, 120))
-  check('and what it said back', /132\s*BPM/i.test(text), text.slice(0, 160))
-}
-await say('mute the drums')
-{
-  const text = await panel.innerText()
-  // The point of a transcript: the earlier exchange is STILL THERE. The
-  // popovers this replaced showed one thing at a time and overwrote it.
-  check('and the previous exchange is still there',
-    /set the tempo to 132/i.test(text) && /mute the drums/i.test(text),
-    text.replace(/\s+/g, ' ').slice(0, 160))
+  check('what it said back is in the window', /132\s*BPM/i.test(text), text.slice(0, 160))
 }
 
-// ── The commands it knows are listed in it ─────────────────────────────────
-await panel.getByText('What you can say', { exact: false }).click()
-await page.waitForTimeout(300)
+// ── The command list is reached from Settings, not from a tab ─────────────
+//
+// Brae: "'What you can say' shouldn't be there for AI mode so have it as a
+// button in settings near the program transcribe button." It sits under the
+// two AI controls, because it describes exactly what those controls decide
+// whether you are relying on.
+await page.evaluate(() => {
+  const p = document.querySelector('[data-voice-panel]')
+  p?.querySelector('button[aria-label="Settings"]')?.click()
+})
+await page.waitForTimeout(400)
+await page.evaluate(() => {
+  const p = document.querySelector('[data-voice-panel]')
+  const b = p && [...p.querySelectorAll('button')].find(x => /What you can say/i.test(x.textContent || ''))
+  b?.click()
+})
+await page.waitForTimeout(400)
 {
   const text = await panel.innerText()
   check('the window lists what you can say',
     /TRANSPORT/i.test(text) && /QUESTIONS/i.test(text), text.slice(0, 100))
+  check('and there is a way back to settings', /Settings/i.test(text))
+}
+
+// ── The HUD button is gone from the title bar ─────────────────────────────
+//
+// Brae: "remove the hud button". The setting itself stays in Settings — this
+// asserts it left the row it shared with Close, which is a lot of prominence
+// for a mode used once a session.
+{
+  const bar = await page.evaluate(() => {
+    const p = document.querySelector('[data-voice-panel]')
+    return p ? p.firstElementChild?.textContent ?? '' : ''
+  })
+  check('no HUD button in the title bar', !/HUD/i.test(bar), JSON.stringify(bar.slice(0, 60)))
 }
 
 // ── It is a card, and it moves ─────────────────────────────────────────────
@@ -142,23 +176,38 @@ await page.waitForTimeout(300)
 }
 
 // ── HUD ────────────────────────────────────────────────────────────────────
+//
+// The title-bar button is gone (Brae: "remove the hud button"), so this drives
+// the switch in Settings instead. Same mode, same assertions — only the door
+// moved, which is exactly the distinction these checks should be able to tell
+// apart from the feature being removed.
+const hudSwitch = async () => {
+  await page.evaluate(() => {
+    const p = document.querySelector('[data-voice-panel]')
+    if (!p.querySelector('button[role="switch"][aria-label="HUD"]')) {
+      p.querySelector('button[aria-label="Settings"]')?.click()
+    }
+  })
+  await page.waitForTimeout(350)
+  await page.evaluate(() => {
+    document.querySelector('[data-voice-panel] button[role="switch"][aria-label="HUD"]')?.click()
+  })
+  await page.waitForTimeout(600)
+}
 const sidebar = page.locator('[data-hud-hide]').first()
 check('the studio chrome is there to begin with', await sidebar.isVisible())
 
-await panel.locator('button', { hasText: 'HUD' }).first().click()
-await page.waitForTimeout(600)
+await hudSwitch()
 check('HUD hides the chrome', !(await sidebar.isVisible()))
 check('and the window itself stays, or there is no way back',
   (await panel.count()) > 0)
 check('the song is still there', await page.locator('[data-editor="true"]').first().isVisible())
 
-await panel.locator('button', { hasText: 'HUD' }).first().click()
-await page.waitForTimeout(600)
+await hudSwitch()
 check('and pressing it again brings the studio back', await sidebar.isVisible())
 
 // ── It is remembered ───────────────────────────────────────────────────────
-await panel.locator('button', { hasText: 'HUD' }).first().click()
-await page.waitForTimeout(600)
+await hudSwitch()
 // Asserted before the reload, so a failure below says which half broke: the
 // setting not being saved, or the saved setting not being applied.
 check('turning it on records the choice',

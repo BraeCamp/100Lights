@@ -51,7 +51,7 @@ import { hudOn, setHud, applyHud } from '@/lib/voice/hud'
 import {
   CALIBRATION_PHRASE, phraseAccuracy, verdictFor, type CalibrationResult,
 } from '@/lib/voice/calibrate'
-import VoicePanel, { type VoiceTurn } from './VoicePanel'
+import VoicePanel from './VoicePanel'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
   studioVoice, setStudioVoice,
@@ -87,6 +87,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [heard, setHeard] = useState('')
   const [said, setSaid] = useState('')
   const [problem, setProblem] = useState('')
+  /** Is the studio speaking right now? Drives the card's waveform. */
+  const [talking, setTalking] = useState(false)
   const [mode, setMode] = useState<VoiceMode>('hold')
   const [enterRuns, setEnterRuns] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
@@ -134,15 +136,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    */
   const lastAcceptedAt = useRef(0)
 
-  /**
-   * What was said, and what was said back.
-   *
-   * The voice system used to speak through popovers that replaced each other,
-   * so the answer to "what did it just do" was already overwritten by the answer
-   * to "what is it doing now". A transcript is the difference between an
-   * interface you can check up on and one you have to take on faith.
-   */
-  const [turns, setTurns] = useState<VoiceTurn[]>([])
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelTab, setPanelTab] = useState<'talk' | 'settings' | 'help'>('talk')
   const [hud, setHudState] = useState(false)
@@ -190,12 +183,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // Read by the recorder's callbacks, which outlive the render that made them.
   const sensitivityRef = useRef(1)
 
-  const addTurn = useCallback((by: VoiceTurn['by'], text: string, ignored = false) => {
-    if (!text?.trim()) return
-    // Bounded. A session left running all afternoon should not grow without
-    // limit, and nobody scrolls back past the last few exchanges.
-    setTurns(t => [...t.slice(-60), { by, text: text.trim(), at: Date.now(), ignored }])
-  }, [])
   /**
    * Whether the studio is currently taking commands, for the person looking at
    * it.
@@ -284,7 +271,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   ) => {
     if (kind === 'problem') setProblem(text)
     else setSaid(text)
-    addTurn('light', text)
     // isPlaying is a PROPERTY, not a method. Calling it threw, which left the
     // control stuck busy and silently blocked every command after the first —
     // a one-character mistake that looked like the whole feature had broken.
@@ -294,12 +280,26 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // all in the mode where speaking is most useful. It is deafened for the
     // duration instead — audio captured while the studio talks is discarded, so
     // it cannot transcribe its own read-back and act on it.
+    // Whether the studio is talking, for the card's waveform. Set around the
+    // utterance rather than inferred from `said`, because the text appears
+    // whether or not it is spoken aloud — and the wave is about the voice.
     const held = recorder.current
     if (held) {
       held.setMuted(true)
-      speak(text, { kind, playing: !!engine?.isPlaying, onDone: () => held.setMuted(false) })
+      setTalking(true)
+      speak(text, {
+        kind,
+        playing: !!engine?.isPlaying,
+        onDone: () => { held.setMuted(false); setTalking(false) },
+      })
     } else {
-      speak(text, { kind, playing: !!engine?.isPlaying, listening })
+      setTalking(true)
+      speak(text, {
+        kind,
+        playing: !!engine?.isPlaying,
+        listening,
+        onDone: () => setTalking(false),
+      })
     }
   }, [engine, listening])
   const handle = useRef<SpeechHandle | null>(null)
@@ -414,7 +414,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
     const text = stripWakeWord(heardFrom)
     if (!text) { setProblem('I didn\'t catch that.'); return }
-    addTurn('you', spoken)
 
     // The context the reading is judged against: the project's real track names,
     // their current levels (so "turn the bass up" knows where the bass IS), and
@@ -494,11 +493,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       assistantActs: assistRef.current === 'auto',
     })) {
       setBusy(false)
-      // Recorded, greyed, and not remarked upon. "It heard me and did nothing"
-      // stays visible in the transcript — that was always worth seeing — but it
-      // is no longer announced, because with the name no longer required this is
-      // the ordinary fate of an overheard sentence, not a correctable mistake.
-      addTurn('you', spoken, true)
+      // Silently. With the name no longer required this is the ordinary fate
+      // of an overheard sentence rather than a correctable mistake, and the
+      // card shows the sentence in progress rather than a log to record it in.
       return
     }
 
@@ -1424,10 +1421,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
       {panelOpen && (
         <VoicePanel
-          turns={turns}
           listening={listening}
           continuous={continuousRef.current}
           level={level}
+          // The live view: what is being said now, what came back, and whether
+          // the studio itself is talking (which the wave needs and no level can
+          // report, since the microphone is deafened while it speaks).
+          talking={talking}
+          saying={heard}
+          reply={said}
+          problem={problem}
           hud={hud}
           initialTab={panelTab}
           mode={mode}
@@ -1473,7 +1476,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             setVoiceSensitivity(v)
           }}
           onClose={() => setPanelOpen(false)}
-          onClear={() => setTurns([])}
           colors={{
             bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
             textMuted: C.textMuted, accent: C.accent,

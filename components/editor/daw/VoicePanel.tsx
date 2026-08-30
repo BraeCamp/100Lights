@@ -12,39 +12,53 @@
 // replaced by the answer to "what is it doing now", and the settings were
 // somewhere else entirely.
 //
-// One window instead, and the thing that makes it worth having is the
-// TRANSCRIPT: what you said and what it said back, in order, still there. A
-// voice interface with no history is one you cannot check up on, and checking up
-// on it is exactly what you want to do while you are learning to trust it.
+// One window instead. It carried a scrolling TRANSCRIPT for a while, and that
+// was right when nobody trusted the feature yet — being able to check up on it
+// is exactly what you want while you are learning whether it works.
+//
+// Brae, once it did: "change the conversation tab (which is now just the card)
+// so that it only shows what you're saying right now." So the log is gone and
+// the card is a live view — a wave, the sentence in progress, and the answer.
+// A conversation is a live event, and a log of one competes with the single
+// line that actually matters.
 
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
-  X, Mic, Maximize2, ListChecks, GripVertical, Sparkles, Lock, Volume2, Gauge, Keyboard, Waves,
+  X, Mic, ListChecks, GripVertical, Sparkles, Lock, Volume2, Gauge, Keyboard, Waves,
+  Settings, BookOpen, ChevronLeft,
 } from 'lucide-react'
 import { commandHelp } from '@/lib/voice/interpret'
 import type { AssistantMode } from '@/lib/voice/speak'
 import { usePlan } from '@/hooks/usePlan'
 import { WAKE_WORDS } from '@/lib/voice/attention'
 
-export interface VoiceTurn {
-  /** Who said it. */
-  by: 'you' | 'light'
-  text: string
-  at: number
-  /** A turn that was heard but deliberately not acted on. */
-  ignored?: boolean
-}
-
 export interface VoicePanelProps {
-  turns: VoiceTurn[]
   listening: boolean
   continuous: boolean
-  /** 0–1 input level, for the meter. */
+  /** 0–1 input level, for the meter and the wave. */
   level: number
+  /**
+   * Is the studio speaking right now?
+   *
+   * Its own voice has no level to read — it goes out through speechSynthesis or
+   * an audio element, and the microphone is deliberately deafened while it
+   * talks so it cannot transcribe itself. So this is a fact, not a
+   * measurement, and the wave it drives is openly a drawn one.
+   */
+  talking?: boolean
+  /**
+   * What is being said RIGHT NOW — the live, partial transcript.
+   *
+   * Brae: "change the conversation tab so that it only shows what you're saying
+   * right now."
+   */
+  saying?: string
+  /** What the studio said back, and what went wrong if anything did. */
+  reply?: string
+  problem?: string
   hud: boolean
   onHud: (on: boolean) => void
   onClose: () => void
-  onClear: () => void
   /**
    * The settings themselves.
    *
@@ -195,6 +209,113 @@ function clamp(p: { x: number; y: number }): { x: number; y: number } {
 
 interface Palette { border: string; textPrimary: string; textMuted: string; accent: string }
 
+/**
+ * The wave across the top of the card.
+ *
+ * Brae: "above it is an audio visual that shows the wave when the machine (in AI
+ * mode) is talking back to the user, and with a differently colored overlay
+ * (warmer color) when the user is talking."
+ *
+ * Two waves, two sources, and they are not the same KIND of thing — which is
+ * worth being straight about rather than papering over:
+ *
+ *   YOURS IS MEASURED. Every level the detector reports is pushed into a
+ *   rolling buffer and drawn. It is the actual sound in the room, which is what
+ *   makes it useful: a flat line while you are talking is the answer to "is it
+ *   even hearing me", and no amount of animation would tell you that.
+ *
+ *   THE STUDIO'S IS DRAWN. There is no level to read. Its voice goes out
+ *   through speechSynthesis or an audio element, and while it talks the
+ *   microphone is deliberately deafened so it cannot transcribe itself — so the
+ *   one meter we have is reading silence by design. Rather than invent a
+ *   measurement, this is openly a travelling wave: it says "the studio is
+ *   speaking" and does not pretend to say how loudly.
+ *
+ * Repainted on level updates rather than from a rAF loop, so a card sitting
+ * open with nothing happening costs nothing — the same rule the editor's other
+ * canvases follow.
+ */
+function Wave({ level, talking, listening, C }: {
+  level: number; talking: boolean; listening: boolean; C: Palette
+}) {
+  const canvas = useRef<HTMLCanvasElement | null>(null)
+  const history = useRef<number[]>([])
+  const phase = useRef(0)
+
+  useEffect(() => {
+    const el = canvas.current
+    if (!el) return
+    const w = el.clientWidth
+    const h = el.clientHeight
+    if (!w || !h) return
+    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    if (el.width !== w * dpr || el.height !== h * dpr) {
+      el.width = w * dpr
+      el.height = h * dpr
+    }
+    const g = el.getContext('2d')
+    if (!g) return
+    g.setTransform(dpr, 0, 0, dpr, 0, 0)
+    g.clearRect(0, 0, w, h)
+
+    const BARS = 64
+    const mid = h / 2
+    const buf = history.current
+    buf.push(Math.max(0, Math.min(1, level)))
+    while (buf.length > BARS) buf.shift()
+
+    // The studio's turn: a travelling wave, plainly generated.
+    if (talking) {
+      phase.current += 0.35
+      g.strokeStyle = C.accent
+      g.lineWidth = 1.5
+      g.beginPath()
+      for (let x = 0; x <= w; x += 2) {
+        const t = x / w
+        const envelope = Math.sin(Math.PI * t)
+        const y = mid + Math.sin(t * 14 + phase.current) * envelope * (h * 0.36)
+        if (x === 0) g.moveTo(x, y)
+        else g.lineTo(x, y)
+      }
+      g.stroke()
+      return
+    }
+
+    // Your turn: the real levels, warm, mirrored around the centre line.
+    const WARM = '#e8934a'
+    const step = w / BARS
+    for (let i = 0; i < buf.length; i++) {
+      const v = buf[i]
+      const amp = Math.max(1, v * (h * 0.44))
+      const x = i * step
+      // Recent samples are the ones being looked at; older ones fade back.
+      g.globalAlpha = 0.35 + 0.65 * (i / Math.max(1, buf.length - 1))
+      g.fillStyle = listening ? WARM : C.textMuted
+      g.fillRect(x, mid - amp, Math.max(1, step - 1.5), amp * 2)
+    }
+    g.globalAlpha = 1
+
+    // A resting line, so an idle card reads as "on and quiet" rather than
+    // "broken".
+    if (!buf.some(v => v > 0.02)) {
+      g.strokeStyle = C.border
+      g.lineWidth = 1
+      g.beginPath()
+      g.moveTo(0, mid)
+      g.lineTo(w, mid)
+      g.stroke()
+    }
+  }, [level, talking, listening, C])
+
+  return (
+    <canvas
+      ref={canvas}
+      aria-hidden
+      style={{ width: '100%', height: 56, display: 'block' }}
+    />
+  )
+}
+
 /** A titled group. The only structure in the settings, and enough of it. */
 function Group({ icon, title, note, children, C }: {
   icon: React.ReactNode; title: string; note?: string
@@ -324,8 +445,9 @@ function Segmented<T extends string>({ value, options, onChange, C, disabled }: 
 }
 
 export default function VoicePanel({
-  turns, listening, continuous, level, hud,
-  onHud, onClose, onClear, colors: C,
+  listening, continuous, level, hud,
+  talking = false, saying = '', reply = '', problem = '',
+  onHud, onClose, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
@@ -339,7 +461,19 @@ export default function VoicePanel({
   // A calibrated sensitivity is a measured number and will almost never be one
   // of the four presets, so the preset row would show nothing selected.
   const calibrated = ![0.7, 1, 1.5, 2.2].some(v => Math.abs(sensitivity - v) < 0.01)
-  const [tab, setTab] = React.useState<'talk' | 'settings' | 'help'>(initialTab)
+  // One view at a time, reached from the gear rather than from a tab strip.
+  //
+  // Brae: "let's put settings into a gear button, and 'What you can say'
+  // shouldn't be there for AI mode so have it as a button in settings."
+  //
+  // The tabs gave three things equal billing, and they are not equal: the live
+  // view is what the card is FOR, settings are visited occasionally, and the
+  // command list is a reference you read once. With the assistant acting on
+  // whatever it hears, a permanent tab listing the built-in phrasings also
+  // rather misstates what the thing can do.
+  const [view, setView] = React.useState<'live' | 'settings' | 'help'>(
+    initialTab === 'settings' ? 'settings' : initialTab === 'help' ? 'help' : 'live',
+  )
   const [find, setFind] = useState('')
 
   // Built once per keystroke rather than per render, and matched on the
@@ -357,8 +491,12 @@ export default function VoicePanel({
       }))
       .filter(g => g.items.length)
   }, [find])
-  React.useEffect(() => { setTab(initialTab) }, [initialTab])
-  const log = useRef<HTMLDivElement>(null)
+  // The gear opens Settings, so the caller asking for it is honoured the same
+  // way — by moving the view rather than by selecting a tab that no longer
+  // exists.
+  React.useEffect(() => {
+    setView(initialTab === 'settings' ? 'settings' : initialTab === 'help' ? 'help' : 'live')
+  }, [initialTab])
 
   // ── Dragging ─────────────────────────────────────────────────────────────
   //
@@ -426,12 +564,6 @@ export default function VoicePanel({
     ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
     if (posRef.current) writePosition(posRef.current)
   }, [])
-
-  // Stick to the bottom as it fills, the way every transcript should.
-  useEffect(() => {
-    const el = log.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [turns.length])
 
   // Two states, not four. A held-open session used to be either "attentive" or
   // "dormant, say the name to wake it", and the name is no longer required —
@@ -501,18 +633,21 @@ export default function VoicePanel({
         )}
         {!listening && <div style={{ flex: 1 }} />}
 
+        {/* Brae: "remove the hud button". Gone from here — it was a mode
+            switch sitting in the same row as the close button, which is a lot
+            of prominence for something used once a session. The setting itself
+            is still in Settings, so nothing is lost. */}
         <button
-          onClick={() => onHud(!hud)}
-          title="HUD — hide everything but the song and the sound visuals"
+          onClick={() => setView(v => (v === 'live' ? 'settings' : 'live'))}
+          aria-label={view === 'live' ? 'Settings' : 'Back'}
+          title={view === 'live' ? 'Settings' : 'Back'}
           style={{
-            display: 'flex', alignItems: 'center', gap: 4, height: 20, padding: '0 7px',
-            borderRadius: 4, cursor: 'pointer', fontSize: 9, fontWeight: 800, letterSpacing: 0.3,
-            border: `1px solid ${hud ? C.accent : C.border}`,
-            background: hud ? `${C.accent}22` : 'transparent',
-            color: hud ? C.accent : C.textMuted,
+            display: 'flex', alignItems: 'center', height: 20, padding: '0 5px',
+            borderRadius: 4, cursor: 'pointer', border: 'none', background: 'transparent',
+            color: view === 'live' ? C.textMuted : C.accent,
           }}
         >
-          <Maximize2 size={10} />HUD
+          <Settings size={13} />
         </button>
         <button
           onClick={onClose}
@@ -527,29 +662,22 @@ export default function VoicePanel({
         </button>
       </div>
 
-      {/* ── Tabs ─────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', borderBottom: `1px solid ${C.border}` }}>
-        {([
-          ['talk', 'Conversation'],
-          ['settings', 'Settings'],
-          ['help', 'What you can say'],
-        ] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            style={{
-              flex: 1, padding: '6px 4px', cursor: 'pointer', border: 'none',
-              borderBottom: `2px solid ${tab === id ? C.accent : 'transparent'}`,
-              background: 'transparent', color: tab === id ? C.textPrimary : C.textMuted,
-              fontSize: 10, fontWeight: 700,
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* ── The wave, and what is being said right now ────────────────────
+          Brae: "change the conversation tab (which is now just the card) so
+          that it only shows what you're saying right now."
 
-      {tab === 'talk' && queue.length > 0 && (
+          The scrolling transcript is gone with the tabs. It was the right thing
+          while nobody trusted the feature — you could check up on it — and it
+          is the wrong thing now that the card is the whole interface: a
+          conversation is a live event, and a log of it competes with the one
+          line that matters. */}
+      {view === 'live' && (
+        <div style={{ padding: '10px 12px 6px', borderBottom: `1px solid ${C.border}` }}>
+          <Wave level={level} talking={talking} listening={listening} C={C} />
+        </div>
+      )}
+
+      {view === 'live' && queue.length > 0 && (
         <div style={{
           borderBottom: `1px solid ${C.border}`, padding: '8px 10px',
           background: `${C.accent}0e`,
@@ -606,55 +734,40 @@ export default function VoicePanel({
       )}
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
-        {tab === 'talk' && (
-          <div ref={log} style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-            {!turns.length && (
-              <div style={{ color: C.textMuted, lineHeight: 1.5 }}>
-                {continuous && listening
-                  ? `Just say what you want — "mute the drums", "loop bars 9 to 17". It stays open, so you can keep going.`
-                  : 'Nothing yet. Hold the button, or switch to click-to-talk in Settings.'}
+        {view === 'live' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 96 }}>
+            {/* What you are saying, right now. One line, large enough to read
+                from where somebody actually sits — across a desk, mid-take,
+                while looking at the arrangement rather than at this. */}
+            <div style={{
+              fontSize: 15, lineHeight: 1.4, color: saying ? C.textPrimary : C.textMuted,
+              fontStyle: saying ? 'normal' : 'italic', minHeight: 42,
+            }}>
+              {saying || (talking
+                ? '…'
+                : listening
+                  ? 'Listening — say what you want.'
+                  : 'Hold the button, or switch to click-to-talk in Settings.')}
+            </div>
+
+            {/* And what it said back. Kept because a reply that vanishes leaves
+                you unable to tell "it did the wrong thing" from "it did
+                nothing" — which is the question this whole card exists to
+                answer. */}
+            {(reply || problem) && (
+              <div style={{
+                padding: '7px 9px', borderRadius: 6, lineHeight: 1.45,
+                borderLeft: `2px solid ${problem ? '#e0776b' : C.accent}`,
+                background: problem ? '#e0776b12' : `${C.accent}12`,
+                color: problem ? '#ffb4b4' : C.textPrimary,
+              }}>
+                {problem || reply}
               </div>
             )}
-            {turns.map((t, i) => (
-              // The studio's turns are tinted and ruled; yours are not. A
-              // transcript is read by scanning for the replies — "what did it
-              // say when I asked that" — and a colour on the four-letter label
-              // was the only thing distinguishing them, which is not enough to
-              // scan by.
-              <div
-                key={i}
-                style={{
-                  display: 'flex', gap: 8, alignItems: 'flex-start',
-                  padding: t.by === 'light' ? '5px 7px' : '2px 7px',
-                  borderRadius: 5,
-                  borderLeft: `2px solid ${t.by === 'light' ? C.accent : 'transparent'}`,
-                  background: t.by === 'light' ? `${C.accent}0f` : 'transparent',
-                }}
-              >
-                <span style={{
-                  flex: '0 0 32px', fontSize: 9, fontWeight: 800, letterSpacing: 0.3,
-                  paddingTop: 1, color: t.by === 'you' ? C.textMuted : C.accent,
-                }}>
-                  {t.by === 'you' ? 'YOU' : WAKE_WORDS[0].toUpperCase()}
-                </span>
-                <span style={{
-                  flex: 1, lineHeight: 1.45,
-                  // A turn that was heard and deliberately not acted on is shown
-                  // differently rather than hidden. "It heard me and did
-                  // nothing" is a fact worth being able to see — otherwise the
-                  // only evidence is that nothing happened.
-                  color: t.ignored ? C.textMuted : C.textPrimary,
-                  fontStyle: t.ignored ? 'italic' : 'normal',
-                }}>
-                  {t.text}
-                  {t.ignored && <span style={{ color: C.textMuted }}> — not acted on</span>}
-                </span>
-              </div>
-            ))}
           </div>
         )}
 
-        {tab === 'settings' && (
+        {view === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
             {/* ── The two that spend money ──────────────────────────────────
@@ -735,6 +848,28 @@ export default function VoicePanel({
                   <span style={{ marginLeft: 'auto' }}>last turn {credits.spent.toLocaleString()}</span>
                 </div>
               )}
+
+              {/* Brae: "'What you can say' shouldn't be there for AI mode so
+                  have it as a button in settings near the program transcribe
+                  button."
+
+                  Here rather than as a tab, and here SPECIFICALLY: the list is
+                  what the built-in commands cover, which is exactly the thing
+                  the two controls above decide whether you are relying on. With
+                  the assistant switched off it is the whole vocabulary and
+                  worth reading; with the assistant acting it is trivia. */}
+              <button
+                onClick={() => setView('help')}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  width: '100%', height: 26, borderRadius: 5, cursor: 'pointer',
+                  border: `1px solid ${C.border}`, background: 'transparent',
+                  color: C.textPrimary, fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                }}
+              >
+                <BookOpen size={11} />
+                What you can say without the assistant
+              </button>
             </Group>
 
             {/* ── How you talk to it ───────────────────────────────────────── */}
@@ -921,8 +1056,22 @@ export default function VoicePanel({
         )}
 
 
-        {tab === 'help' && (
+        {view === 'help' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* Reached from Settings now, so it needs its own way back — the
+                gear toggles live/settings and would strand somebody here. */}
+            <button
+              onClick={() => setView('settings')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
+                padding: '3px 8px 3px 4px', borderRadius: 5, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: 'transparent',
+                color: C.textMuted, fontSize: 10, fontWeight: 700,
+              }}
+            >
+              <ChevronLeft size={12} />
+              Settings
+            </button>
             {/* Sixty-two commands in one scroll is a reference nobody reads.
                 The question people actually arrive with is "can I say X", and a
                 filter answers it in one keystroke — matched on both the phrase
@@ -973,19 +1122,6 @@ export default function VoicePanel({
         )}
       </div>
 
-      {tab === 'talk' && turns.length > 0 && (
-        <div style={{ borderTop: `1px solid ${C.border}`, padding: '5px 10px', display: 'flex' }}>
-          <button
-            onClick={onClear}
-            style={{
-              marginLeft: 'auto', padding: '2px 6px', borderRadius: 4, cursor: 'pointer',
-              border: 'none', background: 'transparent', color: C.textMuted, fontSize: 10,
-            }}
-          >
-            Clear
-          </button>
-        </div>
-      )}
     </div>
   )
 }

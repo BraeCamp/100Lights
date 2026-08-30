@@ -524,7 +524,13 @@ await say('mark bar 3 as the chorus')
   if (!(await panel.count())) {
     await page.locator('button[aria-label="Voice settings"]').click()
     await page.waitForTimeout(600)
-    await panel.getByText('Conversation', { exact: false }).click()
+    // The gear opens on Settings; the queue lives in the live view. There is no
+    // "Conversation" tab any more — the card is the live view and the gear
+    // toggles between the two — so this asks to go back rather than clicking a
+    // tab that no longer exists.
+    await page.evaluate(() => {
+      document.querySelector('[data-voice-panel] button[aria-label="Back"]')?.click()
+    })
     await page.waitForTimeout(300)
   }
   check('and the list is shown', /2 CHANGES READY/i.test(await panel.innerText()),
