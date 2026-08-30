@@ -53,6 +53,7 @@ import {
 import VoicePanel, { type VoiceTurn } from './VoicePanel'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
+  studioVoice, setStudioVoice,
   voiceSensitivity, setVoiceSensitivity, aiActs, setAiActs,
 } from '@/lib/voice/speak'
 
@@ -257,6 +258,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [pendingOffer, setPendingOffer] = useState<AskOffer | null>(null)
   const [pendingName, setPendingName] = useState<AskOffer | null>(null)
   const [speaks, setSpeaks] = useState(false)
+  // Which voice does the answering. Read from storage on mount alongside the
+  // rest, never during render — localStorage is not there on the server, and a
+  // first paint that disagrees with the second is a hydration mismatch.
+  const [studio, setStudio] = useState(true)
 
   /**
    * Say something, and show it.
@@ -298,6 +303,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     available.current = isSpeechAvailable()
     setMode(readVoiceMode())
     setSpeaks(speechEnabled())
+    setStudio(studioVoice())
+    // Dev-only handle on the speaking module (window.__beaconSpeak).
+    //
+    // The studio voice is an optimisation in front of something that already
+    // worked, so what matters about it is how it FAILS — a refused request, a
+    // dead URL, no network. Those are unreachable through the UI, which only
+    // ever calls speak() the one happy way, and each of them has to end with
+    // the browser voice saying the thing anyway and reporting that it finished.
+    if (process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DAW_HOOKS === '1') {
+      (window as unknown as { __beaconSpeak?: typeof speak }).__beaconSpeak = speak
+    }
     modeRef.current = readVoiceMode()
     const on = hudOn()
     setHudState(on)
@@ -1367,6 +1383,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           speaks={speaks}
           onSpeaks={on => { setSpeaks(on); setSpeechEnabled(on) }}
           canSpeak={speechAvailable()}
+          studio={studio}
+          onStudio={on => { setStudio(on); setStudioVoice(on) }}
           onHud={on => { setHudState(on); setHud(on) }}
           mic={mic}
           threshold={threshold}

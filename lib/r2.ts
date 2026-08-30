@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 function client() {
@@ -61,6 +61,25 @@ export async function presignedRedirect(key: string, cacheSeconds = 3600, staleS
 export async function putObject(key: string, body: Uint8Array | ArrayBuffer, contentType: string) {
   const bytes = body instanceof Uint8Array ? body : new Uint8Array(body)
   await client().send(new PutObjectCommand({ Bucket: BUCKET(), Key: key, Body: bytes, ContentType: contentType }))
+}
+
+/**
+ * Is this object already there?
+ *
+ * A HEAD rather than a GET, because the answer is one bit and the object may be
+ * megabytes. Used by the voice cache, where the whole point is to find out
+ * whether something has been paid for already WITHOUT paying to find out.
+ */
+export async function objectExists(key: string): Promise<boolean> {
+  try {
+    await client().send(new HeadObjectCommand({ Bucket: BUCKET(), Key: key }))
+    return true
+  } catch {
+    // 404 is the ordinary answer here and not worth distinguishing from a
+    // transient fault: both mean "cannot serve it from the cache", and the
+    // caller's fallback is the same either way.
+    return false
+  }
 }
 
 export async function deleteObject(key: string) {

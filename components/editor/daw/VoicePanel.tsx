@@ -59,6 +59,9 @@ export interface VoicePanelProps {
   speaks: boolean
   onSpeaks: (on: boolean) => void
   canSpeak: boolean
+  /** The studio's own recorded voice rather than the browser's. */
+  studio: boolean
+  onStudio: (on: boolean) => void
   /** Which tab to open on. */
   initialTab?: 'talk' | 'settings' | 'help'
   /**
@@ -165,7 +168,7 @@ function clamp(p: { x: number; y: number }): { x: number; y: number } {
 export default function VoicePanel({
   turns, listening, attentive, continuous, level, hud,
   onHud, onClose, onClear, colors: C,
-  mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak,
+  mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
   calibration, calibrating, calibrationPhrase, onCalibrate, aiAuto, onAiAuto, credits,
@@ -494,6 +497,27 @@ export default function VoicePanel({
                 </span>
               </span>
             </label>
+
+            {speaks && (
+              // Nested, because it is not a separate feature — it is which voice
+              // the answering is done in. Shown only once answering is on, so
+              // the settings do not present a choice about something switched
+              // off.
+              <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer', marginLeft: 22 }}>
+                <input
+                  type="checkbox" checked={studio}
+                  onChange={e => onStudio(e.target.checked)} style={{ marginTop: 2 }}
+                />
+                <span>
+                  Studio voice
+                  <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
+                    A real recorded voice instead of the browser&rsquo;s. Each phrase is
+                    recorded once and then shared by everyone, so it costs you nothing.
+                    Falls back to the browser voice if it cannot be reached.
+                  </span>
+                </span>
+              </label>
+            )}
 
             <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
               <input

@@ -33,6 +33,33 @@
 const ENABLED_KEY = 'beacon.voice.speak'
 const SENSITIVITY_KEY = 'beacon.voice.sensitivity'
 const AI_AUTO_KEY = 'beacon.voice.ai-auto'
+const STUDIO_KEY = 'beacon.voice.studio'
+
+/**
+ * Use the studio's own recorded voice rather than the browser's.
+ *
+ * Brae: "Can't we record the response and just play it off of our system so
+ * that we aren't paying at all after one person uses something once?"
+ *
+ * So the good voice stops being a running cost and becomes a fixed one. A
+ * phrase is rendered by whoever says it first, stored under a hash of its own
+ * text, and served from storage to everybody afterwards — two people muting a
+ * track called Drums get the same file without anything knowing they are
+ * related. The studio speaks from a script of about a hundred and forty shapes,
+ * so the bill is bounded by how many distinct sentences EXIST, not by how many
+ * people say them.
+ *
+ * On by default when speech is on, because a miss costs a fraction of a cent
+ * and every failure below falls back to the browser's voice, which is free.
+ */
+export function studioVoice(): boolean {
+  try { return localStorage.getItem(STUDIO_KEY) !== 'off' } catch { return true }
+}
+
+export function setStudioVoice(on: boolean): void {
+  try { localStorage.setItem(STUDIO_KEY, on ? 'on' : 'off') } catch { /* private mode */ }
+  if (!on) stopSpeaking()
+}
 
 /**
  * May the assistant act without being asked first?
@@ -179,7 +206,29 @@ export function preferredVoice(): SpeechSynthesisVoice | null {
  * guessing.
  */
 export function speak(text: string, opts: SpeakOptions = {}): boolean {
-  if (!speechEnabled() || !speechAvailable() || !shouldSpeak(text, opts)) {
+  if (!speechEnabled() || !shouldSpeak(text, opts)) {
+    opts.onDone?.()
+    return false
+  }
+  // The studio's own voice if it can be had, the browser's if not. Deciding
+  // here rather than inside the player keeps the fallback in one place: every
+  // path that gives up on the recording lands in speakLocal.
+  if (studioVoice()) {
+    speakStudio(text, opts)
+    return true
+  }
+  return speakLocal(text, opts)
+}
+
+/** The browser's built-in voice. Free, always available, and the floor that
+ *  every other path falls back to. */
+export function speakLocal(text: string, opts: SpeakOptions = {}): boolean {
+  // Whatever is said now is the newest thing said, so a studio recording still
+  // in flight belongs to a superseded utterance and must not arrive on top of
+  // this one. (Harmless when this call IS that fetch's own fallback — it simply
+  // retires a generation nothing is waiting on.)
+  generation++
+  if (!speechAvailable()) {
     opts.onDone?.()
     return false
   }
@@ -211,8 +260,84 @@ export function speak(text: string, opts: SpeakOptions = {}): boolean {
 
 /** Shut up immediately — when the mic opens, or the user turns speech off. */
 export function stopSpeaking(): void {
+  // Bump first. A fetch already in flight resolves into a stale generation and
+  // discards itself rather than starting to talk a second after being told to
+  // stop — the microphone may be open by then, and speech into an open
+  // microphone is transcribed as a command.
+  generation++
+  try { player?.pause() } catch { /* never played */ }
   if (!speechAvailable()) return
   try { window.speechSynthesis.cancel() } catch { /* nothing to cancel */ }
+}
+
+// ── The studio voice ────────────────────────────────────────────────────────
+
+/** Phrases this tab has already resolved. The server cache is what makes the
+ *  voice cheap; this one makes it INSTANT — a repeated read-back plays from a
+ *  URL already in hand, with no round trip at all. */
+const known = new Map<string, string>()
+/** Phrases that are not worth asking about again this session: refused, or the
+ *  endpoint is not there. Without it, a studio with no voice configured asks
+ *  the server on every single command. */
+const hopeless = new Set<string>()
+let player: HTMLAudioElement | null = null
+let generation = 0
+
+/**
+ * Say it in the studio's voice, falling back to the browser's.
+ *
+ * Asynchronous, and deliberately not awaited by the caller: `speak` reports
+ * that it will speak, and whichever voice gets there does the talking. The
+ * fallback is the important part — a recording that cannot be fetched, played,
+ * or paid for must never be the reason a command goes unacknowledged.
+ */
+async function speakStudio(text: string, opts: SpeakOptions): Promise<void> {
+  const words = spoken(text)
+  const mine = ++generation
+  if (hopeless.has(words)) { speakLocal(text, opts); return }
+
+  let url = known.get(words)
+  if (!url) {
+    try {
+      const res = await fetch('/api/voice/say', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: words }),
+      })
+      if (!res.ok) {
+        // 401, 429, 501 and friends all mean the same thing here: this voice is
+        // not available right now. Remembered so the next command does not ask
+        // again — except a 429, which is a budget that resets tomorrow, and a
+        // 502, which is a service that may come back in a minute.
+        if (res.status !== 429 && res.status !== 502) hopeless.add(words)
+        speakLocal(text, opts)
+        return
+      }
+      url = (await res.json()).url as string
+      if (url) known.set(words, url)
+    } catch {
+      speakLocal(text, opts)
+      return
+    }
+  }
+  // Told to stop while the request was in the air.
+  if (mine !== generation) { opts.onDone?.(); return }
+  if (!url) { speakLocal(text, opts); return }
+
+  try {
+    // One element reused: constructing a new one per utterance leaks them in
+    // long sessions, and reusing it gives "replace, don't queue" for free.
+    if (!player) player = new Audio()
+    player.src = url
+    player.onended = () => { if (mine === generation) opts.onDone?.() }
+    player.onerror = () => { if (mine === generation) speakLocal(text, opts) }
+    await player.play()
+  } catch {
+    // Autoplay refused, decode failed, no audio device. The browser voice is
+    // subject to the same gesture rules, but it fails differently often enough
+    // to be worth the try.
+    if (mine === generation) speakLocal(text, opts)
+  }
 }
 
 /**
