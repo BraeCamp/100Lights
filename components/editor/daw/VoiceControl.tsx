@@ -54,7 +54,8 @@ import VoicePanel, { type VoiceTurn } from './VoicePanel'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
   studioVoice, setStudioVoice,
-  voiceSensitivity, setVoiceSensitivity, aiActs, setAiActs,
+  voiceSensitivity, setVoiceSensitivity, aiActs,
+  assistantMode, setAssistantMode, type AssistantMode,
 } from '@/lib/voice/speak'
 
 const C = {
@@ -175,6 +176,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [calibrating, setCalibrating] = useState<null | 'room' | 'voice'>(null)
   const [aiAuto, setAiAutoState] = useState(false)
   const aiAutoRef = useRef(false)
+  // How much the assistant may do, and which ear is listening. Both are read
+  // from storage on mount with everything else — never during render, because
+  // localStorage does not exist on the server and a first paint that disagrees
+  // with the second is a hydration mismatch.
+  const [assist, setAssistState] = useState<AssistantMode>('ask')
+  const assistRef = useRef<AssistantMode>('ask')
+  const [ear, setEarState] = useState<'browser' | 'server'>('browser')
   /** What the last assistant turn cost, and what is left. Shown while testing,
    *  because a balance nobody can see is a balance nobody notices draining. */
   const [credits, setCredits] = useState<{ spent: number; left: number } | null>(null)
@@ -324,6 +332,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const auto = aiActs()
     setAiAutoState(auto)
     aiAutoRef.current = auto
+    const am = assistantMode()
+    setAssistState(am)
+    assistRef.current = am
+    const ear = preferredTranscriber()
+    setEarState(ear)
     setEnterRuns(readVoiceEnter())
   }, [])
 
@@ -765,6 +778,21 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // what it heard. Every time — not the first time, not when unsure: the
     // whole point is that a wrong transcript is indistinguishable from a right
     // one until a person reads it.
+    // Switched off entirely. Not the same as "ask me first": this is somebody
+    // saying they do not want a model in the loop at all, so the honest answer
+    // is that the studio does not know this sentence — and where to change that
+    // if they want to. Offering to spend anyway would make the setting
+    // decorative.
+    if (assistRef.current === 'rules') {
+      setBusy(false)
+      respond(
+        `I don't know how to do that with the built-in commands, and the assistant is off. `
+        + `Turn it on in Settings if you want me to work it out.`,
+        'problem',
+      )
+      return
+    }
+
     if (!confirmed && !aiAutoRef.current) {
       setBusy(false)
       setPendingAsk(text)
@@ -1388,8 +1416,19 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           onHud={on => { setHudState(on); setHud(on) }}
           mic={mic}
           threshold={threshold}
-          aiAuto={aiAuto}
-          onAiAuto={on => { setAiAutoState(on); aiAutoRef.current = on; setAiActs(on) }}
+          assistant={assist}
+          onAssistant={m => {
+            setAssistState(m)
+            assistRef.current = m
+            setAssistantMode(m)
+            // The barrier reads the older flag, so both move together rather
+            // than the two disagreeing about whether to stop and ask.
+            const auto = m === 'auto'
+            setAiAutoState(auto)
+            aiAutoRef.current = auto
+          }}
+          ear={ear}
+          onEar={e => { setEarState(e); setPreferredTranscriber(e) }}
           credits={credits}
           calibration={calibration}
           calibrating={calibrating}

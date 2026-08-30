@@ -62,24 +62,64 @@ export function setStudioVoice(on: boolean): void {
 }
 
 /**
+ * How much the assistant is allowed to do.
+ *
+ * Brae: "Can we have the AI transcription and editing be in the settings so
+ * that paid users can move to and from AI to non-AI from there?"
+ *
+ * There were two states in the code and three in people's heads. The missing
+ * one is OFF — not "ask me first", but never involve the assistant at all, so
+ * the studio is a fixed vocabulary that cannot spend anything. Somebody working
+ * to a budget, or offline, or who simply does not want a model in the loop, had
+ * no way to say so; the only control was whether they got asked before it
+ * happened.
+ *
+ *   rules  the built-in commands only. Never calls out, never costs anything.
+ *          Says so plainly when it does not know a sentence.
+ *   ask    the default. Rules first; anything they cannot read stops and shows
+ *          you the transcript before spending a thing.
+ *   auto   the assistant acts on what it heard, without stopping to ask.
+ *
+ * `ask` remains the default for everybody, because Brae's original constraint
+ * still holds — "every single time it should get confirmation first" — and a
+ * misheard sentence is indistinguishable from a correct one until a person
+ * reads it.
+ */
+export type AssistantMode = 'rules' | 'ask' | 'auto'
+
+const ASSISTANT_KEY = 'beacon.voice.assistant'
+
+export function assistantMode(): AssistantMode {
+  try {
+    const v = localStorage.getItem(ASSISTANT_KEY)
+    if (v === 'rules' || v === 'ask' || v === 'auto') return v
+    // Nobody has chosen yet. Honour the older on/off switch if it was set, so
+    // turning automatic on once does not quietly revert the next time.
+    return localStorage.getItem(AI_AUTO_KEY) === 'on' ? 'auto' : 'ask'
+  } catch { return 'ask' }
+}
+
+export function setAssistantMode(m: AssistantMode): void {
+  try {
+    localStorage.setItem(ASSISTANT_KEY, m)
+    // Kept in step, because the old key is what a session already running reads.
+    localStorage.setItem(AI_AUTO_KEY, m === 'auto' ? 'on' : 'off')
+  } catch { /* private mode */ }
+}
+
+/**
  * May the assistant act without being asked first?
  *
- * Brae, earlier: "I'm worried that AI will mishear things and create commands
- * and use credits accidentally... every single time it should get confirmation
- * first." And then: "Full AI integration will be in the highest tier and only
- * when activated."
- *
- * Those are not in conflict, they are a default and an override. Confirmation
- * stays the default for everybody, and this is the activation — off unless
- * somebody deliberately turns it on, because it is the switch that lets a
- * misheard sentence spend money without anybody seeing it first.
+ * Now one reading of the mode above rather than its own setting. Kept because
+ * it says the thing the barrier actually cares about, at the point where the
+ * money would be spent.
  */
 export function aiActs(): boolean {
-  try { return localStorage.getItem(AI_AUTO_KEY) === 'on' } catch { return false }
+  return assistantMode() === 'auto'
 }
 
 export function setAiActs(on: boolean): void {
-  try { localStorage.setItem(AI_AUTO_KEY, on ? 'on' : 'off') } catch { /* private mode */ }
+  setAssistantMode(on ? 'auto' : 'ask')
 }
 
 /**

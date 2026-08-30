@@ -18,8 +18,12 @@
 // on it is exactly what you want to do while you are learning to trust it.
 
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import { X, Mic, Maximize2, ListChecks, GripVertical } from 'lucide-react'
+import {
+  X, Mic, Maximize2, ListChecks, GripVertical, Sparkles, Lock, Volume2, Gauge, Keyboard, Waves,
+} from 'lucide-react'
 import { commandHelp } from '@/lib/voice/interpret'
+import type { AssistantMode } from '@/lib/voice/speak'
+import { usePlan } from '@/hooks/usePlan'
 import { WAKE_WORDS } from '@/lib/voice/attention'
 
 export interface VoiceTurn {
@@ -97,14 +101,26 @@ export interface VoicePanelProps {
     suggested: number; verdict: string
   } | null
   /**
-   * Whether the assistant may act without being asked first.
+   * How much the assistant may do: nothing, ask first, or act.
    *
-   * The activation, not the default. Confirmation stays on for everybody until
-   * somebody deliberately turns this off, because it is the switch that lets a
-   * misheard sentence spend money without anybody seeing it first.
+   * `ask` stays the default for everybody, because a misheard sentence is
+   * indistinguishable from a correct one until a person reads it. What is new
+   * is `rules` — off entirely, so the studio is a fixed vocabulary that cannot
+   * spend anything.
    */
-  aiAuto?: boolean
-  onAiAuto?: (on: boolean) => void
+  assistant: AssistantMode
+  onAssistant: (m: AssistantMode) => void
+  /**
+   * Which ear is listening: the browser's own recogniser, or the server's.
+   *
+   * This has always existed and was never a choice anybody could make — it was
+   * set silently, and only ever as a fallback when the browser's recogniser
+   * turned out not to work at all. It is the single biggest lever on whether
+   * the studio understands you, so it belongs in front of somebody who is
+   * having trouble being understood.
+   */
+  ear: 'browser' | 'server'
+  onEar: (e: 'browser' | 'server') => void
   /** What the last assistant turn cost, and what is left. */
   credits?: { spent: number; left: number } | null
   calibrating?: null | 'room' | 'voice'
@@ -160,9 +176,154 @@ function clamp(p: { x: number; y: number }): { x: number; y: number } {
   if (typeof window === 'undefined') return p
   const pad = 24
   return {
-    x: Math.max(pad - 360, Math.min(window.innerWidth - pad, p.x)),
+    x: Math.max(pad - 392, Math.min(window.innerWidth - pad, p.x)),
     y: Math.max(0, Math.min(window.innerHeight - pad * 2, p.y)),
   }
+}
+
+// ── The pieces the settings are built from ──────────────────────────────────
+//
+// Brae: "clean up the setting section (and the rest of the voice command card)
+// to look nicer? This is a major feature and we want it to look perfect."
+//
+// The settings had grown by accretion: nine native checkboxes and two radios in
+// a flat column, some under a heading and some not, each explaining itself in a
+// grey paragraph the same size as everything else. Every control was correct
+// and the page had no shape — nothing said which of them mattered, and the two
+// that spend money looked exactly like the one that hides the toolbar.
+//
+// So: everything lives in a titled group, every group carries an icon, and the
+// three kinds of control look like three kinds of control. Nothing here is
+// decoration — the visual weight follows the consequence.
+
+interface Palette { border: string; textPrimary: string; textMuted: string; accent: string }
+
+/** A titled group. The only structure in the settings, and enough of it. */
+function Group({ icon, title, note, children, C }: {
+  icon: React.ReactNode; title: string; note?: string
+  children: React.ReactNode; C: Palette
+}) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ display: 'flex', color: C.textMuted }}>{icon}</span>
+        <h3 style={{
+          margin: 0, fontSize: 9, fontWeight: 800, letterSpacing: 0.6,
+          textTransform: 'uppercase', color: C.textMuted,
+        }}>{title}</h3>
+        <span style={{ flex: 1, height: 1, background: C.border }} />
+      </header>
+      {note && <p style={{ margin: 0, color: C.textMuted, lineHeight: 1.5 }}>{note}</p>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>{children}</div>
+    </section>
+  )
+}
+
+/**
+ * A switch, not a checkbox.
+ *
+ * The native control is 13px of blue-grey that reads as a form field. These are
+ * preferences somebody flips while listening to something, often more than
+ * once, so they get a real target and a state that is legible from across the
+ * desk. The whole row is the label, so the hit area is the row.
+ */
+function Toggle({ on, onChange, label, note, disabled, C }: {
+  on: boolean; onChange: (v: boolean) => void; label: string
+  note?: string; disabled?: boolean; C: Palette
+}) {
+  return (
+    <label style={{
+      display: 'flex', gap: 9, alignItems: 'flex-start',
+      cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1,
+    }}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        disabled={disabled}
+        onClick={() => !disabled && onChange(!on)}
+        style={{
+          flex: '0 0 auto', width: 26, height: 15, marginTop: 1, padding: 0,
+          borderRadius: 999, position: 'relative', transition: 'background 120ms, border-color 120ms',
+          border: `1px solid ${on ? C.accent : C.border}`,
+          background: on ? C.accent : 'transparent',
+          cursor: disabled ? 'default' : 'pointer',
+        }}
+      >
+        <span style={{
+          position: 'absolute', top: 2, left: on ? 13 : 2,
+          width: 9, height: 9, borderRadius: 999,
+          background: on ? '#0b0b0d' : C.textMuted,
+          transition: 'left 120ms',
+        }} />
+      </button>
+      <span style={{ flex: 1, lineHeight: 1.45 }}>
+        <span style={{ color: C.textPrimary }}>{label}</span>
+        {note && <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>{note}</span>}
+      </span>
+    </label>
+  )
+}
+
+/**
+ * One of several, laid out as one control rather than a stack of radios.
+ *
+ * Used where the options are alternatives and worth comparing — which ear, how
+ * much the assistant may do, how hard it is to trigger. The chosen option
+ * explains itself underneath, so all three explanations do not compete for
+ * attention at once.
+ */
+function Segmented<T extends string>({ value, options, onChange, C, disabled }: {
+  value: T
+  options: { id: T; label: string; note: string; cost?: string; locked?: boolean }[]
+  onChange: (v: T) => void
+  C: Palette
+  disabled?: boolean
+}) {
+  const chosen = options.find(o => o.id === value) ?? options[0]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{
+        display: 'flex', gap: 2, padding: 2, borderRadius: 6,
+        border: `1px solid ${C.border}`, background: 'rgba(0,0,0,.22)',
+        opacity: disabled ? 0.5 : 1,
+      }}>
+        {options.map(o => {
+          const active = o.id === value
+          return (
+            <button
+              key={o.id}
+              type="button"
+              aria-pressed={active}
+              disabled={disabled || o.locked}
+              onClick={() => !disabled && !o.locked && onChange(o.id)}
+              title={o.locked ? 'Included with a paid plan' : o.note}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                height: 22, borderRadius: 4, border: 'none',
+                cursor: disabled || o.locked ? 'default' : 'pointer',
+                background: active ? C.accent : 'transparent',
+                color: active ? '#0b0b0d' : o.locked ? C.textMuted : C.textPrimary,
+                fontSize: 10, fontWeight: active ? 800 : 600, letterSpacing: 0.2,
+                transition: 'background 120ms, color 120ms',
+              }}
+            >
+              {o.locked && <Lock size={9} />}
+              {o.label}
+            </button>
+          )
+        })}
+      </div>
+      {/* Only the chosen one explains itself. Three notes at once is a wall. */}
+      <div style={{ color: C.textMuted, lineHeight: 1.45, minHeight: 28 }}>
+        {chosen.note}
+        {chosen.cost && (
+          <span style={{ color: C.accent, marginLeft: 4 }}>{chosen.cost}</span>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function VoicePanel({
@@ -171,9 +332,31 @@ export default function VoicePanel({
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
-  calibration, calibrating, calibrationPhrase, onCalibrate, aiAuto, onAiAuto, credits,
+  calibration, calibrating, calibrationPhrase, onCalibrate, credits,
+  assistant, onAssistant, ear, onEar,
 }: VoicePanelProps) {
+  // Both AI settings cost money to use, so they are shown to everybody and
+  // operable by whoever is paying. Shown rather than hidden: a control you
+  // cannot see is not a decision you know you could have made.
+  const { isPro, loading: planLoading } = usePlan()
   const [tab, setTab] = React.useState<'talk' | 'settings' | 'help'>(initialTab)
+  const [find, setFind] = useState('')
+
+  // Built once per keystroke rather than per render, and matched on the
+  // description as well as the phrase: half the time you know what you want to
+  // happen and not what to call it.
+  const matchedHelp = React.useMemo(() => {
+    const needle = find.trim().toLowerCase()
+    const groups = commandHelp()
+    if (!needle) return groups
+    return groups
+      .map(g => ({
+        ...g,
+        items: g.items.filter(i =>
+          i.say.toLowerCase().includes(needle) || i.what.toLowerCase().includes(needle)),
+      }))
+      .filter(g => g.items.length)
+  }, [find])
   React.useEffect(() => { setTab(initialTab) }, [initialTab])
   const log = useRef<HTMLDivElement>(null)
 
@@ -264,7 +447,7 @@ export default function VoicePanel({
           ? { position: 'fixed' as const, left: pos.x, top: pos.y }
           : { position: 'absolute' as const, top: 'calc(100% + 8px)', right: 0 }),
         zIndex: 80,
-        width: 380, maxHeight: 460, display: 'flex', flexDirection: 'column',
+        width: 412, maxHeight: 544, display: 'flex', flexDirection: 'column',
         background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 8,
         boxShadow: '0 18px 48px rgba(0,0,0,.55)', overflow: 'hidden',
         fontSize: 11, color: C.textPrimary,
@@ -433,9 +616,23 @@ export default function VoicePanel({
               </div>
             )}
             {turns.map((t, i) => (
-              <div key={i} style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
+              // The studio's turns are tinted and ruled; yours are not. A
+              // transcript is read by scanning for the replies — "what did it
+              // say when I asked that" — and a colour on the four-letter label
+              // was the only thing distinguishing them, which is not enough to
+              // scan by.
+              <div
+                key={i}
+                style={{
+                  display: 'flex', gap: 8, alignItems: 'flex-start',
+                  padding: t.by === 'light' ? '5px 7px' : '2px 7px',
+                  borderRadius: 5,
+                  borderLeft: `2px solid ${t.by === 'light' ? C.accent : 'transparent'}`,
+                  background: t.by === 'light' ? `${C.accent}0f` : 'transparent',
+                }}
+              >
                 <span style={{
-                  flex: '0 0 34px', fontSize: 9, fontWeight: 800, letterSpacing: 0.3,
+                  flex: '0 0 32px', fontSize: 9, fontWeight: 800, letterSpacing: 0.3,
                   paddingTop: 1, color: t.by === 'you' ? C.textMuted : C.accent,
                 }}>
                   {t.by === 'you' ? 'YOU' : WAKE_WORDS[0].toUpperCase()}
@@ -458,234 +655,298 @@ export default function VoicePanel({
         )}
 
         {tab === 'settings' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div>
-              <div style={{ color: C.textMuted, marginBottom: 6, letterSpacing: 0.3, fontSize: 9, fontWeight: 800 }}>
-                SPEAKING
-              </div>
-              {(['hold', 'toggle'] as const).map(m => (
-                <label key={m} style={{ display: 'flex', gap: 7, alignItems: 'center', padding: '3px 0', cursor: 'pointer' }}>
-                  <input type="radio" name="voice-mode" checked={mode === m} onChange={() => onMode(m)} />
-                  {m === 'hold'
-                    ? 'Hold the button to speak'
-                    : `Click once, then say "${WAKE_WORDS[0]}" and keep going`}
-                </label>
-              ))}
-            </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-            <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
-              <input type="checkbox" checked={enterRuns} onChange={e => onEnterRuns(e.target.checked)} style={{ marginTop: 2 }} />
-              <span>
-                Enter starts and runs a command
-                <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
-                  Only while you are not typing — Enter keeps its usual job in any field.
-                </span>
-              </span>
-            </label>
-
-            <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: canSpeak ? 'pointer' : 'default' }}>
-              <input
-                type="checkbox" checked={speaks} disabled={!canSpeak}
-                onChange={e => onSpeaks(e.target.checked)} style={{ marginTop: 2 }}
-              />
-              <span>
-                Answer out loud
-                <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
-                  {canSpeak
-                    ? 'Reads back what it did and asks questions aloud. Stays quiet while the transport is running.'
-                    : 'This browser has no speech voices installed.'}
-                </span>
-              </span>
-            </label>
-
-            {speaks && (
-              // Nested, because it is not a separate feature — it is which voice
-              // the answering is done in. Shown only once answering is on, so
-              // the settings do not present a choice about something switched
-              // off.
-              <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer', marginLeft: 22 }}>
-                <input
-                  type="checkbox" checked={studio}
-                  onChange={e => onStudio(e.target.checked)} style={{ marginTop: 2 }}
+            {/* ── The two that spend money ──────────────────────────────────
+                First, and grouped together, because they are the only settings
+                here with a bill attached and the only ones somebody might be
+                switching between deliberately. Everything below is a
+                preference; these two are a decision. */}
+            <Group
+              C={C}
+              icon={<Sparkles size={11} />}
+              title="AI"
+              // What is SHOWN is what is stored, never a prettier version of
+              // it. Forcing the display to "browser / off" for a free account
+              // was tidier and untrue in one case that matters: the ear falls
+              // back to the server on its own when a browser's recogniser
+              // cannot reach its service, free account or not, and a panel
+              // insisting otherwise would be arguing with the studio.
+              note={planLoading ? undefined : isPro
+                ? 'Both are yours to switch off and on. Off, the studio still works — it just uses its own ear and its own vocabulary.'
+                : 'Included with a paid plan. Without one the studio uses its own ear and its built-in commands, which cost nothing and always work.'}
+            >
+              <div>
+                <div style={{ color: C.textPrimary, marginBottom: 5 }}>Hearing</div>
+                <Segmented
+                  C={C}
+                  value={ear}
+                  disabled={planLoading}
+                  onChange={onEar}
+                  options={[
+                    {
+                      id: 'browser', label: 'Browser',
+                      note: 'Your browser’s own recogniser. Instant, free, and shows the words as you say them — but it is a general one, and it has never heard of your track names.',
+                    },
+                    {
+                      id: 'server', label: 'AI', locked: !isPro,
+                      note: 'Records a few seconds and transcribes it properly. Slower by a beat, and much better in a room with noise in it — it is told your track names and the command vocabulary before it listens.',
+                      cost: isPro ? 'Costs credits per command.' : undefined,
+                    },
+                  ]}
                 />
-                <span>
-                  Studio voice
-                  <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
-                    A real recorded voice instead of the browser&rsquo;s. Each phrase is
-                    recorded once and then shared by everyone, so it costs you nothing.
-                    Falls back to the browser voice if it cannot be reached.
-                  </span>
-                </span>
-              </label>
-            )}
-
-            <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
-              <input
-                type="checkbox" checked={collecting}
-                onChange={e => onCollecting(e.target.checked)} style={{ marginTop: 2 }}
-              />
-              <span>
-                Collect commands before running them
-                <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
-                  Say several things, hear them back, then &ldquo;execute&rdquo;. Nothing happens
-                  until you say so.
-                </span>
-              </span>
-            </label>
-
-            <div>
-              <div style={{ color: C.textMuted, marginBottom: 5, letterSpacing: 0.3, fontSize: 9, fontWeight: 800 }}>
-                HOW EASILY IT TRIGGERS
               </div>
-              <div style={{ display: 'flex', gap: 5 }}>
+
+              <div>
+                <div style={{ color: C.textPrimary, marginBottom: 5 }}>Understanding</div>
+                <Segmented
+                  C={C}
+                  value={assistant}
+                  disabled={planLoading}
+                  onChange={onAssistant}
+                  options={[
+                    {
+                      id: 'rules', label: 'Off',
+                      note: 'The built-in commands only. Never calls out, never costs anything, and says so plainly when it does not know a sentence.',
+                    },
+                    {
+                      id: 'ask', label: 'Ask first', locked: !isPro,
+                      note: 'Anything the built-in commands cannot read stops and shows you what it heard. Nothing is spent until you say go.',
+                    },
+                    {
+                      id: 'auto', label: 'Automatic', locked: !isPro,
+                      note: 'Acts on what it heard without stopping to ask — including, sometimes, a sentence it misheard.',
+                      cost: 'Spends credits on its own.',
+                    },
+                  ]}
+                />
+              </div>
+
+              {credits && (
+                <div style={{
+                  display: 'flex', alignItems: 'baseline', gap: 6, padding: '6px 8px',
+                  borderRadius: 5, background: 'rgba(0,0,0,.22)', border: `1px solid ${C.border}`,
+                  color: C.textMuted, fontVariantNumeric: 'tabular-nums',
+                }}>
+                  <span style={{ color: C.textPrimary, fontWeight: 700 }}>
+                    {credits.left.toLocaleString()}
+                  </span>
+                  credits left (about ${(credits.left / 5000).toFixed(2)})
+                  <span style={{ marginLeft: 'auto' }}>last turn {credits.spent.toLocaleString()}</span>
+                </div>
+              )}
+            </Group>
+
+            {/* ── How you talk to it ───────────────────────────────────────── */}
+            <Group C={C} icon={<Mic size={11} />} title="Talking to it">
+              <Segmented
+                C={C}
+                value={mode}
+                onChange={onMode}
+                options={[
+                  { id: 'hold' as const, label: 'Hold', note: 'Hold the button down while you speak, let go when you are done. Nothing is listening the rest of the time.' },
+                  { id: 'toggle' as const, label: 'Keep listening', note: `Click once and it stays open. Say "${WAKE_WORDS[0]}" to get its attention, then keep going without repeating the name.` },
+                ]}
+              />
+              <Toggle
+                C={C} on={enterRuns} onChange={onEnterRuns}
+                label="Enter starts and runs a command"
+                note="Only while you are not typing — Enter keeps its usual job in any field."
+              />
+              <Toggle
+                C={C} on={collecting} onChange={onCollecting}
+                label="Collect commands before running them"
+                note={'Say several things, hear them back, then “execute”. Nothing happens until you say so.'}
+              />
+            </Group>
+
+            {/* ── How it answers ───────────────────────────────────────────── */}
+            <Group C={C} icon={<Volume2 size={11} />} title="Answering">
+              <Toggle
+                C={C} on={speaks} onChange={onSpeaks} disabled={!canSpeak}
+                label="Answer out loud"
+                note={canSpeak
+                  ? 'Reads back what it did and asks questions aloud. Stays quiet while the transport is running.'
+                  : 'This browser has no speech voices installed.'}
+              />
+              {speaks && (
+                <div style={{ paddingLeft: 35 }}>
+                  <Toggle
+                    C={C} on={studio} onChange={onStudio}
+                    label="Studio voice"
+                    note="A real recorded voice instead of the browser's. Each phrase is recorded once and then shared by everyone, so it costs you nothing. Falls back to the browser voice if it cannot be reached."
+                  />
+                </div>
+              )}
+            </Group>
+
+            {/* ── The microphone ───────────────────────────────────────────── */}
+            <Group
+              C={C}
+              icon={<Gauge size={11} />}
+              title="How easily it triggers"
+              note="Watch the meter at the top while you talk, and while the room does. The red line is the bar — set this so your voice crosses it and the room does not."
+            >
+              <div style={{ display: 'flex', gap: 3 }}>
                 {([
                   [0.7, 'Quick', 'picks up quiet speech, and more of the room'],
                   [1, 'Normal', 'the default'],
                   [1.5, 'Firm', 'ignores conversation further away'],
                   [2.2, 'Strict', 'only a clear voice close to the microphone'],
-                ] as const).map(([v, label, why]) => (
-                  <button
-                    key={label}
-                    title={why}
-                    onClick={() => onSensitivity(v)}
-                    style={{
-                      flex: 1, padding: '4px 2px', borderRadius: 4, cursor: 'pointer', fontSize: 10,
-                      border: `1px solid ${Math.abs(sensitivity - v) < 0.01 ? C.accent : C.border}`,
-                      background: Math.abs(sensitivity - v) < 0.01 ? `${C.accent}22` : 'transparent',
-                      color: Math.abs(sensitivity - v) < 0.01 ? C.accent : C.textMuted,
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
+                ] as const).map(([v, label, why]) => {
+                  const active = Math.abs(sensitivity - v) < 0.01
+                  return (
+                    <button
+                      key={label}
+                      title={why}
+                      onClick={() => onSensitivity(v)}
+                      style={{
+                        flex: 1, height: 24, borderRadius: 5, cursor: 'pointer', fontSize: 10,
+                        fontWeight: active ? 800 : 600,
+                        border: `1px solid ${active ? C.accent : C.border}`,
+                        background: active ? `${C.accent}22` : 'transparent',
+                        color: active ? C.accent : C.textMuted,
+                        transition: 'background 120ms, color 120ms, border-color 120ms',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
               </div>
-              <div style={{ color: C.textMuted, marginTop: 4, lineHeight: 1.45 }}>
-                Watch the meter above while you talk and while the room does. The red
-                line is the bar — set this so your voice crosses it and the room does not.
-              </div>
-            </div>
 
-            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 9 }}>
-              <div style={{ color: C.textMuted, marginBottom: 5, letterSpacing: 0.3, fontSize: 9, fontWeight: 800 }}>
-                THE ASSISTANT
-              </div>
-              <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
-                <input
-                  type="checkbox" checked={!!aiAuto}
-                  onChange={e => onAiAuto?.(e.target.checked)} style={{ marginTop: 2 }}
-                />
-                <span>
-                  Let the assistant act without asking
-                  <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
-                    Off by default. Anything the studio cannot work out itself goes
-                    straight to the assistant and spends credits — including a
-                    sentence it misheard.
-                  </span>
-                </span>
-              </label>
-              {credits && (
-                <div style={{ color: C.textMuted, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>
-                  Last turn cost {credits.spent.toLocaleString()} credits ·
-                  {' '}{credits.left.toLocaleString()} left
-                  {' '}(about ${(credits.left / 5000).toFixed(2)})
-                </div>
-              )}
-            </div>
-
-            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 9 }}>
-              <div style={{ color: C.textMuted, marginBottom: 5, letterSpacing: 0.3, fontSize: 9, fontWeight: 800 }}>
-                CHECK THE MICROPHONE
-              </div>
               {calibrating ? (
-                <div style={{ lineHeight: 1.5 }}>
+                <div style={{
+                  lineHeight: 1.5, padding: '7px 9px', borderRadius: 5,
+                  border: `1px solid ${C.accent}55`, background: `${C.accent}12`,
+                }}>
                   {calibrating === 'room'
                     ? 'Listening to the room — say nothing for a moment…'
-                    : <>Now say: <span style={{ color: C.accent }}>&ldquo;{calibrationPhrase}&rdquo;</span></>}
+                    : <>Now say: <span style={{ color: C.accent, fontWeight: 700 }}>&ldquo;{calibrationPhrase}&rdquo;</span></>}
                 </div>
               ) : (
-                <>
+                <div>
                   <button
                     onClick={onCalibrate}
                     style={{
-                      width: '100%', height: 26, borderRadius: 4, cursor: 'pointer',
+                      width: '100%', height: 26, borderRadius: 5, cursor: 'pointer',
                       border: `1px solid ${C.border}`, background: 'transparent',
-                      color: C.textPrimary, fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                      color: C.textPrimary, fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
                     }}
                   >
-                    RUN A CHECK
+                    Check the microphone
                   </button>
-                  <div style={{ color: C.textMuted, marginTop: 4, lineHeight: 1.45 }}>
+                  {/* What it will do, before it does it. Dropped in the first
+                      pass of this redesign and put back: a button that opens a
+                      two-stage measurement should say so, and "says which part
+                      is the problem" is the reason anybody would press it. */}
+                  <div style={{ color: C.textMuted, marginTop: 5, lineHeight: 1.45 }}>
                     Measures the room, then asks you to say one sentence, then says which
                     part is the problem — and sets the sensitivity to match.
                   </div>
-                </>
+                </div>
               )}
 
               {calibration && !calibrating && (
-                <div style={{ marginTop: 8, lineHeight: 1.5 }}>
+                <div style={{
+                  lineHeight: 1.5, padding: '7px 9px', borderRadius: 5,
+                  border: `1px solid ${C.border}`, background: 'rgba(0,0,0,.22)',
+                }}>
                   <div style={{ color: C.textPrimary }}>{calibration.verdict}</div>
-                  <div style={{ color: C.textMuted, marginTop: 5 }}>
+                  <div style={{ color: C.textMuted, marginTop: 4 }}>
                     Heard: &ldquo;{calibration.heard}&rdquo;
                   </div>
                   <div style={{ color: C.textMuted, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
                     room {calibration.floor.toFixed(3)} · voice {calibration.peak.toFixed(3)} ·
-                    {' '}{calibration.headroom.toFixed(1)}x · {Math.round(calibration.accuracy * 100)}% of the words
+                    {' '}{calibration.headroom.toFixed(1)}× · {Math.round(calibration.accuracy * 100)}% of the words
                   </div>
                 </div>
               )}
-            </div>
 
-            {mic && (
-              <div style={{
-                borderTop: `1px solid ${C.border}`, paddingTop: 9, lineHeight: 1.5,
-                color: mic.degraded ? '#e0776b' : C.textMuted,
-              }}>
-                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 3 }}>
-                  MICROPHONE
-                </div>
-                {mic.label || 'default input'}
-                {mic.sampleRate ? ` · ${(mic.sampleRate / 1000).toFixed(1)} kHz` : ''}
-                {mic.echoCancellation ? ' · echo cancelling' : ' · raw'}
-                {mic.degraded && (
-                  <div style={{ marginTop: 4 }}>
-                    This device dropped to call quality when the microphone opened, which
-                    is what makes playback sound grainy. It is the headset switching
-                    profiles, not the studio — monitor on something else while voice is on.
+              {mic && (
+                <div style={{
+                  lineHeight: 1.5, padding: '7px 9px', borderRadius: 5,
+                  border: `1px solid ${mic.degraded ? '#e0776b55' : C.border}`,
+                  background: mic.degraded ? '#e0776b12' : 'rgba(0,0,0,.22)',
+                  color: mic.degraded ? '#e0776b' : C.textMuted,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Waves size={10} />
+                    {mic.label || 'default input'}
+                    {mic.sampleRate ? ` · ${(mic.sampleRate / 1000).toFixed(1)} kHz` : ''}
+                    {mic.echoCancellation ? ' · echo cancelling' : ' · raw'}
                   </div>
-                )}
-              </div>
-            )}
+                  {mic.degraded && (
+                    <div style={{ marginTop: 4 }}>
+                      This device dropped to call quality when the microphone opened, which is what
+                      makes playback sound grainy. It is the headset switching profiles, not the
+                      studio — monitor on something else while voice is on.
+                    </div>
+                  )}
+                </div>
+              )}
+            </Group>
 
-            <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
-              <input type="checkbox" checked={hud} onChange={e => onHud(e.target.checked)} style={{ marginTop: 2 }} />
-              <span>
-                HUD
-                <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
-                  Hides everything but the song and the sound visuals.
-                </span>
-              </span>
-            </label>
+            {/* ── The room it works in ─────────────────────────────────────── */}
+            <Group C={C} icon={<Keyboard size={11} />} title="The studio">
+              <Toggle
+                C={C} on={hud} onChange={onHud}
+                label="HUD"
+                note="Hides everything but the song and the sound visuals."
+              />
+            </Group>
           </div>
         )}
 
+
         {tab === 'help' && (
-          <div>
-            {commandHelp().map(group => (
-              <div key={group.group} style={{ marginBottom: 9 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* Sixty-two commands in one scroll is a reference nobody reads.
+                The question people actually arrive with is "can I say X", and a
+                filter answers it in one keystroke — matched on both the phrase
+                and what it does, because half the time you know the effect and
+                not the wording. */}
+            <input
+              value={find}
+              onChange={e => setFind(e.target.value)}
+              placeholder="What do you want to do?"
+              aria-label="Filter commands"
+              style={{
+                width: '100%', height: 26, padding: '0 9px', borderRadius: 5,
+                border: `1px solid ${C.border}`, background: 'rgba(0,0,0,.22)',
+                color: C.textPrimary, fontSize: 11, outline: 'none',
+              }}
+            />
+            {matchedHelp.map(group => (
+              <div key={group.group}>
                 <div style={{
-                  color: C.accent, fontSize: 9, fontWeight: 800,
-                  letterSpacing: 0.5, marginBottom: 3,
+                  display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5,
                 }}>
-                  {group.group.toUpperCase()}
+                  <span style={{
+                    color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 0.5,
+                  }}>
+                    {group.group.toUpperCase()}
+                  </span>
+                  <span style={{ flex: 1, height: 1, background: C.border }} />
                 </div>
                 {group.items.map(item => (
-                  <div key={item.say} style={{ display: 'flex', gap: 6, padding: '2px 0', lineHeight: 1.35 }}>
-                    <span style={{ color: C.textPrimary, flex: '0 0 auto' }}>&ldquo;{item.say}&rdquo;</span>
-                    <span style={{ color: C.textMuted, flex: 1, textAlign: 'right' }}>{item.what}</span>
+                  // Stacked, not two columns fighting over one line. The old
+                  // layout right-aligned the description against the phrase and
+                  // the two collided the moment either got long — which, on a
+                  // 412px card, is most of them.
+                  <div key={item.say} style={{ padding: '3px 0 4px', lineHeight: 1.4 }}>
+                    <div style={{ color: C.textPrimary }}>&ldquo;{item.say}&rdquo;</div>
+                    <div style={{ color: C.textMuted }}>{item.what}</div>
                   </div>
                 ))}
               </div>
             ))}
+            {!matchedHelp.length && (
+              <div style={{ color: C.textMuted, lineHeight: 1.5 }}>
+                Nothing matches that. The assistant may still manage it — say it and see,
+                if it is switched on in Settings.
+              </div>
+            )}
           </div>
         )}
       </div>

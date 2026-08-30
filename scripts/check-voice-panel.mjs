@@ -66,7 +66,9 @@ check('the window is not there to begin with', (await panel.count()) === 0)
 await page.locator('button[aria-label="Voice settings"]').click()
 await page.waitForTimeout(700)
 check('the gear opens it', (await panel.count()) > 0)
-check('and lands on the settings', /Hold the button to speak/i.test(await panel.innerText()))
+// The speaking mode is a segmented control now, so the tab is identified by
+// what it OFFERS rather than by one option's old full-sentence label.
+check('and lands on the settings', /Keep listening/i.test(await panel.innerText()))
 
 // ── It shows both sides of the conversation ────────────────────────────────
 await panel.getByText('Conversation', { exact: false }).click()
@@ -132,7 +134,7 @@ await page.waitForTimeout(300)
   await panel.getByText('Settings', { exact: false }).click()
   await page.waitForTimeout(300)
   const text = await panel.innerText()
-  check('the panel offers a microphone check', /RUN A CHECK/i.test(text))
+  check('the panel offers a microphone check', /Check the microphone/i.test(text))
   check('and says what it is for',
     /which part is the problem/i.test(text), text.slice(0, 120))
 }

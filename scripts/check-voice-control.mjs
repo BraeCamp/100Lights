@@ -170,13 +170,19 @@ if (await gear.count()) {
   const panel = page.locator('[data-voice-panel]')
   check('it opens the voice card', await panel.count() > 0)
   const text = (await panel.textContent().catch(() => '')) ?? ''
-  check('offering hold and toggle', /Hold the button/i.test(text) && /Click once/i.test(text), text.slice(0, 80))
+  check('offering hold and toggle', /Hold/.test(text) && /Keep listening/i.test(text), text.slice(0, 80))
   check('and the Enter setting', /Enter/i.test(text), text.slice(0, 200))
 
   // Switching to toggle has to persist, or the setting is decoration.
+  //
+  // A segmented control now, not two radios — the options are alternatives
+  // worth comparing rather than a form field, and the old selector silently
+  // found nothing once they became buttons.
   await page.evaluate(() => {
-    const radios = [...document.querySelectorAll('[data-voice-panel] input[type=radio]')]
-    radios[1]?.click()
+    const panel = document.querySelector('[data-voice-panel]')
+    const b = panel && [...panel.querySelectorAll('button')]
+      .find(x => /^Keep listening$/.test(x.textContent.trim()))
+    b?.click()
   })
   await page.waitForTimeout(300)
   const stored = await page.evaluate(() => localStorage.getItem('beacon.voice.mode'))
