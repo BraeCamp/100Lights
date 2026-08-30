@@ -87,6 +87,9 @@ export interface VadState {
   /** When somebody started talking in this take, so a short command can be
    *  answered quickly and a long one is given room to breathe. */
   spokeSince: number | null
+  /** The last sample that cleared the HIGH bar, so the low bar knows how long
+   *  it has been holding the gate open on its own. */
+  lastOpenAt: number | null
 }
 
 export interface VadStep {
@@ -103,6 +106,7 @@ export function newVad(): VadState {
   return {
     floor: 0, calibrated: 0, heard: false, lastLoudAt: 0,
     unbrokenSince: null, activeSince: null, belowSince: null, spokeSince: null,
+    lastOpenAt: null,
   }
 }
 
@@ -140,8 +144,16 @@ export const CONTINUOUS_STRICTNESS = 1.6
  * STAY up costs a fifth of a second of responsiveness and removes almost every
  * false start, which is a trade worth making only when the mic is open long
  * enough for false starts to happen. In a single-command take it is zero.
+ *
+ * 150, not 220. "Play" is a 300ms word whose quiet half sits under the bar, so
+ * even with the gate holding through its tail it clears about 200ms — and 220
+ * put the requirement ABOVE what the shortest real command can produce, which
+ * is how a perfectly clear word ended up discarded as a click. Nothing this
+ * filter is aimed at lasts a sixth of a second: a keyboard click is nearer 30ms
+ * and a chair creak is not loud enough to open the gate in the first place.
+ * Level is what rejects the room; duration only rejects taps.
  */
-export const MIN_SPEECH_MS_CONTINUOUS = 220
+export const MIN_SPEECH_MS_CONTINUOUS = 150
 
 /**
  * How long the level must stay down before the rise before it is forgotten.
@@ -161,6 +173,37 @@ const DIP_GRACE_MS = 200
 /** Below this, nothing counts as speech however quiet the room is — otherwise a
  *  silent room triggers on its own noise floor. */
 export const MIN_SPEECH_LEVEL = 0.012
+
+/**
+ * Where the gate closes, as a fraction of the way from the floor to the bar it
+ * opened at.
+ *
+ * Half. Low enough that the decay of an ordinary word stays inside it, high
+ * enough that room tone does not hold the gate open once the talking stops —
+ * and the gate can only be held open by something that already crossed the high
+ * bar, so a room that never reaches it is never listened to at all.
+ */
+export const RELEASE_FRACTION = 0.5
+
+/** The release bar never sits closer to the floor than this multiple of it, so
+ *  a very low bar in a silent room does not collapse onto the room itself. */
+export const FLOOR_MARGIN = 1.15
+
+/**
+ * How long the low bar may hold the gate open once the level has left the high
+ * one.
+ *
+ * A hysteretic gate with no time limit is a gate that a mix can hold open
+ * forever: a chorus sitting between the two bars never re-triggers the high one
+ * and never falls under the low one, so the floor stops following it, the take
+ * never ends, and the studio decides a song is a very long sentence. The test
+ * for that already existed and caught this within a minute of the change.
+ *
+ * What separates the two is how long it lasts. The tail of a word is a decay —
+ * a few hundred milliseconds and gone. Anything still sitting in the band after
+ * that is not a tail, so the gate lets go and the ordinary rules resume.
+ */
+export const RELEASE_HOLD_MS = 400
 
 /** How long a gap ends the take. Longer over music, where the level falls back
  *  to a moving target rather than to silence and the decision is noisier. */
@@ -212,7 +255,7 @@ const FLOOR_FOLLOW = 0.02
  * not a person talking, whatever its level. It is the new floor, and it is
  * treated as one.
  */
-const SUSTAINED_MS = 2500
+export const SUSTAINED_MS = 2500
 
 /**
  * One sample of the meter.
@@ -254,17 +297,61 @@ export function vadStep(
   const strictness = (opts.continuous ? CONTINUOUS_STRICTNESS : 1)
     * (opts.sensitivity && opts.sensitivity > 0 ? opts.sensitivity : 1)
   const threshold = Math.max(MIN_SPEECH_LEVEL, state.floor * (1 + (ratio - 1) * strictness))
-  const above = rms > threshold
+
+  // ── Two bars, because it is a gate ───────────────────────────────────────
+  //
+  // Brae: "I think that it cuts off the quieter last part of my words because
+  // of the sound limiter." That is exactly what it was, and one threshold was
+  // doing two different jobs: deciding a word had STARTED, and deciding it was
+  // still GOING. Those want different bars, and every noise gate ever built
+  // uses two.
+  //
+  // "Play" is about 300ms — a hard attack on the P, then a decay through the
+  // vowel. In a silent room the bar bottoms out at MIN_SPEECH_LEVEL and the
+  // tail clears it by luck. In a real room, with a fan or a street outside, the
+  // floor lifts the bar into the MIDDLE of the word, and the second half of
+  // every short command falls underneath it. The consequences were worse than a
+  // clipped tail: the loud part alone could not hold out for
+  // MIN_SPEECH_MS_CONTINUOUS, so `heard` was never set, so the take was never
+  // cut, so the audio was thrown away by the idle reset — and the studio
+  // answered "I didn't catch that" to a word it had recorded perfectly.
+  //
+  // So: cross the high bar to open, fall below the LOW one to close. The tail
+  // of a word holds the gate open, counts towards the minimum duration, and
+  // keeps the silence clock from starting at the loudest moment instead of at
+  // the end of the word.
+  const release = Math.max(state.floor * FLOOR_MARGIN, state.floor + (threshold - state.floor) * RELEASE_FRACTION)
+  const opening = rms > threshold
+  // Already open — within the dip grace that carries the gate across a word
+  // boundary — still above the low bar, and not held there for longer than a
+  // word's tail could last. `opening` alone stays the test for everything that
+  // decides what KIND of sound this is; only the gate is hysteretic.
+  const held = state.activeSince != null
+    && state.lastOpenAt != null
+    && now - state.lastOpenAt <= RELEASE_HOLD_MS
+  const above = opening || (held && rms > release)
 
   if (above) {
-    const unbrokenSince = state.unbrokenSince ?? now
+    // Strictly the high bar. This clock is the music test — a mix sits up
+    // without gaps — and judging it against the low bar would let a mix hold it
+    // open through its own dips and never be recognised as a mix.
+    const unbrokenSince = opening ? (state.unbrokenSince ?? now) : null
     const activeSince = state.activeSince ?? now
-    const base = { ...state, unbrokenSince, activeSince, belowSince: null }
+    const base = {
+      ...state, unbrokenSince, activeSince, belowSince: null,
+      lastOpenAt: opening ? now : state.lastOpenAt,
+    }
 
     // Up for this long without a single dip: a section, not a sentence. The
     // level becomes the floor — quickly, because until it does, everything else
     // is judged against a bar belonging to a quieter part of the song.
-    if (now - unbrokenSince > SUSTAINED_MS) {
+    // `unbrokenSince != null` explicitly, not `now - unbrokenSince`. It is null
+    // whenever the gate is being held open by the low bar, and `now - null` is
+    // `now` — which passes this test in any session older than two and a half
+    // seconds. Every quiet word-tail would have been read as a section of music
+    // and pulled the floor up under the speaker. The fixtures missed it because
+    // they speak in the first second; the test below speaks a minute in.
+    if (unbrokenSince != null && now - unbrokenSince > SUSTAINED_MS) {
       return {
         state: { ...base, floor: state.floor * (1 - FLOOR_FOLLOW * 4) + rms * FLOOR_FOLLOW * 4 },
         speaking: false,

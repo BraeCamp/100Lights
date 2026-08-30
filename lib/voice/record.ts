@@ -315,7 +315,27 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
     analyser = ctx.createAnalyser()
     analyser.fftSize = 1024
     const dest = ctx.createMediaStreamDestination()
-    src.connect(hp); hp.connect(comp); comp.connect(analyser); analyser.connect(dest)
+    // ── The analyser taps BEFORE the compressor ──────────────────────────
+    //
+    // Brae: "I think that it cuts off the quieter last part of my words because
+    // of the sound limiter." He meant this compressor, and he was right about
+    // it in a way I had not seen: the two things on this chain want opposite
+    // signals.
+    //
+    // The compressor is here for the TRANSCRIBER, which does better on an even
+    // level. But WebAudio's compressor has no makeup gain, so everything above
+    // its threshold is pulled down and everything below it — the room — is left
+    // exactly where it was. Speech at 0.11 over a 0.02 room came out near 0.05
+    // over the same 0.02: a five-fold gap squeezed to two-and-a-half. The
+    // detector's bar is a RATIO above the floor, and in a held-open session it
+    // asks for about three and a half. So the very stage meant to make speech
+    // easier to hear was flattening it under the bar.
+    //
+    // The recording still gets the compression. Only the judging is moved to
+    // where the dynamics are still real.
+    src.connect(hp)
+    hp.connect(analyser)
+    hp.connect(comp); comp.connect(dest)
     // Nothing reaches ctx.destination: the microphone is analysed and recorded,
     // never monitored. In a borrowed context that is the difference between a
     // voice command and a feedback loop through the speakers.

@@ -23,7 +23,7 @@ import { importTs } from '../lib/ts-import.mjs'
 
 const {
   newVad, vadStep, RATIO_QUIET, RATIO_OVER_MUSIC, CALIBRATION_SAMPLES,
-  CONTINUOUS_STRICTNESS, MIN_SPEECH_MS_CONTINUOUS,
+  CONTINUOUS_STRICTNESS, MIN_SPEECH_MS_CONTINUOUS, SUSTAINED_MS, RELEASE_HOLD_MS,
 } = await importTs('lib/voice/vad.ts')
 
 let failures = 0
@@ -78,6 +78,65 @@ const ROOM = 0.002
 const SPEECH = 0.08
 const MUSIC = 0.10
 const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
+
+// ── One short word, trailing off ────────────────────────────────────────────
+//
+// Brae: "There are some problems with the thing hearing me right now. Even if I
+// just say 'Play' it says 'I didn't get that'" — and then the diagnosis, which
+// was the right one: "I think that it cuts off the quieter last part of my
+// words because of the sound limiter."
+//
+// "Play" is about 300ms. It opens loud on the P and falls away through the
+// vowel, so only its first half is anywhere near the bar. A single threshold
+// doing both jobs — deciding a word has STARTED and deciding it is still GOING
+// — treats that fade as silence the instant it dips, which is what a limiter
+// sounds like from the inside.
+//
+// The room matters here, which is why the fixture has one. In a silent room the
+// bar bottoms out at MIN_SPEECH_LEVEL and the tail clears it by accident. In a
+// real room — a fan, a computer, a street — the floor lifts the bar into the
+// middle of the word, and the second half of every short command falls under it.
+{
+  const REAL_ROOM = 0.02        // not silence: a desk, a fan, a room tone
+  // One word: a hard attack, then a decay through the tail, then the room again.
+  const WORD = [0.11, 0.085, 0.06, 0.045, 0.032, 0.024]
+  const take = [
+    ...rep(CALIBRATION_SAMPLES, REAL_ROOM),
+    ...WORD,
+    ...rep(40, REAL_ROOM),
+  ]
+
+  const held = run(take, { continuous: true })
+  // The consequence of not hearing it is not "a worse transcript". `heard` is
+  // never set, so the take is never cut, so the audio is thrown away by the
+  // idle reset — and the studio answers "I didn't catch that" to a word it
+  // recorded perfectly.
+  check('a short quiet-tailed word is heard in a held-open session',
+    held.everSpoke, `spoke for ${held.speakingMs}ms, bar ${held.thresholds.at(-1).toFixed(3)}`)
+  check('and the take ends, so the audio is actually sent',
+    held.endedAt !== null, String(held.endedAt))
+
+  // The tail has to hold the utterance open rather than the silence clock
+  // starting at the loudest moment — otherwise the end of the word is cut off
+  // mid-vowel, which is what Brae could hear happening.
+  const push = run(take, {})
+  check('the quiet tail counts as part of the word, not as silence',
+    push.speakingMs >= 200, `${push.speakingMs}ms of speech`)
+
+  // The same word, said a minute into the session rather than in the first
+  // second. Timing must not change the answer — and it did: the sustained-level
+  // test compared `now` against a null clock, so once the session was older
+  // than SUSTAINED_MS every quiet tail read as a section of music and dragged
+  // the floor up under the speaker. Every fixture above speaks immediately,
+  // which is exactly why none of them caught it.
+  const late = [...rep(1200, REAL_ROOM), ...WORD, ...rep(40, REAL_ROOM)]
+  const lateRun = run(late, { continuous: true })
+  check('a word a minute in behaves like a word in the first second',
+    lateRun.everSpoke && lateRun.endedAt !== null,
+    `spoke ${lateRun.speakingMs}ms, floor ${lateRun.floor.toFixed(4)}`)
+  check('and the floor is still the room, not the word',
+    lateRun.floor < REAL_ROOM * 1.5, lateRun.floor.toFixed(4))
+}
 
 // ── The case that was broken ────────────────────────────────────────────────
 {
@@ -147,8 +206,15 @@ const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
   // asserting something the design does not provide. What IS guaranteed is that
   // it cannot go on being mistaken: the moment it fails to dip for long enough,
   // it becomes the floor.
+  // Expressed in the constants rather than as a number, because the number
+  // moved when the gate got its second bar and a hand-tuned bound would just
+  // have been raised to whatever came out. The guarantee is a shape: it stops
+  // once the level has held without dipping (SUSTAINED_MS), plus however long
+  // the low bar is allowed to keep the gate open afterwards (RELEASE_HOLD_MS),
+  // plus the sample it is noticed on.
+  const bound = SUSTAINED_MS + RELEASE_HOLD_MS + 50
   check('a chorus landing cannot be mistaken for speech for long',
-    followed.speakingMs <= 2600, `${followed.speakingMs}ms`)
+    followed.speakingMs <= bound, `${followed.speakingMs}ms, bound ${bound}ms`)
   check('and it does not hold the take open forever',
     followed.endedAt !== null, String(followed.endedAt))
 }
@@ -230,6 +296,20 @@ const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
   const word = [...rep(CALIBRATION_SAMPLES, MUSIC), ...speech(30, loudEnough, MUSIC), ...rep(40, MUSIC)]
   check('but a spoken word still is',
     run(word, { playing: true, continuous: true }).everSpoke)
+
+  // The trade made when the gate got a second, lower bar: it now holds through
+  // a DECAY, and a door slam is a decay. What still separates them is how fast.
+  // A percussive hit is most of the way to nothing within a couple of frames,
+  // so it cannot hold even the low bar for long enough; a voice takes its time.
+  //
+  // This is the honest boundary rather than a claim to have solved it: a slam
+  // slow enough to look like a word will get transcribed, come back as nothing,
+  // and be reported as "I didn't catch that" — a wasted transcription, not a
+  // wrong action. Losing every short command was the worse end of that trade.
+  const slam = [...rep(CALIBRATION_SAMPLES, ROOM), 0.30, 0.09, 0.03, ...rep(40, ROOM)]
+  check('a percussive hit decays too fast to be a word',
+    !run(slam, { continuous: true }).everSpoke,
+    `${MIN_SPEECH_MS_CONTINUOUS}ms required`)
 }
 {
   // Several commands in one held-open take, which is the whole point: each has
