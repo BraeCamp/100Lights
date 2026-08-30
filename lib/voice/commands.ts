@@ -55,6 +55,18 @@ export interface InterpretContext {
    * "this" or "it". A sentence that names a track always means that track.
    */
   selectedTrackName?: string
+  /**
+   * The clip currently selected, if any.
+   *
+   * Brae: "The user will be able to select things in this space, and when
+   * they're selected, Light will recognize that and act edit that selected item
+   * unless the user refers directly to a different item or feature."
+   *
+   * Carried as an ID rather than a name because a clip's name is not unique and
+   * often absent — the selection is a specific thing, and resolving it by name
+   * would land back in the ambiguity that selecting it was meant to settle.
+   */
+  selectedClipId?: string
 }
 
 export interface Match {
@@ -178,6 +190,31 @@ const DEICTIC = ['this', 'that', 'it', 'here', 'there', 'them', 'these', 'those'
  * from the studio's state rather than from anything that was said, and if the
  * selection is not what they thought, the wrong track moves.
  */
+/**
+ * The clip a sentence means, including when it does not say.
+ *
+ * Same rule as for tracks, and the same limit: a named clip always wins, and a
+ * name that could not be found NEVER falls back — that would edit the selected
+ * thing while appearing to have understood a different one.
+ */
+function clipOrSelected(
+  w: Words,
+  ctx: InterpretContext,
+  remove: string[],
+  opts: { dropNums?: boolean } = {},
+): { name: string; score: number } | null {
+  const named = nameFrom(w, ctx, remove, opts)
+  if (named) return named
+  if (!ctx.selectedClipId) return null
+  const leftover = w.all.filter(x =>
+    !remove.includes(x)
+    && !DEICTIC.includes(x)
+    && !(opts.dropNums && spokenNumber(x) != null))
+  if (leftover.length) return null
+  // The id form, which the executor resolves directly rather than by name.
+  return { name: `#${ctx.selectedClipId}`, score: 0.85 }
+}
+
 function nameOrSelected(
   w: Words,
   ctx: InterpretContext,
@@ -625,7 +662,7 @@ const COMMANDS: VoiceCommand[] = [
         || (w.has('loop') && w.has('times', 'more'))
         || w.has('double')
       if (!asked) return null
-      const hit = nameFrom(w, ctx, ['repeat', 'duplicate', 'again', 'copy', 'loop', 'times', 'more',
+      const hit = clipOrSelected(w, ctx, ['repeat', 'duplicate', 'again', 'copy', 'loop', 'times', 'more',
           'double', 'twice', 'track', 'clip'], { dropNums: true })
       if (!hit) return null
       // "loop bass 2 three more times" has two numbers and only one of them is
@@ -718,7 +755,7 @@ const COMMANDS: VoiceCommand[] = [
       if (!w.has('transpose', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third', 'step', 'steps')) {
         return null
       }
-      const hit = nameFrom(w, ctx, ['transpose', 'take', 'drop', 'move', 'up', 'down', 'raise', 'lower',
+      const hit = clipOrSelected(w, ctx, ['transpose', 'take', 'drop', 'move', 'up', 'down', 'raise', 'lower',
           'higher', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third',
           'second', 'step', 'steps', 'half', 'tone', 'whole', 'by', 'track', 'clip'], { dropNums: true })
       if (!hit) return null
@@ -1090,7 +1127,7 @@ const COMMANDS: VoiceCommand[] = [
     match(w, ctx) {
       if (!w.has('clip', 'item')) return null
       if (!w.has('delete', 'remove', 'get')) return null
-      const hit = nameFrom(w, ctx, ['delete', 'remove', 'get', 'rid', 'clip', 'item'],
+      const hit = clipOrSelected(w, ctx, ['delete', 'remove', 'get', 'rid', 'clip', 'item'],
         { dropNums: true })
       if (!hit) return null
       return {

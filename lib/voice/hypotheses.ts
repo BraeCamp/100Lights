@@ -82,6 +82,11 @@ export interface Hypothesis {
  */
 export function phoneticKey(word: string): string {
   const w = String(word ?? '').toLowerCase().replace(/[^a-z]/g, '')
+    // Silent gh, which English writes and nobody says. Without this "light"
+    // keyed as l-j-t while "late" and "lite" keyed as l-t, so the studio's own
+    // name did not sound like the two words a recogniser most often turns it
+    // into — the one collision this whole mechanism most needed to make.
+    .replace(/([aeiou])gh/g, '$1')
   if (!w) return ''
   const fold = (c: string): string => {
     if ('ckq'.includes(c)) return 'k'

@@ -94,6 +94,60 @@ for (const overheard of [
   check('a clearly-heard one does', sure.act === true)
 }
 
+// ── The name, heard wrong ──────────────────────────────────────────────────
+//
+// Brae: "Light seems to switch to late... code Light in as a name so that it
+// recognizes its name being said if the context approves."
+//
+// "Light" and "late" differ by one vowel. A general-purpose recogniser has no
+// reason to prefer either and does not know one of them is a name, so the name
+// is matched by SOUND — and a sound-alike is too loose to wake on by itself,
+// which is what the context check is for.
+const knowsCommand = t => /^(mute|stop|play|solo|unmute) /.test(t.trim()) || ['stop', 'play'].includes(t.trim())
+const heardWrong = (text, ok = knowsCommand) => considerUtterance({
+  text, confidence: 0.9, now: NOW, lastAcceptedAt: NOW - ATTENTION_MS - 1000,
+  continuous: true, looksLikeCommand: ok,
+})
+
+check('"light" and "late" sound the same', addressed('late, mute the drums').addressed,
+  'which is why the recogniser swaps them')
+{
+  const v = heardWrong('late, mute the drums')
+  check('a misheard name IS the name when a command follows',
+    v.act === true && v.text === 'mute the drums', JSON.stringify(v))
+}
+{
+  // The other half, and the reason this is safe: on its own it is just a word.
+  const v = heardWrong('late')
+  check('but on its own it is somebody talking about the time', v.act === false)
+  const chat = heardWrong('sorry i am late for the meeting')
+  check('and it does not wake on a sentence that merely contains it',
+    chat.act === false, JSON.stringify(chat))
+}
+{
+  const v = heardWrong('late, what do you reckon')
+  check('nor when what follows is not a command it knows', v.act === false)
+}
+{
+  // Spelled correctly, it needs no approval — that is the difference between
+  // hearing the name and guessing at it.
+  const v = heardWrong('light, what do you reckon')
+  check('the name spelled right needs no context', v.act === true, JSON.stringify(v))
+}
+{
+  // A greeting is itself evidence somebody is addressing something. Nobody
+  // says "hey late".
+  const v = heardWrong('hey late, what do you reckon')
+  check('and a greeting vouches for a sound-alike', v.act === true, JSON.stringify(v))
+}
+{
+  // Words that merely rhyme are NOT the name, however good the command is.
+  for (const w of ['right', 'white', 'night']) {
+    const v = heardWrong(`${w}, mute the drums`)
+    check(`"${w}" is not its name`, v.act === false, JSON.stringify(v))
+  }
+}
+
 // ── Once talking, it keeps listening ───────────────────────────────────────
 //
 // The point of holding the mic open. Having to say the name before every

@@ -294,6 +294,32 @@ const read = (s, ctx) => interpret(s, ctx)
   check('and with no selection it declines', r.calls.length === 0, r.matched)
 }
 
+// ── A selected CLIP is what "it" means ────────────────────────────────────
+//
+// Brae: "when they're selected, Light will recognize that and act edit that
+// selected item unless the user refers directly to a different item."
+{
+  const sel = { ...WITH_BASS, selectedClipId: 'c9' }
+  const dup = read('duplicate it', sel)
+  check('"duplicate it" means the selected clip',
+    dup.calls[0]?.input?.target === '#c9', JSON.stringify(dup.calls[0]?.input))
+  const up = read('take it up an octave', sel)
+  check('"take it up an octave" too',
+    up.calls[0]?.input?.target === '#c9' && up.calls[0]?.input?.semitones === 12,
+    JSON.stringify(up.calls[0]?.input))
+}
+{
+  // "unless the user refers directly to a different item" — a named target
+  // always wins over the selection.
+  const r = read('loop the drums 3 more times', { ...WITH_BASS, selectedClipId: 'c9' })
+  check('but naming something else beats the selection',
+    r.calls[0]?.input?.target === 'Drums', JSON.stringify(r.calls[0]?.input))
+}
+{
+  const r = read('duplicate it', WITH_BASS)
+  check('and with nothing selected it declines', r.calls.length === 0, r.matched)
+}
+
 // ── The commands that act on everything ───────────────────────────────────
 {
   const r = read('mute everything', WITH_BASS)

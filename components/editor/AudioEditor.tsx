@@ -3056,8 +3056,10 @@ export default function AudioEditor(props: AudioEditorProps) {
 
         {/* Body */}
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-          {/* Left sidebar: file-cabinet rail + collapsible panel */}
-          <div style={{ display: 'flex', flexShrink: 0, borderRight: '1px solid var(--border)' }}>
+          {/* Left sidebar: file-cabinet rail + collapsible panel.
+              data-hud-hide puts it away in HUD mode, which leaves the song and
+              the sound visuals. See lib/voice/hud.ts. */}
+          <div data-hud-hide style={{ display: 'flex', flexShrink: 0, borderRight: '1px solid var(--border)' }}>
 
             {/* Rail — always visible */}
             <div style={{

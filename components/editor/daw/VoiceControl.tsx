@@ -41,6 +41,8 @@ import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { considerUtterance, isAttentive, WAKE_WORDS } from '@/lib/voice/attention'
+import { hudOn, setHud, applyHud } from '@/lib/voice/hud'
+import VoicePanel, { type VoiceTurn } from './VoicePanel'
 import { speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable } from '@/lib/voice/speak'
 
 const C = {
@@ -65,7 +67,7 @@ function writeVoiceMode(m: VoiceMode) { try { localStorage.setItem(MODE_KEY, m) 
 function writeVoiceEnter(on: boolean) { try { localStorage.setItem(ENTER_KEY, on ? 'on' : 'off') } catch { /* private mode */ } }
 
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
-  const { project, dispatch, engine, undo, redo, selectedTrackId } = useDaw()
+  const { project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId } = useDaw()
   const [listening, setListening] = useState(false)
   const [busy, setBusy] = useState(false)
   const [heard, setHeard] = useState('')
@@ -117,6 +119,26 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    * because it is.
    */
   const lastAcceptedAt = useRef(0)
+
+  /**
+   * What was said, and what was said back.
+   *
+   * The voice system used to speak through popovers that replaced each other,
+   * so the answer to "what did it just do" was already overwritten by the answer
+   * to "what is it doing now". A transcript is the difference between an
+   * interface you can check up on and one you have to take on faith.
+   */
+  const [turns, setTurns] = useState<VoiceTurn[]>([])
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [panelTab, setPanelTab] = useState<'talk' | 'settings' | 'help'>('talk')
+  const [hud, setHudState] = useState(false)
+
+  const addTurn = useCallback((by: VoiceTurn['by'], text: string, ignored = false) => {
+    if (!text?.trim()) return
+    // Bounded. A session left running all afternoon should not grow without
+    // limit, and nobody scrolls back past the last few exchanges.
+    setTurns(t => [...t.slice(-60), { by, text: text.trim(), at: Date.now(), ignored }])
+  }, [])
   /**
    * Whether the studio is currently taking commands, for the person looking at
    * it.
@@ -202,6 +224,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   ) => {
     if (kind === 'problem') setProblem(text)
     else setSaid(text)
+    addTurn('light', text)
     // isPlaying is a PROPERTY, not a method. Calling it threw, which left the
     // control stuck busy and silently blocked every command after the first —
     // a one-character mistake that looked like the whole feature had broken.
@@ -229,6 +252,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     setMode(readVoiceMode())
     setSpeaks(speechEnabled())
     modeRef.current = readVoiceMode()
+    const on = hudOn()
+    setHudState(on)
+    applyHud(on)
     setEnterRuns(readVoiceEnter())
   }, [])
 
@@ -298,9 +324,20 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         now: Date.now(),
         lastAcceptedAt: lastAcceptedAt.current,
         continuous: true,
+        // The context check for a name that only SOUNDED right. "Late" is
+        // somebody talking about the time; "late, mute the drums" is a
+        // microphone that misheard "light".
+        looksLikeCommand: t => resolveLocally(t, {
+          tracks: project.tracks ?? [],
+          tempo: project.tempo,
+        }).calls.length > 0,
       })
       if (!verdict.act) {
         setBusy(false)
+        // Recorded even though it was not acted on. "It heard me and did
+        // nothing" is a fact worth being able to see — otherwise the only
+        // evidence is that nothing happened.
+        addTurn('you', spoken, true)
         // Two very different situations, and telling them apart is what keeps
         // this from being infuriating. A room having a conversation must
         // produce NOTHING. Somebody who gave a real command and forgot the name
@@ -329,6 +366,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
     const text = stripWakeWord(heardFrom)
     if (!text) { setProblem('I didn\'t catch that.'); return }
+    addTurn('you', spoken)
     setBusy(true); setProblem(''); setSaid(''); setAsking(''); setPendingAsk(null)
     setChoices(null); setPendingDo(null)
 
@@ -446,6 +484,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // So "louder" and "mute this" mean the track being worked on. Nobody
       // says a track's name twenty times in a row.
       selectedTrackName: (project.tracks ?? []).find(t => t.id === selectedTrackId)?.name,
+      // So "duplicate it" and "delete this" mean the clip on screen. Selecting
+      // something is a statement about what you are working on, and the studio
+      // should not need to be told twice.
+      selectedClipId: selectedClipId ?? undefined,
     }
     // resolveHeard when the utterance came from a microphone: it can weigh what
     // the recogniser was unsure of, which is the difference between recovering
@@ -639,7 +681,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // them this closure captures the question as it was when the callback was
     // built — which is null — so the answer to a question the studio had just
     // asked was parsed as a fresh command and did nothing at all.
-  }, [project, runAction, pendingAsk2, pendingOffer, pendingName, respond, undo, redo, selectedTrackId])
+  }, [project, runAction, pendingAsk2, pendingOffer, pendingName, respond, undo, redo, selectedTrackId, selectedClipId])
 
   // Does the user still want to be listening? Asking for the microphone is
   // asynchronous and the first ask shows a dialog, so in hold-to-talk the
@@ -736,6 +778,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // itself — and "Bass 2 muted" reads as a plausible command.
     stopSpeaking()
     setListening(true)
+    // Brae: "create a windowed panel that opens when voice control is
+    // activated". Opened here rather than on the click, so it appears when the
+    // microphone is genuinely live rather than while permission is pending.
+    setPanelTab('talk')
+    setPanelOpen(true)
     // `engine` matters here now: whether the transport is running decides how
     // the microphone is opened, and a stale engine would decide it wrongly.
   }, [project, engine])
@@ -969,7 +1016,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       </button>
 
       <button
-        onClick={e => { e.stopPropagation(); setShowSettings(v => !v) }}
+        onClick={e => {
+          e.stopPropagation()
+          // Settings live in the panel now. Two places rendering the same
+          // controls is how the two of them end up disagreeing about what the
+          // setting currently is.
+          setPanelTab('settings')
+          setPanelOpen(v => !(v && panelTab === 'settings'))
+        }}
         data-voice-settings
         aria-label="Voice settings"
         title="How the voice button works"
@@ -980,84 +1034,30 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         }}
       ><Settings2 size={11} /></button>
 
-      {showSettings && (
-        <div
-          data-voice-settings-panel
-          style={{
-            position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 75,
-            minWidth: 230, padding: 8, background: C.bgSurface,
-            border: `1px solid ${C.border}`, borderRadius: 6,
-            boxShadow: '0 10px 28px rgba(0,0,0,.5)', fontSize: 11, color: C.textPrimary,
+      {panelOpen && (
+        <VoicePanel
+          turns={turns}
+          listening={listening}
+          attentive={attentive}
+          continuous={continuousRef.current}
+          level={level}
+          hud={hud}
+          initialTab={panelTab}
+          mode={mode}
+          onMode={m => { setMode(m); modeRef.current = m; writeVoiceMode(m) }}
+          enterRuns={enterRuns}
+          onEnterRuns={on => { setEnterRuns(on); writeVoiceEnter(on) }}
+          speaks={speaks}
+          onSpeaks={on => { setSpeaks(on); setSpeechEnabled(on) }}
+          canSpeak={speechAvailable()}
+          onHud={on => { setHudState(on); setHud(on) }}
+          onClose={() => setPanelOpen(false)}
+          onClear={() => setTurns([])}
+          colors={{
+            bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
+            textMuted: C.textMuted, accent: C.accent,
           }}
-        >
-          <div style={{ color: C.textMuted, marginBottom: 6, letterSpacing: 0.3 }}>SPEAKING</div>
-          {(['hold', 'toggle'] as VoiceMode[]).map(m => (
-            <label key={m} style={{ display: 'flex', gap: 7, alignItems: 'center', padding: '3px 0', cursor: 'pointer' }}>
-              <input
-                type="radio" name="voice-mode" checked={mode === m}
-                onChange={() => { setMode(m); modeRef.current = m; writeVoiceMode(m) }}
-              />
-              {m === 'hold' ? 'Hold the button to speak' : 'Click to start, click to run'}
-            </label>
-          ))}
-          <div style={{ height: 1, background: C.border, margin: '7px 0' }} />
-          <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
-            <input
-              type="checkbox" checked={enterRuns}
-              onChange={e => { setEnterRuns(e.target.checked); writeVoiceEnter(e.target.checked) }}
-              style={{ marginTop: 2 }}
-            />
-            <span>
-              Enter starts and runs a command
-              <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
-                Only while you are not typing — Enter keeps its usual job in any field.
-              </span>
-            </span>
-          </label>
-
-          <div style={{ height: 1, background: C.border, margin: '7px 0' }} />
-          <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
-            <input
-              type="checkbox" checked={speaks} disabled={!speechAvailable()}
-              onChange={e => { setSpeaks(e.target.checked); setSpeechEnabled(e.target.checked) }}
-              style={{ marginTop: 2 }}
-            />
-            <span>
-              Answer out loud
-              <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
-                {speechAvailable()
-                  ? 'Reads back what it did, and asks questions aloud. Stays quiet while the transport is running.'
-                  : 'This browser has no speech voices installed.'}
-              </span>
-            </span>
-          </label>
-
-          {/* ── What can I say? ─────────────────────────────────────────────
-              Generated from the command registry rather than written out, so a
-              command cannot be added without appearing here and cannot be
-              listed here without being tested. A voice system whose
-              documentation drifts is one people stop trying things on. */}
-          <div style={{ height: 1, background: C.border, margin: '7px 0' }} />
-          <div style={{ color: C.textMuted, marginBottom: 5, letterSpacing: 0.3 }}>THINGS YOU CAN SAY</div>
-          <div style={{ maxHeight: 280, overflowY: 'auto', paddingRight: 4 }}>
-            {commandHelp().map(group => (
-              <div key={group.group} style={{ marginBottom: 8 }}>
-                <div style={{
-                  color: C.accent, fontSize: 9, fontWeight: 800,
-                  letterSpacing: 0.5, marginBottom: 3,
-                }}>
-                  {group.group.toUpperCase()}
-                </div>
-                {group.items.map(item => (
-                  <div key={item.say} style={{ display: 'flex', gap: 6, padding: '2px 0', lineHeight: 1.35 }}>
-                    <span style={{ color: C.textPrimary, flex: '0 0 auto' }}>&ldquo;{item.say}&rdquo;</span>
-                    <span style={{ color: C.textMuted, flex: 1, textAlign: 'right' }}>{item.what}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
+        />
       )}
 
       {(pendingAsk2 || pendingOffer || pendingName) && (

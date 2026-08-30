@@ -1,3 +1,5 @@
+import { phoneticKey } from './hypotheses'
+
 // ── On, but not listening to everything ─────────────────────────────────────
 //
 // Brae: "What can we do to help light be able to be on but quiet until it can
@@ -61,6 +63,15 @@ export const ATTENTION_MS = 25_000
 export const WAKE_CONFIDENCE = 0.55
 
 export interface AttentionInput {
+  /**
+   * Does this text read as a command the studio knows?
+   *
+   * Supplied by the caller rather than imported, because attention must not
+   * depend on the command registry — and because this is exactly the "context
+   * approves" test: a name that only SOUNDED right is believed when what
+   * follows it is something the studio can actually do.
+   */
+  looksLikeCommand?: (text: string) => boolean
   /** What was heard. */
   text: string
   /** The transcriber's confidence in the utterance. */
@@ -94,6 +105,28 @@ function near(a: string, b: string): boolean {
 }
 
 /**
+ * Does this word SOUND like the studio's name?
+ *
+ * Brae: "Light seems to switch to late... Can we code Light in as a name so that
+ * it recognizes its name being said if the context approves?"
+ *
+ * "Light" and "late" differ by one vowel and nothing else — a general-purpose
+ * recogniser has no reason to prefer either, and it does not know this one is a
+ * name. So the name is matched by SOUND, which puts light, late and lite in one
+ * bucket while leaving right, white and night in their own.
+ *
+ * That bucket is too loose to wake on by itself, which is the second half of
+ * what he asked for: a sound-alike only counts when the context approves — when
+ * the rest of the sentence is a command the studio actually knows. "Late" on its
+ * own is somebody talking about the time. "Late, mute the drums" is somebody
+ * whose microphone misheard them.
+ */
+function soundsLikeName(word: string): boolean {
+  const key = phoneticKey(word)
+  return !!key && WAKE_WORDS.some(n => phoneticKey(n) === key)
+}
+
+/**
  * Was the studio addressed, and what is left when its name is taken out?
  *
  * The name has to be at the START or the END. "Light, mute the drums" and "mute
@@ -101,27 +134,59 @@ function near(a: string, b: string): boolean {
  * compressor" is a person talking about one, and a name found anywhere in the
  * sentence would make the second indistinguishable from the first.
  */
-export function addressed(text: string): { addressed: boolean; rest: string } {
+export function addressed(text: string): {
+  addressed: boolean
+  /** True when the name was only a SOUND-ALIKE and wants the context checked. */
+  approximate: boolean
+  rest: string
+} {
   const raw = String(text ?? '').trim()
   const words = raw.toLowerCase().replace(/[^a-z0-9\s'-]/g, ' ').split(/\s+/).filter(Boolean)
-  if (!words.length) return { addressed: false, rest: raw }
+  if (!words.length) return { addressed: false, approximate: false, rest: raw }
 
-  const isName = (w: string) => WAKE_WORDS.some(n => near(w, n))
+  // EXACTLY one of the names. Not "near" one: a one-edit tolerance here made
+  // "late" and "right" both count as the name outright, which skipped the
+  // context check entirely and defeated the point of having two tiers. Sounding
+  // like the name is the other tier's job, and it is the one that asks
+  // permission.
+  const spelled = (w: string) => (WAKE_WORDS as readonly string[]).includes(w)
   // A greeting in front of the name is part of the address, not the command.
   const GREETING = ['hey', 'ok', 'okay', 'hi', 'yo', 'hello']
 
   let start = 0
   while (start < words.length && GREETING.includes(words[start])) start++
-  if (start < words.length && isName(words[start])) {
-    return { addressed: true, rest: words.slice(start + 1).join(' ') }
+  const greeted = start > 0
+
+  const at = (i: number) => {
+    const w = words[i]
+    if (spelled(w)) return 'exact' as const
+    if (soundsLikeName(w)) return 'sound' as const
+    return null
+  }
+
+  if (start < words.length) {
+    const how = at(start)
+    if (how) {
+      return {
+        addressed: true,
+        // "Hey late, mute the drums" — the greeting is itself evidence that
+        // somebody is addressing something, so the sound-alike needs no further
+        // approval. Nobody says "hey late".
+        approximate: how === 'sound' && !greeted,
+        rest: words.slice(start + 1).join(' '),
+      }
+    }
   }
 
   // Trailing: "mute the drums, light".
-  if (words.length > 1 && isName(words[words.length - 1])) {
-    return { addressed: true, rest: words.slice(0, -1).join(' ') }
+  if (words.length > 1) {
+    const how = at(words.length - 1)
+    if (how) {
+      return { addressed: true, approximate: how === 'sound', rest: words.slice(0, -1).join(' ') }
+    }
   }
 
-  return { addressed: false, rest: raw }
+  return { addressed: false, approximate: false, rest: raw }
 }
 
 /**
@@ -133,7 +198,7 @@ export function addressed(text: string): { addressed: boolean; rest: string } {
  * all not a command.
  */
 export function considerUtterance(input: AttentionInput): AttentionVerdict {
-  const { addressed: named, rest } = addressed(input.text)
+  const { addressed: named, approximate, rest } = addressed(input.text)
 
   // Push-to-talk: the button was held down for the duration of the sentence.
   // There is no ambiguity about who was being spoken to.
@@ -143,6 +208,15 @@ export function considerUtterance(input: AttentionInput): AttentionVerdict {
     // Being addressed is the strongest signal there is, but a session that
     // wakes on a mishearing of its own name is a session that is always awake.
     if ((input.confidence ?? 1) < WAKE_CONFIDENCE) return { act: false, reason: 'unsure' }
+
+    // A name that only SOUNDED right has to be approved by what follows it.
+    // "Late" alone is somebody talking about the time; "late, mute the drums"
+    // is somebody whose microphone misheard them.
+    if (approximate) {
+      const approved = rest.trim() ? (input.looksLikeCommand?.(rest) ?? false) : false
+      if (!approved) return { act: false, reason: 'not-addressed' }
+    }
+
     // "Light." on its own is somebody getting the studio's attention, which is
     // a complete and reasonable thing to say. It wakes and waits.
     return { act: true, text: rest, addressed: true }

@@ -13,6 +13,7 @@ import { Sparkles } from 'lucide-react'
 import {
   type UITier, UI_TIERS, TIER_INFO, tierAtLeast, isUITier, tierVisibilityCss,
 } from '@/lib/ui-tiers'
+import { hudCss } from '@/lib/voice/hud'
 import { GRAPHS_LS_KEY } from '@/lib/draw-graphs'
 import { densityCss, isUIDensity, type UIDensity } from '@/lib/ui-density'
 
@@ -95,7 +96,9 @@ export function UITierProvider({ children }: { children: React.ReactNode }) {
       // Density rides along in the same stylesheet: both are static, both are
       // keyed off a data attribute on the wrapper below, and neither unmounts
       // anything when it changes.
-      el.textContent = `${tierVisibilityCss()}\n${densityCss()}`
+      // HUD rides along too: same shape — static rules keyed off a data
+      // attribute on an ancestor, unmounting nothing when it changes.
+      el.textContent = `${tierVisibilityCss()}\n${densityCss()}\n${hudCss()}`
       document.head.appendChild(el)
       styleRef.current = el
     }
