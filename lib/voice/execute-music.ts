@@ -136,6 +136,43 @@ function clipCandidates(
   const seen = new Set<string>()
   const where = (c: DawClip) => describeBeat(c.startBeat, maps)
 
+  // ── Track and item together — "Bass body 1" ──────────────────────────────
+  //
+  // Brae: "'add a descending filter to Bass body 1' … 'Bass (track) body 1
+  // (item)'."
+  //
+  // This is how people disambiguate without being asked, and it was the one
+  // form the studio could not read: it looked for a clip called "bass body 1"
+  // and a track called "bass body 1", found neither, and either failed or
+  // stopped to ask a question the speaker had already answered.
+  //
+  // Tried FIRST, because naming both is the most specific thing anybody can do
+  // and there is nothing left to be ambiguous about once it matches.
+  const spokenFolded = foldName(spoken)
+  if (spokenFolded) {
+    for (const track of p.tracks ?? []) {
+      const tName = foldName(track.name ?? '')
+      if (!tName || !spokenFolded.startsWith(`${tName} `)) continue
+      const rest = spokenFolded.slice(tName.length).trim()
+      if (!rest) continue
+      const onTrack = allClips(p).filter(c => c.trackId === track.id)
+      const hit = findByName(rest, onTrack as unknown as { id: string; name?: string }[])
+      if (!hit || hit.score < 0.6) continue
+      const clip = onTrack.find(c => c.id === hit.item.id)
+      if (!clip) continue
+      seen.add(clip.id)
+      out.push({
+        clip,
+        how: `"${clip.name ?? clip.id}" on "${track.name}"`,
+        label: `${clip.name ?? 'the clip'} on ${track.name}`,
+        keywords: ['clip', 'item', where(clip), String(clip.name ?? '').toLowerCase()],
+        namedDirectly: true,
+      })
+      // Named both halves: there is exactly one thing this can mean.
+      return out
+    }
+  }
+
   // Named directly — "the bass clip".
   const byClip = findByName(spoken, allClips(p) as unknown as { id: string; name?: string }[])
   if (byClip) {

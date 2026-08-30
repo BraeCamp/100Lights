@@ -283,7 +283,14 @@ export class Words {
    */
   said(...targets: string[]): boolean {
     const text = ` ${this.raw.toLowerCase().replace(/[^a-z0-9\s'-]/g, ' ').replace(/\s+/g, ' ')} `
-    return targets.some(t => text.includes(` ${t.toLowerCase()} `))
+    const hit = targets.find(t => text.includes(` ${t.toLowerCase()} `))
+    if (!hit) return false
+    // Counts as read. Without this a rule whose key word is a small one — "fade
+    // the drums OUT" — reported less coverage than it had earned, and readings
+    // that depended on the raw sentence were rejected by the coverage floor for
+    // explaining words they had in fact explained.
+    this.markWord(hit.toLowerCase(), 0)
+    return true
   }
 
   /** Is every word in the sentence one of these? Used to prove a sentence is

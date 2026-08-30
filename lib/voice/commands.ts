@@ -67,6 +67,15 @@ export interface InterpretContext {
    * would land back in the ambiguity that selecting it was meant to settle.
    */
   selectedClipId?: string
+  /**
+   * The clips in the project, so a rule can read "Bass body 1" as one target.
+   *
+   * Naming a track AND an item is the most specific thing anybody can say, and
+   * without the clips here the rules could only see the track half: "bass body
+   * 1" matched no track, narrowed to "bass", and silently dropped the part that
+   * made it unambiguous.
+   */
+  clips?: { id: string; name?: string; trackId: string }[]
 }
 
 export interface Match {
@@ -237,6 +246,45 @@ function nameOrSelected(
   return { name: ctx.selectedTrackName, score: 0.8 }
 }
 
+/**
+ * "Bass body 1" — a track and an item on it, said together.
+ *
+ * Returned as the whole phrase rather than resolved here: the executor already
+ * knows how to read that form, and returning the phrase keeps one place
+ * responsible for turning words into a clip. What matters at this level is that
+ * the phrase survives instead of being narrowed to the track and losing the half
+ * that made it specific.
+ */
+function compoundTarget(rest: string, ctx: InterpretContext): { name: string; score: number } | null {
+  if (!ctx.clips?.length || !rest) return null
+  const folded = ` ${foldName(rest)} `
+  for (const track of ctx.tracks) {
+    const tName = foldName(track.name ?? '')
+    if (!tName) continue
+    // Found ANYWHERE, not only at the start: the leftover often keeps a verb
+    // the rule did not think to remove — "add bass body 1" — and requiring the
+    // track name first threw away the most specific reading over the word
+    // "add".
+    const at = folded.indexOf(` ${tName} `)
+    if (at < 0) continue
+    const tail = folded.slice(at + tName.length + 2).trim()
+    if (!tail) continue
+    const onTrack = ctx.clips.filter(c => c.trackId === track.id)
+    // The LONGEST leading part of the tail that names a clip. The rest of the
+    // tail is usually an argument — "take the bass body 1 up 3 semitones" ends
+    // "body 1 3" once the command words are out, and requiring the whole tail
+    // to be the name meant the 3 broke the match and then became the answer.
+    const tailWords = tail.split(' ').filter(Boolean)
+    for (let n = tailWords.length; n >= 1; n--) {
+      const hit = findByName(tailWords.slice(0, n).join(' '), onTrack)
+      if (hit && hit.score >= 0.6) {
+        return { name: `${track.name} ${hit.item.name ?? ''}`.trim(), score: Math.min(1, hit.score) }
+      }
+    }
+  }
+  return null
+}
+
 function nameFrom(
   w: Words,
   ctx: InterpretContext,
@@ -264,6 +312,23 @@ function nameFrom(
   const kept = words.filter(x => protect.has(x) || !isUnitWord(x))
   const stripped = words.filter(x => !isUnitWord(x))
   const rest = kept.join(' ').trim()
+
+  // ── A track and an item together beats either alone ──────────────────────
+  //
+  // The most specific thing anybody can say, so it is tried first — and tried
+  // against the leftover WITH its numbers, because "Body 2" is a name and its
+  // digit is the half that says which one. Dropping numbers first left "bass
+  // body", which matches Body 1 and Body 2 equally and so matches nothing.
+  const withNumbers = w.all
+    .filter(x => protect.has(x) || !isUnitWord(x))
+    .join(' ')
+    .trim()
+  const compound = compoundTarget(withNumbers, ctx) ?? compoundTarget(rest, ctx)
+  if (compound) {
+    for (const word of w.all) w.markWord(word, 0)
+    return compound
+  }
+
   if (!rest && !stripped.length) return null
 
   let used = kept
@@ -791,14 +856,17 @@ const COMMANDS: VoiceCommand[] = [
       const hit = nameFrom(w, ctx, ['fade', 'in', 'out', 'up', 'away', 'over', 'across', 'bar', 'bars',
           'measure', 'measures', 'beat', 'beats', 'second', 'seconds', 'track'], { dropNums: true })
       if (!hit) return null
+      // A length is optional. "Fade the pad in" over what? Over the pad — the
+      // executor already falls back to the clip's own length, and demanding a
+      // duration made the studio refuse the shortest way of saying the thing.
       const length = lengthWith(w, argNumbers(w, hit.name)[0])
-      if (!length) return null
       return {
         calls: [{
           name: 'automate_parameter',
           input: {
             target: hit.name, parameter: 'volume',
-            from: inward ? 0 : 100, to: inward ? 100 : 0, length,
+            from: inward ? 0 : 100, to: inward ? 100 : 0,
+            ...(length ? { length } : {}),
           },
         }],
         confidence: nameConfidence(hit.score),
@@ -814,8 +882,12 @@ const COMMANDS: VoiceCommand[] = [
     say: ['open the filter on the pad over 8 bars', 'close the filter on the bass over 4 bars'],
     match(w, ctx) {
       if (!w.has('filter', 'lowpass', 'cutoff')) return null
-      const open = w.has('open', 'opening', 'up', 'rising', 'ascending')
-      const close = w.has('close', 'closing', 'down', 'falling', 'descending')
+      // "add a descending filter", "put a rising filter on it" — the direction
+      // word carries the whole meaning, so the verb in front of it can be
+      // anything. Listing every verb would be a dozen near-identical commands;
+      // reading the direction is one rule that covers all of them.
+      const open = w.has('open', 'opening', 'up', 'rising', 'ascending', 'opens')
+      const close = w.has('close', 'closing', 'down', 'falling', 'descending', 'closes')
       if (open === close) return null
       const hit = nameFrom(w, ctx, ['open', 'opening', 'close', 'closing', 'up', 'down', 'rising',
           'falling', 'ascending', 'descending', 'filter', 'lowpass', 'cutoff', 'over',
@@ -823,13 +895,13 @@ const COMMANDS: VoiceCommand[] = [
           'seconds', 'track', 'sweep'], { dropNums: true })
       if (!hit) return null
       const length = lengthWith(w, argNumbers(w, hit.name)[0])
-      if (!length) return null
       return {
         calls: [{
           name: 'automate_parameter',
           input: {
             target: hit.name, parameter: 'lowpass',
-            from: open ? 0 : 100, to: open ? 100 : 0, length,
+            from: open ? 0 : 100, to: open ? 100 : 0,
+            ...(length ? { length } : {}),
           },
         }],
         confidence: nameConfidence(hit.score),
@@ -1006,6 +1078,12 @@ const COMMANDS: VoiceCommand[] = [
       const effect = EFFECTS.find(e => w.has(e))
       if (!effect) return null
       if (!w.has('put', 'add', 'give', 'stick')) return null
+      // "Add a DESCENDING filter" is a sweep, not a switch. The direction word
+      // is the whole difference and it belongs to the automation rule, so this
+      // one stands aside rather than adding a static filter at 1%.
+      if (w.has('descending', 'ascending', 'rising', 'falling', 'opening', 'closing', 'sweep')) {
+        return null
+      }
       const hit = nameFrom(w, ctx, [...EFFECTS, 'put', 'add', 'give', 'stick', 'some',
         'percent', 'track'], { dropNums: true })
       if (!hit) return null
@@ -1030,6 +1108,12 @@ const COMMANDS: VoiceCommand[] = [
     match(w, ctx) {
       const effect = EFFECTS.find(e => w.has(e))
       if (!effect) return null
+      // A swept filter belongs to the automation rule, not here. Without this,
+      // "add a descending filter to Bass body 1" set a static filter to 1% —
+      // the "1" of "body 1" read as an amount.
+      if (w.has('descending', 'ascending', 'rising', 'falling', 'opening', 'closing', 'sweep')) {
+        return null
+      }
       const hit = nameFrom(w, ctx, [...EFFECTS, 'more', 'less', 'percent', 'track',
         'take', 'off', 'up', 'down'], { dropNums: true })
       if (!hit) return null

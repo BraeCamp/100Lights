@@ -59,6 +59,60 @@ export interface Heard {
   confidence?: number
 }
 
+/**
+ * Where a sentence stops explaining itself and starts giving an instruction.
+ *
+ * Brae: "I want a more gradual introduction to the song so let's add a
+ * descending filter to Bass body 1" should be read as "add descending filter to
+ * Bass body 1".
+ *
+ * People say WHY before they say WHAT, and the reason is not a command — it is
+ * a whole clause of perfectly good English with no instruction in it. Left in
+ * place it drags every reading's coverage down until nothing qualifies, and the
+ * sentence falls through to the assistant even though the studio knows exactly
+ * how to do the thing being asked for.
+ *
+ * The reason can also come SECOND ("mute the drums so I can hear the bass"), so
+ * guessing which half is the command is not something to do here. Both halves
+ * are offered and the parser's own scoring picks — the half containing an
+ * instruction explains itself completely, and the half containing a reason
+ * explains nothing.
+ */
+const CONNECTIVES = [
+  'so lets', "so let's", 'so can you', 'so could you', 'so please', 'so maybe', 'so',
+  'then lets', "then let's", 'then', 'and then', 'which means', 'therefore',
+  'because', 'i want to', 'i need to', 'lets', "let's",
+]
+
+/**
+ * The sentence, and each half of it either side of a connective.
+ *
+ * Never more than a handful: only the first occurrence of each connective is
+ * used, and a fragment shorter than two words cannot be a command worth trying.
+ */
+export function clauseCandidates(text: string): { text: string; why: string }[] {
+  const lower = ` ${String(text ?? '').toLowerCase().replace(/[^a-z0-9\s'-]/g, ' ').replace(/\s+/g, ' ').trim()} `
+  const words = lower.trim().split(' ').filter(Boolean)
+  if (words.length < 4) return []
+
+  const out: { text: string; why: string }[] = []
+  const seen = new Set<string>()
+  for (const c of CONNECTIVES) {
+    const at = lower.indexOf(` ${c} `)
+    if (at < 0) continue
+    const before = lower.slice(0, at).trim()
+    const after = lower.slice(at + c.length + 2).trim()
+    for (const [half, side] of [[after, 'after'], [before, 'before']] as const) {
+      if (half.split(' ').filter(Boolean).length < 2) continue
+      if (seen.has(half)) continue
+      seen.add(half)
+      out.push({ text: half, why: `the part ${side} "${c}"` })
+    }
+    if (out.length >= 6) break
+  }
+  return out
+}
+
 export interface Hypothesis {
   text: string
   /**
@@ -163,6 +217,18 @@ export function hypotheses(heard: Heard, vocabulary: readonly string[]): Hypothe
 
   const out: Hypothesis[] = [{ text, cost: 0, why: 'as heard' }]
   const seen = new Set([text.toLowerCase()])
+
+  // ── The command inside the sentence ──────────────────────────────────────
+  //
+  // Offered whatever the recogniser's confidence was, because this is not a
+  // correction of a mishearing: the words are right and only part of them is an
+  // instruction. Cheap, so the whole sentence still wins when the whole sentence
+  // is the command.
+  for (const clause of clauseCandidates(text)) {
+    if (seen.has(clause.text.toLowerCase())) continue
+    seen.add(clause.text.toLowerCase())
+    out.push({ text: clause.text, cost: 0.3, why: clause.why })
+  }
 
   // Whole sentences the recogniser itself considered. It had reasons; they are
   // just not reasons that knew anything about this project.

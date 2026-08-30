@@ -491,6 +491,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // something is a statement about what you are working on, and the studio
       // should not need to be told twice.
       selectedClipId: selectedClipId ?? undefined,
+      // So "Bass body 1" reads as one target — a track and an item said
+      // together, which is the most specific thing anybody can say and was the
+      // one form the rules could not see.
+      clips: (project.arrangementClips ?? []).map(c => ({
+        id: c.id, name: c.name, trackId: c.trackId,
+      })),
     }
     // resolveHeard when the utterance came from a microphone: it can weigh what
     // the recogniser was unsure of, which is the difference between recovering
