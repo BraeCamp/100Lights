@@ -25,7 +25,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Mic, Loader2, X, Settings2 } from 'lucide-react'
-import { useDaw } from '@/lib/daw-state'
+import { useDaw, reducer as dawReducer, type DawAction } from '@/lib/daw-state'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { hearBetter } from '@/lib/voice/hear-better'
@@ -35,6 +35,9 @@ import { COMMAND_VOCABULARY, commandHelp } from '@/lib/voice/interpret'
 import { remember, markFailed } from '@/lib/voice/voice-memory'
 import { startRecording, preferredTranscriber, setPreferredTranscriber, type Recording } from '@/lib/voice/record'
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
+import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
+import { noticeFor } from '@/lib/voice/notices'
+import { speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable } from '@/lib/voice/speak'
 
 const C = {
   bgSurface: '#1c1c1c',
@@ -135,6 +138,41 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // credit barrier, for the same reason: the cost of asking is a keystroke, and
   // the cost of not asking is somebody's work.
   const [pendingDo, setPendingDo] = useState<{ label: string; calls: VoiceCall[] } | null>(null)
+
+  // ── The conversation ─────────────────────────────────────────────────────
+  //
+  // Brae: "The program would ask 'Do you mean the bass track, or the bass item
+  // on the bass track at bar 15?'... 'Would you like to rename the bass item at
+  // bar 15 to avoid confusion?' and 'What would you like to change it to?'"
+  //
+  // Three states, because that exchange has three steps: a question with
+  // options, an offer to fix the cause, and a prompt for the new name. Whatever
+  // is pending gets the NEXT utterance before the parser does — someone
+  // answering "the track" is not issuing a command, and interpreting it as one
+  // is how a conversation turns into a series of non-sequiturs.
+  const [pendingAsk2, setPendingAsk2] = useState<VoiceAsk | null>(null)
+  const [pendingOffer, setPendingOffer] = useState<AskOffer | null>(null)
+  const [pendingName, setPendingName] = useState<AskOffer | null>(null)
+  const [speaks, setSpeaks] = useState(false)
+
+  /**
+   * Say something, and show it.
+   *
+   * Speech is never the delivery — the text always appears. A browser with no
+   * voices, a muted machine, or somebody who turned speech off must still see
+   * every answer, so this sets the visible state first and speaks second.
+   */
+  const respond = useCallback((
+    text: string,
+    kind: 'report' | 'question' | 'problem' = 'report',
+  ) => {
+    if (kind === 'problem') setProblem(text)
+    else setSaid(text)
+    // isPlaying is a PROPERTY, not a method. Calling it threw, which left the
+    // control stuck busy and silently blocked every command after the first —
+    // a one-character mistake that looked like the whole feature had broken.
+    speak(text, { kind, playing: !!engine?.isPlaying, listening })
+  }, [engine, listening])
   const handle = useRef<SpeechHandle | null>(null)
   /** Set when recording instead of using the browser's recogniser. */
   const recorder = useRef<Recording | null>(null)
@@ -143,6 +181,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   useEffect(() => {
     available.current = isSpeechAvailable()
     setMode(readVoiceMode())
+    setSpeaks(speechEnabled())
     setEnterRuns(readVoiceEnter())
   }, [])
 
@@ -204,6 +243,97 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // BOTH confidences have to hold. Badly heard and badly understood are
     // different failures with the same cure, and a wrong local answer is worse
     // than a slow correct one: it is silent, free, and therefore frequent.
+    // ── If a question is on the table, this is the answer to it ────────────
+    //
+    // Routed before the parser, because an answer is not a command: "the track"
+    // and "yes" and "Intro" mean nothing on their own and everything in reply
+    // to what was just asked.
+    if (pendingAsk2) {
+      const picked = readChoice(text, pendingAsk2.options)
+      if (picked == null) {
+        // Not an answer. It might be a change of subject, and a studio you
+        // cannot walk away from mid-question is worse than one that never asks:
+        // if the words are a command in their own right, the question is
+        // abandoned and the command runs. Only genuine mumbling gets re-asked.
+        const asCommand = resolveLocally(text, { tracks: project.tracks ?? [], tempo: project.tempo })
+        const givingUp = /^(cancel|never ?mind|forget it|nothing|stop)\b/i.test(text.trim())
+        if (givingUp) {
+          setPendingAsk2(null)
+          setBusy(false)
+          setSaid('Dropped it.')
+          return
+        }
+        if (!confidentEnough(asCommand, heardConfidence)) {
+          setBusy(false)
+          respond(`I didn't catch which one. ${pendingAsk2.speak}`, 'question')
+          return
+        }
+        setPendingAsk2(null)
+        // Falls through to the normal path below, which will run it.
+      } else {
+        const option = pendingAsk2.options[picked]
+        const offer = pendingAsk2.offer
+        setPendingAsk2(null)
+        const plan = planVoiceCalls(option.calls, project)
+        setBusy(false)
+        if (plan.problem) { respond(plan.problem, 'problem'); return }
+        for (const a of plan.actions) runAction(a)
+        // The offer comes after the thing they asked for, never instead of it.
+        if (offer) {
+          setPendingOffer(offer)
+          respond(`${plan.say} ${offer.speak}`, 'question')
+        } else {
+          respond(plan.say)
+        }
+        return
+      }
+    }
+
+    if (pendingOffer) {
+      const yes = readYesNo(text)
+      if (yes === null) {
+        // Neither yes nor no. An offer is the easiest thing in the world to
+        // ignore by just carrying on, so carrying on is allowed.
+        const asCommand = resolveLocally(text, { tracks: project.tracks ?? [], tempo: project.tempo })
+        if (confidentEnough(asCommand, heardConfidence)) {
+          setPendingOffer(null)
+          // Falls through and runs.
+        } else {
+          setBusy(false)
+          respond(`Sorry — ${pendingOffer.speak}`, 'question')
+          return
+        }
+      }
+      if (yes !== null) {
+      setBusy(false)
+      const offer = pendingOffer
+      setPendingOffer(null)
+      if (!yes) { setSaid('Left as it is.'); return }
+      setPendingName(offer)
+      respond(offer.prompt, 'question')
+      return
+      }
+    }
+
+    if (pendingName) {
+      const offer = pendingName
+      setPendingName(null)
+      setBusy(false)
+      // Whatever they said IS the name. No parsing, no vocabulary, no
+      // correction — a name is the one input where the studio has no business
+      // deciding it misheard, because there is nothing to check it against.
+      const fresh = text.trim().replace(/[.!?]+$/, '')
+      if (!fresh) { respond('I did not catch a name.', 'problem'); return }
+      const plan = planVoiceCalls(
+        [{ name: offer.call.name, input: { ...offer.call.input, [offer.call.field]: fresh } }],
+        project,
+      )
+      if (plan.problem) { respond(plan.problem, 'problem'); return }
+      for (const a of plan.actions) runAction(a)
+      respond(plan.say)
+      return
+    }
+
     // The context the reading is judged against: the project's real track names,
     // their current levels (so "turn the bass up" knows where the bass IS), and
     // the tempo (so "a bit faster" has something to be faster than). A reading
@@ -245,7 +375,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         setPendingDo({ label: plan.say, calls: local.calls })
         return
       }
+      // The executor found more than one thing the words could mean, and
+      // declined to pick. That is a question, not a failure.
+      if (plan.ask) {
+        setBusy(false)
+        setPendingAsk2(plan.ask)
+        respond(plan.ask.speak, 'question')
+        return
+      }
       if (!plan.problem) {
+        const before = project
         for (const a of plan.actions) runAction(a)
         remember({
           said: text, heard: heardConfidence, by: 'local',
@@ -257,9 +396,20 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // A reading of a REWRITTEN sentence says so. Acting silently on words
         // nobody said is how someone learns not to trust the thing — and if the
         // rewrite was wrong, seeing it is the only way they find out.
-        setSaid(local.rewrittenFrom
+        const spokenBack = local.rewrittenFrom
           ? `${plan.say} (heard "${local.rewrittenFrom}")`
-          : plan.say)
+          : plan.say
+        // Anything worth mentioning about what this changed — a forgotten solo,
+        // a name collision just created. Computed against the project as it was
+        // BEFORE, which is why it is captured above.
+        // What the project WILL be, worked out with the same reducer the studio
+        // uses. Dispatch is asynchronous, so reading the real after-state here
+        // would read the before-state and every notice would compare a project
+        // to itself; replaying the actions gives the honest answer immediately
+        // and cannot drift, because it is not a second implementation.
+        const after = (plan.actions as DawAction[]).reduce(dawReducer, before)
+        const notice = noticeFor(before, after)
+        respond(notice ? `${spokenBack} ${notice}` : spokenBack)
         setBusy(false)
         return
       }
@@ -377,7 +527,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     } finally {
       setBusy(false)
     }
-  }, [project, runAction])
+    // The conversation states are dependencies, not incidental reads. Without
+    // them this closure captures the question as it was when the callback was
+    // built — which is null — so the answer to a question the studio had just
+    // asked was parsed as a fresh command and did nothing at all.
+  }, [project, runAction, pendingAsk2, pendingOffer, pendingName, respond, undo, redo])
 
   // Does the user still want to be listening? Asking for the microphone is
   // asynchronous and the first ask shows a dialog, so in hold-to-talk the
@@ -445,6 +599,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     if (!wanted.current) { rec.cancel(); setProblem(''); return }
     recorder.current = rec
     setProblem('')
+    // Stop talking the instant the microphone opens, or it transcribes
+    // itself — and "Bass 2 muted" reads as a plausible command.
+    stopSpeaking()
     setListening(true)
   }, [project])
 
@@ -511,8 +668,23 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // Released while the recognition was being built: stop it immediately
     // rather than leaving it open.
     if (!wanted.current) { h.abort(); handle.current = null; return }
+    // Stop talking the instant the microphone opens, or it transcribes
+    // itself — and "Bass 2 muted" reads as a plausible command.
+    stopSpeaking()
     setListening(true)
   }, [listening, busy, run])
+
+  /**
+   * Answer the pending question by clicking.
+   *
+   * Deliberately routed through run() with the option's own words rather than
+   * acting directly: one path means the click and the sentence cannot drift
+   * apart, and the spoken path — the one that is hard to get right — is
+   * exercised every time anybody uses the buttons.
+   */
+  const answerByHand = useCallback((words: string) => {
+    void run(words, 1)
+  }, [run])
 
   const finish = useCallback(() => {
     wanted.current = false
@@ -681,6 +853,23 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             </span>
           </label>
 
+          <div style={{ height: 1, background: C.border, margin: '7px 0' }} />
+          <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
+            <input
+              type="checkbox" checked={speaks} disabled={!speechAvailable()}
+              onChange={e => { setSpeaks(e.target.checked); setSpeechEnabled(e.target.checked) }}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              Answer out loud
+              <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
+                {speechAvailable()
+                  ? 'Reads back what it did, and asks questions aloud. Stays quiet while the transport is running.'
+                  : 'This browser has no speech voices installed.'}
+              </span>
+            </span>
+          </label>
+
           {/* ── What can I say? ─────────────────────────────────────────────
               Generated from the command registry rather than written out, so a
               command cannot be added without appearing here and cannot be
@@ -705,6 +894,94 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
                 ))}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {(pendingAsk2 || pendingOffer || pendingName) && (
+        <div
+          style={{
+            position: 'absolute', top: 26, right: 0, zIndex: 64,
+            width: 360, padding: 10, background: C.bgSurface,
+            border: `1px solid ${C.accent}`, borderRadius: 6,
+            boxShadow: '0 10px 28px rgba(0,0,0,.5)', fontSize: 11, color: C.textPrimary,
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 5 }}>
+            {pendingName ? 'WHAT SHOULD IT BE CALLED?' : 'WHICH DID YOU MEAN?'}
+          </div>
+          <div style={{ marginBottom: 8, lineHeight: 1.4 }}>
+            {pendingAsk2?.speak ?? pendingOffer?.speak ?? pendingName?.prompt}
+          </div>
+
+          {/* Every question is answerable by clicking as well as by speaking.
+              The spoken path is the point of the feature; the clicks are what
+              make it usable with speech off, on a machine with no voices, or in
+              a room where talking is not an option. */}
+          {pendingAsk2 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {pendingAsk2.options.map((option, i) => (
+                <button
+                  key={i}
+                  onClick={() => answerByHand(option.label)}
+                  style={{
+                    textAlign: 'left', padding: '7px 9px', borderRadius: 4, cursor: 'pointer',
+                    border: `1px solid ${C.border}`, background: '#141414',
+                    color: C.textPrimary, fontSize: 11, lineHeight: 1.35,
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {pendingOffer && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => answerByHand('yes')}
+                style={{
+                  flex: 1, height: 26, borderRadius: 4, cursor: 'pointer',
+                  border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent,
+                  fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                }}
+              >
+                YES
+              </button>
+              <button
+                onClick={() => answerByHand('no')}
+                style={{
+                  height: 26, padding: '0 12px', borderRadius: 4, cursor: 'pointer',
+                  border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
+                  fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                }}
+              >
+                NO
+              </button>
+            </div>
+          )}
+
+          {pendingName && (
+            <input
+              autoFocus
+              placeholder="a new name…"
+              onKeyDown={e => {
+                e.stopPropagation()
+                const value = (e.target as HTMLInputElement).value.trim()
+                if (e.key === 'Enter' && value) answerByHand(value)
+                if (e.key === 'Escape') { setPendingName(null); setSaid('Left as it is.') }
+              }}
+              style={{
+                width: '100%', height: 26, padding: '0 8px', boxSizing: 'border-box',
+                background: '#141414', border: `1px solid ${C.border}`, borderRadius: 4,
+                color: C.textPrimary, fontSize: 11, outline: 'none',
+              }}
+            />
+          )}
+
+          <div style={{ color: C.textMuted, fontSize: 10, marginTop: 6 }}>
+            {pendingName ? 'Or say it.' : 'Or answer out loud.'}
           </div>
         </div>
       )}

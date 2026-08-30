@@ -289,6 +289,150 @@ await say('mark bar 3 as the chorus')
   check('and the track list is where it was', (await state()).tracks.map(t => t.name).join(',') === before.join(','))
 }
 
+// ── The conversation, end to end ───────────────────────────────────────────
+//
+// Brae's example, exactly: a track called Bass with three clips on it, one of
+// them also called Bass. "Loop the bass three more times" has two honest
+// readings, so the studio asks — and then offers to fix the reason it had to.
+{
+  await page.evaluate(p => window.__dawDispatch({ type: 'LOAD_PROJECT', project: p }), {
+    ...PROJECT,
+    id: 'convo', name: 'Convo',
+    tracks: [track('t1', 'Bass'), track('t2', 'Drums')],
+    arrangementClips: [
+      { kind: 'midi', id: 'k1', trackId: 't1', name: 'Intro', startBeat: 0, durationBeats: 4, isDrumClip: false, notes: notes(4, 40) },
+      { kind: 'midi', id: 'k2', trackId: 't1', name: 'Middle', startBeat: 32, durationBeats: 4, isDrumClip: false, notes: notes(4, 40) },
+      { kind: 'midi', id: 'k3', trackId: 't1', name: 'Bass', startBeat: 56, durationBeats: 4, isDrumClip: false, notes: notes(4, 40) },
+    ],
+  })
+  await page.waitForTimeout(1200)
+
+  const before = (await state()).clips
+  await say('loop the bass 3 more times')
+
+  const question = page.getByText('WHICH DID YOU MEAN', { exact: false })
+  const askedIt = await question.first().waitFor({ state: 'visible', timeout: 15000 })
+    .then(() => true).catch(() => false)
+  check('an ambiguous target asks instead of guessing', askedIt)
+  check('and nothing has changed while it asks', (await state()).clips === before,
+    `${(await state()).clips} clips`)
+
+  const text = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('div')]
+      .find(d => /Do you mean/i.test(d.textContent || '') && (d.textContent || '').length < 200)
+    return el?.textContent ?? ''
+  })
+  check('the question names both readings',
+    /bar 15/i.test(text) && /track/i.test(text), text.slice(0, 140))
+
+  // Answer it the way a person would — in a fragment, not a sentence.
+  await say('the bass clip at bar 15')
+  await page.waitForTimeout(1000)
+  check('answering it does the thing', (await state()).clips > before,
+    `${before} → ${(await state()).clips} clips`)
+
+  // And then the offer that stops it happening again.
+  const offer = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('div')]
+      .find(d => /rename/i.test(d.textContent || '') && (d.textContent || '').length < 250)
+    return el?.textContent ?? ''
+  })
+  check('it offers to rename the clip that caused the confusion',
+    /rename/i.test(offer), offer.slice(0, 140))
+
+  await say('yes')
+  await page.waitForTimeout(800)
+  const prompt = await page.getByText('WHAT SHOULD IT BE CALLED', { exact: false }).count()
+  check('saying yes asks what to call it', prompt > 0)
+
+  await say('Outro')
+  await page.waitForTimeout(1000)
+  const names = await page.evaluate(() =>
+    window.__dawProject().arrangementClips.map(c => c.name))
+  check('and the clip is renamed', names.includes('Outro'), names.join(','))
+}
+
+// ── And the collision is actually gone ─────────────────────────────────────
+//
+// Checked on a fresh project rather than the one above, because duplicating a
+// clip KEEPS its name — as it does in every DAW — so "loop the bass three more
+// times" leaves three more clips called Bass behind it, and renaming the
+// original cannot fix a collision the command itself just recreated. That is
+// correct behaviour and a bad way to test the claim.
+//
+// So: cause the ambiguity with a command that changes no names, resolve it,
+// accept the offer, and then check that the same sentence runs straight
+// through. That is the whole point of the offer — not resolving one command,
+// but not being asked again.
+{
+  await page.evaluate(p => window.__dawDispatch({ type: 'LOAD_PROJECT', project: p }), {
+    ...PROJECT,
+    id: 'convo2', name: 'Convo2',
+    tracks: [track('t1', 'Bass'), track('t2', 'Drums')],
+    arrangementClips: [
+      { kind: 'midi', id: 'm1', trackId: 't1', name: 'Intro', startBeat: 0, durationBeats: 4, isDrumClip: false, notes: notes(4, 40) },
+      { kind: 'midi', id: 'm2', trackId: 't1', name: 'Bass', startBeat: 56, durationBeats: 4, isDrumClip: false, notes: notes(4, 40) },
+    ],
+  })
+  await page.waitForTimeout(1200)
+
+  await say('take the bass up 3 semitones')
+  const q = page.getByText('WHICH DID YOU MEAN', { exact: false })
+  const asked = await q.first().waitFor({ state: 'visible', timeout: 15000 })
+    .then(() => true).catch(() => false)
+  check('transposing an ambiguous target asks too', asked)
+
+  await say('the bass clip at bar 15')
+  await page.waitForTimeout(900)
+  await say('yes')
+  await page.waitForTimeout(800)
+  await say('Ending')
+  await page.waitForTimeout(1000)
+
+  const names = await page.evaluate(() =>
+    window.__dawProject().arrangementClips.map(c => c.name))
+  check('the collision is gone', !names.some(n => (n || '').toLowerCase() === 'bass'),
+    names.join(','))
+
+  // The payoff, stated honestly. The NAME collision is gone, so the studio no
+  // longer offers to rename anything. The track still holds two clips, so
+  // "take the bass up" is still a real question — which of them, or both — and
+  // the answer people almost always mean is "both", which is why it is offered
+  // first and answerable in one word.
+  const before = await page.evaluate(() =>
+    window.__dawProject().arrangementClips.map(c => c.notes?.[0]?.pitch))
+  await say('take the bass up 2 semitones')
+  await page.waitForTimeout(1000)
+
+  const question = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('div')]
+      .find(d => /Do you mean/i.test(d.textContent || '') && (d.textContent || '').length < 200)
+    return el?.textContent ?? ''
+  })
+  check('the rename offer is not made again', !/rename/i.test(question), question.slice(0, 120))
+  check('and "all of them" is the first thing offered',
+    /both clips/i.test(question), question.slice(0, 120))
+
+  await say('all of them')
+  await page.waitForTimeout(1000)
+  const after = await page.evaluate(() =>
+    window.__dawProject().arrangementClips.map(c => c.notes?.[0]?.pitch))
+  check('and one word moves the whole part',
+    after.every((p, i) => p === before[i] + 2),
+    `${before.join(',')} → ${after.join(',')}`)
+}
+
+// ── Questions the studio answers ───────────────────────────────────────────
+{
+  await say('what is the tempo')
+  const answer = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('div')]
+      .find(d => /BPM/i.test(d.textContent || '') && (d.textContent || '').length < 80)
+    return el?.textContent ?? ''
+  })
+  check('"what is the tempo" answers in words', /\d+\s*BPM/i.test(answer), answer)
+}
+
 // ── And none of it cost anything ───────────────────────────────────────────
 check('not one command reached the assistant', assistCalls === 0, `${assistCalls} calls`)
 

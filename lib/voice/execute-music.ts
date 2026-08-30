@@ -27,10 +27,12 @@ import {
   defaultSaturator, defaultChorus, defaultEq3, defaultLimiter,
 } from '../daw-types'
 import { findByName, foldName, spokenNumber, spokenFraction } from './resolve'
+import type { VoiceAsk, AskOption } from './ask'
 import {
   musicMaps, positionToBeat, durationToBeats, describeBeat, describeDuration,
   type MusicMaps, type MusicPosition, type MusicDuration,
 } from './position'
+import { beatToSeconds } from '../tempo-map'
 
 export interface VoiceCall { name: string; input: Record<string, unknown> }
 
@@ -38,6 +40,15 @@ export interface VoicePlan {
   actions: unknown[]
   say: string
   problem?: string
+  /**
+   * A question, when the sentence named something the project holds more than
+   * one of.
+   *
+   * Distinct from `problem`, which means the command cannot be carried out. An
+   * `ask` means it can be carried out several ways and the studio declines to
+   * pick — the actions are empty until someone answers.
+   */
+  ask?: VoiceAsk
 }
 
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `v${Math.random().toString(36).slice(2)}`)
@@ -104,21 +115,188 @@ function mapsOf(p: DawProject): MusicMaps {
  * several, the earliest is the one they mean, because that is the one in front
  * of them when they say "loop it".
  */
-function resolveClip(spoken: string, p: DawProject): { clip: DawClip; how: string } | null {
+/**
+ * Every clip the spoken words could plausibly mean.
+ *
+ * Two routes to a clip and they overlap: by the clip's own name, and by its
+ * TRACK's name — people say the track far more often. When both routes hit, or
+ * when the named track holds several clips, there is genuinely more than one
+ * answer, and the old code resolved that by order: clips before tracks, and the
+ * earliest clip on a track. Right often enough to be trusted, wrong often
+ * enough to matter, and silent either way.
+ *
+ * So all of them come back, and the caller asks.
+ */
+function clipCandidates(
+  spoken: string,
+  p: DawProject,
+  maps: MusicMaps,
+): { clip: DawClip; how: string; label: string; keywords: string[]; namedDirectly: boolean }[] {
+  const out: { clip: DawClip; how: string; label: string; keywords: string[]; namedDirectly: boolean }[] = []
+  const seen = new Set<string>()
+  const where = (c: DawClip) => describeBeat(c.startBeat, maps)
+
+  // Named directly — "the bass clip".
   const byClip = findByName(spoken, allClips(p) as unknown as { id: string; name?: string }[])
   if (byClip) {
     const clip = allClips(p).find(c => c.id === byClip.item.id)
-    if (clip) return { clip, how: `"${clip.name ?? clip.id}"` }
-  }
-  const byTrack = findByName(spoken, p.tracks as unknown as { id: string; name?: string }[])
-  if (byTrack) {
-    const onTrack = allClips(p).filter(c => c.trackId === byTrack.item.id).sort((a, b) => a.startBeat - b.startBeat)
-    if (onTrack.length) {
-      const t = p.tracks.find(x => x.id === byTrack.item.id)
-      return { clip: onTrack[0], how: `the first clip on "${t?.name ?? ''}"` }
+    if (clip) {
+      seen.add(clip.id)
+      out.push({
+        clip,
+        how: `"${clip.name ?? clip.id}"`,
+        label: `the ${clip.name ?? 'clip'} clip at ${where(clip)}`,
+        keywords: ['clip', 'item', where(clip), String(clip.name ?? '').toLowerCase()],
+        namedDirectly: true,
+      })
     }
   }
-  return null
+
+  // Named by its track — "the bass", meaning what is on the bass track.
+  const byTrack = findByName(spoken, p.tracks as unknown as { id: string; name?: string }[])
+  if (byTrack) {
+    const track = p.tracks.find(x => x.id === byTrack.item.id)
+    const onTrack = allClips(p)
+      .filter(c => c.trackId === byTrack.item.id)
+      .sort((a, b) => a.startBeat - b.startBeat)
+    for (const clip of onTrack) {
+      if (seen.has(clip.id)) continue
+      seen.add(clip.id)
+      out.push({
+        clip,
+        how: onTrack.length === 1
+          ? `the clip on "${track?.name ?? ''}"`
+          : `the clip at ${where(clip)} on "${track?.name ?? ''}"`,
+        label: onTrack.length === 1
+          ? `the ${track?.name ?? ''} track`
+          : `the one at ${where(clip)} on ${track?.name ?? ''}`,
+        keywords: ['track', where(clip), String(track?.name ?? '').toLowerCase()],
+        namedDirectly: false,
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * The clip they meant, or the question to ask instead.
+ *
+ * `ask` and `clip` are never both set: either it is settled or it is not.
+ */
+function resolveClipOrAsk(
+  spoken: string,
+  p: DawProject,
+  maps: MusicMaps,
+  verb: string,
+  rest: Record<string, unknown> = {},
+): { clip?: DawClip; how?: string; ask?: VoiceAsk } {
+  // An answer to a question this function asked, carrying the id of the clip
+  // that was chosen. It must NOT be resolved by name again: re-entering the
+  // lookup lands in the same ambiguity that produced the question, so the
+  // answer would be met with the question a second time.
+  const direct = resolveClip(spoken, p)
+  if (spoken.startsWith('#')) return direct ? { clip: direct.clip, how: direct.how } : {}
+
+  const found = clipCandidates(spoken, p, maps)
+  if (!found.length) return {}
+  if (found.length === 1) return { clip: found[0].clip, how: found[0].how }
+
+  // ── Shape the question ───────────────────────────────────────────────────
+  //
+  // Brae's example is a binary — "the bass track, or the bass item on the bass
+  // track at bar 15?" — and that is the right shape, because the two are
+  // different KINDS of answer. Listing the named clip alongside every clip on
+  // the track produced three options of which two were both "the track", so
+  // answering "the track" tied them and the question was asked again. A
+  // question whose obvious answer is not accepted is worse than no question.
+  //
+  // So: a name collision asks which THING was meant, and the track's own answer
+  // is its first clip — the same one it would have used all along. Several
+  // clips with no collision is a different question, asking which ONE, and
+  // there the bar is the only thing that distinguishes them.
+  const named = found.find(c => c.namedDirectly)
+  const onTrack = found.filter(c => !c.namedDirectly)
+  const call = (clip: DawClip) => [{ name: verb, input: { ...rest, target: `#${clip.id}` } }]
+
+  const options: AskOption[] = named && onTrack.length
+    ? [
+      { label: named.label, calls: call(named.clip), keywords: named.keywords },
+      {
+        label: `the ${trackNameOf(onTrack[0].clip, p) ?? ''} track`,
+        calls: call(onTrack[0].clip),
+        keywords: ['track', String(trackNameOf(onTrack[0].clip, p) ?? '').toLowerCase()],
+      },
+    ]
+    : [
+      // ── "All of them" comes first, because it is usually the answer ──────
+      //
+      // "Take the bass up three semitones" almost always means the bass PART,
+      // not one clip of it. Offering only the individual clips made the studio
+      // ask a question whose real answer was not on the list, which is a worse
+      // failure than not asking: the person has to pick something they did not
+      // mean, or start again.
+      //
+      // It is one option producing several calls — planVoiceCalls already
+      // applies a list — so nothing downstream needs to know this happened.
+      ...(onTrack.length > 1
+        ? [{
+          // "all 2 clips" is not something anyone says. This is read aloud.
+          label: onTrack.length === 2
+            ? `both clips on ${trackNameOf(onTrack[0].clip, p) ?? ''}`
+            : `all ${onTrack.length} clips on ${trackNameOf(onTrack[0].clip, p) ?? ''}`,
+          calls: onTrack.map(c => ({ name: verb, input: { ...rest, target: `#${c.clip.id}` } })),
+          keywords: ['all', 'everything', 'both', 'whole', 'track', 'them'],
+        }]
+        : []),
+      ...found.slice(0, 4).map(c => ({
+        label: c.label,
+        calls: call(c.clip),
+        keywords: c.keywords,
+      })),
+    ]
+
+  // Only offer the rename when the confusion is a NAME collision — a clip
+  // called "bass" sitting on a track called "Bass". Several clips on one track
+  // is not a naming mistake and there is nothing to fix, so offering would be
+  // noise.
+  const collision = found.find(c => c.namedDirectly)
+  const offer: VoiceAsk['offer'] = collision && found.some(c => !c.namedDirectly)
+    ? {
+      speak: `That name is on both. Would you like to rename the clip at ${describeBeat(collision.clip.startBeat, maps)} to avoid the confusion?`,
+      prompt: 'What would you like to call it?',
+      call: { name: 'rename_clip', input: { target: `#${collision.clip.id}` }, field: 'name' },
+    }
+    : undefined
+
+  return {
+    ask: {
+      speak: options.length > 3
+        // Reading five options aloud is not a question, it is a list nobody
+        // will hold in their head. Past three, the first two are offered and
+        // the rest are on screen.
+        ? `Do you mean ${options[0].label}, ${options[1].label}, or one of the others?`
+        : `Do you mean ${options.map(o => o.label).join(', or ')}?`,
+      options,
+      offer,
+    },
+  }
+}
+
+/** The name of the track a clip sits on. */
+function trackNameOf(clip: DawClip, p: DawProject): string | undefined {
+  return (p.tracks ?? []).find(t => t.id === clip.trackId)?.name
+}
+
+function resolveClip(spoken: string, p: DawProject): { clip: DawClip; how: string } | null {
+  // An id, handed back when a question is answered: the choice was made against
+  // a specific clip and must not be re-resolved by name, or answering the
+  // question would land in the same ambiguity that prompted it.
+  if (spoken.startsWith('#')) {
+    const clip = allClips(p).find(c => c.id === spoken.slice(1))
+    return clip ? { clip, how: `"${clip.name ?? clip.id}"` } : null
+  }
+  const found = clipCandidates(spoken, p, mapsOf(p))
+  return found.length ? { clip: found[0].clip, how: found[0].how } : null
 }
 
 function resolveTrack(spoken: string, p: DawProject): DawTrack | null {
@@ -134,10 +312,12 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
   switch (call.name) {
     // DUPLICATE — "loop bass 2 three more times"
     case 'duplicate_clip': {
-      const found = resolveClip(target, project)
-      if (!found) return fail(`I couldn't find "${target || 'that'}" — say the track or clip name.`)
       const count = spokenNumber(i.count as string) ?? 1
       if (count < 1) return fail('Say how many more times to repeat it.')
+      const chosen = resolveClipOrAsk(target, project, maps, 'duplicate_clip', { count })
+      if (chosen.ask) return { actions: [], say: '', ask: chosen.ask }
+      const found = chosen.clip ? { clip: chosen.clip, how: chosen.how ?? '' } : null
+      if (!found) return fail(`I couldn't find "${target || 'that'}" — say the track or clip name.`)
       const { clip } = found
       const actions = Array.from({ length: count }, (_, n) => ({
         type: 'ADD_CLIP',
@@ -318,10 +498,12 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
     }
 
     case 'transpose': {
-      const found = resolveClip(target, project)
-      if (!found) return fail(`I couldn't find "${target || 'that'}" to transpose.`)
       const semis = spokenNumber(i.semitones as string)
       if (semis == null || semis === 0) return fail('Say how many semitones to move it.')
+      const chosen = resolveClipOrAsk(target, project, maps, 'transpose', { semitones: semis })
+      if (chosen.ask) return { actions: [], say: '', ask: chosen.ask }
+      const found = chosen.clip ? { clip: chosen.clip, how: chosen.how ?? '' } : null
+      if (!found) return fail(`I couldn't find "${target || 'that'}" to transpose.`)
       const clip = found.clip
       if (!('notes' in clip)) return fail('That is an audio clip — transposing audio is not supported yet.')
       const notes = (clip as MidiClip).notes
@@ -399,6 +581,92 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
         say: clips
           ? `Deleted "${track.name}" and its ${clips} clip${clips === 1 ? '' : 's'}.`
           : `Deleted "${track.name}".`,
+      }
+    }
+
+    // ── Answering, rather than doing ─────────────────────────────────────
+    //
+    // A query changes nothing and replies in words. The category barely existed
+    // before there was a voice to reply with, and it is the best argument for
+    // one: the tempo is on screen somewhere, and reading it means stopping what
+    // you are doing, looking away, and losing the thought.
+    //
+    // Every answer is computed from the project. None costs anything, none
+    // needs the assistant, and none can be wrong in an interesting way.
+    case 'describe': {
+      const topic = str(i.topic).toLowerCase()
+      const tracks = project.tracks ?? []
+      const clips = allClips(project)
+
+      switch (topic) {
+        case 'tempo':
+          return {
+            actions: [],
+            say: `${Math.round(project.tempo)} BPM, in ${project.timeSignatureNum}/${project.timeSignatureDen}.`,
+          }
+
+        case 'tracks': {
+          if (!tracks.length) return { actions: [], say: 'There are no tracks yet.' }
+          const names = tracks.map(t => t.name).filter(Boolean)
+          return {
+            actions: [],
+            say: `${tracks.length} track${tracks.length === 1 ? '' : 's'}: ${names.join(', ')}.`,
+          }
+        }
+
+        case 'muted': {
+          const muted = tracks.filter(t => t.mute).map(t => t.name)
+          const soloed = tracks.filter(t => t.solo).map(t => t.name)
+          const parts: string[] = []
+          if (muted.length) parts.push(`${muted.join(' and ')} ${muted.length === 1 ? 'is' : 'are'} muted`)
+          // Solo is reported even when the question was about muting. A
+          // forgotten solo is the more common way to lose a track and it looks
+          // nothing like a mute from across the room, so the honest answer to
+          // "is anything muted" mentions it.
+          if (soloed.length) parts.push(`${soloed.join(' and ')} ${soloed.length === 1 ? 'is' : 'are'} soloed`)
+          return { actions: [], say: parts.length ? `${parts.join(', and ')}.` : 'Nothing is muted or soloed.' }
+        }
+
+        case 'length': {
+          if (!clips.length) return { actions: [], say: 'The song is empty.' }
+          const end = Math.max(...clips.map(c => c.startBeat + c.durationBeats))
+          const seconds = beatToSeconds(end, maps.tempo)
+          const mins = Math.floor(seconds / 60)
+          const secs = Math.round(seconds % 60)
+          const howLong = mins
+            ? `${mins} minute${mins === 1 ? '' : 's'} ${secs} second${secs === 1 ? '' : 's'}`
+            : `${secs} second${secs === 1 ? '' : 's'}`
+          return { actions: [], say: `The song runs to ${describeBeat(end, maps)} — about ${howLong}.` }
+        }
+
+        case 'clips': {
+          const named = str(i.target).trim()
+          if (named) {
+            const track = resolveTrack(named, project)
+            if (!track) return fail(`I couldn't find a track called "${named}".`)
+            const on = clips.filter(c => c.trackId === track.id).sort((a, b) => a.startBeat - b.startBeat)
+            if (!on.length) return { actions: [], say: `"${track.name}" has no clips.` }
+            return {
+              actions: [],
+              say: `"${track.name}" has ${on.length} clip${on.length === 1 ? '' : 's'}, at ${on.map(c => describeBeat(c.startBeat, maps)).join(', ')}.`,
+            }
+          }
+          return { actions: [], say: `${clips.length} clip${clips.length === 1 ? '' : 's'} in the arrangement.` }
+        }
+
+        default:
+          return fail('I don\'t know how to answer that.')
+      }
+    }
+
+    case 'rename_clip': {
+      const found = resolveClip(target, project)
+      if (!found) return fail(`I couldn't find "${target || 'that'}" to rename.`)
+      const name = str(i.name).trim()
+      if (!name) return fail('Say what to call it.')
+      return {
+        actions: [{ type: 'UPDATE_CLIP', clipId: found.clip.id, patch: { name } }],
+        say: `That clip is now "${name}".`,
       }
     }
 
@@ -487,9 +755,15 @@ export function planVoiceCalls(calls: VoiceCall[], project: DawProject): VoicePl
   for (const c of calls) {
     const plan = planVoiceCall(c, project)
     if (plan.problem) return { actions: [], say: '', problem: plan.problem }
+    // A question stops the whole sentence. Running the first half of "loop the
+    // bass and play it" while asking which bass would leave the project half
+    // changed by a command nobody has finished giving.
+    if (plan.ask) return { actions: [], say: '', ask: plan.ask }
     actions.push(...plan.actions)
     if (plan.say) said.push(plan.say)
   }
-  if (!actions.length) return fail('I didn\'t catch anything to do.')
+  // A plan with no actions is not necessarily empty — a query answers in words
+  // and changes nothing, which is a complete and successful command.
+  if (!actions.length && !said.length) return fail('I didn\'t catch anything to do.')
   return { actions, say: said.join(' ') }
 }

@@ -306,6 +306,32 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'describe',
+    description:
+      'ANSWER A QUESTION about the song without changing anything. "what is the tempo", "how many tracks are there", "is anything muted", "how long is it", "how many clips are on the bass".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        topic: {
+          type: 'string',
+          enum: ['tempo', 'tracks', 'muted', 'length', 'clips'],
+        },
+        target: { ...TARGET, description: 'For "clips" — which track they asked about.' },
+      },
+      required: ['topic'],
+    },
+  },
+  {
+    name: 'rename_clip',
+    description:
+      'RENAME A CLIP — change what one clip is called. Mostly reached by accepting the offer made when a clip and its track share a name.',
+    input_schema: {
+      type: 'object',
+      properties: { target: TARGET, name: { type: 'string' } },
+      required: ['target', 'name'],
+    },
+  },
+  {
     name: 'undo',
     description: 'UNDO — take back the last change. Carried out by the editor, which owns the history.',
     input_schema: { type: 'object', properties: {} },

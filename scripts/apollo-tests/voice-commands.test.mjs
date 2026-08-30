@@ -114,10 +114,15 @@ for (const command of VOICE_COMMANDS) {
     // And the call it produced is one the executor can actually carry out.
     // `problem` is the executor's way of saying "I understood the shape but
     // could not act on it", which is precisely the failure that was invisible.
+    //
+    // "Carry out" means actions OR an answer. A question — "what's the tempo" —
+    // changes nothing and replies in words, and that is a complete and
+    // successful command, not an empty plan. Requiring actions of everything
+    // would make the suite reject the one command family that cannot have any.
     const plan = planVoiceCall(got.calls[0], PROJECT)
-    if (plan.problem || !plan.actions.length) {
-      check(`${command.id} — "${phrase}" → actions`, false,
-        plan.problem || 'no actions')
+    if (plan.problem || (!plan.actions.length && !plan.say)) {
+      check(`${command.id} — "${phrase}" → does something`, false,
+        plan.problem || 'neither actions nor an answer')
       continue
     }
     planned++
@@ -125,7 +130,7 @@ for (const command of VOICE_COMMANDS) {
 }
 check(`every example resolves to its own command`, resolved === VOICE_COMMANDS.reduce((n, c) => n + c.say.length, 0),
   `${resolved} of ${VOICE_COMMANDS.reduce((n, c) => n + c.say.length, 0)}`)
-check(`every example plans into real actions`, planned === resolved, `${planned} of ${resolved}`)
+check(`every example plans into an action or an answer`, planned === resolved, `${planned} of ${resolved}`)
 
 // ── The registry is internally sound ───────────────────────────────────────
 const ids = VOICE_COMMANDS.map(c => c.id)
@@ -135,6 +140,23 @@ check('every command says what it does', VOICE_COMMANDS.every(c => c.what.length
 check('every command names a real tool',
   VOICE_COMMANDS.every(c => MUSIC_TOOL_NAMES.includes(c.tool)),
   VOICE_COMMANDS.filter(c => !MUSIC_TOOL_NAMES.includes(c.tool)).map(c => c.tool).join(',') || 'all valid')
+
+// The loophole above is only a loophole if nothing checks it. A question must
+// answer AND change nothing; anything that is not a question must do something.
+{
+  let wrong = []
+  for (const command of VOICE_COMMANDS) {
+    if (command.handledBy === 'ui') continue
+    const got = interpret(command.say[0], CTX)
+    if (got.matched !== command.id) continue
+    const plan = planVoiceCall(got.calls[0], PROJECT)
+    const isQuestion = command.group === 'Questions'
+    if (isQuestion && plan.actions.length) wrong.push(`${command.id} changed something`)
+    if (!isQuestion && !plan.actions.length) wrong.push(`${command.id} changed nothing`)
+  }
+  check('questions answer without changing anything, and commands change something',
+    wrong.length === 0, wrong.join('; '))
+}
 
 // Only the declared exceptions skip the executor.
 check('every command that skips the executor says so',

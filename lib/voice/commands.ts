@@ -66,7 +66,7 @@ export interface VoiceCommand {
   /** Which entry in MUSIC_TOOLS this produces. */
   tool: string
   /** Which group it appears under in the help panel. */
-  group: 'Transport' | 'Mixer' | 'Timing' | 'Arrangement' | 'Notes' | 'Project'
+  group: 'Transport' | 'Mixer' | 'Timing' | 'Arrangement' | 'Notes' | 'Project' | 'Questions'
   /** One line, in a person's terms, for the help panel. */
   what: string
   /**
@@ -959,6 +959,120 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
 
+  // ── Questions ────────────────────────────────────────────────────────────
+  //
+  // These answer instead of acting. They barely existed as a category before
+  // there was a voice to answer with, and they are the best argument for one:
+  // the tempo is on screen somewhere, and reading it means stopping what you
+  // are doing, looking away, and losing the thought.
+  //
+  // Every one of them is computed from the project. None costs anything and
+  // none needs the assistant.
+  {
+    id: 'describe.tempo',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask the tempo',
+    say: ['what is the tempo', 'how fast is this', 'what bpm is this'],
+    match(w) {
+      if (!w.has('tempo', 'bpm', 'fast')) return null
+      // A question, not an instruction. "set the tempo to 120" shares its only
+      // distinctive word with this, and what separates them is a number to set
+      // it to and a verb that means to set it.
+      if (w.num() != null) return null
+      if (w.has('set', 'change', 'make', 'take', 'speed', 'slow')) return null
+      return { calls: [{ name: 'describe', input: { topic: 'tempo' } }], confidence: 0.92 }
+    },
+  },
+  {
+    id: 'describe.tracks',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask what tracks there are',
+    say: ['what tracks are there', 'how many tracks are there', 'list the tracks'],
+    match(w) {
+      if (!w.has('track', 'tracks')) return null
+      if (!w.has('what', 'how', 'many', 'list', 'which')) return null
+      if (w.has('add', 'delete', 'remove', 'rename', 'duplicate', 'mute', 'solo')) return null
+      return { calls: [{ name: 'describe', input: { topic: 'tracks' } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'describe.muted',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask what is muted or soloed',
+    say: ['is anything muted', 'is anything soloed', 'what is muted'],
+    match(w, ctx) {
+      if (!w.has('muted', 'soloed')) return null
+      if (!w.has('anything', 'what', 'which', 'any')) return null
+      // "mute the bass" names a track and is an instruction; a question names
+      // nothing. That is the whole difference, so it is what gets checked.
+      if (nameFrom(w, ctx, ['muted', 'soloed', 'anything', 'what', 'which', 'any'],
+        { dropNums: true })) return null
+      return { calls: [{ name: 'describe', input: { topic: 'muted' } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'describe.length',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask how long the song is',
+    say: ['how long is this', 'how long is the song'],
+    match(w) {
+      if (!w.hasPhrase('how', 'long')) return null
+      return { calls: [{ name: 'describe', input: { topic: 'length' } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'describe.clips',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask what clips are on a track',
+    say: ['how many clips are on the bass 2', 'what clips are on the drums'],
+    match(w, ctx) {
+      if (!w.has('clip', 'clips', 'item', 'items')) return null
+      if (!w.has('what', 'how', 'many', 'which', 'list')) return null
+      const hit = nameFrom(w, ctx, ['clip', 'clips', 'item', 'items', 'what', 'how',
+        'many', 'which', 'list', 'track'], { dropNums: true })
+      return {
+        calls: [{ name: 'describe', input: { topic: 'clips', ...(hit ? { target: hit.name } : {}) } }],
+        confidence: hit ? nameConfidence(hit.score) : 0.88,
+        needsName: !!hit,
+      }
+    },
+  },
+  {
+    id: 'rename_clip',
+    tool: 'rename_clip',
+    group: 'Arrangement',
+    what: 'Rename a clip',
+    say: ['rename the bass 2 clip to intro', 'rename the drums clip to verse'],
+    match(w, ctx) {
+      if (!w.has('rename')) return null
+      if (!w.has('clip', 'item')) return null
+      const parts = w.raw.toLowerCase().split(/\s+to\s+/)
+      if (parts.length !== 2) return null
+      const fresh = parts[1].trim().replace(/[^a-z0-9\s'-]/g, '').trim()
+      if (!fresh) return null
+      const said = parts[0].replace(/\b(rename|call|the|clip|item|please)\b/g, ' ').trim()
+      const hit = said ? findByName(said, ctx.tracks) : null
+      if (!hit || hit.score < 0.6) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return {
+        calls: [{
+          name: 'rename_clip',
+          input: {
+            target: hit.item.name ?? '',
+            name: fresh.replace(/\b[a-z]/g, c => c.toUpperCase()),
+          },
+        }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+
   {
     id: 'undo',
     tool: 'undo',
@@ -1120,6 +1234,14 @@ const PRECEDENCE: string[] = [
   'set_tempo',
   'set_tempo.relative',
   'set_time_signature',
+  // Questions before the instructions they resemble: "what's the tempo" and
+  // "set the tempo to 120" share their only distinctive word.
+  'describe.tempo',
+  'describe.tracks',
+  'describe.muted',
+  'describe.length',
+  'describe.clips',
+  'rename_clip',
   // Undo before the transport: "take that back" contains no transport word, but
   // keeping the pair together is clearer than scattering them.
   'undo',
@@ -1182,7 +1304,8 @@ export const COMMAND_VOCABULARY: readonly string[] = (() => {
 
 /** The help panel's contents, grouped the way it displays them. */
 export function commandHelp(): { group: string; items: { what: string; say: string }[] }[] {
-  const order: VoiceCommand['group'][] = ['Transport', 'Mixer', 'Timing', 'Arrangement', 'Notes', 'Project']
+  const order: VoiceCommand['group'][] =
+    ['Transport', 'Mixer', 'Timing', 'Arrangement', 'Notes', 'Project', 'Questions']
   return order
     .map(group => ({
       group,
