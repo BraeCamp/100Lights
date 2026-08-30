@@ -34,9 +34,23 @@ export function setPreferredTranscriber(t: Transcriber): void {
   try { localStorage.setItem(PREFER_KEY, t) } catch { /* private mode */ }
 }
 
+export interface Transcript {
+  text: string
+  alternatives: string[]
+  confidence: number
+}
+
 export interface Recording {
-  /** Stop capturing and hand back what was said. */
-  stop: () => Promise<{ text: string; alternatives: string[]; confidence: number } | null>
+  /**
+   * Stop capturing and hand back what was said.
+   *
+   * A FAILURE returns its reason rather than null. The first version returned
+   * null for everything, so a missing DEEPGRAM_API_KEY, a 502 and genuine
+   * silence were indistinguishable — and the caller reported all three as "I
+   * didn't catch that", which blames the speaker for a server problem and hides
+   * the one message that would have explained it.
+   */
+  stop: () => Promise<{ ok: true; result: Transcript | null } | { ok: false; error: string }>
   /** Throw it away. */
   cancel: () => void
 }
@@ -94,7 +108,7 @@ export async function startRecording(): Promise<Recording | null> {
         const blob = new Blob(chunks, { type: mimeType || 'audio/webm' })
         // Nothing was said. Better to return null than to spend a request on
         // silence and get an empty transcript back.
-        if (blob.size < 1200) { resolve(null); return }
+        if (blob.size < 1200) { resolve({ ok: true, result: null }); return }
         try {
           const res = await fetch('/api/voice/transcribe', {
             method: 'POST',
@@ -107,18 +121,22 @@ export async function startRecording(): Promise<Recording | null> {
           }
           const data = await res.json() as { text?: string; alternatives?: string[]; confidence?: number }
           resolve({
-            text: (data.text ?? '').trim(),
-            alternatives: data.alternatives ?? [],
-            confidence: typeof data.confidence === 'number' ? data.confidence : 1,
+            ok: true,
+            result: {
+              text: (data.text ?? '').trim(),
+              alternatives: data.alternatives ?? [],
+              confidence: typeof data.confidence === 'number' ? data.confidence : 1,
+            },
           })
         } catch (err) {
+          const why = err instanceof Error ? err.message : String(err)
           void import('@/lib/diag-journal')
-            .then(m => m.diag('audio', `server transcribe failed: ${err instanceof Error ? err.message : String(err)}`))
+            .then(m => m.diag('audio', `server transcribe failed: ${why}`))
             .catch(() => {})
-          resolve(null)
+          resolve({ ok: false, error: why })
         }
       }
-      try { rec.stop() } catch { release(); resolve(null) }
+      try { rec.stop() } catch { release(); resolve({ ok: false, error: 'Recording stopped unexpectedly.' }) }
     }),
   }
 }

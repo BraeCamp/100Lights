@@ -304,7 +304,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // command will simply work rather than failing the same way again.
         if (/speech service/i.test(m)) {
           setPreferredTranscriber('server')
-          setProblem('Your browser can\'t reach its speech service — switched to recording. Try again.')
+          // Carry straight on rather than saying "try again". The button was
+          // pressed because there was something to say, and making someone
+          // press it twice to work around a fault they did not cause is a poor
+          // apology. Only while they are still holding it — a release during
+          // the failed attempt means they have given up on this one.
+          if (wanted.current) {
+            setProblem('Switched to recording — go ahead.')
+            void startRecorded()
+          } else {
+            setProblem('Your browser can\'t reach its speech service — switched to recording.')
+          }
           return
         }
         setProblem(m)
@@ -331,8 +341,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       setBusy(true)
       void rec.stop().then(r => {
         setBusy(false)
-        if (!r || !r.text) { setProblem('I didn\'t catch that.'); return }
-        heardSentence(r.text, r.alternatives.length ? [r.alternatives] : [], r.confidence)
+        // A server fault is not the speaker's fault. "I didn't catch that" is
+        // only correct when the recording genuinely held no words.
+        if (!r.ok) { setProblem(r.error); markFailed(r.error); return }
+        if (!r.result || !r.result.text) { setProblem('I didn\'t catch that.'); return }
+        const { text, alternatives, confidence } = r.result
+        heardSentence(text, alternatives.length ? [alternatives] : [], confidence)
       })
       return
     }
