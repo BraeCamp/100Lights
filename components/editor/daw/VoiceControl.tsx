@@ -40,6 +40,7 @@ import {
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
+import { considerUtterance, isAttentive, WAKE_WORDS } from '@/lib/voice/attention'
 import { speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable } from '@/lib/voice/speak'
 
 const C = {
@@ -104,6 +105,31 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [showType, setShowType] = useState(false)
   /** 0–1 microphone loudness while recording, for the meter on the button. */
   const [level, setLevel] = useState(0)
+  /**
+   * When a command was last accepted.
+   *
+   * Brae: "I don't want background noise to mess with the on toggled voice
+   * command system."
+   *
+   * This is the whole attention model. Inside the window the studio is in a
+   * conversation and takes what it hears; outside it, it is on but quiet and
+   * needs its name first. Clicking the button counts as being spoken to,
+   * because it is.
+   */
+  const lastAcceptedAt = useRef(0)
+  /**
+   * Whether the studio is currently taking commands, for the person looking at
+   * it.
+   *
+   * A microphone indicator that cannot distinguish "hearing you" from "waiting
+   * to be spoken to" is the thing people complain about in every always-on
+   * assistant ever shipped — you cannot tell whether it ignored you or is about
+   * to act. Polled rather than scheduled, because the window is restarted by
+   * every accepted command and a timer would have to be cancelled and rebuilt
+   * on each one.
+   */
+  const [attentive, setAttentive] = useState(false)
+
   /** The mode as it is NOW. The recorder's callbacks outlive the render that
    *  created them, and a stale mode would decide whether to keep listening. */
   const modeRef = useRef<VoiceMode>('hold')
@@ -247,7 +273,61 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
      *  Typed commands have no such thing and pass only the words. */
     heard?: Heard,
   ) => {
-    const text = stripWakeWord(spoken)
+    // ── Was this meant for the studio at all? ───────────────────────────────
+    //
+    // Every filter before this one answers "is that a voice". With the
+    // microphone held open across a room, the question that matters is whether
+    // the voice was talking to US, and nothing acoustic can answer it: somebody
+    // across the room saying "stop" is a person clearly saying stop.
+    //
+    // Checked on the RAW sentence, because stripWakeWord below removes the name
+    // — it was written when the wake word was optional decoration and the
+    // button meant "I am talking to you". Holding the button still means that.
+    // Clicking it once and walking away does not.
+    let heardFrom = spoken
+    //
+    // Only for SPOKEN input. `heard` is present when this came from a
+    // microphone and absent when it was typed, and typing a command is already
+    // an unambiguous act of addressing the studio — demanding its name from
+    // somebody using the keyboard would be asking them to prove something they
+    // just did.
+    if (heard && continuousRef.current && !confirmed && !pendingAsk2 && !pendingOffer && !pendingName) {
+      const verdict = considerUtterance({
+        text: spoken,
+        confidence: heardConfidence,
+        now: Date.now(),
+        lastAcceptedAt: lastAcceptedAt.current,
+        continuous: true,
+      })
+      if (!verdict.act) {
+        setBusy(false)
+        // Two very different situations, and telling them apart is what keeps
+        // this from being infuriating. A room having a conversation must
+        // produce NOTHING. Somebody who gave a real command and forgot the name
+        // is told which word is missing — without it being acted on.
+        const looksLikeCommand = resolveLocally(spoken, {
+          tracks: project.tracks ?? [],
+          tempo: project.tempo,
+        }).calls.length > 0
+        if (looksLikeCommand) {
+          setHeard(spoken)
+          setProblem(`Say "${WAKE_WORDS[0]}" first — listening, but not acting.`)
+        }
+        return
+      }
+      // Being addressed starts a conversation, so the name is not needed again
+      // for the next command.
+      if (verdict.addressed) lastAcceptedAt.current = Date.now()
+      heardFrom = verdict.text
+      // "Light." on its own is somebody getting its attention and nothing more.
+      if (!heardFrom.trim()) {
+        setBusy(false)
+        setProblem(''); setHeard(''); setSaid('Listening.')
+        return
+      }
+    }
+
+    const text = stripWakeWord(heardFrom)
     if (!text) { setProblem('I didn\'t catch that.'); return }
     setBusy(true); setProblem(''); setSaid(''); setAsking(''); setPendingAsk(null)
     setChoices(null); setPendingDo(null)
@@ -435,6 +515,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // to itself; replaying the actions gives the honest answer immediately
         // and cannot drift, because it is not a second implementation.
         const after = (plan.actions as DawAction[]).reduce(dawReducer, before)
+        lastAcceptedAt.current = Date.now()
         const notice = noticeFor(before, after)
         respond(notice ? `${spokenBack} ${notice}` : spokenBack)
         setBusy(false)
@@ -610,10 +691,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // Toggling the setting mid-session must not change what the take already
     // running is doing.
     continuousRef.current = modeRef.current === 'toggle'
+    // Pressing the button IS addressing it, so a session opens attentive and
+    // the first command needs no name. It goes quiet on its own after that.
+    lastAcceptedAt.current = Date.now()
     // Hand the transcriber the words that are actually likely here — the
     // commands it can act on, and the names of the tracks in this project.
     const vocabulary = [
       ...COMMAND_VOCABULARY,
+      // Its own name, which is now load-bearing: a session that cannot hear
+      // "light" over a mix is a session that never wakes up.
+      ...WAKE_WORDS,
       ...(project.tracks ?? []).map(t => t.name).filter((n): n is string => !!n),
     ]
     const rec = await startRecording({
@@ -782,6 +869,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // The recorder can finish a take on its own when talking stops; keep the ref
   // pointing at the current handler so it never calls a stale one.
   useEffect(() => { finishRef.current = finish }, [finish])
+
+  // Only while a held-open session is running: nothing to show otherwise, and
+  // no reason to keep a timer alive.
+  useEffect(() => {
+    if (!listening || !continuousRef.current) { setAttentive(false); return }
+    const tick = () => setAttentive(isAttentive(Date.now(), lastAcceptedAt.current))
+    tick()
+    const id = setInterval(tick, 1500)
+    return () => clearInterval(id)
+  }, [listening])
 
   // Enter runs the command — but only when Enter is not doing something else.
   // A DAW binds Enter (rename a track, confirm a field), and stealing it would
@@ -1277,6 +1374,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             <div style={{ color: C.textMuted }}>“{heard}”</div>
           )}
           {said && <div style={{ color: C.accent }}>{said}</div>}
+          {listening && continuousRef.current && !said && !problem && (
+            <div style={{ color: attentive ? C.accent : C.textMuted }}>
+              {attentive
+                ? 'Listening — go ahead.'
+                : `On, but quiet. Say "${WAKE_WORDS[0]}" to wake it.`}
+            </div>
+          )}
           {problem && <div style={{ color: '#ffb4b4' }}>{problem}</div>}
           <button
             onClick={() => { setHeard(''); setSaid(''); setProblem('') }}
