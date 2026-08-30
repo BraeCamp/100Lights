@@ -41,8 +41,9 @@ import {
 import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
-import { considerUtterance, isAttentive, WAKE_WORDS } from '@/lib/voice/attention'
+import { WAKE_WORDS, shouldActOn } from '@/lib/voice/attention'
 import { interpretSequence } from '@/lib/voice/sequence'
+import { interpret } from '@/lib/voice/interpret'
 import {
   readQueueControl, askToImplement, readBack, reportRun, type QueuedCommand,
 } from '@/lib/voice/queue'
@@ -206,7 +207,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    * every accepted command and a timer would have to be cancelled and rebuilt
    * on each one.
    */
-  const [attentive, setAttentive] = useState(false)
 
   /** The mode as it is NOW. The recorder's callbacks outlive the render that
    *  created them, and a stale mode would decide whether to keep listening. */
@@ -383,89 +383,34 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   ) => {
     // ── Was this meant for the studio at all? ───────────────────────────────
     //
-    // Every filter before this one answers "is that a voice". With the
-    // microphone held open across a room, the question that matters is whether
-    // the voice was talking to US, and nothing acoustic can answer it: somebody
-    // across the room saying "stop" is a person clearly saying stop.
+    // Brae: "The 'say light first' thing needs to go. It isn't working for me."
     //
-    // Checked on the RAW sentence, because stripWakeWord below removes the name
-    // — it was written when the wake word was optional decoration and the
-    // button meant "I am talking to you". Holding the button still means that.
-    // Clicking it once and walking away does not.
-    let heardFrom = spoken
+    // It was a toll, and it was charged on the wrong thing. The idea was sound —
+    // a microphone held open across a room hears people who are not talking to
+    // it, and nothing acoustic can tell you that somebody across the room saying
+    // "stop" did not mean you. The name was the disambiguator.
     //
-    // Only for SPOKEN input. `heard` is present when this came from a
-    // microphone and absent when it was typed, and typing a command is already
-    // an unambiguous act of addressing the studio — demanding its name from
-    // somebody using the keyboard would be asking them to prove something they
-    // just did.
-    // ── Collecting listens freely, because collecting does nothing ──────────
+    // In practice it failed in both directions at once. It did not reliably
+    // WAKE — "light" is a short, soft word that the recogniser renders as
+    // "late", "right", "like" — so the studio ignored real commands from
+    // somebody sitting right in front of it. And it charged that toll on
+    // sentences that were unmistakably meant for it: Brae said "execute", which
+    // is not a command the rules resolve, so it failed the looksLikeCommand
+    // test, so it was dropped as room noise and reported as "not acted on".
+    // The one word whose entire job is to approve a queue could not get through
+    // the gate guarding the queue.
     //
-    // Brae: "I have to say Light before it acts upon anything", and then, on
-    // saying "start": "it responded with 'Not acted on'. Why?"
+    // So the name is no longer required. It is still UNDERSTOOD — saying
+    // "light, mute the drums" works and always did, and stripWakeWord below
+    // still removes it — it is simply not demanded.
     //
-    // Because the session had gone quiet and the name is what wakes it. That
-    // guard exists to stop the room executing commands — and while collecting,
-    // NOTHING executes. Every command is written down, read back and waits for
-    // "execute", so the worst a stray sentence can do is add a line to a list
-    // somebody is about to read. Asking for the name to add to a list nobody
-    // has approved is a toll on the safe half of the feature.
-    //
-    // Executing still asks. That is where the risk actually lives.
-    const guarded = heard && continuousRef.current && !collectingRef.current
-    if (guarded && !confirmed && !pendingAsk2 && !pendingOffer && !pendingName) {
-      const verdict = considerUtterance({
-        text: spoken,
-        confidence: heardConfidence,
-        now: Date.now(),
-        lastAcceptedAt: lastAcceptedAt.current,
-        continuous: true,
-        // The context check for a name that only SOUNDED right. "Late" is
-        // somebody talking about the time; "late, mute the drums" is a
-        // microphone that misheard "light".
-        looksLikeCommand: t => resolveLocally(t, {
-          tracks: project.tracks ?? [],
-          tempo: project.tempo,
-        }).calls.length > 0,
-      })
-      if (!verdict.act) {
-        setBusy(false)
-        // Recorded even though it was not acted on. "It heard me and did
-        // nothing" is a fact worth being able to see — otherwise the only
-        // evidence is that nothing happened.
-        addTurn('you', spoken, true)
-        // Two very different situations, and telling them apart is what keeps
-        // this from being infuriating. A room having a conversation must
-        // produce NOTHING. Somebody who gave a real command and forgot the name
-        // is told which word is missing — without it being acted on.
-        const looksLikeCommand = resolveLocally(spoken, {
-          tracks: project.tracks ?? [],
-          tempo: project.tempo,
-        }).calls.length > 0
-        if (looksLikeCommand) {
-          setHeard(spoken)
-          // Spoken, not merely displayed. "It did nothing and I do not know
-          // why" is the complaint this is answering, and a line of grey text
-          // beside a button is not an answer when you are looking at the
-          // arrangement.
-          respond(
-            `Say "${WAKE_WORDS[0]}" first, or start collecting and nothing will run until you say execute.`,
-            'problem',
-          )
-        }
-        return
-      }
-      // Being addressed starts a conversation, so the name is not needed again
-      // for the next command.
-      if (verdict.addressed) lastAcceptedAt.current = Date.now()
-      heardFrom = verdict.text
-      // "Light." on its own is somebody getting its attention and nothing more.
-      if (!heardFrom.trim()) {
-        setBusy(false)
-        setProblem(''); setHeard(''); setSaid('Listening.')
-        return
-      }
-    }
+    // What replaces it is a quieter rule that costs nothing to satisfy: in a
+    // held-open session, act on what the built-in commands can actually read,
+    // and let anything else pass without comment. A room having a conversation
+    // produces sentences the rules cannot read, so it still produces nothing —
+    // but it produces nothing SILENTLY, instead of asking somebody to say a
+    // magic word first.
+    const heardFrom = spoken
 
     const text = stripWakeWord(heardFrom)
     if (!text) { setProblem('I didn\'t catch that.'); return }
@@ -522,6 +467,35 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       if (control === 'read') { respond(readBack(queue), 'question'); return }
       if (control === 'clear') { setQueue([]); offeredAt.current = 0; respond('Cleared.'); return }
       if (control === 'run') { runQueueRef.current?.(); return }
+    }
+
+    // ── Was this meant for the studio at all? ───────────────────────────────
+    //
+    // Placed HERE, after the queue words, and asking the real interpreter — both
+    // of which are the fixes rather than incidental.
+    //
+    // After the queue words, because "execute" resolves to no command (it is
+    // about the LIST, not the song) and the old guard therefore threw it away as
+    // room noise. Asking the real interpreter, because the cheap pre-check this
+    // first used is deliberately narrow: it reads "mute the drums" and does not
+    // read "take the bass up", so a gate built on it would have silently ignored
+    // real commands — swapping one kind of not-listening for another.
+    if (!shouldActOn({
+      held: !!heard && continuousRef.current,
+      collecting: collectingRef.current,
+      answering: confirmed || !!pendingAsk2 || !!pendingOffer || !!pendingName,
+      readable: interpret(text, ctx).calls.length > 0,
+      // Already handled above; named here so the rule reads completely.
+      queueWord: !!control,
+      assistantActs: assistRef.current === 'auto',
+    })) {
+      setBusy(false)
+      // Recorded, greyed, and not remarked upon. "It heard me and did nothing"
+      // stays visible in the transcript — that was always worth seeing — but it
+      // is no longer announced, because with the name no longer required this is
+      // the ordinary fate of an overheard sentence, not a correctable mistake.
+      addTurn('you', spoken, true)
+      return
     }
 
     // ── One breath, possibly several commands ──────────────────────────────
@@ -873,6 +847,28 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         matched: local.matched, understood: local.confidence,
         calls, said_back: plan.say,
       })
+      // Brae: "Then it executes with AI and sends the system a correction that
+      // we can work from when I'm making patches."
+      //
+      // voice-memory has recorded exactly this since it was written, and kept
+      // it on the machine — "it belongs on their machine unless they choose
+      // otherwise". This is otherwise. Only the wording, what it turned out to
+      // mean, and the track names travel; the song stays here.
+      //
+      // Deliberately not awaited and deliberately unable to fail: the command
+      // has already run, and a notebook being unavailable must never turn a
+      // successful edit into a reported failure.
+      void fetch('/api/voice/gap', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          said: text,
+          calls,
+          say: plan.say,
+          source: heard ? 'spoken' : 'typed',
+          tracks: (project.tracks ?? []).map(t => t.name),
+        }),
+      }).catch(() => {})
       // Done — the exchange is closed, so the next command starts clean rather
       // than inheriting the last one's context.
       history.current = []
@@ -1278,16 +1274,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     return () => clearInterval(id)
   }, [collecting, queue, respond])
 
-  // Only while a held-open session is running: nothing to show otherwise, and
-  // no reason to keep a timer alive.
-  useEffect(() => {
-    if (!listening || !continuousRef.current) { setAttentive(false); return }
-    const tick = () => setAttentive(isAttentive(Date.now(), lastAcceptedAt.current))
-    tick()
-    const id = setInterval(tick, 1500)
-    return () => clearInterval(id)
-  }, [listening])
-
   // Enter runs the command — but only when Enter is not doing something else.
   // A DAW binds Enter (rename a track, confirm a field), and stealing it would
   // break editing to serve a feature nobody has invoked yet. So it only counts
@@ -1399,7 +1385,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         <VoicePanel
           turns={turns}
           listening={listening}
-          attentive={attentive}
           continuous={continuousRef.current}
           level={level}
           hud={hud}
@@ -1770,11 +1755,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           )}
           {said && <div style={{ color: C.accent }}>{said}</div>}
           {listening && continuousRef.current && !said && !problem && (
-            <div style={{ color: attentive ? C.accent : C.textMuted }}>
-              {attentive
-                ? 'Listening — go ahead.'
-                : `On, but quiet. Say "${WAKE_WORDS[0]}" to wake it.`}
-            </div>
+            <div style={{ color: C.accent }}>Listening — go ahead.</div>
           )}
           {problem && <div style={{ color: '#ffb4b4' }}>{problem}</div>}
           <button

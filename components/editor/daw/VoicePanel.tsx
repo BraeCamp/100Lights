@@ -38,9 +38,6 @@ export interface VoiceTurn {
 export interface VoicePanelProps {
   turns: VoiceTurn[]
   listening: boolean
-  /** True while a held-open session is taking commands rather than waiting to
-   *  be addressed. */
-  attentive: boolean
   continuous: boolean
   /** 0–1 input level, for the meter. */
   level: number
@@ -327,7 +324,7 @@ function Segmented<T extends string>({ value, options, onChange, C, disabled }: 
 }
 
 export default function VoicePanel({
-  turns, listening, attentive, continuous, level, hud,
+  turns, listening, continuous, level, hud,
   onHud, onClose, onClear, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
@@ -433,9 +430,10 @@ export default function VoicePanel({
     if (el) el.scrollTop = el.scrollHeight
   }, [turns.length])
 
-  const state = !listening ? 'off'
-    : !continuous ? 'listening'
-      : attentive ? 'attentive' : 'dormant'
+  // Two states, not four. A held-open session used to be either "attentive" or
+  // "dormant, say the name to wake it", and the name is no longer required —
+  // so a session that is open is simply listening.
+  const state = !listening ? 'off' : !continuous ? 'listening' : 'attentive'
 
   return (
     <div
@@ -474,7 +472,6 @@ export default function VoicePanel({
           {state === 'off' && 'VOICE'}
           {state === 'listening' && 'LISTENING'}
           {state === 'attentive' && 'LISTENING — GO AHEAD'}
-          {state === 'dormant' && `SAY "${WAKE_WORDS[0].toUpperCase()}" TO WAKE`}
         </span>
 
         {/* The level meter earns its place: "is it even hearing me" is the
@@ -611,7 +608,7 @@ export default function VoicePanel({
             {!turns.length && (
               <div style={{ color: C.textMuted, lineHeight: 1.5 }}>
                 {continuous && listening
-                  ? `Say "${WAKE_WORDS[0]}" and then what you want — "${WAKE_WORDS[0]}, mute the drums". Once it answers you can keep going without saying the name again.`
+                  ? `Just say what you want — "mute the drums", "loop bars 9 to 17". It stays open, so you can keep going.`
                   : 'Nothing yet. Hold the button, or switch to click-to-talk in Settings.'}
               </div>
             )}
@@ -745,7 +742,7 @@ export default function VoicePanel({
                 onChange={onMode}
                 options={[
                   { id: 'hold' as const, label: 'Hold', note: 'Hold the button down while you speak, let go when you are done. Nothing is listening the rest of the time.' },
-                  { id: 'toggle' as const, label: 'Keep listening', note: `Click once and it stays open. Say "${WAKE_WORDS[0]}" to get its attention, then keep going without repeating the name.` },
+                  { id: 'toggle' as const, label: 'Keep listening', note: 'Click once and it stays open. Say what you want, as many times as you like — it acts on the commands it recognises and ignores the rest of the room.' },
                 ]}
               />
               <Toggle

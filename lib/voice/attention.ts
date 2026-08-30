@@ -202,6 +202,62 @@ export function addressed(text: string): {
  * one of those must produce nothing — not a question, not an apology, and above
  * all not a command.
  */
+/**
+ * Should a sentence heard in a held-open session be acted on?
+ *
+ * Brae: "The 'say light first' thing needs to go. It isn't working for me. Also
+ * I said execute at one point and it said 'not acted on'."
+ *
+ * Those were one bug wearing two hats. The old rule asked "was I addressed by
+ * name", and it failed in both directions at once: "light" is short and soft
+ * and comes back from a recogniser as "late", "right" or "like", so real
+ * commands from somebody sitting in front of the microphone were ignored — and
+ * the toll was charged even on sentences that could not have been meant for
+ * anybody else. "Execute" resolves to no command (it is about the QUEUE, not
+ * the song), so it failed the is-this-a-command test and was written off as
+ * room noise. The one word whose entire job is to approve a list could not get
+ * past the guard on the list.
+ *
+ * The replacement asks a question the speaker never has to work to satisfy: can
+ * the studio actually READ this? A room having a conversation produces
+ * sentences the built-in commands cannot read, so the room still runs nothing —
+ * it simply runs nothing silently, rather than demanding a magic word first.
+ *
+ * Pure, and separate from the component, because this is the rule that decides
+ * whether a microphone in a room is allowed to change somebody's song, and it
+ * spent its whole life inline in a hundred-line callback where the only way to
+ * exercise it was to say something out loud.
+ */
+export interface ActInput {
+  /** Is the microphone held open across commands? The rule only applies there;
+   *  a push-to-talk take is somebody holding a button down, which is not
+   *  ambiguous about who they meant. */
+  held: boolean
+  /** While collecting, nothing executes — every command is written down and
+   *  waits for approval — so there is nothing to protect anyone from. */
+  collecting: boolean
+  /** Can the built-in commands read it? */
+  readable: boolean
+  /** Is it a word about the queue — "execute", "go ahead", "clear"? These
+   *  resolve to no command and are the exact case the old rule dropped. */
+  queueWord: boolean
+  /** Is the studio already mid-conversation — waiting on an answer it asked
+   *  for? A reply to a question is addressed by construction. */
+  answering: boolean
+  /** Has the assistant been given permission to act on anything it hears? */
+  assistantActs: boolean
+}
+
+export function shouldActOn(input: ActInput): boolean {
+  if (!input.held || input.collecting) return true
+  if (input.answering) return true
+  if (input.readable || input.queueWord) return true
+  // Nothing here can read it. Handing it to the assistant would mean paying to
+  // interpret whatever the room said, so that only happens where somebody has
+  // explicitly asked for the assistant to act on its own.
+  return input.assistantActs
+}
+
 export function considerUtterance(input: AttentionInput): AttentionVerdict {
   const { addressed: named, approximate, rest } = addressed(input.text)
 
