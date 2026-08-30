@@ -45,6 +45,29 @@ export const FILLER = new Set([
   // Trailing address. "mute the pad for me" left "me" attached to the name, so
   // the lookup asked for a track called "pad me" and found nothing.
   'me', 'there', 'here',
+  // ── How people actually open a sentence ─────────────────────────────────
+  //
+  // Brae: "I said 'Alright, let's start' and it said not acted on. It needs to
+  // do what I say, that's the whole point of this."
+  //
+  // "let's start" worked. "ok start" worked. "alright let's start" resolved to
+  // NOTHING — because "alright" was not on this list, so it survived as an
+  // unexplained word, and on a two-word command that is half the sentence. The
+  // reading scored too low to be accepted and the studio decided it had
+  // overheard something.
+  //
+  // Nobody says "start". They say "alright, let's start", "okay so play it",
+  // "right then, mute the drums". These are how a sentence BEGINS, not part of
+  // what is being asked for, and the shorter the command the more damage one
+  // unrecognised opener does.
+  //
+  // ⚠️ "right" is deliberately absent and must stay absent: it is a pan
+  // direction. "pan the guitar right" is a command whose last word this list
+  // would eat.
+  'alright', 'allright', 'alrighty', 'well', 'anyway', 'anyhow',
+  'yeah', 'yep', 'yes', 'sure', 'cool', 'great', 'nice', 'perfect',
+  'actually', 'basically', 'maybe', 'also', 'oh', 'hi', 'hello',
+  'go', 'gonna', 'going', 'wanna', 'try',
 ])
 
 /**

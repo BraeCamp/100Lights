@@ -102,16 +102,46 @@ async function record(userId: string, delta: number, reason: string): Promise<vo
   try { await sql`INSERT INTO credit_ledger (id, user_id, delta, reason) VALUES (${crypto.randomUUID()}, ${userId}, ${delta}, ${reason})` } catch { /* audit only */ }
 }
 
-export interface CreditState { balance: number; monthlyGrant: number; freeTranscribeUsed: number }
+export interface CreditState {
+  balance: number
+  monthlyGrant: number
+  freeTranscribeUsed: number
+  /**
+   * Did the balance actually get READ?
+   *
+   * Brae, with 650,000 credits in the table: "It says 'Out of AI credits' now.
+   * It should most definitely NOT be out of AI credits."
+   *
+   * Whether or not that was the cause in his case, it is a bug on its own: this
+   * function failed soft to zeros, so a connection blip, a cold start, a
+   * timeout — anything at all — came back as `balance: 0` and was
+   * indistinguishable from an account that has genuinely run out. Every caller
+   * then told a paying customer they were out of money, which is both wrong and
+   * the most alarming thing it could have said.
+   *
+   * Failing soft was right for the UI, which only wants a number to draw. It
+   * was wrong for the GATE, which needs to know the difference between "no
+   * credits" and "no answer".
+   */
+  ok: boolean
+}
 
-/** Current balance + free-allowance usage. Fails soft to zeros (so UI never crashes offline). */
+/** Current balance + free-allowance usage. Fails soft to zeros for display —
+ *  check `ok` before refusing anybody anything on the strength of it. */
 export async function getCredits(userId: string): Promise<CreditState> {
   try {
     await ensure()
     const r = await sql`SELECT balance, monthly_grant, free_transcribe_used FROM user_credits WHERE user_id = ${userId}`
-    if (!r.length) return { balance: 0, monthlyGrant: 0, freeTranscribeUsed: 0 }
-    return { balance: Number(r[0].balance), monthlyGrant: Number(r[0].monthly_grant), freeTranscribeUsed: Number(r[0].free_transcribe_used) }
-  } catch { return { balance: 0, monthlyGrant: 0, freeTranscribeUsed: 0 } }
+    if (!r.length) return { balance: 0, monthlyGrant: 0, freeTranscribeUsed: 0, ok: true }
+    return {
+      balance: Number(r[0].balance),
+      monthlyGrant: Number(r[0].monthly_grant),
+      freeTranscribeUsed: Number(r[0].free_transcribe_used),
+      ok: true,
+    }
+  } catch {
+    return { balance: 0, monthlyGrant: 0, freeTranscribeUsed: 0, ok: false }
+  }
 }
 
 /** Add credits (a purchase/top-up or an admin grant). */

@@ -493,6 +493,49 @@ for (const chat of [
     r.calls.length === 0, `${r.matched} ${JSON.stringify(r.input ?? null)}`)
 }
 
+// ── How a sentence starts ───────────────────────────────────────────────────
+//
+// Brae: "I said 'Alright, let's start' and it said not acted on. It needs to do
+// what I say, that's the whole point of this."
+//
+// "let's start" worked. "ok start" worked. "alright let's start" resolved to
+// nothing at all — "alright" was not a filler word, so it survived as an
+// unexplained one, and on a two-word command that is half the sentence. The
+// reading scored too low to be believed and the studio decided it had overheard
+// something.
+//
+// Nobody says "start". They say "alright, let's start". The shorter the
+// command, the more damage one unrecognised opener does — which is exactly
+// backwards, because the shortest commands are the ones said most often.
+for (const [text, expected] of [
+  ["alright let's start", 'play'],
+  ["Alright, let's start", 'play'],
+  ['alright play it', 'play'],
+  ['okay so play', 'play'],
+  ['well, stop', 'stop'],
+  ['yeah stop', 'stop'],
+  ['anyway pause', 'pause'],
+  ['actually, restart', 'restart'],
+]) {
+  const r = said(text)
+  check(`"${text}" is acted on`, r.input?.action === expected,
+    `${r.matched ?? 'NONE'} ${JSON.stringify(r.input ?? null)}`)
+}
+
+// ⚠️ The words that must NOT become filler, because a command depends on them.
+// "right" is a pan direction; eating it would turn "pan the guitar right" into
+// "pan the guitar", which is not a command at all.
+for (const [text, check1] of [
+  ['pan the pad right', r => r.input?.pan > 0],
+  ['pan the pad hard right', r => r.input?.pan > 0],
+  ['go to bar 9', r => r.input?.action === 'locate'],
+  ['go back to the beginning', r => r.input?.action === 'restart'],
+]) {
+  const r = said(text)
+  check(`"${text}" still means what it says`, check1(r),
+    `${r.matched ?? 'NONE'} ${JSON.stringify(r.input ?? null)}`)
+}
+
 console.log(failures
   ? `\n${failures} failing`
   : '\nit reads the command out of the sentence, and the item out of the track')

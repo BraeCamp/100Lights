@@ -28,8 +28,17 @@ export async function POST(req: Request) {
   // Gate on balance (usage-based: we bill the REAL token cost after the call, but require a floor to
   // start so an empty account can't run up work). No-op until CREDITS_ENABLED.
   if (CREDITS_ENABLED) {
-    const { balance } = await getCredits(userId)
-    if (balance < CREDIT_COSTS.aiAssist) {
+    const { balance, ok } = await getCredits(userId)
+    // Only refuse on an answer we actually got. A failed read used to come back
+    // as `balance: 0` and was indistinguishable from an empty account, so a
+    // database blip told a paying customer they were out of credits and stopped
+    // them working — the worst of both, since it is both wrong and alarming.
+    //
+    // When the balance cannot be read the call goes ahead. The real cost is
+    // billed AFTER the call either way, so the exposure is one assistant turn
+    // on an account we could not check, against locking somebody out of a
+    // feature they have paid for because a query timed out.
+    if (ok && balance < CREDIT_COSTS.aiAssist) {
       return Response.json({ error: 'Not enough credits for the AI assistant. Top up or upgrade to keep going.', needCredits: true, balance }, { status: 402 })
     }
   }

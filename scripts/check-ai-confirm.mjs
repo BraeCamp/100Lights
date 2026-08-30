@@ -53,6 +53,19 @@ await page.route('**/api/ai/assist*', async route => {
 // this test depend on the wording of a dialog it is not about.
 await page.addInitScript(() => {
   try { localStorage.setItem('100lights-ui-tier', 'full') } catch { /* private mode */ }
+  // ⚠️ Ask-first is no longer the default — the assistant acts unless somebody
+  // asks to be asked. Brae: "It still pulls up 'Ask the assistant' menu which
+  // it shouldn't do at all in AI mode."
+  //
+  // So this suite selects it, because what it exists to prove is that the
+  // barrier WORKS when it is on: nothing is spent before the press, the words
+  // are shown and correctable, and cancelling costs nothing. Those guarantees
+  // are the reason the setting is still there, and they matter more now that
+  // it is a choice rather than the default.
+  try {
+    localStorage.setItem('beacon.voice.assistant', 'ask')
+    localStorage.setItem('beacon.voice.ai-auto', 'off')
+  } catch { /* private mode */ }
 })
 
 await page.goto(`${BASE}/create?modules=audio&audioMode=music`, { waitUntil: 'domcontentloaded', timeout: 180000 })
@@ -141,8 +154,22 @@ check('pressing the button is what sends it', assistCalls === before + 1,
 // do.
 {
   const before = assistCalls
+  // ⚠️ BOTH keys. `beacon.voice.assistant` is the one the mode is read from now
+  // and it wins over the older flag — and addInitScript above re-runs on every
+  // navigation, so a reload re-pins it to 'ask' and flipping only the old key
+  // changes nothing at all. Same trap this suite's HUD and voice-mode checks
+  // have both fallen into.
   await page.evaluate(() => {
-    try { localStorage.setItem('beacon.voice.ai-auto', 'on') } catch { /* private mode */ }
+    try {
+      localStorage.setItem('beacon.voice.assistant', 'auto')
+      localStorage.setItem('beacon.voice.ai-auto', 'on')
+    } catch { /* private mode */ }
+  })
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('beacon.voice.assistant', 'auto')
+      localStorage.setItem('beacon.voice.ai-auto', 'on')
+    } catch { /* private mode */ }
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
   await typeBtn.waitFor({ state: 'visible', timeout: 240000 })
@@ -156,7 +183,16 @@ check('pressing the button is what sends it', assistCalls === before + 1,
 
   // Off again, and the barrier is back — the setting is the whole difference.
   await page.evaluate(() => {
-    try { localStorage.setItem('beacon.voice.ai-auto', 'off') } catch { /* private mode */ }
+    try {
+      localStorage.setItem('beacon.voice.assistant', 'ask')
+      localStorage.setItem('beacon.voice.ai-auto', 'off')
+    } catch { /* private mode */ }
+  })
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('beacon.voice.assistant', 'ask')
+      localStorage.setItem('beacon.voice.ai-auto', 'off')
+    } catch { /* private mode */ }
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
   await typeBtn.waitFor({ state: 'visible', timeout: 240000 })

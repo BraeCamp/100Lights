@@ -76,14 +76,29 @@ export function setStudioVoice(on: boolean): void {
  *
  *   rules  the built-in commands only. Never calls out, never costs anything.
  *          Says so plainly when it does not know a sentence.
- *   ask    the default. Rules first; anything they cannot read stops and shows
- *          you the transcript before spending a thing.
- *   auto   the assistant acts on what it heard, without stopping to ask.
+ *   ask    Rules first; anything they cannot read is read back and confirmed —
+ *          out loud, answerable with "yes" — before a thing is spent.
+ *   auto   the default. The assistant acts on what it heard.
  *
- * `ask` remains the default for everybody, because Brae's original constraint
- * still holds — "every single time it should get confirmation first" — and a
- * misheard sentence is indistinguishable from a correct one until a person
- * reads it.
+ * ⚠️ `auto` IS THE DEFAULT, AND THAT REVERSES AN EARLIER INSTRUCTION.
+ *
+ * The original was Brae's, and it was right at the time: "I'm worried that AI
+ * will mishear things and create commands and use credits accidentally... every
+ * single time it should get confirmation first." The reasoning has not become
+ * wrong — a misheard sentence is still indistinguishable from a correct one
+ * until somebody reads it.
+ *
+ * What changed is that he used it. "It needs to do what I say, that's the whole
+ * point of this." "It still pulls up 'Ask the assistant' menu which it
+ * shouldn't do at all in AI mode." "The AI should be able to detect what to do
+ * itself since it's wired into the whole Beacon + Apollo system." Three
+ * sentences making one point: a voice control that stops for permission before
+ * every unfamiliar sentence is not a voice control.
+ *
+ * The protection did not leave with it. `rules` is there for anybody who wants
+ * a studio that cannot spend at all, `ask` is one click away and now actually
+ * works by voice, and undo still undoes. What is gone is the toll charged on
+ * every sentence the built-in commands happen not to cover.
  */
 export type AssistantMode = 'rules' | 'ask' | 'auto'
 
@@ -93,10 +108,11 @@ export function assistantMode(): AssistantMode {
   try {
     const v = localStorage.getItem(ASSISTANT_KEY)
     if (v === 'rules' || v === 'ask' || v === 'auto') return v
-    // Nobody has chosen yet. Honour the older on/off switch if it was set, so
-    // turning automatic on once does not quietly revert the next time.
-    return localStorage.getItem(AI_AUTO_KEY) === 'on' ? 'auto' : 'ask'
-  } catch { return 'ask' }
+    // Nobody has chosen yet. The older on/off switch still wins where it was
+    // deliberately turned OFF, so anybody who asked to be asked keeps being
+    // asked; everyone else gets a studio that acts.
+    return localStorage.getItem(AI_AUTO_KEY) === 'off' ? 'ask' : 'auto'
+  } catch { return 'auto' }
 }
 
 export function setAssistantMode(m: AssistantMode): void {

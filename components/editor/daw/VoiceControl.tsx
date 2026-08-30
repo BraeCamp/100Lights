@@ -483,7 +483,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     if (!shouldActOn({
       held: !!heard && continuousRef.current,
       collecting: collectingRef.current,
-      answering: confirmed || !!pendingAsk2 || !!pendingOffer || !!pendingName,
+      // pendingAsk belongs here with the rest: "yes" reads as no command at
+      // all, so without it the answer to the studio's own question is dropped
+      // as overheard chatter before it ever reaches the handler below.
+      answering: confirmed || pendingAsk !== null
+        || !!pendingAsk2 || !!pendingOffer || !!pendingName,
       readable: interpret(text, ctx).calls.length > 0,
       // Already handled above; named here so the rule reads completely.
       queueWord: !!control,
@@ -552,6 +556,39 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // Routed before the parser, because an answer is not a command: "the track"
     // and "yes" and "Intro" mean nothing on their own and everything in reply
     // to what was just asked.
+
+    // ── "Ask first" has to be answerable out loud ──────────────────────────
+    //
+    // Brae: "ask first should have the machine confirm before doing something,
+    // not just skip doing it altogether."
+    //
+    // He was describing it exactly. The confirmation could only ever be
+    // answered by clicking it or pressing Enter in its text box — there was no
+    // voice path to "yes" at all. So in a voice session it did skip: you said
+    // something, a box appeared, and unless you reached for the keyboard
+    // nothing whatsoever happened. A confirmation you cannot answer in the
+    // medium you are working in is a refusal with extra steps.
+    if (pendingAsk !== null) {
+      const yn = readYesNo(text)
+      if (yn === true) {
+        const t = pendingAsk.trim()
+        setPendingAsk(null)
+        if (t) { void run(t, 1, true) }
+        return
+      }
+      if (yn === false) {
+        setPendingAsk(null)
+        setBusy(false)
+        respond('Left it.')
+        return
+      }
+      // Anything else is a change of subject rather than an answer. The
+      // question goes away and the new sentence is treated on its own terms —
+      // people move on, and holding a stale question over them is worse than
+      // dropping it.
+      setPendingAsk(null)
+    }
+
     if (pendingAsk2) {
       const picked = readChoice(text, pendingAsk2.options)
       if (picked == null) {
@@ -888,7 +925,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // so "execute" reported nothing collected and then cleared the list it
     // could not see. runQueue is reached through a ref because it is declared
     // below, the same way finish() is.
-  }, [project, runAction, pendingAsk2, pendingOffer, pendingName, respond, undo, redo,
+    // pendingAsk is a dependency for the same reason the others are, and the
+    // symptom would have been the same one this file has produced three times:
+    // the closure holds the question as it was when it was built — null — so
+    // "yes" is parsed as a fresh command and confirms nothing.
+  }, [project, runAction, pendingAsk, pendingAsk2, pendingOffer, pendingName, respond, undo, redo,
     selectedTrackId, selectedClipId, queue])
 
   // Does the user still want to be listening? Asking for the microphone is

@@ -13,5 +13,19 @@ export async function GET() {
     freeTranscribeUsed: c.freeTranscribeUsed,
     freeTranscribeSeconds: FREE_TRANSCRIBE_SECONDS,
     metered: CREDITS_ENABLED,   // false = nothing is billed yet (everything works free)
+    // ── Enough to tell the three "out of credits" causes apart ─────────────
+    //
+    // A balance of 0 has three completely different explanations and they were
+    // impossible to distinguish from outside: the account really is empty, the
+    // balance could not be read (which used to return 0 and say "out of
+    // credits"), or the credits are sitting on a DIFFERENT account from the one
+    // signed in — which is easy to do when they were granted by looking a user
+    // up by email.
+    //
+    // The user id is the signed-in user's own, shown to that user only, so
+    // opening this page answers "is this the account the credits are on"
+    // without anybody having to read a database.
+    ok: c.ok,
+    userId,
   })
 }
