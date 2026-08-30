@@ -47,15 +47,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'That recording is too long for a command.' }, { status: 413 })
   }
 
-  // `alternatives` because the caller scores them against the project's own
-  // track names — the same trick that turns "base two" into "Bass 2". Smart
-  // formatting is left ON so numbers arrive as digits ("128" not "one twenty
-  // eight"), which is what the command parser wants.
+  // NO `alternatives`. Nova-3 refuses it outright — "Nova-3 models do not
+  // support more than one alternative" — with a 400, which is what made every
+  // recorded command fail. Asked directly with the shipped parameters and
+  // without them; the only difference was that one.
+  //
+  // Worth stating what that costs, since it was there for a reason: the
+  // browser's recogniser returns several guesses and hear-better.ts scores them
+  // against the project's real track names, which is what turns "base two" into
+  // "Bass 2". Nova-3 returns one. The name repair still runs on that one
+  // sentence — a single guess can still be corrected — but the "pick the
+  // alternative that mentions a real track" half has nothing to choose from
+  // here. An older model would give alternatives back at a cost in accuracy;
+  // better to have Nova-3's one good guess and repair it.
+  //
+  // smart_format stays ON so numbers arrive as digits — "128", not "one twenty
+  // eight" — which is exactly what the command parser wants.
   const params = new URLSearchParams({
     model: 'nova-3',
     smart_format: 'true',
-    punctuate: 'false',      // a command is not a sentence; trailing periods only confuse matching
-    alternatives: '3',
   })
 
   let res: Response
@@ -73,9 +83,15 @@ export async function POST(req: Request) {
   }
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => '')
+    // Deepgram says exactly what is wrong; the first version put that in a
+    // `detail` field the client never displayed, so "Transcription failed
+    // (400)" was all anyone saw of "Nova-3 models do not support more than one
+    // alternative". Put the actual sentence in `error`.
+    const raw = await res.text().catch(() => '')
+    let why = ''
+    try { why = (JSON.parse(raw) as { err_msg?: string }).err_msg ?? '' } catch { why = raw.slice(0, 160) }
     return NextResponse.json(
-      { error: `Transcription failed (${res.status}).`, detail: detail.slice(0, 200) },
+      { error: why ? `Transcription failed: ${why}` : `Transcription failed (${res.status}).` },
       { status: 502 },
     )
   }
