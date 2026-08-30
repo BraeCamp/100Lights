@@ -31,6 +31,7 @@ import { commandHelp } from '@/lib/voice/interpret'
 import type { AssistantMode } from '@/lib/voice/speak'
 import { usePlan } from '@/hooks/usePlan'
 import { WAKE_WORDS } from '@/lib/voice/attention'
+import { LUMENS_NAME } from '@/lib/credit-tiers'
 
 export interface VoicePanelProps {
   listening: boolean
@@ -844,7 +845,7 @@ export default function VoicePanel({
                   <span style={{ color: C.textPrimary, fontWeight: 700 }}>
                     {credits.left.toLocaleString()}
                   </span>
-                  credits left (about ${(credits.left / 5000).toFixed(2)})
+                  {LUMENS_NAME} left (about ${(credits.left / 5000).toFixed(2)})
                   <span style={{ marginLeft: 'auto' }}>last turn {credits.spent.toLocaleString()}</span>
                 </div>
               )}

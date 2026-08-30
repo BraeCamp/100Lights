@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server'
 import { CREDITS_ENABLED, meterAI, CREDIT_COSTS, grantCredits } from '@/lib/credits'
 import { recordUsage } from '@/lib/api-usage'
 import { getElevenLabsCredits, creditsDelta, headerMap } from '@/lib/elevenlabs-usage'
+import { LUMENS_NAME } from '@/lib/credit-tiers'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
   let charged = 0
   if (CREDITS_ENABLED) {
     const m = await meterAI(userId, CREDIT_COSTS.stems, 'stem separation')
-    if (!m.ok) return Response.json({ error: 'Not enough credits.', needCredits: true, balance: m.balance }, { status: 402 })
+    if (!m.ok) return Response.json({ error: `Out of ${LUMENS_NAME}.`, needCredits: true, balance: m.balance }, { status: 402 })
     if (!m.usedFree) charged = CREDIT_COSTS.stems
   }
   const refundOnFail = async () => { if (charged) await grantCredits(userId, charged, 'refund: stem separation failed') }

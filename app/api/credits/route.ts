@@ -1,5 +1,16 @@
 import { auth } from '@clerk/nextjs/server'
 import { getCredits, CREDITS_ENABLED, FREE_TRANSCRIBE_SECONDS } from '@/lib/credits'
+import { isAdmin } from '@/lib/admin-auth'
+
+/** The host and database name the server is actually connected to — never the
+ *  credentials. Parsed defensively: a malformed URL must not take the route
+ *  down, since this is a diagnostic hanging off a page people use. */
+function dbHost(): string {
+  try {
+    const u = new URL(process.env.DATABASE_URL ?? '')
+    return u.hostname + u.pathname
+  } catch { return '(unset or unparseable)' }
+}
 
 // Current AI-credit balance for the signed-in user (shared across every 100Lights app).
 // Fails soft to zeros so the UI never crashes. Mirrors app/api/billing/info + app/api/usage.
@@ -27,5 +38,17 @@ export async function GET() {
     // without anybody having to read a database.
     ok: c.ok,
     userId,
+    // ── Which database is this answer coming from? ────────────────────────
+    //
+    // The one question left after "is it the right account". A balance granted
+    // in one database and read from another is invisible from both ends: the
+    // grant succeeds, the read succeeds, and they disagree. Vercel's API
+    // returns the value encrypted, so it could not be compared from outside —
+    // this asks the running server instead, which is the only place that knows.
+    //
+    // HOST AND DATABASE NAME ONLY, and only for an admin. Enough to compare
+    // against the connection a grant was made on; nothing that could be used to
+    // connect.
+    ...(await isAdmin() ? { db: dbHost() } : {}),
   })
 }

@@ -6,6 +6,7 @@
 // theme-aware, floating panel.
 import { useRef, useState, useEffect } from 'react'
 import { Sparkles, X, Send, Loader2 } from 'lucide-react'
+import { LUMENS_NAME } from '@/lib/credit-tiers'
 
 export interface AssistAction { name: string; input: Record<string, unknown> }
 type Msg = { role: 'user' | 'assistant'; content: string }
@@ -39,7 +40,7 @@ export default function AiAssistant({ module, stateSummary, execute, onClose }: 
       const r = await fetch('/api/ai/assist', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: next, module, stateSummary: stateSummary() }) })
       if (!r.ok) {
         const e = await r.json().catch(() => ({} as { error?: string; needCredits?: boolean }))
-        setErr(e.needCredits ? 'Out of AI credits — top up to continue.' : (e.error || `Error ${r.status}`))
+        setErr(e.needCredits ? `Out of ${LUMENS_NAME} — top up to continue.` : (e.error || `Error ${r.status}`))
         setBusy(false); return
       }
       const data = await r.json() as { message?: string; actions?: AssistAction[] }

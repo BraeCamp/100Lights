@@ -1,7 +1,9 @@
 import { testUserId } from '@/lib/api-user'
 import { auth } from '@clerk/nextjs/server'
 import { CREDITS_ENABLED, CREDIT_COSTS, getCredits, spendCredits } from '@/lib/credits'
-import { aiCreditsForTokens } from '@/lib/credit-tiers'
+import { aiCreditsForTokens, LUMENS_NAME } from '@/lib/credit-tiers'
+import { getSubscription } from '@/lib/subscription'
+import { isPaid, type Plan } from '@/lib/entitlements'
 import { recordUsage } from '@/lib/api-usage'
 import { runAssist, AI_ASSIST_MODEL, type AssistMessage } from '@/lib/ai-assist'
 
@@ -39,7 +41,36 @@ export async function POST(req: Request) {
     // on an account we could not check, against locking somebody out of a
     // feature they have paid for because a query timed out.
     if (ok && balance < CREDIT_COSTS.aiAssist) {
-      return Response.json({ error: 'Not enough credits for the AI assistant. Top up or upgrade to keep going.', needCredits: true, balance }, { status: 402 })
+      // ── A paying account reading zero is a fault, not a bill ────────────
+      //
+      // Brae, on Max with 1,250,000 Lumens in the table: "It still says that
+      // I'm out of AI credits."
+      //
+      // A subscriber's balance being zero is not the ordinary end of a
+      // spending account — it means the row is missing, or unreachable, or on
+      // an account other than the one signed in. Every one of those is our
+      // problem, and every one of them presents to the person as being told
+      // they have run out of something they just paid for.
+      //
+      // So the plan is checked before refusing. Somebody on a paid plan is let
+      // through: the turn is billed afterwards like any other, so the exposure
+      // is one assistant turn against locking a paying customer out of the
+      // feature they are paying for. Only a genuinely free account with a
+      // genuinely empty balance is refused, which is the case the gate was
+      // written for.
+      const sub = await getSubscription(userId).catch(() => null)
+      const paid = sub ? isPaid(sub.plan as Plan) : false
+      if (!paid) {
+        return Response.json({
+          error: `Out of ${LUMENS_NAME}. Top up or upgrade to keep going.`,
+          needCredits: true,
+          balance,
+        }, { status: 402 })
+      }
+      console.warn(
+        `[assist] ${userId} is on ${sub?.plan} but reads ${balance} ${LUMENS_NAME} — `
+        + 'letting the turn through; the credit row is missing or on another account.',
+      )
     }
   }
 

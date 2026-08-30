@@ -52,6 +52,7 @@ import {
   CALIBRATION_PHRASE, phraseAccuracy, verdictFor, type CalibrationResult,
 } from '@/lib/voice/calibrate'
 import VoicePanel from './VoicePanel'
+import { LUMENS_NAME } from '@/lib/credit-tiers'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
   studioVoice, setStudioVoice,
@@ -832,7 +833,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // way, so this is a partial loss, not a dead feature.
         const signedOut = res.status === 401 || res.status === 404
         setProblem(
-          e.needCredits ? 'Out of AI credits.'
+          e.needCredits ? `Out of ${LUMENS_NAME}.`
             : signedOut ? 'Sign in to use the assistant. Simple commands still work without it.'
               : (e.error || `Couldn't reach the assistant (${res.status}).`))
         markFailed(e.error || `http ${res.status}`)
@@ -1718,7 +1719,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             </button>
           </div>
           <div style={{ color: C.textMuted, fontSize: 10, marginTop: 6 }}>
-            Uses AI credits. Fix the words above and press Enter to try again for free.
+            Uses {LUMENS_NAME}. Fix the words above and press Enter to try again for free.
           </div>
         </div>
       )}
