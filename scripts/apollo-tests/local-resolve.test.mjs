@@ -84,12 +84,36 @@ check('"play the bass louder" is not the transport command',
 
 check('an empty utterance resolves to nothing', r('').calls.length === 0)
 
-// ── Both signals gate execution ─────────────────────────────────────────────
+// ── How sure the transcriber must be depends on what matched ───────────────
+//
+// Brae, after saying "start" and being told the AI was out of credits: "it
+// should be a non-AI response — it should have high confidence after running
+// through the existing program that it already knows the command."
+//
+// A transcriber rates SHORT utterances low as a matter of course: "start" is one
+// syllable with no context to check itself against. A flat threshold on that
+// number therefore sends the simplest and most-used commands in the studio to a
+// model — the exact opposite of the point.
 const good = r('play')
 check('a confident rule on well-heard speech runs locally',
   confidentEnough(good, 0.95) === true)
-check('the same rule on badly-heard speech goes to the assistant',
-  confidentEnough(good, 0.4) === false)
+check('"start" runs locally even when the transcriber is unsure of one syllable',
+  confidentEnough(r('start'), 0.45) === true)
+check('and so does "stop"', confidentEnough(r('stop'), 0.4) === true)
+check('a fixed-vocabulary match is not gated on hearing confidence alone',
+  r('play').needsName === false)
+
+// A NAME is the opposite case: only as good as the word it was given, and
+// muting the wrong track is quiet and easy to miss.
+check('a name-dependent rule DOES want the words to be trusted',
+  r('mute the pad').needsName === true)
+check('and goes to the assistant when they are not',
+  confidentEnough(r('mute the pad'), 0.4) === false)
+check('but runs locally when they are',
+  confidentEnough(r('mute the pad'), 0.85) === true)
+
+check('garbled speech on a fixed command is still refused below the floor',
+  confidentEnough(good, 0.15) === false)
 check('nothing resolved never runs locally, however well heard',
   confidentEnough(r('make it bigger'), 1) === false)
 

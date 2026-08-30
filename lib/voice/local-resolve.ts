@@ -33,9 +33,18 @@ export interface LocalResult {
   confidence: number
   /** Which rule fired, for the log and for knowing what to promote next. */
   matched: string
+  /**
+   * Did this depend on resolving a spoken TRACK NAME?
+   *
+   * The distinction decides how much the transcriber's own confidence matters.
+   * A rule that matched the whole utterance against a fixed vocabulary carries
+   * its own proof; one that had to find "the pad" among the project's tracks
+   * is only as good as the words it was given.
+   */
+  needsName: boolean
 }
 
-const NOTHING: LocalResult = { calls: [], confidence: 0, matched: 'none' }
+const NOTHING: LocalResult = { calls: [], confidence: 0, matched: 'none', needsName: false }
 
 /** Lower-case, collapse whitespace, drop trailing punctuation. */
 const norm = (s: string): string =>
@@ -68,16 +77,16 @@ export function resolveLocally(sentence: string, ctx: ResolveContext): LocalResu
   // The most-said commands in the studio, and the least ambiguous. Anchored to
   // the whole utterance: "play" is transport, "play the bass louder" is not.
   if (/^(play|start|go)$/.test(t) || /^(start|hit) (playing|playback)$/.test(t)) {
-    return { calls: [{ name: 'transport', input: { action: 'play' } }], confidence: 0.97, matched: 'transport.play' }
+    return { calls: [{ name: 'transport', input: { action: 'play' } }], confidence: 0.97, matched: 'transport.play', needsName: false }
   }
   if (/^(stop|pause|halt)( it| playing| playback)?$/.test(t)) {
     return {
       calls: [{ name: 'transport', input: { action: t.startsWith('pause') ? 'pause' : 'stop' } }],
-      confidence: 0.97, matched: 'transport.stop',
+      confidence: 0.97, matched: 'transport.stop', needsName: false,
     }
   }
   if (/^(restart|start over|from the top|back to the (start|beginning))$/.test(t)) {
-    return { calls: [{ name: 'transport', input: { action: 'restart' } }], confidence: 0.95, matched: 'transport.restart' }
+    return { calls: [{ name: 'transport', input: { action: 'restart' } }], confidence: 0.95, matched: 'transport.restart', needsName: false }
   }
 
   // "go to bar 9" — a locate, with the bar spelled out or spoken.
@@ -87,7 +96,7 @@ export function resolveLocally(sentence: string, ctx: ResolveContext): LocalResu
     if (bar && bar > 0) {
       return {
         calls: [{ name: 'transport', input: { action: 'locate', at: { bar } } }],
-        confidence: 0.9, matched: 'transport.locate',
+        confidence: 0.9, matched: 'transport.locate', needsName: false,
       }
     }
   }
@@ -101,7 +110,7 @@ export function resolveLocally(sentence: string, ctx: ResolveContext): LocalResu
     const bpm = m && num(m[1])
     // A plausible musical tempo. 3 or 900 is a misheard word, not a request.
     if (bpm && bpm >= 20 && bpm <= 300) {
-      return { calls: [{ name: 'set_tempo', input: { bpm } }], confidence: 0.92, matched: 'set_tempo' }
+      return { calls: [{ name: 'set_tempo', input: { bpm } }], confidence: 0.92, matched: 'set_tempo', needsName: false }
     }
   }
 
@@ -112,14 +121,14 @@ export function resolveLocally(sentence: string, ctx: ResolveContext): LocalResu
     if (a && b && b > a) {
       return {
         calls: [{ name: 'set_loop_region', input: { start: { bar: a }, end: { bar: b } } }],
-        confidence: 0.9, matched: 'set_loop_region',
+        confidence: 0.9, matched: 'set_loop_region', needsName: false,
       }
     }
   }
   if (/^(turn )?loop(ing)? (on|off)$/.test(t)) {
     return {
       calls: [{ name: 'set_loop_region', input: { enabled: /on$/.test(t) } }],
-      confidence: 0.94, matched: 'set_loop_enabled',
+      confidence: 0.94, matched: 'set_loop_enabled', needsName: false,
     }
   }
 
@@ -145,6 +154,7 @@ export function resolveLocally(sentence: string, ctx: ResolveContext): LocalResu
           // match's own score is folded in rather than asserted over.
           confidence: Math.min(0.93, 0.6 + hit.score * 0.35),
           matched: `set_track.${verb}`,
+          needsName: true,
         }
       }
     }
@@ -163,6 +173,7 @@ export function resolveLocally(sentence: string, ctx: ResolveContext): LocalResu
           calls: [{ name: 'set_track', input: { target: { name: hit.item.name }, volume: v } }],
           confidence: Math.min(0.9, 0.55 + hit.score * 0.35),
           matched: 'set_track.volume',
+          needsName: true,
         }
       }
     }
@@ -179,5 +190,31 @@ export function resolveLocally(sentence: string, ctx: ResolveContext): LocalResu
  * to spend the round trip — a wrong edit costs far more than a slow one.
  */
 export function confidentEnough(local: LocalResult, heardConfidence: number): boolean {
-  return local.calls.length > 0 && local.confidence >= 0.85 && heardConfidence >= 0.75
+  if (!local.calls.length || local.confidence < 0.85) return false
+
+  // ── How sure the transcriber needs to be depends on what matched ──────────
+  //
+  // Brae, after saying "start" and being told the AI was out of credits: "it
+  // should be a non-AI response — it should have high confidence after running
+  // through the existing program that it already knows the command."
+  //
+  // He is right, and the first version got this wrong by treating both signals
+  // as one flat AND. A transcriber reports LOW confidence on short utterances
+  // as a matter of course — "start" is one syllable with no context to check
+  // itself against, and Deepgram routinely rates it below 0.75 — so a single
+  // hard threshold sent the simplest, most-used commands in the studio to a
+  // model, which is the exact opposite of the intent.
+  //
+  // The insight is that an exact match against a FIXED vocabulary carries its
+  // own proof. "start" is not a word the resolver half-recognised; it is the
+  // whole utterance, matched completely, against a list of a dozen commands.
+  // For a mishearing to produce it, the speaker would have had to say something
+  // that lands exactly on another known command — and the cost of that is a
+  // transport button pressed, which is instantly obvious and instantly undone.
+  //
+  // A NAME is the opposite case. "mute the pad" is only as good as the word
+  // "pad", the project has a dozen candidates, and muting the wrong track is
+  // quiet and easy to miss. That one still wants the transcriber to be sure.
+  const needed = local.needsName ? 0.6 : 0.3
+  return heardConfidence >= needed
 }
