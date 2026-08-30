@@ -24,6 +24,7 @@ import { importTs } from '../lib/ts-import.mjs'
 const {
   newVad, vadStep, RATIO_QUIET, RATIO_OVER_MUSIC, CALIBRATION_SAMPLES,
   CONTINUOUS_STRICTNESS, MIN_SPEECH_MS_CONTINUOUS, SUSTAINED_MS, RELEASE_HOLD_MS,
+  worthSending, SEND_MARGIN,
 } = await importTs('lib/voice/vad.ts')
 
 let failures = 0
@@ -136,6 +137,69 @@ const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
     `spoke ${lateRun.speakingMs}ms, floor ${lateRun.floor.toFixed(4)}`)
   check('and the floor is still the room, not the word',
     lateRun.floor < REAL_ROOM * 1.5, lateRun.floor.toFixed(4))
+}
+
+// ── "check check" works, "start" does not ───────────────────────────────────
+//
+// Brae, after three rounds of lowering the bar: "It works for hard letters like
+// 'check check', but not 'start'." Then: "I think we need to remove the volume
+// gate and try it."
+//
+// That is the shape of the whole bug, and it is not really about the bar's
+// height. "Check" is two hard transients that spike over any bar. "Start" opens
+// on a sibilant and closes on a softer t — it never spikes, and no reachable
+// threshold catches it without also catching the room.
+//
+// What made that fatal was not the detector failing to recognise the word. It
+// was that failing to recognise it meant the audio was never SENT: the take is
+// only cut once speech has been detected, so an unrecognised word sat in the
+// buffer until the idle reset threw it away. A speech recogniser was waiting on
+// the other end of the wire and never got to hear it.
+//
+// So there are two halves here: the bar is now low enough to catch a soft word,
+// AND the bar no longer decides what reaches the recogniser.
+{
+  const REAL_ROOM = 0.02
+  // "check check": two hard transients.
+  const hard = [
+    ...rep(CALIBRATION_SAMPLES, REAL_ROOM),
+    0.14, 0.06, 0.03, 0.13, 0.055, 0.03,
+    ...rep(80, REAL_ROOM),
+  ]
+  // "start": a sibilant onset, a vowel, and a soft stop. Never far above the
+  // room, and audibly a word to any person in the building.
+  const soft = [
+    ...rep(CALIBRATION_SAMPLES, REAL_ROOM),
+    0.042, 0.050, 0.046, 0.038, 0.030, 0.026,
+    ...rep(80, REAL_ROOM),
+  ]
+
+  check('a hard-consonant word is heard, as it always was',
+    run(hard, { continuous: true }).everSpoke)
+  // The bar he could not clear. With the ratios lowered it is now reachable by
+  // an ordinary word that never spikes — this is the "make it more sensitive"
+  // half, and it is worth an assertion because the previous two attempts each
+  // moved it and each left this case failing.
+  const softRun = run(soft, { continuous: true })
+  check('and a soft-onset word is heard too, which is the whole complaint',
+    softRun.everSpoke, `bar ${softRun.thresholds.at(-1).toFixed(4)}, word peaked at 0.050`)
+  check('and its take ends, so it is actually sent',
+    softRun.endedAt !== null, String(softRun.endedAt))
+
+  // The half that matters most, and the one the previous three attempts all
+  // missed: a clip reaches the recogniser on ENERGY, not on this file's opinion
+  // of whether there were words in it.
+  const room = 0.02
+  check('a word this file did not recognise is still sent',
+    worthSending(0.05, room, false), 'peaked at 0.05 over a 0.02 room')
+  check('and one it did recognise, obviously',
+    worthSending(0.0, room, true))
+  check('but an untouched room is not',
+    !worthSending(room * 1.05, room, false), `${SEND_MARGIN}x required`)
+  check('nor is silence',
+    !worthSending(0, room, false))
+  check('and a room of literally nothing cannot divide by itself',
+    !worthSending(0, 0, false))
 }
 
 // ── Once you are talking, stop measuring ────────────────────────────────────

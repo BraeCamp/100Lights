@@ -33,7 +33,7 @@
 // route): in a noisy room the decision between "mute" and "moot" is much easier
 // when the likely words are known.
 
-import { newVad, vadStep } from './vad'
+import { newVad, vadStep, worthSending } from './vad'
 
 const PREFER_KEY = 'beacon.voice.transcriber'
 
@@ -364,6 +364,17 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
 
   let vad = newVad()
   let heardSpeech = false
+  /**
+   * The loudest sample in this segment.
+   *
+   * Kept so that whether audio is SENT can be decided separately from whether
+   * the detector recognised it as speech. Those had been the same question, and
+   * they are not: the detector is an RMS threshold, and the thing on the other
+   * end of the wire is a speech recogniser. Deciding on this side that there
+   * were no words in a recording — and throwing it away unheard — is the one
+   * job we are least equipped to do.
+   */
+  let peakSeen = 0
   let watcher: ReturnType<typeof setInterval> | null = null
   const startedAt = Date.now()
   let autoStop: (() => void) | null = null
@@ -385,6 +396,7 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
       // Reported on the same scale as the level, so the meter can draw one
       // against the other.
       o.onLevel?.(Math.min(1, rms * 8), Math.min(1, step.threshold * 8))
+      if (rms > peakSeen) peakSeen = rms
       if (step.speaking && !heardSpeech) { heardSpeech = true; o.onSpeechStart?.() }
       if (step.ended) {
         // Finished talking. Ending here rather than on release keeps the
@@ -413,7 +425,26 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
         // a word that has not yet cleared the bar, and restarting here would cut
         // its beginning off.
         if (!heardSpeech && !vad.activeSince && now - segmentStartedAt > IDLE_RESET_MS) {
-          restartSegment()
+          // ── The other half of the volume gate ─────────────────────────────
+          //
+          // Brae: "I think we need to remove the volume gate and try it." And,
+          // exactly: "It works for hard letters like 'check check', but not
+          // 'start'."
+          //
+          // That is the shape of the whole bug. "Check" is two hard transients
+          // that spike well over any bar; "start" opens on a sibilant and
+          // closes on a softer t, and never spikes at all. The word was
+          // recorded perfectly both times — and when the detector did not
+          // recognise it, the take was never CUT, so it was never sent, so it
+          // reached the idle reset and was thrown away unheard.
+          //
+          // Removing the veto on sending was not enough on its own, because
+          // this is where audio the detector does not recognise actually dies.
+          // So: if anything at all rose above the room, cut and send it. The
+          // recogniser gets to decide whether there were words in it, which is
+          // its job and not ours.
+          if (worthSending(peakSeen, vad.floor)) void cutUtterance()
+          else restartSegment()
         }
         return
       }
@@ -430,6 +461,7 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
     chunks = []
     vad = newVad()
     heardSpeech = false
+    peakSeen = 0
     segmentStartedAt = Date.now()
     try {
       rec = new MediaRecorder(processed, mimeType ? { mimeType } : undefined)
@@ -449,7 +481,9 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
    */
   async function cutUtterance(): Promise<void> {
     const finished = chunks
-    const hadSpeech = heardSpeech
+    // Anything that rose above the room at all is worth sending, whether or not
+    // the detector called it speech.
+    const hadSpeech = worthSending(peakSeen, vad.floor, heardSpeech)
     const type = mimeType || 'audio/webm'
     await new Promise<void>(resolve => {
       rec.onstop = () => resolve()
@@ -458,6 +492,9 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
     chunks = []
     vad = newVad()
     heardSpeech = false
+    const wasPeak = peakSeen
+    peakSeen = 0
+    void wasPeak
     segmentStartedAt = Date.now()
     try {
       rec = new MediaRecorder(processed, mimeType ? { mimeType } : undefined)
@@ -465,6 +502,21 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
       rec.start()
     } catch { /* cannot continue; the caller's stop() will notice */ }
 
+    // ── The detector does not get a veto ────────────────────────────────
+    //
+    // Brae, three rounds into this: "I calibrated and it still can't hear me."
+    // The key was valid, the endpoint was answering, and the audio never left
+    // the browser — because this line asked an RMS threshold whether there were
+    // any words in the recording, and threw the recording away when it said no.
+    //
+    // That is the one judgement we are worst placed to make. On the other end of
+    // the wire is a speech recogniser; on this end is a number compared against
+    // a moving average. The detector's real job is deciding WHEN to cut, and it
+    // is good at that. Whether a clip contains words is not its business.
+    //
+    // So the bar for sending is now "did anything at all rise above the room",
+    // and being wrong costs one transcription that comes back empty — against
+    // the alternative, which is somebody saying "play" nine times.
     if (!hadSpeech && !o.playing) return
     const blob = new Blob(finished, { type })
     if (blob.size < 1200) return
@@ -538,7 +590,12 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
         // did not hear me" into a confident refusal to even look — so when
         // there is music in the room the clip goes to the transcriber and the
         // transcriber decides.
-        if (analyser && !heardSpeech && !o.playing) { resolve({ ok: true, result: null }); return }
+        // Same rule as the continuous path: rose above the room at all, send
+        // it. Somebody who held the button down and spoke has already told us
+        // there is something here, which is better evidence than the meter.
+        if (analyser && !worthSending(peakSeen, vad.floor, heardSpeech) && !o.playing) {
+          resolve({ ok: true, result: null }); return
+        }
         resolve(await transcribe(blob))
       }
       try { rec.stop() } catch { release(); resolve({ ok: false, error: 'Recording stopped unexpectedly.' }) }

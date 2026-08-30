@@ -21,7 +21,9 @@
 import { importTs } from './lib/ts-import.mjs'
 
 const { sensitivityFor, AIM, SENSITIVITY_MIN, SENSITIVITY_MAX } = await importTs('lib/voice/calibrate.ts')
-const { RATIO_QUIET, CONTINUOUS_STRICTNESS, MIN_SPEECH_LEVEL } = await importTs('lib/voice/vad.ts')
+const {
+  RATIO_QUIET, CONTINUOUS_STRICTNESS, MIN_SPEECH_LEVEL, MIN_TRIGGER_MARGIN,
+} = await importTs('lib/voice/vad.ts')
 
 let failures = 0
 const check = (name, ok, detail = '') => {
@@ -32,6 +34,7 @@ const check = (name, ok, detail = '') => {
 /** The bar the detector will actually use, given a calibrated sensitivity. */
 const barFor = (floor, sensitivity) => Math.max(
   MIN_SPEECH_LEVEL,
+  floor * MIN_TRIGGER_MARGIN,
   floor * (1 + (RATIO_QUIET - 1) * CONTINUOUS_STRICTNESS * sensitivity),
 )
 
@@ -64,9 +67,14 @@ check('a quieter room gets a stricter number than a noisy one', quiet > noisy,
 check('and neither is one of the four presets by accident',
   ![0.7, 1, 1.5, 2.2].includes(quiet) || ![0.7, 1, 1.5, 2.2].includes(noisy),
   `${quiet}, ${noisy}`)
-check('the bar sits about a third of the way up, as claimed',
-  Math.abs((barFor(0.02, sensitivityFor(0.02, 0.11)) - 0.02) / (0.11 - 0.02) - AIM) < 0.02,
+check('the bar sits where AIM says, in a room that leaves room for it',
+  Math.abs((barFor(0.02, sensitivityFor(0.02, 0.11)) - 0.02) / (0.11 - 0.02) - AIM) < 0.03,
   `aim ${AIM}`)
+// And in a noisy room the margin wins, which is the point of having it: a bar a
+// few percent over the room is crossed by the room.
+check('a noisy room still keeps the bar clear of its own tone',
+  barFor(0.035, sensitivityFor(0.035, 0.13)) >= 0.035 * MIN_TRIGGER_MARGIN - 1e-9,
+  `${barFor(0.035, sensitivityFor(0.035, 0.13)).toFixed(4)} over 0.035`)
 
 console.log('\nNONSENSE IN, SOMETHING SAFE OUT')
 check('no measurement at all falls back to the standing setting',

@@ -140,12 +140,23 @@ export const CALIBRATION_SAMPLES = 10
 /**
  * How far above the floor a sample has to sit to count as speech.
  *
+ * Brae: "Make it more sensitive." Three rounds of this, so the numbers moved
+ * properly rather than by a notch: 1.7x the room in a quiet one (was 2.5), and
+ * 1.2x rather than 1.6x on top of that when the microphone is held open.
+ *
+ * The reason it can afford to be this low now is everything else that changed
+ * around it. The bar only has to catch a word's ONSET, because the latch holds
+ * the take open through the rest of it. And it no longer decides whether audio
+ * is SENT — anything above the room goes to the recogniser regardless — so the
+ * cost of the bar being wrong has gone from "the command is lost" to "the take
+ * is cut a moment late".
+ *
  * In a quiet room the floor is hiss and a large multiple is safe and correct.
  * Over a mix the floor is the music, and speech ADDS to it rather than
  * multiplying it — a person talking over their own playback raises the meter by
  * something like a quarter, not by a factor of two and a half.
  */
-export const RATIO_QUIET = 2.5
+export const RATIO_QUIET = 1.7
 export const RATIO_OVER_MUSIC = 1.3
 
 /**
@@ -155,7 +166,7 @@ export const RATIO_OVER_MUSIC = 1.3
  * less sensitive in a quiet room AND over music, without either case having to
  * know about the other.
  */
-export const CONTINUOUS_STRICTNESS = 1.6
+export const CONTINUOUS_STRICTNESS = 1.2
 
 /**
  * How long a rise has to hold before it is somebody talking.
@@ -192,9 +203,69 @@ export const MIN_SPEECH_MS_CONTINUOUS = 150
  */
 const DIP_GRACE_MS = 200
 
-/** Below this, nothing counts as speech however quiet the room is — otherwise a
- *  silent room triggers on its own noise floor. */
-export const MIN_SPEECH_LEVEL = 0.012
+/**
+ * Below this, nothing counts as speech however quiet the room is — otherwise a
+ * silent room triggers on its own noise floor.
+ *
+ * 0.004, not 0.012. It is a HARD floor that no amount of calibration can get
+ * under, and at 0.012 it was the binding constraint on a quiet input: somebody
+ * whose microphone runs at a low gain could calibrate all day and never move
+ * the bar, because the bar was not being set by the calibration at all. The
+ * measured floor is a far better guard than a constant, and it is what does the
+ * work now; this is only here to stop a truly silent room dividing by its own
+ * hiss.
+ */
+export const MIN_SPEECH_LEVEL = 0.004
+
+/**
+ * The bar never sits closer to the room than this multiple of it.
+ *
+ * With the ratios lowered and calibration aiming just above the floor, a noisy
+ * room could otherwise put the bar within a few percent of its own tone — and
+ * then the room crosses it constantly. That costs less than it used to, since a
+ * take no longer has to be recognised as speech to be sent, but "costs less"
+ * is not "is free": every false crossing is a clip transcribed to be told there
+ * were no words in it.
+ *
+ * A quarter above the room is the least that still means anything.
+ */
+export const MIN_TRIGGER_MARGIN = 1.25
+
+/**
+ * How far above the room something has to rise before the clip is worth sending.
+ *
+ * A quarter — the same margin, for a different question. Deliberately far below
+ * anything this file would call speech: it is not "was that a word", it is "did
+ * anything happen at all", and the only thing it exists to exclude is a
+ * recording of an untouched room.
+ */
+export const SEND_MARGIN = 1.25
+
+/**
+ * Should this clip go to the recogniser?
+ *
+ * Brae: "It works for hard letters like 'check check', but not 'start'... I
+ * think we need to remove the volume gate and try it."
+ *
+ * He was right, and this is the line that mattered. Whether audio was SENT used
+ * to be the same question as whether this file recognised speech in it — and
+ * those are not the same question at all. On the other end of the wire is a
+ * speech recogniser; on this end is a number compared against a moving average.
+ * Deciding here that a recording contains no words, and discarding it unheard,
+ * is the one judgement we are worst equipped to make.
+ *
+ * "Check" is two hard transients and clears any bar. "Start" opens on a
+ * sibilant and closes on a soft t, never spikes, and was thrown away — a word
+ * the microphone had captured perfectly and a recogniser would have read
+ * instantly.
+ *
+ * So the detector keeps the job it is good at, deciding WHEN to cut, and loses
+ * the veto. Being wrong now costs one transcription that comes back empty.
+ */
+export function worthSending(peak: number, floor: number, heardSpeech = false): boolean {
+  if (heardSpeech) return true
+  return peak > Math.max(floor, 0) * SEND_MARGIN && peak > 0
+}
 
 /**
  * Where the gate closes, as a fraction of the way from the floor to the bar it
@@ -353,7 +424,11 @@ export function vadStep(
   const ratio = opts.playing ? RATIO_OVER_MUSIC : RATIO_QUIET
   const strictness = (opts.continuous ? CONTINUOUS_STRICTNESS : 1)
     * (opts.sensitivity && opts.sensitivity > 0 ? opts.sensitivity : 1)
-  const threshold = Math.max(MIN_SPEECH_LEVEL, state.floor * (1 + (ratio - 1) * strictness))
+  const threshold = Math.max(
+    MIN_SPEECH_LEVEL,
+    state.floor * MIN_TRIGGER_MARGIN,
+    state.floor * (1 + (ratio - 1) * strictness),
+  )
 
   // ── Two bars, because it is a gate ───────────────────────────────────────
   //

@@ -31,6 +31,8 @@
 
 /** What somebody is asked to say. Chosen to contain the words that go wrong:
  *  the studio's name, a swept filter, and a track-shaped noun. */
+import { RATIO_QUIET, CONTINUOUS_STRICTNESS } from './vad'
+
 export const CALIBRATION_PHRASE = 'Light, add a descending low pass filter to the pad'
 
 export interface CalibrationResult {
@@ -82,17 +84,24 @@ export function phraseAccuracy(asked: string, heard: string): number {
 /**
  * Where to put the bar, as a fraction of the way from this room to this voice.
  *
- * A third. Low enough that the ONSET of an ordinary word clears it comfortably,
- * which is all the bar has to catch now — once a word has started, the latch
- * holds the take open on much less, so the bar no longer has to sit under the
- * quietest part of somebody's speech. High enough that room tone, which lives
- * near the floor, does not reach it.
+ * A seventh, having been a third. Brae: "make calibration make it more
+ * sensitive than it does."
+ *
+ * A third was chosen to clear a word's onset comfortably, and "comfortably" was
+ * the mistake: it is aiming for the middle of a person's dynamic range when it
+ * should be aiming just above the room. "Check" opens on a hard transient and
+ * clears any bar; "start" opens on a sibilant and closes on a soft t, and never
+ * goes near one. Aiming for the average word loses every quiet one.
+ *
+ * It can sit this low because being wrong is cheap now: the bar no longer
+ * decides whether audio reaches the recogniser, only when the take is cut. The
+ * worst case is a clip that comes back empty.
  */
-export const AIM = 0.35
+export const AIM = 0.15
 
 /** The clamp. Outside this the answer is not a sensitivity setting, it is a
  *  room or a microphone problem, and the verdict says so in words. */
-export const SENSITIVITY_MIN = 0.25
+export const SENSITIVITY_MIN = 0.1
 export const SENSITIVITY_MAX = 4
 
 /**
@@ -121,8 +130,14 @@ export const SENSITIVITY_MAX = 4
 export function sensitivityFor(floor: number, peak: number, opts: {
   ratio?: number; continuousStrictness?: number
 } = {}): number {
-  const ratio = opts.ratio ?? 2.5                 // RATIO_QUIET
-  const strict = opts.continuousStrictness ?? 1.6 // CONTINUOUS_STRICTNESS
+  // Imported, not restated. The first version wrote 2.5 and 1.6 here as its own
+  // defaults, and they were correct for exactly as long as nobody changed the
+  // detector — which happened the same afternoon. Two copies of one number are
+  // two numbers, and the failure is silent: calibration goes on solving an
+  // equation the detector has stopped using, so the bar lands somewhere nobody
+  // chose.
+  const ratio = opts.ratio ?? RATIO_QUIET
+  const strict = opts.continuousStrictness ?? CONTINUOUS_STRICTNESS
   if (!(floor > 0) || !(peak > floor)) return 1
   const want = AIM * (peak - floor)
   const per = floor * (ratio - 1) * strict
