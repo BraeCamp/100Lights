@@ -497,6 +497,71 @@ await say('mark bar 3 as the chorus')
   await say('unmute this')
 }
 
+// ── Collecting, and nothing happening until it is asked for ────────────────
+{
+  await page.evaluate(p => window.__dawDispatch({ type: 'LOAD_PROJECT', project: p }), {
+    ...PROJECT,
+    id: 'queue', name: 'Queue',
+    tracks: [track('t1', 'Bass 2'), track('t2', 'Pad'), track('t3', 'Drums')],
+    arrangementClips: [],
+  })
+  await page.waitForTimeout(1200)
+
+  await say('start collecting')
+  const before = await state()
+  await say('mute the drums')
+  await say('set the tempo to 96')
+  {
+    const now = await state()
+    check('a collected command does NOT happen yet',
+      trackNamed(now, 'Drums')?.mute === false && now.tempo === before.tempo,
+      `drums muted=${trackNamed(now, 'Drums')?.mute} tempo=${now.tempo}`)
+  }
+
+  // The window opens by itself when the microphone goes live; this test types,
+  // so it is opened by hand.
+  const panel = page.locator('[data-voice-panel]')
+  if (!(await panel.count())) {
+    await page.locator('button[aria-label="Voice settings"]').click()
+    await page.waitForTimeout(600)
+    await panel.getByText('Conversation', { exact: false }).click()
+    await page.waitForTimeout(300)
+  }
+  check('and the list is shown', /2 CHANGES READY/i.test(await panel.innerText()),
+    (await panel.innerText()).slice(0, 90))
+
+  await say('read them back')
+  check('it can say the list back',
+    /Drums: muted/i.test(await panel.innerText()), (await panel.innerText()).slice(0, 140))
+
+  await say('execute')
+  await page.waitForTimeout(900)
+  {
+    const now = await state()
+    check('"execute" carries them all out',
+      trackNamed(now, 'Drums')?.mute === true && now.tempo === 96,
+      `drums muted=${trackNamed(now, 'Drums')?.mute} tempo=${now.tempo}`)
+    check('and the list is empty afterwards',
+      !/CHANGES READY/i.test(await panel.innerText()))
+  }
+
+  await say('stop collecting')
+  await say('unmute the drums')
+  check('and afterwards commands happen immediately again',
+    trackNamed(await state(), 'Drums')?.mute === false)
+}
+
+// ── Several commands in one breath ─────────────────────────────────────────
+{
+  const before = await state()
+  await say('solo the pad set the tempo to 132')
+  const now = await state()
+  check('one sentence, two commands',
+    trackNamed(now, 'Pad')?.solo === true && now.tempo === 132,
+    `pad soloed=${trackNamed(now, 'Pad')?.solo} tempo=${before.tempo} → ${now.tempo}`)
+  await say('unsolo the pad')
+}
+
 // ── And none of it cost anything ───────────────────────────────────────────
 check('not one command reached the assistant', assistCalls === 0, `${assistCalls} calls`)
 

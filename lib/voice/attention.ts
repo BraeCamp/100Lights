@@ -47,10 +47,15 @@ export const WAKE_WORDS = ['light', 'lights', 'beacon', 'lite'] as const
  *
  * Long enough to give three or four commands in a row without repeating
  * yourself, short enough that a session left running does not stay armed while
- * the room fills up with a conversation. It restarts on every accepted command,
- * so a working session never goes dormant underneath you.
+ * the room fills up with a conversation. It restarts on every utterance the
+ * studio UNDERSTANDS — including one it only queued or had a question about —
+ * so a working session never goes dormant underneath somebody.
+ *
+ * Raised from 25 seconds after Brae reported having to say the name before
+ * everything: a window is a guess about how long a person pauses while
+ * thinking, and twenty-five seconds was too short a guess.
  */
-export const ATTENTION_MS = 25_000
+export const ATTENTION_MS = 45_000
 
 /**
  * How sure the transcriber must be before a DORMANT session will believe it was

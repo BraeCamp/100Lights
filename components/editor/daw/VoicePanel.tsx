@@ -18,7 +18,7 @@
 // on it is exactly what you want to do while you are learning to trust it.
 
 import React, { useEffect, useRef } from 'react'
-import { X, Mic, Settings2, Maximize2 } from 'lucide-react'
+import { X, Mic, Maximize2, ListChecks } from 'lucide-react'
 import { commandHelp } from '@/lib/voice/interpret'
 import { WAKE_WORDS } from '@/lib/voice/attention'
 
@@ -74,6 +74,19 @@ export interface VoicePanelProps {
   threshold?: number
   sensitivity: number
   onSensitivity: (v: number) => void
+  /**
+   * Commands said but not yet carried out.
+   *
+   * Shown because the point of collecting is being able to CHECK before
+   * committing, and a list you can only hear is a list you cannot check at your
+   * own pace.
+   */
+  queue: { text: string; say: string }[]
+  collecting: boolean
+  onCollecting: (on: boolean) => void
+  onRunQueue: () => void
+  onClearQueue: () => void
+  onDropQueued: (index: number) => void
   colors: {
     bgSurface: string
     border: string
@@ -88,6 +101,7 @@ export default function VoicePanel({
   onHud, onClose, onClear, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
+  queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
 }: VoicePanelProps) {
   const [tab, setTab] = React.useState<'talk' | 'settings' | 'help'>(initialTab)
   React.useEffect(() => { setTab(initialTab) }, [initialTab])
@@ -200,6 +214,62 @@ export default function VoicePanel({
         ))}
       </div>
 
+      {tab === 'talk' && queue.length > 0 && (
+        <div style={{
+          borderBottom: `1px solid ${C.border}`, padding: '8px 10px',
+          background: `${C.accent}0e`,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
+            color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 0.5,
+          }}>
+            <ListChecks size={11} />
+            {queue.length} CHANGE{queue.length === 1 ? '' : 'S'} READY
+          </div>
+          {queue.map((q, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, padding: '2px 0', lineHeight: 1.4 }}>
+              <span style={{ color: C.textMuted, flex: '0 0 12px' }}>{i + 1}</span>
+              <span style={{ flex: 1 }}>{q.say || q.text}</span>
+              <button
+                onClick={() => onDropQueued(i)}
+                aria-label={`Remove ${q.say || q.text}`}
+                style={{
+                  border: 'none', background: 'transparent', color: C.textMuted,
+                  cursor: 'pointer', padding: 0, lineHeight: 1,
+                }}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
+            <button
+              onClick={onRunQueue}
+              style={{
+                flex: 1, height: 24, borderRadius: 4, cursor: 'pointer',
+                border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent,
+                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+              }}
+            >
+              EXECUTE
+            </button>
+            <button
+              onClick={onClearQueue}
+              style={{
+                height: 24, padding: '0 10px', borderRadius: 4, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
+                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+              }}
+            >
+              CLEAR
+            </button>
+          </div>
+          <div style={{ color: C.textMuted, fontSize: 10, marginTop: 5 }}>
+            Or say &ldquo;execute&rdquo;, &ldquo;go ahead&rdquo;, or &ldquo;read them back&rdquo;.
+          </div>
+        </div>
+      )}
+
       <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
         {tab === 'talk' && (
           <div ref={log} style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -272,6 +342,20 @@ export default function VoicePanel({
                   {canSpeak
                     ? 'Reads back what it did and asks questions aloud. Stays quiet while the transport is running.'
                     : 'This browser has no speech voices installed.'}
+                </span>
+              </span>
+            </label>
+
+            <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', cursor: 'pointer' }}>
+              <input
+                type="checkbox" checked={collecting}
+                onChange={e => onCollecting(e.target.checked)} style={{ marginTop: 2 }}
+              />
+              <span>
+                Collect commands before running them
+                <span style={{ display: 'block', color: C.textMuted, marginTop: 2 }}>
+                  Say several things, hear them back, then &ldquo;execute&rdquo;. Nothing happens
+                  until you say so.
                 </span>
               </span>
             </label>

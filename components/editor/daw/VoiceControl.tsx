@@ -41,6 +41,10 @@ import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { considerUtterance, isAttentive, WAKE_WORDS } from '@/lib/voice/attention'
+import { interpretSequence } from '@/lib/voice/sequence'
+import {
+  readQueueControl, askToImplement, readBack, reportRun, type QueuedCommand,
+} from '@/lib/voice/queue'
 import { hudOn, setHud, applyHud } from '@/lib/voice/hud'
 import VoicePanel, { type VoiceTurn } from './VoicePanel'
 import {
@@ -138,6 +142,26 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   /** What the microphone turned out to be, for the panel and for diagnosing a
    *  device that cannot record and monitor at the same time. */
   const [mic, setMic] = useState<MicReport | null>(null)
+
+  /**
+   * Commands said but not yet carried out.
+   *
+   * Brae: "Can we have it collect executable commands... and it executes when I
+   * say 'Execute' or 'Go ahead'."
+   *
+   * Every command until now happened the instant it was understood, which is
+   * right for "stop" and wrong for working through an idea. Collected, they can
+   * be heard back and corrected before anything has been done rather than
+   * after.
+   */
+  const [queue, setQueue] = useState<QueuedCommand[]>([])
+  const [collecting, setCollecting] = useState(false)
+  /** Always the current runQueue(), because run() is defined above it. */
+  const runQueueRef = useRef<(() => void) | null>(null)
+  const collectingRef = useRef(false)
+  /** So the offer to implement is made once per batch, not on every tick. */
+  const offeredAt = useRef(0)
+  const lastQueuedAt = useRef(0)
   /** The bar the level is being judged against, drawn on the meter. */
   const [threshold, setThreshold] = useState(0)
   const [sensitivity, setSensitivityState] = useState(1)
@@ -381,6 +405,88 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const text = stripWakeWord(heardFrom)
     if (!text) { setProblem('I didn\'t catch that.'); return }
     addTurn('you', spoken)
+
+    // The context the reading is judged against: the project's real track names,
+    // their current levels (so "turn the bass up" knows where the bass IS), and
+    // the tempo (so "a bit faster" has something to be faster than). A reading
+    // that cannot see these has to guess, and guessing is what this whole path
+    // exists to avoid.
+    const ctx = {
+      tracks: project.tracks ?? [],
+      tempo: project.tempo,
+      // So "louder" and "mute this" mean the track being worked on. Nobody
+      // says a track's name twenty times in a row.
+      selectedTrackName: (project.tracks ?? []).find(t => t.id === selectedTrackId)?.name,
+      // So "duplicate it" and "delete this" mean the clip on screen. Selecting
+      // something is a statement about what you are working on, and the studio
+      // should not need to be told twice.
+      selectedClipId: selectedClipId ?? undefined,
+      // So "Bass body 1" reads as one target — a track and an item said
+      // together, which is the most specific thing anybody can say and was the
+      // one form the rules could not see.
+      clips: (project.arrangementClips ?? []).map(c => ({
+        id: c.id, name: c.name, trackId: c.trackId,
+      })),
+    }
+
+    // ── Is this about the queue rather than about the song? ────────────────
+    //
+    // Checked before the parser, because "execute" and "read them back" are
+    // things you say TO the studio about the conversation, not things you can
+    // do to a track.
+    const control = readQueueControl(text)
+    if (control) {
+      lastAcceptedAt.current = Date.now()
+      setBusy(false)
+      if (control === 'collect') {
+        setCollecting(true); collectingRef.current = true
+        respond('Collecting. Say what you want and then "execute".')
+        return
+      }
+      if (control === 'immediate') {
+        setCollecting(false); collectingRef.current = false
+        respond(queue.length ? `Acting immediately again. ${queue.length} still collected.` : 'Acting immediately again.')
+        return
+      }
+      if (control === 'read') { respond(readBack(queue), 'question'); return }
+      if (control === 'clear') { setQueue([]); offeredAt.current = 0; respond('Cleared.'); return }
+      if (control === 'run') { runQueueRef.current?.(); return }
+    }
+
+    // ── One breath, possibly several commands ──────────────────────────────
+    //
+    // Typed or spoken: running two commands together is the same problem either
+    // way, and somebody typing "solo the pad set the tempo to 132" means both.
+    {
+      const segments = interpretSequence(text, ctx)
+      if (segments.length > 1) {
+        lastAcceptedAt.current = Date.now()
+        setBusy(false)
+        const collected: QueuedCommand[] = []
+        const ran: string[] = []
+        const failed: string[] = []
+        for (const seg of segments) {
+          const plan = planVoiceCalls(seg.reading.calls, project)
+          if (plan.problem) { failed.push(plan.problem); continue }
+          if (collectingRef.current) {
+            collected.push({ text: seg.text, say: plan.say, calls: seg.reading.calls })
+          } else {
+            for (const a of plan.actions) runAction(a)
+            ran.push(plan.say)
+          }
+        }
+        if (collected.length) {
+          setQueue(q => [...q, ...collected])
+          lastQueuedAt.current = Date.now()
+          respond(`Collected ${collected.length}: ${collected.map(c => c.say).join(' ')}`)
+        } else if (ran.length) {
+          respond(ran.join(' '))
+        } else {
+          respond(failed[0] ?? 'I didn\'t catch that.', 'problem')
+        }
+        return
+      }
+    }
     setBusy(true); setProblem(''); setSaid(''); setAsking(''); setPendingAsk(null)
     setChoices(null); setPendingDo(null)
 
@@ -487,28 +593,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
 
-    // The context the reading is judged against: the project's real track names,
-    // their current levels (so "turn the bass up" knows where the bass IS), and
-    // the tempo (so "a bit faster" has something to be faster than). A reading
-    // that cannot see these has to guess, and guessing is what this whole path
-    // exists to avoid.
-    const ctx = {
-      tracks: project.tracks ?? [],
-      tempo: project.tempo,
-      // So "louder" and "mute this" mean the track being worked on. Nobody
-      // says a track's name twenty times in a row.
-      selectedTrackName: (project.tracks ?? []).find(t => t.id === selectedTrackId)?.name,
-      // So "duplicate it" and "delete this" mean the clip on screen. Selecting
-      // something is a statement about what you are working on, and the studio
-      // should not need to be told twice.
-      selectedClipId: selectedClipId ?? undefined,
-      // So "Bass body 1" reads as one target — a track and an item said
-      // together, which is the most specific thing anybody can say and was the
-      // one form the rules could not see.
-      clips: (project.arrangementClips ?? []).map(c => ({
-        id: c.id, name: c.name, trackId: c.trackId,
-      })),
-    }
     // resolveHeard when the utterance came from a microphone: it can weigh what
     // the recogniser was unsure of, which is the difference between recovering
     // a mishearing and reporting one.
@@ -547,9 +631,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // The executor found more than one thing the words could mean, and
       // declined to pick. That is a question, not a failure.
       if (plan.ask) {
+        // Understood well enough to have a question about, which is plenty of
+        // evidence that somebody is talking to the studio.
+        lastAcceptedAt.current = Date.now()
         setBusy(false)
         setPendingAsk2(plan.ask)
         respond(plan.ask.speak, 'question')
+        return
+      }
+      // Collecting: understood, described, and NOT done. The whole point is
+      // that a command can be taken back before it has happened.
+      if (!plan.problem && collectingRef.current && !local.destructive) {
+        setBusy(false)
+        lastAcceptedAt.current = Date.now()
+        lastQueuedAt.current = Date.now()
+        setQueue(q => [...q, { text, say: plan.say, calls: local.calls }])
+        respond(`Collected: ${plan.say}`)
         return
       }
       if (!plan.problem) {
@@ -701,7 +798,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // them this closure captures the question as it was when the callback was
     // built — which is null — so the answer to a question the studio had just
     // asked was parsed as a fresh command and did nothing at all.
-  }, [project, runAction, pendingAsk2, pendingOffer, pendingName, respond, undo, redo, selectedTrackId, selectedClipId])
+    // `queue` is a dependency, not an incidental read: without it this closure
+    // holds the list as it was when the callback was built — which is empty —
+    // so "execute" reported nothing collected and then cleared the list it
+    // could not see. runQueue is reached through a ref because it is declared
+    // below, the same way finish() is.
+  }, [project, runAction, pendingAsk2, pendingOffer, pendingName, respond, undo, redo,
+    selectedTrackId, selectedClipId, queue])
 
   // Does the user still want to be listening? Asking for the microphone is
   // asynchronous and the first ask shows a dialog, so in hold-to-talk the
@@ -922,6 +1025,31 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     heardSentence(text, alternatives.length ? [alternatives] : [], confidence, words)
   }, [heardSentence, markFailed])
 
+  /**
+   * Carry out everything collected, in the order it was said.
+   *
+   * Re-planned rather than replayed: a command was resolved against the project
+   * as it was when it was collected, and the project may have moved since —
+   * including because an earlier command in this same batch moved it.
+   */
+  const runQueue = useCallback(() => {
+    const items = queue
+    setQueue([])
+    offeredAt.current = 0
+    if (!items.length) { respond('Nothing collected yet.'); return }
+    let done = 0
+    const failed: string[] = []
+    for (const item of items) {
+      const plan = planVoiceCalls(item.calls, project)
+      if (plan.problem) { failed.push(plan.problem); continue }
+      for (const a of plan.actions) runAction(a)
+      done++
+    }
+    respond(reportRun(done, failed))
+  }, [queue, project, runAction, respond])
+
+  useEffect(() => { runQueueRef.current = runQueue }, [runQueue])
+
   const finish = useCallback(() => {
     wanted.current = false
     setLevel(0)
@@ -951,6 +1079,29 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // The recorder can finish a take on its own when talking stops; keep the ref
   // pointing at the current handler so it never calls a stale one.
   useEffect(() => { finishRef.current = finish }, [finish])
+
+  /**
+   * Offer to carry the list out once the talking stops.
+   *
+   * Brae: "This will be prompted by the machine by having it ask 'Do you want to
+   * implement these changes?'"
+   *
+   * After a pause rather than after a count, because the natural end of a batch
+   * is when somebody stops describing it. Offered ONCE per batch — an assistant
+   * that asks the same question every few seconds is one people answer by
+   * turning it off.
+   */
+  useEffect(() => {
+    if (!collecting || !queue.length) return
+    const id = setInterval(() => {
+      if (!queue.length) return
+      if (offeredAt.current >= lastQueuedAt.current) return
+      if (Date.now() - lastQueuedAt.current < 6000) return
+      offeredAt.current = Date.now()
+      respond(askToImplement(queue), 'question')
+    }, 1500)
+    return () => clearInterval(id)
+  }, [collecting, queue, respond])
 
   // Only while a held-open session is running: nothing to show otherwise, and
   // no reason to keep a timer alive.
@@ -1088,6 +1239,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           onHud={on => { setHudState(on); setHud(on) }}
           mic={mic}
           threshold={threshold}
+          queue={queue}
+          collecting={collecting}
+          onCollecting={on => { setCollecting(on); collectingRef.current = on }}
+          onRunQueue={runQueue}
+          onClearQueue={() => { setQueue([]); offeredAt.current = 0 }}
+          onDropQueued={i => setQueue(q => q.filter((_, n) => n !== i))}
           sensitivity={sensitivity}
           onSensitivity={v => {
             setSensitivityState(v)

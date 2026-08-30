@@ -126,6 +126,69 @@ export interface Hypothesis {
 }
 
 /**
+ * Words that mean the same thing to a studio.
+ *
+ * Brae: "see if you can access phrase synonyms to adjust confidence with
+ * unprogrammed phrases."
+ *
+ * There is no dictionary to reach for here — nothing offline, and a network
+ * lookup on every utterance would be both slow and wrong, because general
+ * English does not know that "kill" means mute and "bump" means louder. What
+ * exists is a small, specific vocabulary: the words engineers actually use for
+ * the two dozen things a studio does.
+ *
+ * It is deliberately NOT a new set of commands. Each entry is a word that maps
+ * onto a word the parser already knows, and it enters the system the same way
+ * every other guess does — as a proposal with a cost, weighed against the words
+ * actually said. So an unrecognised phrase gets a second chance at a lower
+ * confidence rather than an instant refusal, which is exactly what was asked
+ * for: it adjusts confidence, it does not assert meaning.
+ *
+ * One direction only. These map INTO the command vocabulary, never out of it,
+ * so a sentence that already uses the studio's own word is never rewritten.
+ */
+const SYNONYMS: Record<string, string> = {
+  // Silence
+  kill: 'mute', cut: 'mute', drop: 'mute', silence: 'mute', off: 'mute',
+  unkill: 'unmute', restore: 'unmute', bring: 'unmute',
+  // Level
+  bump: 'louder', lift: 'louder', push: 'louder', crank: 'louder', raise: 'louder',
+  duck: 'quieter', dip: 'quieter', pull: 'quieter', trim: 'quieter',
+  // Transport
+  roll: 'play', run: 'play', hit: 'play', kick: 'play',
+  halt: 'stop', kill_it: 'stop', freeze: 'stop',
+  // Time
+  speed: 'tempo', pace: 'tempo', bpm: 'tempo',
+  // Arrangement
+  repeat: 'duplicate', clone: 'duplicate', double: 'duplicate',
+  shift: 'move', slide: 'move', nudge: 'move',
+  // Pitch
+  pitch: 'transpose', octave_up: 'transpose',
+  // Effects
+  verb: 'reverb', echo: 'delay', space: 'reverb',
+}
+
+/**
+ * Every sentence this one could be, with a studio word swapped in.
+ *
+ * At most one swap per proposal: two at once is a rewrite rather than a
+ * synonym, and the cost of being wrong compounds.
+ */
+export function synonymCandidates(text: string): { text: string; why: string }[] {
+  const words = String(text ?? '').toLowerCase().replace(/[^a-z0-9\s'-]/g, ' ').split(/\s+/).filter(Boolean)
+  const out: { text: string; why: string }[] = []
+  for (let i = 0; i < words.length; i++) {
+    const swap = SYNONYMS[words[i]]
+    if (!swap) continue
+    const next = [...words]
+    next[i] = swap
+    out.push({ text: next.join(' '), why: `"${words[i]}" is a way of saying "${swap}"` })
+    if (out.length >= 4) break
+  }
+  return out
+}
+
+/**
  * A rough phonetic key — what a word sounds like, spelled consistently.
  *
  * Deliberately crude. It exists to make "mute"/"moot" and "sole"/"solo" collide
@@ -228,6 +291,19 @@ export function hypotheses(heard: Heard, vocabulary: readonly string[]): Hypothe
     if (seen.has(clause.text.toLowerCase())) continue
     seen.add(clause.text.toLowerCase())
     out.push({ text: clause.text, cost: 0.3, why: clause.why })
+  }
+
+  // ── The same thing, said the way an engineer says it ─────────────────────
+  //
+  // Offered whatever the confidence was, because this is not a correction of a
+  // mishearing either: the word was heard perfectly and simply is not the one
+  // the parser knows. Costed a little above a clause split — swapping a word
+  // changes what the sentence MEANS, where splitting only changes how much of
+  // it is read.
+  for (const alt of synonymCandidates(text)) {
+    if (seen.has(alt.text.toLowerCase())) continue
+    seen.add(alt.text.toLowerCase())
+    out.push({ text: alt.text, cost: 0.45, why: alt.why })
   }
 
   // Whole sentences the recogniser itself considered. It had reasons; they are
