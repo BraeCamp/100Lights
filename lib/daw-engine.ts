@@ -2084,7 +2084,38 @@ export class DawEngine extends EventTarget {
         extraOscs.push(...r.extraOscs)
       } catch { /* a bad bar must not silence the clip — carry on unprocessed */ }
     }
-    last.connect(nodes.midiInput)     // track FX, volume and pan apply after this
+    // ⚠️ AND THE CLIP'S SOUND SETTINGS. Brae: "I don't hear any changes when I
+    // change it in Sound Settings either... when I say before, I mean
+    // pre-Apollo."
+    //
+    // He was right, and this line is why. A combined clip skips the whole
+    // per-note loop (see _tryScheduleCombined at the top of the MIDI pass), and
+    // the per-note loop is the ONLY place clip.rollFx was ever applied — so
+    // every low-pass, reverb, drive and gain set in the Sound panel was
+    // silently discarded the moment a render landed. Measured before the fix:
+    // six unrelated fields, including a gain of 0.4 that should halve the
+    // level, all produced exactly 0.0 dB.
+    //
+    // ⚠️ THIS IS THE SAME BUG AS THE FX-LANE BARS DIRECTLY ABOVE, one layer up,
+    // and the comment there says so: "Clip effects were applied in exactly two
+    // places — per NOTE on the live MIDI path, and per CLIP for audio clips —
+    // and a combined buffer went through neither". Sound settings were the
+    // other thing living only on the per-note path. Anything that is applied
+    // per note has to be applied here too, or combining silently removes it.
+    //
+    // ⚠️ It is not only Apollo tracks. A `poly` track is translated to Helios by
+    // default (_resolveInstrument, heliosSynth !== false), so it resolves as
+    // apollo and takes this path as well — which is why this reads as a
+    // pre-Apollo regression on ordinary synth tracks.
+    const clipFx = this._resolveNoteFx(clip, { pitch: 60, velocity: 100 } as MidiNote)
+    if (this._rollFxActive(clipFx)) {
+      // Clip-wide, so the shared chain (one per clip, keyed on the settings) is
+      // right here — a combined clip is one buffer, not a voice per note.
+      const rf = this._getClipFxChain(clip.id, clipFx, nodes.midiInput, clip.lfoShape)
+      last.connect(rf.input)
+    } else {
+      last.connect(nodes.midiInput)   // track FX, volume and pan apply after this
+    }
     src.start(startAt, offsetSec)
     this._registerMidiVoice(src, gain)
     src.onended = () => {
