@@ -242,6 +242,137 @@ export const MUSIC_TOOLS = [
       required: ['pattern'],
     },
   },
+  // ── The compound ones ────────────────────────────────────────────────────
+  //
+  // Brae: "We need to take into consideration more complex tasks so that we can
+  // make changes faster for users."
+  //
+  // Everything below replaces a sequence with a sentence. "Make the pad
+  // brighter" is otherwise: add an EQ, find the high band, raise it, find the
+  // low band, drop it — five actions and a memory of which band is which. The
+  // words people already use for these moves are the fastest interface there
+  // is, and they are the words this program did not know.
+  {
+    name: 'shape_tone',
+    description:
+      'TONE IN ONE WORD — brighter, darker, warmer, cleaner, punchier, fuller, thinner, softer. "make the pad brighter", "warm up the bass", "the drums need more punch", "clean up the low end". Each one is a small set of EQ or dynamics moves; say `more` or a percentage for a stronger version.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        quality: {
+          type: 'string',
+          enum: ['brighter', 'darker', 'warmer', 'cleaner', 'punchier', 'softer', 'fuller', 'thinner'],
+        },
+        amount: { type: 'number', description: 'Percent, 0-100. Omit for a normal move.' },
+      },
+      required: ['quality'],
+    },
+  },
+  {
+    name: 'set_width',
+    description:
+      'STEREO WIDTH — how far a track spreads. "make the pad wider", "narrow the bass", "put the kick in mono", "collapse it to mono". Bass in mono is the commonest reason anybody asks.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        width: { type: 'string', enum: ['wider', 'narrower', 'mono', 'normal'] },
+      },
+      required: ['width'],
+    },
+  },
+  {
+    name: 'duck_under',
+    description:
+      'DUCKING / SIDECHAIN — make one track step out of the way of another. "duck the pad under the kick", "sidechain the bass to the kick", "pump the pads with the drums". `target` is the one that gets quieter; `under` is the one it makes room for.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The track that will duck.' },
+        under: { ...TARGET, description: 'The track it ducks under — usually the kick.' },
+        amount: { type: 'number', description: 'Percent, 0-100. Omit for a normal amount.' },
+      },
+      required: ['under'],
+    },
+  },
+  {
+    name: 'time_feel',
+    description:
+      'FEEL — how the part sits against the beat. "make the drums half time", "double time the hats", "humanize the piano", "push it ahead of the beat", "lay it back", "straighten it out". Half and double time rewrite the note positions; the rest nudge them.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        feel: { type: 'string', enum: ['half', 'double', 'humanize', 'ahead', 'behind', 'straight'] },
+        amount: { type: 'number', description: 'Percent, for humanize/ahead/behind.' },
+      },
+      required: ['feel'],
+    },
+  },
+  {
+    name: 'note_length',
+    description:
+      'ARTICULATION — how long the notes are held. "make the pad legato", "staccato the bass", "shorter notes on the keys", "let the chords ring". Legato joins notes up to the next one; staccato clips them short.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        style: { type: 'string', enum: ['legato', 'staccato', 'longer', 'shorter'] },
+        amount: { type: 'number', description: 'Percent, 0-100.' },
+      },
+      required: ['style'],
+    },
+  },
+  {
+    name: 'dynamics_ramp',
+    description:
+      'CRESCENDO / DIMINUENDO — get louder or quieter across a part. "crescendo the strings", "make the drums build", "fade the notes down across the pad". This shapes the note VELOCITIES, so the part plays harder rather than just being turned up.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        direction: { type: 'string', enum: ['crescendo', 'diminuendo'] },
+      },
+      required: ['direction'],
+    },
+  },
+  {
+    name: 'harmonize',
+    description:
+      'HARMONISE — add a second voice to a part. "harmonise the lead a third above", "add a fifth to the bass", "double it an octave down". Adds notes; it does not replace what is there.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        interval: { type: 'string', description: 'third, fourth, fifth, sixth or octave.' },
+        direction: { type: 'string', enum: ['above', 'below'] },
+      },
+      required: ['interval'],
+    },
+  },
+  {
+    name: 'reverse_notes',
+    description:
+      'REVERSE — play a part backwards. "reverse the arp", "play the melody backwards", "flip the riff". The rhythm is mirrored in time; the notes keep their pitches.',
+    input_schema: {
+      type: 'object',
+      properties: { target: TARGET },
+    },
+  },
+  {
+    name: 'section',
+    description:
+      'SECTIONS — work with a named part of the song. "loop the chorus", "go to the verse", "double the chorus", "how long is the bridge". Sections come from the markers in the song, so this only knows the ones that have been named.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The marker name: chorus, verse, bridge, drop…' },
+        action: { type: 'string', enum: ['loop', 'go', 'duplicate'], description: 'Omit for "go".' },
+      },
+      required: ['name'],
+    },
+  },
   {
     name: 'open_editor',
     description:

@@ -95,6 +95,8 @@ export interface VoicePanelProps {
   onStudio: (on: boolean) => void
   /** Which tab to open on. */
   initialTab?: 'talk' | 'settings' | 'help'
+  /** Open the library window — everything Light can do. */
+  onLibrary: () => void
   /**
    * What the microphone actually turned out to be.
    *
@@ -463,7 +465,7 @@ function Segmented<T extends string>({ value, options, onChange, C, disabled }: 
 export default function VoicePanel({
   listening, continuous, level, hud,
   talking = false, saying = '', reply = '', problem = '', question,
-  onHud, onClose, colors: C,
+  onHud, onClose, onLibrary, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
@@ -487,8 +489,8 @@ export default function VoicePanel({
   // command list is a reference you read once. With the assistant acting on
   // whatever it hears, a permanent tab listing the built-in phrasings also
   // rather misstates what the thing can do.
-  const [view, setView] = React.useState<'live' | 'settings' | 'help'>(
-    initialTab === 'settings' ? 'settings' : initialTab === 'help' ? 'help' : 'live',
+  const [view, setView] = React.useState<'live' | 'settings'>(
+    initialTab === 'settings' ? 'settings' : 'live',
   )
   const [find, setFind] = useState('')
 
@@ -511,7 +513,7 @@ export default function VoicePanel({
   // way — by moving the view rather than by selecting a tab that no longer
   // exists.
   React.useEffect(() => {
-    setView(initialTab === 'settings' ? 'settings' : initialTab === 'help' ? 'help' : 'live')
+    setView(initialTab === 'settings' ? 'settings' : 'live')
   }, [initialTab])
 
   // ── Dragging ─────────────────────────────────────────────────────────────
@@ -648,6 +650,24 @@ export default function VoicePanel({
           </div>
         )}
         {!listening && <div style={{ flex: 1 }} />}
+
+        {/* ⚠️ In the title bar, not buried in Settings.
+            Brae: "We'll add a help button in the voice control window that
+            pulls up another window for it." Nobody goes looking through
+            settings to find out what a thing can do — the question arrives
+            while you are already talking to it. */}
+        <button
+          onClick={onLibrary}
+          aria-label="What Light can do"
+          title="What Light can do"
+          style={{
+            display: 'flex', alignItems: 'center', height: 20, padding: '0 5px',
+            borderRadius: 4, cursor: 'pointer', border: 'none', background: 'transparent',
+            color: C.textMuted,
+          }}
+        >
+          <BookOpen size={13} />
+        </button>
 
         {/* Brae: "remove the hud button". Gone from here — it was a mode
             switch sitting in the same row as the close button, which is a lot
@@ -888,7 +908,7 @@ export default function VoicePanel({
                   the assistant switched off it is the whole vocabulary and
                   worth reading; with the assistant acting it is trivia. */}
               <button
-                onClick={() => setView('help')}
+                onClick={onLibrary}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   width: '100%', height: 26, borderRadius: 5, cursor: 'pointer',
@@ -897,7 +917,7 @@ export default function VoicePanel({
                 }}
               >
                 <BookOpen size={11} />
-                What you can say without the assistant
+                What you can say
               </button>
             </Group>
 
@@ -1085,70 +1105,11 @@ export default function VoicePanel({
         )}
 
 
-        {view === 'help' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {/* Reached from Settings now, so it needs its own way back — the
-                gear toggles live/settings and would strand somebody here. */}
-            <button
-              onClick={() => setView('settings')}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
-                padding: '3px 8px 3px 4px', borderRadius: 5, cursor: 'pointer',
-                border: `1px solid ${C.border}`, background: 'transparent',
-                color: C.textMuted, fontSize: 10, fontWeight: 700,
-              }}
-            >
-              <ChevronLeft size={12} />
-              Settings
-            </button>
-            {/* Sixty-two commands in one scroll is a reference nobody reads.
-                The question people actually arrive with is "can I say X", and a
-                filter answers it in one keystroke — matched on both the phrase
-                and what it does, because half the time you know the effect and
-                not the wording. */}
-            <input
-              value={find}
-              onChange={e => setFind(e.target.value)}
-              placeholder="What do you want to do?"
-              aria-label="Filter commands"
-              style={{
-                width: '100%', height: 26, padding: '0 9px', borderRadius: 5,
-                border: `1px solid ${C.border}`, background: 'rgba(0,0,0,.22)',
-                color: C.textPrimary, fontSize: 11, outline: 'none',
-              }}
-            />
-            {matchedHelp.map(group => (
-              <div key={group.group}>
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5,
-                }}>
-                  <span style={{
-                    color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 0.5,
-                  }}>
-                    {group.group.toUpperCase()}
-                  </span>
-                  <span style={{ flex: 1, height: 1, background: C.border }} />
-                </div>
-                {group.items.map(item => (
-                  // Stacked, not two columns fighting over one line. The old
-                  // layout right-aligned the description against the phrase and
-                  // the two collided the moment either got long — which, on a
-                  // 412px card, is most of them.
-                  <div key={item.say} style={{ padding: '3px 0 4px', lineHeight: 1.4 }}>
-                    <div style={{ color: C.textPrimary }}>&ldquo;{item.say}&rdquo;</div>
-                    <div style={{ color: C.textMuted }}>{item.what}</div>
-                  </div>
-                ))}
-              </div>
-            ))}
-            {!matchedHelp.length && (
-              <div style={{ color: C.textMuted, lineHeight: 1.5 }}>
-                Nothing matches that. The assistant may still manage it — say it and see,
-                if it is switched on in Settings.
-              </div>
-            )}
-          </div>
-        )}
+        {/* (The in-panel help list lived here. Seventy-seven things read
+            inside a card that sits in the transport is a keyhole, and you
+            read this WHILE talking to the studio — closing the thing you
+            are talking to in order to look up what to say is backwards. It
+            is its own window now: VoiceLibrary.tsx.) */}
       </div>
 
     </div>

@@ -26,6 +26,7 @@ import { defaultDrumInstrument } from '../daw-types'
 import { parseSpokenBeat, beatToNotes, describeBeat as describeSpokenBeat } from './beatbox'
 import { parseDefinitions, applyDefinitions, clearVocab, definitions, laneFromName } from './vocab'
 import {
+  defaultTransientShaper, defaultUtility, defaultUnmask,
   defaultReverb, defaultDelay, defaultFilter, defaultCompressor,
   defaultSaturator, defaultChorus, defaultEq3, defaultLimiter,
   defaultVelocityMidi, defaultScaleMidi, defaultChordMidi, defaultArpMidi,
@@ -40,6 +41,7 @@ import { beatToSeconds } from '../tempo-map'
 import { LOWPASS_HZ, HIGHPASS_HZ } from '../daw-effect-params'
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '../daw-effect-catalog'
 import { nameChord, groupIntoChords } from '../chord-analysis'
+import { rngFor } from '../seeded-random'
 
 export interface VoiceCall { name: string; input: Record<string, unknown> }
 
@@ -602,6 +604,53 @@ function editorTarget(
   })
   return { actions, clipId, name: existing?.name ?? (wantsDrums ? 'a new Drums track' : 'a new Keys track'), made: true }
 }
+
+// ── Shared ground for the compound commands ────────────────────────────────
+//
+// All of them need the same two things: the MIDI clip somebody meant, and a way
+// to put an effect on a track whether or not it already has one. Written once,
+// because eight commands each resolving a clip slightly differently is eight
+// slightly different ideas of what "the pad" means.
+
+/** The MIDI clip a compound edit should act on, or a reason it cannot. */
+function midiClipFor(target: string, project: DawProject, verb: string):
+{ clip: MidiClip; how: string } | { problem: string } {
+  const found = resolveClip(target, project)
+  if (!found) return { problem: `I couldn't find "${target || 'that'}" to ${verb}.` }
+  const clip = found.clip
+  if (!('notes' in clip)) return { problem: `That is an audio clip — there are no notes to ${verb}.` }
+  const notes = (clip as MidiClip).notes
+  if (!notes.length) return { problem: 'That clip has no notes yet.' }
+  return { clip: clip as MidiClip, how: found.how ?? '' }
+}
+
+/**
+ * Put an effect on a track, or find the one already there.
+ *
+ * ⚠️ Reuses an existing device of the same type rather than stacking another.
+ * Saying "brighter" three times should brighten three times, not build a tower
+ * of three EQs whose combined effect nobody can reason about — and which is
+ * exactly what a naive add-every-time does.
+ */
+function effectOn(
+  track: DawTrack,
+  type: EffectType,
+  make: () => Record<string, unknown>,
+): { id: string; params: Record<string, unknown>; actions: unknown[] } {
+  const existing = (track.effects ?? []).find(e => e.type === type)
+  if (existing) {
+    return { id: existing.id, params: { ...(existing.params as object) } as Record<string, unknown>, actions: [] }
+  }
+  const id = newId()
+  const params = make()
+  return {
+    id,
+    params,
+    actions: [{ type: 'ADD_EFFECT', trackId: track.id, effect: { id, type, params } }],
+  }
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
 export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: VoiceContext): VoicePlan {
   const maps = mapsOf(project)
@@ -1645,6 +1694,328 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       return {
         actions,
         say: `Made a ${beat.bars === 1 ? 'one-bar' : `${beat.bars}-bar`} beat ${how}: ${describeSpokenBeat(beat)}${existing ? ` on ${existing.name}` : ' on a new Drums track'}.`,
+      }
+    }
+
+    // ── TONE IN ONE WORD ────────────────────────────────────────────────
+    case 'shape_tone': {
+      const quality = str(i.quality).toLowerCase()
+      const track = resolveTrack(target, project)
+        ?? (target ? null : (project.tracks ?? [])[0])
+      if (!track) return fail(`I couldn't find "${target || 'that track'}".`)
+      const pct = spokenNumber(i.amount as string)
+      // A "normal" move is deliberately modest. These are meant to be said
+      // repeatedly until it sounds right, which only works if one of them is
+      // never drastic.
+      const k = pct == null ? 1 : clamp(pct / 50, 0.2, 2.4)
+
+      const actions: unknown[] = []
+      let said = ''
+      if (quality === 'punchier' || quality === 'softer') {
+        const dir = quality === 'punchier' ? 1 : -1
+        const fx = effectOn(track, 'transientshaper', () => ({ ...defaultTransientShaper() } as never))
+        actions.push(...fx.actions)
+        const attack = clamp((fx.params.attack as number ?? 0) + dir * 4 * k, -12, 12)
+        const sustain = clamp((fx.params.sustain as number ?? 0) - dir * 2 * k, -12, 12)
+        actions.push({
+          type: 'UPDATE_EFFECT', trackId: track.id, effectId: fx.id,
+          // ⚠️ `patch`, not `params`: the reducer spreads action.patch onto the
+          // effect, so sending `params` at the top level is a silent no-op —
+          // the command reports success and changes nothing.
+          patch: { params: { ...fx.params, attack, sustain } as unknown as TrackEffect['params'] },
+        })
+        said = quality === 'punchier' ? 'more punch' : 'softer attack'
+      } else {
+        const fx = effectOn(track, 'eq3', () => ({ ...defaultEq3() } as never))
+        actions.push(...fx.actions)
+        const low = fx.params.lowGain as number ?? 0
+        const mid = fx.params.midGain as number ?? 0
+        const high = fx.params.highGain as number ?? 0
+        // Each quality is a SHAPE, not a single band. "Warmer" that only
+        // boosted the low end is a muddier track, not a warmer one — the top
+        // has to come down with it or the balance is unchanged.
+        const move: Record<string, [number, number, number]> = {
+          brighter: [0, 0, 3],
+          darker: [0, 0, -3],
+          warmer: [2.5, 0, -1.5],
+          cleaner: [-3, 0, 0.5],
+          fuller: [2, 1.5, 0],
+          thinner: [-2.5, -1, 0],
+        }
+        const d = move[quality]
+        if (!d) return fail(`I don't know how to make something "${quality}".`)
+        actions.push({
+          type: 'UPDATE_EFFECT', trackId: track.id, effectId: fx.id,
+          patch: {
+            params: {
+              ...fx.params,
+              lowGain: clamp(low + d[0] * k, -18, 18),
+              midGain: clamp(mid + d[1] * k, -18, 18),
+              highGain: clamp(high + d[2] * k, -18, 18),
+            } as unknown as TrackEffect['params'],
+          },
+        })
+        said = quality
+      }
+      return { actions, say: `${track.name} — ${said}.` }
+    }
+
+    // ── STEREO WIDTH ────────────────────────────────────────────────────
+    case 'set_width': {
+      const want = str(i.width).toLowerCase()
+      const track = resolveTrack(target, project) ?? (target ? null : (project.tracks ?? [])[0])
+      if (!track) return fail(`I couldn't find "${target || 'that track'}".`)
+      const fx = effectOn(track, 'utility', () => ({ ...defaultUtility() } as never))
+      const now = (fx.params.width as number) ?? 1
+      const width = want === 'mono' ? 0
+        : want === 'normal' ? 1
+          : want === 'wider' ? clamp(now + 0.4, 0, 2)
+            : clamp(now - 0.4, 0, 2)
+      return {
+        actions: [
+          ...fx.actions,
+          {
+            type: 'UPDATE_EFFECT', trackId: track.id, effectId: fx.id,
+            patch: { params: { ...fx.params, width, mono: want === 'mono' } as unknown as TrackEffect['params'] },
+          },
+        ],
+        say: want === 'mono' ? `${track.name} is mono.` : `${track.name} — ${want}.`,
+      }
+    }
+
+    // ── DUCKING ─────────────────────────────────────────────────────────
+    case 'duck_under': {
+      const key = resolveTrack(str(i.under), project)
+      if (!key) return fail(`I couldn't find "${str(i.under) || 'that'}" to duck under.`)
+      const track = resolveTrack(target, project) ?? (target ? null : null)
+      if (!track) return fail(`Say which track should duck under ${key.name}.`)
+      if (track.id === key.id) return fail('A track cannot duck under itself.')
+      const pct = spokenNumber(i.amount as string)
+      const amount = pct == null ? 0.6 : clamp(pct / 100, 0, 1)
+      const fx = effectOn(track, 'unmask', () => ({ ...defaultUnmask() } as never))
+      return {
+        actions: [
+          ...fx.actions,
+          {
+            type: 'UPDATE_EFFECT', trackId: track.id, effectId: fx.id,
+            patch: { params: { ...fx.params, keyTrackId: key.id, amount } as unknown as TrackEffect['params'] },
+          },
+        ],
+        say: `${track.name} now ducks under ${key.name}.`,
+      }
+    }
+
+    // ── FEEL ────────────────────────────────────────────────────────────
+    case 'time_feel': {
+      const feel = str(i.feel).toLowerCase()
+      const got = midiClipFor(target, project, 'change the feel of')
+      if ('problem' in got) return fail(got.problem)
+      const { clip, how } = got
+      const notes = clip.notes
+      const pct = spokenNumber(i.amount as string)
+
+      if (feel === 'half' || feel === 'double') {
+        const f = feel === 'half' ? 2 : 0.5
+        return {
+          actions: [
+            ...notes.map(n => ({
+              type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+              patch: { startBeat: n.startBeat * f, durationBeats: Math.max(0.05, n.durationBeats * f) },
+            })),
+            // The clip has to grow or shrink with its notes, or half time runs
+            // off the end and is silently cut in two.
+            { type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: Math.max(1, clip.durationBeats * f) } },
+          ],
+          say: `${how} is now ${feel === 'half' ? 'half' : 'double'} time.`,
+        }
+      }
+
+      if (feel === 'straight') {
+        return {
+          actions: notes.map(n => ({
+            type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+            patch: { startBeat: Math.round(n.startBeat * 4) / 4 },
+          })),
+          say: `Straightened ${how}.`,
+        }
+      }
+
+      // ⚠️ Humanize is seeded from the NOTE, not from Math.random. The same
+      // clip humanized twice must give the same feel, or undo-and-redo quietly
+      // becomes a different performance and nobody can tell what changed.
+      const depth = (pct == null ? 1 : clamp(pct / 50, 0, 3)) * 0.02
+      const shift = feel === 'ahead' ? -depth * 1.5 : feel === 'behind' ? depth * 1.5 : 0
+      return {
+        actions: notes.map((n, idx) => {
+          const jitter = feel === 'humanize'
+            ? (rngFor(`humanize:${clip.id}:${n.id ?? idx}`)() - 0.5) * depth * 2
+            : 0
+          return {
+            type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+            patch: { startBeat: Math.max(0, n.startBeat + shift + jitter) },
+          }
+        }),
+        say: feel === 'humanize' ? `Humanized ${how}.`
+          : `${how} now sits ${feel === 'ahead' ? 'ahead of' : 'behind'} the beat.`,
+      }
+    }
+
+    // ── ARTICULATION ────────────────────────────────────────────────────
+    case 'note_length': {
+      const style = str(i.style).toLowerCase()
+      const got = midiClipFor(target, project, 'change the note lengths of')
+      if ('problem' in got) return fail(got.problem)
+      const { clip, how } = got
+      const pct = spokenNumber(i.amount as string)
+      const notes = [...clip.notes].sort((a, b) => a.startBeat - b.startBeat)
+
+      if (style === 'legato') {
+        // Each note runs to the next one that starts later. Notes stacked in a
+        // chord share a start, so "the next note" is the next START, not the
+        // next entry — otherwise a chord's notes cut each other to nothing.
+        const starts = [...new Set(notes.map(n => n.startBeat))].sort((a, b) => a - b)
+        return {
+          actions: notes.map(n => {
+            const next = starts.find(sBeat => sBeat > n.startBeat)
+            const end = next ?? (clip.durationBeats)
+            return {
+              type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+              patch: { durationBeats: Math.max(0.05, end - n.startBeat) },
+            }
+          }),
+          say: `${how} is legato.`,
+        }
+      }
+      const f = style === 'staccato' ? 0.35
+        : style === 'shorter' ? (pct == null ? 0.7 : clamp(pct / 100, 0.05, 1))
+          : (pct == null ? 1.4 : clamp(1 + pct / 100, 1, 4))
+      return {
+        actions: notes.map(n => ({
+          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+          patch: { durationBeats: Math.max(0.05, n.durationBeats * f) },
+        })),
+        say: `${how} — ${style}.`,
+      }
+    }
+
+    // ── CRESCENDO ───────────────────────────────────────────────────────
+    case 'dynamics_ramp': {
+      const dir = /dim|down|quiet|soft|decres/i.test(str(i.direction)) ? -1 : 1
+      const got = midiClipFor(target, project, 'shape the dynamics of')
+      if ('problem' in got) return fail(got.problem)
+      const { clip, how } = got
+      const notes = clip.notes
+      const span = Math.max(...notes.map(n => n.startBeat)) || 1
+      return {
+        actions: notes.map(n => {
+          const t = span > 0 ? n.startBeat / span : 0
+          // 45 to 115 across the part: quiet enough to be a real swell, loud
+          // enough at the top to still be the same instrument.
+          const v = dir > 0 ? 45 + t * 70 : 115 - t * 70
+          return {
+            type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+            patch: { velocity: Math.round(clamp(v, 1, 127)) },
+          }
+        }),
+        say: `${how} ${dir > 0 ? 'builds' : 'falls away'} across the part.`,
+      }
+    }
+
+    // ── HARMONISE ───────────────────────────────────────────────────────
+    case 'harmonize': {
+      const words = str(i.interval).toLowerCase()
+      const SEMIS: Record<string, number> = {
+        second: 2, third: 4, fourth: 5, fifth: 7, sixth: 9, seventh: 11, octave: 12,
+      }
+      const name = Object.keys(SEMIS).find(k => words.includes(k))
+      const semis = name ? SEMIS[name] : spokenNumber(words)
+      if (semis == null || !semis) return fail('Say an interval — a third, a fifth, an octave.')
+      const below = /below|down|under/i.test(str(i.direction) || words)
+      const step = below ? -Math.abs(semis) : Math.abs(semis)
+      const got = midiClipFor(target, project, 'harmonize')
+      if ('problem' in got) return fail(got.problem)
+      const { clip, how } = got
+      return {
+        actions: [{
+          type: 'UPDATE_CLIP', clipId: clip.id,
+          patch: {
+            notes: [
+              ...clip.notes,
+              // ADDED, not replaced: harmonising is a second voice, and a
+              // command that silently removed the first would be a transpose
+              // wearing the wrong name.
+              ...clip.notes
+                .map(n => ({ ...n, id: newId(), pitch: n.pitch + step }))
+                .filter(n => n.pitch >= 0 && n.pitch <= 127),
+            ],
+          },
+        }],
+        say: `Harmonized ${how} a ${name ?? `${Math.abs(step)} semitone`} ${below ? 'below' : 'above'}.`,
+      }
+    }
+
+    // ── REVERSE ─────────────────────────────────────────────────────────
+    case 'reverse_notes': {
+      const got = midiClipFor(target, project, 'reverse')
+      if ('problem' in got) return fail(got.problem)
+      const { clip, how } = got
+      const notes = clip.notes
+      // Mirror around the clip, using each note's END so a long note reversed
+      // still finishes where it used to start.
+      const end = Math.max(clip.durationBeats, ...notes.map(n => n.startBeat + n.durationBeats))
+      return {
+        actions: notes.map(n => ({
+          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+          patch: { startBeat: Math.max(0, end - (n.startBeat + n.durationBeats)) },
+        })),
+        say: `${how} plays backwards.`,
+      }
+    }
+
+    // ── SECTIONS ────────────────────────────────────────────────────────
+    case 'section': {
+      const want = foldName(str(i.name))
+      const markers = [...(project.cueMarkers ?? [])].sort((a, b) => a.beat - b.beat)
+      if (!markers.length) return fail('There are no named sections yet — say "call this the chorus" at a spot first.')
+      const idx = markers.findIndex(m => foldName(m.name ?? '').includes(want) || want.includes(foldName(m.name ?? '')))
+      if (idx < 0) {
+        return fail(`I couldn't find a section called "${str(i.name)}". There is ${markers.map(m => m.name).join(', ')}.`)
+      }
+      const from = markers[idx].beat
+      // A section runs to the NEXT marker, or to the end of the song. That is
+      // what a marker means, and it is the only reading that needs no extra
+      // bookkeeping to stay true when markers move.
+      const to = markers[idx + 1]?.beat
+        ?? Math.max(from + 4, ...(project.arrangementClips ?? []).map(c => c.startBeat + c.durationBeats))
+      const action = str(i.action || 'go').toLowerCase()
+      const label = markers[idx].name ?? 'that section'
+
+      if (action === 'loop') {
+        return {
+          actions: [
+            // ⚠️ start/end, and enabling is its own action — SET_LOOP alone
+            // moves the loop without switching it on.
+            { type: 'SET_LOOP', start: from, end: to },
+            { type: 'SET_LOOP_ENABLED', enabled: true },
+          ],
+          say: `Looping ${label} — ${describeBeat(from, maps)} to ${describeBeat(to, maps)}.`,
+        }
+      }
+      if (action === 'duplicate') {
+        const inside = (project.arrangementClips ?? []).filter(c => c.startBeat >= from && c.startBeat < to)
+        if (!inside.length) return fail(`There is nothing in ${label} to double.`)
+        const span = to - from
+        return {
+          actions: inside.map(c => ({
+            type: 'ADD_CLIP',
+            clip: { ...c, id: newId(), startBeat: c.startBeat + span } as unknown as MidiClip,
+          })),
+          say: `Doubled ${label} — ${inside.length} clip${inside.length === 1 ? '' : 's'} repeated.`,
+        }
+      }
+      return {
+        actions: [{ type: 'TRANSPORT', action: 'locate', beat: from }],
+        say: `${label}, ${describeBeat(from, maps)}.`,
       }
     }
 

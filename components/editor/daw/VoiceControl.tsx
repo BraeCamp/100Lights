@@ -54,6 +54,7 @@ import {
   CALIBRATION_PHRASE, phraseAccuracy, verdictFor, type CalibrationResult,
 } from '@/lib/voice/calibrate'
 import VoicePanel from './VoicePanel'
+import VoiceLibrary from './VoiceLibrary'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
@@ -207,6 +208,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // inside the window now, so there is no corner left to choose.)
 
   const [panelTab, setPanelTab] = useState<'talk' | 'settings' | 'help'>('talk')
+  /** The library of everything Light can do — its own window, not a view in
+   *  the card. See VoiceLibrary.tsx for why. */
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const [hud, setHudState] = useState(false)
   /** What the microphone turned out to be, for the panel and for diagnosing a
    *  device that cannot record and monitor at the same time. */
@@ -2174,6 +2178,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         }}
       ><Settings2 size={11} /></button>
 
+      {libraryOpen && (
+        <VoiceLibrary
+          onClose={() => setLibraryOpen(false)}
+          colors={{
+            bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
+            textMuted: C.textMuted, accent: C.accent,
+          }}
+        />
+      )}
+
       {panelOpen && (
         <VoicePanel
           listening={listening}
@@ -2235,6 +2249,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             sensitivityRef.current = v
             setVoiceSensitivity(v)
           }}
+          onLibrary={() => setLibraryOpen(true)}
           onClose={() => setPanelOpen(false)}
           colors={{
             bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,

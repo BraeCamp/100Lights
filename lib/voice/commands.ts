@@ -33,6 +33,7 @@
 import { findByName, foldName, spokenNumber } from './resolve'
 import { beatWordsOf } from './beatbox'
 import { parseDefinitions } from './vocab'
+import { COMMAND_SUMMARIES } from './command-summaries'
 
 /** Drum names a single-lane recording can be asked for. */
 const DRUM_WORDS = ['kick', 'snare', 'clap', 'crash', 'rim', 'hat', 'hihat', 'tom']
@@ -609,6 +610,13 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Nudge a track louder or quieter',
     say: ['turn the bass up', 'bring the drums down a bit', 'make the pad louder'],
     match(w, ctx) {
+      // ⚠️ Tone words share "up" and "more" with volume — "warm UP the guitar"
+      // and "MORE punch" are not level changes, and this rule sees them first
+      // because it is looking for exactly those two words. Naming a quality
+      // means the sentence is about tone.
+      if (w.has('warm', 'warmer', 'warmth', 'bright', 'brighter', 'brighten',
+        'dark', 'darker', 'darken', 'punch', 'punchier', 'punchy', 'fuller',
+        'thicker', 'thinner', 'cleaner', 'snappier', 'duller')) return null
       if (EFFECTS.some(e => w.has(e))) return null
       const up = w.has(...UP)
       const down = w.has(...DOWN)
@@ -1074,6 +1082,230 @@ const COMMANDS: VoiceCommand[] = [
       }
     },
   },
+  // ── The words producers already use ──────────────────────────────────────
+  //
+  // Brae: "compile all music terms that we don't have commands for... take into
+  // consideration more complex tasks so that we can make changes faster."
+  //
+  // Each of these is a sentence in place of a sequence. They are local for the
+  // same reason everything else here is: the attention gate asks whether the
+  // built-in rules can READ a sentence, so a tool without a rule is unreachable
+  // in a held-open session.
+  {
+    id: 'shape_tone',
+    tool: 'shape_tone',
+    group: 'Mixer',
+    what: 'Brighten, darken, warm up or add punch',
+    say: [
+      'make the pad brighter', 'warm up the guitar', 'the drums need more punch',
+      'darken the pad', 'make the vocals fuller', 'make the guitar thinner',
+    ],
+    match(w, ctx) {
+      const QUALITY: Array<[string[], string]> = [
+        [['brighter', 'brighten', 'bright'], 'brighter'],
+        // ⚠️ No 'duller': it is one edit from 'fuller', and this entry is
+        // tested first, so "make the pad fuller" came back darker.
+        [['darker', 'darken', 'dark'], 'darker'],
+        [['warmer', 'warm', 'warmth'], 'warmer'],
+        [['cleaner', 'clean', 'tighter'], 'cleaner'],
+        [['punch', 'punchier', 'punchy', 'snappier'], 'punchier'],
+        // ⚠️ NOT a bare "softer": set_velocity already owns that word, and
+        // "make the drums softer" means play them softer far more often than
+        // it means soften their attack. The transient reading has to be asked
+        // for explicitly.
+        [['attack', 'transient', 'transients'], 'softer'],
+        [['fuller', 'thicker', 'bigger'], 'fuller'],
+        // ⚠️ Not a bare "thin". It enters the substitution vocabulary, and at
+        // low confidence "what time is it" was rewritten to "hat thin is it" —
+        // where "hat" is one edit from "halt" and the studio stopped playback.
+        // A short trigger word is a rewrite target for every sentence.
+        [['thinner'], 'thinner'],
+      ]
+      const hit = QUALITY.find(([words]) => w.has(...words))
+      if (!hit) return null
+      // The attack reading only counts when they also asked for less of it.
+      if (hit[1] === 'softer' && !w.has('softer', 'gentler', 'smoother', 'less')) return null
+      // "clean up the mix" is a different request from "clean up the bass", and
+      // neither is a tone move without a track to make it on.
+      const named = nameOrSelected(w, ctx, [
+        'make', 'the', 'up', 'more', 'a', 'bit', 'need', 'needs', 'little',
+        'low', 'end', 'top', 'sound', 'sounds', 'out', ...hit[0],
+      ])
+      if (!named) return null
+      return {
+        calls: [{ name: 'shape_tone', input: { target: named.name, quality: hit[1] } }],
+        confidence: 0.88,
+      }
+    },
+  },
+  {
+    id: 'set_width',
+    tool: 'set_width',
+    group: 'Mixer',
+    what: 'Spread a track wide, narrow it, or make it mono',
+    say: ['make the pad wider', 'narrow the guitar', 'put the drums in mono'],
+    match(w, ctx) {
+      const width = w.has('wider', 'widen') ? 'wider'
+        : w.has('narrower', 'narrow') ? 'narrower'
+          : w.has('mono') ? 'mono' : null
+      if (!width) return null
+      const named = nameOrSelected(w, ctx, ['make', 'put', 'in', 'to', 'wider', 'widen',
+        'narrower', 'narrow', 'mono', 'stereo', 'the'])
+      if (!named) return null
+      return { calls: [{ name: 'set_width', input: { target: named.name, width } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'duck_under',
+    tool: 'duck_under',
+    group: 'Mixer',
+    what: 'Duck one track under another',
+    say: ['duck the pad under the drums', 'sidechain the guitar to the drums'],
+    match(w, ctx) {
+      if (!w.has('duck', 'ducking', 'sidechain', 'sidechained', 'pump')) return null
+      // TWO names, and which is which is decided by the preposition, not by
+      // order — "duck the pad under the kick" and "sidechain the bass to the
+      // kick" put the key track in the same place but say it differently.
+      const m = /\b(?:duck|sidechain|pump)\w*\s+(?:the\s+)?(.+?)\s+(?:under|to|with|against|from)\s+(?:the\s+)?(.+?)\s*$/i.exec(w.raw)
+      if (!m) return null
+      const who = findByName(m[1].trim(), ctx.tracks ?? [])
+      const key = findByName(m[2].trim(), ctx.tracks ?? [])
+      if (!who || !key) return null
+      // findByName returns a MATCH — the thing is on .item, and reading .name
+      // off the match is undefined rather than an error, which would have sent
+      // the executor looking for a track called "undefined".
+      for (const word of w.all) w.has(word)
+      return {
+        calls: [{ name: 'duck_under', input: { target: who.item.name, under: key.item.name } }],
+        confidence: 0.92,
+      }
+    },
+  },
+  {
+    id: 'time_feel',
+    tool: 'time_feel',
+    group: 'Timing',
+    what: 'Half time, double time, humanize, push or lay back',
+    say: [
+      'make the drums half time', 'double time the pad', 'humanize the guitar',
+      'lay the pad back a bit', 'push the drums ahead',
+    ],
+    match(w, ctx) {
+      const feel = (w.has('half') && w.has('time')) ? 'half'
+        : (w.has('double') && w.has('time')) ? 'double'
+          : w.has('humanize', 'humanise', 'loosen') ? 'humanize'
+            : (w.has('lay', 'laid', 'behind', 'lazy') && !w.has('ahead')) ? 'behind'
+              : w.has('ahead', 'push', 'rushed') ? 'ahead' : null
+      if (!feel) return null
+      const named = nameOrSelected(w, ctx, ['make', 'the', 'half', 'double', 'time',
+        'humanize', 'humanise', 'loosen', 'lay', 'laid', 'back', 'behind', 'lazy',
+        'ahead', 'push', 'rushed', 'a', 'bit'])
+      if (!named) return null
+      return { calls: [{ name: 'time_feel', input: { target: named.name, feel } }], confidence: 0.88 }
+    },
+  },
+  {
+    id: 'note_length',
+    tool: 'note_length',
+    group: 'Notes',
+    what: 'Legato, staccato, or just longer and shorter notes',
+    say: ['make the pad legato', 'staccato the guitar', 'shorter notes on the lead'],
+    match(w, ctx) {
+      const style = w.has('legato') ? 'legato'
+        : w.has('staccato', 'stabs', 'stabby') ? 'staccato'
+          : (w.has('shorter') && w.has('note', 'notes')) ? 'shorter'
+            : (w.has('longer') && w.has('note', 'notes')) ? 'longer' : null
+      if (!style) return null
+      const named = nameOrSelected(w, ctx, ['make', 'the', 'legato', 'staccato', 'stabs',
+        'stabby', 'shorter', 'longer', 'note', 'notes', 'on'])
+      if (!named) return null
+      return { calls: [{ name: 'note_length', input: { target: named.name, style } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'dynamics_ramp',
+    tool: 'dynamics_ramp',
+    group: 'Notes',
+    what: 'Build or fall away across a part',
+    say: ['crescendo the pad', 'diminuendo the guitar', 'make the drums build'],
+    match(w, ctx) {
+      const dir = w.has('crescendo', 'build', 'swell') ? 'crescendo'
+        : w.has('diminuendo', 'decrescendo', 'fall') ? 'diminuendo' : null
+      if (!dir) return null
+      // A fade is a VOLUME move over time and already has a command; this is a
+      // performance getting harder. Sharing the word would make one of them
+      // unreachable.
+      if (w.has('fade')) return null
+      const named = nameOrSelected(w, ctx, ['make', 'the', 'crescendo', 'diminuendo',
+        'decrescendo', 'build', 'swell', 'fall', 'away', 'across'])
+      if (!named) return null
+      return { calls: [{ name: 'dynamics_ramp', input: { target: named.name, direction: dir } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'harmonize',
+    tool: 'harmonize',
+    group: 'Notes',
+    what: 'Add a second voice a third, fifth or octave away',
+    say: ['harmonize the lead a third above', 'add a fifth to the pad', 'double the lead an octave down'],
+    match(w, ctx) {
+      const INTERVALS = ['third', 'fourth', 'fifth', 'sixth', 'seventh', 'octave']
+      const interval = INTERVALS.find(x => w.has(x))
+      if (!interval) return null
+      if (!w.has('harmonize', 'harmonise', 'harmony', 'add', 'double', 'stack')) return null
+      const below = w.has('below', 'down', 'under')
+      const named = nameOrSelected(w, ctx, ['harmonize', 'harmonise', 'harmony', 'add',
+        'double', 'stack', 'a', 'the', 'to', 'an', 'above', 'below', 'up', 'down',
+        'under', ...INTERVALS])
+      if (!named) return null
+      return {
+        calls: [{ name: 'harmonize', input: { target: named.name, interval, direction: below ? 'below' : 'above' } }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'reverse_notes',
+    tool: 'reverse_notes',
+    group: 'Notes',
+    what: 'Play a part backwards',
+    say: ['reverse the lead', 'play the pad backwards', 'reverse the guitar'],
+    match(w, ctx) {
+      // ⚠️ No "flip": has() matches within one edit and "flip" is one edit
+      // from "clip", so it swallowed "delete the bass 2 clip". A trigger word
+      // that is a typo of a core noun is a trap however well it reads.
+      if (!w.has('reverse', 'reversed', 'backwards', 'backward')) return null
+      const named = nameOrSelected(w, ctx, ['reverse', 'reversed', 'backwards',
+        'backward', 'play', 'the'])
+      if (!named) return null
+      return { calls: [{ name: 'reverse_notes', input: { target: named.name } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'section',
+    tool: 'section',
+    group: 'Arrangement',
+    what: 'Loop, jump to, or double a named section',
+    say: ['loop the chorus', 'go to the drop', 'jump to the chorus'],
+    match(w) {
+      const SECTIONS = ['chorus', 'verse', 'bridge', 'intro', 'outro', 'drop',
+        'breakdown', 'hook', 'refrain', 'solo', 'build']
+      const name = SECTIONS.find(x => w.has(x))
+      if (!name) return null
+      const action = w.has('loop', 'looping') ? 'loop'
+        : w.has('double', 'duplicate', 'repeat', 'copy') ? 'duplicate'
+          // ⚠️ said(), not has(): "go" is filler everywhere else in the
+          // language and never survives into the stripped word list. Exactly
+          // the trap transport.play's own example fell into.
+          // ⚠️ No 'take' here: "make" is ONE EDIT from it, so every sentence
+          // beginning "make the…" read as a jump to a section. said('go')
+          // because "go" is filler and never survives into the word list.
+          : (w.said('go') || w.has('jump', 'skip')) ? 'go' : null
+      if (!action) return null
+      return { calls: [{ name: 'section', input: { name, action } }], confidence: 0.88 }
+    },
+  },
+
   // ── The sequencer and the piano roll ─────────────────────────────────────
   //
   // Local, like make_beat and for the same reason: with the microphone held
@@ -2501,15 +2733,45 @@ export const NEVER_SUBSTITUTE: readonly string[] = [
 ]
 
 /** The help panel's contents, grouped the way it displays them. */
-export function commandHelp(): { group: string; items: { what: string; say: string }[] }[] {
+export interface HelpItem {
+  id: string
+  /** The one-liner, for the list. */
+  what: string
+  /** The first phrasing, shown under the name. */
+  say: string
+  /** Every phrasing, for search and for the detail view. */
+  phrasings: string[]
+  /** A sentence or two, shown on hover. Falls back to `what`. */
+  summary: string
+  /** Destructive commands are read back before they run. */
+  destructive: boolean
+}
+
+/**
+ * Everything Light can do, grouped for reading.
+ *
+ * Brae: "create a library of functions that can be done through Light... so
+ * that users can see what they can do."
+ *
+ * ⚠️ Generated from the command registry itself, never hand-listed. A written
+ * list of what a program can do is out of date the day after it is written, and
+ * wrong in the direction that matters most — it promises things. This cannot
+ * promise anything the parser does not actually resolve, because it IS the
+ * parser's own table.
+ */
+export function commandHelp(): { group: string; items: HelpItem[] }[] {
   const order: VoiceCommand['group'][] =
     ['Transport', 'Mixer', 'Timing', 'Arrangement', 'Notes', 'Project', 'Questions']
   return order
     .map(group => ({
       group,
-      items: VOICE_COMMANDS.filter(c => c.group === group).map(c => ({
+      items: VOICE_COMMANDS.filter(c => c.group === group).map((c): HelpItem => ({
+        id: c.id,
         what: c.what,
         say: c.say[0],
+        phrasings: c.say,
+        summary: COMMAND_SUMMARIES[c.id] ?? c.what,
+        destructive: !!c.destructive,
       })),
     }))
     .filter(g => g.items.length > 0)

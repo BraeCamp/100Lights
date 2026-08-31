@@ -34,7 +34,9 @@
 import assert from 'node:assert'
 import { importTs } from '../lib/ts-import.mjs'
 
-const { VOICE_COMMANDS, COMMAND_VOCABULARY, commandHelp } = await importTs('lib/voice/commands.ts')
+const { VOICE_COMMANDS, COMMAND_VOCABULARY, commandHelp, COMMANDS_BY_ID } =
+  await importTs('lib/voice/commands.ts')
+const { COMMAND_SUMMARIES } = await importTs('lib/voice/command-summaries.ts')
 const { interpret } = await importTs('lib/voice/interpret.ts')
 const { planVoiceCall } = await importTs('lib/voice/execute-music.ts')
 const { MUSIC_TOOL_NAMES } = await importTs('lib/voice/music-tools.ts')
@@ -233,6 +235,35 @@ const help = commandHelp()
 const helpCount = help.reduce((n, g) => n + g.items.length, 0)
 check('the help panel lists every command', helpCount === VOICE_COMMANDS.length,
   `${helpCount} of ${VOICE_COMMANDS.length}`)
+
+// ── The library people read ────────────────────────────────────────────────
+//
+// Brae: "create a library of functions that can be done through Light... When
+// the user hovers over one, it shows a summary of that function."
+//
+// ⚠️ The summaries live in their own file, keyed by command id, so they can
+// silently come unstuck from the commands they describe — a renamed command
+// keeps working and quietly loses its explanation, and nothing anywhere would
+// notice. This is the check that notices.
+{
+  const help = commandHelp()
+  const listed = help.flatMap(g => g.items)
+  check('the library lists every command', listed.length === VOICE_COMMANDS.length,
+    `${listed.length} of ${VOICE_COMMANDS.length}`)
+
+  const missing = listed.filter(i => i.summary === i.what).map(i => i.id)
+  check('and every one has a written summary', missing.length === 0,
+    missing.length ? `no summary for ${missing.join(', ')}` : '')
+
+  const stale = Object.keys(COMMAND_SUMMARIES).filter(id => !COMMANDS_BY_ID[id])
+  check('with no summary left behind by a rename', stale.length === 0, stale.join(', '))
+
+  check('each carries its phrasings for search',
+    listed.every(i => i.phrasings.length > 0 && i.phrasings.includes(i.say)))
+  // A summary that just repeats the one-liner teaches nothing on hover.
+  const thin = listed.filter(i => i.summary.length < i.what.length + 20).map(i => i.id)
+  check('and the summaries say more than the titles do', thin.length === 0, thin.join(', '))
+}
 
 console.log(failures
   ? `\n${failures} failing`
