@@ -38,7 +38,7 @@ import {
   startRecording, preferredTranscriber, setPreferredTranscriber,
   type Recording, type StopResult, type MicReport,
 } from '@/lib/voice/record'
-import { planVoiceCalls, type VoiceCall } from '@/lib/voice/execute-music'
+import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execute-music'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn } from '@/lib/voice/attention'
@@ -118,6 +118,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // steer a new command. Cleared when a command completes, because at that
   // point the exchange is closed.
   const history = useRef<{ role: 'user' | 'assistant'; content: string }[]>([])
+
+  // The song as it is NOW, for the assistant loop.
+  //
+  // ⚠️ `project` inside the callback is the value captured when the callback
+  // was built. After the loop dispatches an edit, reading it again returns the
+  // song from BEFORE that edit — so the assistant would check its work against
+  // a project that never had the change in it, and be told its own edit had not
+  // happened. Refs are the state as of the last commit, which is what a turn
+  // after a dispatch needs. This file has produced the stale-closure bug three
+  // times already; this is the same shape.
+  const projectRef = useRef(project)
+  const selectedTrackIdRef = useRef(selectedTrackId)
+  const selectedClipIdRef = useRef(selectedClipId)
+  useEffect(() => { projectRef.current = project }, [project])
+  useEffect(() => { selectedTrackIdRef.current = selectedTrackId }, [selectedTrackId])
+  useEffect(() => { selectedClipIdRef.current = selectedClipId }, [selectedClipId])
   /** The assistant asked something and is waiting — a question, not a failure. */
   const [asking, setAsking] = useState('')
   const [typed, setTyped] = useState('')
@@ -812,83 +828,188 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // somebody deliberately turns it on, because it is the switch that lets a
     // misheard sentence spend money without anybody seeing it first.
 
+    // ── The assistant's turn, as a loop ──────────────────────────────────────
+    //
+    // Brae: "I want to lean into the AI version."
+    //
+    // This was one shot: ask, receive tool calls, execute them, forget. The
+    // model never found out what any of them did, which is why the system
+    // prompt had to SHOUT that one sentence can hold several requests — with no
+    // second turn there was nowhere to continue, so everything had to be got
+    // right blind, first time.
+    //
+    // Now the results go back. Three things follow that could not happen
+    // before: it can read the song before acting on it (`describe` answers
+    // back), it can recover from a refusal instead of dying on it, and it can
+    // report what actually changed rather than what it meant to change.
+    //
+    // ⚠️ Bounded, because a loop that spends money on every pass is a loop that
+    // must be able to stop. Four turns is enough for read → act → check.
+    const MAX_TURNS = 4
+    const msgs: { role: 'user' | 'assistant'; content: unknown }[] =
+      [...history.current, { role: 'user' as const, content: text }]
+    let lastSay = ''
+    let spoke = ''
+    const allCalls: VoiceCall[] = []
+    let lastProblem = ''
+    let usedTurns = 0
+
     try {
-      const res = await fetch('/api/ai/assist', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          module: 'music',
-          messages: [...history.current, { role: 'user', content: text }],
-          stateSummary: musicStateSummary(project),
-        }),
-      })
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({} as { error?: string; needCredits?: boolean }))
-        // 401 is the route's own answer; 404 is Clerk's middleware refusing an
-        // unauthenticated request BEFORE the route runs, which it does with a
-        // 404 rather than a 401. Both mean the same thing to a person, and
-        // "Couldn't reach the assistant (404)" reads like an outage rather than
-        // like "sign in" — which sends people looking for a fault that is not
-        // there. The local resolver still handles the common commands either
-        // way, so this is a partial loss, not a dead feature.
-        const signedOut = res.status === 401 || res.status === 404
-        setProblem(
-          e.needCredits ? `Out of ${LUMENS_NAME}.`
-            : signedOut ? 'Sign in to use the assistant. Simple commands still work without it.'
-              : (e.error || `Couldn't reach the assistant (${res.status}).`))
-        markFailed(e.error || `http ${res.status}`)
-        return
-      }
-      const data = await res.json() as {
-        message?: string; actions?: VoiceCall[]; credits?: number; balance?: number
-      }
-      if (typeof data.credits === 'number') {
-        setCredits({ spent: data.credits, left: data.balance ?? 0 })
-      }
-      const calls = data.actions ?? []
-      if (!calls.length) {
-        // The model answered rather than acted — usually a clarifying question,
-        // sometimes a plain answer. Either way it is NOT an error, and showing
-        // it as one was the reason clarification could never work: a question
-        // styled like a failure invites you to give up, not to reply.
-        //
-        // So it becomes a question, the exchange is remembered, and the reply
-        // box opens focused. Answering continues the same conversation.
-        const reply = data.message?.trim() || 'I couldn\'t turn that into an edit.'
-        history.current = [...history.current,
-          { role: 'user' as const, content: text },
-          { role: 'assistant' as const, content: reply }].slice(-8)
-        remember({
-          said: text, heard: heardConfidence, by: 'assistant',
-          matched: local.matched, understood: local.confidence,
-          calls: [], asked: reply,
+      for (let turn = 0; turn < MAX_TURNS; turn++) {
+        usedTurns = turn + 1
+        const res = await fetch('/api/ai/assist', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            module: 'music',
+            messages: msgs,
+            // Re-read every turn: after the first pass the song is not what it
+            // was, and a summary from before the edits would have the assistant
+            // checking its work against the project it started with.
+            stateSummary: musicStateSummary({
+              ...projectRef.current,
+              selectedTrackId: selectedTrackIdRef.current,
+              selectedClipId: selectedClipIdRef.current,
+            }),
+          }),
         })
-        setAsking(reply)
-        setShowType(true)
-        return
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({} as { error?: string; needCredits?: boolean }))
+          // 401 is the route's own answer; 404 is Clerk's middleware refusing an
+          // unauthenticated request BEFORE the route runs, which it does with a
+          // 404 rather than a 401. Both mean the same thing to a person, and
+          // "Couldn't reach the assistant (404)" reads like an outage rather than
+          // like "sign in" — which sends people looking for a fault that is not
+          // there. The local resolver still handles the common commands either
+          // way, so this is a partial loss, not a dead feature.
+          const signedOut = res.status === 401 || res.status === 404
+          setProblem(
+            e.needCredits ? `Out of ${LUMENS_NAME}.`
+              : signedOut ? 'Sign in to use the assistant. Simple commands still work without it.'
+                : (e.error || `Couldn't reach the assistant (${res.status}).`))
+          markFailed(e.error || `http ${res.status}`)
+          return
+        }
+        const data = await res.json() as {
+          message?: string; actions?: (VoiceCall & { id?: string })[]
+          credits?: number; balance?: number; stop?: string; raw?: unknown[]
+        }
+        if (typeof data.credits === 'number') {
+          setCredits({ spent: data.credits, left: data.balance ?? 0 })
+        }
+        const calls = data.actions ?? []
+        if (data.message?.trim()) spoke = data.message.trim()
+
+        if (!calls.length) {
+          // The model answered rather than acted — usually a clarifying question,
+          // sometimes a plain answer. Either way it is NOT an error, and showing
+          // it as one was the reason clarification could never work: a question
+          // styled like a failure invites you to give up, not to reply.
+          //
+          // After a turn that DID work, the same text is the report of what
+          // changed, so it is spoken rather than asked.
+          const reply = spoke || 'I couldn\'t turn that into an edit.'
+          if (lastSay) { respond(reply); setSaid(reply); history.current = []; setAsking(''); return }
+          history.current = [...history.current,
+            { role: 'user' as const, content: text },
+            { role: 'assistant' as const, content: reply }].slice(-8)
+          remember({
+            said: text, heard: heardConfidence, by: 'assistant',
+            matched: local.matched, understood: local.confidence,
+            calls: [], asked: reply,
+          })
+          setAsking(reply)
+          setShowType(true)
+          return
+        }
+
+        // ── Plan the whole batch before running any of it ────────────────────
+        //
+        // ⚠️ All-or-nothing per turn, deliberately. Running the first half of
+        // "loop the bass and play it" and then failing on the second leaves the
+        // project half-changed by a command nobody finished giving. So a batch
+        // with any bad call executes NOTHING — but, unlike before, the reason
+        // goes back to the model, which can now name the right track and try
+        // again instead of the user being told "no" and starting over.
+        const proj = projectRef.current
+        const plans = calls.map(c => planVoiceCall(c, proj))
+        // The executor found more than one thing the words could mean and
+        // declined to pick. That is a question for the PERSON, not for the
+        // model — it is their song, and the ambiguity is about which of their
+        // tracks they meant. So the loop stops and asks, the same way the
+        // local path does.
+        const asking = plans.find(pl => pl.ask)
+        if (asking?.ask) {
+          lastAcceptedAt.current = Date.now()
+          setPendingAsk2(asking.ask)
+          respond(asking.ask.speak, 'question')
+          return
+        }
+
+        const badAt = plans.findIndex(pl => pl.problem)
+        const results = calls.map((c, i) => ({
+          type: 'tool_result' as const,
+          tool_use_id: c.id ?? `call_${i}`,
+          is_error: badAt >= 0,
+          content: badAt < 0
+            ? (plans[i].say || 'done')
+            : i === badAt
+              ? (plans[i].problem || 'could not be done')
+              : 'not run — another call in the same reply could not be done, so nothing was changed',
+        }))
+
+        if (badAt < 0) {
+          for (const pl of plans) for (const a of pl.actions) runAction(a)
+          lastSay = plans.map(pl => pl.say).filter(Boolean).join(' ')
+          setSaid(lastSay)
+          // ⚠️ WAIT for the edit to land before the next turn reads the song.
+          //
+          // A single animation frame is not enough and the failure is silent:
+          // the ref still holds the pre-edit project, so the assistant is handed
+          // a summary in which its own change never happened and is invited to
+          // conclude the edit failed. Measured — the summary on the third turn
+          // was byte-identical to the first.
+          //
+          // The reducer returns a new object whenever it changes anything, so
+          // identity is the signal. Capped, because some calls (transport, a
+          // no-op set) legitimately change nothing and there is nothing to wait
+          // for.
+          const beforeEdit = projectRef.current
+          for (let i = 0; i < 16 && projectRef.current === beforeEdit; i++) {
+            await new Promise(r => setTimeout(r, 16))
+          }
+        }
+
+        // ⚠️ One utterance, one record. The obvious place to write these is
+        // here, where the calls are — but a loop passes through here several
+        // times, so a single sentence would be filed as three or four separate
+        // commands and the corpus would count read-then-act turns as if they
+        // were repeated attempts. They are written once, after the loop.
+        allCalls.push(...calls)
+        if (badAt >= 0) lastProblem = plans[badAt].problem || 'refused'
+
+        // Nothing more to send back: the model is done talking.
+        if (data.stop !== 'tool_use') break
+
+        msgs.push(
+          { role: 'assistant', content: data.raw ?? [] },
+          { role: 'user', content: results },
+        )
+        if (turn === MAX_TURNS - 1 && badAt >= 0) setProblem(plans[badAt].problem || '')
       }
-      const plan = planVoiceCalls(calls, project)
-      if (plan.problem) {
-        markFailed(plan.problem)
-        setProblem(plan.problem)
-        return
-      }
-      for (const a of plan.actions) runAction(a)
-      // Every assistant answer is a worked example of a sentence the local
-      // resolver could not handle. Sorted by frequency these become the build
-      // order for replacing it — the phrasings actually used, ranked by use.
+
       remember({
         said: text, alternatives: undefined, heard: heardConfidence, by: 'assistant',
         matched: local.matched, understood: local.confidence,
-        calls, said_back: plan.say,
+        calls: allCalls, said_back: lastSay || spoke,
       })
+
       // Brae: "Then it executes with AI and sends the system a correction that
       // we can work from when I'm making patches."
       //
-      // voice-memory has recorded exactly this since it was written, and kept
-      // it on the machine — "it belongs on their machine unless they choose
-      // otherwise". This is otherwise. Only the wording, what it turned out to
-      // mean, and the track names travel; the song stays here.
+      // Now carries the OUTCOME as well as the intention. What the assistant
+      // was asked to do is only half a training example; whether it worked is
+      // the half that says which readings to fix.
       //
       // Deliberately not awaited and deliberately unable to fail: the command
       // has already run, and a notebook being unavailable must never turn a
@@ -898,17 +1019,23 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           said: text,
-          calls,
-          say: plan.say,
+          calls: allCalls,
+          say: lastSay || spoke,
           source: heard ? 'spoken' : 'typed',
-          tracks: (project.tracks ?? []).map(t => t.name),
+          outcome: lastProblem ? `refused: ${lastProblem}` : 'ran',
+          turns: usedTurns,
+          tracks: (projectRef.current.tracks ?? []).map(t => t.name),
         }),
       }).catch(() => {})
+
       // Done — the exchange is closed, so the next command starts clean rather
-      // than inheriting the last one's context.
+      // than inheriting the last one's context. Only text is kept: replaying a
+      // tool_use turn into the NEXT sentence would need its results alongside
+      // it, and a conversation carrying one without the other is rejected.
       history.current = []
       setAsking('')
-      setSaid(plan.say)
+      if (spoke && lastSay) respond(spoke)
+      setSaid(lastSay || spoke)
     } catch {
       setProblem('Couldn\'t reach the assistant.')
     } finally {

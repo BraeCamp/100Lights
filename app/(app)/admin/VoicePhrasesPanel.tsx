@@ -29,6 +29,7 @@ interface Spoken { text: string | null; key: string; size: number; modified: str
 interface Gap {
   said: string; count: number; lastAt: number; say: string
   calls: unknown; source: string; status: string; ids: string[]
+  outcome?: string; refused?: number
 }
 interface Data {
   voiceId: string
@@ -212,6 +213,15 @@ export default function VoicePhrasesPanel() {
                         <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
                           became: {r.say || '(no read-back recorded)'}
                         </div>
+                        {/* Understood-then-failed is the row worth fixing
+                            first, and it used to look exactly like one that
+                            worked. */}
+                        {(r.refused ?? 0) > 0 && (
+                          <div style={{ color: '#fb923c', marginTop: 2 }}>
+                            refused {r.refused} of {r.count}
+                            {r.outcome?.startsWith('refused') ? ` — ${r.outcome.slice(9)}` : ''}
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                         {r.count}&times; · {r.source}

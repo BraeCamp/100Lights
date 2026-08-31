@@ -20,6 +20,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json() as {
       said?: string; calls?: unknown; say?: string; source?: string; tracks?: unknown
+      outcome?: string; turns?: number
     }
     const said = String(body.said ?? '').trim()
     // Nothing to learn from an empty string, and a paragraph is somebody using
@@ -35,6 +36,9 @@ export async function POST(req: Request) {
       // track called "Bass 2"; the rest of the project is not ours to keep in a
       // notebook about wording.
       tracks: Array.isArray(body.tracks) ? body.tracks.slice(0, 40).map(String) : [],
+      // Whether it worked, which is the label the queue was missing.
+      outcome: String(body.outcome ?? '').slice(0, 200),
+      turns: Math.max(1, Math.min(8, Number(body.turns) || 1)),
       userId,
     })
   } catch { /* see above */ }

@@ -7,13 +7,33 @@ const MODEL = process.env.AI_ASSIST_MODEL || 'claude-sonnet-5'
 
 import { MUSIC_TOOLS, MUSIC_SYSTEM_HINT } from './voice/music-tools'
 
-export interface AssistMessage { role: 'user' | 'assistant'; content: string }
-export interface AssistAction { name: string; input: Record<string, unknown> }
+/**
+ * A turn's content.
+ *
+ * It used to be a plain string, which is all a one-shot exchange needs: ask,
+ * get tool calls back, execute them, forget. That shape is also exactly what
+ * made the assistant unable to check its own work — a tool result has nowhere
+ * to go in a conversation made of strings, so the model never learned whether
+ * anything it did worked, and could never read the song before acting on it.
+ *
+ * Blocks are what a tool loop is made of: the assistant's turn carries the
+ * tool_use it emitted, and the reply carries a tool_result per id.
+ */
+export type AssistBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+
+export interface AssistMessage { role: 'user' | 'assistant'; content: string | AssistBlock[] }
+/** `id` pairs the call with the tool_result that reports how it went. */
+export interface AssistAction { name: string; input: Record<string, unknown>; id?: string }
 export interface AssistResult {
   text: string
   actions: AssistAction[]
-  usage: { inputTokens: number; outputTokens: number }
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   stop: string
+  /** The assistant's turn verbatim, to be echoed back when replying with results. */
+  raw: AssistBlock[]
 }
 
 // Action tools = the things the assistant can DO in a module. The client executes each against the live
@@ -96,21 +116,63 @@ function toolsFor(moduleName: string) {
   return moduleName === 'music' ? MUSIC_TOOLS : TOOLS
 }
 
-function systemPrompt(moduleName: string, stateSummary?: string): string {
+/**
+ * The unchanging half of the system prompt.
+ *
+ * Split from the song's state on purpose: everything up to and including this
+ * text is identical on every request, which is what makes it cacheable. The
+ * state summary changes with every edit and so must come after the cache
+ * breakpoint, or it would invalidate the prefix each time and the cache would
+ * never be read.
+ */
+function staticSystem(moduleName: string): string {
   if (moduleName === 'music') {
     return [
       'You are the 100Lights assistant, working hands-on inside Beacon, the music studio.',
       'You take actions by calling the provided tools; the app executes them for real on the user\'s song. Prefer doing the work over describing it.',
       MUSIC_SYSTEM_HINT,
-      stateSummary ? `Current song: ${stateSummary}` : '',
+      LOOP_HINT,
     ].filter(Boolean).join('\n\n')
   }
+  return staticSystemOther(moduleName)
+}
+
+/**
+ * What changes now that results come back.
+ *
+ * Worth stating plainly, because the previous prompt was written for a model
+ * that got exactly one turn and had to guess at everything it could not see.
+ */
+const LOOP_HINT = [
+  'You will be told what each tool call did. If a call fails, the reason comes back — fix it and try again rather than giving up or repeating it unchanged.',
+  'You can look before you act: `describe` answers questions about the song, and its answer comes back to you, so use it when a request depends on something you were not told (which track is loudest, what is on a chain).',
+  'When the work is done, reply with one short sentence saying what actually changed — from the results you were given, not from what you intended.',
+].join(' ')
+
+function staticSystemOther(moduleName: string): string {
   return [
     `You are the 100Lights assistant — you help people make music and videos INSIDE the app, working hands-on with its modules. The user is currently in the ${moduleName} module.`,
     `You can take actions by calling the provided tools; the app executes them for real on the user's project. Prefer doing the work over describing it: if the user asks for a music video of "a rainy city", search_and_add_stock for the footage, import_audio if they gave a track, then auto_edit — then tell them what you did in one or two sentences.`,
     `Only call tools that clearly serve the request. Never invent URLs. Keep replies short and friendly; no preamble. If you can't act, say what you need (e.g. "add an audio track first").`,
-    stateSummary ? `Current project state: ${stateSummary}` : '',
   ].filter(Boolean).join('\n\n')
+}
+
+/**
+ * System as blocks, with one cache breakpoint at the end of the static half.
+ *
+ * The cached prefix is tools + static system — 37 tool schemas and the prompt,
+ * re-sent identically on every single utterance and, until now, paid for in
+ * full every single time. The song's state sits after the breakpoint because
+ * it is different on every request by definition.
+ */
+function systemBlocks(moduleName: string, stateSummary?: string) {
+  const blocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> = [
+    { type: 'text', text: staticSystem(moduleName), cache_control: { type: 'ephemeral' } },
+  ]
+  if (stateSummary) {
+    blocks.push({ type: 'text', text: `${moduleName === 'music' ? 'Current song' : 'Current project state'}: ${stateSummary}` })
+  }
+  return blocks
 }
 
 /** Run one assistant turn. Returns the reply text, any actions to execute, and token usage. Throws on a
@@ -130,7 +192,7 @@ export async function runAssist(opts: {
     body: JSON.stringify({
       model: MODEL,
       max_tokens: opts.maxTokens ?? 1200,
-      system: systemPrompt(opts.module ?? 'video', opts.stateSummary),
+      system: systemBlocks(opts.module ?? 'video', opts.stateSummary),
       tools: toolsFor(opts.module ?? 'video'),
       messages: opts.messages.map(m => ({ role: m.role, content: m.content })),
     }),
@@ -141,17 +203,25 @@ export async function runAssist(opts: {
   if (!res.ok) throw new Error(`Anthropic API error ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`)
 
   const data = await res.json() as {
-    content?: Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>
-    usage?: { input_tokens?: number; output_tokens?: number }
+    content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>
+    usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }
     stop_reason?: string
   }
   const blocks = data.content ?? []
   const text = blocks.filter(b => b.type === 'text').map(b => b.text ?? '').join('\n').trim()
-  const actions: AssistAction[] = blocks.filter(b => b.type === 'tool_use' && b.name).map(b => ({ name: b.name!, input: b.input ?? {} }))
+  const actions: AssistAction[] = blocks
+    .filter(b => b.type === 'tool_use' && b.name)
+    .map(b => ({ name: b.name!, input: b.input ?? {}, id: b.id }))
   return {
     text, actions,
-    usage: { inputTokens: data.usage?.input_tokens ?? 0, outputTokens: data.usage?.output_tokens ?? 0 },
+    usage: {
+      inputTokens: data.usage?.input_tokens ?? 0,
+      outputTokens: data.usage?.output_tokens ?? 0,
+      cacheReadTokens: data.usage?.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: data.usage?.cache_creation_input_tokens ?? 0,
+    },
     stop: data.stop_reason ?? 'end_turn',
+    raw: blocks as AssistBlock[],
   }
 }
 

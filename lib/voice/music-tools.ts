@@ -552,36 +552,102 @@ export const MUSIC_TOOL_NAMES = MUSIC_TOOLS.map(t => t.name)
  * comes back in. Handing the model raw beats would make it do arithmetic that
  * lib/voice/position already does correctly, including across meter changes.
  */
+/**
+ * What the assistant is told about the song before it answers.
+ *
+ * ⚠️ This used to be structural only — tempo, meter, track names, which bars
+ * hold clips. Everything about how the song SOUNDS was missing: what instrument
+ * is on a track, how loud it is, what effects are on it, what the user has
+ * selected. So "make this one warmer", "is the bass too loud", "put a phaser on
+ * the one I'm on" were unanswerable, and not because the model was weak —
+ * nobody had told it. A request that depends on unstated facts gets a guess,
+ * and a guess that edits the wrong track is the failure this whole layer exists
+ * to avoid.
+ *
+ * Kept terse on purpose. It is sent on EVERY turn and sits after the cache
+ * breakpoint (it changes with every edit, so it cannot be cached), which makes
+ * it the part of the prompt that is genuinely paid for each time.
+ */
 export function musicStateSummary(p: {
   tempo?: number
   timeSignatureNum?: number
   timeSignatureDen?: number
   tempoMarkers?: { beat: number; tempo: number }[]
   meterMarkers?: { beat: number; num: number; den: number }[]
-  tracks?: { id: string; name?: string }[]
+  tracks?: {
+    id: string
+    name?: string
+    volume?: number
+    pan?: number
+    mute?: boolean
+    solo?: boolean
+    kind?: string
+    instrument?: { type?: string; params?: unknown }
+    effects?: { type: string; params?: unknown }[]
+  }[]
   arrangementClips?: { trackId: string; name?: string; startBeat: number; durationBeats: number }[]
+  selectedTrackId?: string | null
+  selectedClipId?: string | null
 }): string {
   const num = p.timeSignatureNum ?? 4
   const den = p.timeSignatureDen ?? 4
   const bar = (beat: number) => Math.floor(beat / Math.max(1, num)) + 1
+
+  // 0–1 fader → dB, because that is the unit the request is spoken in ("a
+  // couple of dB down") and the number the user can see on the track.
+  const db = (v: number) => (v <= 0.0001 ? '-inf' : `${(20 * Math.log10(v)).toFixed(1)}dB`)
+  const panOf = (v: number) =>
+    Math.abs(v) < 0.02 ? '' : ` pan ${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`
+
   const tracks = (p.tracks ?? []).map(t => {
     const clips = (p.arrangementClips ?? []).filter(c => c.trackId === t.id)
-    if (!clips.length) return `"${t.name ?? t.id}" (empty)`
-    const where = clips
-      .slice()
-      .sort((a, b) => a.startBeat - b.startBeat)
-      .map(c => `${c.name ? `"${c.name}" ` : ''}bar ${bar(c.startBeat)}–${bar(c.startBeat + c.durationBeats)}`)
-      .join(', ')
-    return `"${t.name ?? t.id}": ${where}`
+    const where = clips.length
+      ? clips.slice().sort((a, b) => a.startBeat - b.startBeat)
+          .map(c => `${c.name ? `"${c.name}" ` : ''}bar ${bar(c.startBeat)}–${bar(c.startBeat + c.durationBeats)}`)
+          .join(', ')
+      : 'empty'
+    const ip = t.instrument?.params as { pack?: string; presetName?: string; name?: string } | undefined
+    const inst = t.instrument ? (ip?.presetName || ip?.name || ip?.pack || t.instrument.type) : undefined
+    // The device chain by name, in order — the assistant can now add to it and
+    // automate it, so "what is already on this" is a question it has to be able
+    // to answer without asking.
+    const fx = (t.effects ?? []).map(e => {
+      const u = (e.params as { unit?: { type?: string } } | undefined)?.unit
+      const name = e.type === 'helios' && u?.type ? `apollo ${u.type}` : e.type
+      return (e.params as { enabled?: boolean } | undefined)?.enabled === false ? `${name}(off)` : name
+    })
+    const flags = [
+      t.mute ? 'muted' : '',
+      t.solo ? 'soloed' : '',
+      t.kind === 'group' ? 'group' : '',
+      t.id === p.selectedTrackId ? 'SELECTED' : '',
+    ].filter(Boolean)
+    return [
+      `"${t.name ?? t.id}"`,
+      inst ? `[${inst}]` : '',
+      typeof t.volume === 'number' ? db(t.volume) : '',
+      typeof t.pan === 'number' ? panOf(t.pan).trim() : '',
+      fx.length ? `fx: ${fx.join('→')}` : 'no fx',
+      flags.length ? `(${flags.join(', ')})` : '',
+      `— ${where}`,
+    ].filter(Boolean).join(' ')
   })
+
   const changes = [
     ...(p.tempoMarkers ?? []).map(m => `tempo ${m.tempo} at bar ${bar(m.beat)}`),
     ...(p.meterMarkers ?? []).map(m => `${m.num}/${m.den} at bar ${bar(m.beat)}`),
   ]
+  const selClip = p.selectedClipId
+    ? (p.arrangementClips ?? []).find(c => (c as { id?: string }).id === p.selectedClipId)
+    : undefined
+
   return [
     `${p.tempo ?? 120} bpm, ${num}/${den}.`,
     changes.length ? `Changes: ${changes.join('; ')}.` : '',
     tracks.length ? `Tracks — ${tracks.join(' | ')}.` : 'No tracks yet.',
+    // "this one" / "here" have to mean something, and the only thing that can
+    // give them meaning is what the user is actually pointing at.
+    selClip ? `Selected clip: "${selClip.name ?? p.selectedClipId}" at bar ${bar(selClip.startBeat)}.` : '',
   ].filter(Boolean).join(' ')
 }
 

@@ -23,7 +23,14 @@ export async function POST(req: Request) {
 
   let body: { messages?: AssistMessage[]; module?: string; stateSummary?: string }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
-  const messages = (body.messages ?? []).filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+  // ⚠️ Content is a string OR an array of blocks. The string-only filter this
+  // replaces would have silently DROPPED every tool_use and tool_result turn —
+  // and a conversation missing the assistant's tool_use but carrying its
+  // tool_result is rejected by the API, so the loop would have failed on its
+  // second turn with an error about an orphaned result.
+  const messages = (body.messages ?? []).filter(m =>
+    (m.role === 'user' || m.role === 'assistant') &&
+    (typeof m.content === 'string' ? !!m.content.trim() : Array.isArray(m.content) && m.content.length > 0))
   if (!messages.length) return Response.json({ error: 'No message' }, { status: 400 })
   if (messages.length > 40) messages.splice(0, messages.length - 40)   // cap history the model sees
 
@@ -82,12 +89,25 @@ export async function POST(req: Request) {
   }
 
   // Ledger (always) + usage-based charge (only when billing is live).
-  const credits = aiCreditsForTokens(result.usage.inputTokens, result.usage.outputTokens)
+  //
+  // ⚠️ Cached tokens are reported SEPARATELY and are not in input_tokens, so
+  // billing on input_tokens alone would charge nothing at all for a cache read
+  // and would miss the 25% premium a cache write costs. Both are real money, at
+  // their real rates: a read is a tenth of an input token, a write is a quarter
+  // more than one. Getting this wrong in our favour would be overcharging; the
+  // way it would have gone wrong here is undercharging, which is just as much a
+  // wrong number in the ledger.
+  const u = result.usage
+  const effectiveInput = u.inputTokens + u.cacheWriteTokens * 1.25 + u.cacheReadTokens * 0.1
+  const credits = aiCreditsForTokens(effectiveInput, u.outputTokens)
   recordUsage({
     userId, provider: 'anthropic', operation: 'ai-assist', unitType: 'tokens',
-    inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
-    units: result.usage.inputTokens + result.usage.outputTokens,
-    metadata: { model: AI_ASSIST_MODEL, credits, actions: result.actions.map(a => a.name) },
+    inputTokens: u.inputTokens, outputTokens: u.outputTokens,
+    units: u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheWriteTokens,
+    metadata: {
+      model: AI_ASSIST_MODEL, credits, actions: result.actions.map(a => a.name),
+      cacheRead: u.cacheReadTokens, cacheWrite: u.cacheWriteTokens,
+    },
   })
   let balance: number | undefined
   if (CREDITS_ENABLED) {

@@ -39,6 +39,19 @@ export interface GapRow {
   /** The tracks in play, so a phrasing that depends on a name can be read back
    *  in context months later. */
   tracks: unknown
+  /**
+   * How it actually went: 'ran', or 'refused: <reason>'.
+   *
+   * ⚠️ The half that was missing. A row saying only what the assistant DECIDED
+   * a sentence meant is an intention, and a queue of intentions cannot tell you
+   * which readings were wrong — the phrasings worth fixing first are exactly the
+   * ones that were understood and then failed, and they looked identical to the
+   * ones that worked.
+   */
+  outcome: string
+  /** How many assistant turns it took. More than one means it had to look
+   *  something up or recover from a refusal — the interesting rows. */
+  turns: number
   userId: string
   status: string
   note: string
@@ -60,6 +73,8 @@ async function ensure() {
       user_id    TEXT NOT NULL DEFAULT '',
       status     TEXT NOT NULL DEFAULT 'new',
       note       TEXT NOT NULL DEFAULT '',
+      outcome    TEXT NOT NULL DEFAULT '',
+      turns      INT NOT NULL DEFAULT 1,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`
   // The same sentence from ten people is one phrasing to write, not ten. The
@@ -67,6 +82,11 @@ async function ensure() {
   // once this is more than a handful of rows.
   await sql`CREATE INDEX IF NOT EXISTS voice_gaps_said ON voice_command_gaps (lower(said))`
   await sql`CREATE INDEX IF NOT EXISTS voice_gaps_ts ON voice_command_gaps (ts DESC)`
+  // CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
+  // the columns added after the first deploy have to be added explicitly or
+  // they exist only on a database that has never run this code.
+  await sql`ALTER TABLE voice_command_gaps ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT ''`
+  await sql`ALTER TABLE voice_command_gaps ADD COLUMN IF NOT EXISTS turns INT NOT NULL DEFAULT 1`
   ready = true
 }
 
@@ -86,11 +106,12 @@ export async function addGap(row: Omit<GapRow, 'id' | 'ts' | 'status' | 'note'>)
       SELECT COUNT(*)::int AS n FROM voice_command_gaps WHERE lower(said) = lower(${said})`
     if (n >= PER_PHRASE_CAP) return
     await sql`
-      INSERT INTO voice_command_gaps (id, ts, said, calls, say, source, tracks, user_id)
+      INSERT INTO voice_command_gaps (id, ts, said, calls, say, source, tracks, user_id, outcome, turns)
       VALUES (
         ${crypto.randomUUID()}, ${Date.now()}, ${said},
         ${JSON.stringify(row.calls ?? [])}::jsonb, ${row.say ?? ''}, ${row.source ?? 'typed'},
-        ${JSON.stringify(row.tracks ?? [])}::jsonb, ${row.userId ?? ''}
+        ${JSON.stringify(row.tracks ?? [])}::jsonb, ${row.userId ?? ''},
+        ${row.outcome ?? ''}, ${row.turns ?? 1}
       )`
   } catch {
     // Fail-soft, deliberately and completely. This is a notebook. A command
@@ -107,6 +128,10 @@ export interface GapGroup {
   calls: unknown
   source: string
   status: string
+  /** How the most recent attempt went, and how many of the grouped attempts
+   *  were refused — a phrasing that fails half the time is the one to fix. */
+  outcome: string
+  refused: number
   ids: string[]
 }
 
@@ -129,6 +154,8 @@ export async function listGaps(limit = 200): Promise<GapGroup[]> {
         (ARRAY_AGG(calls ORDER BY ts DESC))[1] AS calls,
         (ARRAY_AGG(source ORDER BY ts DESC))[1] AS source,
         (ARRAY_AGG(status ORDER BY ts DESC))[1] AS status,
+        (ARRAY_AGG(outcome ORDER BY ts DESC))[1] AS outcome,
+        COUNT(*) FILTER (WHERE outcome LIKE 'refused%')::int AS refused,
         ARRAY_AGG(id)          AS ids
       FROM voice_command_gaps
       GROUP BY lower(said), said
@@ -142,6 +169,8 @@ export async function listGaps(limit = 200): Promise<GapGroup[]> {
       calls: r.calls,
       source: String(r.source ?? ''),
       status: String(r.status ?? 'new'),
+      outcome: String(r.outcome ?? ''),
+      refused: Number(r.refused ?? 0),
       ids: (r.ids ?? []) as string[],
     }))
   } catch {
