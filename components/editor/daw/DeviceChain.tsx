@@ -599,10 +599,23 @@ function FilterControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
         reach silence.
       */}
       <CtrlRow label="Freq">
+        {/* ⚠️ THE FULL RANGE, 20 Hz to 20 kHz, as it always was.
+            I narrowed this to 200 Hz – 18 kHz to stop the knob reaching
+            silence, and Brae felt it immediately: "I can hear the low pass a
+            little bit, but it sounds almost like it's opaque... It worked fine
+            before, I don't know why we changed it."
+            He was right. A person turning a filter to the bottom and hearing it
+            close is not a bug — it is the filter working, and it is one turn
+            away from being undone. The thing worth guarding against was a
+            SPOKEN percentage or a DRAWN curve parking the track in silence with
+            nothing on screen to explain it, and those are guarded where they
+            happen (LOWPASS_HZ, applyAmount, safeHz) rather than by taking the
+            bottom two octaves off the control.
+            The log taper stays: it is what makes the bottom reachable at all. */}
         <RangeCtrl
           value={p.frequency}
-          min={p.type === 'lowpass' ? LOWPASS_HZ.min : p.type === 'highpass' ? HIGHPASS_HZ.min : 20}
-          max={p.type === 'lowpass' ? LOWPASS_HZ.max : p.type === 'highpass' ? HIGHPASS_HZ.max : 20000}
+          min={20}
+          max={20000}
           step={1}
           curve="log"
           onChange={v => up({ frequency: v })}

@@ -59,11 +59,26 @@ export interface AutomatableParam {
  * and one drawn by hand mean the same thing. They were two independent copies
  * for a while, which is how a curve drifts.
  *
- * The bottom is 200 Hz rather than 20: below that a low-pass has removed
- * everything anybody can hear, so the lower octaves are travel the drawing has
- * to cross and nobody wants.
+ * ⚠️ The bottom was 200 Hz and that was too timid. Brae: "I can hear the low
+ * pass a little bit, but it sounds almost like it's opaque. The higher notes
+ * are quieter but still there... It worked fine before, I don't know why we
+ * changed it."
+ *
+ * He was right, and it was my doing. 200 Hz was chosen to stop a DRAWN curve
+ * bottoming out in silence, and it took the dramatic end of the filter with
+ * it — a low-pass that will not go below 200 Hz cannot actually close, so it
+ * reads as a blanket over the sound rather than as a filter.
+ *
+ * 60 Hz keeps the point (a sweep still lands somewhere audible rather than at
+ * a fifth of a Hertz) while giving the sweep back the bottom two octaves,
+ * where all the drama is.
+ *
+ * ⚠️ This is the range for a DRAWN or SPOKEN curve. The knob a person turns is
+ * deliberately not limited to it — see FilterControls. Someone dialling a
+ * control by hand and hearing it close is not a bug; a curve that silently
+ * parks the track is.
  */
-export const LOWPASS_HZ = { min: 200, max: 18_000 }
+export const LOWPASS_HZ = { min: 60, max: 18_000 }
 export const HIGHPASS_HZ = { min: 20, max: 2_000 }
 
 const WET: AutomatableParam = { key: 'wet', label: 'Wet', min: 0, max: 1 }
