@@ -39,6 +39,8 @@ export async function POST(req: Request) {
   }
 
   const url = new URL(req.url)
+  // Beat mode keeps the filler words, because in beat mode they are the words.
+  const beatMode = url.searchParams.get('beat') === '1'
   const contentType = req.headers.get('content-type') || 'audio/webm'
   const audio = await req.arrayBuffer().catch(() => null)
   if (!audio || audio.byteLength < 512) {
@@ -72,7 +74,11 @@ export async function POST(req: Request) {
     numerals: 'true',
     // "um", "uh" and friends carry no instruction and only get in the way of
     // matching a short command.
-    filler_words: 'false',
+    //
+    // ⚠️ Except when the filler words ARE the instruction. Saying a beat —
+    // "boom ka boom boom ka" — is nothing but filler, and dropping it left the
+    // beat parser with an empty sentence. `?beat=1` turns them back on.
+    filler_words: beatMode ? 'true' : 'false',
   })
 
   // ── Tell it which words to expect ────────────────────────────────────────
@@ -132,7 +138,7 @@ export async function POST(req: Request) {
         alternatives?: {
           transcript?: string
           confidence?: number
-          words?: { word?: string; punctuated_word?: string; confidence?: number }[]
+          words?: { word?: string; punctuated_word?: string; confidence?: number; start?: number; end?: number }[]
         }[]
       }[]
     }
@@ -158,9 +164,17 @@ export async function POST(req: Request) {
     // that affordable — without it every word in the sentence is equally
     // suspect and the search has to widen everywhere at once. With it, the one
     // word it flagged gets reconsidered and the rest are taken at face value.
+    //
+    // ⚠️ The TIMES are kept too, and they are not a nicety. Turning a spoken
+    // beat into a drum part is entirely a question of when each syllable
+    // landed; without `s` the same five words can only be spaced evenly, which
+    // is a different beat from the one somebody said. Deepgram has always sent
+    // them and this route always dropped them.
     words: (alts[0]?.words ?? []).map(w => ({
       word: (w.punctuated_word ?? w.word ?? '').trim(),
       confidence: typeof w.confidence === 'number' ? w.confidence : 1,
+      ...(typeof w.start === 'number' ? { s: w.start } : {}),
+      ...(typeof w.end === 'number' ? { e: w.end } : {}),
     })).filter(w => w.word),
     confidence: typeof alts[0]?.confidence === 'number' ? alts[0].confidence : 1,
   })

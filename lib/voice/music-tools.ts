@@ -229,6 +229,43 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'make_beat',
+    description:
+      'BEAT FROM VOICE — the person said a rhythm out loud using drum syllables: "boom ka boom boom ka", "make me a beat like doom ts doom ts", "boom boom ka". Call this whenever the message contains percussion syllables, even buried in a sentence — the syllables at the END are the beat and the words in front are just the request. Put the syllables you heard in `pattern`, in order, separated by spaces. Do NOT tidy them into real words: "ka" is not "car", and the exact syllables are what decide which drum each one is. The actual RHYTHM comes from when they were said, not from you.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'The drum syllables, in order, space separated. "boom ka boom boom ka".' },
+        track: { type: 'string', description: 'Which drum track to put it on. Omit to use the drums, or make one.' },
+        at: { ...POSITION, description: 'Where to put it. Omit for the start.' },
+      },
+      required: ['pattern'],
+    },
+  },
+  {
+    name: 'metronome',
+    description:
+      'METRONOME / CLICK — turn the click on or off. "give me a click", "metronome on", "turn the click off", "count me in". Use `on` for the click itself. Say the tempo with set_tempo, not here.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        on: { type: 'boolean', description: 'True to start the click, false to stop it.' },
+      },
+      required: ['on'],
+    },
+  },
+  {
+    name: 'name_notes',
+    description:
+      'WHAT NOTES — name the notes that are playing or selected. "what notes are being played", "what chord is this", "what note is that", "what key am I in". Give `target` to ask about one track or clip; omit it to ask about everything sounding at the playhead.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'A track or clip to name the notes of. Omit for whatever is at the playhead.' },
+      },
+    },
+  },
+  {
     name: 'set_swing',
     description:
       'SWING — how far off the grid the offbeats sit. "add some swing", "swing 30 percent", "straighten it out" is 0.',

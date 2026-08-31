@@ -22,6 +22,8 @@
 //   freshly minted here.
 
 import type { DawProject, DawTrack, MidiClip, DawClip, EffectType, TrackEffect } from '../daw-types'
+import { defaultDrumInstrument } from '../daw-types'
+import { parseSpokenBeat, beatToNotes, describeBeat as describeSpokenBeat } from './beatbox'
 import {
   defaultReverb, defaultDelay, defaultFilter, defaultCompressor,
   defaultSaturator, defaultChorus, defaultEq3, defaultLimiter,
@@ -445,7 +447,102 @@ function resolveTrack(spoken: string, p: DawProject): DawTrack | null {
   return m ? (p.tracks.find(t => t.id === m.item.id) ?? null) : null
 }
 
-export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
+/** What the microphone reported, when the sentence came from one.
+ *
+ *  ⚠️ Only the beat needs this, and only because the model cannot carry it: an
+ *  assistant relays WORDS, and a spoken rhythm is entirely a question of WHEN
+ *  each syllable landed. The tool call says which syllables; this says when. */
+export interface VoiceContext {
+  words?: { word: string; confidence?: number; s?: number; e?: number }[]
+  /** Where the playhead is, in beats. Not in the project - the project is a
+   *  document and this is a moment - so anything that answers "what is playing
+   *  RIGHT NOW" has to be told. */
+  atBeat?: number
+}
+
+const PITCH_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+/** "C#4" - a pitch as a person would say it. */
+function pitchName(pitch: number): string {
+  return `${PITCH_NAMES[((pitch % 12) + 12) % 12]}${Math.floor(pitch / 12) - 1}`
+}
+
+/**
+ * Name what is sounding - the spoken half of a tuner.
+ *
+ * Brae: "people can ask what notes are being played".
+ *
+ * Two questions wear the same words. With a target it means "what is in this
+ * part", and the answer is that clip's notes. Without one it means "what is
+ * under the playhead right now", which needs a moment as well as a document -
+ * hence VoiceContext.atBeat. Answering the first when they asked the second is
+ * worse than admitting the playhead is unknown, because both answers look
+ * equally confident.
+ */
+function namePlayingNotes(
+  project: DawProject,
+  target: string,
+  maps: ReturnType<typeof mapsOf>,
+  atBeat?: number,
+): string {
+  const clips = (project.arrangementClips ?? []).filter(
+    (c): c is MidiClip => (c as MidiClip).kind === 'midi' && !!(c as MidiClip).notes?.length,
+  )
+  const drumTrack = new Set(
+    (project.tracks ?? []).filter(t => t.instrument?.type === 'drum').map(t => t.id),
+  )
+
+  let sounding: { pitch: number; track: string }[] = []
+  let where = ''
+
+  if (target) {
+    const chosen = resolveClipOrAsk(target, project, maps, 'name_notes', {})
+    const clip = chosen.clip as MidiClip | null
+    const track = resolveTrack(target, project)
+    const wanted = clip
+      ? [clip]
+      : track ? clips.filter(c => c.trackId === track.id) : []
+    if (!wanted.length) return `I couldn't find "${target}".`
+    where = `in ${clip?.name || track?.name || target}`
+    sounding = wanted.flatMap(c => c.notes.map(n => ({
+      pitch: n.pitch,
+      track: (project.tracks ?? []).find(t => t.id === c.trackId)?.name ?? '',
+    })))
+  } else {
+    if (atBeat == null) {
+      return 'Point me at a track or clip and I\'ll name its notes - I can\'t see where the playhead is.'
+    }
+    where = `at ${describeBeat(atBeat, maps)}`
+    for (const c of clips) {
+      if (atBeat < c.startBeat || atBeat >= c.startBeat + c.durationBeats) continue
+      const local = atBeat - c.startBeat
+      const name = (project.tracks ?? []).find(t => t.id === c.trackId)?.name ?? ''
+      for (const n of c.notes) {
+        if (local >= n.startBeat && local < n.startBeat + n.durationBeats) {
+          sounding.push({ pitch: n.pitch, track: name })
+        }
+      }
+    }
+  }
+
+  // Drums are pitches too, and naming a kick "C1" is technically true and
+  // useless. They are left out of the chord and named as drums instead.
+  const pitched = sounding.filter(x => !drumTrack.has(
+    (project.tracks ?? []).find(t => t.name === x.track)?.id ?? '',
+  ))
+  const uniq = [...new Set(pitched.map(x => x.pitch))].sort((a, b) => a - b)
+
+  if (!uniq.length) return `Nothing pitched is sounding ${where}.`
+  if (uniq.length === 1) return `${pitchName(uniq[0])} ${where}.`
+
+  const names = uniq.map(pitchName).join(', ')
+  const chord = nameChord(uniq)
+  // The chord name is the answer to "what chord is this"; the note list is the
+  // answer to "what notes". Saying both costs one clause and covers both.
+  return `${names} ${where}${chord ? ` - that's ${chord}` : ''}.`
+}
+
+export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: VoiceContext): VoicePlan {
   const maps = mapsOf(project)
   const i = call.input ?? {}
   const target = str(i.target)
@@ -1438,6 +1535,70 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
       }
     }
 
+    // BEAT FROM VOICE - "make a beat like boom ka boom boom ka"
+    case 'make_beat': {
+      const pattern = str(i.pattern)
+      // Prefer what the MICROPHONE heard over what the model relayed. The model
+      // can only pass words; the rhythm lives in their timings, and those exist
+      // only on the transcript. Falling back to the relayed syllables still
+      // makes a beat - an evenly spaced one - which is the right answer for a
+      // typed command and for the browser recogniser, neither of which times
+      // anything.
+      const fromMic = (heard?.words ?? []).map(w => ({ word: w.word, s: w.s, e: w.e }))
+      const spoken = fromMic.length ? fromMic : pattern.split(/\s+/).filter(Boolean).map(word => ({ word }))
+      if (!spoken.length) return fail('Say the beat out loud - something like "boom ka boom boom ka".')
+
+      const beat = parseSpokenBeat(spoken, { bpm: project.tempo || 120 })
+      if (!beat.hits.length) {
+        // Do not invent a beat nobody asked for. Say what was missing.
+        return fail('I did not catch any drum sounds in that - try "boom ka boom boom ka".')
+      }
+
+      const at = positionToBeat(pos(i.at), maps) ?? 0
+      const wanted = str(i.track)
+      // The track they named, an existing drum track, or a new one.
+      const existing = wanted
+        ? resolveTrack(wanted, project)
+        : (project.tracks ?? []).find(t => t.instrument?.type === 'drum')
+      const trackId = existing?.id ?? newId()
+      const actions: unknown[] = []
+      if (!existing) {
+        actions.push({ type: 'ADD_TRACK', id: trackId, name: 'Drums' })
+        // Without this the notes are pitches on a synth, not drums.
+        actions.push({ type: 'SET_INSTRUMENT', trackId, instrument: defaultDrumInstrument() })
+      }
+      actions.push({
+        type: 'ADD_CLIP',
+        clip: {
+          id: newId(), trackId, kind: 'midi', name: 'Spoken beat',
+          startBeat: at, durationBeats: beat.bars * 4, loopEnabled: false,
+          notes: beatToNotes(beat, newId),
+        } as unknown as MidiClip,
+      })
+      // Say WHICH timing was used. An evenly spaced beat is not the rhythm they
+      // said, and letting that pass as success is how a feature earns distrust:
+      // they will hear the difference and have no idea why.
+      const how = beat.timing === 'heard'
+        ? 'in the rhythm you said it'
+        : 'evenly spaced - I heard the words but not their timing'
+      return {
+        actions,
+        say: `Made a ${beat.bars === 1 ? 'one-bar' : `${beat.bars}-bar`} beat ${how}: ${describeSpokenBeat(beat)}${existing ? ` on ${existing.name}` : ' on a new Drums track'}.`,
+      }
+    }
+
+    // METRONOME - the click. UI state, like transport, not the reducer.
+    case 'metronome': {
+      const on = i.on === true || /^(true|on|yes)$/i.test(String(i.on ?? ''))
+      return { actions: [{ type: 'METRONOME', on }], say: on ? 'Click on.' : 'Click off.' }
+    }
+
+    // WHAT NOTES - name what is sounding.
+    case 'name_notes': {
+      // A question, not an edit: it changes nothing and answers out loud.
+      return { actions: [], say: namePlayingNotes(project, target, maps, heard?.atBeat) }
+    }
+
     case 'transport': {
       const action = str(i.action || 'play').toLowerCase()
       if (!['play', 'stop', 'pause', 'restart', 'toggle', 'locate'].includes(action)) {
@@ -1466,11 +1627,11 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
  * and add a filter" leaving the loop without the filter is worse than doing
  * nothing and saying why.
  */
-export function planVoiceCalls(calls: VoiceCall[], project: DawProject): VoicePlan {
+export function planVoiceCalls(calls: VoiceCall[], project: DawProject, heard?: VoiceContext): VoicePlan {
   const actions: unknown[] = []
   const said: string[] = []
   for (const c of calls) {
-    const plan = planVoiceCall(c, project)
+    const plan = planVoiceCall(c, project, heard)
     if (plan.problem) return { actions: [], say: '', problem: plan.problem }
     // A question stops the whole sentence. Running the first half of "loop the
     // bass and play it" while asking which bass would leave the project half

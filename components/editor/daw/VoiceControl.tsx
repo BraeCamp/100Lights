@@ -82,7 +82,7 @@ function writeVoiceMode(m: VoiceMode) { try { localStorage.setItem(MODE_KEY, m) 
 function writeVoiceEnter(on: boolean) { try { localStorage.setItem(ENTER_KEY, on ? 'on' : 'off') } catch { /* private mode */ } }
 
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
-  const { project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId } = useDaw()
+  const { project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId, metronome, setMetronome } = useDaw()
   const [listening, setListening] = useState(false)
   const [busy, setBusy] = useState(false)
   const [heard, setHeard] = useState('')
@@ -413,6 +413,26 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     setEnterRuns(readVoiceEnter())
   }, [])
 
+  /** The last thing the microphone reported, for the planners that need more
+   *  than words.
+   *
+   *  Only two things do. A spoken BEAT is entirely a question of WHEN each
+   *  syllable landed, and an assistant relays words with no times - so the
+   *  timings have to come from the transcript directly. And "what notes are
+   *  being played" needs the playhead, which is a moment rather than part of
+   *  the song, so it is not in the project either. */
+  // Read inside a callback that must not be rebuilt every time the click is
+  // toggled — recreating the recorder's options mid-session is how a held-open
+  // microphone gets restarted underneath somebody.
+  const metronomeOnRef = useRef(false)
+  useEffect(() => { metronomeOnRef.current = metronome }, [metronome])
+
+  const heardRef = useRef<Heard | undefined>(undefined)
+  const voiceCtx = useCallback(() => ({
+    words: heardRef.current?.words,
+    atBeat: engine?.currentBeat,
+  }), [engine])
+
   /** Apply one planned action. Transport is the engine, everything else the
    *  reducer — shared so the local and assistant paths cannot drift apart. */
   const runAction = useCallback((a: unknown) => {
@@ -442,8 +462,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       else engine?.play?.()
       return
     }
+    // The click is studio state, not part of the song - same as transport, and
+    // for the same reason: nothing about it belongs in the saved document.
+    if (act.type === 'METRONOME') { setMetronome?.((act as { on?: boolean }).on !== false); return }
     dispatch(act as never)
-  }, [dispatch, engine])
+  }, [dispatch, engine, setMetronome])
 
   /** Send a finished sentence to the assistant and run whatever comes back. */
   const run = useCallback(async (
@@ -454,6 +477,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
      *  Typed commands have no such thing and pass only the words. */
     heard?: Heard,
   ) => {
+    // Kept for the planners: a typed command clears it, so a beat can never be
+    // built from the timings of a previous, unrelated sentence.
+    heardRef.current = heard
     // ── Was this meant for the studio at all? ───────────────────────────────
     //
     // Brae: "The 'say light first' thing needs to go. It isn't working for me."
@@ -594,7 +620,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         const ran: string[] = []
         const failed: string[] = []
         for (const seg of segments) {
-          const plan = planVoiceCalls(seg.reading.calls, project)
+          const plan = planVoiceCalls(seg.reading.calls, project, voiceCtx())
           if (plan.problem) { failed.push(plan.problem); continue }
           if (collectingRef.current) {
             collected.push({ text: seg.text, say: plan.say, calls: seg.reading.calls })
@@ -694,7 +720,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         const option = pendingAsk2.options[picked]
         const offer = pendingAsk2.offer
         setPendingAsk2(null)
-        const plan = planVoiceCalls(option.calls, project)
+        const plan = planVoiceCalls(option.calls, project, voiceCtx())
         setBusy(false)
         if (plan.problem) { respond(plan.problem, 'problem'); return }
         for (const a of plan.actions) runAction(a)
@@ -747,6 +773,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const plan = planVoiceCalls(
         [{ name: offer.call.name, input: { ...offer.call.input, [offer.call.field]: fresh } }],
         project,
+        voiceCtx(),
       )
       if (plan.problem) { respond(plan.problem, 'problem'); return }
       for (const a of plan.actions) runAction(a)
@@ -781,7 +808,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     }
 
     if (confidentEnough(local, heardConfidence)) {
-      const plan = planVoiceCalls(local.calls, project)
+      const plan = planVoiceCalls(local.calls, project, voiceCtx())
       if (!plan.problem && local.destructive && !confirmed) {
         // Understood perfectly, and still not run: the read-back says exactly
         // what would be lost, and a person presses the button.
@@ -852,7 +879,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         ...local.alternatives,
       ]
       const offered = readings
-        .map(r => ({ label: planVoiceCalls(r.calls, project).say, calls: r.calls }))
+        .map(r => ({ label: planVoiceCalls(r.calls, project, voiceCtx()).say, calls: r.calls }))
         .filter(r => r.label)
       if (offered.length > 1) {
         setBusy(false)
@@ -1017,7 +1044,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // goes back to the model, which can now name the right track and try
         // again instead of the user being told "no" and starting over.
         const proj = projectRef.current
-        const plans = calls.map(c => planVoiceCall(c, proj))
+        const plans = calls.map(c => planVoiceCall(c, proj, voiceCtx()))
         // The executor found more than one thing the words could mean and
         // declined to pick. That is a question for the PERSON, not for the
         // model — it is their song, and the ambiguity is about which of their
@@ -1160,7 +1187,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     text: string,
     alternatives: string[][],
     confidence: number,
-    words?: { word: string; confidence: number }[],
+    // Carries the TIMES too. A spoken beat is nothing but the times, and
+    // narrowing them away here is exactly how they would go missing between
+    // the transcriber that reports them and the planner that needs them.
+    words?: { word: string; confidence: number; s?: number; e?: number }[],
   ) => {
     // A continuous session is still listening: the sentence ended, the take did
     // not. Clearing it here made the button claim to be off while the
@@ -1226,6 +1256,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     ])]
     const rec = await startRecording({
       vocabulary,
+      // ⚠️ The click is the signal that a BEAT might be coming.
+      //
+      // Brae: "the metronome will allows users to sing a beat into the
+      // transcription system." Somebody with the click running and the
+      // microphone open is very likely saying a rhythm, and the recogniser is
+      // normally told to throw away exactly the syllables a rhythm is made of.
+      // Turning the click on is the clearest statement of intent available
+      // without adding a mode nobody asked for.
+      beat: metronomeOnRef.current,
       // Both of these change how the microphone is opened, and both are things
       // only the studio knows: whether the monitor path must be left alone, and
       // what rate it is running at.
@@ -1396,7 +1435,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     let done = 0
     const failed: string[] = []
     for (const item of items) {
-      const plan = planVoiceCalls(item.calls, project)
+      const plan = planVoiceCalls(item.calls, project, voiceCtx())
       if (plan.problem) { failed.push(plan.problem); continue }
       for (const a of plan.actions) runAction(a)
       done++
@@ -1803,7 +1842,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           <div style={{ display: 'flex', gap: 6 }}>
             <button
               onClick={() => {
-                const plan = planVoiceCalls(pendingDo.calls, project)
+                const plan = planVoiceCalls(pendingDo.calls, project, voiceCtx())
                 setPendingDo(null)
                 if (plan.problem) { setProblem(plan.problem); return }
                 for (const a of plan.actions) runAction(a)
@@ -1849,7 +1888,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               <button
                 key={i}
                 onClick={() => {
-                  const plan = planVoiceCalls(choice.calls, project)
+                  const plan = planVoiceCalls(choice.calls, project, voiceCtx())
                   setChoices(null)
                   if (plan.problem) { setProblem(plan.problem); return }
                   for (const a of plan.actions) runAction(a)

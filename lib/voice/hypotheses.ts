@@ -46,6 +46,12 @@ export interface HeardWord {
   word: string
   /** The recogniser's own confidence in this word, 0–1. */
   confidence: number
+  /** When it was said, in seconds. Server transcription only — the browser's
+   *  recogniser does not time words. Nothing in the command path needs this;
+   *  a spoken BEAT is nothing but this, since the rhythm is entirely a
+   *  question of when each syllable landed. */
+  s?: number
+  e?: number
 }
 
 export interface Heard {

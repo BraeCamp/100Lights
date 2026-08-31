@@ -53,8 +53,14 @@ export interface Transcript {
   text: string
   alternatives: string[]
   /** Per-word confidence, when the recogniser reports it. What the interpreter
-   *  uses to decide WHICH words are worth reconsidering. */
-  words?: { word: string; confidence: number }[]
+   *  uses to decide WHICH words are worth reconsidering.
+   *
+   *  `s`/`e` are the word's start and end in seconds, present only from the
+   *  server transcriber — the browser's own recogniser does not time words.
+   *  Turning a spoken beat into drums is entirely a question of when each
+   *  syllable landed, so their absence is the difference between the rhythm
+   *  somebody said and an evenly spaced guess at it. */
+  words?: { word: string; confidence: number; s?: number; e?: number }[]
   confidence: number
 }
 
@@ -109,6 +115,16 @@ export interface Recording {
 export interface RecordOptions {
   /** Words likely in this project — commands and track names. */
   vocabulary?: string[]
+  /**
+   * Listening for a BEAT rather than a command.
+   *
+   * Keeps the filler words — "boom", "ka", "ts" are the whole message when
+   * somebody is saying a rhythm, and the recogniser is normally told to throw
+   * exactly those away. Server transcription only; the browser's recogniser has
+   * no such switch and no word times either, which is why a beat spoken through
+   * it can only ever be evenly spaced.
+   */
+  beat?: boolean
   /**
    * Is the transport running?
    *
@@ -543,6 +559,7 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
       // it off long before the words that matter — the caller sorts it so the
       // most valuable hints survive any cap at all.
       for (const term of (o.vocabulary ?? []).slice(0, 100)) if (term.trim()) qs.append('kt', term.trim())
+      if (o.beat) qs.set('beat', '1')
       const res = await fetch(`/api/voice/transcribe${qs.toString() ? `?${qs}` : ''}`, {
         method: 'POST',
         headers: { 'content-type': blob.type || 'audio/webm' },
