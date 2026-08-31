@@ -242,6 +242,75 @@ export const MUSIC_TOOLS = [
       required: ['pattern'],
     },
   },
+  // ── The four the audit called "needs work" ───────────────────────────────
+  //
+  // Brae: "Let's do the ones that are labeled 'Needs work'... Remember that we
+  // are doing it primarily to make it work with AI mode."
+  //
+  // Written for the ASSISTANT first, which changes how they are shaped. A local
+  // rule matches words; a model reads a description and decides. So each of
+  // these says what it is FOR and when NOT to reach for it, because the failure
+  // mode with a model is not that it cannot find the tool — it is that it uses
+  // the wrong one confidently.
+  {
+    name: 'balance_levels',
+    description:
+      'BALANCE / LEVEL MATCH / NORMALISE — set track levels by MEASURING them rather than by guessing. "balance the mix", "match the vocal to the guitar", "normalise the drums", "even out the levels", "the bass is too loud compared to everything else". Give `reference` to match everything to one track; omit it to even the whole mix out. ⚠️ Use this when the request is about levels being WRONG RELATIVE TO EACH OTHER. For "turn the pad up", use set_track — that is a direct move and does not need measuring. This one renders the tracks to measure them, so it takes a few seconds and says so.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        targets: {
+          type: 'array', items: { type: 'string' },
+          description: 'Track names to balance. Omit for every audible track.',
+        },
+        reference: { type: 'string', description: 'A track to match the others to. Omit to even everything out together.' },
+      },
+    },
+  },
+  {
+    name: 'apply_groove',
+    description:
+      'GROOVE / FEEL / SHUFFLE — give a part a named feel by moving its notes and shaping its accents. "give the drums a shuffle", "swing the hats", "make the bass laid back", "put the drums back on the grid", "loosen it up". Named feels: straight, light swing, swing, shuffle, laid back, pushed, off-grid, hard accents. ⚠️ This is NOT set_swing — that sets one number for the whole song at playback time; this bakes a feel into one part\'s notes, where you can see it and undo it. Prefer this when they name a FEEL or a part; use set_swing when they ask for a swing percentage on the song.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        groove: { type: 'string', description: 'The feel, as they said it: "shuffle", "a bit of swing", "laid back", "straight".' },
+        amount: { type: 'number', description: 'Percent, 0-200. 100 is the template as written.' },
+      },
+      required: ['groove'],
+    },
+  },
+  {
+    name: 'crossfade',
+    description:
+      'CROSSFADE — fade one clip out as the next fades in, so the join is smooth instead of a click. "crossfade the two vocal takes", "blend those clips together", "smooth the join between the pads". If the clips do not overlap, the second is pulled back to meet the first. ⚠️ For fading a whole TRACK in or out over a section, use automate_parameter instead — that is a volume move over time, not a join between two clips.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        first: { ...TARGET, description: 'The clip that fades out. Omit to use the two that overlap.' },
+        second: { ...TARGET, description: 'The clip that fades in.' },
+        length: LENGTH,
+      },
+    },
+  },
+  {
+    name: 'stutter',
+    description:
+      'STUTTER / RETRIGGER / ROLL — chop notes into fast repeats. "stutter the last note", "retrigger the snare at 32nds", "roll the last chord", "make the ending stutter". Classic on the last beat before a drop, and on a snare going into a chorus. `division` is how fast the repeats are: 8, 16 or 32. ⚠️ Only affects notes that are already there — it repeats them, it does not invent new ones.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        division: { type: 'number', description: '8, 16 or 32. Omit for 16ths.' },
+        scope: {
+          type: 'string', enum: ['last', 'all'],
+          description: '"last" repeats only the final note or chord, which is the usual ask. Omit for last.',
+        },
+      },
+    },
+  },
+
   // ── The compound ones ────────────────────────────────────────────────────
   //
   // Brae: "We need to take into consideration more complex tasks so that we can

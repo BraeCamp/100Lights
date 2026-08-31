@@ -25,6 +25,7 @@ import type { DawProject, DawTrack, MidiClip, DawClip, EffectType, TrackEffect }
 import { defaultDrumInstrument } from '../daw-types'
 import { parseSpokenBeat, beatToNotes, describeBeat as describeSpokenBeat } from './beatbox'
 import { parseDefinitions, applyDefinitions, clearVocab, definitions, laneFromName } from './vocab'
+import { grooveNamed, applyGroove } from './grooves'
 import {
   defaultTransientShaper, defaultUtility, defaultUnmask,
   defaultReverb, defaultDelay, defaultFilter, defaultCompressor,
@@ -1694,6 +1695,151 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       return {
         actions,
         say: `Made a ${beat.bars === 1 ? 'one-bar' : `${beat.bars}-bar`} beat ${how}: ${describeSpokenBeat(beat)}${existing ? ` on ${existing.name}` : ' on a new Drums track'}.`,
+      }
+    }
+
+    // ── BALANCE / LEVEL MATCH ───────────────────────────────────────────
+    //
+    // ⚠️ The planner cannot do this one. Measuring a track means RENDERING it,
+    // which is asynchronous and needs an audio context — neither of which a
+    // pure function that returns actions has. So it hands the studio a job, the
+    // same way a spoken take does, and the studio reports back when it knows.
+    case 'balance_levels': {
+      const tracks = project.tracks ?? []
+      const wanted = Array.isArray(i.targets)
+        ? (i.targets as string[]).map(n => resolveTrack(n, project)).filter(Boolean)
+        : []
+      if (Array.isArray(i.targets) && wanted.length !== (i.targets as string[]).length) {
+        return fail(`I couldn't find all of those tracks.`)
+      }
+      const ref = str(i.reference) ? resolveTrack(str(i.reference), project) : null
+      if (str(i.reference) && !ref) return fail(`I couldn't find "${str(i.reference)}" to match to.`)
+
+      const ids = (wanted.length ? wanted : tracks.filter(t => !t.mute && t.kind !== 'group'))
+        .map(t => t!.id)
+      if (ids.length < 2 && !ref) return fail('There is only one track to balance.')
+
+      return {
+        actions: [{ type: 'BALANCE_LEVELS', trackIds: ids, referenceId: ref?.id ?? null }],
+        say: ref
+          ? `Measuring, then matching everything to ${ref.name}. This takes a few seconds.`
+          : `Measuring ${ids.length} tracks and evening them out. This takes a few seconds.`,
+      }
+    }
+
+    // ── GROOVE ──────────────────────────────────────────────────────────
+    case 'apply_groove': {
+      const groove = grooveNamed(str(i.groove))
+      if (!groove) {
+        return fail(`I don't know a feel called "${str(i.groove)}". Try shuffle, swing, laid back, pushed, off-grid or straight.`)
+      }
+      const got = midiClipFor(target, project, 'groove')
+      if ('problem' in got) return fail(got.problem)
+      const { clip, how } = got
+      const pct = spokenNumber(i.amount as string)
+      const amount = pct == null ? 1 : Math.max(0, Math.min(2, pct / 100))
+      const moved = applyGroove(clip.notes, groove, {
+        amount,
+        beatsPerBar: project.timeSignatureNum || 4,
+      })
+      return {
+        actions: moved.map(m => ({
+          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: m.id,
+          patch: { startBeat: m.startBeat, velocity: m.velocity },
+        })),
+        say: `${how} — ${groove.label.toLowerCase()}. ${groove.note}`,
+      }
+    }
+
+    // ── CROSSFADE ───────────────────────────────────────────────────────
+    case 'crossfade': {
+      const clips = [...(project.arrangementClips ?? [])].sort((a, b) => a.startBeat - b.startBeat)
+      if (clips.length < 2) return fail('There are not two clips to cross between.')
+
+      let first = str(i.first) ? resolveClip(str(i.first), project)?.clip ?? null : null
+      let second = str(i.second) ? resolveClip(str(i.second), project)?.clip ?? null : null
+
+      if (!first || !second) {
+        // Nothing named: find the pair that actually meet. Overlapping first,
+        // because an overlap is somebody having already lined them up.
+        const onSameTrack = (a: typeof clips[0], b: typeof clips[0]) => a.trackId === b.trackId
+        let best: [typeof clips[0], typeof clips[0]] | null = null
+        for (let n = 0; n < clips.length - 1; n++) {
+          const a = clips[n], b = clips[n + 1]
+          if (!onSameTrack(a, b)) continue
+          const gap = b.startBeat - (a.startBeat + a.durationBeats)
+          if (gap <= 0.001) { best = [a, b]; break }
+          if (!best && gap < 1) best = [a, b]
+        }
+        if (!best) return fail('I could not find two clips next to each other to cross between.')
+        first = best[0]; second = best[1]
+      }
+      if (first.id === second.id) return fail('That is one clip — a crossfade needs two.')
+      if (first.startBeat > second.startBeat) { const t = first; first = second; second = t }
+
+      const overlap = (first.startBeat + first.durationBeats) - second.startBeat
+      const asked = durationToBeats(len(i.length), second.startBeat, maps)
+      // The overlap they already have, or the length they asked for, or half a
+      // bar — in that order, because an existing overlap is a decision somebody
+      // already made and this should honour it rather than overrule it.
+      const length = Math.max(0.05, asked ?? (overlap > 0.01 ? overlap : 2))
+
+      const actions: unknown[] = []
+      let moved = false
+      if (overlap < length - 0.001) {
+        // No overlap to fade across, so make one by pulling the second clip
+        // back. Nothing else can create the crossing.
+        actions.push({
+          type: 'MOVE_CLIP', clipId: second.id,
+          startBeat: Math.max(0, (first.startBeat + first.durationBeats) - length),
+        })
+        moved = true
+      }
+      actions.push({ type: 'UPDATE_CLIP', clipId: first.id, patch: { fadeOut: length } })
+      actions.push({ type: 'UPDATE_CLIP', clipId: second.id, patch: { fadeIn: length } })
+      return {
+        actions,
+        say: `Crossfaded "${first.name ?? 'the first'}" into "${second.name ?? 'the next'}" over ${length === 1 ? 'a beat' : `${+length.toFixed(2)} beats`}${moved ? ', pulling the second one back to meet it' : ''}.`,
+      }
+    }
+
+    // ── STUTTER / RETRIGGER ─────────────────────────────────────────────
+    case 'stutter': {
+      const got = midiClipFor(target, project, 'stutter')
+      if ('problem' in got) return fail(got.problem)
+      const { clip, how } = got
+      const div = spokenNumber(i.division as string) ?? 16
+      if (![4, 8, 16, 32].includes(div)) return fail('Say 8, 16 or 32 for how fast the repeats are.')
+      const step = 4 / div                       // a 16th is 0.25 beats
+      const all = /all|every|whole/i.test(str(i.scope))
+
+      const notes = clip.notes
+      const lastStart = Math.max(...notes.map(n => n.startBeat))
+      // A chord is several notes at one moment, so "the last note" is every
+      // note at the last START — stuttering one voice of a chord and leaving
+      // the others held is not what anybody means.
+      const chosen = all ? notes : notes.filter(n => Math.abs(n.startBeat - lastStart) < 1e-6)
+      if (!chosen.length) return fail('There is nothing there to stutter.')
+
+      const kept = notes.filter(n => !chosen.includes(n))
+      const repeats: typeof notes = []
+      for (const n of chosen) {
+        const count = Math.max(2, Math.min(16, Math.round(n.durationBeats / step)))
+        for (let r = 0; r < count; r++) {
+          repeats.push({
+            ...n,
+            id: newId(),
+            startBeat: n.startBeat + r * step,
+            durationBeats: step * 0.9,
+            // Fading across the repeats is what makes it read as a roll rather
+            // than as a stuck note.
+            velocity: Math.max(20, Math.round(n.velocity * (1 - 0.5 * (r / Math.max(1, count - 1))))),
+          })
+        }
+      }
+      return {
+        actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: [...kept, ...repeats] } }],
+        say: `Stuttered ${all ? 'every note in' : 'the end of'} ${how} at ${div}ths.`,
       }
     }
 

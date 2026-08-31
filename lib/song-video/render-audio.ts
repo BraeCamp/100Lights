@@ -66,6 +66,44 @@ function peaksFrom(ch0: Float32Array): number[] {
   })
 }
 
+/**
+ * How loud each of these tracks actually sounds, measured rather than guessed.
+ *
+ * Brae's audit called level matching "needs work — the offline analysis exists;
+ * the in-app path does not". This is that path: each track is rendered on its
+ * own through the real engine, with its own instrument and effects, and
+ * measured with K-weighting.
+ *
+ * ⚠️ `dryMaster` on every stem, so the master compressor is not applied to each
+ * track individually. Measuring through it would make a loud track measure
+ * quieter than it is — the compressor pulls it down — and the balance would
+ * then over-correct in exactly the wrong direction.
+ *
+ * Client-only (OfflineAudioContext). Import it lazily; it renders audio.
+ */
+export async function measureTrackLoudness(
+  project: DawProject,
+  trackIds: string[],
+  opts: { startBeat: number; endBeat: number },
+): Promise<Array<{ trackId: string; lufs: number; peak: number }>> {
+  const { loudnessLufs } = await import('@/lib/loudness')
+  const out: Array<{ trackId: string; lufs: number; peak: number }> = []
+  // In series, not in parallel. Offline contexts are a limited resource — the
+  // engine's own notes record that back-to-back ones start coming back silent —
+  // and a silent stem would read as "this track is inaudible, turn it up 18 dB".
+  for (const id of trackIds) {
+    try {
+      const { channels } = await renderChannels(project, opts, { soloTrackId: id, dryMaster: true })
+      const m = loudnessLufs(channels, SR)
+      out.push({ trackId: id, lufs: m.lufs, peak: m.peak })
+    } catch {
+      // A track that will not render is left out rather than reported as
+      // silent, because silent means "turn it up".
+    }
+  }
+  return out
+}
+
 // Render a project's channels through the offline engine. With `soloTrackId`, only
 // that track's clips play (others muted) — its isolated stem. With `dryMaster`, the
 // master DynamicsCompressor is bypassed (tap post-analyser, pre-compressor), so the

@@ -478,6 +478,79 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     atBeat: engine?.currentBeat,
   }), [engine])
 
+  /**
+   * Measure the tracks and move the faders to match.
+   *
+   * From the audit's "needs work" list. The measurement is the whole feature:
+   * anybody can move a fader, and the thing that is hard by ear is knowing by
+   * HOW MUCH — which is a number nobody has until the tracks have been rendered
+   * and weighed.
+   *
+   * ⚠️ Measured over the first 32 beats rather than the whole song. A full
+   * project is one offline render per track, and a balance that takes a minute
+   * is one nobody waits for. Thirty-two beats is long enough for the gate to
+   * have real material to work with and short enough to come back while you are
+   * still thinking about the question.
+   */
+  const runBalance = useCallback(async (job: { trackIds: string[]; referenceId: string | null }) => {
+    const project = projectRef.current
+    if (!project) return
+    try {
+      setTaking('Measuring the tracks…')
+      const [{ measureTrackLoudness }, { matchGainDb, applyGainDb }] = await Promise.all([
+        import('@/lib/song-video/render-audio'),
+        import('@/lib/loudness'),
+      ])
+      const end = Math.min(
+        32,
+        Math.max(...(project.arrangementClips ?? []).map(c => c.startBeat + c.durationBeats), 8),
+      )
+      const measured = await measureTrackLoudness(project, job.trackIds, { startBeat: 0, endBeat: end })
+      const heard = measured.filter(m => Number.isFinite(m.lufs))
+      if (heard.length < 2 && !job.referenceId) {
+        respond('I could only hear one of those tracks, so there is nothing to balance it against.', 'problem')
+        setTaking(''); return
+      }
+
+      // The target: the reference track if they named one, otherwise the middle
+      // of what is there. The MEDIAN rather than the mean, so one very loud or
+      // very quiet track does not drag every other fader after it.
+      const ref = job.referenceId ? heard.find(m => m.trackId === job.referenceId) : null
+      if (job.referenceId && !ref) {
+        respond('I could not hear the track you wanted to match to.', 'problem')
+        setTaking(''); return
+      }
+      const sorted = [...heard].map(m => m.lufs).sort((a, b) => a - b)
+      const target = ref ? ref.lufs : sorted[Math.floor(sorted.length / 2)]
+
+      const nameOf = (id: string) => (project.tracks ?? []).find(t => t.id === id)?.name ?? 'a track'
+      const moves: string[] = []
+      for (const m of heard) {
+        if (ref && m.trackId === ref.trackId) continue
+        const delta = matchGainDb(m.lufs, target)
+        // Under a decibel is not audible and not worth reporting as a change —
+        // a balance that claims to have moved six tracks when it moved none is
+        // a balance nobody believes twice.
+        if (Math.abs(delta) < 1) continue
+        const track = (project.tracks ?? []).find(t => t.id === m.trackId)
+        const next = applyGainDb(track?.volume ?? 0.8, delta)
+        // ⚠️ UPDATE_TRACK with a patch — there is no SET_TRACK_VOLUME action,
+        // and an unknown type falls through the reducer silently, so this would
+        // have reported six fader moves and made none.
+        dispatch({ type: 'UPDATE_TRACK', trackId: m.trackId, patch: { volume: next } } as never)
+        moves.push(`${nameOf(m.trackId)} ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta).toFixed(1)} dB`)
+      }
+
+      respond(moves.length
+        ? `Balanced${ref ? ` to ${nameOf(ref.trackId)}` : ''}: ${moves.join(', ')}.`
+        : 'They are already within a decibel of each other — nothing worth moving.')
+    } catch (err) {
+      respond(`I could not measure that: ${String(err).slice(0, 80)}`, 'problem')
+    } finally {
+      setTaking('')
+    }
+  }, [dispatch, respond])
+
   /** Apply one planned action. Transport is the engine, everything else the
    *  reducer — shared so the local and assistant paths cannot drift apart. */
   const runAction = useCallback((a: unknown) => {
@@ -523,13 +596,20 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the project, and there is nothing for the reducer to do with it.
     if (act.type === 'VOCAB') return
 
+    // Measuring means RENDERING, which is asynchronous and needs an audio
+    // context — neither of which the planner has. So it is a job, like a take.
+    if (act.type === 'BALANCE_LEVELS') {
+      void runBalance(act as unknown as { trackIds: string[]; referenceId: string | null })
+      return
+    }
+
     // A whole conversation of its own: ask about the click, count in, listen.
     if (act.type === 'RECORD_TAKE') {
       setPendingTake(act as unknown as PendingTake)
       return
     }
     dispatch(act as never)
-  }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId])
+  }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId, runBalance])
 
   /**
    * Record a spoken take: count in, listen, and write down what was said.

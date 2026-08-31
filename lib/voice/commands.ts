@@ -617,6 +617,9 @@ const COMMANDS: VoiceCommand[] = [
       if (w.has('warm', 'warmer', 'warmth', 'bright', 'brighter', 'brighten',
         'dark', 'darker', 'darken', 'punch', 'punchier', 'punchy', 'fuller',
         'thicker', 'thinner', 'cleaner', 'snappier', 'duller')) return null
+      // Same trap with feel words: "loosen UP the pad" is a groove, not a
+      // level. "Up" is the most overloaded word in the vocabulary.
+      if (w.has('loosen', 'groove', 'shuffle', 'feel')) return null
       if (EFFECTS.some(e => w.has(e))) return null
       const up = w.has(...UP)
       const down = w.has(...DOWN)
@@ -1082,6 +1085,132 @@ const COMMANDS: VoiceCommand[] = [
       }
     },
   },
+  // ── The four the audit called "needs work" ───────────────────────────────
+  //
+  // Built for AI mode first, so the tool descriptions carry the weight. These
+  // rules exist so the same sentences also work with the assistant off, and so
+  // a held-open session does not drop them at the attention gate.
+  {
+    id: 'balance_levels',
+    tool: 'balance_levels',
+    group: 'Mixer',
+    what: 'Measure the tracks and even out their levels',
+    say: ['balance the mix', 'even out the levels', 'normalize the levels'],
+    match(w, ctx) {
+      // ⚠️ No bare 'match' as a trigger: it is ONE EDIT from "much", so "how
+      // much reverb is on the pad" would balance the mix. The match-to-one-track
+      // phrasing is read from the raw sentence below instead.
+      if (!w.has('balance', 'normalize', 'normalise')
+        && !(w.has('even') && w.has('level', 'levels', 'out'))) return null
+      if (w.has('pan', 'panning')) return null      // "balance" is also a pan word
+      const m = /\bmatch(?:es|ed)?\s+(?:the\s+)?(.+?)\s+to\s+(?:the\s+)?(.+?)\s*$/i.exec(w.raw)
+      if (m) {
+        const ref = findByName(m[2].trim(), ctx.tracks ?? [])
+        if (ref) {
+          for (const word of w.all) w.has(word)
+          return {
+            calls: [{ name: 'balance_levels', input: { reference: ref.item.name } }],
+            confidence: 0.9,
+          }
+        }
+      }
+      return { calls: [{ name: 'balance_levels', input: {} }], confidence: 0.88 }
+    },
+  },
+  {
+    id: 'apply_groove',
+    tool: 'apply_groove',
+    group: 'Timing',
+    what: 'Give a part a named feel — shuffle, laid back, off-grid',
+    say: [
+      'give the drums a shuffle', 'put the guitar back on the grid',
+      'swing the drums',
+    ],
+    match(w, ctx) {
+      // ⚠️ No 'laid': time_feel already owns "lay it back", and a groove
+      // template that duplicated it made the two commands indistinguishable on
+      // the sentence they both claim. The laid-back TEMPLATE still exists and
+      // the assistant can ask for it by name — this rule just does not fight
+      // over the words.
+      // ⚠️ No 'loosen' either — time_feel's humanize already answers to it.
+      // Two commands that both claim a word are one command with a coin flip.
+      // The off-grid TEMPLATE is still there for the assistant to name.
+      if (!w.has('groove', 'shuffle', 'swing', 'feel', 'grid')) return null
+      // ⚠️ A NAMED PART is what separates this from set_swing, which sets one
+      // number for the whole song at playback time. Both answer to the word
+      // "swing", and the difference is whether a part was named.
+      const named = nameOrSelected(w, ctx, [
+        'give', 'make', 'put', 'the', 'a', 'some', 'bit', 'of', 'back', 'on',
+        'groove', 'shuffle', 'swing', 'feel', 'grid', 'up',
+      ])
+      if (!named) return null
+      // A percentage means they are talking about the song's swing amount.
+      if (w.num() != null) return null
+      const groove = w.has('shuffle') ? 'shuffle'
+        : w.has('grid') ? 'straight'
+          : w.has('swing') ? 'swing' : 'groove'
+      return {
+        calls: [{ name: 'apply_groove', input: { target: named.name, groove } }],
+        confidence: 0.89,
+      }
+    },
+  },
+  {
+    id: 'crossfade',
+    tool: 'crossfade',
+    group: 'Arrangement',
+    what: 'Fade one clip out as the next fades in',
+    say: ['crossfade the pad clip into the vocals clip', 'crossfade the drums clip into the guitar clip'],
+    match(w, ctx) {
+      if (!w.has('crossfade', 'crossfaded')) return null
+      const m = /\bcrossfade\w*\s+(?:the\s+)?(.+?)\s+(?:into|with|to|and)\s+(?:the\s+)?(.+?)\s*$/i.exec(w.raw)
+      if (m) {
+        const a = findByName(m[1].trim(), ctx.clips ?? [])
+        const b = findByName(m[2].trim(), ctx.clips ?? [])
+        if (a && b) {
+          for (const word of w.all) w.has(word)
+          return {
+            calls: [{ name: 'crossfade', input: { first: a.item.name, second: b.item.name } }],
+            confidence: 0.92,
+          }
+        }
+      }
+      for (const word of w.all) w.has(word)
+      return { calls: [{ name: 'crossfade', input: {} }], confidence: 0.85 }
+    },
+  },
+  {
+    id: 'stutter',
+    tool: 'stutter',
+    group: 'Notes',
+    what: 'Chop notes into fast repeats',
+    say: ['stutter the end of the lead', 'retrigger the drums at 32nds'],
+    match(w, ctx) {
+      // ⚠️ No 'roll': "piano roll" is a core noun in this app and open_editor
+      // owns it. The word is in the tool description for the assistant, which
+      // reads meaning rather than matching tokens.
+      if (!w.has('stutter', 'stuttered', 'retrigger', 'retriggered')) return null
+      const n = w.num()
+      const named = nameOrSelected(w, ctx, [
+        'stutter', 'stuttered', 'retrigger', 'retriggered', 'the', 'end', 'of',
+        'at', 'last', 'note', 'notes', 'every', 'all',
+      ], { dropNums: true })
+      if (!named) return null
+      const all = w.has('every', 'all')
+      return {
+        calls: [{
+          name: 'stutter',
+          input: {
+            target: named.name,
+            ...(n && [4, 8, 16, 32].includes(n) ? { division: n } : {}),
+            ...(all ? { scope: 'all' } : {}),
+          },
+        }],
+        confidence: 0.9,
+      }
+    },
+  },
+
   // ── The words producers already use ──────────────────────────────────────
   //
   // Brae: "compile all music terms that we don't have commands for... take into

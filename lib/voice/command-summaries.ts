@@ -40,6 +40,9 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   set_width: 'How far a track spreads across the stereo picture. Wider, narrower, or hard mono. Bass in mono is the commonest reason anybody asks for this.',
   duck_under: 'Makes one track step out of the way of another — the pump you hear when a pad breathes around a kick. Say which one gets quieter and which one it makes room for: "duck the pad under the kick".',
 
+  balance_levels: 'Sets track levels by MEASURING them rather than by guessing. It renders each track on its own, works out how loud it actually sounds, and moves the faders to match — so it takes a few seconds and says so. ⚠️ Measured with K-weighting, not raw level: a bass and a hi-hat at the same RMS are nowhere near equally loud, and matching by raw level is what leaves the bass booming and the vocal buried.',
+  crossfade: 'Fades one clip out as the next fades in, so the join is smooth instead of a click. If the two clips do not overlap, the second is pulled back to meet the first — there is no other way to make them cross. An overlap you already set up is honoured rather than overruled.',
+
   // ── Timing ───────────────────────────────────────────────────────────────
   set_tempo: 'Changes the song tempo in BPM, or adds a tempo change at a bar if you say where.',
   'set_tempo.relative': 'Speeds up or slows down by a step, for when you know it is wrong but not what it should be.',
@@ -51,6 +54,8 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   'set_loop_region.on': 'Turns looping on over whatever range is already set.',
   'set_loop_region.off': 'Turns looping off and lets the song run on.',
   time_feel: 'How a part sits against the beat. Half time and double time rewrite the note positions and stretch the clip to match. Humanize nudges each note slightly — the same way every time, so undoing and redoing does not give you a different performance. Ahead and behind push the whole part early or late.',
+
+  apply_groove: 'Gives one part a named feel — shuffle, laid back, pushed, off-grid, straight — by moving its notes and shaping its accents. ⚠️ Not the same as swing: swing is one number applied to the whole song at playback time and only ever moves the offbeats. A groove is baked into the notes of one part, so you can see it in the piano roll, and it can move downbeats and change accents, which uniform swing cannot.',
 
   // ── Arrangement ──────────────────────────────────────────────────────────
   duplicate_clip: 'Repeats a clip back to back, as many times as you say. The copies follow on immediately rather than landing on top of each other.',
@@ -75,6 +80,7 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   dynamics_ramp: 'A crescendo or diminuendo across a part. It shapes the note velocities, so the part is genuinely played harder rather than turned up.',
   harmonize: 'Adds a second voice a third, fifth or octave away. It ADDS — the original part stays, which is the difference between harmonising and transposing.',
   reverse_notes: 'Plays a part backwards. The rhythm mirrors in time and the pitches stay as they were.',
+  stutter: 'Chops notes into fast repeats — the roll on the last beat before a drop, or a snare going into a chorus. By default it takes only the last note or chord, which is the usual ask; say "every note" for the whole part. The repeats get quieter across the run, which is what makes it read as a roll rather than as a stuck note.',
   add_midi_effect: 'Shapes the notes before they reach the instrument — an arpeggiator, a chord builder, a scale corrector, a velocity shaper.',
   remove_midi_effect: 'Takes a note shaper back off, so the instrument plays what is actually written in the clip again.',
   make_beat: 'Say a rhythm out loud — "boom ka boom boom ka" — and get it as drums, placed in the timing you said it. If the studio could not hear when you said each syllable it spaces them evenly and tells you so, because that is a different beat from the one you played.',
