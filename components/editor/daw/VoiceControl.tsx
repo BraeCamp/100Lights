@@ -173,6 +173,43 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const lastAcceptedAt = useRef(0)
 
   const [panelOpen, setPanelOpen] = useState(false)
+
+  /**
+   * A choice you are being asked to make, sized like one.
+   *
+   * Brae: "make the options bigger when there are multiple and connect them to
+   * the voice control window when it is open."
+   *
+   * These were 11px rows in a 340px popover — the same weight as a tooltip, for
+   * the one moment the studio has stopped and is waiting on you. A question
+   * that has to be answered is the most important thing on screen while it is
+   * there, and it was the smallest.
+   */
+  const choiceStyle = (accent: boolean): React.CSSProperties => ({
+    textAlign: 'left', padding: '11px 13px', borderRadius: 7, cursor: 'pointer',
+    border: `1px solid ${accent ? C.accent : C.border}`,
+    background: accent ? 'rgb(var(--accent-rgb) / .12)' : '#171717',
+    color: C.textPrimary, fontSize: 13.5, lineHeight: 1.35, fontWeight: 500,
+    transition: 'background .12s, border-color .12s',
+  })
+  const choiceHover = (e: React.MouseEvent<HTMLButtonElement>, on: boolean) => {
+    e.currentTarget.style.background = on ? 'rgb(var(--accent-rgb) / .22)' : '#171717'
+    e.currentTarget.style.borderColor = on ? C.accent : C.border
+  }
+
+  /**
+   * Where a question sits.
+   *
+   * ⚠️ Anchored to the voice PANEL when the panel is open, and to the button
+   * when it is not. Both were pinned to the button, so opening the card put the
+   * question behind or beside the very window you were reading — two surfaces
+   * competing for the same corner, which is the same mistake as the "I didn't
+   * get that" line arguing with the question underneath it.
+   */
+  const askAnchor = (z: number): React.CSSProperties => panelOpen
+    ? { position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: z, width: 'min(460px, 92vw)' }
+    : { position: 'absolute', top: 26, right: 0, zIndex: z, width: 'min(400px, 92vw)' }
+
   const [panelTab, setPanelTab] = useState<'talk' | 'settings' | 'help'>('talk')
   const [hud, setHudState] = useState(false)
   /** What the microphone turned out to be, for the panel and for diagnosing a
@@ -1666,10 +1703,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       {(pendingAsk2 || pendingOffer || pendingName) && (
         <div
           style={{
-            position: 'absolute', top: 26, right: 0, zIndex: 64,
-            width: 360, padding: 10, background: C.bgSurface,
-            border: `1px solid ${C.accent}`, borderRadius: 6,
-            boxShadow: '0 10px 28px rgba(0,0,0,.5)', fontSize: 11, color: C.textPrimary,
+            ...askAnchor(64),
+            padding: 13, background: C.bgSurface,
+            border: `1px solid ${C.accent}`, borderRadius: 9,
+            boxShadow: '0 12px 34px rgba(0,0,0,.55)', fontSize: 12.5, color: C.textPrimary,
           }}
           onClick={e => e.stopPropagation()}
         >
@@ -1685,16 +1722,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               make it usable with speech off, on a machine with no voices, or in
               a room where talking is not an option. */}
           {pendingAsk2 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
               {pendingAsk2.options.map((option, i) => (
                 <button
                   key={i}
                   onClick={() => answerByHand(option.label)}
-                  style={{
-                    textAlign: 'left', padding: '7px 9px', borderRadius: 4, cursor: 'pointer',
-                    border: `1px solid ${C.border}`, background: '#141414',
-                    color: C.textPrimary, fontSize: 11, lineHeight: 1.35,
-                  }}
+                  style={choiceStyle(i === 0)}
+                  onMouseEnter={e => choiceHover(e, true)}
+                  onMouseLeave={e => choiceHover(e, i === 0)}
                 >
                   {option.label}
                 </button>
@@ -1799,17 +1834,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       {choices && (
         <div
           style={{
-            position: 'absolute', top: 26, right: 0, zIndex: 62,
-            width: 340, padding: 10, background: C.bgSurface,
-            border: `1px solid ${C.border}`, borderRadius: 6,
-            boxShadow: '0 10px 28px rgba(0,0,0,.5)', fontSize: 11, color: C.textPrimary,
+            ...askAnchor(62),
+            padding: 13, background: C.bgSurface,
+            border: `1px solid ${C.accent}`, borderRadius: 9,
+            boxShadow: '0 12px 34px rgba(0,0,0,.55)', fontSize: 12.5, color: C.textPrimary,
           }}
           onClick={e => e.stopPropagation()}
         >
           <div style={{ color: C.textMuted, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 6 }}>
             WHICH DID YOU MEAN?
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             {choices.map((choice, i) => (
               <button
                 key={i}
@@ -1820,11 +1855,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
                   for (const a of plan.actions) runAction(a)
                   setSaid(plan.say)
                 }}
-                style={{
-                  textAlign: 'left', padding: '7px 9px', borderRadius: 4, cursor: 'pointer',
-                  border: `1px solid ${C.border}`, background: '#141414',
-                  color: C.textPrimary, fontSize: 11, lineHeight: 1.35,
-                }}
+                style={choiceStyle(i === 0)}
+                onMouseEnter={e => choiceHover(e, true)}
+                onMouseLeave={e => choiceHover(e, i === 0)}
               >
                 {choice.label}
               </button>
