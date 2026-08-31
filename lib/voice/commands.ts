@@ -32,6 +32,11 @@
 
 import { findByName, foldName, spokenNumber } from './resolve'
 import { beatWordsOf } from './beatbox'
+import { parseDefinitions } from './vocab'
+
+/** Drum names a single-lane recording can be asked for. */
+const DRUM_WORDS = ['kick', 'snare', 'clap', 'crash', 'rim', 'hat', 'hihat', 'tom']
+
 import type { VoiceCall } from './execute-music'
 import { Words, near } from './words'
 
@@ -1069,6 +1074,99 @@ const COMMANDS: VoiceCommand[] = [
       }
     },
   },
+  // ── The sequencer and the piano roll ─────────────────────────────────────
+  //
+  // Local, like make_beat and for the same reason: with the microphone held
+  // open, anything the built-in rules cannot read is dropped as room noise.
+  // "Open the sequencer" is unmistakably addressed to the studio.
+  {
+    id: 'open_editor',
+    tool: 'open_editor',
+    group: 'Notes',
+    what: 'Open or create a step sequencer or piano roll',
+    say: [
+      'open the sequencer', 'show me the piano roll', 'make a new sequencer',
+      'open the step sequencer on the drums', 'new piano roll',
+    ],
+    match(w, ctx) {
+      const roll = w.has('pianoroll', 'roll') || (w.has('piano') && !w.has('sequencer'))
+      const seq = w.has('sequencer', 'stepsequencer', 'steps')
+      if (!roll && !seq) return null
+      // Recording is its own command and shares every one of these words.
+      if (w.has('record', 'recording', 'tap', 'say')) return null
+      const create = w.has('new', 'make', 'create', 'another', 'add')
+      if (!create && !w.has('open', 'show', 'see', 'bring')) return null
+      const named = nameOrSelected(w, ctx, ['open', 'show', 'see', 'bring', 'new', 'make',
+        'create', 'another', 'add', 'sequencer', 'stepsequencer', 'steps', 'piano', 'roll',
+        'pianoroll', 'step'])
+      return {
+        calls: [{
+          name: 'open_editor',
+          input: { editor: roll ? 'pianoroll' : 'sequencer', ...(named ? { target: named.name } : {}), ...(create ? { create: true } : {}) },
+        }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'record_take',
+    tool: 'record_take',
+    group: 'Notes',
+    what: 'Say a part in time and have it written down',
+    say: [
+      'record a beat', 'record the kick', 'let me record chords into the piano roll',
+      'record a drum pattern', 'record notes in the piano roll',
+    ],
+    match(w, ctx) {
+      if (!w.has('record', 'recording', 'tap')) return null
+      const roll = w.has('pianoroll', 'roll', 'piano', 'chords', 'chord', 'notes', 'note')
+      // Which single drum, if they named one. "record the kick" is one lane.
+      const drum = DRUM_WORDS.find(d => w.has(d))
+      // ⚠️ Naming a drum IS naming the sequencer. "record the kick" says which
+      // editor it means as clearly as "record a beat" does, and requiring the
+      // word "beat" as well would refuse the most natural way to ask.
+      const seq = !!drum || w.has('sequencer', 'beat', 'drum', 'drums', 'pattern', 'steps')
+      if (!roll && !seq) return null
+      const named = nameOrSelected(w, ctx, ['record', 'recording', 'tap', 'let', 'me', 'into',
+        'sequencer', 'beat', 'drum', 'drums', 'pattern', 'steps', 'piano', 'roll', 'pianoroll',
+        'chords', 'chord', 'notes', 'note', ...(drum ? [drum] : [])])
+      return {
+        calls: [{
+          name: 'record_take',
+          input: {
+            editor: roll && !seq ? 'pianoroll' : 'sequencer',
+            ...(drum ? { drum } : {}),
+            ...(named ? { target: named.name } : {}),
+          },
+        }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'define_word',
+    tool: 'define_word',
+    group: 'Notes',
+    what: 'Give a word a meaning for this session',
+    say: [
+      'ta means closed hi hat', 'cha means snare', 'one means C major',
+      'forget the shorthand',
+    ],
+    match(w) {
+      if (w.has('forget', 'clear') && w.has('shorthand', 'shorthands', 'definitions', 'words')) {
+        return { calls: [{ name: 'define_word', input: { clear: true } }], confidence: 0.9 }
+      }
+      // The RAW sentence, because the meaning is in the exact words and the
+      // stripped list has already thrown the small ones away. Cheap enough to
+      // parse twice: if it reads no definitions this is not the command.
+      if (!/\b(means|equals)\b/i.test(w.raw)) return null
+      const defs = parseDefinitions(w.raw)
+      if (!defs.length) return null
+      // Everything is accounted for, so this reading explains the sentence.
+      for (const word of w.all) w.has(word)
+      return { calls: [{ name: 'define_word', input: { phrase: w.raw } }], confidence: 0.92 }
+    },
+  },
   {
     id: 'metronome',
     tool: 'metronome',
@@ -1334,6 +1432,11 @@ const COMMANDS: VoiceCommand[] = [
       // note has to be read as part of a PHRASE with the scale rather than
       // hunted for on its own. A bare letter is a note only when a scale word
       // is standing next to it.
+      // ⚠️ "one means C major" is a shorthand being DEFINED, not a key being
+      // set. A chord name and a key name are the same words, and the only thing
+      // separating them is what the sentence is doing with them - so a sentence
+      // that says "means" is not this command, however much of it looks like it.
+      if (/\b(means|equals)\b/i.test(w.raw)) return null
       const NOTES: Record<string, number> = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }
       const m = /\b([a-g])\s*(sharp|flat|#)?\s+(major|minor|dorian|chromatic)\b/i.exec(w.raw)
       if (!m) return null

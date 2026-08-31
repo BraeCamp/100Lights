@@ -37,6 +37,21 @@ export interface AskOption {
    * fragments are matched against.
    */
   keywords: string[]
+  /**
+   * Something the STUDIO does, rather than something the song becomes.
+   *
+   * ⚠️ Every other option is a list of VoiceCalls, which is right for anything
+   * that edits the project: calls are data, so they can be read back, queued,
+   * confirmed and recorded as a training example. But a few questions are about
+   * the studio's own behaviour and have no representation as an edit — "do you
+   * want the click on this take?" starts a count-in and opens a microphone, and
+   * there is no call that means that.
+   *
+   * Kept OPTIONAL and rare on purpose. An option with a closure is invisible to
+   * everything that reasons about calls, so anything expressible as a call must
+   * stay one.
+   */
+  onPick?: () => void
 }
 
 /**

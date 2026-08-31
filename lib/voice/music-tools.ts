@@ -243,6 +243,47 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'open_editor',
+    description:
+      'OPEN AN EDITOR — show the step sequencer or the piano roll. "open the sequencer", "show me the piano roll for the pad", "make a new sequencer", "start a new drum pattern". Set `create` when they asked for a NEW one rather than to see an existing one.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        editor: { type: 'string', enum: ['sequencer', 'pianoroll'], description: 'sequencer for drums, pianoroll for notes.' },
+        target: { ...TARGET, description: 'Which track or clip. Omit for the selected one.' },
+        create: { type: 'boolean', description: 'True to make a new empty one.' },
+      },
+      required: ['editor'],
+    },
+  },
+  {
+    name: 'record_take',
+    description:
+      'RECORD BY VOICE — the person wants to SAY a part in time and have it written down. "record a beat", "let me tap in the kick", "record chords into the piano roll", "I want to say the hi-hat part". The studio asks about the click, counts them in, listens, and places what they said on the grid. `drum` records one drum at a time, which is how a kit is usually built.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        editor: { type: 'string', enum: ['sequencer', 'pianoroll'] },
+        target: { ...TARGET, description: 'Which track or clip to record into. Omit for the selected one.' },
+        drum: { type: 'string', description: 'One drum only — "kick", "closed hi hat", "snare". Omit to take whatever they say.' },
+        bars: { type: 'number', description: 'How long, in bars. Omit for one.' },
+      },
+      required: ['editor'],
+    },
+  },
+  {
+    name: 'define_word',
+    description:
+      'SHORTHAND — the person is saying what a word means for this session: "ta means closed hi hat and cha means snare", "one means C major", "let bap be the kick". Pass their sentence through in `phrase` EXACTLY as they said it; the studio parses it. These last until they change them or clear them.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        phrase: { type: 'string', description: 'The sentence, verbatim: "ta means closed hi hat, and cha means snare".' },
+        clear: { type: 'boolean', description: 'True to forget every shorthand instead.' },
+      },
+    },
+  },
+  {
     name: 'metronome',
     description:
       'METRONOME / CLICK — turn the click on or off. "give me a click", "metronome on", "turn the click off", "count me in". Use `on` for the click itself. Say the tempo with set_tempo, not here.',

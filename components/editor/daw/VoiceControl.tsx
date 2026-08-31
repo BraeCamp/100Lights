@@ -28,6 +28,8 @@ import { Mic, Loader2, Settings2 } from 'lucide-react'
 import { useDaw, reducer as dawReducer, type DawAction } from '@/lib/daw-state'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { musicStateSummary } from '@/lib/voice/music-tools'
+import { drumTake, chordTake, takeToNotes, describeTake } from '@/lib/voice/pass'
+import { detectOnsets, monoOf } from '@/lib/voice/onsets'
 import { combinePresets } from '@/lib/midi-presets'
 import { hearBetter } from '@/lib/voice/hear-better'
 import { resolveLocally, resolveHeard, confidentEnough } from '@/lib/voice/local-resolve'
@@ -82,7 +84,10 @@ function writeVoiceMode(m: VoiceMode) { try { localStorage.setItem(MODE_KEY, m) 
 function writeVoiceEnter(on: boolean) { try { localStorage.setItem(ENTER_KEY, on ? 'on' : 'off') } catch { /* private mode */ } }
 
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
-  const { project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId, metronome, setMetronome } = useDaw()
+  const {
+    project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId,
+    metronome, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
+  } = useDaw()
   const [listening, setListening] = useState(false)
   const [busy, setBusy] = useState(false)
   const [heard, setHeard] = useState('')
@@ -447,6 +452,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     selectedAt.current = Date.now()
   }, [selectedTrackId, selectedClipId])
 
+  /**
+   * A recording asked for by voice, waiting on one question.
+   *
+   * Brae: "When the user begins sequencer recording or piano roll recording
+   * using the voice controls, it will ask if the user wants the metronome.
+   * Either way, the program will [do] an audible countdown then start."
+   */
+  interface PendingTake {
+    editor: 'sequencer' | 'pianoroll'
+    clipId: string
+    lane?: string | null
+    bars?: number
+  }
+  const [pendingTake, setPendingTake] = useState<PendingTake | null>(null)
+  const [taking, setTaking] = useState<string>('')
+
   const heardRef = useRef<Heard | undefined>(undefined)
   const voiceCtx = useCallback(() => ({
     words: heardRef.current?.words,
@@ -485,8 +506,163 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // The click is studio state, not part of the song - same as transport, and
     // for the same reason: nothing about it belongs in the saved document.
     if (act.type === 'METRONOME') { setMetronome?.((act as { on?: boolean }).on !== false); return }
+
+    // Which editor is on screen is also the studio, not the song.
+    if (act.type === 'OPEN_EDITOR') {
+      const a = act as unknown as { editor: 'sequencer' | 'pianoroll'; clipId: string }
+      if (a.editor === 'pianoroll') { setExpandedStepSeqClipId?.(null); setExpandedPianoRollClipId?.(a.clipId) }
+      else { setExpandedPianoRollClipId?.(null); setExpandedStepSeqClipId?.(a.clipId) }
+      return
+    }
+
+    // Already applied by the planner - the shorthand lives in a module, not in
+    // the project, and there is nothing for the reducer to do with it.
+    if (act.type === 'VOCAB') return
+
+    // A whole conversation of its own: ask about the click, count in, listen.
+    if (act.type === 'RECORD_TAKE') {
+      setPendingTake(act as unknown as PendingTake)
+      return
+    }
     dispatch(act as never)
-  }, [dispatch, engine, setMetronome])
+  }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId])
+
+  /**
+   * Record a spoken take: count in, listen, and write down what was said.
+   *
+   * ── Why the recorder starts BEFORE the count-in ──────────────────────────
+   *
+   * The grid needs an origin — the moment beat one happened — in the
+   * recording's own timeline, and the only way to know that is to have the
+   * recording already running when it arrives. Counting in first and then
+   * opening the microphone would leave the startup latency between them
+   * unmeasured, and at 120bpm a sixteenth is 125ms: a hundred milliseconds of
+   * unaccounted-for delay is most of a subdivision, so everything lands late
+   * and the first hit misses the downbeat.
+   *
+   * The clicks are therefore IN the recording. That is harmless: they happen
+   * before the origin, and both the negative-step guard and the in-order
+   * word/onset walk skip them.
+   */
+  const runTake = useCallback(async (take: PendingTake, withClick: boolean) => {
+    const bpm = projectRef.current?.tempo || 120
+    const bars = Math.max(1, Math.min(8, take.bars ?? 1))
+    const beatsPerBar = projectRef.current?.timeSignatureNum || 4
+    if (withClick) setMetronome?.(true)
+
+    let rec: Awaited<ReturnType<typeof startRecording>> = null
+    try {
+      setTaking('Getting ready…')
+      rec = await startRecording({
+        // The syllables ARE the message here, so the filler words stay.
+        beat: true,
+        vocabulary: [...COMMAND_VOCABULARY],
+        playing: !!engine?.isPlaying,
+        sampleRate: engine?.ctx?.sampleRate,
+        audioContext: engine?.ctx,
+      })
+      if (!rec) { respond('I could not open the microphone.', 'problem'); setTaking(''); return }
+
+      // Audible either way — Brae asked for the countdown whether or not the
+      // click is on afterwards.
+      const t0 = performance.now()
+      setTaking('Counting in…')
+      await engine?.countIn?.(beatsPerBar, bpm)
+      const originSec = (performance.now() - t0) / 1000
+
+      const seconds = (bars * beatsPerBar * 60) / bpm
+      setTaking(take.lane ? `Say the ${take.lane} part…` : 'Say it…')
+      // A tail, so the last syllable is not clipped by the stopwatch.
+      await new Promise(r => setTimeout(r, (seconds + 0.7) * 1000))
+
+      setTaking('Working it out…')
+      const out = await rec.stop()
+      rec = null
+      if (!out.ok) { respond(out.error, 'problem'); setTaking(''); return }
+      const words = (out.result?.words ?? []).map(w => ({ word: w.word, s: w.s, e: w.e }))
+      if (!words.length) { respond('I did not catch anything in that take.', 'problem'); setTaking(''); return }
+
+      // ── The audio spikes ────────────────────────────────────────────────
+      //
+      // Brae: "the program connects those names to the audio spikes from the
+      // user saying the words". Without the audio the words carry their own
+      // times, which are close enough to read and too loose to play.
+      let onsets: ReturnType<typeof detectOnsets> = []
+      try {
+        if (out.audio && engine?.ctx) {
+          const buf = await engine.ctx.decodeAudioData(await out.audio.arrayBuffer())
+          onsets = detectOnsets(monoOf(buf), buf.sampleRate)
+        }
+      } catch { /* no spikes: the word times still make a take, and it says so */ }
+
+      const opts = { bpm, originSec, maxBars: bars, onlyLane: (take.lane ?? undefined) as never }
+      const built = take.editor === 'pianoroll'
+        ? chordTake(words, onsets, opts)
+        : drumTake(words, onsets, opts)
+
+      if (!built.hits.length) {
+        respond(take.editor === 'pianoroll'
+          ? 'I did not hear any chords in that. Try naming them, or say something like "one means C major".'
+          : 'I did not hear any drums in that. Try "kick clap kick kick crash".', 'problem')
+        setTaking(''); return
+      }
+
+      const clip = (projectRef.current?.arrangementClips ?? [])
+        .find(c => c.id === take.clipId) as { notes?: unknown[]; durationBeats?: number } | undefined
+      const fresh = takeToNotes(built, () => crypto.randomUUID(), take.editor === 'pianoroll' ? 1 : undefined)
+      dispatch({
+        type: 'UPDATE_CLIP',
+        clipId: take.clipId,
+        // ADDED to what is there, because building a kit one drum at a time is
+        // the whole point of a single-lane take — replacing would mean each
+        // pass erased the last one.
+        patch: {
+          notes: [...((clip?.notes ?? []) as never[]), ...(fresh as never[])],
+          durationBeats: Math.max(clip?.durationBeats ?? 0, built.bars * beatsPerBar),
+        },
+      } as never)
+
+      const how = built.fromAudio ? '' : ' (timed from the words — I could not hear the attacks)'
+      const missed = built.ignored.length ? ` I skipped ${built.ignored.slice(0, 3).join(', ')}.` : ''
+      respond(`Got it: ${describeTake(built)}.${missed}${how}`)
+    } catch (err) {
+      respond(`The take failed: ${String(err).slice(0, 80)}`, 'problem')
+    } finally {
+      rec?.cancel?.()
+      setTaking('')
+    }
+  }, [dispatch, engine, respond, setMetronome])
+
+  /**
+   * The one question a take always asks.
+   *
+   * It goes through pendingAsk2, which is the studio's ordinary way of asking
+   * something — so it appears inside the voice window with the rest of the
+   * conversation, and is answerable by saying yes or by clicking.
+   */
+  useEffect(() => {
+    if (!pendingTake) return
+    const take = pendingTake
+    setPendingTake(null)
+    setPendingAsk2({
+      speak: `Recording ${take.lane ? `the ${take.lane}` : take.editor === 'pianoroll' ? 'chords' : 'a beat'}. Do you want the click?`,
+      options: [
+        {
+          label: 'Yes, with the click',
+          calls: [],
+          // What a person actually says to answer this.
+          keywords: ['yes', 'yeah', 'yep', 'click', 'metronome', 'please', 'sure', 'on'],
+          onPick: () => { void runTake(take, true) },
+        },
+        {
+          label: 'No click',
+          calls: [],
+          keywords: ['no', 'nope', 'without', 'off', 'none', 'silent'],
+          onPick: () => { void runTake(take, false) },
+        },
+      ],
+    })
+  }, [pendingTake, runTake])
 
   /** Send a finished sentence to the assistant and run whatever comes back. */
   const run = useCallback(async (
@@ -744,6 +920,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         const option = pendingAsk2.options[picked]
         const offer = pendingAsk2.offer
         setPendingAsk2(null)
+        // A studio-level answer: no calls, a closure instead. See AskOption.
+        if (option.onPick) { setBusy(false); option.onPick(); return }
         const plan = planVoiceCalls(option.calls, project, voiceCtx())
         setBusy(false)
         if (plan.problem) { respond(plan.problem, 'problem'); return }
@@ -1674,7 +1852,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
                 {pendingAsk2.options.map((option, i) => (
                   <button
                     key={i}
-                    onClick={() => answerByHand(option.label)}
+                    // A closure option is picked directly. Routing it through
+                    // answerByHand would send the label back through keyword
+                    // matching, which is the long way round to the same button
+                    // and fails whenever two labels share a word.
+                    onClick={() => {
+                      if (!option.onPick) { answerByHand(option.label); return }
+                      setPendingAsk2(null)
+                      option.onPick()
+                    }}
                     style={choiceStyle(i === 0)}
                     onMouseEnter={e => choiceHover(e, true)}
                     onMouseLeave={e => choiceHover(e, i === 0)}
@@ -1998,7 +2184,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           // report, since the microphone is deafened while it speaks).
           talking={talking}
           saying={heard}
-          reply={said}
+          // ⚠️ During a take the status IS the message that matters: "Counting
+          // in…" then "Say it…" is the difference between speaking on the beat
+          // and speaking into a microphone that has not opened yet. It wins the
+          // slot for as long as the take is running.
+          reply={taking || said}
           problem={problem}
           question={question}
           hud={hud}

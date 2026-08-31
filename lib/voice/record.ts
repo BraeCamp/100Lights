@@ -198,7 +198,21 @@ export interface RecordOptions {
 }
 
 export type StopResult =
-  | { ok: true; result: Transcript | null }
+  | {
+    ok: true
+    result: Transcript | null
+    /**
+     * The recording itself.
+     *
+     * ⚠️ Needed because a transcript cannot say WHEN precisely enough. Word
+     * times land within tens of milliseconds, which is fine for a command and
+     * a third of a sixteenth note out at 120bpm — so a spoken rhythm gets its
+     * timing from the audio's own attacks instead (lib/voice/onsets.ts) and
+     * the words only say which drum. Nothing else needs this and it costs
+     * nothing to hand back, since the blob already exists.
+     */
+    audio?: Blob
+  }
   | { ok: false; error: string }
 
 /** The first container this browser will actually produce. Safari and Chrome
@@ -613,7 +627,10 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
         if (analyser && !worthSending(peakSeen, vad.floor, heardSpeech) && !o.playing) {
           resolve({ ok: true, result: null }); return
         }
-        resolve(await transcribe(blob))
+        // The blob rides along with the transcript: a spoken take needs both,
+        // and re-recording to get the audio is not an option.
+        const out = await transcribe(blob)
+        resolve(out.ok ? { ...out, audio: blob } : out)
       }
       try { rec.stop() } catch { release(); resolve({ ok: false, error: 'Recording stopped unexpectedly.' }) }
     })

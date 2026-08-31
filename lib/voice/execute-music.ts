@@ -24,6 +24,7 @@
 import type { DawProject, DawTrack, MidiClip, DawClip, EffectType, TrackEffect } from '../daw-types'
 import { defaultDrumInstrument } from '../daw-types'
 import { parseSpokenBeat, beatToNotes, describeBeat as describeSpokenBeat } from './beatbox'
+import { parseDefinitions, applyDefinitions, clearVocab, definitions, laneFromName } from './vocab'
 import {
   defaultReverb, defaultDelay, defaultFilter, defaultCompressor,
   defaultSaturator, defaultChorus, defaultEq3, defaultLimiter,
@@ -540,6 +541,66 @@ function namePlayingNotes(
   // The chord name is the answer to "what chord is this"; the note list is the
   // answer to "what notes". Saying both costs one clause and covers both.
   return `${names} ${where}${chord ? ` - that's ${chord}` : ''}.`
+}
+
+/**
+ * The clip an editor should open on, making one if it has to.
+ *
+ * ⚠️ The instrument decides the editor, not the other way round. A sequencer on
+ * a synth track shows a grid of drum lanes that play chromatic pitches, which
+ * looks like it worked and sounds like nothing anybody asked for - so a new
+ * sequencer brings a drum kit with it, and a new piano roll does not.
+ */
+function editorTarget(
+  project: DawProject,
+  target: string,
+  editor: 'sequencer' | 'pianoroll',
+  create: boolean,
+  maps: ReturnType<typeof mapsOf>,
+): { actions: unknown[]; clipId: string; name: string; made: boolean; problem?: string } {
+  const none = { actions: [], clipId: '', name: '', made: false }
+  const clips = (project.arrangementClips ?? []).filter(
+    (c): c is MidiClip => (c as MidiClip).kind === 'midi',
+  )
+  const wantsDrums = editor === 'sequencer'
+
+  if (!create) {
+    // Named a clip, named a track, or neither - in that order of specificity.
+    const named = target ? clips.find(c => foldName(c.name ?? '') === foldName(target)) : null
+    if (named) return { actions: [], clipId: named.id, name: named.name ?? 'that clip', made: false }
+    const track = target ? resolveTrack(target, project) : null
+    if (target && !track) return { ...none, problem: `I couldn't find "${target}".` }
+    const onTrack = track ? clips.filter(c => c.trackId === track.id) : clips
+    if (onTrack.length) {
+      const c = onTrack[0]
+      return { actions: [], clipId: c.id, name: c.name ?? track?.name ?? 'that clip', made: false }
+    }
+    if (!track) {
+      return { ...none, problem: 'There is nothing to open yet - say "make a new sequencer".' }
+    }
+    // A track with no clips: making one is what they meant.
+  }
+
+  const track = target ? resolveTrack(target, project) : null
+  const existing = track ?? (project.tracks ?? []).find(t =>
+    wantsDrums ? t.instrument?.type === 'drum' : t.instrument?.type !== 'drum')
+  const trackId = existing?.id ?? newId()
+  const actions: unknown[] = []
+  if (!existing) {
+    actions.push({ type: 'ADD_TRACK', id: trackId, name: wantsDrums ? 'Drums' : 'Keys' })
+    if (wantsDrums) actions.push({ type: 'SET_INSTRUMENT', trackId, instrument: defaultDrumInstrument() })
+  }
+  const clipId = newId()
+  const startBeat = positionToBeat(undefined, maps) ?? 0
+  actions.push({
+    type: 'ADD_CLIP',
+    clip: {
+      id: clipId, trackId, kind: 'midi',
+      name: wantsDrums ? 'Beat' : 'Notes',
+      startBeat, durationBeats: 4, loopEnabled: false, notes: [],
+    } as unknown as MidiClip,
+  })
+  return { actions, clipId, name: existing?.name ?? (wantsDrums ? 'a new Drums track' : 'a new Keys track'), made: true }
 }
 
 export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: VoiceContext): VoicePlan {
@@ -1584,6 +1645,61 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       return {
         actions,
         say: `Made a ${beat.bars === 1 ? 'one-bar' : `${beat.bars}-bar`} beat ${how}: ${describeSpokenBeat(beat)}${existing ? ` on ${existing.name}` : ' on a new Drums track'}.`,
+      }
+    }
+
+    // OPEN AN EDITOR - the sequencer or the piano roll, on something.
+    case 'open_editor': {
+      const editor = /piano|roll|note/i.test(str(i.editor)) ? 'pianoroll' : 'sequencer'
+      const found = editorTarget(project, target, editor, i.create === true, maps)
+      if (found.problem) return fail(found.problem)
+      return {
+        actions: [...found.actions, { type: 'OPEN_EDITOR', editor, clipId: found.clipId }],
+        say: `${found.made ? 'Made and opened' : 'Opened'} the ${editor === 'pianoroll' ? 'piano roll' : 'sequencer'} on ${found.name}.`,
+      }
+    }
+
+    // RECORD BY VOICE - the studio asks about the click, counts in, and listens.
+    case 'record_take': {
+      const editor = /piano|roll|note|chord/i.test(str(i.editor)) ? 'pianoroll' : 'sequencer'
+      const found = editorTarget(project, target, editor, false, maps)
+      if (found.problem) return fail(found.problem)
+      const drum = str(i.drum)
+      const lane = drum ? laneFromName(drum) : null
+      if (drum && !lane) return fail(`I do not know a drum called "${drum}".`)
+      const bars = Math.max(1, Math.min(8, spokenNumber(i.bars as string) ?? 1))
+      return {
+        actions: [
+          ...found.actions,
+          { type: 'OPEN_EDITOR', editor, clipId: found.clipId },
+          // The UI owns the rest: it has the microphone, the count-in and the
+          // transport clock, none of which are in the project.
+          { type: 'RECORD_TAKE', editor, clipId: found.clipId, lane, bars },
+        ],
+        say: '',   // the studio speaks when it asks about the click
+      }
+    }
+
+    // SHORTHAND - "ta means closed hi hat, and cha means snare"
+    case 'define_word': {
+      if (i.clear === true) {
+        clearVocab()
+        return { actions: [{ type: 'VOCAB', cleared: true }], say: 'Forgot every shorthand.' }
+      }
+      // The person's own sentence, parsed here rather than by the model: the
+      // model relays words and this needs the exact ones, and the local rules
+      // hand the raw sentence straight through.
+      const said = applyDefinitions(parseDefinitions(str(i.phrase)))
+      if (!said) {
+        return fail('Say it like "ta means closed hi hat" - a single word, then what it means.')
+      }
+      const n = definitions().length
+      // A studio-level action, like METRONOME: the shorthand is not part of the
+      // song and has no business in the project, but something did change and
+      // saying so is what tells the difference between "noted" and "ignored".
+      return {
+        actions: [{ type: 'VOCAB', defined: definitions().map(d => d.word) }],
+        say: `${said}. ${n} shorthand${n === 1 ? '' : 's'} in this session.`,
       }
     }
 
