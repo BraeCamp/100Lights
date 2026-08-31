@@ -197,8 +197,12 @@ const FEATURES: Feature[] = [
     description: 'The ⚙ button opens the track’s device chain and instrument panel below — right-click the track header for more options like rename, color, and freeze.' },
   { group: 'Tracks & Mixing', name: 'Automation Lanes', helpIds: ['automation'], hint: TRACK_HINT,
     description: 'Add lanes that change parameters over time — volume rides, pan sweeps, filter moves — drawn as editable curves directly beneath the track’s clips.' },
-  { group: 'Tracks & Mixing', name: 'Effects Lane', helpIds: ['fx-lane'], hint: TRACK_HINT,
-    description: 'Toggle a lane under the track where clip effects live as draggable regions. Select, copy, and paste effect regions between tracks with the usual shortcuts.' },
+  // The Effects Lane entry is gone with the button that opened it: nothing sets
+  // showFx any more, so a help topic pointing at `fx-lane` would highlight an
+  // element that never renders — a tour step leading somewhere that does not
+  // exist is worse than no step. Track effects are covered by "Device Chain"
+  // under Instruments & Effects, and by "Track Settings" above it; if the bar
+  // lane comes back, so does this.
 
   // ── Session View ──
   { group: 'Session View', name: 'Scenes', helpIds: ['add-scene'], modes: ['music'], hint: SESSION_HINT,

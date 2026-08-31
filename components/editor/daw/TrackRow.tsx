@@ -413,6 +413,25 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   } | null>(null)
   const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
   const [spectralTarget, setSpectralTarget] = useState<AudioClip | null>(null)
+  // ── The track head's FX button is gone ────────────────────────────────
+  //
+  // Brae: "it looks like it used an FX track different from what I'd get from
+  // the FX button, so let's just get rid of the FX button on trackheads."
+  //
+  // He was right that they were different things, and the reason is worth
+  // recording: THREE buttons in this file said "FX" and none of them meant the
+  // same thing. The one on the track head created nothing at all — it revealed
+  // an effects LANE, whose bars are ClipEffects (a time range on a track, in
+  // the RollFx sound-settings model). The header inside that lane opened the
+  // DEVICE CHAIN, which is track.effects — discrete DSP devices, a completely
+  // different object family that nothing converts between. And the group track
+  // head had a third one that only changed the selection.
+  //
+  // Track effects now have exactly one door: select a track and the Devices tab
+  // below is already open on them. `showFx` stays only because the lane it
+  // toggled still exists in the file; nothing sets it any more, so the lane no
+  // longer renders. That is deliberate and is Brae's next decision — delete the
+  // bar lane, or give it a home that is not a third meaning of the word FX.
   const [showFx,         setShowFx]         = useState(false)
   const [fxRackOpen,     setFxRackOpen]     = useState<{ x: number; y: number } | null>(null)
   const fxRackRef = useRef<HTMLDivElement>(null)
@@ -912,9 +931,9 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               style={{ fontSize: 8, width: 15, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.mute ? '#d97706' : 'var(--bg-surface)', color: track.mute ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>M</button>
             <button onClick={e => { e.stopPropagation(); dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }) }}
               style={{ fontSize: 8, width: 15, height: 14, borderRadius: 2, border: '1px solid var(--border)', background: track.solo ? '#eab308' : 'var(--bg-surface)', color: track.solo ? '#000' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>S</button>
-            <button onClick={e => { e.stopPropagation(); setSelectedTrackId(track.id); setShowFx(v => !v) }}
-              title="Group effects — opens the device chain in the Devices tab"
-              style={{ fontSize: 8, width: 20, height: 14, borderRadius: 2, border: `1px solid ${track.effects.length ? 'var(--accent)' : 'var(--border)'}`, background: track.effects.length ? 'rgb(var(--accent-rgb) / 0.2)' : 'var(--bg-surface)', color: track.effects.length ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>FX</button>
+            <button onClick={e => { e.stopPropagation(); setSelectedTrackId(track.id) }}
+              title="Select this group — its effects are in the Devices tab below"
+              style={{ fontSize: 8, width: 20, height: 14, borderRadius: 2, border: `1px solid ${track.effects.length ? 'var(--accent)' : 'var(--border)'}`, background: track.effects.length ? 'rgb(var(--accent-rgb) / 0.2)' : 'var(--bg-surface)', color: track.effects.length ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}>{track.effects.length || '·'}</button>
           </div>
           {/* Group lane — a thin summary bar (no clips) */}
           <div style={{ flex: 1, height: GROUP_TRACK_HEIGHT, borderBottom: '1px solid var(--border)', background: `linear-gradient(90deg, ${track.color}18, transparent 40%)`, display: 'flex', alignItems: 'center', paddingLeft: 10 }}>
@@ -1118,12 +1137,6 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             </div>
             <div style={{ flex: 1 }} />
             <AddAutoButton track={track} />
-            <button
-              title="Toggle effects lane"
-              data-help-id="fx-lane"
-              onClick={e => { e.stopPropagation(); setShowFx(v => !v) }}
-              style={{ fontSize: 8, width: 22, height: 14, borderRadius: 2, border: `1px solid ${showFx ? 'var(--accent)' : 'var(--border)'}`, background: showFx ? 'var(--accent)' : 'var(--bg-surface)', color: showFx ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontWeight: 700, padding: 0, flexShrink: 0 }}
-            >FX</button>
             {collabPeers.length > 0 && (
               <button
                 ref={myMixBtnRef}
