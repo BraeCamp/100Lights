@@ -68,6 +68,22 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  // ⚠️ One catch around the whole thing. An unhandled throw here is a bare 500
+  // with an empty body, which tells the studio nothing and sends whoever is
+  // debugging it to a log file on the other side of a deploy. Every failure
+  // should say what it was.
+  try {
+    return await handlePost(req)
+  } catch (err) {
+    return Response.json({
+      rendered: false,
+      reason: 'render-failed',
+      detail: String(err instanceof Error ? err.stack ?? err.message : err).slice(0, 400),
+    }, { status: 200 })
+  }
+}
+
+async function handlePost(req: Request) {
   if (!await requireUser(req)) {
     return Response.json({ error: 'Sign in to use server loading.' }, { status: 401 })
   }

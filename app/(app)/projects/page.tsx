@@ -1,5 +1,6 @@
 'use client'
 
+import { SaveOfflineItem } from '@/components/projects/SaveOfflineItem'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil, Check, ExternalLink } from 'lucide-react'
@@ -636,6 +637,11 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
               </button>
             </div>
           )}
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
+          {/* Renders this project's audio on the server and keeps it on this
+              device. Deliberately does NOT close the menu — it reports its own
+              progress in place, and a job you started should say how it went. */}
+          <SaveOfflineItem projectId={ctxMenu.id} style={{ padding: '8px 14px', fontSize: 14, gap: 10 }} />
           <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
           <button onClick={() => { const id = ctxMenu.id; setCtxMenu(null); requestDeleteCloud(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: '#ef4444' }}>
             <Trash2 size={14} /> Delete

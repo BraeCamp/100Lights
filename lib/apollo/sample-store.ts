@@ -8,6 +8,10 @@ import { initLibrary, libraryAdd, libraryGetById, LibraryEntry } from '@/lib/sou
 import { libraryFulfill } from '@/lib/default-samples'
 import { audioBufferToWav, blobToAudioBuffer } from '@/lib/wav-encoder'
 import type { ApolloPatch } from '@/lib/apollo/patch'
+// Pure, and needed by the SERVER render route — so it cannot live in a
+// 'use client' module. Re-exported here for the callers that already had it.
+import { referencedSampleIds } from './patch-samples'
+export { referencedSampleIds }
 import type { ApolloEngine } from '@/lib/apollo/engine-client'
 import type { SpectralAnalysis } from '@/lib/apollo/spectral'
 
@@ -69,17 +73,6 @@ async function decodeSpectralBlob(blob: Blob): Promise<SpectralAnalysis> {
   }
 }
 
-export function referencedSampleIds(patch: ApolloPatch): string[] {
-  const ids = new Set<string>()
-  for (const o of patch.oscs) {
-    if (o.smp.sampleId) ids.add(o.smp.sampleId)
-    if (o.gran.sampleId) ids.add(o.gran.sampleId)
-    if (o.spec.sampleId) ids.add(o.spec.sampleId)
-    for (const z of o.ms.zones) ids.add(z.sampleId)
-  }
-  if (patch.noise.sampleId) ids.add(patch.noise.sampleId)
-  return [...ids]
-}
 
 // ── One fetch, one decode, shared by every engine ───────────────────────────
 //

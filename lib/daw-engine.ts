@@ -11,7 +11,7 @@ import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
-import { translateInstrument } from './apollo/daw-synth'
+import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain } from './apollo/daw-instrument'
@@ -19,7 +19,6 @@ import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginPar
 import type { PluginInstrumentParams } from './beacon-plugins/types'
 import { combined, combinedStale, combinedStamp, requestCombine, prerenderOn, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
-import { fatPatch } from './apollo/patch-diff'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
@@ -366,45 +365,26 @@ export class DawEngine extends EventTarget {
   // Legacy synths on Helios: poly/wavetable instruments translate to Apollo
   // patches and play through the per-track Apollo engine path. Cached by the
   // params OBJECT (SET_INSTRUMENT replaces it, invalidating naturally).
-  private _heliosSynthCache = new WeakMap<object, ApolloInstrumentParams | null>()
   /** Clips already playing LIVE in this pass. A combined render that lands
    *  mid-playback must not take over a clip whose notes are already scheduled
    *  and ringing — the buffer would play on top of them, the same music twice.
    *  Cleared whenever the transport restarts, so the next pass uses buffers. */
   private _liveScheduledClips = new Set<string>()
 
-  /** Slim patches expanded once per params object, then cached. */
-  private _fatPatchCache = new WeakMap<object, ApolloInstrumentParams>()
+  /** Slim patches expanded once per params object, then cached.
+   *
+   *  The DECISION -- is this an Apollo track, and with what patch -- lives in
+   *  resolve-apollo.ts, because "Save for offline" has to make the same one from
+   *  a saved file with no engine running. A clip cache key is a hash of its
+   *  patch, so two answers that differ at all would have the offline save
+   *  rendering under keys playback never asks for: a full render that buys
+   *  nothing. The caches stay here; only the rule is shared. */
+  private _resolveCache = newApolloResolveCache()
   private _resolveInstrument(track: DawTrack): TrackInstrument {
-    const inst = track.instrument
-    if (inst?.type === 'apollo') {
-      // Expand HERE, at the point of use, not only on the project-load path.
-      // Patches are stored as a diff from Init to keep projects small, and
-      // hydrating in migrateProject alone was too fragile: a cloud project
-      // loads through ProjectEditor, which never calls it, so the engine got a
-      // patch with no oscillators — silent, and cheap enough that it did not
-      // even feel slow. Every consumer (playback, preload, combining) comes
-      // through this method, so doing it here covers all of them. A patch that
-      // is already complete round-trips unchanged.
-      const key = inst.params as object
-      let fat = this._fatPatchCache.get(key)
-      if (!fat) {
-        fat = fatPatch(inst.params) as unknown as ApolloInstrumentParams
-        this._fatPatchCache.set(key, fat)
-      }
-      return { type: 'apollo', params: fat }
-    }
-    if (!inst || (inst.type !== 'poly' && inst.type !== 'wavetable' && inst.type !== 'fm')) return inst
-    // poly translates faithfully (same primitives) → Helios by default.
-    // wavetable + fm map approximately (tables / PM-vs-FM) → explicit opt-in.
-    if (inst.type === 'poly' ? track.heliosSynth === false : track.heliosSynth !== true) return inst
-    let patch = this._heliosSynthCache.get(inst.params as object)
-    if (patch === undefined) {
-      patch = translateInstrument(inst) as ApolloInstrumentParams | null
-      this._heliosSynthCache.set(inst.params as object, patch)
-    }
-    return patch ? { type: 'apollo', params: patch } : inst
+    const patch = apolloPatchFor(track, this._resolveCache)
+    return patch ? { type: 'apollo', params: patch } : track.instrument
   }
+
   setHeliosFxPref(trackId: string, on: boolean) {
     if (this.heliosFxPref.get(trackId) === on) return
     this.heliosFxPref.set(trackId, on)

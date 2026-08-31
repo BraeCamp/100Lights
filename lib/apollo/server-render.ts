@@ -31,8 +31,13 @@
 import { createRenderHost as createRenderHostJs } from '@/lib/apollo/render-host.mjs'
 import { initPatch, PARAMS, FX_DEFS } from '@/lib/apollo/patch'
 import { generateFactoryTable, buildTableMips } from '@/lib/apollo/tables'
-import { referencedSampleIds } from '@/lib/apollo/sample-store'
-import { freezeStamp } from '@/lib/apollo/daw-freeze'
+// From patch-samples, NOT sample-store: that module is 'use client', and
+// calling into it from a route fails at runtime.
+import { referencedSampleIds } from '@/lib/apollo/patch-samples'
+// From clip-stamp, NOT daw-freeze: daw-freeze pulls in engine-client and its
+// whole worklet dependency chain, which a function that only needs the hash has
+// no business bundling.
+import { freezeStamp } from '@/lib/apollo/clip-stamp'
 import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import type { MidiClip } from '@/lib/daw-types'

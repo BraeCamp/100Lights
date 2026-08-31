@@ -1,5 +1,6 @@
 'use client'
 
+import { SaveOfflineItem } from '@/components/projects/SaveOfflineItem'
 import { useState, useEffect, Suspense, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -521,6 +522,7 @@ export default function DashboardPage() {
         >
           <Pencil size={12} /> Rename
         </button>
+        <SaveOfflineItem projectId={ctxMenu.id} />
       </div>
     )}
     </>
