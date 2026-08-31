@@ -67,6 +67,9 @@ export function collectFxRanges(units: FxUnit[], out: Record<string, [number, nu
 }
 
 export class ApolloEngine extends EventTarget {
+  /** True once the worklet has died. It never comes back by itself. */
+  crashed = false
+
   /**
    * Exceptions the audio thread caught and recovered from.
    *
@@ -108,10 +111,19 @@ export class ApolloEngine extends EventTarget {
     })
     // A worklet crash is otherwise SILENT (audio just stops) — surface it to
     // Sentry with the engine version so stale-cache pairings are diagnosable.
+    //
+    // ⚠️ Reporting is not recovering. A dead AudioWorkletNode never produces a
+    // sample again, so anything routed THROUGH it is gone until the page is
+    // reloaded — and in Beacon that is the whole mix, because the master glue
+    // bus is one of these. Telling Sentry and leaving the user in silence is
+    // the "it goes quiet and doesn't come back" report. The event lets the host
+    // put the audio back on a path that still works.
     node.onprocessorerror = () => {
+      this.crashed = true
       void import('@sentry/nextjs')
         .then(S => S.captureException(new Error(`Apollo engine processor crashed (v${ENGINE_VERSION})`)))
         .catch(() => {})
+      try { this.dispatchEvent(new CustomEvent('processorError')) } catch { /* no listeners */ }
     }
     this.node = node
     if (external) {

@@ -1204,6 +1204,34 @@ export default function AudioEditor(props: AudioEditorProps) {
     id => projectRef.current?.tracks.find(t => t.id === id)?.name,
   ), [])
 
+  // Audio that had to be rerouted to keep playing.
+  //
+  // A silent recovery beats silence, but it must not be INVISIBLE: something in
+  // the studio just stopped working, the sound may be subtly different, and the
+  // person listening is the only one who can say whether it still sounds right.
+  //
+  // ⚠️ Its own effect, deliberately. Written first inside the dev-hooks effect,
+  // which early-returns unless DAW_HOOKS — so the one notice that exists for
+  // real users in a real failure would have appeared for nobody but us.
+  useEffect(() => {
+    const eng = engineForRender
+    if (!eng?.addEventListener) return
+    // ⚠️ One timer, cleared before each notice. Two recoveries close together
+    // (a track chain going while the master bus is still being reported) left
+    // the FIRST notice's timeout running, and it blanked the second message a
+    // moment after it appeared — the more serious failure being the one you
+    // could not read.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const onRecovered = (e: Event) => {
+      const d = (e as CustomEvent<{ how?: string }>).detail
+      setSyncMsg(d?.how ? `Audio recovered — ${d.how}.` : 'Audio recovered.')
+      clearTimeout(timer)
+      timer = setTimeout(() => setSyncMsg(null), 6000)
+    }
+    eng.addEventListener('audio-recovered', onRecovered)
+    return () => { clearTimeout(timer); eng.removeEventListener('audio-recovered', onRecovered) }
+  }, [engineForRender])
+
   // Dev-only: expose dispatch + a project/history snapshot so a genuine build
   // session can be driven and recorded (the History capture mode then replays
   // what actually happened — edits and refinements included).

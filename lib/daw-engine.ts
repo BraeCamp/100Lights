@@ -277,6 +277,38 @@ export class DawEngine extends EventTarget {
     this._heliosMaster = buildHeliosMasterBus(this.ctx)
     this._heliosMaster.output.connect(this.masterBusOut)
     void this._heliosMaster.ready.then(() => this._applyMasterRoute())
+    // ⚠️ EVERY sound in the studio flows through this one worklet, so if it
+    // dies the whole mix is silent — permanently, because a dead
+    // AudioWorkletNode never produces another sample and nothing was watching
+    // for it. That is the "Beacon goes quiet and doesn't come back" report:
+    // the crash was reported to Sentry and the user was left in silence with a
+    // working legacy path sitting one boolean away.
+    this._heliosMaster.onCrash(() => {
+      this._heliosMasterOn = false
+      this._applyMasterRoute()
+      this.dispatchEvent(new CustomEvent('audio-recovered', {
+        detail: { what: 'master', how: 'the Apollo master bus stopped; the mix is back on the classic path' },
+      }))
+    })
+
+    // The browser suspends AudioContexts on its own — device switches,
+    // bluetooth renegotiating, the OS taking the output. Apollo has watched for
+    // this since somebody reported "the audio just cuts out"; Beacon never did,
+    // so a suspended context here stayed suspended until the user happened to
+    // press play again. Same watchdog, same reason.
+    //
+    // ⚠️ Not `=== 'suspended'`: WebKit reports an interrupted context as
+    // 'interrupted', which every inline resume guard in this file misses.
+    // Anything that is not 'running' wants resuming.
+    if (typeof document !== 'undefined' && typeof this.ctx.addEventListener === 'function') {
+      const kick = () => {
+        if (document.visibilityState === 'visible' && this.ctx.state !== 'running' && this.ctx.state !== 'closed') {
+          void (this.ctx as AudioContext).resume?.()
+        }
+      }
+      this.ctx.addEventListener('statechange', kick)
+      document.addEventListener('visibilitychange', kick)
+    }
 
     // Performance-FX insert: masterGain → perfFilter → perfGain → analyser.
     this.perfFilter = this.ctx.createBiquadFilter()
@@ -509,12 +541,24 @@ export class DawEngine extends EventTarget {
     // worklet); untranslatable chains and opted-out tracks use the legacy
     // per-node graph. Same {input,output,handles,dispose} shape either way.
     const wantHelios = this.heliosFxPref.get(trackId) !== false
-    const chain = (wantHelios ? buildHeliosFxChain(this.ctx, effects, this.tempo) : null)
-      ?? buildEffectsChain(this.ctx, effects, this.tempo)
+    const helios = wantHelios ? buildHeliosFxChain(this.ctx, effects, this.tempo) : null
+    const chain = helios ?? buildEffectsChain(this.ctx, effects, this.tempo)
     nodes.effectsInput.connect(chain.input)
     chain.output.connect(nodes.effectsOutput)
     this.effectsChains.set(trackId, chain as ReturnType<typeof buildEffectsChain>)
     this._wireSidechains(trackId, effects)
+    // A track's chain is one worklet too, and a dead one takes that track's
+    // audio with it for good. The legacy per-node graph can render the same
+    // effects, so the track drops to it rather than staying silent — for this
+    // track only, since the rest of the mix is unaffected.
+    helios?.onCrash(() => {
+      if (this.heliosFxPref.get(trackId) === false) return   // already rebuilt
+      this.heliosFxPref.set(trackId, false)
+      this._rebuildEffectsChain(trackId, effects)
+      this.dispatchEvent(new CustomEvent('audio-recovered', {
+        detail: { what: 'track', trackId, how: 'an Apollo effect chain stopped; this track is back on the classic path' },
+      }))
+    })
   }
 
   private _wireSidechains(trackId: string, effects: DawTrack['effects']) {

@@ -281,6 +281,22 @@ export interface HeliosChain {
   /** Resolves once the worklet has ACKED patch + fx mode — offline bounces
    * MUST await this before startRendering (port delivery races the render). */
   ready: Promise<void>
+  /**
+   * Called if the worklet dies. A dead node never produces another sample, so
+   * whatever is routed through this chain is silent until something re-routes
+   * it — the caller has to be able to hear about that, not just Sentry.
+   */
+  onCrash(fn: () => void): void
+  /**
+   * Declare this chain dead and run everyone's onCrash.
+   *
+   * A recovery path that has never once been taken is a recovery path that
+   * does not work, and `onprocessorerror` cannot be provoked to order. This is
+   * how the fallback gets exercised — and it is genuine API, not scaffolding:
+   * a host that decides the worklet is gone by some other means (no meters for
+   * seconds while the transport runs) needs to be able to say so.
+   */
+  crash(): void
 }
 
 /**
@@ -319,6 +335,8 @@ export function buildHeliosMasterBus(ctx: BaseAudioContext): HeliosChain {
   return {
     input, output, ready, handles: new Map(),
     meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
+    onCrash(fn) { engine.addEventListener('processorError', () => fn()) },
+    crash() { engine.crashed = true; engine.dispatchEvent(new CustomEvent('processorError')) },
     dispose() {
       alive = false
       try { input.disconnect() } catch { /* ok */ }
@@ -433,6 +451,8 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
     handles,
     ready,
     meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
+    onCrash(fn) { engine.addEventListener('processorError', () => fn()) },
+    crash() { engine.crashed = true; engine.dispatchEvent(new CustomEvent('processorError')) },
     dispose() {
       alive = false
       try { input.disconnect() } catch { /* ok */ }
