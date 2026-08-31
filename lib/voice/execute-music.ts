@@ -531,9 +531,53 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
       // beat if this is ever applied optimistically.
       const ordered = [...clips].sort((a, b) => (by > 0 ? b.startBeat - a.startBeat : a.startBeat - b.startBeat))
       const spoken = len(i.by)
+
+      // ── What is written on the timeline moves with it ────────────────────
+      //
+      // Brae: "When I asked the voice control to move everything over, it
+      // forgot to move the graphs for effects over."
+      //
+      // Clips are not the only thing with a position. An automation point and a
+      // clip-effect bar each carry their own absolute beat, and moving the
+      // music without them leaves a filter sweep sitting over whatever happens
+      // to be there afterwards — which is worse than not moving at all, because
+      // the arrangement still plays and simply sounds wrong somewhere else.
+      //
+      // Scoped to the tracks actually being moved. "Move the bass over" must not
+      // drag the pad's automation with it, and a whole-arrangement move has
+      // every track in the set anyway.
+      const movedTracks = new Set(ordered.map(c => c.trackId))
+      const shift = (b: number) => Math.max(0, b + by)
+
+      const laneActions = (project.automationLanes ?? [])
+        .filter(l => movedTracks.has(l.trackId))
+        .flatMap(l => (l.points ?? []).map(pt => ({
+          type: 'UPDATE_AUTOMATION_POINT',
+          laneId: l.id,
+          pointId: pt.id,
+          patch: { beat: shift(pt.beat) },
+        })))
+
+      // The FX bars drawn over a clip — same argument, same fix.
+      const fxActions = (project.clipEffects ?? [])
+        .filter(fx => movedTracks.has(fx.trackId))
+        .map(fx => ({
+          type: 'UPDATE_CLIP_EFFECT',
+          effectId: fx.id,
+          patch: { startBeat: shift(fx.startBeat) },
+        }))
+
+      const carried = laneActions.length + fxActions.length
       return {
-        actions: ordered.map(c => ({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, c.startBeat + by) })),
-        say: `Moved ${target ? `${clips.length} clip${clips.length === 1 ? '' : 's'} on ${target}` : `all ${clips.length} clips`} ${spoken ? describeDuration(spoken, Math.abs(by)) : `${Math.abs(by)} beats`} ${by > 0 ? 'later' : 'earlier'}.`,
+        actions: [
+          ...ordered.map(c => ({ type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, c.startBeat + by) })),
+          ...laneActions,
+          ...fxActions,
+        ],
+        // The automation is mentioned because its absence was the bug. "Moved
+        // all 6 clips one bar later" was true and complete-sounding while the
+        // filter sweeps stayed where they were.
+        say: `Moved ${target ? `${clips.length} clip${clips.length === 1 ? '' : 's'} on ${target}` : `all ${clips.length} clips`}${carried ? ' and their automation' : ''} ${spoken ? describeDuration(spoken, Math.abs(by)) : `${Math.abs(by)} beats`} ${by > 0 ? 'later' : 'earlier'}.`,
       }
     }
 
