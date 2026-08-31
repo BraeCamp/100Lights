@@ -17,9 +17,16 @@ import {
   defaultMultibandComp, defaultLimiter, defaultDynEq, defaultUnmask,
   type EffectType,
 } from './daw-types'
+import { defaultFx, type FxType } from './apollo/patch'
 
-/** Every effect that can be added, in the order the picker shows them. */
-export const ADD_OPTIONS: { type: EffectType; label: string }[] = [
+/**
+ * Every effect that can be added, in the order the picker shows them.
+ *
+ * `fx` marks an Apollo-native device: type 'helios' with an Apollo FxUnit
+ * carried in its params. See APOLLO_ADD_OPTIONS below for why only some of
+ * Apollo's units are offered.
+ */
+export const ADD_OPTIONS: { type: EffectType; label: string; fx?: FxType }[] = [
   { type: 'eq3',            label: 'EQ3' },
   { type: 'compressor',     label: 'Compressor' },
   { type: 'reverb',         label: 'Reverb' },
@@ -40,8 +47,51 @@ export const ADD_OPTIONS: { type: EffectType; label: string }[] = [
   { type: 'unmask',         label: 'Unmask (duck under another track)' },
 ]
 
-/** Sensible starting values for a freshly added effect. */
-export function makeDefaultParams(type: EffectType) {
+/**
+ * Apollo's effects, addable as ordinary devices.
+ *
+ * Brae: "let's add the Apollo effects to the device chain in whatever way you
+ * recommend."
+ *
+ * The recommendation, and why it is this shape:
+ *
+ * The bridge in lib/apollo/daw-fx.ts already renders a Beacon chain through
+ * Apollo's engine, and a 'helios' device type already exists there to carry an
+ * Apollo unit verbatim. What was missing was any way to ADD one — the wrapper
+ * could only be created by round-tripping a chain through the Apollo Rack card.
+ * So this is not a second effect system bolted on; it is the existing one given
+ * a front door.
+ *
+ * ⚠️ Only the units Beacon has no equivalent for are listed. Apollo also has a
+ * reverb, a delay, an EQ, a filter and a compressor — but Beacon's own reverb
+ * ALREADY TRANSLATES to Apollo's reverb when the chain runs on Helios, so
+ * offering both would put two entries in the menu that produce the same DSP and
+ * differ only in which knobs you get. A menu that asks people to choose between
+ * "Reverb" and "Reverb" is worse than one that doesn't.
+ *
+ * ⚠️ The three splitters (splitLH / splitLMH / splitMS) are deliberately absent.
+ * They host CHILD chains — a unit whose real content is other units — and a
+ * device card has nowhere to put a nested chain. They translate fine if a patch
+ * already has them; they just can't be built or edited here yet.
+ */
+export const APOLLO_ADD_OPTIONS: { type: EffectType; label: string; fx: FxType }[] = [
+  { type: 'helios', fx: 'hyper',    label: 'Hyper / Dimension' },
+  { type: 'helios', fx: 'phaser',   label: 'Phaser' },
+  { type: 'helios', fx: 'flanger',  label: 'Flanger' },
+  { type: 'helios', fx: 'echobode', label: 'Echobode (freq-shift delay)' },
+  { type: 'helios', fx: 'octaver',  label: 'Octaver' },
+  { type: 'helios', fx: 'convolve', label: 'Convolve (IR reverb)' },
+]
+
+/**
+ * Sensible starting values for a freshly added effect.
+ *
+ * `fx` is required for type 'helios' and ignored otherwise: an Apollo device's
+ * defaults come from Apollo's own FX_DEFS registry rather than a copy kept
+ * here, so a unit that gains a parameter in Apollo gains it here too.
+ */
+export function makeDefaultParams(type: EffectType, fx?: FxType) {
+  if (type === 'helios') return { enabled: true, unit: defaultFx(fx ?? 'phaser') }
   switch (type) {
     case 'eq3':            return defaultEq3()
     case 'compressor':     return defaultCompressor()

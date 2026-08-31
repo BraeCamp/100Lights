@@ -25,6 +25,8 @@
     "lib/apollo/slicing.ts",
     "lib/apollo/modules.ts",
     "lib/scale-constants.ts",
-    "lib/apollo/patch.ts"
+    "lib/apollo/patch.ts",
+    "lib/apollo/daw-fx.ts",
+    "lib/daw-effect-params.ts"
   ]
 }

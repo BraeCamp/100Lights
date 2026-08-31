@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useRef, useEffect, createContext, useContext } from 'react'
+import { useState, useRef, useEffect, createContext, useContext, useSyncExternalStore } from 'react'
 import nextDynamic from 'next/dynamic'
 import { createPortal } from 'react-dom'
 import Knob from './Knob'
-import { X } from 'lucide-react'
+import { X, PictureInPicture2 } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useMidiLearn } from '@/lib/midi-learn'
 import type {
@@ -12,6 +12,7 @@ import type {
   DelayParams, FilterParams, SaturatorParams, ReduxParams, AutoPanParams, UtilityParams, LfoParams, EffectType,
   NoiseGateParams, DeEsserParams, ChorusParams, TransientShaperParams, MultibandCompParams, LimiterParams, DynEqParams, UnmaskParams,
   MidiEffect, MidiEffectType, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams,
+  HeliosFxParams,
 } from '@/lib/daw-types'
 import {
   defaultEq3, defaultCompressor, defaultReverb, defaultDelay, defaultFilter,
@@ -19,7 +20,8 @@ import {
   defaultNoiseGate, defaultDeEsser, defaultChorus, defaultTransientShaper, defaultMultibandComp, defaultLimiter, defaultDynEq,
   voiceChainEffects,
 } from '@/lib/daw-types'
-import { ADD_OPTIONS, makeDefaultParams } from '@/lib/daw-effect-catalog'
+import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '@/lib/daw-effect-catalog'
+import { FX_DEFS, type FxType, type FxUnit } from '@/lib/apollo/patch'
 
 // ── Label map ──────────────────────────────────────────────────────────────────
 
@@ -804,12 +806,164 @@ function MultibandCompControls({ effect, trackId, returnId }: { effect: TrackEff
   )
 }
 
+
+// ── The popped-out device ──────────────────────────────────────────────────
+//
+// Brae: "Put a button on the device chain graph that opens that item in a card
+// that can be moved around. Just the one."
+//
+// Just the one, so the state is a module-level singleton rather than per-card
+// React state: popping a second device replaces the first. That is a decision,
+// not a shortcut — a floating window manager is a different feature, and the
+// value here is being able to park ONE device where you can see it while you
+// work on the track, which a stack of overlapping cards actively undermines.
+//
+// It lives outside React because the card outlives the chain that opened it:
+// the device panel is a popover that closes, and a card that vanished with it
+// would be useless for the thing people want it for — watching a compressor
+// while editing the clips feeding it.
+
+type Popped = { effectId: string; trackId: string; returnId?: string }
+let poppedDevice: Popped | null = null
+const poppedSubs = new Set<() => void>()
+
+export function setPoppedDevice(p: Popped | null) {
+  poppedDevice = p
+  for (const f of poppedSubs) f()
+}
+function subscribePopped(f: () => void) { poppedSubs.add(f); return () => { poppedSubs.delete(f) } }
+function usePoppedDevice() {
+  return useSyncExternalStore(subscribePopped, () => poppedDevice, () => null)
+}
+
+function PopOutButton({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const popped = usePoppedDevice()
+  const isMe = popped?.effectId === effect.id
+  return (
+    <button
+      title={isMe ? 'Close the floating card' : 'Open this device in a card you can move'}
+      onClick={e => { e.stopPropagation(); setPoppedDevice(isMe ? null : { effectId: effect.id, trackId, returnId }) }}
+      style={{
+        width: 14, height: 14, border: 'none', borderRadius: 2, background: 'transparent',
+        color: isMe ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, padding: 0,
+      }}
+      onMouseEnter={e => { if (!isMe) (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-primary)' }}
+      onMouseLeave={e => { if (!isMe) (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)' }}
+    >
+      <PictureInPicture2 size={11} />
+    </button>
+  )
+}
+
+/**
+ * The floating card itself. Mounted once, at the studio root, so it survives
+ * the device panel being closed.
+ */
+export function DevicePopoutHost() {
+  const { project } = useDaw()
+  const popped = usePoppedDevice()
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const drag = useRef<{ dx: number; dy: number } | null>(null)
+
+  const owner = popped
+    ? popped.returnId
+      ? project.returnTracks.find(r => r.id === popped.returnId)
+      : project.tracks.find(t => t.id === popped.trackId)
+    : undefined
+  const effect = owner?.effects.find(e => e.id === popped?.effectId)
+
+  // Opening positions the card; it does not move again on its own.
+  useEffect(() => {
+    if (!popped) return
+    setPos({ x: Math.max(8, window.innerWidth - 260), y: 120 })
+  }, [popped])
+
+  // A device that has been deleted takes its card with it — otherwise the card
+  // sits there showing a device the project no longer has.
+  useEffect(() => {
+    if (popped && !effect) setPoppedDevice(null)
+  }, [popped, effect])
+
+  // ⚠️ Guarded on `popped`, NOT on drag.current: the ref is null at the moment
+  // this effect runs (it is only set by the pointerdown that starts a drag) and
+  // setting a ref never re-renders, so an effect keyed on it would attach the
+  // listeners exactly never and the card would not move at all.
+  useEffect(() => {
+    if (!popped) return
+    const move = (e: PointerEvent) => {
+      const d = drag.current
+      if (!d) return
+      setPos({
+        x: Math.min(Math.max(0, e.clientX - d.dx), window.innerWidth - 120),
+        y: Math.min(Math.max(0, e.clientY - d.dy), window.innerHeight - 40),
+      })
+    }
+    const up = () => { drag.current = null }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+  }, [popped])
+
+  if (!popped || !effect || typeof document === 'undefined') return null
+  const enabled = (effect.params as { enabled?: boolean }).enabled !== false
+
+  return createPortal(
+    <div
+      onPointerDown={e => e.stopPropagation()}
+      onMouseDown={e => e.stopPropagation()}
+      style={{
+        position: 'fixed', left: pos.x, top: pos.y, zIndex: 2400, width: 208,
+        background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10,
+        boxShadow: '0 18px 48px rgba(0,0,0,0.6)', overflow: 'hidden',
+        opacity: enabled ? 1 : 0.6,
+      }}
+    >
+      <div
+        onPointerDown={e => {
+          const r = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect()
+          drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top }
+        }}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px',
+          background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)',
+          cursor: 'grab', userSelect: 'none',
+        }}
+      >
+        <span style={{ flex: 1, fontSize: 9, fontWeight: 800, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {deviceTitle(effect)}
+        </span>
+        <span style={{ fontSize: 8, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 70 }}>
+          {owner && 'name' in owner ? (owner as { name: string }).name : ''}
+        </span>
+        <button
+          title="Close"
+          onClick={() => setPoppedDevice(null)}
+          style={{ width: 14, height: 14, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}
+        ><X size={12} /></button>
+      </div>
+      <div style={{ padding: '8px 6px', maxHeight: '60vh', overflowY: 'auto' }}>
+        <DeviceBody effect={effect} trackId={popped.trackId} returnId={popped.returnId} />
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+/** An Apollo device is named by its unit — every one of them has type 'helios'. */
+function deviceTitle(effect: TrackEffect): string {
+  if (effect.type === 'helios') {
+    const u = (effect.params as HeliosFxParams).unit
+    if (u) return `Apollo ${FX_DEFS[u.type as FxType]?.label ?? u.type}`
+  }
+  return EFFECT_LABELS[effect.type]
+}
+
 // ── Device card ────────────────────────────────────────────────────────────────
 
 function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
   const { dispatch } = useDaw()
   const enabled = effect.params.enabled
-  const [autoGain, setAutoGain] = useState(false)
 
   function toggleBypass() {
     returnId
@@ -851,7 +1005,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
             letterSpacing: 1.2, textTransform: 'uppercase', fontStretch: 'condensed', display: 'block',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
-            {EFFECT_LABELS[effect.type]}
+            {deviceTitle(effect)}
           </span>
           {effect.type === 'eq3' && (
             <span style={{ fontSize: 8, color: 'var(--text-muted)', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -859,6 +1013,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
             </span>
           )}
         </div>
+        <PopOutButton effect={effect} trackId={trackId} returnId={returnId} />
         {/* Bypass LED */}
         <button
           title={enabled ? 'Bypass' : 'Enable'}
@@ -888,6 +1043,21 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
           <X size={13} />
         </button>
       </div>
+      <DeviceBody effect={effect} trackId={trackId} returnId={returnId} />
+    </div>
+  )
+}
+
+/**
+ * A device's controls, with no card around them.
+ *
+ * Split out of EffectDevice so the pop-out card can render exactly the same
+ * controls as the inline card rather than a second, drifting copy of them.
+ */
+function DeviceBody({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const [autoGain, setAutoGain] = useState(false)
+  return (
+    <>
       {/* Controls */}
       <EffectLearnCtx.Provider value={effect.id}>
       <div style={{ padding: '8px 6px', flex: 1 }}>
@@ -895,7 +1065,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
         {['compressor', 'noisegate', 'deesser', 'dyneq', 'multibandcomp', 'limiter'].includes(effect.type) && !returnId && (
           <GrStrip trackId={trackId} effectId={effect.id} />
         )}
-        {effect.type === 'helios'         && <HeliosDeviceBody       effect={effect} />}
+        {effect.type === 'helios'         && <HeliosDeviceBody       effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'eq3'            && <Eq3Controls             effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'compressor'     && <CompressorControls      effect={effect} trackId={trackId} returnId={returnId} />}
         {effect.type === 'limiter'        && <LimiterControls         effect={effect} trackId={trackId} returnId={returnId} />}
@@ -935,7 +1105,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
         </div>
       </div>
       </EffectLearnCtx.Provider>
-    </div>
+    </>
   )
 }
 
@@ -1006,11 +1176,11 @@ function AddDeviceButton({ trackId, returnId }: { trackId: string; returnId?: st
     setOpen(o => !o)
   }
 
-  function add(type: EffectType) {
+  function add(type: EffectType, fx?: FxType) {
     const effect: TrackEffect = {
       id: crypto.randomUUID(),
       type,
-      params: makeDefaultParams(type),
+      params: makeDefaultParams(type, fx) as TrackEffect['params'],
     }
     returnId
       ? dispatch({ type: 'ADD_RETURN_EFFECT', returnId, effect })
@@ -1043,7 +1213,7 @@ function AddDeviceButton({ trackId, returnId }: { trackId: string; returnId?: st
           left: dropPos.left,
           zIndex: 1000,
           background: 'var(--bg-surface)', border: '1px solid var(--border)',
-          borderRadius: 4, overflow: 'hidden', minWidth: 130,
+          borderRadius: 4, overflow: 'hidden', minWidth: 176, maxHeight: '62vh', overflowY: 'auto',
           boxShadow: '0 -4px 16px rgba(0,0,0,0.55)',
         }}>
           {ADD_OPTIONS.map(opt => (
@@ -1059,6 +1229,29 @@ function AddDeviceButton({ trackId, returnId }: { trackId: string; returnId?: st
               onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgb(var(--accent-rgb) / 0.18)' }}
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
             >
+              {opt.label}
+            </button>
+          ))}
+          {/* Apollo's own units, in the same menu rather than a separate world.
+              Only the ones Beacon has no equivalent for — see APOLLO_ADD_OPTIONS. */}
+          <div style={{
+            padding: '5px 12px 3px', marginTop: 2, borderTop: '1px solid var(--border)',
+            fontSize: 8, fontWeight: 800, letterSpacing: '0.09em', color: 'var(--text-muted)',
+          }}>APOLLO</div>
+          {APOLLO_ADD_OPTIONS.map(opt => (
+            <button
+              key={opt.fx}
+              onClick={e => { e.stopPropagation(); add(opt.type, opt.fx) }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left',
+                padding: '7px 12px', background: 'transparent',
+                border: 'none', color: 'var(--text-primary)', fontSize: 12,
+                cursor: 'pointer',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgb(var(--accent-rgb) / 0.18)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+            >
+              <span style={{ color: 'var(--accent-light)', fontSize: 10 }}>☀︎</span>
               {opt.label}
             </button>
           ))}
@@ -1331,18 +1524,117 @@ function ResponseCurve({ effect }: { effect: TrackEffect }) {
 
 // Apollo-native device: compact face — the real editing surface is the
 // Apollo Rack card (open it from the chain header).
-function HeliosDeviceBody({ effect }: { effect: TrackEffect }) {
-  const p = effect.params as import('@/lib/daw-types').HeliosFxParams
+/**
+ * An Apollo device, with its actual knobs.
+ *
+ * It used to say "edit via Apollo Rack ↗ in the chain header" and show nothing
+ * — which was honest when the only way to make one of these was to round-trip
+ * a chain through the Apollo card, and useless now that they can be added from
+ * the device menu like anything else.
+ *
+ * The controls are generated from Apollo's FX_DEFS rather than hand-written per
+ * unit: that registry already carries every parameter's label and range, so a
+ * unit that gains a knob in Apollo gains it here with no work, and — more to
+ * the point — none of these ranges can drift from the ones the DSP uses.
+ */
+function HeliosDeviceBody({ effect, trackId, returnId }: { effect: TrackEffect; trackId: string; returnId?: string }) {
+  const { dispatch } = useDaw()
+  const p = effect.params as HeliosFxParams
   const u = p.unit
+  const blocked = useHeliosBlocker(trackId, returnId)
+
+  function write(patch: Partial<FxUnit>) {
+    if (!u) return
+    const unit = { ...u, ...patch }
+    const params = { ...p, unit } as typeof effect.params
+    returnId
+      ? dispatch({ type: 'UPDATE_RETURN_EFFECT', returnId, effectId: effect.id, patch: { params } })
+      : dispatch({ type: 'UPDATE_EFFECT', trackId, effectId: effect.id, patch: { params } })
+  }
+  const setParam = (key: string, v: number) => write({ params: { ...(u?.params ?? {}), [key]: v } })
+
+  const def = u ? FX_DEFS[u.type as FxType] : undefined
+  if (!u || !def) {
+    return <div style={{ padding: 10, fontSize: 10, color: 'var(--text-muted)' }}>Unknown Apollo unit.</div>
+  }
+
   return (
-    <div style={{ padding: '10px 10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ fontSize: 16, textAlign: 'center' }}>☀︎</div>
-      <div style={{ fontSize: 11, fontWeight: 700, textAlign: 'center', color: 'var(--text-primary)', textTransform: 'capitalize' }}>{u?.type ?? 'unit'}</div>
-      <div style={{ fontSize: 9, textAlign: 'center', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-        Apollo-native device · mix {Math.round((u?.mix ?? 1) * 100)}%<br />edit via Apollo Rack ↗ in the chain header
-      </div>
+    <div style={{ padding: '2px 4px 0' }}>
+      {blocked && (
+        // Not a style note — the device is INAUDIBLE in this state. The legacy
+        // chain builder skips device types it does not know, so an Apollo unit
+        // in a chain that fell back to it makes no sound at all.
+        <div style={{
+          margin: '0 2px 6px', padding: '5px 6px', borderRadius: 4, fontSize: 9, lineHeight: 1.45,
+          background: 'rgba(220,120,40,0.16)', border: '1px solid rgba(220,120,40,0.5)', color: 'var(--text-primary)',
+        }}>
+          <b>Not being heard.</b> This track fell back to the classic effect path
+          {blocked.effect ? <> because <b>{deviceTitle(blocked.effect)}</b> {blocked.reason}</> : <> ({blocked.reason})</>},
+          and Apollo devices only make sound on Apollo&rsquo;s. Remove or replace that device to bring this one back.
+        </div>
+      )}
+      {def.params.map(pr => (
+        <CtrlRow key={pr.key} label={pr.label} learnKey={pr.label}>
+          <RangeCtrl
+            value={Number(u.params?.[pr.key] ?? pr.default)}
+            min={pr.min}
+            max={pr.max}
+            // Whole steps only where the range is genuinely a list of choices
+            // (modes, stages, bit depths). A 0..1 parameter stays continuous
+            // even when its ends happen to be integers — the octaver's Dry is
+            // 0..1 and quantising it to a switch would be a real loss, where a
+            // flag landing on 0.4 is merely odd.
+            step={pr.max - pr.min >= 2 && Number.isInteger(pr.min) && Number.isInteger(pr.max) && Number.isInteger(pr.default) ? 1 : 0.01}
+            onChange={v => setParam(pr.key, v)}
+          />
+        </CtrlRow>
+      ))}
+      <CtrlRow label="Mix" learnKey="Mix">
+        <RangeCtrl value={u.mix ?? 1} min={0} max={1} onChange={v => write({ mix: v })} />
+      </CtrlRow>
     </div>
   )
+}
+
+/**
+ * Why this track's chain is off Apollo's engine, if it is.
+ *
+ * Asked of the bridge rather than re-derived, so the card can never claim a
+ * chain runs on Helios that the engine then refuses to build.
+ *
+ * ⚠️ Computed during RENDER, not in an effect keyed on the chain's contents.
+ * The effect version looked right and silently never re-ran when a device was
+ * added — the card kept showing the verdict for the chain as it was one device
+ * ago, which for this particular message is worse than showing nothing. The
+ * only asynchronous part is loading the bridge (kept out of the panel's chunk
+ * because it pulls in the whole Apollo engine), so that is what the effect is
+ * for; it loads once, module-wide, and every later render answers straight
+ * away from the current props.
+ */
+let heliosBlockerFn: ((e: TrackEffect[], tempo: number) => { effect?: TrackEffect; reason: string } | null) | null = null
+let heliosBlockerLoading = false
+
+function useHeliosBlocker(trackId: string, returnId?: string): { effect?: TrackEffect; reason: string } | null {
+  const { project } = useDaw()
+  const [, force] = useState(0)
+
+  useEffect(() => {
+    if (heliosBlockerFn || heliosBlockerLoading) return
+    heliosBlockerLoading = true
+    void import('@/lib/apollo/daw-fx')
+      .then(m => { heliosBlockerFn = m.heliosBlocker; force(n => n + 1) })
+      .catch(() => { heliosBlockerLoading = false })
+  }, [])
+
+  const owner = returnId
+    ? project.returnTracks.find(r => r.id === returnId)
+    : project.tracks.find(t => t.id === trackId)
+  const effects = owner?.effects
+  if (!effects) return null
+  if (!returnId && project.tracks.find(t => t.id === trackId)?.heliosFx === false) {
+    return { reason: 'this track is set to the classic effect path' }
+  }
+  return heliosBlockerFn ? heliosBlockerFn(effects, project.tempo) : null
 }
 
 export default function DeviceChain({ trackId }: { trackId: string }) {

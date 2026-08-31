@@ -49,6 +49,7 @@ import HelpButton from './daw/HelpButton'
 import { InspectButton } from './daw/InspectMode'
 import PracticeButton from './daw/PracticeButton'
 import { VUMeter } from './daw/TrackRow'
+import { DevicePopoutHost } from './daw/DeviceChain'
 import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
 import SendToProjectButton from './SendToProjectButton'
@@ -3513,6 +3514,12 @@ export default function AudioEditor(props: AudioEditorProps) {
           fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
         }}>↻ {syncMsg}</div>
       )}
+
+      {/* A device popped out of the chain, floating over the studio. Mounted
+          here rather than inside DeviceChain because the device panel is a
+          popover: a card that unmounted with it could not be used for the one
+          thing it is for — watching a device while working on the track. */}
+      <DevicePopoutHost />
 
       {/* Offline-sync conflict review — the per-item "Yours vs Theirs" panel
           (self-gates on the context's mergeConflicts). */}

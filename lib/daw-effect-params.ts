@@ -1,4 +1,5 @@
-import type { EffectType, TrackEffect } from './daw-types'
+import type { EffectType, TrackEffect, HeliosFxParams } from './daw-types'
+import { FX_DEFS, type FxType } from './apollo/patch'
 
 // ── What on a device can be drawn over time ─────────────────────────────────
 //
@@ -112,6 +113,22 @@ const BY_TYPE: Partial<Record<EffectType, AutomatableParam[]>> = {
  * one table row cannot describe both.
  */
 export function automatableParams(effect: TrackEffect): AutomatableParam[] {
+  // An Apollo device has no row in the table above and never will: its
+  // parameters are declared in Apollo's own FX_DEFS, complete with the range
+  // each one lives in. Reading them there rather than copying them here is
+  // what keeps a unit that gains a knob in Apollo from silently missing it in
+  // Beacon — and every range is already in the parameter's own unit, which is
+  // exactly what a lane needs.
+  if (effect.type === 'helios') {
+    const u = (effect.params as HeliosFxParams).unit
+    if (!u) return []
+    const def = FX_DEFS[u.type as FxType]
+    if (!def) return []
+    return [
+      ...def.params.map(pr => ({ key: pr.key, label: pr.label, min: pr.min, max: pr.max })),
+      { key: 'mix', label: 'Mix', min: 0, max: 1 },
+    ]
+  }
   const list = BY_TYPE[effect.type] ?? []
   if (effect.type !== 'filter') return list
   const kind = (effect.params as { type?: string } | undefined)?.type
@@ -124,6 +141,25 @@ export function primaryParam(effect: TrackEffect): AutomatableParam | null {
   return automatableParams(effect)[0] ?? null
 }
 
+/**
+ * What a parameter currently reads, wherever the device happens to keep it.
+ *
+ * An Apollo device keeps its values one level down, in `params.unit.params`,
+ * so the obvious `effect.params[key]` returns undefined for every one of them
+ * — which would seed a new lane at its minimum and yank the sound to the
+ * bottom of the range the moment the lane was created.
+ */
+export function currentValue(effect: TrackEffect, key: string): number | undefined {
+  if (effect.type === 'helios') {
+    const u = (effect.params as HeliosFxParams).unit
+    if (!u) return undefined
+    if (key === 'mix') return u.mix
+    return (u.params as Record<string, number> | undefined)?.[key]
+  }
+  const v = (effect.params as unknown as Record<string, unknown>)?.[key]
+  return typeof v === 'number' ? v : undefined
+}
+
 /** What a device is called on a track, short enough to sit in a row of them. */
 export const EFFECT_SHORT: Partial<Record<EffectType, string>> = {
   eq3: 'EQ', compressor: 'COMP', reverb: 'VERB', delay: 'DLY', filter: 'FLT',
@@ -134,3 +170,18 @@ export const EFFECT_SHORT: Partial<Record<EffectType, string>> = {
 }
 
 export const shortName = (t: EffectType): string => EFFECT_SHORT[t] ?? String(t).slice(0, 5).toUpperCase()
+
+/**
+ * The same, but for a device rather than a type.
+ *
+ * Every Apollo device shares the type 'helios', so naming by type alone puts a
+ * row of identical "APOLLO" entries in the FX menu with no way to tell the
+ * phaser from the octaver. The unit knows what it is; ask it.
+ */
+export function shortNameOf(effect: TrackEffect): string {
+  if (effect.type === 'helios') {
+    const u = (effect.params as HeliosFxParams).unit
+    if (u) return String(u.type).slice(0, 6).toUpperCase()
+  }
+  return shortName(effect.type)
+}

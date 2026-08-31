@@ -24,7 +24,7 @@ import { libraryFulfill } from '@/lib/default-samples'
 import ClipView from './ClipView'
 import { DEFAULT_KIT, DRUM_PATTERNS, patternToNotes } from '@/lib/drum-presets'
 import DeviceChain from './DeviceChain'
-import { automatableParams, primaryParam, shortName } from '@/lib/daw-effect-params'
+import { automatableParams, primaryParam, shortNameOf, currentValue } from '@/lib/daw-effect-params'
 import IsolateModal from './IsolateModal'
 import ClipSettingsModal from './ClipSettingsModal'
 // Lazy: STFT worker + editor UI only load when the spectral editor is opened
@@ -281,12 +281,12 @@ function FxMenu({ track }: { track: DawTrack }) {
       type: 'ADD_AUTOMATION_LANE',
       lane: {
         id: crypto.randomUUID(), trackId: track.id, parameter,
-        label: `${shortName(e.type)} ${prm.label}`,
+        label: `${shortNameOf(e)} ${prm.label}`,
         // ⚠️ The parameter's OWN range. An automation value reaches the effect
         // unchanged, so these are units: a filter lane declared 0–1 sets the
         // cutoff to a fraction of a Hertz and silences the track.
         min: prm.min, max: prm.max,
-        defaultValue: Number((e.params as unknown as Record<string, unknown>)?.[prm.key] ?? prm.min),
+        defaultValue: currentValue(e, prm.key) ?? prm.min,
         points: [], expanded: true,
       },
     })
@@ -359,7 +359,7 @@ function FxMenu({ track }: { track: DawTrack }) {
                     open" is the question somebody has while the menu is up. */}
                 <span style={{ width: 10, color: laneOpen ? 'var(--accent-light)' : 'transparent', fontWeight: 700 }}>✓</span>
                 <span style={{ flex: 1, textDecoration: bypassed ? 'line-through' : 'none' }}>
-                  {shortName(e.type)}
+                  {shortNameOf(e)}
                   {prm && <span style={{ color: 'var(--text-muted)' }}> · {prm.label}</span>}
                 </span>
                 {bypassed && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>off</span>}
@@ -414,11 +414,11 @@ function AddAutoButton({ track }: { track: DawTrack }) {
     // silences the track. That is not hypothetical — it is the bug Brae found
     // in the spoken version of this same feature.
     ...track.effects.flatMap(e => automatableParams(e).map(prm => ({
-      label: `${shortName(e.type)} ${prm.label}`,
+      label: `${shortNameOf(e)} ${prm.label}`,
       parameter: `fx:${e.id}:${prm.key}`,
       min: prm.min,
       max: prm.max,
-      def: Number((e.params as unknown as Record<string, unknown>)?.[prm.key] ?? prm.min),
+      def: currentValue(e, prm.key) ?? prm.min,
     }))),
     // Apollo tracks: automate the patch's own 8 performance macros
     ...(apolloParams ? [0, 1, 2, 3, 4, 5, 6, 7].map(i => ({
