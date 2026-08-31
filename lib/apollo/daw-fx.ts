@@ -24,8 +24,17 @@ import { initPatch, SYNC_RATES, type ApolloPatch, type FxUnit, type FxType } fro
 import { ApolloEngine } from './engine-client'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
-/** Inverse of the engine's cutoffHz(norm) = 8 * 2500^norm (8 Hz .. 20 kHz). */
-const hzToNorm = (hz: number) => clamp(Math.log(clamp(hz, 8, 20000) / 8) / Math.log(2500), 0, 1)
+/**
+ * Inverse of the engine's cutoffHz(norm) = 8 * 2500^norm (8 Hz .. 20 kHz).
+ *
+ * ⚠️ The floor is 20 Hz, not 8, and a non-finite value opens the filter rather
+ * than closing it — same rule as safeHz in daw-effects, and for the same
+ * reason: the values reaching here have come from a spoken percentage, an
+ * automation lane and old saved projects, and a cutoff under 20 Hz is not a
+ * dark sound, it is a track that has vanished with nothing to show why.
+ */
+const hzToNorm = (hz: number) =>
+  clamp(Math.log(clamp(!Number.isFinite(hz) || hz < 20 ? 20000 : hz, 20, 20000) / 8) / Math.log(2500), 0, 1)
 /** Biquad Q → Apollo's 0..1 resonance (perceptual approximation). */
 const qToRes = (q: number) => clamp(Math.log2(clamp(q, 0.1, 20) + 1) / 4.4, 0, 0.95)
 

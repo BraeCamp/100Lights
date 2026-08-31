@@ -271,6 +271,24 @@ function FxMenu({ track }: { track: DawTrack }) {
     return n + (prm && lanes.some(l => l.parameter === `fx:${e.id}:${prm.key}`) ? 1 : 0)
   }, 0)
 
+  /**
+   * Switch one device off without deleting it.
+   *
+   * Brae: "Allow me to mute filters."
+   *
+   * The device card has always had a bypass LED, but that lives in a panel you
+   * have to open and scroll to — and the moment you actually want it is when a
+   * filter has swallowed the track and you want to hear it WITHOUT that device,
+   * right now, from the track head. Same field the card writes, so the two are
+   * never out of step.
+   */
+  const setBypass = (e: TrackEffect, off: boolean) => {
+    dispatch({
+      type: 'UPDATE_EFFECT', trackId: track.id, effectId: e.id,
+      patch: { params: { ...(e.params as object), enabled: !off } as TrackEffect['params'] },
+    })
+  }
+
   const toggle = (e: TrackEffect) => {
     const prm = primaryParam(e)
     if (!prm) { setSelectedTrackId(track.id); return }
@@ -340,30 +358,50 @@ function FxMenu({ track }: { track: DawTrack }) {
             const laneOpen = !!prm && lanes.some(l => l.parameter === `fx:${e.id}:${prm.key}`)
             const bypassed = (e.params as unknown as { enabled?: boolean })?.enabled === false
             return (
-              <button
+              // A row, not a button: it holds two controls now, and a button
+              // inside a button is invalid and swallows the inner click.
+              <div
                 key={e.id}
-                onClick={() => toggle(e)}
-                title={prm
-                  ? `${laneOpen ? 'Hide' : 'Draw'} ${prm.label.toLowerCase()} under this track`
-                  : 'Open the device chain'}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
-                  padding: '5px 10px', border: 'none', cursor: 'pointer', fontSize: 12,
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                  padding: '5px 8px 5px 10px', fontSize: 12,
                   background: laneOpen ? 'rgb(var(--accent-rgb) / 0.16)' : 'transparent',
                   color: bypassed ? 'var(--text-muted)' : 'var(--text-primary)',
                 }}
                 onMouseEnter={ev => { if (!laneOpen) (ev.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
                 onMouseLeave={ev => { if (!laneOpen) (ev.currentTarget as HTMLElement).style.background = 'transparent' }}
               >
-                {/* A tick rather than a highlight alone: "which of these are
-                    open" is the question somebody has while the menu is up. */}
-                <span style={{ width: 10, color: laneOpen ? 'var(--accent-light)' : 'transparent', fontWeight: 700 }}>✓</span>
-                <span style={{ flex: 1, textDecoration: bypassed ? 'line-through' : 'none' }}>
-                  {shortNameOf(e)}
-                  {prm && <span style={{ color: 'var(--text-muted)' }}> · {prm.label}</span>}
-                </span>
-                {bypassed && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>off</span>}
-              </button>
+                <button
+                  onClick={ev => { ev.stopPropagation(); setBypass(e, !bypassed) }}
+                  title={bypassed ? `Switch ${shortNameOf(e)} back on` : `Mute ${shortNameOf(e)} — hear the track without it`}
+                  style={{
+                    width: 9, height: 9, borderRadius: '50%', border: 'none', padding: 0, flexShrink: 0,
+                    cursor: 'pointer',
+                    background: bypassed ? '#3a3a3a' : 'var(--accent)',
+                    boxShadow: bypassed ? 'none' : '0 0 5px var(--accent)',
+                  }}
+                />
+                <button
+                  onClick={() => toggle(e)}
+                  title={prm
+                    ? `${laneOpen ? 'Hide' : 'Draw'} ${prm.label.toLowerCase()} under this track`
+                    : 'Open the device chain'}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0,
+                    textAlign: 'left', padding: 0, border: 'none', background: 'transparent',
+                    cursor: 'pointer', fontSize: 12, color: 'inherit',
+                  }}
+                >
+                  {/* A tick rather than a highlight alone: "which of these are
+                      open" is the question somebody has while the menu is up. */}
+                  <span style={{ width: 10, color: laneOpen ? 'var(--accent-light)' : 'transparent', fontWeight: 700 }}>✓</span>
+                  <span style={{ flex: 1, textDecoration: bypassed ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {shortNameOf(e)}
+                    {prm && <span style={{ color: 'var(--text-muted)' }}> · {prm.label}</span>}
+                  </span>
+                </button>
+                {bypassed && <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>off</span>}
+              </div>
             )
           })}
 

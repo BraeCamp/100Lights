@@ -22,6 +22,7 @@ import {
 } from '@/lib/daw-types'
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '@/lib/daw-effect-catalog'
 import { FX_DEFS, type FxType, type FxUnit } from '@/lib/apollo/patch'
+import { LOWPASS_HZ, HIGHPASS_HZ } from '@/lib/daw-effect-params'
 
 // ── Label map ──────────────────────────────────────────────────────────────────
 
@@ -541,8 +542,30 @@ function FilterControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
           <option value="notch">Notch</option>
         </select>
       </CtrlRow>
+      {/*
+        ⚠️ The range depends on the TYPE, because the ends of a filter's travel
+        are not symmetrical: the bottom of a low-pass and the top of a high-pass
+        are both silence, not a sound.
+
+        This knob used to run 20 Hz – 20 kHz for every type, so the bottom tenth
+        of a low-pass sweep was a dead zone you could simply turn into — the
+        track goes quiet, nothing is wrong, and the only way back is to notice
+        the number. That is "the lowpass cutoff is making the pad stop playing
+        sound", reachable by hand rather than by any bug.
+
+        Every other route to this parameter already knew: the spoken percentage,
+        the voice sweep and the automation lane all use LOWPASS_HZ / HIGHPASS_HZ.
+        The one control people actually turn was the last one still able to
+        reach silence.
+      */}
       <CtrlRow label="Freq">
-        <RangeCtrl value={p.frequency} min={20} max={20000} step={1} onChange={v => up({ frequency: v })} />
+        <RangeCtrl
+          value={p.frequency}
+          min={p.type === 'lowpass' ? LOWPASS_HZ.min : p.type === 'highpass' ? HIGHPASS_HZ.min : 20}
+          max={p.type === 'lowpass' ? LOWPASS_HZ.max : p.type === 'highpass' ? HIGHPASS_HZ.max : 20000}
+          step={1}
+          onChange={v => up({ frequency: v })}
+        />
       </CtrlRow>
       <CtrlRow label="Q">
         <RangeCtrl value={p.q} min={0.1} max={20} step={0.01} onChange={v => up({ q: v })} />
