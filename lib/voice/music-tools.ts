@@ -719,5 +719,10 @@ export const MUSIC_SYSTEM_HINT = [
   'ONE SENTENCE OFTEN CONTAINS SEVERAL REQUESTS. Emit a tool call for EVERY request in it, in the order they were said, all in this one reply. "Move everything over by one bar and have a 1 bar long crash at the beginning, then restart" is THREE calls: move_clips, insert_clip, transport. Do not stop after the first.',
   'Use the names they used for tracks and clips; the app resolves them against the real project and will refuse rather than guess if a name is ambiguous.',
   'Positions are bars and beats counting from 1 ("the beginning" is bar 1). Lengths can be bars, beats or seconds — pass whichever unit they said and let the app convert, because the song may change tempo or time signature part way through.',
+  // Brae: "I just said 'Can you make a beat like boom ka boom ka' and it didn't
+  // know what I was talking about." Drum syllables look like a transcription
+  // failure — the natural instinct is to tidy "boom ka" into "boom car" or to
+  // ask what was meant. They are the request.
+  'DRUM SYLLABLES ARE A BEAT, NOT A MISHEARING. "boom", "ka", "doom", "ts", "tss", "pah", "bap" and the like are somebody saying a rhythm out loud. "Can you make a beat like boom ka boom ka" is a make_beat call with pattern "boom ka boom ka". Pass the syllables through EXACTLY as they were said — do not correct them into real words, and do not ask what they meant. The rhythm comes from when they were said, so you only need to report which syllables there were, in order.',
   'Percentages are 0-100. If a request is ambiguous or no tool fits, say so in one short sentence instead of guessing.',
 ].join(' ')

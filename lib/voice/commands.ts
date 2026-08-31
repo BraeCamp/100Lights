@@ -31,6 +31,7 @@
 // working fails the build, which means the documentation cannot rot.
 
 import { findByName, foldName, spokenNumber } from './resolve'
+import { beatWordsOf } from './beatbox'
 import type { VoiceCall } from './execute-music'
 import { Words, near } from './words'
 
@@ -1022,6 +1023,81 @@ const COMMANDS: VoiceCommand[] = [
       const amount = n != null && n >= 0 && n <= 100 ? n : w.has('some', 'add', 'bit') ? 25 : null
       if (amount == null) return null
       return { calls: [{ name: 'set_swing', input: { amount } }], confidence: 0.9 }
+    },
+  },
+  // ── Saying a beat out loud ────────────────────────────────────────────────
+  //
+  // Brae: "I just said 'Can you make a beat like boom ka boom ka' and it didn't
+  // know what I was talking about."
+  //
+  // The tool existed and the assistant had it. What was missing is THIS: with
+  // the microphone held open, a sentence the built-in commands cannot read is
+  // dropped silently as room noise (see shouldActOn) unless the assistant is
+  // set to act on its own. A beat is unmistakably addressed to the studio -
+  // nobody says "boom ka boom ka" to a person - so the studio should be able to
+  // read it itself, without paying a model to tell it what it just heard.
+  //
+  // Reading it locally also makes it instant and free, which matters more here
+  // than for most commands: saying a rhythm is something people do repeatedly,
+  // adjusting it each time.
+  {
+    id: 'make_beat',
+    tool: 'make_beat',
+    group: 'Notes',
+    what: 'Say a rhythm out loud and get it as drums',
+    say: [
+      'make a beat like boom ka boom boom ka',
+      'can you make a beat like boom ka boom ka',
+      'boom ka boom boom ka',
+      'give me a beat like doom ts doom ts',
+    ],
+    match(w) {
+      // The RAW sentence, not the filtered word list: the filter exists to drop
+      // conversational noise, and a beat is made of exactly the kind of short
+      // meaningless syllables it drops.
+      const spoken = w.raw.split(/\s+/).filter(Boolean).map(word => ({ word }))
+      const { beat } = beatWordsOf(spoken)
+      if (beat.length < 2) return null
+      // Two syllables are only a beat if they were asked for as one. Three or
+      // more is a rhythm on its own - nobody ends a sentence with three drum
+      // sounds by accident.
+      const asked = w.has('beat', 'rhythm', 'drums', 'drum', 'pattern', 'groove')
+      if (!asked && beat.length < 3) return null
+      return {
+        calls: [{ name: 'make_beat', input: { pattern: beat.map(b => b.word).join(' ') } }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'metronome',
+    tool: 'metronome',
+    group: 'Transport',
+    what: 'Turn the click on or off',
+    say: ['turn on the metronome', 'give me a click', 'turn the click off', 'metronome off'],
+    match(w) {
+      if (!w.has('metronome', 'click')) return null
+      const off = w.has('off', 'stop', 'kill', 'disable')
+      const on = w.has('on', 'start', 'give', 'turn', 'want', 'need')
+      // "the click is too loud" is about the click and is not a request to
+      // toggle it, so one of these words is required rather than assumed.
+      if (!off && !on) return null
+      return { calls: [{ name: 'metronome', input: { on: !off } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'name_notes',
+    tool: 'name_notes',
+    group: 'Questions',
+    what: 'Ask what notes or chord are sounding',
+    say: ['what notes are being played', 'what chord is this', 'what notes are these'],
+    match(w) {
+      if (!w.has('note', 'notes', 'chord', 'chords')) return null
+      if (!w.has('what', 'which', 'name', 'tell')) return null
+      // A question, not an edit. Everything here that also takes notes as its
+      // object is an instruction, and they share the noun.
+      if (w.has('add', 'delete', 'remove', 'move', 'transpose', 'quantize', 'louder', 'quieter')) return null
+      return { calls: [{ name: 'name_notes', input: {} }], confidence: 0.9 }
     },
   },
   {
@@ -2023,7 +2099,13 @@ const COMMANDS: VoiceCommand[] = [
         'play', 'start', 'go', 'playing', 'playback', 'begin', 'resume',
         ...THE_SONG,
       ])
-      if (!w.has('play', 'start', 'go')) return null
+      // ⚠️ `said`, not `has`, for "go": it is FILLER everywhere else in the
+      // language ("go ahead", "let's go"), so the stripped word list never
+      // contains it and w.has('go') is false for the bare sentence "go". The
+      // command listed "go" as an example, and the conformance suite has been
+      // reporting it as unreachable — the same shape as "fade in" vs "fade out",
+      // which is what said() exists for.
+      if (!w.has('play', 'start') && !w.said('go')) return null
       if (!w.only(ONLY)) return null
       // The object is read, not merely tolerated, so the reading explains the
       // whole sentence and scores like it. One call per word because has()

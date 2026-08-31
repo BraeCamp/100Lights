@@ -217,7 +217,10 @@ export class Words {
    * one that accounts for both.
    */
   coverage(): number {
-    return this.all.length ? this.used.size / this.all.length : 0
+    // Nothing to explain is fully explained. A sentence of pure filler — "go"
+    // — has no content words, and scoring that as zero coverage punished the
+    // one kind of reading that can legitimately produce it.
+    return this.all.length ? this.used.size / this.all.length : 1
   }
 
   /** The words this reading could not account for. Shown when asking. */

@@ -23,6 +23,8 @@ import { importTs } from '../lib/ts-import.mjs'
 const { phraseAccuracy, verdictFor, CALIBRATION_PHRASE } =
   await importTs('lib/voice/calibrate.ts')
 
+const { SENSITIVITY_MIN, SENSITIVITY_MAX } = await importTs('lib/voice/calibrate.ts')
+
 let failures = 0
 const check = (label, pass, extra = '') => {
   if (!pass) failures++
@@ -85,16 +87,28 @@ const say = (m) => verdictFor({
     /level is fine/i.test(v.verdict), v.verdict)
 }
 {
+  // The suggestion is MEASURED from the room, not chosen from a short list of
+  // presets - calibrate.ts says so where it computes it. This assertion used to
+  // read `v.suggested === 2.2`, which was the old fixed dial, so it has been
+  // failing ever since and nothing surfaced it: this file was never in the test
+  // suite. What actually matters is comparative - a clear loud voice can afford
+  // a stricter bar than a marginal one - and that survives the arithmetic being
+  // retuned, which an exact number cannot.
   const v = say({ floor: 0.005, peak: 0.09, accuracy: 0.95 })
-  check('a clear loud voice can afford the strictest setting',
-    v.suggested === 2.2, String(v.suggested))
+  const marginal = say({ floor: 0.03, peak: 0.09, accuracy: 0.95 })
+  check('a clear loud voice can afford a stricter setting than a marginal one',
+    v.suggested > marginal.suggested, `${v.suggested} vs ${marginal.suggested}`)
   check('and is told so', /strictest/i.test(v.verdict), v.verdict)
 }
 {
   const v = say({ floor: 0.02, peak: 0.12, accuracy: 0.9 })
   check('an ordinary good result is just good', /^Good/.test(v.verdict), v.verdict)
-  check('and suggests something sensible', v.suggested >= 1 && v.suggested <= 1.5,
-    String(v.suggested))
+  // Sensible for an ORDINARY room means somewhere in the middle of the travel:
+  // not pinned at either stop, which is what a measurement that has run out of
+  // road looks like. The old 1-1.5 band was two notches of the retired dial.
+  check('and suggests something sensible',
+    v.suggested > SENSITIVITY_MIN && v.suggested < SENSITIVITY_MAX,
+    `${v.suggested} (dial ${SENSITIVITY_MIN}-${SENSITIVITY_MAX})`)
 }
 
 // ── The suggestion is always usable ───────────────────────────────────────
@@ -110,8 +124,13 @@ for (const m of [
   { accuracy: 1, floor: 0.001, peak: 0.4 },
 ]) {
   const v = say(m)
+  // On the DIAL means within its travel, not one of four notches. The point of
+  // this loop is that no measurement - including a silent room, a null sample
+  // rate and a perfect score - can push the suggestion somewhere the control
+  // cannot go.
   check(`the suggestion stays on the dial: ${JSON.stringify(m)}`,
-    [0.7, 1, 1.5, 2.2].includes(v.suggested), String(v.suggested))
+    Number.isFinite(v.suggested) && v.suggested >= SENSITIVITY_MIN && v.suggested <= SENSITIVITY_MAX,
+    String(v.suggested))
   check('  and it always says something', v.verdict.length > 20)
 }
 

@@ -30,7 +30,9 @@ import { importTs } from '../lib/ts-import.mjs'
 import { makeTrack, makeClip } from '../lib/daw-fixture.mjs'
 
 const { planVoiceCall } = await importTs('lib/voice/execute-music.ts')
-const { FX_FIELDS } = await importTs('lib/roll-fx.ts')
+// The device-chain filter's own declared range - the contract the voice
+// planner has to write lanes against.
+const { LOWPASS_HZ } = await importTs('lib/daw-effect-params.ts')
 
 let failures = 0
 const check = (label, pass, extra = '') => {
@@ -62,21 +64,29 @@ const sweep = (from, to, parameter = 'lowpass') => planVoiceCall(
   const points = plan.actions.filter(a => a.type === 'ADD_AUTOMATION_POINT').map(a => a.point)
   check('it makes one lane and two points', !!lane && points.length === 2)
 
-  // The bug, stated as the thing that is audible: a cutoff below the bottom of
-  // human hearing silences the track.
-  const lowest = points.length ? Math.min(...points.map(p => p.value)) : NaN
-  check('the quietest end of the sweep is still audible', points.length === 2 && lowest >= 20,
-    `${lowest} Hz — under 20 Hz is silence, and 0.2 Hz is what it used to be`)
-  check('and the loud end is genuinely open',
-    points.length === 2 && Math.max(...points.map(p => p.value)) >= 10_000,
-    points.length ? `${Math.max(...points.map(p => p.value))} Hz` : 'no points at all')
+  // ⚠️ This test was written against the FIRST fix, which put Hertz in the
+  // points, and Brae rejected that one too: "it's consistent through the track
+  // item instead of being the graph that I need it to be." A point is a
+  // POSITION on the graph, 0 to 1; the lane's min/max carry the unit. Hertz in
+  // the points means the drawn shape is no longer the shape you drew.
+  //
+  // So the assertion moves to where the invariant actually lives. The thing
+  // that must never happen is a sweep that SILENCES the track, and that is a
+  // fact about the cutoff the engine ends up with — position resolved through
+  // the lane — not about the number stored in the point.
+  const resolve = (ln, norm) => ln.curve === 'log'
+    ? ln.min * Math.pow(ln.max / ln.min, norm)
+    : ln.min + norm * (ln.max - ln.min)
 
-  // A lane whose range says 0–1 is what made the fractions look plausible.
-  check('the lane advertises the range its values are actually in',
-    lane.min >= 20 && lane.max > 1000, `min ${lane.min} max ${lane.max}`)
-  check('every point sits inside that range',
-    points.every(p => p.value >= lane.min && p.value <= lane.max),
-    points.map(p => p.value).join(', '))
+  check('the points are positions on the graph, not Hertz',
+    points.every(p => p.value >= 0 && p.value <= 1), points.map(p => p.value).join(', '))
+  check('the lane carries the Hertz', lane.min >= 20 && lane.max > 1000, `min ${lane.min} max ${lane.max}`)
+
+  const hz = points.map(p => resolve(lane, p.value))
+  check('the quietest end of the sweep is still audible', Math.min(...hz) >= 20,
+    `${Math.round(Math.min(...hz))} Hz — under 20 Hz is silence, and 0.2 Hz is what it used to be`)
+  check('and the loud end is genuinely open', Math.max(...hz) >= 10_000,
+    `${Math.round(Math.max(...hz))} Hz`)
 
   // And the read-back has to be in the same unit, or it cannot contradict a
   // wrong value out loud.
@@ -88,6 +98,7 @@ const sweep = (from, to, parameter = 'lowpass') => planVoiceCall(
 {
   const down = sweep('100%', '20%')
   const dp = down.actions.filter(a => a.type === 'ADD_AUTOMATION_POINT').map(a => a.point)
+  // Direction is a property of the positions now, and still has to survive.
   check('a descending sweep descends', dp[0].value > dp[1].value, `${dp[0].value} → ${dp[1].value}`)
 
   const up = sweep('20%', '100%')
@@ -95,19 +106,33 @@ const sweep = (from, to, parameter = 'lowpass') => planVoiceCall(
   check('and an ascending one ascends', up2[0].value < up2[1].value, `${up2[0].value} → ${up2[1].value}`)
 }
 
-// ── The curve is the app's, not a second opinion ───────────────────────────
+// ── The lane's range is the DEVICE's range ─────────────────────────────────
 //
-// If these drift apart, "half open" means one thing to the voice control and
-// another to the piano roll, and the difference is audible the first time
-// somebody compares them.
+// This block used to compare the voice sweep against the piano roll's own
+// low-pass curve, on the grounds that "half open" must mean the same thing in
+// both places. That comparison no longer holds, and noticing why matters more
+// than the check did.
+//
+// They are two different controls. roll-fx's `filterHz` is the per-note Sound
+// Settings filter and runs logHz(200, 90); the voice sweep automates the
+// DEVICE CHAIN filter effect, whose declared automatable range is LOWPASS_HZ
+// (60 Hz - 18 kHz). Half open reads 1897 Hz on one and 1039 Hz on the other
+// because they are not the same knob, and forcing them to agree would mean
+// giving one of them a range that does not match the thing it controls.
+//
+// What must not drift is the voice planner from the device contract: the lane
+// it writes has to declare exactly the range the effect says it accepts, or an
+// automation point means one thing to the planner and another to the engine.
 {
-  const lp = FX_FIELDS.find(f => f.key === 'filterHz')
-  const mid = sweep('50%', '50%').actions.find(a => a.type === 'ADD_AUTOMATION_POINT').point.value
-  check('half-open matches the piano roll to within a hair',
-    Math.abs(mid - lp.fromNorm(0.5)) <= 2, `voice ${mid} Hz vs roll-fx ${lp.fromNorm(0.5)} Hz`)
-  check('fully open matches too',
-    Math.abs(sweep('100%', '100%').actions.find(a => a.type === 'ADD_AUTOMATION_POINT').point.value
-      - lp.fromNorm(1)) <= 2)
+  const plan = sweep('100%', '20%')
+  const lane = plan.actions.find(a => a.type === 'ADD_AUTOMATION_LANE').lane
+  check('the lane declares the effect\'s own range',
+    lane.min === LOWPASS_HZ.min && lane.max === LOWPASS_HZ.max,
+    `lane ${lane.min}-${lane.max} vs device ${LOWPASS_HZ.min}-${LOWPASS_HZ.max}`)
+  // A linear taper across 60 Hz to 18 kHz puts everything audible in the bottom
+  // tenth of the dial, which is the "opaque low-pass" complaint in another form.
+  check('and sweeps it logarithmically, as a filter is heard',
+    lane.curve === 'log', String(lane.curve))
 }
 
 // ── Volume and pan are still fractions ─────────────────────────────────────

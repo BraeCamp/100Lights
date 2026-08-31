@@ -154,7 +154,14 @@ export function interpret(sentence: string, ctx: InterpretContext): Interpretati
   // wants to hear "bass" as "bars" is charged for discarding a real name, and
   // any reading that keeps the name intact beats it.
   const words = new Words(sentence).protecting(nameWords(ctx))
-  if (!words.length) return NOTHING
+  // ⚠️ Empty means EMPTY, not "made only of small words". A few commands are
+  // themselves filler — "go" is the transport, and it strips to nothing at all
+  // — so bailing on an empty stripped list refused them before a single rule
+  // saw the sentence. That is why the conformance suite has been reporting
+  // transport.play's own example "go" as unreachable. Rules that need a filler
+  // word ask the raw sentence through said(); every other rule reads the
+  // stripped list, finds nothing, and declines as it always did.
+  if (!words.length && !words.raw.trim()) return NOTHING
 
   const candidates: Candidate[] = []
   for (const command of VOICE_COMMANDS) {
