@@ -1402,7 +1402,11 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
       const kind = built.type
 
       const pct = spokenNumber(i.amount as string)
-      const existing = track.effects.find(e => e.type === kind && (
+      // ⚠️ `?? []` because a THROW here takes the whole command down with an
+      // unhandled error instead of a sentence the user can read. A track
+      // without an effects array should produce "I can't do that", not a
+      // stack trace — found when a sweep crashed mid-run on exactly this.
+      const existing = (track.effects ?? []).find(e => e.type === kind && (
         // Every Apollo device shares the type 'helios', so matching on type
         // alone would call a phaser "the octaver you already have".
         kind !== 'helios' ||
