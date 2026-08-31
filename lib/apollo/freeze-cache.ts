@@ -568,9 +568,25 @@ export function setTransportPlaying(v: boolean): void {
   // forever and never get cheaper on the second pass.
   if (was && !v && lastGroups && pendingWhilePlaying) {
     pendingWhilePlaying = false
+    // ⚠️ 'resumed' was in the event type from the beginning and NOTHING ever
+    // logged it. So the log recorded that playing stopped the work and never
+    // that it started again — half of the story, and the half that makes the
+    // other half measurable.
+    //
+    // Brae: "Keep the information of when the user hits play while it's loading
+    // and when loading resumes. This way we can see how playing can get in the
+    // way of loading." The gap between the `paused` above it and this line IS
+    // the cost of listening while it loads.
+    logEvent('resumed', {
+      detail: pausedAt ? `after ${((Date.now() - pausedAt) / 1000).toFixed(1)}s of playback` : 'baking again',
+    })
+    pausedAt = 0
     requestCombine(lastBpm, lastGroups)
   }
 }
+
+/** When the bake last parked for playback, so 'resumed' can say how long. */
+let pausedAt = 0
 
 /** Hand the main thread back between pieces of a long job. scheduler.yield()
  *  resumes at the front of the queue after a frame, so splitting work up doesn't
@@ -1029,6 +1045,7 @@ async function bakeLayer(
     // render was running.
     if (transportPlaying) {
       setProgress({ ...progress, active: false, phase: 'paused' })
+      pausedAt = Date.now()
       logEvent('paused', { layer: label, detail: 'playing live — baking resumes on pause' })
       return false
     }

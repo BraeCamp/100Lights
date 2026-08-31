@@ -7,6 +7,7 @@ import type {
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
   ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
 } from './daw-types'
+import { repairAutomationPoints } from './automation-repair'
 import { fatPatch } from './apollo/patch-diff'
 import { restoreNoteIds } from './note-ids'
 import type { MidiPreset } from './midi-presets'
@@ -1092,7 +1093,7 @@ export function migrateProject(raw: Partial<DawProject>): DawProject {
     arrangementClips: withIds.arrangementClips,
     sessionGrid:      withIds.sessionGrid,
     clipEffects:     (raw.clipEffects ?? []).map(legacyToBar),
-    automationLanes: raw.automationLanes ?? [],
+    automationLanes: repairAutomationPoints(raw.automationLanes ?? []),
     returnTracks:    raw.returnTracks    ?? [],
     takeLanes:       raw.takeLanes       ?? [],
     crossfaderValue: raw.crossfaderValue ?? 0.5,

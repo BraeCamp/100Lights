@@ -102,8 +102,13 @@ const BY_TYPE: Partial<Record<EffectType, AutomatableParam[]>> = {
   deesser: [{ key: 'threshold', label: 'Threshold', min: -60, max: 0, unit: 'dB' }],
   chorus: [{ key: 'mix', label: 'Mix', min: 0, max: 1 }, { key: 'depth', label: 'Depth', min: 0, max: 1 }],
   transientshaper: [
-    { key: 'attack', label: 'Attack', min: -1, max: 1 },
-    { key: 'sustain', label: 'Sustain', min: -1, max: 1 },
+    // ⚠️ WAS -1..1, and the DSP reads these as DECIBELS
+    // (`attackGain = 10 ** (attack / 20)`). So a lane could swing the attack by
+    // one twelfth of the range its own knob offers — about 1 dB, which is
+    // nothing. The effect was fine; automating it could not reach it. The card
+    // has always used -12..12, and now so does this.
+    { key: 'attack', label: 'Attack', min: -12, max: 12, unit: 'dB' },
+    { key: 'sustain', label: 'Sustain', min: -12, max: 12, unit: 'dB' },
   ],
   // ⚠️ The key was `threshold`, and LimiterParams has none — it is `ceilingDb`.
   // buildLimiter's setParam does `p[key] = value` and then reads p.ceilingDb, so

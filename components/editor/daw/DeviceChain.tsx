@@ -559,7 +559,20 @@ function FilterControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
             color: 'var(--text-primary)', fontSize: 10, padding: '1px 2px', borderRadius: 2,
             outline: 'none', cursor: 'pointer', boxSizing: 'border-box',
           }}
-          onChange={e => { e.stopPropagation(); up({ type: e.target.value as FilterParams['type'] }) }}
+          onChange={e => {
+            e.stopPropagation()
+            // ⚠️ Carry the cutoff into the new type's own range. A low-pass at
+            // 1.2 kHz is a gentle darkening; the SAME number as a high-pass
+            // takes the whole body of the sound away. Switching type used to
+            // keep the frequency and hand you a filter nobody would choose.
+            const next = e.target.value as FilterParams['type']
+            const hz = next === 'lowpass'
+              ? (p.frequency >= LOWPASS_HZ.min ? p.frequency : 1200)
+              : next === 'highpass'
+                ? (p.frequency <= HIGHPASS_HZ.max ? p.frequency : 300)
+                : p.frequency
+            up({ type: next, frequency: hz })
+          }}
           onKeyDown={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}
         >
@@ -1060,7 +1073,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
           </span>
           {effect.type === 'eq3' && (
             <span style={{ fontSize: 8, color: 'var(--text-muted)', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              Precision EQ — insert on device chain
+              Starts flat — move a band to hear it
             </span>
           )}
         </div>

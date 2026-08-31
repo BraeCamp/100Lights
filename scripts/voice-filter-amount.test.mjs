@@ -87,9 +87,17 @@ const existing = cutoffFor(20, withFilter(8000), 'set_effect')
 check('setting an existing filter to 20% stays audible', existing.hz >= LOWPASS_HZ.min, `${existing.hz}Hz`)
 
 // ── And the default, with no amount said at all ────────────────────────────
+//
+// ⚠️ This used to assert the cutoff was ABOVE 2 kHz, which encoded the very
+// thing Brae reported: a filter that arrives at 8 kHz is inaudible, so "added
+// a filter" did nothing you could hear. The default is deliberately 1200 Hz
+// now. What matters is not that it is open but that it is HEARD and not
+// near-closed — a filter you cannot hear and a filter that swallows the track
+// are both wrong, in opposite directions.
 const noAmount = planVoiceCall({ name: 'add_effect', input: { target: 'Pad', effect: 'filter' } }, project)
-check('a filter added with no amount is open', noAmount.actions?.[0]?.effect?.params?.frequency >= 2000,
-  `${noAmount.actions?.[0]?.effect?.params?.frequency}Hz`)
+const noAmountHz = noAmount.actions?.[0]?.effect?.params?.frequency
+check('a filter added with no amount lands somewhere audible',
+  noAmountHz > LOWPASS_HZ.min * 1.5 && noAmountHz < 4000, `${noAmountHz}Hz`)
 
 console.log(failures ? `\n${failures} FAILED` : '\nall good')
 process.exit(failures ? 1 : 0)

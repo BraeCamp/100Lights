@@ -1029,6 +1029,44 @@ export default function AudioEditor(props: AudioEditorProps) {
     return () => { cancelled = true; stop?.() }
   }, [])
 
+  // ── The loading panel ────────────────────────────────────────────────────
+  //
+  // Brae: "clicking on the loading text above the loading bar opens upwards a
+  // list of what is loading and what's in queue, as well as errors... Keep the
+  // information of when the user hits play while it's loading and when loading
+  // resumes. This way we can see how playing can get in the way of loading."
+  //
+  // Everything it shows already existed — combineStats() has counts, the failed
+  // list, and a 200-event log that already records `paused` (with the reason:
+  // playing) and `resumed`. None of it had anywhere to be seen, so a stall was
+  // a pill that said "Loading" and nothing else. Polled only while open: this
+  // reads counters, and reading them every frame when nobody is looking is how
+  // a diagnostic becomes the thing it is diagnosing.
+  const [loadPanel, setLoadPanel] = useState(false)
+  const [loadDetail, setLoadDetail] = useState<{
+    ready: number; inFlight: number; queued: number; setAside: number; givenUp: number
+    lastError: string | null; failed: [string, number][]
+    log: { t: number; kind: string; layer?: string; detail?: string; ms?: number; done?: number; total?: number }[]
+  } | null>(null)
+  useEffect(() => {
+    if (!loadPanel) return
+    let alive = true
+    const read = () => {
+      void import('@/lib/apollo/freeze-cache').then(({ combineStats }) => {
+        if (!alive) return
+        const st = combineStats()
+        setLoadDetail({
+          ready: st.ready, inFlight: st.inFlight, queued: st.queued,
+          setAside: st.setAside, givenUp: st.givenUp,
+          lastError: st.lastError, failed: st.failed, log: st.log,
+        })
+      }).catch(() => {})
+    }
+    read()
+    const id = setInterval(read, 700)
+    return () => { alive = false; clearInterval(id) }
+  }, [loadPanel])
+
   const autoFroze = useRef(false)
   useEffect(() => {
     if (!AUTO_FREEZE_ON_LOAD) return
@@ -2986,12 +3024,18 @@ export default function AudioEditor(props: AudioEditorProps) {
                 transition: 'width 240ms linear, background 300ms',
               }} />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <div style={{
-                marginBottom: 4, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 600,
-                background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
-                color: 'var(--text-muted)', letterSpacing: '0.02em',
-              }}>
+            <div style={{ display: 'flex', justifyContent: 'center', pointerEvents: 'auto' }}>
+              <button
+                onClick={() => setLoadPanel(v => !v)}
+                title={loadPanel ? 'Hide what is loading' : 'Show what is loading, what is queued and anything that failed'}
+                style={{
+                  marginBottom: 4, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 600,
+                  background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
+                  color: loadPanel ? 'var(--text-primary)' : 'var(--text-muted)', letterSpacing: '0.02em',
+                  cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                <span style={{ fontSize: 8, opacity: .8 }}>{loadPanel ? '▾' : '▴'}</span>
                 {/* Say what is actually happening, and it has changed several
                     times as the loader has. It claimed loading was paused while
                     playing when it was not; then "ahead of the playhead" while
@@ -3019,8 +3063,66 @@ export default function AudioEditor(props: AudioEditorProps) {
                       : loadProgress.phase === 'head'
                         ? 'Getting the sound ready…'
                         : `Loading the song — ${loadProgress.done}/${loadProgress.total}`}
-              </div>
+              </button>
             </div>
+
+            {/* Opens UPWARD, above the pill, because the bar lives on the
+                bottom edge — a panel that dropped down would go off-screen. */}
+            {loadPanel && (
+              <div
+                style={{
+                  pointerEvents: 'auto', alignSelf: 'center', marginBottom: 2,
+                  width: 'min(560px, calc(100vw - 24px))', maxHeight: '46vh', overflowY: 'auto',
+                  background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
+                  borderRadius: 10, boxShadow: '0 -12px 40px rgba(0,0,0,.55)',
+                  padding: '10px 12px', fontSize: 11, color: 'var(--text-secondary)',
+                }}
+              >
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 8, fontVariantNumeric: 'tabular-nums' }}>
+                  <span><b style={{ color: 'var(--text-primary)' }}>{loadDetail?.inFlight ?? 0}</b> rendering</span>
+                  <span><b style={{ color: 'var(--text-primary)' }}>{loadDetail?.queued ?? 0}</b> queued</span>
+                  <span><b style={{ color: 'var(--text-primary)' }}>{loadDetail?.ready ?? 0}</b> ready</span>
+                  {!!loadDetail?.setAside && <span style={{ color: '#e0a458' }}><b>{loadDetail.setAside}</b> set aside</span>}
+                  {!!loadDetail?.givenUp && <span style={{ color: '#f08c8c' }}><b>{loadDetail.givenUp}</b> given up</span>}
+                </div>
+
+                {loadDetail?.lastError && (
+                  <div style={{ background: 'rgba(240,140,140,.12)', border: '1px solid rgba(240,140,140,.35)', borderRadius: 6, padding: '5px 8px', marginBottom: 8, color: '#f0b0b0' }}>
+                    {loadDetail.lastError}
+                  </div>
+                )}
+
+                {/* The history, newest first. `paused` rows are the ones Brae
+                    asked for by name: they record that PLAY interrupted the
+                    work, and `resumed` records it coming back — so the cost of
+                    listening while it loads is visible instead of theoretical. */}
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.08em', color: 'var(--text-muted)', margin: '2px 0 4px' }}>
+                  WHAT HAPPENED
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {(loadDetail?.log ?? []).slice(-40).reverse().map((e, i) => {
+                    const bad = ['silent', 'window-error', 'layer-error', 'job-error', 'stall', 'reset', 'gave-up'].includes(e.kind)
+                    const wait = e.kind === 'paused' || e.kind === 'resumed'
+                    return (
+                      <div key={i} style={{
+                        display: 'flex', gap: 8, alignItems: 'baseline',
+                        fontFamily: 'var(--font-mono, ui-monospace), monospace', fontSize: 10,
+                        color: bad ? '#f0a0a0' : wait ? '#e0c07a' : 'var(--text-muted)',
+                      }}>
+                        <span style={{ opacity: .6, minWidth: 46, textAlign: 'right' }}>{(e.t / 1000).toFixed(1)}s</span>
+                        <span style={{ minWidth: 88, fontWeight: 600 }}>{e.kind}</span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          {e.layer ? `${e.layer} — ` : ''}{e.detail ?? ''}
+                          {typeof e.done === 'number' && typeof e.total === 'number' ? ` (${e.done}/${e.total})` : ''}
+                          {typeof e.ms === 'number' ? ` ${e.ms}ms` : ''}
+                        </span>
+                      </div>
+                    )
+                  })}
+                  {!(loadDetail?.log ?? []).length && <span style={{ color: 'var(--text-muted)' }}>Nothing recorded yet.</span>}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
