@@ -1204,6 +1204,46 @@ export default function AudioEditor(props: AudioEditorProps) {
     id => projectRef.current?.tracks.find(t => t.id === id)?.name,
   ), [])
 
+  // A frozen track must not keep playing at the old tempo.
+  //
+  // Brae: "when I changed bpm, one of the tracks stayed at an old bpm."
+  //
+  // Freezing renders a synth clip to audio for CPU, and that render is made AT
+  // A TEMPO. Change the tempo and every other track moves while the frozen one
+  // keeps its old timing — silently, because audio is supposed to keep its own
+  // speed, so nothing looks wrong. Freeze is a performance trick the user
+  // accepted, not a decision to nail that part to 120 bpm.
+  //
+  // ⚠️ The detector for this ALREADY EXISTED and nothing ever called it:
+  // isFreezeStale(), whose own comment says "a tempo change invalidates it",
+  // had zero callers in the repo. Same shape as a warning nobody wired up.
+  //
+  // Thawing rather than re-rendering: it is instant, exact, and reversible —
+  // the notes and patch ride along on the clip — where a re-render is a long
+  // async job that would block the studio at the worst moment. The track costs
+  // CPU again until it is re-frozen, and being in time is worth more than that.
+  const lastTempo = useRef(project.tempo)
+  useEffect(() => {
+    if (project.tempo === lastTempo.current) return
+    lastTempo.current = project.tempo
+    const stale = project.arrangementClips.filter(
+      c => c.kind === 'audio' && (c as { frozenFrom?: { bpm?: number } }).frozenFrom
+        && (c as { frozenFrom?: { bpm?: number } }).frozenFrom?.bpm !== project.tempo,
+    )
+    if (!stale.length) return
+    void (async () => {
+      const { thawClip } = await import('@/lib/apollo/daw-freeze')
+      const ids = new Set(stale.map(c => c.id))
+      const clips = projectRef.current.arrangementClips.map(c =>
+        ids.has(c.id) ? (thawClip(c as Parameters<typeof thawClip>[0]) ?? c) : c)
+      rawDispatch({ type: 'LOAD_PROJECT', project: migrateProject({ ...projectRef.current, arrangementClips: clips }) })
+      setSyncMsg(stale.length === 1
+        ? 'One frozen part was rendered at the old tempo — unfrozen so it follows the new one. Re-freeze when you are done.'
+        : `${stale.length} frozen parts were rendered at the old tempo — unfrozen so they follow the new one.`)
+      setTimeout(() => setSyncMsg(null), 7000)
+    })()
+  }, [project.tempo, project.arrangementClips])
+
   // Audio that had to be rerouted to keep playing.
   //
   // A silent recovery beats silence, but it must not be INVISIBLE: something in

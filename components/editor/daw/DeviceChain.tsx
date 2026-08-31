@@ -74,15 +74,40 @@ function CtrlRow({ label, learnKey, children }: { label: string; learnKey?: stri
 const EffectLearnCtx = createContext<string>('')
 const CtrlLabelCtx = createContext<string>('')
 
-function RangeCtrl({ value, min, max, step = 0.01, onChange }: {
+function RangeCtrl({ value, min, max, step = 0.01, curve, onChange }: {
   value: number; min: number; max: number; step?: number
+  /**
+   * 'log' spaces the knob by RATIO rather than by difference.
+   *
+   * ⚠️ Frequency needs this, and its absence is why "the filter doesn't seem to
+   * be working". A low-pass knob running linearly from 200 Hz to 18 kHz puts
+   * everything a person can hear it do — 200 Hz to 1.5 kHz — in the FIRST 7% of
+   * its travel, and spends the other 93% between 1.5 kHz and 18 kHz where a
+   * low-pass on a pad is nearly inaudible. Measured: 8 kHz barely touches a
+   * pad, 800 Hz takes two thirds of its highs, and 800 Hz sits at 3.4% of the
+   * knob. So the control worked perfectly and felt completely dead.
+   *
+   * An octave is a ratio, which is why every filter knob ever built is spaced
+   * this way: each equal turn should halve or double the frequency.
+   */
+  curve?: 'log'
   onChange: (v: number) => void
 }) {
   const eid = useContext(EffectLearnCtx)
   const label = useContext(CtrlLabelCtx)
   const learnId = eid && label ? `${eid}:${label}` : ''
-  // A CC (0..1) maps across the control's own range.
-  const midi = useMidiLearn(learnId, v01 => onChange(min + v01 * (max - min)))
+
+  // A log control is handed to the knob as a plain 0..1 position and converted
+  // back on the way out, so Knob itself stays unaware of tapers.
+  const isLog = curve === 'log' && min > 0 && max > min
+  const toKnob = (v: number) =>
+    isLog ? Math.log(Math.min(max, Math.max(min, v)) / min) / Math.log(max / min) : v
+  const fromKnob = (k: number) =>
+    isLog ? min * Math.pow(max / min, Math.min(1, Math.max(0, k))) : k
+
+  // A CC (0..1) maps across the control's own range — through the same taper,
+  // or a knob and a MIDI fader would disagree about where the middle is.
+  const midi = useMidiLearn(learnId, v01 => onChange(isLog ? fromKnob(v01) : min + v01 * (max - min)))
 
   // Double-click resets a ± control to its neutral centre — flat EQ, no pan,
   // zero gain. For a one-directional control there is no such obvious home, so
@@ -111,12 +136,14 @@ function RangeCtrl({ value, min, max, step = 0.01, onChange }: {
         onClick={e => e.stopPropagation()}
       >
         <Knob
-          value={value} min={min} max={max}
-          defaultValue={dflt}
+          value={isLog ? toKnob(value) : value}
+          min={isLog ? 0 : min}
+          max={isLog ? 1 : max}
+          defaultValue={isLog ? toKnob(dflt) : dflt}
           size={30}
-          bipolar={min < 0 && max > 0}
+          bipolar={!isLog && min < 0 && max > 0}
           color={midi.armed ? '#f59e0b' : midi.cc != null ? '#22c55e' : 'var(--accent)'}
-          onChange={onChange}
+          onChange={v => onChange(isLog ? Math.round(fromKnob(v)) : v)}
         />
         {/* The row already carries the name on the left, so the knob does not
             repeat it — it gets the NUMBER instead, which the slider never
@@ -564,6 +591,7 @@ function FilterControls({ effect, trackId, returnId }: { effect: TrackEffect; tr
           min={p.type === 'lowpass' ? LOWPASS_HZ.min : p.type === 'highpass' ? HIGHPASS_HZ.min : 20}
           max={p.type === 'lowpass' ? LOWPASS_HZ.max : p.type === 'highpass' ? HIGHPASS_HZ.max : 20000}
           step={1}
+          curve="log"
           onChange={v => up({ frequency: v })}
         />
       </CtrlRow>
@@ -1608,6 +1636,9 @@ function HeliosDeviceBody({ effect, trackId, returnId }: { effect: TrackEffect; 
             // 0..1 and quantising it to a switch would be a real loss, where a
             // flag landing on 0.4 is merely odd.
             step={pr.max - pr.min >= 2 && Number.isInteger(pr.min) && Number.isInteger(pr.max) && Number.isInteger(pr.default) ? 1 : 0.01}
+            // FX_DEFS marks its own log parameters (rates, times). Ignoring
+            // that gave them the same dead travel the filter had.
+            curve={pr.curve === 'log' && pr.min > 0 ? 'log' : undefined}
             onChange={v => setParam(pr.key, v)}
           />
         </CtrlRow>

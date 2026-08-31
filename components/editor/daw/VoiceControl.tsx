@@ -128,6 +128,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // happened. Refs are the state as of the last commit, which is what a turn
   // after a dispatch needs. This file has produced the stale-closure bug three
   // times already; this is the same shape.
+  // Is a question on screen right now? Read inside run(), which does not list
+  // `asking` as a dependency — the value it would otherwise close over is the
+  // one from when the callback was built, which is the stale-closure bug this
+  // file has produced several times.
+  const askingRef = useRef('')
+
   const projectRef = useRef(project)
   const selectedTrackIdRef = useRef(selectedTrackId)
   const selectedClipIdRef = useRef(selectedClipId)
@@ -136,6 +142,19 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   useEffect(() => { selectedClipIdRef.current = selectedClipId }, [selectedClipId])
   /** The assistant asked something and is waiting — a question, not a failure. */
   const [asking, setAsking] = useState('')
+  useEffect(() => { askingRef.current = asking }, [asking])
+  // ⚠️ A question and a failure must never be on screen together. Brae: "It
+  // said 'I didn't get that' in the window but it asked an applicable question
+  // under the Voice button." They are two different surfaces — the question is
+  // a popover by the Voice button, the problem is a line in the card — so
+  // nothing stopped them contradicting each other, and the one that reads like
+  // the answer ("it failed") is the wrong one.
+  //
+  // Here rather than at each call site: a question can be raised from the
+  // assistant loop, the local resolver or a queued confirmation, and a rule
+  // that has to be remembered in three places is a rule that gets forgotten in
+  // one of them.
+  useEffect(() => { if (asking) setProblem('') }, [asking])
   const [typed, setTyped] = useState('')
   const [showType, setShowType] = useState(false)
   /** 0–1 microphone loudness while recording, for the meter on the button. */
@@ -430,7 +449,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const heardFrom = spoken
 
     const text = stripWakeWord(heardFrom)
-    if (!text) { setProblem('I didn\'t catch that.'); return }
+    if (!text) {
+      // ⚠️ NOT while a question is on screen. With the microphone held open,
+      // the pause after the studio asks something is full of room noise, and
+      // each empty take used to overwrite the display with "I didn't get
+      // that" — so the card said it had failed while the question it was
+      // waiting on sat right there, still answerable. Nothing was wrong; it
+      // just looked like everything was.
+      if (!askingRef.current) setProblem('I didn\'t catch that.')
+      return
+    }
 
     // The context the reading is judged against: the project's real track names,
     // their current levels (so "turn the bass up" knows where the bass IS), and
@@ -846,6 +874,20 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // ⚠️ Bounded, because a loop that spends money on every pass is a loop that
     // must be able to stop. Four turns is enough for read → act → check.
     const MAX_TURNS = 4
+    // ⚠️ A TURN CAN HANG, AND FOUR OF THEM HANG FOUR TIMES AS LONG.
+    //
+    // This was one request; making it a loop quietly made the worst case four
+    // sequential requests, and the client had no timeout at all — the route
+    // allows 90s and the model call itself 60s, so the control could sit busy
+    // for minutes. Busy disables the mic AND swallows Enter, so what that looks
+    // like from the outside is the voice control freezing: you type the command
+    // again, nothing happens, again, nothing happens.
+    //
+    // So: each turn gets a deadline, and the whole loop gets a budget. Running
+    // out is a failure with a sentence, not an unexplained silence.
+    const TURN_MS = 30_000
+    const LOOP_MS = 75_000
+    const loopStartedAt = Date.now()
     const msgs: { role: 'user' | 'assistant'; content: unknown }[] =
       [...history.current, { role: 'user' as const, content: text }]
     let lastSay = ''
@@ -857,8 +899,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     try {
       for (let turn = 0; turn < MAX_TURNS; turn++) {
         usedTurns = turn + 1
+        if (Date.now() - loopStartedAt > LOOP_MS) {
+          setProblem('That took too long — stopping there. Try saying it again.')
+          markFailed('loop budget exceeded')
+          return
+        }
         const res = await fetch('/api/ai/assist', {
           method: 'POST',
+          signal: AbortSignal.timeout(TURN_MS),
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             module: 'music',
@@ -1036,8 +1084,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       setAsking('')
       if (spoke && lastSay) respond(spoke)
       setSaid(lastSay || spoke)
-    } catch {
-      setProblem('Couldn\'t reach the assistant.')
+    } catch (err) {
+      const timedOut = (err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError'
+      setProblem(timedOut
+        ? 'The assistant took too long. Say it again — it usually comes back.'
+        : 'Couldn\'t reach the assistant.')
+      markFailed(timedOut ? 'assistant timeout' : 'assistant unreachable')
     } finally {
       setBusy(false)
     }
@@ -1890,7 +1942,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               // and the voice shortcut — never see a keystroke meant for this
               // field.
               e.stopPropagation()
-              if (e.key === 'Enter' && typed.trim() && !busy) {
+              if (e.key === 'Enter' && typed.trim()) {
+                // ⚠️ This used to be `&& !busy`, so pressing Enter while the
+                // assistant was still working did NOTHING AT ALL — no message,
+                // no queue, the text just sat there. Somebody typing a command
+                // that seems to be ignored types it again, and again, which is
+                // exactly what "the voice control freezes" looks like from the
+                // outside. Being told it is still working is the whole fix.
+                if (busy) { setProblem('Still working on the last one…'); return }
                 const t = typed.trim()
                 setTyped(''); setShowType(false)
                 void run(t)
