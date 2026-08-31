@@ -12,7 +12,7 @@ import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { importAudioFile } from '@/lib/daw-audio-import'
 import { useUITierOptional } from '../UITierProvider'
 import { DENSITY_ROW_SCALE } from '@/lib/ui-density'
-import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane } from '@/lib/daw-types'
+import type { DawTrack, AudioClip, DawClip, AutomationLane, TakeLane, TrackEffect } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip, TRACK_COLORS, COLLAPSED_TRACK_HEIGHT, GROUP_TRACK_HEIGHT, clipLockedBy } from '@/lib/daw-types'
 import { useWorkshopThemeOptional } from '../WorkshopThemeProvider'
 import { clampToViewport } from './menu-clamp'
@@ -23,7 +23,6 @@ import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import ClipView from './ClipView'
 import { DEFAULT_KIT, DRUM_PATTERNS, patternToNotes } from '@/lib/drum-presets'
-import EffectLaneView, { EFFECT_H } from './EffectLane'
 import DeviceChain from './DeviceChain'
 import { automatableParams, primaryParam, shortName } from '@/lib/daw-effect-params'
 import IsolateModal from './IsolateModal'
@@ -227,69 +226,163 @@ const CHIP_LIMIT = 2
  * silently clipping the fourth would let the row claim the chain ends where the
  * space does.
  */
-function DeviceChips({ track }: { track: DawTrack }) {
+/**
+ * The FX button: this track's device chain, as a menu you can leave open.
+ *
+ * Brae: "add an FX button that opens the device chain options. Clicking on an
+ * option toggles it open without closing the menu, clicking away closes the
+ * menu. At the bottom of that menu will be a '+ add effect' button."
+ *
+ * The staying-open part is the whole design, and it is the opposite of how a
+ * menu normally behaves. Opening curves for a chain is a comparing job — the
+ * filter against the compressor against the reverb — and a menu that dismisses
+ * itself after each choice turns four decisions into four round trips through
+ * the same button. So a click toggles a lane and the list stays; only a click
+ * outside puts it away.
+ *
+ * It replaces the effect-bar lane, which drew the same kind of curve over the
+ * same kind of parameter and wrote it to a different place in the project.
+ */
+function FxMenu({ track }: { track: DawTrack }) {
   const { project, dispatch, setSelectedTrackId } = useDaw()
-  if (!track.effects.length) return null
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0 })
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Click away closes it. Pointerdown rather than click so the menu goes when
+  // somebody starts interacting elsewhere, not after they finish.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node)) return
+      if (btnRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('pointerdown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('pointerdown', onDown); window.removeEventListener('keydown', onKey) }
+  }, [open])
+
+  const lanes = project.automationLanes.filter(l => l.trackId === track.id)
+  const openCount = track.effects.reduce((n, e) => {
+    const prm = primaryParam(e)
+    return n + (prm && lanes.some(l => l.parameter === `fx:${e.id}:${prm.key}`) ? 1 : 0)
+  }, 0)
+
+  const toggle = (e: TrackEffect) => {
+    const prm = primaryParam(e)
+    if (!prm) { setSelectedTrackId(track.id); return }
+    const parameter = `fx:${e.id}:${prm.key}`
+    const lane = lanes.find(l => l.parameter === parameter)
+    if (lane) { dispatch({ type: 'REMOVE_AUTOMATION_LANE', laneId: lane.id }); return }
+    dispatch({
+      type: 'ADD_AUTOMATION_LANE',
+      lane: {
+        id: crypto.randomUUID(), trackId: track.id, parameter,
+        label: `${shortName(e.type)} ${prm.label}`,
+        // ⚠️ The parameter's OWN range. An automation value reaches the effect
+        // unchanged, so these are units: a filter lane declared 0–1 sets the
+        // cutoff to a fraction of a Hertz and silences the track.
+        min: prm.min, max: prm.max,
+        defaultValue: Number((e.params as unknown as Record<string, unknown>)?.[prm.key] ?? prm.min),
+        points: [], expanded: true,
+      },
+    })
+  }
 
   return (
-    <div
-      onClick={e => e.stopPropagation()}
-      style={{ display: 'flex', gap: 2, alignItems: 'center', minWidth: 0, flexShrink: 0 }}
-    >
-      {track.effects.length > CHIP_LIMIT && (
-        <button
-          onClick={() => setSelectedTrackId(track.id)}
-          title={`${track.effects.length} devices — open the chain in Devices`}
+    <>
+      <button
+        ref={btnRef}
+        data-help-id="fx-menu"
+        onClick={ev => {
+          ev.stopPropagation()
+          const r = (ev.currentTarget as HTMLElement).getBoundingClientRect()
+          setPos({ top: r.bottom + 4, left: r.left })
+          setOpen(v => !v)
+        }}
+        title={track.effects.length
+          ? `${track.effects.length} device${track.effects.length === 1 ? '' : 's'} — open a curve under this track`
+          : 'Effects on this track'}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 2, height: 14, padding: '0 4px',
+          borderRadius: 2, flexShrink: 0, fontSize: 8, fontWeight: 700, cursor: 'pointer',
+          border: `1px solid ${openCount || open ? 'var(--accent)' : track.effects.length ? 'var(--border)' : 'var(--border)'}`,
+          background: open ? 'rgb(var(--accent-rgb) / 0.25)' : 'var(--bg-surface)',
+          color: openCount || open ? 'var(--accent-light)' : track.effects.length ? 'var(--text-secondary)' : 'var(--text-muted)',
+        }}
+      >FX{track.effects.length ? ` ${track.effects.length}` : ''}</button>
+
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          onClick={e => e.stopPropagation()}
           style={{
-            fontSize: 7, height: 12, padding: '0 3px', borderRadius: 2, flexShrink: 0,
-            border: '1px solid var(--border)', background: 'var(--bg-surface)',
-            color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 700,
+            position: 'fixed', top: pos.top, left: pos.left, zIndex: 9000, minWidth: 190,
+            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.45)', padding: '4px 0', fontSize: 12,
           }}
-        >+{track.effects.length - CHIP_LIMIT}</button>
-      )}
-      {track.effects.slice(0, CHIP_LIMIT).map(e => {
-        const prm = primaryParam(e)
-        const parameter = prm ? `fx:${e.id}:${prm.key}` : null
-        const lane = parameter
-          ? project.automationLanes.find(l => l.trackId === track.id && l.parameter === parameter)
-          : null
-        const off = (e.params as unknown as { enabled?: boolean })?.enabled === false
-        return (
+        >
+          <div style={{ padding: '4px 10px 5px', borderBottom: '1px solid var(--border)', fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>
+            {track.name} — device chain
+          </div>
+
+          {!track.effects.length && (
+            <div style={{ padding: '8px 10px', fontSize: 11, color: 'var(--text-muted)' }}>
+              No effects on this track yet.
+            </div>
+          )}
+
+          {track.effects.map(e => {
+            const prm = primaryParam(e)
+            const laneOpen = !!prm && lanes.some(l => l.parameter === `fx:${e.id}:${prm.key}`)
+            const bypassed = (e.params as unknown as { enabled?: boolean })?.enabled === false
+            return (
+              <button
+                key={e.id}
+                onClick={() => toggle(e)}
+                title={prm
+                  ? `${laneOpen ? 'Hide' : 'Draw'} ${prm.label.toLowerCase()} under this track`
+                  : 'Open the device chain'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                  padding: '5px 10px', border: 'none', cursor: 'pointer', fontSize: 12,
+                  background: laneOpen ? 'rgb(var(--accent-rgb) / 0.16)' : 'transparent',
+                  color: bypassed ? 'var(--text-muted)' : 'var(--text-primary)',
+                }}
+                onMouseEnter={ev => { if (!laneOpen) (ev.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+                onMouseLeave={ev => { if (!laneOpen) (ev.currentTarget as HTMLElement).style.background = 'transparent' }}
+              >
+                {/* A tick rather than a highlight alone: "which of these are
+                    open" is the question somebody has while the menu is up. */}
+                <span style={{ width: 10, color: laneOpen ? 'var(--accent-light)' : 'transparent', fontWeight: 700 }}>✓</span>
+                <span style={{ flex: 1, textDecoration: bypassed ? 'line-through' : 'none' }}>
+                  {shortName(e.type)}
+                  {prm && <span style={{ color: 'var(--text-muted)' }}> · {prm.label}</span>}
+                </span>
+                {bypassed && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>off</span>}
+              </button>
+            )
+          })}
+
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
           <button
-            key={e.id}
-            onClick={() => {
-              if (!prm || !parameter) { setSelectedTrackId(track.id); return }
-              if (lane) { dispatch({ type: 'REMOVE_AUTOMATION_LANE', laneId: lane.id }); return }
-              dispatch({
-                type: 'ADD_AUTOMATION_LANE',
-                lane: {
-                  id: crypto.randomUUID(), trackId: track.id, parameter,
-                  label: `${shortName(e.type)} ${prm.label}`,
-                  // ⚠️ The parameter's OWN range. An automation value reaches the
-                  // effect unchanged, so these are units, not drawing hints — a
-                  // filter lane declared 0–1 sets the cutoff to a fraction of a
-                  // Hertz and silences the track.
-                  min: prm.min, max: prm.max,
-                  defaultValue: Number((e.params as unknown as Record<string, unknown>)?.[prm.key] ?? prm.min),
-                  points: [], expanded: true,
-                },
-              })
-            }}
-            title={prm
-              ? `${shortName(e.type)}${off ? ' (bypassed)' : ''} — ${lane ? 'hide' : 'draw'} ${prm.label.toLowerCase()} under this track`
-              : `${shortName(e.type)} — open the device chain`}
+            onClick={() => { setSelectedTrackId(track.id); setOpen(false) }}
+            title="Open the device chain to add an effect"
             style={{
-              fontSize: 7, height: 12, padding: '0 3px', borderRadius: 2, flexShrink: 0,
-              border: `1px solid ${lane ? 'var(--accent)' : 'var(--border)'}`,
-              background: lane ? 'rgb(var(--accent-rgb) / 0.25)' : 'var(--bg-surface)',
-              color: off ? 'var(--text-muted)' : lane ? 'var(--accent-light)' : 'var(--text-secondary)',
-              textDecoration: off ? 'line-through' : 'none',
-              cursor: 'pointer', fontWeight: 700, letterSpacing: 0.2,
+              display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px',
+              border: 'none', background: 'transparent', color: 'var(--accent-light)',
+              cursor: 'pointer', fontSize: 12, fontWeight: 600,
             }}
-          >{shortName(e.type)}</button>
-        )
-      })}
-    </div>
+            onMouseEnter={ev => { (ev.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+            onMouseLeave={ev => { (ev.currentTarget as HTMLElement).style.background = 'transparent' }}
+          >+ Add effect</button>
+        </div>,
+        document.body,
+      )}
+    </>
   )
 }
 
@@ -523,26 +616,6 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   } | null>(null)
   const [settingsTarget, setSettingsTarget] = useState<AudioClip | null>(null)
   const [spectralTarget, setSpectralTarget] = useState<AudioClip | null>(null)
-  // ── The track head's FX button is gone ────────────────────────────────
-  //
-  // Brae: "it looks like it used an FX track different from what I'd get from
-  // the FX button, so let's just get rid of the FX button on trackheads."
-  //
-  // He was right that they were different things, and the reason is worth
-  // recording: THREE buttons in this file said "FX" and none of them meant the
-  // same thing. The one on the track head created nothing at all — it revealed
-  // an effects LANE, whose bars are ClipEffects (a time range on a track, in
-  // the RollFx sound-settings model). The header inside that lane opened the
-  // DEVICE CHAIN, which is track.effects — discrete DSP devices, a completely
-  // different object family that nothing converts between. And the group track
-  // head had a third one that only changed the selection.
-  //
-  // Track effects now have exactly one door: select a track and the Devices tab
-  // below is already open on them. `showFx` stays only because the lane it
-  // toggled still exists in the file; nothing sets it any more, so the lane no
-  // longer renders. That is deliberate and is Brae's next decision — delete the
-  // bar lane, or give it a home that is not a third meaning of the word FX.
-  const [showFx,         setShowFx]         = useState(false)
   const [fxRackOpen,     setFxRackOpen]     = useState<{ x: number; y: number } | null>(null)
   const fxRackRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -1163,7 +1236,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 {track.name}
               </span>
             )}
-            <DeviceChips track={track} />
+            <FxMenu track={track} />
             {/* Voice chain badge — podcast mode only */}
             {audioMode === 'podcast' && track.effects.length > 0 && (
               <span title="Voice chain active" style={{
@@ -2039,41 +2112,6 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       ))}
 
       {/* Effects lane */}
-      {!collapsed && showFx && (
-        <div style={{ display: 'flex', flexShrink: 0, alignItems: 'stretch' }}>
-          {/* FX header — the track's RACK effects (device chain) live here, viewable
-              as chips and editable via a click-to-open popover. The lane to the
-              right holds the drawn clip-effect BARS. */}
-          <div
-            onClick={e => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setFxRackOpen(v => v ? null : { x: r.left + 6, y: r.bottom + 4 }) }}
-            title="Track effects — click to open the device chain (add / edit / reorder)"
-            style={{ width: headerW, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: fxRackOpen ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.3)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}`, boxSizing: 'border-box', cursor: 'pointer' }}
-          >
-            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: 1, textTransform: 'uppercase', flexShrink: 0 }}>FX</span>
-            {track.effects.length > 0 ? (
-              <div style={{ display: 'flex', gap: 3, flex: 1, overflow: 'hidden', alignItems: 'center' }}>
-                {track.effects.slice(0, 5).map(e => (
-                  <span key={e.id} style={{ fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'rgb(var(--accent-rgb) / 0.16)', color: 'var(--accent-light)', whiteSpace: 'nowrap', flexShrink: 0, textTransform: 'uppercase' }}>
-                    {e.type === 'chorus' ? (e.params as { type?: string }).type ?? 'chorus' : e.type === 'transientshaper' ? 'transient' : e.type}
-                  </span>
-                ))}
-                {track.effects.length > 5 && <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0 }}>+{track.effects.length - 5}</span>}
-              </div>
-            ) : (
-              <span style={{ fontSize: 9, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>click to add effects</span>
-            )}
-          </div>
-          <EffectLaneView
-            trackId={track.id}
-            beatW={beatW}
-            scrollLeft={scrollLeft}
-            viewWidth={viewWidth}
-            onCopyEffects={onCopyEffects}
-            onPasteEffects={onPasteEffects}
-          />
-        </div>
-      )}
-
       {/* Track-head FX device-chain popover — the rack effects, editable in place */}
       {fxRackOpen && createPortal(
         <div
