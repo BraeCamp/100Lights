@@ -596,6 +596,18 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the project, and there is nothing for the reducer to do with it.
     if (act.type === 'VOCAB') return
 
+    // The history belongs to the editor, so undo cannot be a reducer action.
+    // Handled HERE rather than only in the local path, because the assistant
+    // can call undo too and used to be told the studio had never heard of it.
+    if (act.type === 'UNDO' || act.type === 'REDO') {
+      const step = act.type === 'UNDO' ? undo : redo
+      const did = step?.()
+      if (!step) setProblem('Undo is not available here.')
+      else if (did === false) setProblem(act.type === 'UNDO' ? 'Nothing to undo.' : 'Nothing to redo.')
+      else setSaid(act.type === 'UNDO' ? 'Undone.' : 'Redone.')
+      return
+    }
+
     // Measuring means RENDERING, which is asynchronous and needs an audio
     // context — neither of which the planner has. So it is a job, like a take.
     if (act.type === 'BALANCE_LEVELS') {
@@ -609,7 +621,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
     dispatch(act as never)
-  }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId, runBalance])
+  }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId, runBalance, undo, redo])
 
   /**
    * Record a spoken take: count in, listen, and write down what was said.

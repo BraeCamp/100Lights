@@ -541,7 +541,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'duplicate_track',
     description:
-      'DUPLICATE A TRACK — copy a whole track with its clips and effects. Not the same as duplicate_clip, which repeats one clip along the timeline.',
+      'DUPLICATE A TRACK — copy a whole track with its clips, effects and settings. "copy the drums track", "duplicate the bass", "make another one of these". ⚠️ Not duplicate_clip: that repeats ONE clip along the timeline on the track it is already on. This makes a second track.',
     input_schema: {
       type: 'object',
       properties: { target: TARGET },
@@ -551,7 +551,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'remove_track',
     description:
-      'DELETE A TRACK — remove it and everything on it. Destructive: the caller confirms before this runs.',
+      'DELETE A TRACK — remove a track and everything on it. "delete the guitar track", "get rid of the pad", "remove that track". ⚠️ Destructive and confirmed out loud before it runs. If they only want it quiet, that is set_track with muted — reach for this only when they said delete or remove.',
     input_schema: {
       type: 'object',
       properties: { target: TARGET },
@@ -631,7 +631,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'rename_clip',
     description:
-      'RENAME A CLIP — change what one clip is called. Mostly reached by accepting the offer made when a clip and its track share a name.',
+      'RENAME A CLIP — change what one clip is called. "call that clip the intro", "rename the bass clip to verse". Worth doing: every command that takes a target finds things by name, so a well-named clip is an easier one to talk about later. ⚠️ For a TRACK use rename_track.',
     input_schema: {
       type: 'object',
       properties: { target: TARGET, name: { type: 'string' } },
@@ -654,7 +654,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'remove_clip',
     description:
-      'DELETE A CLIP — remove one clip from the arrangement. Destructive: the caller confirms before this runs.',
+      'DELETE A CLIP — remove one clip from the arrangement. "delete the second pad clip", "get rid of that clip", "take the crash out of bar 9". ⚠️ Destructive and confirmed before it runs. This removes the clip; remove_track removes the whole track it sits on.',
     input_schema: {
       type: 'object',
       properties: { target: TARGET },
@@ -743,7 +743,7 @@ export const MUSIC_TOOLS = [
   },
   {
     name: 'remove_marker',
-    description: 'REMOVE A MARKER — "delete the chorus marker".',
+    description: 'REMOVE A MARKER — take a named place out of the song. "delete the chorus marker", "remove the bridge marker". ⚠️ The sections either side of it merge into one, because a section is the gap between two markers — so removing a marker changes what "loop the chorus" means.',
     input_schema: {
       type: 'object',
       properties: { name: { type: 'string' } },
@@ -795,14 +795,14 @@ export const MUSIC_TOOLS = [
   {
     name: 'add_clip_effect',
     description:
-      'EFFECT BAR — a stretch of the timeline over which one sound parameter is dialled in and back out. Not an effect on the track: a region on it. "put a low-pass bar on the bass for 4 bars", "add drive over the chorus". The parameter follows a shape across the region, which is what makes it a bar rather than a setting.',
+      'EFFECT BAR — a stretch of the timeline over which one sound parameter is dialled in and back out. Not an effect on the track: a region on it. "put a low-pass bar on the bass for 4 bars", "add drive over the chorus". The parameter follows a shape across the region, which is what makes it a bar rather than a setting. ⚠️ `target` is a TRACK, despite the name — say the track the bar goes on, not a clip.',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
         parameter: {
           type: 'string',
-          description: 'A sound-shaping field: filterHz, highpassHz, drive, reverbWet, delayWet, bitcrush, gain, distortion.',
+          description: 'A sound-shaping field: filterHz (low-pass), highpassHz, drive, reverbWet, delayWet, bitcrush, gain, distortion. Plain words work too — "lowpass", "reverb", "delay", "crush" are understood.',
         },
         amount: { type: 'number', description: 'How far it is dialled in, 0-100.' },
         at: POSITION,
@@ -826,12 +826,12 @@ export const MUSIC_TOOLS = [
   },
   {
     name: 'undo',
-    description: 'UNDO — take back the last change. Carried out by the editor, which owns the history.',
+    description: 'UNDO — take back the last change. "undo that", "undo", "take that back", "no, put it back how it was". Reach for this whenever they say the last thing was wrong, rather than trying to work out the opposite edit and doing that instead — the opposite of a command is rarely the same as undoing it.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'redo',
-    description: 'REDO — put back what was just undone.',
+    description: 'REDO — put back what was just undone. "redo that", "redo", "actually put it back". Only meaningful straight after an undo.',
     input_schema: { type: 'object', properties: {} },
   },
 ] as const

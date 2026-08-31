@@ -25,6 +25,7 @@ import type { DawProject, DawTrack, MidiClip, DawClip, EffectType, TrackEffect }
 import { defaultDrumInstrument } from '../daw-types'
 import { parseSpokenBeat, beatToNotes, describeBeat as describeSpokenBeat } from './beatbox'
 import { parseDefinitions, applyDefinitions, clearVocab, definitions, laneFromName } from './vocab'
+import { commandHelp } from './commands'
 import { grooveNamed, applyGroove } from './grooves'
 import {
   defaultTransientShaper, defaultUtility, defaultUnmask,
@@ -145,6 +146,25 @@ function buildSpokenEffect(name: string): { type: EffectType; params: TrackEffec
  * per field: a filter sweeps logarithmically over a range where the top is
  * "off", drive is already a fraction, and gain is a multiplier around unity.
  */
+/**
+ * The plain words for these fields.
+ *
+ * ⚠️ A model reads the schema and mostly uses the field names, but it says
+ * "lowpass" often enough that refusing it is a real failure — and the refusal
+ * ("I don't know how to shape lowpass") reads like the feature is missing
+ * rather than like the word was wrong.
+ */
+const CLIP_FX_ALIASES: Record<string, string> = {
+  lowpass: 'filterHz', 'low-pass': 'filterHz', 'low pass': 'filterHz',
+  filter: 'filterHz', cutoff: 'filterHz', lpf: 'filterHz',
+  highpass: 'highpassHz', 'high-pass': 'highpassHz', 'high pass': 'highpassHz', hpf: 'highpassHz',
+  reverb: 'reverbWet', wet: 'reverbWet', space: 'reverbWet',
+  delay: 'delayWet', echo: 'delayWet',
+  crush: 'bitcrush', 'bit crush': 'bitcrush', lofi: 'bitcrush',
+  saturation: 'drive', warmth: 'drive', overdrive: 'drive',
+  volume: 'gain', level: 'gain',
+}
+
 const CLIP_FX_FIELDS: Record<string, { key: string; label: string; at: (unit: number) => number }> = {
   filterHz: { key: 'filterHz', label: 'Low-pass', at: u => Math.round(200 * Math.pow(90, 1 - u)) },
   highpassHz: { key: 'highpassHz', label: 'High-pass', at: u => Math.round(20 * Math.pow(100, u)) },
@@ -1028,6 +1048,19 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const clips = allClips(project)
 
       switch (topic) {
+        // ⚠️ 'help' was in the schema's enum and had no case, so a model asking
+        // "what can you do" got "I don't know how to answer that" — the worst
+        // possible answer to that particular question.
+        case 'help': {
+          const groups = commandHelp()
+          const total = groups.reduce((n, g) => n + g.items.length, 0)
+          return {
+            actions: [],
+            say: `${total} things, in ${groups.length} groups: ${groups.map(g => `${g.group.toLowerCase()} (${g.items.length})`).join(', ')}. `
+              + 'Ask for any of them in your own words, or open the book icon in the voice window to read the whole list.',
+          }
+        }
+
         case 'tempo':
           return {
             actions: [],
@@ -1261,7 +1294,19 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     case 'set_key_scale': {
-      const key = spokenNumber(i.key as string)
+      // ⚠️ A NAME or a number. The schema asks for a semitone because that is
+      // what the action carries, but a model asked for "F minor" has to convert
+      // it first, and that is a step it can silently get wrong. Accepting both
+      // removes the conversion rather than hoping it goes well.
+      const NOTE_PC: Record<string, number> = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }
+      const named = /^\s*([a-g])\s*(sharp|#|flat|b|♭)?\s*$/i.exec(str(i.key))
+      let key = spokenNumber(i.key as string)
+      if (named) {
+        const base = NOTE_PC[named[1].toLowerCase()]
+        const acc = named[2]?.toLowerCase()
+        key = base + (acc === 'sharp' || acc === '#' ? 1 : acc ? -1 : 0)
+        key = ((key % 12) + 12) % 12
+      }
       const scale = str(i.scale).toLowerCase() || 'major'
       if (key == null || key < 0 || key > 11) return fail('Say a key, like F minor.')
       const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -1513,9 +1558,12 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     case 'add_clip_effect': {
       const track = resolveTrack(target, project)
       if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
-      const field = str(i.parameter)
+      const said = str(i.parameter)
+      const field = CLIP_FX_FIELDS[said] ? said : (CLIP_FX_ALIASES[said.toLowerCase().trim()] ?? said)
       const spec = CLIP_FX_FIELDS[field]
-      if (!spec) return fail(`I don't know how to shape "${field || 'that'}".`)
+      if (!spec) {
+        return fail(`I don't know how to shape "${said || 'that'}". Try low-pass, high-pass, drive, reverb, delay, bitcrush or level.`)
+      }
 
       const pct = spokenNumber(i.amount as string)
       const amount = pct == null ? 1 : Math.max(0, Math.min(1, pct / 100))
@@ -1548,7 +1596,11 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
             ],
           },
         }],
-        say: `${spec.label} bar on "${track.name}" from ${describeBeat(startBeat, maps)}, ${describeDuration({ bars: 0 }, beats)}.`,
+        // ⚠️ Was `describeDuration({ bars: 0 }, beats)` — hardcoded, so this
+        // reported "0 bars" no matter how long the bar actually was. The
+        // ACTION was right and the read-back was wrong, which is the worse
+        // way round: it teaches somebody to distrust a correct answer.
+        say: `${spec.label} bar on "${track.name}" from ${describeBeat(startBeat, maps)}, ${describeDuration(len(i.length) ?? { beats }, beats)}.`,
       }
     }
 
@@ -2231,6 +2283,23 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // A question, not an edit: it changes nothing and answers out loud.
       return { actions: [], say: namePlayingNotes(project, target, maps, heard?.atBeat) }
     }
+
+    // ── UNDO / REDO ─────────────────────────────────────────────────────
+    //
+    // ⚠️ These are TOOLS the assistant can call, and until now the executor had
+    // no case for them — so "undo that" in AI mode came back "I don't know how
+    // to undo yet". The local path intercepted them before planning and the
+    // assistant path never reached that interception, which is exactly the kind
+    // of gap that only exists on one of two routes to the same command.
+    //
+    // The history belongs to the editor and cannot be a reducer action, so this
+    // hands over a studio-level action like TRANSPORT does. `say` is empty on
+    // purpose: the studio reports what actually happened, because "Undone."
+    // over an empty stack is the small lie that teaches somebody to stop
+    // trusting the read-back.
+    case 'undo':
+    case 'redo':
+      return { actions: [{ type: call.name === 'undo' ? 'UNDO' : 'REDO' }], say: '' }
 
     case 'transport': {
       const action = str(i.action || 'play').toLowerCase()
