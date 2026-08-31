@@ -1086,7 +1086,7 @@ function EffectDevice({ effect, trackId, returnId }: { effect: TrackEffect; trac
           </span>
           {effect.type === 'eq3' && (
             <span style={{ fontSize: 8, color: 'var(--text-muted)', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              Starts flat — move a band to hear it
+              Starts with a tilt — set a band to 0 for flat
             </span>
           )}
         </div>

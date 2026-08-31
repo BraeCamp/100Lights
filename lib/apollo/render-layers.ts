@@ -86,7 +86,31 @@ export function layersFor(patches: ApolloPatch[], opts: { detailed?: boolean } =
     ? LADDER[3]
     : { ...LADDER[3], id: 'sends', label: 'Adding the effects', full: true }
 
-  if (!opts.detailed) return [LADDER[0], finalRung]
+  // ── One pass, not two ─────────────────────────────────────────────────────
+  //
+  // Brae: "let's see about changing the loading type so that when loading it
+  // doesn't do filter and no effect audio separately. Let's put them back
+  // together now that we've corrected some stuff."
+  //
+  // The dry rung existed to get SOMETHING audible quickly, and its cost was
+  // never only the extra render — it was that the something was audibly wrong.
+  // The song arrives without its filters or effects, plays like that for a
+  // while, and then changes underneath you. That is indistinguishable from the
+  // bugs we have just spent a long time fixing, and it trains you to distrust
+  // what you are hearing.
+  //
+  // It is also unnecessary. Combining is an OPTIMISATION: an uncombined song
+  // plays live, correctly and with every effect, from the first press of play.
+  // The dry rung was never the difference between hearing the song and not —
+  // only between hearing a wrong version sooner and the right version later.
+  //
+  // So the default is a single full-fidelity pass. Half the render work of the
+  // two-rung version, and nothing is ever heard in a state the song is not in.
+  // `detailed` still restores the whole climb for watching the effects arrive.
+  // Named for what it is now: one pass that renders the song as it actually
+  // sounds. "Adding the effects" described a rung that arrived AFTER a dry one
+  // and would read as a stage in a sequence that no longer exists.
+  if (!opts.detailed) return [{ ...finalRung, label: 'Loading the song' }]
 
   const out: RenderLayer[] = [LADDER[0]]
   if (anyFilters) out.push(LADDER[1])

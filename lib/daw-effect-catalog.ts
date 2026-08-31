@@ -93,7 +93,26 @@ export const APOLLO_ADD_OPTIONS: { type: EffectType; label: string; fx: FxType }
 export function makeDefaultParams(type: EffectType, fx?: FxType) {
   if (type === 'helios') return { enabled: true, unit: defaultFx(fx ?? 'phaser') }
   switch (type) {
-    case 'eq3':            return defaultEq3()
+    // ⚠️ An EQ you ADD is not the same thing as an EQ that is THERE.
+    //
+    // Brae: "EQ should be flat normally, but when I add the EQ filter it should
+    // change the EQ."
+    //
+    // Both halves matter. A track's EQ sitting flat is correct and every DAW
+    // does it — nobody wants their sound coloured by opening a panel. But
+    // deliberately ADDING one is an action, and an action that produces no
+    // sound is indistinguishable from a broken one; that is exactly how the
+    // filter's 8 kHz default read.
+    //
+    // So `defaultEq3()` stays flat for everything that just needs the shape,
+    // and the ADD path gives a gentle brightening — the most common reason
+    // anyone reaches for an EQ, audible immediately, and one drag from flat
+    // again.
+    // Measured: a +4/-2 shelf pair moved a pad by only 2.0 dB, because a shelf at
+    // 8 kHz has little to work on. The mid band is where instruments actually
+    // live, so the tilt runs across all three and lands around 5 dB — heard on
+    // anything, and still gentle enough to keep.
+    case 'eq3':            return { ...defaultEq3(), highGain: 6, midGain: -3, lowGain: 3 }
     case 'compressor':     return defaultCompressor()
     case 'reverb':         return defaultReverb()
     case 'delay':          return defaultDelay()
