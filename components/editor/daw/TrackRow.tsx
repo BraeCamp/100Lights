@@ -304,6 +304,10 @@ function FxMenu({ track }: { track: DawTrack }) {
         // unchanged, so these are units: a filter lane declared 0–1 sets the
         // cutoff to a fraction of a Hertz and silences the track.
         min: prm.min, max: prm.max,
+        // A point is a 0–1 POSITION; the range carries the units. Hertz has to
+        // say it is spaced by ratio or a drawn descent is inaudible until its
+        // last tenth — the same reason the knob is log.
+        curve: prm.curve,
         defaultValue: currentValue(e, prm.key) ?? prm.min,
         points: [], expanded: true,
       },

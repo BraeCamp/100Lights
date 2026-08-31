@@ -41,6 +41,15 @@ export interface AutomatableParam {
   max: number
   /** Shown after the number, for read-backs and the lane header. */
   unit?: string
+  /**
+   * Spaced by ratio rather than by difference.
+   *
+   * ⚠️ Anything in Hertz wants this. A cutoff lane drawn linearly from 200 Hz
+   * to 18 kHz spends most of its height above 8 kHz, where a low-pass is
+   * nearly inaudible — so a descent drawn from the top does nothing until its
+   * last tenth and reads as a filter that is not working.
+   */
+  curve?: 'log'
 }
 
 /**
@@ -74,17 +83,17 @@ const BY_TYPE: Partial<Record<EffectType, AutomatableParam[]>> = {
   filter: [
     // Range chosen per filter TYPE at lookup time — a high-pass sweeping to
     // 18 kHz is silence just as surely as a low-pass at 0.2 Hz.
-    { key: 'frequency', label: 'Cutoff', min: LOWPASS_HZ.min, max: LOWPASS_HZ.max, unit: 'Hz' },
+    { key: 'frequency', label: 'Cutoff', min: LOWPASS_HZ.min, max: LOWPASS_HZ.max, unit: 'Hz', curve: 'log' },
     { key: 'q', label: 'Resonance', min: 0.1, max: 20 },
   ],
   saturator: [{ key: 'drive', label: 'Drive', min: 0, max: 1 }, { key: 'color', label: 'Colour', min: 0, max: 1 }],
   redux: [{ key: 'bitDepth', label: 'Bit depth', min: 1, max: 16, unit: 'bit' }],
-  autopan: [{ key: 'depth', label: 'Depth', min: 0, max: 1 }, { key: 'rate', label: 'Rate', min: 0.05, max: 20, unit: 'Hz' }],
+  autopan: [{ key: 'depth', label: 'Depth', min: 0, max: 1 }, { key: 'rate', label: 'Rate', min: 0.05, max: 20, unit: 'Hz', curve: 'log' }],
   utility: [
     { key: 'gain', label: 'Gain', min: -24, max: 24, unit: 'dB' },
     { key: 'width', label: 'Width', min: 0, max: 2 },
   ],
-  lfo: [{ key: 'rate', label: 'Rate', min: 0.05, max: 20, unit: 'Hz' }, { key: 'depth', label: 'Depth', min: 0, max: 1 }],
+  lfo: [{ key: 'rate', label: 'Rate', min: 0.05, max: 20, unit: 'Hz', curve: 'log' }, { key: 'depth', label: 'Depth', min: 0, max: 1 }],
   noisegate: [{ key: 'threshold', label: 'Threshold', min: -80, max: 0, unit: 'dB' }],
   deesser: [{ key: 'threshold', label: 'Threshold', min: -60, max: 0, unit: 'dB' }],
   chorus: [{ key: 'mix', label: 'Mix', min: 0, max: 1 }, { key: 'depth', label: 'Depth', min: 0, max: 1 }],
@@ -94,7 +103,7 @@ const BY_TYPE: Partial<Record<EffectType, AutomatableParam[]>> = {
   ],
   limiter: [{ key: 'threshold', label: 'Ceiling', min: -24, max: 0, unit: 'dB' }],
   dyneq: [
-    { key: 'freq', label: 'Frequency', min: 20, max: 18_000, unit: 'Hz' },
+    { key: 'freq', label: 'Frequency', min: 20, max: 18_000, unit: 'Hz', curve: 'log' },
     { key: 'rangeDb', label: 'Range', min: -18, max: 18, unit: 'dB' },
   ],
   multibandcomp: [
@@ -133,7 +142,7 @@ export function automatableParams(effect: TrackEffect): AutomatableParam[] {
   if (effect.type !== 'filter') return list
   const kind = (effect.params as { type?: string } | undefined)?.type
   const hz = kind === 'highpass' ? HIGHPASS_HZ : LOWPASS_HZ
-  return list.map(p => (p.key === 'frequency' ? { ...p, ...hz } : p))
+  return list.map(p => (p.key === 'frequency' ? { ...p, ...hz, curve: 'log' as const } : p))
 }
 
 /** The one people reach for first — used for the click-to-automate chip. */

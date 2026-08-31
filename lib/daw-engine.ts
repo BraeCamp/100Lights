@@ -108,6 +108,12 @@ const PREFETCH_LOOKAHEAD = 2.5   // seconds
 function interpolateAutomation(lane: AutomationLane, beat: number): number {
   const range = lane.max - lane.min
   if (lane.points.length === 0) {
+    if (lane.curve === 'log' && lane.min > 0 && lane.max > lane.min) {
+      // Inverse of the log mapping in the caller: a lane with no points must
+      // sit exactly on its own default, whichever way it is spaced.
+      const v = Math.min(lane.max, Math.max(lane.min, lane.defaultValue))
+      return Math.log(v / lane.min) / Math.log(lane.max / lane.min)
+    }
     return range === 0 ? 0 : (lane.defaultValue - lane.min) / range   // guard max===min → NaN into an AudioParam
   }
   const sorted = [...lane.points].sort((a, b) => a.beat - b.beat)
@@ -2512,7 +2518,12 @@ export class DawEngine extends EventTarget {
       // the user's manual value stands until they re-enable automation.
       if (lane.overridden) continue
       const norm  = interpolateAutomation(lane, now)
-      const value = lane.min + norm * (lane.max - lane.min)
+      // ⚠️ A point's value is a 0–1 POSITION, not the parameter's value — the
+      // lane editor stores exactly what the mouse drew ("value is 0..1") and
+      // min/max carry the units. Log lanes space that position by ratio.
+      const value = lane.curve === 'log' && lane.min > 0
+        ? lane.min * Math.pow(lane.max / lane.min, Math.min(1, Math.max(0, norm)))
+        : lane.min + norm * (lane.max - lane.min)
       this._applyAutomation(lane.trackId, lane.parameter, value)
     }
 

@@ -656,6 +656,17 @@ export interface AutomationLane {
    *  draws grayed) until the user re-enables it. Purely a playback state;
    *  the points are never destroyed. */
   overridden?: boolean
+  /**
+   * How a point's 0–1 position maps onto min..max. Absent = linear.
+   *
+   * ⚠️ Frequency needs 'log' and the reason is audible, not theoretical. A
+   * cutoff lane running linearly from 200 Hz to 18 kHz spends most of its
+   * height above 8 kHz, where a low-pass on a pad does almost nothing — so a
+   * drawn descent from the top only starts to be heard in the last tenth of
+   * its travel, and reads as "the filter isn't doing anything". Same reason
+   * the knob is log: an octave is a RATIO.
+   */
+  curve?: 'log'
 }
 
 // ── Tone EQ ───────────────────────────────────────────────────────────────────

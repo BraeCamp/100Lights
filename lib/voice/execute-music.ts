@@ -493,39 +493,40 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
         hz = FILTER_HZ[kind]
       }
 
-      // ── A cutoff is in HERTZ, and this was writing percentages ───────────
+      // ── A POINT IS A POSITION, NOT A VALUE ───────────────────────────────
       //
-      // Brae: "the lowpass cutoff made the pad stop playing audio."
+      // Brae, first: "the lowpass cutoff made the pad stop playing audio."
+      // Brae, after the first fix: "it's consistent through the track item
+      // instead of being the graph that I need it to be."
       //
-      // The lane was declared min 0 / max 1 and its points were the spoken
-      // fractions — 1.0 down to 0.2 — and the engine passes an automation value
-      // to the effect UNCHANGED: `filter.frequency.value = value`. So "sweep
-      // down to 20%" set the cutoff to 0.2 Hz. A low-pass at a fifth of a Hertz
-      // removes the entire audible spectrum, and because the last point holds
-      // for the rest of the song, the track never came back.
+      // ⚠️ THE FIRST FIX WAS WRONG AND THIS IS THE CORRECTION. The original
+      // lane was declared min 0 / max 1 with fractional points, so the engine
+      // mapped it onto 0–1 Hz and the track vanished. That much was right. But
+      // the fix then wrote HERTZ into the points, and a point value is not the
+      // parameter's value — the lane editor stores what the mouse drew
+      // (`// value is 0..1` in AutomationLaneView) and the engine maps it
+      // through min/max. So a point of 12 000 became 200 + 12000 × 17800, tens
+      // of millions of Hertz, clamped wide open at both ends of the sweep. The
+      // filter then sat fully open for the whole clip: a constant, not a curve.
       //
-      // Nothing caught it because no other code path creates a frequency lane:
-      // the track's own automation menu offers volume, pan, effect WET and
-      // Apollo macros, all of which genuinely are 0–1. This command invented
-      // the one parameter whose units are different and inherited the range
-      // that suited all the others.
-      //
-      // The curve is the app's own (roll-fx's LP/HP), not a fresh one — a
-      // second opinion about where "half open" sits would be audible the first
-      // time somebody compared this against the piano roll.
-      const at = (f: number) => (hz ? hz.fromNorm(f) : f)
+      // The lane's RANGE is what carries the units; only that needed changing.
+      // Points go back to the 0–1 the rest of the app draws, and the lane says
+      // it is spaced logarithmically so a descent is heard across its whole
+      // travel rather than only in the last tenth — Brae: "The descending part
+      // is as important as the filter."
       actions.push({
         type: 'ADD_AUTOMATION_LANE',
         lane: {
           id: laneId, trackId: track.id, parameter, label,
           min: hz ? hz.min : 0,
           max: hz ? hz.max : 1,
-          defaultValue: at(from),
+          curve: hz ? 'log' : undefined,
+          defaultValue: hz ? hz.fromNorm(from) : from,
           points: [], expanded: true,
         },
       })
-      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat, value: at(from) } })
-      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat + lengthBeats, value: at(to) } })
+      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat, value: from } })
+      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat + lengthBeats, value: to } })
 
       const spoken = len(i.length)
       return {
@@ -535,7 +536,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
         // at 1.9 kHz or at a fifth of a Hertz — so the read-back could not have
         // caught the bug it was describing. "Down to 570 Hz" can be wrong out
         // loud.
-        say: `${label} from ${hz ? `${fmtHz(at(from))} to ${fmtHz(at(to))}` : `${Math.round(from * 100)}% to ${Math.round(to * 100)}%`} over ${spoken ? describeDuration(spoken, lengthBeats) : `${+lengthBeats.toFixed(2)} beats`}, starting ${describeBeat(startBeat, maps)}, on ${found.how}.`,
+        say: `${label} from ${hz ? `${fmtHz(hz.fromNorm(from))} to ${fmtHz(hz.fromNorm(to))}` : `${Math.round(from * 100)}% to ${Math.round(to * 100)}%`} over ${spoken ? describeDuration(spoken, lengthBeats) : `${+lengthBeats.toFixed(2)} beats`}, starting ${describeBeat(startBeat, maps)}, on ${found.how}.`,
       }
     }
 
