@@ -21,6 +21,7 @@
 // changing either produces a new stamp, which misses, which re-renders.
 
 import type { MidiClip } from '@/lib/daw-types'
+import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import { layersFor, patchForLayer, layerLabel } from './render-layers'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { renderApolloProject, freezeStamp, type TrackRenderGroup } from '@/lib/apollo/daw-freeze'
@@ -35,7 +36,7 @@ setCombineWriter(saveCombined)
 // AudioBuffers are not tied to the context that allocated them, so one
 // throwaway context is enough to rebuild what was stored.
 let allocCtx: OfflineAudioContext | null = null
-const alloc = () => (allocCtx ??= new OfflineAudioContext(2, 1, 48000))
+const alloc = () => (allocCtx ??= new OfflineAudioContext(2, 1, RENDER_SAMPLE_RATE))
 
 /** Rendered audio, keyed by everything that decides how it sounds. */
 const buffers = new Map<string, AudioBuffer>()

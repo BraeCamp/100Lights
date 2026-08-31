@@ -42,22 +42,29 @@ const plainLayers = layersFor([plain])
 check('a song with no filters or FX gets a single layer', plainLayers.length === 1, `${plainLayers.length}`)
 check('and that layer is the full patch', plainLayers[0].full === true)
 
-// The DEFAULT is two rungs, and that is a deliberate reversal. Every rung
-// re-renders the whole song, so four rungs is four times the work for the same
-// final audio — the biggest redundancy in the loader, and mine. "With filters
-// but no effects" is also not a state anyone asked to hear; what was asked for
-// is hearing the song at all, then hearing it properly.
-check('a filtered song gets dry then the real thing',
-  layersFor([withFilter]).map(l => l.id).join(' → ') === 'dry → sends',
+// The DEFAULT is ONE rung, and that is a deliberate reversal — twice over.
+// Every rung re-renders the whole song, so four rungs was four times the work
+// for the same final audio. Then the dry rung went too: Brae, "let's see about
+// changing the loading type so that when loading it doesn't do filter and no
+// effect audio separately. Let's put them back together." A dry pass does not
+// decide whether you hear the song — an uncombined song already plays live with
+// every effect — it only decides whether you hear a WRONG version first and
+// have it change underneath you. So: one pass, at the song's real sound.
+check('a filtered song renders once, at its real sound',
+  layersFor([withFilter]).map(l => l.id).join(' → ') === 'sends',
   layersFor([withFilter]).map(l => l.id).join(' → '))
 
 check('an FX song too',
-  layersFor([withFx]).map(l => l.id).join(' → ') === 'dry → sends',
+  layersFor([withFx]).map(l => l.id).join(' → ') === 'sends',
   layersFor([withFx]).map(l => l.id).join(' → '))
 
-check('and a song with everything is still only two passes',
-  layersFor([everything]).length === 2,
+check('and a song with everything is still a single pass',
+  layersFor([everything]).length === 1,
   layersFor([everything]).map(l => l.id).join(' → '))
+
+// The one rung must be the REAL patch, or the whole song renders at less than
+// its own sound with nothing to show for it.
+check('and that pass is the full patch', layersFor([everything])[0].full === true)
 
 // The full climb is still available for watching the effects arrive one by one.
 const all = layersFor([everything], { detailed: true })
@@ -67,11 +74,16 @@ check('detailed mode climbs the whole ladder',
 check('exactly one layer is the full patch', all.filter(l => l.full).length === 1)
 check('and it is the LAST one', all.at(-1).full === true)
 
-// A project is many patches: one track with reverb earns the whole project a
-// dry layer, because the layers are rendered across the song together.
+// A project is many patches, and the layers are rendered across the song
+// together — so the ladder is decided for the project, not per track. With the
+// single-pass default that means one pass whatever the mix of tracks, and the
+// interesting assertion is that one effected track does not drag the project
+// back into a multi-pass climb.
 const mixed = layersFor([plain, withFx])
-check('one effected track gives the project a dry layer', mixed.length > 1,
+check('one effected track does not cost the project an extra pass', mixed.length === 1,
   mixed.map(l => l.id).join(' → '))
+check('and detailed mode still climbs for it',
+  layersFor([plain, withFx], { detailed: true }).length > 1)
 
 // ── What each layer sounds like ─────────────────────────────────────────────
 const [dry, filters, effects, sends] = all
@@ -106,8 +118,10 @@ check('reducing a patch does not mutate the original',
 // ── What the bar says ───────────────────────────────────────────────────────
 check('the label counts the layers', layerLabel(all, 0) === 'The song, no effects (1 of 4)',
   layerLabel(all, 0))
-check('and counts two when there are two',
-  layerLabel(layersFor([everything]), 0) === 'The song, no effects (1 of 2)',
+// A single pass gets no "1 of 1" — a count of one is noise, and the bar should
+// just say what it is doing.
+check('a single pass gets no count',
+  layerLabel(layersFor([everything]), 0) === 'Loading the song',
   layerLabel(layersFor([everything]), 0))
 check('a single-layer song gets no count', layerLabel(plainLayers, 0) === 'Loading the song',
   layerLabel(plainLayers, 0))

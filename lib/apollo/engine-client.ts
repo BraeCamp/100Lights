@@ -4,6 +4,7 @@
 // computes LFO/remap LUTs, and exposes note/transport/param APIs to the UI.
 
 import { ApolloPatch, FxUnit, LfoPoint, PARAMS, FX_DEFS } from '@/lib/apollo/patch'
+import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import { buildTableMips, factoryTableWithMips, userTableWithMips, copyBuilt } from '@/lib/apollo/tables'
 import { analyzeSpectralInWorker, SpectralAnalysis } from '@/lib/apollo/spectral'
 import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
@@ -94,6 +95,49 @@ export class ApolloEngine extends EventTarget {
   private pendingPv: Record<string, number> = {}
   private pvTimer: ReturnType<typeof setTimeout> | null = null
   ready = false
+
+  private _flushId = 0
+
+  /**
+   * Wait until everything already posted has actually REACHED the processor.
+   *
+   * ⚠️ This is the fix for notes going missing from a render. `startRendering()`
+   * does not wait for the port: the offline scheduler makes ONE pass, posts every
+   * note event, and renders immediately — so whatever is still in flight when the
+   * render starts is simply not played. It is intermittent by nature (measured at
+   * roughly one render in eight), and the way it fails is the worst kind: the
+   * render succeeds, reports no error, and is quietly missing notes. The symptom
+   * that found it was a four-note chord whose level never built, because only the
+   * first note ever sounded.
+   *
+   * Port messages are delivered IN ORDER, so a reply to a ping posted after the
+   * notes proves the notes arrived. renderMany() already did this for the combine
+   * path; the DAW's own offline render did not, which is why it was the one that
+   * drifted.
+   *
+   * The timeout is a safety net rather than the mechanism — an engine too old to
+   * answer, or a node that has died, falls back to the old behaviour instead of
+   * hanging the render forever.
+   */
+  flush(timeoutMs = 4000): Promise<void> {
+    const node = this.node
+    if (!node || this.crashed) return Promise.resolve()
+    const id = ++this._flushId
+    return new Promise<void>(resolve => {
+      const timer = setTimeout(() => { node.port.removeEventListener('message', onMsg); resolve() }, timeoutMs)
+      const onMsg = (e: MessageEvent) => {
+        const d = e.data as { type?: string; id?: number }
+        if (d?.type === 'ready' && d.id === id) {
+          clearTimeout(timer)
+          node.port.removeEventListener('message', onMsg)
+          resolve()
+        }
+      }
+      node.port.addEventListener('message', onMsg)
+      node.port.start()
+      try { node.port.postMessage({ type: 'ping', id }) } catch { clearTimeout(timer); resolve() }
+    })
+  }
 
   /**
    * Standalone init creates its own AudioContext + master/analyser chain.
@@ -399,7 +443,13 @@ export class ApolloEngine extends EventTarget {
     notes: { t: number; dur: number; note: number; vel: number }[],
     seconds: number,
   ): Promise<AudioBuffer> {
-    const sr = this.ctx?.sampleRate || 48000
+    // ⚠️ NOT `this.ctx.sampleRate`. Rendering at the device's rate is what made
+    // the same song sound different on a 44.1 kHz machine and a 48 kHz one —
+    // and freezeStamp never mentioned the rate, so the two shared a cache key.
+    // A render is a durable artifact: it gets cached, shared between users and
+    // served from the backend, so it cannot depend on whatever the listener's
+    // sound card happens to be running at.
+    const sr = RENDER_SAMPLE_RATE
     const octx = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr)
     await octx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const node = new AudioWorkletNode(octx, 'apollo-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })

@@ -84,17 +84,37 @@ check('the lane is on the clip\'s track', lane.lane.trackId === 'tb2', lane.lane
 // 8 seconds at 120bpm is 16 beats, starting at the clip's own start (beat 16).
 check('it starts where the clip starts', p1.point.beat === 16, String(p1.point.beat))
 check('and ends 8 seconds later, in beats', p2.point.beat === 32, String(p2.point.beat))
-// ⚠️ This assertion used to read `p1.point.value === 0.8 && p2.point.value === 0`
-// — the spoken fractions, written straight into an automation lane the engine
-// reads as HERTZ. It was not a test of the sweep, it was a copy of it, and it
-// held the bug in place: 0 there meant a 0 Hz cutoff, which is silence, and
-// Brae found it by hearing a pad disappear.
+// ⚠️ Twice wrong before this, in opposite directions.
 //
-// A percentage is what somebody SAYS. Hertz is what the filter is in. The test
-// now asserts the second, which is the only one that can be wrong.
-check('sweeping 80% down to 0% lands in audible Hertz',
-  p1.point.value > 1000 && p2.point.value >= 20 && p2.point.value < p1.point.value,
-  `${p1.point.value} Hz → ${p2.point.value} Hz`)
+// First it read `p1.point.value === 0.8 && p2.point.value === 0` — the spoken
+// fractions written straight into a lane that was read as HERTZ, so 0 meant a
+// 0 Hz cutoff, which is silence. Brae found it by hearing a pad disappear.
+//
+// The fix for THAT wrote Hertz into the points, and this test asserted it. That
+// was wrong too, and Brae found it the same way: "it's consistent through the
+// track item instead of being the graph that I need it to be." A point is a
+// POSITION, 0 to 1; the lane's min/max carry the units. Hertz in the points
+// means the graph no longer draws the shape you drew.
+//
+// So the invariant is neither of those numbers on its own. It is that a
+// position of 0 — the bottom of the graph, which is what "to 0%" means —
+// resolves through the lane to a cutoff you can still HEAR. That is the thing
+// that broke, and it is the thing worth asserting.
+const resolve = (lane, norm) => lane.curve === 'log'
+  ? lane.min * Math.pow(lane.max / lane.min, norm)
+  : lane.min + norm * (lane.max - lane.min)
+
+check('the points are positions on the graph, not Hertz',
+  p1.point.value === 0.8 && p2.point.value === 0,
+  `${p1.point.value} → ${p2.point.value}`)
+check('and the lane carries the Hertz, on a log taper',
+  lane.lane.min >= 20 && lane.lane.max >= 15000 && lane.lane.curve === 'log',
+  `${lane.lane.min}–${lane.lane.max} Hz, ${lane.lane.curve}`)
+// The one that actually caused the silence.
+const hz1 = resolve(lane.lane, p1.point.value), hz2 = resolve(lane.lane, p2.point.value)
+check('so sweeping 80% down to 0% lands in audible Hertz',
+  hz1 > 1000 && hz2 >= 20 && hz2 < hz1,
+  `${Math.round(hz1)} Hz → ${Math.round(hz2)} Hz`)
 check('both points belong to the lane it just made',
   p1.laneId === lane.lane.id && p2.laneId === lane.lane.id)
 

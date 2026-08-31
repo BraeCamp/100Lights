@@ -87,6 +87,26 @@ export function playApolloNote(
   else m.queue.push(...events)
 }
 
+/**
+ * Wait until every Apollo instrument in this context has RECEIVED what was
+ * posted to it — call between scheduling and startRendering().
+ *
+ * ⚠️ preloadApolloInstrument makes the engine ready BEFORE the scheduler runs;
+ * this covers the gap AFTER it. The offline scheduler posts all its note events
+ * in one synchronous pass and the render begins immediately, so events still in
+ * flight are never played and the bounce comes back missing notes, with no
+ * error. Measured at about one render in eight on a four-note chord: the render
+ * that failed had only its first note in it.
+ *
+ * Engines that never came up are skipped rather than waited on — their notes
+ * were already lost at preload, which warns separately.
+ */
+export async function apolloDrain(ctx: BaseAudioContext): Promise<void> {
+  const set = byCtx.get(ctx)
+  if (!set) return
+  await Promise.all([...set].filter(m => m.isReady).map(m => m.engine.flush()))
+}
+
 /** Warm module + patch + samples ahead of playback / offline render. */
 export async function preloadApolloInstrument(
   ctx: BaseAudioContext,

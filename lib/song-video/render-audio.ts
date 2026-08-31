@@ -1,4 +1,5 @@
 import { DawEngine } from '@/lib/daw-engine'
+import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import type { DawProject } from '@/lib/daw-types'
 import { initLibrary } from '@/lib/sound-library'
 import {
@@ -21,7 +22,10 @@ export interface RenderedMix {
   peaks: number[]   // 80-band max-abs, matching the timeline waveform format
 }
 
-const SR = 44100
+// ⚠️ Was a hardcoded 44100 while the engine used the device's rate and the
+// freeze cache used 48000 — three different answers to one question, in three
+// files. One constant now.
+const SR = RENDER_SAMPLE_RATE
 
 // cyrb53 — cheap stable hash for fingerprints.
 function hash(str: string): string {

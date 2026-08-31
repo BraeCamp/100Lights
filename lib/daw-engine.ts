@@ -1,6 +1,7 @@
 'use client'
 
 import { midiToNoteName } from './scale-constants'
+import { rngFor } from '@/lib/seeded-random'
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
 import { isAudioClip, isMidiClip, POLY_PRESETS } from './daw-types'
 import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
@@ -13,7 +14,7 @@ import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './ap
 import { translateInstrument } from './apollo/daw-synth'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
-import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
+import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain } from './apollo/daw-instrument'
 import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam } from './beacon-plugins/host'
 import type { PluginInstrumentParams } from './beacon-plugins/types'
 import { combined, combinedStale, combinedStamp, requestCombine, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
@@ -2629,10 +2630,18 @@ export class DawEngine extends EventTarget {
       if (fx.type === 'velocity') {
         const p = fx.params as VelocityMidiParams
         if (!p.enabled) continue
-        result = result.map(n => {
+        result = result.map((n, i) => {
           const range  = p.outMax - p.outMin
           const scaled = p.outMin + (n.velocity / 127) * range
-          const rand   = p.random > 0 ? (Math.random() * 2 - 1) * p.random : 0
+          // ⚠️ Was Math.random(). Humanize is meant to make the part sound
+          // played rather than typed — it is NOT meant to make the song a
+          // different performance on every render. Seeding from the note's own
+          // identity keeps the feature exactly as it sounds and makes it a
+          // property of the song: the same note is nudged the same way on every
+          // machine, every render, forever.
+          const rand = p.random > 0
+            ? (rngFor(`velocity:${fx.id}:${n.id ?? `${i}:${n.pitch}:${n.startBeat}`}`)() * 2 - 1) * p.random
+            : 0
           return { ...n, velocity: Math.max(0, Math.min(127, Math.round(scaled + rand))) }
         })
       } else if (fx.type === 'scale') {
@@ -3077,7 +3086,14 @@ export class DawEngine extends EventTarget {
       ir = this.ctx.createBuffer(2, len, sr)
       for (let ch = 0; ch < 2; ch++) {
         const d = ir.getChannelData(ch)
-        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6)
+        // ⚠️ Was Math.random(). A reverb IR is noise, so nobody can hear that
+        // it changed — but it changed on every render, which meant the same
+        // song never rendered to the same audio twice. Seeded from the decay
+        // and the channel: still noise, still decorrelated between left and
+        // right (that stereo width is the whole point of two channels), and
+        // now the same noise on every machine.
+        const rnd = rngFor(`reverb-ir:${key}:${ch}`)
+        for (let i = 0; i < len; i++) d[i] = (rnd() * 2 - 1) * Math.pow(1 - i / len, 2.6)
       }
       this._reverbIRs.set(key, ir)
     }
@@ -3843,7 +3859,9 @@ export class DawEngine extends EventTarget {
     const buf = this.ctx.createBuffer(2, len, this.ctx.sampleRate)
     for (let ch = 0; ch < 2; ch++) {
       const d = buf.getChannelData(ch)
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2)
+      // Same fix as _getReverbIR — see the note there.
+      const rnd = rngFor(`make-ir:${key}:${ch}`)
+      for (let i = 0; i < len; i++) d[i] = (rnd() * 2 - 1) * Math.pow(1 - i / len, 2)
     }
     this._irCache.set(key, buf)
     return buf
@@ -4377,6 +4395,12 @@ export class DawEngine extends EventTarget {
       this._renderNow = null           // virtual clock OFF
       this.isPlaying  = false
     }
+    // ⚠️ Between scheduling and rendering, not before either. _preloadAll got
+    // every engine UP; this waits for the notes just posted to it to actually
+    // arrive. startRendering() does not wait for the port, so without this a
+    // render intermittently comes back missing notes — silently, and about one
+    // time in eight. See ApolloEngine.flush().
+    await apolloDrain(this.ctx)
     const rendered = await octx.startRendering()
     const channels: Float32Array[] = []
     for (let c = 0; c < rendered.numberOfChannels; c++) channels.push(rendered.getChannelData(c).slice())

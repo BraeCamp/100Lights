@@ -28,6 +28,7 @@
 // always correct, so it is what happens.
 
 import type { DawProject, DawClip, MidiClip, AudioClip, ApolloInstrumentParams } from '@/lib/daw-types'
+import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { ApolloEngine } from '@/lib/apollo/engine-client'
 import { restorePatchSamples, saveBounceToLibrary } from '@/lib/apollo/sample-store'
@@ -111,7 +112,16 @@ function patchHash(patch: ApolloPatch): string {
 /** The identity of a render: change the notes, the patch or the tempo and this
  *  changes, which is what tells a cached freeze it is stale. */
 export function freezeStamp(notes: MidiClip['notes'], patch: ApolloPatch, bpm: number): string {
-  return `${notesHash(notes)}-${patchHash(patch)}-${bpm}`
+  // ⚠️ The RATE is part of what a render is. It was not in here, so a render
+  // made at 44.1 kHz and one made at 48 kHz were indistinguishable — which was
+  // survivable while renders never left the machine that made them, and is not
+  // survivable now that they are cached, shared and served from the backend.
+  //
+  // Everything renders at RENDER_SAMPLE_RATE today, so in practice this is a
+  // constant; it is in the stamp so that if it ever changes, or a render
+  // arrives from somewhere that used a different one, the two can never be
+  // mistaken for each other. Existing cached renders simply re-render once.
+  return `${notesHash(notes)}-${patchHash(patch)}-${bpm}-${RENDER_SAMPLE_RATE}`
 }
 
 /** True when this clip's frozen audio no longer matches its source. */
