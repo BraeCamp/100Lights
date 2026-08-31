@@ -646,6 +646,20 @@ export function musicStateSummary(p: {
   arrangementClips?: { trackId: string; name?: string; startBeat: number; durationBeats: number }[]
   selectedTrackId?: string | null
   selectedClipId?: string | null
+  /**
+   * Was this selected AFTER the assistant's last reply?
+   *
+   * Brae: "the voice control should keep track of what I'm selecting in case I
+   * say something like 'this track'. This would supersede context if the item
+   * is selected after the previous context was created."
+   *
+   * ⚠️ The conversation carries up to forty previous messages, and several of
+   * them may be about a track the user has since clicked away from. Pointing at
+   * something with the mouse is the most direct statement of what "this" means
+   * there is - more direct than anything said earlier - but the model has no
+   * way to know the click happened after the sentence unless it is told.
+   */
+  selectionIsNew?: boolean
 }): string {
   const num = p.timeSignatureNum ?? 4
   const den = p.timeSignatureDen ?? 4
@@ -698,6 +712,9 @@ export function musicStateSummary(p: {
   const selClip = p.selectedClipId
     ? (p.arrangementClips ?? []).find(c => (c as { id?: string }).id === p.selectedClipId)
     : undefined
+  const selTrack = p.selectedTrackId
+    ? (p.tracks ?? []).find(t => t.id === p.selectedTrackId)
+    : undefined
 
   return [
     `${p.tempo ?? 120} bpm, ${num}/${den}.`,
@@ -706,6 +723,15 @@ export function musicStateSummary(p: {
     // "this one" / "here" have to mean something, and the only thing that can
     // give them meaning is what the user is actually pointing at.
     selClip ? `Selected clip: "${selClip.name ?? p.selectedClipId}" at bar ${bar(selClip.startBeat)}.` : '',
+    // Stated as recency, not as a fact about the project, because that is the
+    // part the model cannot work out for itself and the part that decides
+    // which of two answers is right.
+    p.selectionIsNew && (selTrack || selClip)
+      ? `⚠️ SELECTED JUST NOW, since your last reply: ${[
+        selTrack ? `track "${selTrack.name}"` : '',
+        selClip ? `clip "${selClip.name ?? p.selectedClipId}"` : '',
+      ].filter(Boolean).join(' and ')}. "this", "that", "it" and "here" mean THAT, and it supersedes anything selected or discussed earlier in this conversation.`
+      : '',
   ].filter(Boolean).join(' ')
 }
 
@@ -724,5 +750,6 @@ export const MUSIC_SYSTEM_HINT = [
   // failure — the natural instinct is to tidy "boom ka" into "boom car" or to
   // ask what was meant. They are the request.
   'DRUM SYLLABLES ARE A BEAT, NOT A MISHEARING. "boom", "ka", "doom", "ts", "tss", "pah", "bap" and the like are somebody saying a rhythm out loud. "Can you make a beat like boom ka boom ka" is a make_beat call with pattern "boom ka boom ka". Pass the syllables through EXACTLY as they were said — do not correct them into real words, and do not ask what they meant. The rhythm comes from when they were said, so you only need to report which syllables there were, in order.',
+  'POINTING BEATS REMEMBERING. If the state summary says something was selected just now, "this track", "that clip", "it" and "here" mean the thing that is selected — even when an earlier message in this conversation was about something else. Somebody who clicks a track and then says "mute this" has told you which track twice, and the click is the more recent of the two.',
   'Percentages are 0-100. If a request is ambiguous or no tool fits, say so in one short sentence instead of guessing.',
 ].join(' ')

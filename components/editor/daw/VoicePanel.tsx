@@ -57,6 +57,21 @@ export interface VoicePanelProps {
   /** What the studio said back, and what went wrong if anything did. */
   reply?: string
   problem?: string
+  /**
+   * The question the studio is waiting on, rendered INSIDE this window.
+   *
+   * Brae: "Questions and answers should also live in the voice control window.
+   * Things like 'I didn't catch that' and questions about what was said should
+   * live there. That means that they shouldn't be in other places, since the
+   * space around the voice control gets crowded."
+   *
+   * ⚠️ It arrives as a node rather than as data because the question owns real
+   * behaviour - editable text, choice buttons, a name field - and that
+   * behaviour belongs with the state it changes, in VoiceControl. What this
+   * component decides is WHERE it goes, which is the whole point: one home, not
+   * a popover competing with the window for the same corner.
+   */
+  question?: React.ReactNode
   hud: boolean
   onHud: (on: boolean) => void
   onClose: () => void
@@ -447,7 +462,7 @@ function Segmented<T extends string>({ value, options, onChange, C, disabled }: 
 
 export default function VoicePanel({
   listening, continuous, level, hud,
-  talking = false, saying = '', reply = '', problem = '',
+  talking = false, saying = '', reply = '', problem = '', question,
   onHud, onClose, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
@@ -756,15 +771,28 @@ export default function VoicePanel({
                 nothing" — which is the question this whole card exists to
                 answer. */}
             {(reply || problem) && (
-              <div style={{
+              <div
+                // The read-back's stable hook. It used to be on a bubble
+                // floating below the button; the bubble is gone and this is
+                // where the same text lives now, so the checks that read it
+                // still find the thing they were checking.
+                data-voice-readback
+                style={{
                 padding: '7px 9px', borderRadius: 6, lineHeight: 1.45,
                 borderLeft: `2px solid ${problem ? '#e0776b' : C.accent}`,
                 background: problem ? '#e0776b12' : `${C.accent}12`,
                 color: problem ? '#ffb4b4' : C.textPrimary,
-              }}>
+                }}
+              >
                 {problem || reply}
               </div>
             )}
+
+            {/* The question, in the same column as the answer it follows.
+                Below the reply because that is the order it happened in: you
+                said something, the studio answered, and this is what it still
+                needs to know. */}
+            {question}
           </div>
         )}
 

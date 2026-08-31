@@ -24,7 +24,7 @@
 // ============================================================================
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Mic, Loader2, X, Settings2 } from 'lucide-react'
+import { Mic, Loader2, Settings2 } from 'lucide-react'
 import { useDaw, reducer as dawReducer, type DawAction } from '@/lib/daw-state'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { musicStateSummary } from '@/lib/voice/music-tools'
@@ -197,18 +197,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     e.currentTarget.style.borderColor = on ? C.accent : C.border
   }
 
-  /**
-   * Where a question sits.
-   *
-   * ⚠️ Anchored to the voice PANEL when the panel is open, and to the button
-   * when it is not. Both were pinned to the button, so opening the card put the
-   * question behind or beside the very window you were reading — two surfaces
-   * competing for the same corner, which is the same mistake as the "I didn't
-   * get that" line arguing with the question underneath it.
-   */
-  const askAnchor = (z: number): React.CSSProperties => panelOpen
-    ? { position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: z, width: 'min(460px, 92vw)' }
-    : { position: 'absolute', top: 26, right: 0, zIndex: z, width: 'min(400px, 92vw)' }
+  // (askAnchor lived here: it decided which corner a floating question got,
+  // anchoring to the panel when open and the button when not. Questions live
+  // inside the window now, so there is no corner left to choose.)
 
   const [panelTab, setPanelTab] = useState<'talk' | 'settings' | 'help'>('talk')
   const [hud, setHudState] = useState(false)
@@ -344,6 +335,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   ) => {
     if (kind === 'problem') setProblem(text)
     else setSaid(text)
+    // When the studio last spoke. Anything pointed at AFTER this is newer than
+    // the conversation, which is what lets a click outrank a sentence.
+    lastReplyAt.current = Date.now()
     // isPlaying is a PROPERTY, not a method. Calling it threw, which left the
     // control stuck busy and silently blocked every command after the first —
     // a one-character mistake that looked like the whole feature had broken.
@@ -426,6 +420,32 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // microphone gets restarted underneath somebody.
   const metronomeOnRef = useRef(false)
   useEffect(() => { metronomeOnRef.current = metronome }, [metronome])
+
+  /**
+   * What is selected, and WHEN it was selected.
+   *
+   * Brae: "the voice control should keep track of what I'm selecting in case I
+   * say something like 'this track'. This would supersede context if the item
+   * is selected after the previous context was created."
+   *
+   * Two jobs. It REMEMBERS, so "this track" still resolves a moment after
+   * clicking somewhere that clears the selection - the last thing you pointed
+   * at is still the thing you were talking about. And it TIMES the pointing, so
+   * the assistant can be told that a click happened after the sentence it is
+   * still holding in mind. A conversation carries forty messages; a click
+   * carries one meaning, and it is the newer of the two.
+   */
+  const lastSelection = useRef<{ trackId: string | null; clipId: string | null }>({ trackId: null, clipId: null })
+  const selectedAt = useRef(0)
+  const lastReplyAt = useRef(0)
+  useEffect(() => {
+    // Clearing a selection is not pointing at anything, so it does not count as
+    // a new statement about what "this" means - it just leaves the last one
+    // standing.
+    if (!selectedTrackId && !selectedClipId) return
+    lastSelection.current = { trackId: selectedTrackId ?? null, clipId: selectedClipId ?? null }
+    selectedAt.current = Date.now()
+  }, [selectedTrackId, selectedClipId])
 
   const heardRef = useRef<Heard | undefined>(undefined)
   const voiceCtx = useCallback(() => ({
@@ -533,11 +553,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       tempo: project.tempo,
       // So "louder" and "mute this" mean the track being worked on. Nobody
       // says a track's name twenty times in a row.
-      selectedTrackName: (project.tracks ?? []).find(t => t.id === selectedTrackId)?.name,
+      // The live selection, or the last one there was. Clicking a clip clears
+      // the track selection on some surfaces, and "mute this track" a second
+      // later still means the track you were just on.
+      selectedTrackName: (project.tracks ?? [])
+        .find(t => t.id === (selectedTrackId ?? lastSelection.current.trackId))?.name,
       // So "duplicate it" and "delete this" mean the clip on screen. Selecting
       // something is a statement about what you are working on, and the studio
       // should not need to be told twice.
-      selectedClipId: selectedClipId ?? undefined,
+      selectedClipId: selectedClipId ?? lastSelection.current.clipId ?? undefined,
       // So "Bass body 1" reads as one target — a track and an item said
       // together, which is the most specific thing anybody can say and was the
       // one form the rules could not see.
@@ -980,8 +1004,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             // checking its work against the project it started with.
             stateSummary: musicStateSummary({
               ...projectRef.current,
-              selectedTrackId: selectedTrackIdRef.current,
-              selectedClipId: selectedClipIdRef.current,
+              selectedTrackId: selectedTrackIdRef.current ?? lastSelection.current.trackId,
+              selectedClipId: selectedClipIdRef.current ?? lastSelection.current.clipId,
+              // Pointed at since the assistant last spoke, so it outranks
+              // anything the conversation is still carrying about some other
+              // track. Without this the model has the selection but no way to
+              // know it is newer than the sentence it is answering.
+              selectionIsNew: selectedAt.current > lastReplyAt.current,
             }),
           }),
         })
@@ -1595,6 +1624,290 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     ? { onPointerDown: () => void start(), onPointerUp: finish, onPointerLeave: finish }
     : { onClick: () => { if (listening) finish(); else void start() } }
 
+  /**
+   * Everything the studio is waiting on an answer to.
+   *
+   * Brae: "Questions and answers should also live in the voice control window.
+   * Things like 'I didn't catch that' and questions about what was said should
+   * live there. That means that they shouldn't be in other places, since the
+   * space around the voice control gets crowded."
+   *
+   * ⚠️ These were five separate popovers anchored to the BUTTON, each with its
+   * own corner and its own z-index, and the read-back bubble made six. They
+   * argued with each other and with the window: an earlier fix here had to stop
+   * a question and an "I didn't get that" appearing together, and another had to
+   * re-anchor questions so opening the panel did not hide the very thing you
+   * were being asked. Both were the same problem — several surfaces competing
+   * for one corner — and one home is the fix rather than better rules about
+   * which corner each gets.
+   *
+   * The order is the order they take precedence in, and only one is ever set.
+   */
+  const qCard: React.CSSProperties = {
+    padding: 11, background: '#141414', border: `1px solid ${C.accent}`,
+    borderRadius: 8, fontSize: 12, color: C.textPrimary,
+  }
+  const question = (pendingAsk2 || pendingOffer || pendingName || pendingDo || choices
+    || pendingAsk !== null || asking)
+    ? (
+      <>
+        {(pendingAsk2 || pendingOffer || pendingName) && (
+          <div
+            style={{
+              ...qCard,
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 5 }}>
+              {pendingName ? 'WHAT SHOULD IT BE CALLED?' : 'WHICH DID YOU MEAN?'}
+            </div>
+            <div style={{ marginBottom: 8, lineHeight: 1.4 }}>
+              {pendingAsk2?.speak ?? pendingOffer?.speak ?? pendingName?.prompt}
+            </div>
+
+            {/* Every question is answerable by clicking as well as by speaking.
+                The spoken path is the point of the feature; the clicks are what
+                make it usable with speech off, on a machine with no voices, or in
+                a room where talking is not an option. */}
+            {pendingAsk2 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {pendingAsk2.options.map((option, i) => (
+                  <button
+                    key={i}
+                    onClick={() => answerByHand(option.label)}
+                    style={choiceStyle(i === 0)}
+                    onMouseEnter={e => choiceHover(e, true)}
+                    onMouseLeave={e => choiceHover(e, i === 0)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {pendingOffer && (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => answerByHand('yes')}
+                  style={{
+                    flex: 1, height: 26, borderRadius: 4, cursor: 'pointer',
+                    border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent,
+                    fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                  }}
+                >
+                  YES
+                </button>
+                <button
+                  onClick={() => answerByHand('no')}
+                  style={{
+                    height: 26, padding: '0 12px', borderRadius: 4, cursor: 'pointer',
+                    border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
+                    fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                  }}
+                >
+                  NO
+                </button>
+              </div>
+            )}
+
+            {pendingName && (
+              <input
+                autoFocus
+                placeholder="a new name…"
+                onKeyDown={e => {
+                  e.stopPropagation()
+                  const value = (e.target as HTMLInputElement).value.trim()
+                  if (e.key === 'Enter' && value) answerByHand(value)
+                  if (e.key === 'Escape') { setPendingName(null); setSaid('Left as it is.') }
+                }}
+                style={{
+                  width: '100%', height: 26, padding: '0 8px', boxSizing: 'border-box',
+                  background: '#141414', border: `1px solid ${C.border}`, borderRadius: 4,
+                  color: C.textPrimary, fontSize: 11, outline: 'none',
+                }}
+              />
+            )}
+
+            <div style={{ color: C.textMuted, fontSize: 10, marginTop: 6 }}>
+              {pendingName ? 'Or say it.' : 'Or answer out loud.'}
+            </div>
+          </div>
+        )}
+
+        {pendingDo && (
+          <div
+            style={{
+              ...qCard,
+              borderColor: '#b4453a',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ color: '#e0776b', fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 5 }}>
+              THIS CANNOT BE UNDONE BY SAYING THE OPPOSITE
+            </div>
+            <div style={{ marginBottom: 8, lineHeight: 1.4 }}>{pendingDo.label}</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => {
+                  const plan = planVoiceCalls(pendingDo.calls, project, voiceCtx())
+                  setPendingDo(null)
+                  if (plan.problem) { setProblem(plan.problem); return }
+                  for (const a of plan.actions) runAction(a)
+                  setSaid(plan.say)
+                }}
+                style={{
+                  flex: 1, height: 26, borderRadius: 4, cursor: 'pointer',
+                  border: '1px solid #b4453a', background: 'rgba(180,69,58,.16)', color: '#e0776b',
+                  fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                }}
+              >
+                DO IT
+              </button>
+              <button
+                onClick={() => setPendingDo(null)}
+                style={{
+                  height: 26, padding: '0 10px', borderRadius: 4, cursor: 'pointer',
+                  border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
+                  fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        )}
+
+        {choices && (
+          <div
+            style={{
+              ...qCard,
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ color: C.textMuted, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 6 }}>
+              WHICH DID YOU MEAN?
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {choices.map((choice, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    const plan = planVoiceCalls(choice.calls, project, voiceCtx())
+                    setChoices(null)
+                    if (plan.problem) { setProblem(plan.problem); return }
+                    for (const a of plan.actions) runAction(a)
+                    setSaid(plan.say)
+                  }}
+                  style={choiceStyle(i === 0)}
+                  onMouseEnter={e => choiceHover(e, true)}
+                  onMouseLeave={e => choiceHover(e, i === 0)}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setChoices(null)}
+              style={{
+                marginTop: 7, height: 22, padding: '0 9px', borderRadius: 4, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
+                fontSize: 10, fontWeight: 700,
+              }}
+            >
+              NEITHER
+            </button>
+          </div>
+        )}
+
+        {pendingAsk !== null && (
+          <div
+            style={{
+              ...qCard,
+              border: `1px solid ${C.accent}`, borderRadius: 6,
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ color: C.textMuted, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 5 }}>
+              I DON&apos;T KNOW THAT ONE — HEARD:
+            </div>
+            {/* Editable, because the thing being guarded against is a MISHEARING.
+                Reading it back is what catches one; being able to correct it is
+                what makes the catch useful. A corrected sentence is re-tried
+                locally first, so fixing a misheard word usually costs nothing. */}
+            <input
+              autoFocus
+              value={pendingAsk}
+              onChange={e => setPendingAsk(e.target.value)}
+              onKeyDown={e => {
+                e.stopPropagation()
+                if (e.key === 'Enter') { const t = pendingAsk.trim(); setPendingAsk(null); if (t) void run(t, 1, true) }
+                if (e.key === 'Escape') setPendingAsk(null)
+              }}
+              style={{
+                width: '100%', height: 26, padding: '0 8px', boxSizing: 'border-box',
+                background: '#141414', border: `1px solid ${C.border}`, borderRadius: 4,
+                color: C.textPrimary, fontSize: 11, outline: 'none', marginBottom: 8,
+              }}
+            />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => { const t = pendingAsk.trim(); setPendingAsk(null); if (t) void run(t, 1, true) }}
+                style={{
+                  flex: 1, height: 26, borderRadius: 4, cursor: 'pointer',
+                  border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent,
+                  fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                }}
+              >
+                ASK THE ASSISTANT
+              </button>
+              <button
+                onClick={() => setPendingAsk(null)}
+                style={{
+                  height: 26, padding: '0 10px', borderRadius: 4, cursor: 'pointer',
+                  border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
+                  fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+            <div style={{ color: C.textMuted, fontSize: 10, marginTop: 6 }}>
+              Uses {LUMENS_NAME}. Fix the words above and press Enter to try again for free.
+            </div>
+          </div>
+        )}
+
+        {asking && (
+          <div
+            style={{
+              ...qCard,
+              lineHeight: 1.45,
+            }}
+          >
+            <div style={{ color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 3 }}>
+              ASKING
+            </div>
+            {asking}
+            <div style={{ color: C.textMuted, marginTop: 5, fontSize: 10 }}>
+              Answer below, or hold the mic and say it.
+            </div>
+          </div>
+        )}
+      </>
+    )
+    : null
+
+  // ⚠️ A question now lives ONLY in the window, so the window has to be open
+  // for one to be readable at all. Opening it is also the honest signal: the
+  // studio has stopped and is waiting on you, which is exactly when you want
+  // the thing you are talking to in front of you.
+  //
+  // Not on `heard`: that fires on every syllable, and a panel that opens
+  // because somebody started talking is a panel nobody can keep closed.
+  useEffect(() => {
+    if (question || problem || said) setPanelOpen(true)
+  }, [question, problem, said])
+
   return (
     <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', ...style }}>
       <button
@@ -1687,6 +2000,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           saying={heard}
           reply={said}
           problem={problem}
+          question={question}
           hud={hud}
           initialTab={panelTab}
           mode={mode}
@@ -1739,261 +2053,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         />
       )}
 
-      {(pendingAsk2 || pendingOffer || pendingName) && (
-        <div
-          style={{
-            ...askAnchor(64),
-            padding: 13, background: C.bgSurface,
-            border: `1px solid ${C.accent}`, borderRadius: 9,
-            boxShadow: '0 12px 34px rgba(0,0,0,.55)', fontSize: 12.5, color: C.textPrimary,
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 5 }}>
-            {pendingName ? 'WHAT SHOULD IT BE CALLED?' : 'WHICH DID YOU MEAN?'}
-          </div>
-          <div style={{ marginBottom: 8, lineHeight: 1.4 }}>
-            {pendingAsk2?.speak ?? pendingOffer?.speak ?? pendingName?.prompt}
-          </div>
-
-          {/* Every question is answerable by clicking as well as by speaking.
-              The spoken path is the point of the feature; the clicks are what
-              make it usable with speech off, on a machine with no voices, or in
-              a room where talking is not an option. */}
-          {pendingAsk2 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-              {pendingAsk2.options.map((option, i) => (
-                <button
-                  key={i}
-                  onClick={() => answerByHand(option.label)}
-                  style={choiceStyle(i === 0)}
-                  onMouseEnter={e => choiceHover(e, true)}
-                  onMouseLeave={e => choiceHover(e, i === 0)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {pendingOffer && (
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button
-                onClick={() => answerByHand('yes')}
-                style={{
-                  flex: 1, height: 26, borderRadius: 4, cursor: 'pointer',
-                  border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent,
-                  fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
-                }}
-              >
-                YES
-              </button>
-              <button
-                onClick={() => answerByHand('no')}
-                style={{
-                  height: 26, padding: '0 12px', borderRadius: 4, cursor: 'pointer',
-                  border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
-                  fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
-                }}
-              >
-                NO
-              </button>
-            </div>
-          )}
-
-          {pendingName && (
-            <input
-              autoFocus
-              placeholder="a new name…"
-              onKeyDown={e => {
-                e.stopPropagation()
-                const value = (e.target as HTMLInputElement).value.trim()
-                if (e.key === 'Enter' && value) answerByHand(value)
-                if (e.key === 'Escape') { setPendingName(null); setSaid('Left as it is.') }
-              }}
-              style={{
-                width: '100%', height: 26, padding: '0 8px', boxSizing: 'border-box',
-                background: '#141414', border: `1px solid ${C.border}`, borderRadius: 4,
-                color: C.textPrimary, fontSize: 11, outline: 'none',
-              }}
-            />
-          )}
-
-          <div style={{ color: C.textMuted, fontSize: 10, marginTop: 6 }}>
-            {pendingName ? 'Or say it.' : 'Or answer out loud.'}
-          </div>
-        </div>
-      )}
-
-      {pendingDo && (
-        <div
-          style={{
-            position: 'absolute', top: 26, right: 0, zIndex: 63,
-            width: 340, padding: 10, background: C.bgSurface,
-            border: '1px solid #b4453a', borderRadius: 6,
-            boxShadow: '0 10px 28px rgba(0,0,0,.5)', fontSize: 11, color: C.textPrimary,
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ color: '#e0776b', fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 5 }}>
-            THIS CANNOT BE UNDONE BY SAYING THE OPPOSITE
-          </div>
-          <div style={{ marginBottom: 8, lineHeight: 1.4 }}>{pendingDo.label}</div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button
-              onClick={() => {
-                const plan = planVoiceCalls(pendingDo.calls, project, voiceCtx())
-                setPendingDo(null)
-                if (plan.problem) { setProblem(plan.problem); return }
-                for (const a of plan.actions) runAction(a)
-                setSaid(plan.say)
-              }}
-              style={{
-                flex: 1, height: 26, borderRadius: 4, cursor: 'pointer',
-                border: '1px solid #b4453a', background: 'rgba(180,69,58,.16)', color: '#e0776b',
-                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
-              }}
-            >
-              DO IT
-            </button>
-            <button
-              onClick={() => setPendingDo(null)}
-              style={{
-                height: 26, padding: '0 10px', borderRadius: 4, cursor: 'pointer',
-                border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
-                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
-              }}
-            >
-              CANCEL
-            </button>
-          </div>
-        </div>
-      )}
-
-      {choices && (
-        <div
-          style={{
-            ...askAnchor(62),
-            padding: 13, background: C.bgSurface,
-            border: `1px solid ${C.accent}`, borderRadius: 9,
-            boxShadow: '0 12px 34px rgba(0,0,0,.55)', fontSize: 12.5, color: C.textPrimary,
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ color: C.textMuted, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 6 }}>
-            WHICH DID YOU MEAN?
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-            {choices.map((choice, i) => (
-              <button
-                key={i}
-                onClick={() => {
-                  const plan = planVoiceCalls(choice.calls, project, voiceCtx())
-                  setChoices(null)
-                  if (plan.problem) { setProblem(plan.problem); return }
-                  for (const a of plan.actions) runAction(a)
-                  setSaid(plan.say)
-                }}
-                style={choiceStyle(i === 0)}
-                onMouseEnter={e => choiceHover(e, true)}
-                onMouseLeave={e => choiceHover(e, i === 0)}
-              >
-                {choice.label}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={() => setChoices(null)}
-            style={{
-              marginTop: 7, height: 22, padding: '0 9px', borderRadius: 4, cursor: 'pointer',
-              border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
-              fontSize: 10, fontWeight: 700,
-            }}
-          >
-            NEITHER
-          </button>
-        </div>
-      )}
-
-      {pendingAsk !== null && (
-        <div
-          style={{
-            position: 'absolute', top: 26, right: 0, zIndex: 62,
-            width: 340, padding: 10, background: C.bgSurface,
-            border: `1px solid ${C.accent}`, borderRadius: 6,
-            boxShadow: '0 10px 28px rgba(0,0,0,.5)', fontSize: 11, color: C.textPrimary,
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ color: C.textMuted, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 5 }}>
-            I DON&apos;T KNOW THAT ONE — HEARD:
-          </div>
-          {/* Editable, because the thing being guarded against is a MISHEARING.
-              Reading it back is what catches one; being able to correct it is
-              what makes the catch useful. A corrected sentence is re-tried
-              locally first, so fixing a misheard word usually costs nothing. */}
-          <input
-            autoFocus
-            value={pendingAsk}
-            onChange={e => setPendingAsk(e.target.value)}
-            onKeyDown={e => {
-              e.stopPropagation()
-              if (e.key === 'Enter') { const t = pendingAsk.trim(); setPendingAsk(null); if (t) void run(t, 1, true) }
-              if (e.key === 'Escape') setPendingAsk(null)
-            }}
-            style={{
-              width: '100%', height: 26, padding: '0 8px', boxSizing: 'border-box',
-              background: '#141414', border: `1px solid ${C.border}`, borderRadius: 4,
-              color: C.textPrimary, fontSize: 11, outline: 'none', marginBottom: 8,
-            }}
-          />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button
-              onClick={() => { const t = pendingAsk.trim(); setPendingAsk(null); if (t) void run(t, 1, true) }}
-              style={{
-                flex: 1, height: 26, borderRadius: 4, cursor: 'pointer',
-                border: `1px solid ${C.accent}`, background: `${C.accent}22`, color: C.accent,
-                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
-              }}
-            >
-              ASK THE ASSISTANT
-            </button>
-            <button
-              onClick={() => setPendingAsk(null)}
-              style={{
-                height: 26, padding: '0 10px', borderRadius: 4, cursor: 'pointer',
-                border: `1px solid ${C.border}`, background: 'transparent', color: C.textMuted,
-                fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
-              }}
-            >
-              CANCEL
-            </button>
-          </div>
-          <div style={{ color: C.textMuted, fontSize: 10, marginTop: 6 }}>
-            Uses {LUMENS_NAME}. Fix the words above and press Enter to try again for free.
-          </div>
-        </div>
-      )}
-
-      {asking && (
-        <div
-          style={{
-            position: 'absolute', top: 26, right: 0, zIndex: 61,
-            minWidth: 300, maxWidth: 360, padding: '8px 10px',
-            background: C.bgSurface, border: `1px solid ${C.accent}`, borderRadius: 6,
-            boxShadow: '0 10px 28px rgba(0,0,0,.5)',
-            fontSize: 11, lineHeight: 1.45, color: C.textPrimary,
-          }}
-        >
-          <div style={{ color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 0.5, marginBottom: 3 }}>
-            ASKING
-          </div>
-          {asking}
-          <div style={{ color: C.textMuted, marginTop: 5, fontSize: 10 }}>
-            Answer below, or hold the mic and say it.
-          </div>
-        </div>
-      )}
 
       {showType && (
         <div
@@ -2041,35 +2100,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         </div>
       )}
 
-      {(heard || said || problem) && (
-        <div
-          data-voice-readback
-          style={{
-            position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 70,
-            minWidth: 260, maxWidth: 460, padding: '8px 10px',
-            background: C.bgSurface, border: `1px solid ${problem ? '#5a2a2a' : C.border}`,
-            borderRadius: 6, boxShadow: '0 10px 28px rgba(0,0,0,.5)',
-            fontSize: 11, lineHeight: 1.45, color: C.textPrimary,
-          }}
-        >
-          {heard && !said && !problem && (
-            <div style={{ color: C.textMuted }}>“{heard}”</div>
-          )}
-          {said && <div style={{ color: C.accent }}>{said}</div>}
-          {listening && continuousRef.current && !said && !problem && (
-            <div style={{ color: C.accent }}>Listening — go ahead.</div>
-          )}
-          {problem && <div style={{ color: '#ffb4b4' }}>{problem}</div>}
-          <button
-            onClick={() => { setHeard(''); setSaid(''); setProblem('') }}
-            aria-label="Dismiss"
-            style={{
-              position: 'absolute', top: 4, right: 4, display: 'inline-flex',
-              border: 'none', background: 'transparent', color: C.textMuted, cursor: 'pointer', padding: 2,
-            }}
-          ><X size={11} /></button>
-        </div>
-      )}
     </div>
   )
 }
