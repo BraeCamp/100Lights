@@ -84,8 +84,17 @@ check('the lane is on the clip\'s track', lane.lane.trackId === 'tb2', lane.lane
 // 8 seconds at 120bpm is 16 beats, starting at the clip's own start (beat 16).
 check('it starts where the clip starts', p1.point.beat === 16, String(p1.point.beat))
 check('and ends 8 seconds later, in beats', p2.point.beat === 32, String(p2.point.beat))
-check('sweeping 80% down to 0%', p1.point.value === 0.8 && p2.point.value === 0,
-  `${p1.point.value} → ${p2.point.value}`)
+// ⚠️ This assertion used to read `p1.point.value === 0.8 && p2.point.value === 0`
+// — the spoken fractions, written straight into an automation lane the engine
+// reads as HERTZ. It was not a test of the sweep, it was a copy of it, and it
+// held the bug in place: 0 there meant a 0 Hz cutoff, which is silence, and
+// Brae found it by hearing a pad disappear.
+//
+// A percentage is what somebody SAYS. Hertz is what the filter is in. The test
+// now asserts the second, which is the only one that can be wrong.
+check('sweeping 80% down to 0% lands in audible Hertz',
+  p1.point.value > 1000 && p2.point.value >= 20 && p2.point.value < p1.point.value,
+  `${p1.point.value} Hz → ${p2.point.value} Hz`)
 check('both points belong to the lane it just made',
   p1.laneId === lane.lane.id && p2.laneId === lane.lane.id)
 

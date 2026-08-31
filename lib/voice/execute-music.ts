@@ -53,6 +53,33 @@ export interface VoicePlan {
   ask?: VoiceAsk
 }
 
+/**
+ * Where a spoken fraction of a filter sweep actually lands, in Hertz.
+ *
+ * The same curve the piano roll's own filters use (roll-fx's LP and HP), and
+ * logarithmic because that is how a cutoff is heard: halfway between 200 Hz and
+ * 18 kHz by ear is around 1.9 kHz, not 9 kHz. A linear sweep spends most of its
+ * travel in the top octave, where almost nothing happens, and then falls off a
+ * cliff at the end.
+ *
+ * Stated here rather than imported because roll-fx exports the whole FX_FIELDS
+ * table and this needs two numbers from it — but they are the SAME two numbers,
+ * and the check asserts that rather than trusting this comment.
+ */
+const logHz = (min: number, mult: number) => ({
+  min,
+  max: Math.round(min * mult),
+  fromNorm: (n: number) => Math.round(min * Math.pow(mult, Math.max(0, Math.min(1, n)))),
+})
+const FILTER_HZ = {
+  lowpass: logHz(200, 90),   // 200 Hz → 18 kHz (fully open)
+  highpass: logHz(20, 100),  // 20 Hz (open) → 2 kHz
+} as const
+
+/** A cutoff, said the way a person would say it. */
+const fmtHz = (v: number): string =>
+  (v >= 1000 ? `${(v / 1000).toFixed(1).replace(/\.0$/, '')} kHz` : `${Math.round(v)} Hz`)
+
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `v${Math.random().toString(36).slice(2)}`)
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const fail = (problem: string): VoicePlan => ({ actions: [], say: '', problem })
@@ -419,6 +446,8 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
       const laneId = newId()
       let parameter: string
       let label: string
+      /** Set for the filter sweeps, whose values are Hertz rather than 0–1. */
+      let hz: { min: number; max: number; fromNorm: (n: number) => number } | null = null
 
       if (param === 'volume' || param === 'pan') {
         // The track's own parameter — no effect needed.
@@ -429,23 +458,56 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
         const effectId = newId()
         actions.push({
           type: 'ADD_EFFECT', trackId: track.id,
-          effect: { id: effectId, type: 'filter', params: { enabled: true, type: kind, frequency: 8000, q: 1 } },
+          effect: { id: effectId, type: 'filter', params: { enabled: true, type: kind, frequency: FILTER_HZ[kind].max, q: 1 } },
         })
         parameter = `fx:${effectId}:frequency`
         label = kind === 'lowpass' ? 'Low-pass cutoff' : 'High-pass cutoff'
+        hz = FILTER_HZ[kind]
       }
 
+      // ── A cutoff is in HERTZ, and this was writing percentages ───────────
+      //
+      // Brae: "the lowpass cutoff made the pad stop playing audio."
+      //
+      // The lane was declared min 0 / max 1 and its points were the spoken
+      // fractions — 1.0 down to 0.2 — and the engine passes an automation value
+      // to the effect UNCHANGED: `filter.frequency.value = value`. So "sweep
+      // down to 20%" set the cutoff to 0.2 Hz. A low-pass at a fifth of a Hertz
+      // removes the entire audible spectrum, and because the last point holds
+      // for the rest of the song, the track never came back.
+      //
+      // Nothing caught it because no other code path creates a frequency lane:
+      // the track's own automation menu offers volume, pan, effect WET and
+      // Apollo macros, all of which genuinely are 0–1. This command invented
+      // the one parameter whose units are different and inherited the range
+      // that suited all the others.
+      //
+      // The curve is the app's own (roll-fx's LP/HP), not a fresh one — a
+      // second opinion about where "half open" sits would be audible the first
+      // time somebody compared this against the piano roll.
+      const at = (f: number) => (hz ? hz.fromNorm(f) : f)
       actions.push({
         type: 'ADD_AUTOMATION_LANE',
-        lane: { id: laneId, trackId: track.id, parameter, label, min: 0, max: 1, defaultValue: from, points: [], expanded: true },
+        lane: {
+          id: laneId, trackId: track.id, parameter, label,
+          min: hz ? hz.min : 0,
+          max: hz ? hz.max : 1,
+          defaultValue: at(from),
+          points: [], expanded: true,
+        },
       })
-      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat, value: from } })
-      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat + lengthBeats, value: to } })
+      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat, value: at(from) } })
+      actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat + lengthBeats, value: at(to) } })
 
       const spoken = len(i.length)
       return {
         actions,
-        say: `${label} from ${Math.round(from * 100)}% to ${Math.round(to * 100)}% over ${spoken ? describeDuration(spoken, lengthBeats) : `${+lengthBeats.toFixed(2)} beats`}, starting ${describeBeat(startBeat, maps)}, on ${found.how}.`,
+        // Read back in the unit the thing is actually in. "From 100% to 20%"
+        // sounded reasonable and was the same sentence whether the sweep ended
+        // at 1.9 kHz or at a fifth of a Hertz — so the read-back could not have
+        // caught the bug it was describing. "Down to 570 Hz" can be wrong out
+        // loud.
+        say: `${label} from ${hz ? `${fmtHz(at(from))} to ${fmtHz(at(to))}` : `${Math.round(from * 100)}% to ${Math.round(to * 100)}%`} over ${spoken ? describeDuration(spoken, lengthBeats) : `${+lengthBeats.toFixed(2)} beats`}, starting ${describeBeat(startBeat, maps)}, on ${found.how}.`,
       }
     }
 
