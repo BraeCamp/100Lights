@@ -283,7 +283,12 @@ export const MUSIC_TOOLS = [
           type: 'string',
           enum: ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'eq3', 'limiter'],
         },
-        amount: { type: 'number', description: 'How much, 0-100. Omit for a sensible default.' },
+        amount: {
+          type: 'number',
+          description:
+            'How much of the effect, 0-100 — more means MORE effect. For a filter that means more filtering: '
+            + '100 is as dark as it goes (still audible), 0 leaves it open. Omit for a sensible default.',
+        },
       },
       required: ['target', 'effect'],
     },
@@ -300,7 +305,10 @@ export const MUSIC_TOOLS = [
           type: 'string',
           enum: ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'eq3', 'limiter'],
         },
-        amount: { type: 'number', description: 'How much, 0-100.' },
+        amount: {
+          type: 'number',
+          description: 'How much of the effect, 0-100 — more means MORE effect (for a filter, more filtering).',
+        },
       },
       required: ['target', 'effect', 'amount'],
     },

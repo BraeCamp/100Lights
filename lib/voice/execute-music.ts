@@ -142,10 +142,36 @@ function applyAmount(params: Record<string, unknown>, kind: EffectType, pct: num
     case 'reverb': case 'delay': params.wet = unit; break
     case 'chorus': params.mix = unit; break
     case 'saturator': params.drive = unit; break
-    // 20 Hz to 20 kHz, logarithmically, so "the filter at 50%" lands around
-    // 600 Hz where a person hears half-closed rather than at 10 kHz where a
-    // linear reading would put it and nothing would appear to have happened.
-    case 'filter': params.frequency = Math.round(20 * Math.pow(1000, unit)); break
+    // ⚠️ THIS IS THE ONE THAT SILENCED THE PAD. It was
+    //     params.frequency = Math.round(20 * Math.pow(1000, unit))
+    // which is wrong twice over.
+    //
+    // (1) THE FLOOR WAS 20 Hz. That is not a dark filter, it is silence — and
+    //     it was reachable from ordinary numbers, not just from 0: any amount
+    //     up to about 30% lands below 200 Hz (10% → 40 Hz, 25% → 112 Hz), and
+    //     below 200 Hz a low-pass has removed everything anybody can hear. The
+    //     sweep command already knew this and used LOWPASS_HZ, whose bottom is
+    //     200 Hz for exactly this reason; this path never got the same fix.
+    //
+    // (2) IT RAN BACKWARDS. Every other case here reads "more amount, more
+    //     effect" — 100% reverb is drenched. 100% filter meant 20 kHz, i.e.
+    //     NO filtering, while a small number meant almost total removal. So
+    //     "put a bit of a low-pass on the pad" was the request most likely to
+    //     make it disappear, and "give it loads of low-pass" did nothing.
+    //     CLIP_FX_FIELDS.filterHz in this same file already has it the right
+    //     way round; the two now agree.
+    //
+    // The range is the shared one, so a filter set by percentage, swept by
+    // voice, or drawn by hand all live between the same two frequencies — and
+    // 100% is now as dark as the studio goes while STILL BEING AUDIBLE.
+    case 'filter': {
+      const highpass = (params.type as string) === 'highpass'
+      const r = highpass ? HIGHPASS_HZ : LOWPASS_HZ
+      // A low-pass filters more as it comes DOWN; a high-pass as it goes UP.
+      const u = highpass ? unit : 1 - unit
+      params.frequency = Math.round(r.min * Math.pow(r.max / r.min, u))
+      break
+    }
     case 'compressor': case 'limiter': params.threshold = Math.round(-60 + unit * 60); break
     case 'eq3': params.midGain = Math.round(-12 + unit * 24); break
     default: break

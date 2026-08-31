@@ -13,6 +13,7 @@
     "test:noteids": "tsc -p tsconfig.test.json && node scripts/note-ids.test.mjs",
     "test:splice": "tsc -p tsconfig.test.json && node scripts/daw-splice.test.mjs",
     "test:apollo-fx": "tsc -p tsconfig.test.json && node scripts/apollo-fx-devices.test.mjs",
+    "test:voice-filter": "tsc -p tsconfig.test.json && node scripts/voice-filter-amount.test.mjs",
     "check:discoverable": "node scripts/check-discoverable.mjs",
     "test:storage": "tsc -p tsconfig.test.json && node scripts/storage-policy.test.mjs",
     "check:catalog": "node scripts/check-catalog-in-app.mjs",

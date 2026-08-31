@@ -27,6 +27,7 @@
     "lib/scale-constants.ts",
     "lib/apollo/patch.ts",
     "lib/apollo/daw-fx.ts",
-    "lib/daw-effect-params.ts"
+    "lib/daw-effect-params.ts",
+    "lib/voice/execute-music.ts"
   ]
 }
