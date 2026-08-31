@@ -35,6 +35,7 @@ import {
 } from './position'
 import { beatToSeconds } from '../tempo-map'
 import { LOWPASS_HZ, HIGHPASS_HZ } from '../daw-effect-params'
+import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '../daw-effect-catalog'
 import { nameChord, groupIntoChords } from '../chord-analysis'
 
 export interface VoiceCall { name: string; input: Record<string, unknown> }
@@ -101,6 +102,28 @@ const EFFECT_DEFAULTS: Partial<Record<EffectType, () => TrackEffect['params']>> 
   reverb: defaultReverb, delay: defaultDelay, filter: defaultFilter,
   compressor: defaultCompressor, saturator: defaultSaturator,
   chorus: defaultChorus, eq3: defaultEq3, limiter: defaultLimiter,
+}
+
+/**
+ * What a spoken effect name builds.
+ *
+ * ⚠️ The short list above was the ONLY thing a spoken "put an X on it" could
+ * make, so every device added since — the Apollo units especially — could be
+ * named by the model and then refused by the planner. This reads the same
+ * catalogue the Add Device menu does, so the two cannot drift: an Apollo name
+ * ('phaser', 'octaver') builds the 'helios' wrapper the menu builds, and a
+ * Beacon name builds its own defaults.
+ */
+function buildSpokenEffect(name: string): { type: EffectType; params: TrackEffect['params'] } | null {
+  const apollo = APOLLO_ADD_OPTIONS.find(o => o.fx === name)
+  if (apollo) return { type: 'helios', params: makeDefaultParams('helios', apollo.fx) as TrackEffect['params'] }
+  const beacon = ADD_OPTIONS.find(o => o.type === name)
+  if (!beacon) return null
+  const make = EFFECT_DEFAULTS[beacon.type]
+  return {
+    type: beacon.type,
+    params: (make ? make() : makeDefaultParams(beacon.type)) as TrackEffect['params'],
+  }
 }
 
 /**
@@ -1373,18 +1396,23 @@ export function planVoiceCall(call: VoiceCall, project: DawProject): VoicePlan {
     case 'set_effect': {
       const track = resolveTrack(target, project)
       if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
-      const kind = str(i.effect).toLowerCase() as EffectType
-      const make = EFFECT_DEFAULTS[kind]
-      if (!make) return fail(`I don't know an effect called "${str(i.effect) || 'that'}".`)
+      const spokenName = str(i.effect).toLowerCase()
+      const built = buildSpokenEffect(spokenName)
+      if (!built) return fail(`I don't know an effect called "${str(i.effect) || 'that'}".`)
+      const kind = built.type
 
       const pct = spokenNumber(i.amount as string)
-      const existing = track.effects.find(e => e.type === kind)
+      const existing = track.effects.find(e => e.type === kind && (
+        // Every Apollo device shares the type 'helios', so matching on type
+        // alone would call a phaser "the octaver you already have".
+        kind !== 'helios' ||
+        (e.params as { unit?: { type?: string } })?.unit?.type === spokenName))
 
       if (!existing) {
         if (call.name === 'set_effect' && pct === 0) {
           return fail(`There is no ${kind} on "${track.name}" to turn down.`)
         }
-        const params = make() as unknown as Record<string, unknown>
+        const params = built.params as unknown as Record<string, unknown>
         if (pct != null) applyAmount(params, kind, pct)
         return {
           actions: [{ type: 'ADD_EFFECT', trackId: track.id, effect: { id: newId(), type: kind, params } }],

@@ -47,6 +47,28 @@ const TARGET = {
   description: 'What they called it — a track or clip name, exactly as spoken ("bass 2"). The app resolves it.',
 } as const
 
+import { ADD_OPTIONS, APOLLO_ADD_OPTIONS } from '../daw-effect-catalog'
+
+/**
+ * Every effect the assistant may name, taken from the catalogue the Add Device
+ * menu uses.
+ *
+ * ⚠️ This was eight names typed by hand, and the model said so out loud when
+ * asked for a phaser: "There's no phaser effect available — the options I have
+ * are reverb, delay, filter, compressor, saturator, chorus, eq3, or limiter."
+ * Every device shipped since that list was written — the whole Apollo set, plus
+ * redux, gate, de-esser, transient shaper, multiband, dyn EQ, unmask, utility —
+ * was unreachable by voice, and nothing could notice because the list looked
+ * deliberate.
+ *
+ * Generated from ADD_OPTIONS + APOLLO_ADD_OPTIONS so a device added to the menu
+ * is speakable the same day.
+ */
+export const SPEAKABLE_EFFECTS: string[] = [
+  ...ADD_OPTIONS.map(o => o.type),
+  ...APOLLO_ADD_OPTIONS.map(o => o.fx),
+]
+
 export const MUSIC_TOOLS = [
   {
     name: 'duplicate_clip',
@@ -279,10 +301,7 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         target: TARGET,
-        effect: {
-          type: 'string',
-          enum: ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'eq3', 'limiter'],
-        },
+        effect: { type: 'string', enum: SPEAKABLE_EFFECTS },
         amount: {
           type: 'number',
           description:
@@ -301,10 +320,7 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         target: TARGET,
-        effect: {
-          type: 'string',
-          enum: ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'eq3', 'limiter'],
-        },
+        effect: { type: 'string', enum: SPEAKABLE_EFFECTS },
         amount: {
           type: 'number',
           description: 'How much of the effect, 0-100 — more means MORE effect (for a filter, more filtering).',
@@ -442,10 +458,7 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         target: TARGET,
-        effect: {
-          type: 'string',
-          enum: ['reverb', 'delay', 'filter', 'compressor', 'saturator', 'chorus', 'eq3', 'limiter'],
-        },
+        effect: { type: 'string', enum: SPEAKABLE_EFFECTS },
       },
       required: ['target', 'effect'],
     },

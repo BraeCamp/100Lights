@@ -23,7 +23,7 @@ import { libraryGetAll } from '@/lib/sound-library'
 import { libraryFulfill } from '@/lib/default-samples'
 import ClipView from './ClipView'
 import { DEFAULT_KIT, DRUM_PATTERNS, patternToNotes } from '@/lib/drum-presets'
-import DeviceChain from './DeviceChain'
+import DeviceChain, { setPoppedDevice } from './DeviceChain'
 import { automatableParams, primaryParam, shortNameOf, currentValue } from '@/lib/daw-effect-params'
 import IsolateModal from './IsolateModal'
 import ClipSettingsModal from './ClipSettingsModal'
@@ -530,11 +530,38 @@ function AddAutoButton({ track }: { track: DawTrack }) {
 
 function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack }) {
   const { dispatch } = useDaw()
+
+  /**
+   * Brae: "Have a button on device chain item tracks that opens the effect
+   * settings."
+   *
+   * A lane under a track says which device it drives — "FLT Cutoff" — and until
+   * now that was the end of it: to change anything else about that filter you
+   * had to leave the arrangement, open the Devices panel and find it again,
+   * having lost sight of the curve you were working on. The device the lane
+   * belongs to is already known from its own `fx:{effectId}:…` parameter, so
+   * the button just has to say so.
+   *
+   * It opens the movable card rather than the panel, because the panel is
+   * exactly the thing that takes you away from the lane.
+   */
+  const effectId = lane.parameter.startsWith('fx:') ? lane.parameter.split(':')[1] : null
+  const effect = effectId ? track.effects.find(e => e.id === effectId) : undefined
+
   return (
     <div style={{ width: HDR_W, height: AUTO_H, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}55`, boxSizing: 'border-box' }}>
       <div style={{ flex: 1, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {lane.label}
       </div>
+      {effect && (
+        <button
+          onClick={e => { e.stopPropagation(); setPoppedDevice({ effectId: effect.id, trackId: track.id }) }}
+          title={`Open ${shortNameOf(effect)}'s settings`}
+          style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', padding: 0, flexShrink: 0 }}
+          onMouseEnter={ev => { (ev.currentTarget as HTMLElement).style.color = 'var(--accent-light)' }}
+          onMouseLeave={ev => { (ev.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
+        ><SlidersHorizontal size={10} /></button>
+      )}
       <button onClick={() => dispatch({ type: 'CLEAR_AUTOMATION_LANE', laneId: lane.id })} title="Clear" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 9, padding: 0, flexShrink: 0 }}><Eraser size={10} /></button>
       <button onClick={() => dispatch({ type: 'REMOVE_AUTOMATION_LANE', laneId: lane.id })} title="Remove lane" style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0, flexShrink: 0 }}><X size={11} /></button>
     </div>

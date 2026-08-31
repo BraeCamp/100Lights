@@ -76,7 +76,11 @@ const BY_TYPE: Partial<Record<EffectType, AutomatableParam[]>> = {
   ],
   compressor: [
     { key: 'threshold', label: 'Threshold', min: -60, max: 0, unit: 'dB' },
-    { key: 'amount', label: 'Amount', min: 0, max: 1 },
+    // ⚠️ WAS `amount`, WHICH THE COMPRESSOR DOES NOT HAVE. CompressorParams is
+    // threshold/ratio/attack/release/knee/makeupGain — there is no "amount", so
+    // the lane wrote a field nothing reads and the sound never moved. Ratio is
+    // the thing "how hard is it compressing" actually means.
+    { key: 'ratio', label: 'Ratio', min: 1, max: 20, unit: ':1' },
   ],
   reverb: [WET, { key: 'decay', label: 'Decay', min: 0.1, max: 10, unit: 's' }],
   delay: [WET, { key: 'feedback', label: 'Feedback', min: 0, max: 0.95 }],
@@ -101,7 +105,11 @@ const BY_TYPE: Partial<Record<EffectType, AutomatableParam[]>> = {
     { key: 'attack', label: 'Attack', min: -1, max: 1 },
     { key: 'sustain', label: 'Sustain', min: -1, max: 1 },
   ],
-  limiter: [{ key: 'threshold', label: 'Ceiling', min: -24, max: 0, unit: 'dB' }],
+  // ⚠️ The key was `threshold`, and LimiterParams has none — it is `ceilingDb`.
+  // buildLimiter's setParam does `p[key] = value` and then reads p.ceilingDb, so
+  // automating the ceiling set a field nobody read. Silent: the lane draws, the
+  // curve runs, nothing happens. Its own range, too: the ceiling is -12..0.
+  limiter: [{ key: 'ceilingDb', label: 'Ceiling', min: -12, max: 0, unit: 'dB' }],
   dyneq: [
     { key: 'freq', label: 'Frequency', min: 20, max: 18_000, unit: 'Hz', curve: 'log' },
     { key: 'rangeDb', label: 'Range', min: -18, max: 18, unit: 'dB' },

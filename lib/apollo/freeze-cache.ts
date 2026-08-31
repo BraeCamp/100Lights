@@ -721,8 +721,36 @@ export function onCombineProgress(fn: (p: CombineProgress) => void): () => void 
   return () => { progressListeners.delete(fn) }
 }
 
+/**
+ * The fraction the bar is showing, held so it cannot fall.
+ *
+ * ⚠️ Brae: "When I played in the middle of loading, then I stopped playing the
+ * loading bar had jumped back significantly."
+ *
+ * Two causes, and the guard covers both. Pressing play PARKS the bake, and
+ * resuming restarts the current fidelity layer, so its own count begins again
+ * near zero. And the layer-level updates reported `done/total` for the LAYER
+ * while the job-level ones reported it for the whole JOB — two different
+ * denominators feeding one bar, so it lurched even without a park.
+ *
+ * The denominator is now always the job (below). This is the belt as well as
+ * the braces: a progress bar that goes backwards tells the user the work is
+ * being lost, which is not what is happening and is the most alarming possible
+ * way to say "still going".
+ */
+let progressFloor = 0
+
 function setProgress(next: Partial<CombineProgress>): void {
-  progress = { ...progress, ...next }
+  const merged = { ...progress, ...next }
+  const total = merged.total || 0
+  if (total > 0) {
+    const frac = merged.done / total
+    // A new job (or a finished one) resets the floor; otherwise hold the line.
+    if (merged.phase === 'idle' || frac < progressFloor - 0.5) progressFloor = frac
+    else if (frac < progressFloor) merged.done = Math.round(progressFloor * total)
+    else progressFloor = frac
+  }
+  progress = merged
   for (const l of progressListeners) l(progress)
 }
 
@@ -942,6 +970,10 @@ async function bakeLayer(
   layerCount: number,
   aside: Set<string>,
   silentOnce: Set<string>,
+  /** The WHOLE job's counts. The bar is one bar, so it needs one denominator —
+   *  reporting a layer's own progress into it is what made it lurch between
+   *  layers even when nothing had gone wrong. */
+  job?: () => { done: number; total: number },
 ): Promise<boolean> {
   const wants = wantsOf(layerGroups, bpm)
   logEvent('layer-start', { layer: label, total: wants.length })
@@ -1028,8 +1060,9 @@ async function bakeLayer(
     headStartDone = true
     if (!window.length) break
 
+    const jp = job ? job() : { done: doneCount(), total: wants.length }
     setProgress({
-      done: doneCount(), total: wants.length, active: true, phase,
+      done: jp.done, total: jp.total, active: true, phase,
       layer: label, layerIndex, layerCount,
     })
 
@@ -1124,6 +1157,7 @@ async function bake(bpm: number, groups: TrackRenderGroup[], wanted: Want[], job
         : groups.map(g => ({ ...g, patch: patchForLayer(g.patch, layer) }))
       const finished = await bakeLayer(
         layerGroups, bpm, layerLabel(layers, li), li, layers.length, aside, silentOnce,
+        () => ({ done: wanted.length - missing().length, total: wanted.length }),
       )
       if (!finished) { parked = true; break }
     }
