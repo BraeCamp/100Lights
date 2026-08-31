@@ -1067,6 +1067,110 @@ export default function AudioEditor(props: AudioEditorProps) {
     return () => { alive = false; clearInterval(id) }
   }, [loadPanel])
 
+  // ── Send the loading story once, when it settles ─────────────────────────
+  //
+  // Brae: "Errors should go to the program and save in the admin so that you
+  // can use it to make edits when we make a pass."
+  //
+  // One row per session, not one per event: the question a pass asks is "which
+  // songs load badly, and on what machine", not "list every window that
+  // retried". Sent when loading finishes or gives up, and on the way out of the
+  // page — a session that was abandoned half-loaded is the most interesting
+  // kind and would otherwise be the one never reported.
+  const loadReported = useRef(false)
+  const sendLoadReport = useCallback((outcome: string) => {
+    if (loadReported.current) return
+    loadReported.current = true
+    void import('@/lib/apollo/freeze-cache').then(({ combineStats, loadLog }) => {
+      const st = combineStats()
+      const log = loadLog()
+      if (!log.length) return
+      const kinds = (...k: string[]) => log.filter(e => k.includes(e.kind)).length
+      const paused = log.filter(e => e.kind === 'paused')
+      // Time parked for playback, read from the gap between each pause and the
+      // resume that followed it — the cost of listening while it loads.
+      let pausedMs = 0
+      for (const p of paused) {
+        const back = log.find(e => e.kind === 'resumed' && e.t > p.t)
+        pausedMs += (back?.t ?? log[log.length - 1].t) - p.t
+      }
+      const nav = navigator as Navigator & { deviceMemory?: number }
+      const body = {
+        projectId: projectRef.current.id ?? '',
+        projectName: projectRef.current.name ?? '',
+        wanted: st.progress.total, done: st.progress.done,
+        elapsedMs: log.length ? log[log.length - 1].t - log[0].t : 0,
+        errors: kinds('window-error', 'layer-error', 'job-error'),
+        silent: kinds('silent'),
+        setAside: st.setAside, givenUp: st.givenUp,
+        playInterruptions: paused.length,
+        pausedMs,
+        outcome,
+        device: `${nav.hardwareConcurrency ?? '?'}core ${nav.deviceMemory ?? '?'}GB ${navigator.platform ?? ''}`.slice(0, 200),
+        events: log.slice(-60),
+      }
+      // keepalive so a report survives the page going away, which is exactly
+      // when an abandoned half-load needs reporting.
+      void fetch('/api/load-report', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body), keepalive: true,
+      }).catch(() => {})
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    // Settled: everything asked for has arrived, or the loader stopped trying.
+    if (loadProgress.total > 0 && loadProgress.done >= loadProgress.total) sendLoadReport('ok')
+  }, [loadProgress.done, loadProgress.total, sendLoadReport])
+
+  useEffect(() => {
+    const bye = () => sendLoadReport('left')
+    window.addEventListener('pagehide', bye)
+    return () => window.removeEventListener('pagehide', bye)
+  }, [sendLoadReport])
+
+  // ── Server loading ───────────────────────────────────────────────────────
+  //
+  // Brae: "when the song is loading we should have a button next to the loading
+  // text called 'Switch to server loading' so that users can switch manually",
+  // and "have the AI detect when the computer is having trouble... we can
+  // switch it to server loading".
+  //
+  // The detector lives in the loader, where the evidence is. This watches it and
+  // OFFERS rather than switching by itself: changing how somebody's studio works
+  // without asking is the kind of help nobody wants, and the first thing they
+  // would do is wonder what else changed. Once they say yes it is remembered, so
+  // a machine that struggles is not asked twice.
+  const [serverLoad, setServerLoad] = useState(false)
+  const [serverOffer, setServerOffer] = useState<string | null>(null)
+  const offeredServer = useRef(false)
+
+  const switchToServer = useCallback((on: boolean, why: string) => {
+    setServerLoad(on)
+    setServerOffer(null)
+    void import('@/lib/apollo/freeze-cache').then(({ setServerLoading }) => setServerLoading(on, why)).catch(() => {})
+    try { localStorage.setItem('beacon.serverLoading', on ? 'on' : 'off') } catch { /* private mode */ }
+  }, [])
+
+  useEffect(() => {
+    try { if (localStorage.getItem('beacon.serverLoading') === 'on') switchToServer(true, 'remembered') } catch { /* ignore */ }
+  }, [switchToServer])
+
+  useEffect(() => {
+    if (serverLoad || offeredServer.current) return
+    if (!(loadProgress.total > 0 && loadProgress.done < loadProgress.total)) return
+    const id = setInterval(() => {
+      void import('@/lib/apollo/freeze-cache').then(({ loadIsStruggling }) => {
+        const v = loadIsStruggling()
+        if (v.struggling && !offeredServer.current) {
+          offeredServer.current = true
+          setServerOffer(v.why)
+        }
+      }).catch(() => {})
+    }, 4000)
+    return () => clearInterval(id)
+  }, [serverLoad, loadProgress.total, loadProgress.done])
+
   const autoFroze = useRef(false)
   useEffect(() => {
     if (!AUTO_FREEZE_ON_LOAD) return
@@ -3024,7 +3128,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 transition: 'width 240ms linear, background 300ms',
               }} />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'center', pointerEvents: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, pointerEvents: 'auto' }}>
               <button
                 onClick={() => setLoadPanel(v => !v)}
                 title={loadPanel ? 'Hide what is loading' : 'Show what is loading, what is queued and anything that failed'}
@@ -3064,7 +3168,43 @@ export default function AudioEditor(props: AudioEditorProps) {
                         ? 'Getting the sound ready…'
                         : `Loading the song — ${loadProgress.done}/${loadProgress.total}`}
               </button>
+
+              <button
+                onClick={() => switchToServer(!serverLoad, serverLoad ? 'switched back' : 'chosen by the user')}
+                title={serverLoad
+                  ? 'Render on this computer again'
+                  : 'Stop rendering on this computer and use renders from the server where they exist'}
+                style={{
+                  marginBottom: 4, padding: '3px 9px', borderRadius: 999, fontSize: 10, fontWeight: 600,
+                  background: serverLoad ? 'rgb(var(--accent-rgb) / .22)' : 'var(--bg-elevated, #16181d)',
+                  border: `1px solid ${serverLoad ? 'var(--accent)' : 'var(--border)'}`,
+                  color: serverLoad ? 'var(--accent-light)' : 'var(--text-muted)',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >{serverLoad ? 'Server loading — on' : 'Switch to server loading'}</button>
             </div>
+
+            {/* The offer, when the machine is visibly struggling. It says WHAT
+                it noticed: "we think you should change something" without the
+                evidence is just an alarm. */}
+            {serverOffer && !serverLoad && (
+              <div style={{
+                pointerEvents: 'auto', alignSelf: 'center', marginBottom: 4,
+                display: 'flex', alignItems: 'center', gap: 10,
+                background: 'var(--bg-elevated, #16181d)', border: '1px solid #a2591b',
+                borderRadius: 999, padding: '4px 6px 4px 12px', fontSize: 11, color: 'var(--text-secondary)',
+              }}>
+                <span>This computer is having trouble — {serverOffer}.</span>
+                <button
+                  onClick={() => switchToServer(true, `offered: ${serverOffer}`)}
+                  style={{ padding: '3px 9px', borderRadius: 999, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / .2)', color: 'var(--accent-light)', fontSize: 10.5, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >Use server loading</button>
+                <button
+                  onClick={() => setServerOffer(null)}
+                  style={{ padding: '3px 8px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 10.5, cursor: 'pointer' }}
+                >Keep going here</button>
+              </div>
+            )}
 
             {/* Opens UPWARD, above the pill, because the bar lives on the
                 bottom edge — a panel that dropped down would go off-screen. */}

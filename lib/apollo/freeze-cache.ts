@@ -65,6 +65,7 @@ export type LoadEventKind =
   | 'job-start' | 'job-end' | 'layer-start' | 'layer-done'
   | 'window' | 'silent' | 'window-error' | 'layer-error' | 'job-error'
   | 'retry' | 'stall' | 'reset' | 'paused' | 'resumed' | 'gave-up'
+  | 'server-on' | 'server-off'
 
 export interface LoadEvent {
   t: number             // ms since the page loaded — comparable with everything else
@@ -585,6 +586,76 @@ export function setTransportPlaying(v: boolean): void {
   }
 }
 
+// ── Server loading ──────────────────────────────────────────────────────────
+//
+// Brae: "let's have the AI detect when the computer is having trouble rendering
+// the song quickly using error handling. When we detect that audio cuts or the
+// loading has lots of errors, we can switch it to server loading."
+//
+// Two halves, and only one of them is a judgement call.
+//
+// The DETECTOR is the easy half and it is honest, because the loader has been
+// writing down exactly the right things all along: renders that threw, renders
+// that came back silent, clips set aside after a second failure, stalls, and
+// clips given up on entirely. A machine that cannot keep up produces those; a
+// machine that can does not. No guessing at CPU speed, no benchmark — the work
+// itself is the measurement.
+//
+// The SWITCH is the half that has to be honest about what exists. Rendering on
+// a server needs a machine that can run Apollo's engine, and that is real work
+// with real infrastructure behind it. What exists today is storage: a render
+// that has ALREADY been made can be served. So server loading asks for renders
+// by content hash and uses what comes back; when nothing has been rendered for
+// a song it says so plainly rather than pretending to be doing something.
+
+let serverLoading = false
+let serverFetchRunning = false
+export function isServerLoading(): boolean { return serverLoading }
+
+/**
+ * Turn server loading on or off.
+ *
+ * Turning it ON parks local baking: the point is to stop this machine doing the
+ * work, so continuing to bake in the background would be exactly the cost the
+ * user was trying to escape.
+ */
+export function setServerLoading(on: boolean, why = 'chosen'): void {
+  if (serverLoading === on) return
+  serverLoading = on
+  logEvent(on ? 'server-on' : 'server-off', { detail: why })
+  // ⚠️ BOTH directions have to ask again. Turning it ON only parked the local
+  // bake and then waited for something to call requestCombine — which nothing
+  // does until the transport next asks for a clip, so the server was never
+  // actually contacted and the switch looked like it did nothing.
+  if (lastGroups) requestCombine(lastBpm, lastGroups)
+}
+
+/**
+ * Is this machine struggling badly enough to be worth offering a way out?
+ *
+ * Deliberately a high bar. Offering to change how somebody's studio works is
+ * an interruption, and one bad render is not a struggling computer — the loader
+ * already retries, rests and recovers from those on its own. What it cannot
+ * recover from is a pattern: several failures, or clips it has given up on, or
+ * a job that has stopped making progress.
+ */
+export function loadIsStruggling(): { struggling: boolean; why: string } {
+  const log = eventLog
+  const recent = log.slice(-40)
+  const errors = recent.filter(e => e.kind === 'window-error' || e.kind === 'layer-error' || e.kind === 'job-error').length
+  const silent = recent.filter(e => e.kind === 'silent').length
+  const stalls = recent.filter(e => e.kind === 'stall' || e.kind === 'reset').length
+  // ⚠️ Read from the LOG, not from combineStats().givenUp — that counter is
+  // structurally zero now ("nothing is condemned across sessions any more") and
+  // a detector keyed on it would never fire.
+  const given = recent.filter(e => e.kind === 'gave-up').length
+  if (given > 0) return { struggling: true, why: `${given} part${given === 1 ? '' : 's'} could not be rendered on this machine` }
+  if (stalls >= 2) return { struggling: true, why: 'loading has stalled more than once' }
+  if (errors >= 3) return { struggling: true, why: `${errors} render failures` }
+  if (silent >= 3) return { struggling: true, why: `${silent} renders came back silent` }
+  return { struggling: false, why: '' }
+}
+
 /** When the bake last parked for playback, so 'resumed' can say how long. */
 let pausedAt = 0
 
@@ -1041,6 +1112,12 @@ async function bakeLayer(
   let headStartDone = false
 
   while (renderable().length) {
+    // Rule 0: the user asked for this work to happen somewhere else.
+    if (serverLoading) {
+      setProgress({ ...progress, active: false, phase: 'paused' })
+      logEvent('paused', { layer: label, detail: 'server loading is on — this machine is not rendering' })
+      return false
+    }
     // Rule 1, checked every pass: play may have been pressed while the last
     // render was running.
     if (transportPlaying) {
@@ -1225,10 +1302,70 @@ async function bake(bpm: number, groups: TrackRenderGroup[], wanted: Want[], job
  * it on every pass for every clip that is not yet cached, dozens of times a
  * second, so it returns immediately unless there is new work to start.
  */
+/**
+ * Ask the server for renders instead of making them here.
+ *
+ * ⚠️ This serves what has ALREADY been rendered. A clip's stamp is a content
+ * hash of its notes, its patch and the tempo, which is identical for every
+ * user — so a song rendered once can be served to everyone who opens it, and
+ * that sharing is the actual prize rather than the CPU offload.
+ *
+ * Nothing renders on demand yet: a 404 means nobody has made this part, and
+ * the honest thing is to say so and let the song play live, which it does
+ * perfectly well. Pretending to load would be worse than the wait.
+ */
+async function fetchServerRenders(wanted: Want[]): Promise<number> {
+  let got = 0
+  let missing = 0
+  for (const w of wanted) {
+    if (buffers.has(w.key)) continue
+    if (!serverLoading) break        // switched off mid-run
+    try {
+      const res = await fetch(`/api/render-clip?stamp=${encodeURIComponent(w.key)}`)
+      if (res.status === 404) { missing++; continue }
+      if (!res.ok) { logEvent('window-error', { detail: `server render ${res.status}` }); break }
+      const buf = await audioFromBytes(await res.arrayBuffer())
+      if (buf) { buffers.set(w.key, buf); got++ }
+    } catch (err) {
+      logEvent('window-error', { detail: `server render: ${String(err).slice(0, 90)}` })
+      break
+    }
+  }
+  if (missing) {
+    logEvent('gave-up', {
+      detail: `${missing} part${missing === 1 ? '' : 's'} have not been rendered on the server — playing those live`,
+    })
+  }
+  return got
+}
+
+/** Decode bytes from the server into a buffer this cache can hold. */
+async function audioFromBytes(bytes: ArrayBuffer): Promise<AudioBuffer | null> {
+  try { return await alloc().decodeAudioData(bytes) } catch { return null }
+}
+
 export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   if (!groups.length) return
   lastGroups = groups
   lastBpm = bpm
+
+  // ⚠️ BEFORE the in-flight and playing guards, both of which return early.
+  // Asking the server is not the same work as baking here: a local job that is
+  // already running will park itself on its next pass (Rule 0), and waiting for
+  // it to finish first would mean the switch did nothing until the bake it was
+  // meant to stop had completed.
+  if (serverLoading) {
+    if (!serverFetchRunning) {
+      serverFetchRunning = true
+      const wantedNow = wantsOf(groups, bpm)
+      setProgress({ done: 0, total: wantedNow.length, active: true, phase: 'head', layer: 'Loading from the server' })
+      void fetchServerRenders(wantedNow).then(got => {
+        serverFetchRunning = false
+        setProgress({ done: got, total: wantedNow.length, active: false, phase: 'idle', layer: undefined })
+      })
+    }
+    return
+  }
 
   const jobKey = 'project-combine'
   if (inFlight.has(jobKey)) return
@@ -1244,6 +1381,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   }
 
   const wanted = wantsOf(groups, bpm)
+
   // Size the cache to this song before rendering into it, or it evicts the
   // opening of the song to make room for the end of it.
   const spb = 60 / bpm

@@ -33,6 +33,7 @@ import ShortsExportPanel from './ShortsExportPanel'
 import AppTargetsPanel from './AppTargetsPanel'
 import AppCorrectionsPanel from './AppCorrectionsPanel'
 import TestRecipesPanel from './TestRecipesPanel'
+import LoadReportsPanel from './LoadReportsPanel'
 import VoicePhrasesPanel from './VoicePhrasesPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
@@ -775,6 +776,19 @@ export default async function AdminPage() {
                 description="Candidate chord progressions, bass lines, and motifs mined from public-domain sheet music, extracted as editable MIDI (the sheet itself isn't kept). Review each, then Integrate to ship it into the Sound Library recipe catalog every user sees, or Delete to discard it. Only you can see this."
               />
               <TestRecipesPanel />
+            </>
+          ),
+        },
+        {
+          id: 'load-reports',
+          label: 'Song Loading',
+          content: (
+            <>
+              <PanelIntro
+                title="Song Loading"
+                description="How songs actually load on real machines. A session is only written down when it has trouble — an error, a silent render, a clip set aside, or a load over 20 seconds — so an empty list means loading is going well. The 'interrupted by play' figures answer a specific question: how much does listening while it loads slow the loading down. Click a row for its event log."
+              />
+              <LoadReportsPanel />
             </>
           ),
         },

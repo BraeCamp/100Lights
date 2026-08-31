@@ -397,8 +397,21 @@ export function buildFilter(ctx: AudioContext, params: FilterParams): EffectHand
     setParam(key, value) {
       if (key === 'enabled')   { params = { ...params, enabled: value as boolean }; filter.type = params.enabled ? params.type : ('allpass' as BiquadFilterType) }
       if (key === 'type')      { params = { ...params, type: value as FilterParams['type'] }; if (params.enabled) filter.type = params.type }
-      if (key === 'frequency') { params = { ...params, frequency: value as number }; filter.frequency.value = safeHz(value as number) }
-      if (key === 'q')         filter.Q.value = safeQ(value as number)
+      if (key === 'frequency') {
+        params = { ...params, frequency: value as number }
+        // ⚠️ A GLIDE, NOT A JUMP. Automation calls this from the scheduler every
+        // 25 ms, and assigning .value directly makes the cutoff move in 25 ms
+        // steps — on a resonant filter that is zipper noise, and on a steep
+        // sweep it is audible as the sound lurching rather than gliding.
+        // Volume and pan have always been smoothed this way in the engine;
+        // effect parameters went through a plain assignment.
+        //
+        // 20 ms is shorter than the tick that drives it, so the curve is
+        // followed rather than lagged, and it is far too short to soften a
+        // deliberate knob turn.
+        filter.frequency.setTargetAtTime(safeHz(value as number), ctx.currentTime, 0.02)
+      }
+      if (key === 'q')         filter.Q.setTargetAtTime(safeQ(value as number), ctx.currentTime, 0.02)
     },
     dispose() { filter.disconnect() },
   }
