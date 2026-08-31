@@ -1156,20 +1156,15 @@ export default function AudioEditor(props: AudioEditorProps) {
     try { if (localStorage.getItem('beacon.serverLoading') === 'on') switchToServer(true, 'remembered') } catch { /* ignore */ }
   }, [switchToServer])
 
-  useEffect(() => {
-    if (serverLoad || offeredServer.current) return
-    if (!(loadProgress.total > 0 && loadProgress.done < loadProgress.total)) return
-    const id = setInterval(() => {
-      void import('@/lib/apollo/freeze-cache').then(({ loadIsStruggling }) => {
-        const v = loadIsStruggling()
-        if (v.struggling && !offeredServer.current) {
-          offeredServer.current = true
-          setServerOffer(v.why)
-        }
-      }).catch(() => {})
-    }, 4000)
-    return () => clearInterval(id)
-  }, [serverLoad, loadProgress.total, loadProgress.done])
+  // ⚠️ The "this machine is struggling, shall I switch you to server loading?"
+  // offer used to live here. It watched a bake in progress and fired when the
+  // bake went badly — and there is no bake any more: playback is real time, so
+  // loadProgress never fills and the offer could only ever be a promise the
+  // studio could not keep.
+  //
+  // Brae: "it will be manual." Server rendering is now one deliberate action —
+  // saving a project for offline use — rather than something the app decides
+  // for you when it thinks you are having a bad time.
 
   const autoFroze = useRef(false)
   useEffect(() => {

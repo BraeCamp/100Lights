@@ -13,6 +13,15 @@ const nextConfig: NextConfig = {
   // VERCEL_URL is unique per deployment and always present on Vercel, and the
   // build time is computed here so it exists everywhere — so SOMETHING always
   // identifies the build, which is the whole point.
+  // ⚠️ public/ is served from the CDN and is NOT part of a serverless function's
+  // filesystem. /api/render-clip renders clips with Apollo's real engine, which
+  // means reading public/apollo/engine.js at runtime — without this line that
+  // read throws ENOENT in production only, and server loading silently goes
+  // back to being the thing that gives up. Nothing in dev can catch it, because
+  // in dev the whole repo is on disk.
+  outputFileTracingIncludes: {
+    '/api/render-clip': ['./public/apollo/engine.js'],
+  },
   env: {
     NEXT_PUBLIC_BUILD_SHA: process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev',
     NEXT_PUBLIC_DEPLOY_ID: process.env.VERCEL_URL ?? 'local',

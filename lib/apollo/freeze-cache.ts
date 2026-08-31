@@ -67,6 +67,11 @@ export type LoadEventKind =
   | 'window' | 'silent' | 'window-error' | 'layer-error' | 'job-error'
   | 'retry' | 'stall' | 'reset' | 'paused' | 'resumed' | 'gave-up'
   | 'server-on' | 'server-off'
+  // ⚠️ Deliberately not in FAILURE_KINDS. The server declining a part — because
+  // it needs samples that live only on this machine — is a normal answer, and
+  // the clip plays live. Filing it as a failure is what made "gave up trying"
+  // read like a broken loader instead of a missing feature.
+  | 'server-refused'
 
 export interface LoadEvent {
   t: number             // ms since the page loaded — comparable with everything else
@@ -412,6 +417,38 @@ function setProjectNeed(frames: number): void {
   // A little headroom so re-rendering one clip can't immediately evict another.
   MAX_FRAMES = Math.min(DEVICE_CEILING, Math.max(48_000 * 60, Math.ceil(frames * 1.1)))
 }
+
+// ── Real time by default ────────────────────────────────────────────────────
+//
+// Brae: "prerendering seems to be increasing the work needed. Let's switch to
+// real time and continuous on the computer instead of cached."
+//
+// ⚠️ Prerendering is OFF. Every clip in the project used to be rendered through
+// an OfflineAudioContext on load, before a note had been played — measured at
+// 25.7s for a 21-clip, 6-track song (scripts/check-load-speed.mjs), with the
+// main thread blocked in chunks throughout.
+//
+// That work only ever bought CHEAPER PLAYBACK, and it was buying something the
+// app already had. Apollo is an AudioWorklet: live playback runs on the audio
+// thread and costs the main thread nothing. The bake is the opposite — it runs
+// on the main thread and is what makes the studio lock up. So the loading bar
+// was spending real, visible time up front to avoid a cost that mostly was not
+// there, on every open, for parts of the song the listener might never reach.
+//
+// No DAW does this. Ableton opens a set and plays it; instruments are computed
+// live, audio streams from disk, and Freeze is a per-track command you invoke
+// when a track is genuinely too expensive. That is the model here now: play
+// live, and freeze when asked.
+//
+// The cache itself is kept in full — it is correct, it is well tested, and it
+// is exactly what an explicit freeze and the offline/weak-device path want. It
+// is simply no longer something that happens to you on open.
+let prerender = false
+
+/** Turn the automatic bake back on (an explicit freeze, or a device that has
+ *  asked for it). Off is the default and the intended state. */
+export function setPrerender(on: boolean): void { prerender = on }
+export function prerenderOn(): boolean { return prerender }
 
 export function combinedStamp(clip: MidiClip, patch: ApolloPatch, bpm: number): string {
   // The clip id is in the key so two clips that happen to hold identical notes
@@ -1315,29 +1352,149 @@ async function bake(bpm: number, groups: TrackRenderGroup[], wanted: Want[], job
  * the honest thing is to say so and let the song play live, which it does
  * perfectly well. Pretending to load would be worse than the wait.
  */
-async function fetchServerRenders(wanted: Want[]): Promise<number> {
+async function fetchServerRenders(
+  wanted: Want[],
+  bpm: number,
+  onProgress?: (done: number) => void,
+): Promise<number> {
   let got = 0
-  let missing = 0
-  for (const w of wanted) {
-    if (buffers.has(w.key)) continue
+  let made = 0
+  const refused = new Map<string, number>()
+
+  // Rendering a clip on the server costs a second or two, so asking for them
+  // one at a time turns a 23-clip song into a minute of waiting. Small batches:
+  // enough to hide the latency, not so many that one song monopolises the
+  // renderer.
+  const BATCH = 4
+  const queue = wanted.filter(w => !buffers.has(w.key))
+
+  for (let i = 0; i < queue.length; i += BATCH) {
     if (!serverLoading) break        // switched off mid-run
-    try {
-      const res = await fetch(`/api/render-clip?stamp=${encodeURIComponent(w.key)}`)
-      if (res.status === 404) { missing++; continue }
-      if (!res.ok) { logEvent('window-error', { detail: `server render ${res.status}` }); break }
-      const buf = await audioFromBytes(await res.arrayBuffer())
-      if (buf) { buffers.set(w.key, buf); got++ }
-    } catch (err) {
-      logEvent('window-error', { detail: `server render: ${String(err).slice(0, 90)}` })
-      break
-    }
+    await Promise.all(queue.slice(i, i + BATCH).map(async w => {
+      if (buffers.has(w.key) || !serverLoading) return
+      try {
+        // Already rendered by somebody, somewhere: the whole point.
+        const res = await fetch(`/api/render-clip?stamp=${encodeURIComponent(w.key)}`)
+        if (res.ok) {
+          const buf = await audioFromBytes(await res.arrayBuffer())
+          if (buf) { buffers.set(w.key, buf); got++; onProgress?.(got) }
+          return
+        }
+        if (res.status !== 404) {
+          logEvent('window-error', { detail: `server render ${res.status}` })
+          return
+        }
+        // ⚠️ This is the part that used to be missing, and the whole reason
+        // server loading "gave up trying": a 404 was the end of the road,
+        // because nothing anywhere ever MADE a render. Now a miss is a request.
+        const body = await res.json().catch(() => null) as { renderer?: boolean } | null
+        if (!body?.renderer) { bump(refused, 'no-renderer'); return }
+
+        const made_ = await fetch('/api/render-clip', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ key: w.key, clipId: w.clip.id, notes: w.clip.notes, patch: w.patch, bpm }),
+        })
+        if (!made_.ok) { logEvent('window-error', { detail: `server render ${made_.status}` }); return }
+
+        // A refusal comes back as JSON and a render as audio. Both are 200:
+        // being told "not this one, and here is why" is a normal answer, not a
+        // failure, and the clip simply plays live.
+        if ((made_.headers.get('content-type') ?? '').includes('json')) {
+          const why = await made_.json().catch(() => null) as { reason?: string } | null
+          bump(refused, why?.reason ?? 'refused')
+          return
+        }
+        const buf = await audioFromBytes(await made_.arrayBuffer())
+        if (buf) { buffers.set(w.key, buf); got++; made++; onProgress?.(got) }
+      } catch (err) {
+        logEvent('window-error', { detail: `server render: ${String(err).slice(0, 90)}` })
+      }
+    }))
   }
-  if (missing) {
-    logEvent('gave-up', {
-      detail: `${missing} part${missing === 1 ? '' : 's'} have not been rendered on the server — playing those live`,
+
+  if (made) logEvent('layer-done', { detail: `the server rendered ${made} part${made === 1 ? '' : 's'}` })
+  if (refused.size) {
+    // ⚠️ Not 'gave-up'. Giving up is what this did when there was no renderer,
+    // and it belongs to the honest-failure kinds that colour the log red and
+    // count against the load in the admin report. A part the server declines —
+    // because it needs samples only this machine has, say — is a part that
+    // plays live, which is the normal, working state of the studio.
+    logEvent('server-refused', {
+      detail: [...refused].map(([why, n]) => `${n} ${SERVER_REFUSALS[why] ?? why}`).join(', '),
     })
   }
   return got
+}
+
+function bump(m: Map<string, number>, k: string): void { m.set(k, (m.get(k) ?? 0) + 1) }
+
+/**
+ * Save this project's audio for offline use — the manual, deliberate one.
+ *
+ * Brae: "We still want server rendering to work so that users can save their
+ * projects from the cloud for offline use... But it will be manual."
+ *
+ * ⚠️ This is the ONLY thing that should ever reach for the server now. It is
+ * not a loading strategy and it is not a fallback for a slow machine: playback
+ * is real time and stays that way. This is a person deciding, once, that they
+ * want this song on this device with no network — the aeroplane case.
+ *
+ * What it does: asks the server for every clip (rendering the ones nobody has
+ * rendered yet), then writes them into local storage so the next open finds
+ * them already there. Nothing here touches the transport, so it is safe to run
+ * while the song plays — the renders arrive in the cache and are used the next
+ * time each clip comes round.
+ */
+export async function saveForOffline(
+  bpm: number,
+  groups: TrackRenderGroup[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ saved: number; total: number; alreadyHad: number }> {
+  const wanted = wantsOf(groups, bpm)
+  if (!wanted.length) return { saved: 0, total: 0, alreadyHad: 0 }
+
+  // Anything already on this device is already offline — no point paying for it
+  // twice, and on a second run this makes the whole thing a no-op.
+  const alreadyHad = await loadFromDisk(wanted)
+  const missing = wanted.filter(w => !buffers.has(w.key))
+  onProgress?.(alreadyHad, wanted.length)
+
+  // fetchServerRenders reads `serverLoading` as its own kill switch, so it has
+  // to be on for the length of this — but only for the length of this, and it
+  // goes back however it was found rather than however it "should" be.
+  const was = serverLoading
+  serverLoading = true
+  let got = 0
+  try {
+    got = await fetchServerRenders(missing, bpm, done => onProgress?.(alreadyHad + done, wanted.length))
+  } finally {
+    serverLoading = was
+  }
+
+  // Landing in `buffers` makes a clip playable NOW; writing it down is what
+  // makes it playable next week on a plane.
+  let saved = 0
+  for (const w of wanted) {
+    const buf = buffers.get(w.key)
+    if (!buf) continue
+    try { await keepForNextTime(w.key, buf); saved++ } catch { /* no storage — it still plays live */ }
+  }
+  logEvent('layer-done', {
+    detail: `saved ${saved} of ${wanted.length} parts for offline use`,
+  })
+  return { saved, total: wanted.length, alreadyHad: alreadyHad + got - got }
+}
+
+/** Why the server would not render a part, in words rather than codes. */
+const SERVER_REFUSALS: Record<string, string> = {
+  'needs-samples': 'use sounds from your library, so they stay on this machine',
+  'too-big': 'are too long to render on the server',
+  'stamp-mismatch': 'did not match their fingerprint',
+  'render-failed': 'the server could not render',
+  'silent': 'came back silent from the server',
+  'empty': 'have no notes',
+  'no-renderer': 'have not been rendered and the server cannot make them',
 }
 
 /** Decode bytes from the server into a buffer this cache can hold. */
@@ -1360,7 +1517,12 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
       serverFetchRunning = true
       const wantedNow = wantsOf(groups, bpm)
       setProgress({ done: 0, total: wantedNow.length, active: true, phase: 'head', layer: 'Loading from the server' })
-      void fetchServerRenders(wantedNow).then(got => {
+      // Server rendering takes real seconds now that it actually renders, so the
+      // bar has to move while it does — a frozen bar is how this looked when it
+      // was doing nothing at all.
+      void fetchServerRenders(wantedNow, bpm, done =>
+        setProgress({ done, total: wantedNow.length, active: true, phase: 'head', layer: 'Loading from the server' }),
+      ).then(got => {
         serverFetchRunning = false
         setProgress({ done: got, total: wantedNow.length, active: false, phase: 'idle', layer: undefined })
       })

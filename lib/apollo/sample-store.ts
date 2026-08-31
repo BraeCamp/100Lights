@@ -69,7 +69,7 @@ async function decodeSpectralBlob(blob: Blob): Promise<SpectralAnalysis> {
   }
 }
 
-function referencedSampleIds(patch: ApolloPatch): string[] {
+export function referencedSampleIds(patch: ApolloPatch): string[] {
   const ids = new Set<string>()
   for (const o of patch.oscs) {
     if (o.smp.sampleId) ids.add(o.smp.sampleId)

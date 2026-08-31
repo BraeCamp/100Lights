@@ -17,7 +17,7 @@ import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music
 import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain } from './apollo/daw-instrument'
 import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam } from './beacon-plugins/host'
 import type { PluginInstrumentParams } from './beacon-plugins/types'
-import { combined, combinedStale, combinedStamp, requestCombine, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
+import { combined, combinedStale, combinedStamp, requestCombine, prerenderOn, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
 import { fatPatch } from './apollo/patch-diff'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
@@ -1127,7 +1127,11 @@ export class DawEngine extends EventTarget {
     // could never finish: the song stayed on the live path and stayed
     // unplayable. Must come AFTER _tracks is assigned above. Skipped for offline
     // contexts, which render the real synth path and must stay reproducible.
-    if (!('startRendering' in this.ctx)) this._requestCombineAll()
+    // ⚠️ Only when prerendering is asked for, which it is not by default. This
+    // line is what made opening a song a 25-second load: every clip baked
+    // through an OfflineAudioContext before a note was played. Live playback
+    // runs in the worklet and needs none of it. See setPrerender().
+    if (prerenderOn() && !('startRendering' in this.ctx)) this._requestCombineAll()
     // Pre-warm sample-oscillator buffers for poly instruments — same reason as
     // preset buffers: a lazily-loaded sample would miss its first note.
     setApolloCtxTempo(this.ctx, project.tempo)
@@ -2018,7 +2022,7 @@ export class DawEngine extends EventTarget {
     // would mean the new sound never gets built at all, and the old one plays
     // forever. Asked ONCE: the miss path below used to ask a second time for the
     // same clip in the same pass.
-    if (!exact) requestCombine(this.tempo, this._apolloGroups())
+    if (!exact && prerenderOn()) requestCombine(this.tempo, this._apolloGroups())
     const buf = exact ?? combinedStale(clip.id)
     if (!buf) {
       // Not ready (or the notes/patch just changed, so the stamp moved) — ask
