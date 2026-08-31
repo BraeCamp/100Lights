@@ -34,6 +34,7 @@ import {
   type MusicMaps, type MusicPosition, type MusicDuration,
 } from './position'
 import { beatToSeconds } from '../tempo-map'
+import { LOWPASS_HZ, HIGHPASS_HZ } from '../daw-effect-params'
 import { nameChord, groupIntoChords } from '../chord-analysis'
 
 export interface VoiceCall { name: string; input: Record<string, unknown> }
@@ -56,24 +57,25 @@ export interface VoicePlan {
 /**
  * Where a spoken fraction of a filter sweep actually lands, in Hertz.
  *
- * The same curve the piano roll's own filters use (roll-fx's LP and HP), and
- * logarithmic because that is how a cutoff is heard: halfway between 200 Hz and
- * 18 kHz by ear is around 1.9 kHz, not 9 kHz. A linear sweep spends most of its
- * travel in the top octave, where almost nothing happens, and then falls off a
- * cliff at the end.
+ * The RANGE comes from lib/daw-effect-params, which is also what the track's
+ * automation menu offers, so a sweep somebody speaks and one they draw by hand
+ * mean the same thing. They were two copies for about an hour, which is exactly
+ * long enough for a curve to drift.
  *
- * Stated here rather than imported because roll-fx exports the whole FX_FIELDS
- * table and this needs two numbers from it — but they are the SAME two numbers,
- * and the check asserts that rather than trusting this comment.
+ * The CURVE is logarithmic because that is how a cutoff is heard: halfway
+ * between 200 Hz and 18 kHz by ear is around 1.9 kHz, not 9 kHz. A linear sweep
+ * spends most of its travel in the top octave, where almost nothing happens,
+ * and then falls off a cliff at the end.
  */
-const logHz = (min: number, mult: number) => ({
-  min,
-  max: Math.round(min * mult),
-  fromNorm: (n: number) => Math.round(min * Math.pow(mult, Math.max(0, Math.min(1, n)))),
+const logRange = (r: { min: number; max: number }) => ({
+  min: r.min,
+  max: r.max,
+  fromNorm: (n: number) =>
+    Math.round(r.min * Math.pow(r.max / r.min, Math.max(0, Math.min(1, n)))),
 })
 const FILTER_HZ = {
-  lowpass: logHz(200, 90),   // 200 Hz → 18 kHz (fully open)
-  highpass: logHz(20, 100),  // 20 Hz (open) → 2 kHz
+  lowpass: logRange(LOWPASS_HZ),
+  highpass: logRange(HIGHPASS_HZ),
 } as const
 
 /** A cutoff, said the way a person would say it. */

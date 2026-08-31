@@ -25,6 +25,7 @@ import ClipView from './ClipView'
 import { DEFAULT_KIT, DRUM_PATTERNS, patternToNotes } from '@/lib/drum-presets'
 import EffectLaneView, { EFFECT_H } from './EffectLane'
 import DeviceChain from './DeviceChain'
+import { automatableParams, primaryParam, shortName } from '@/lib/daw-effect-params'
 import IsolateModal from './IsolateModal'
 import ClipSettingsModal from './ClipSettingsModal'
 // Lazy: STFT worker + editor UI only load when the spectral editor is opened
@@ -204,6 +205,94 @@ function snapToClipEdges(beat: number, excludeIds: Set<string>, thresholdBeats: 
   return nearest
 }
 
+/** How many device chips fit on a track head before it is a smear. */
+const CHIP_LIMIT = 2
+
+/**
+ * The device chain, visible on the track itself.
+ *
+ * Brae: "Can we make the visual for the device chain easier for users to see on
+ * tracks? I also want them to be editable under tracks so that users can adjust
+ * the graph of all active device chain effects in line with the track."
+ *
+ * It was invisible. A track carrying an EQ, a compressor and a filter looked
+ * exactly like an empty one — the only way to find out was to select the track
+ * and read the panel below, which means you cannot compare two tracks at a
+ * glance, and comparing tracks at a glance is most of what a track head is for.
+ *
+ * One chip per device, in chain order, bypassed ones struck through. Clicking
+ * one opens a lane for that device's main parameter directly under this track,
+ * so the thing you can see is the thing you can edit; clicking again takes it
+ * away. Anything past the first couple becomes a count rather than a smear —
+ * silently clipping the fourth would let the row claim the chain ends where the
+ * space does.
+ */
+function DeviceChips({ track }: { track: DawTrack }) {
+  const { project, dispatch, setSelectedTrackId } = useDaw()
+  if (!track.effects.length) return null
+
+  return (
+    <div
+      onClick={e => e.stopPropagation()}
+      style={{ display: 'flex', gap: 2, alignItems: 'center', minWidth: 0, flexShrink: 0 }}
+    >
+      {track.effects.length > CHIP_LIMIT && (
+        <button
+          onClick={() => setSelectedTrackId(track.id)}
+          title={`${track.effects.length} devices — open the chain in Devices`}
+          style={{
+            fontSize: 7, height: 12, padding: '0 3px', borderRadius: 2, flexShrink: 0,
+            border: '1px solid var(--border)', background: 'var(--bg-surface)',
+            color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 700,
+          }}
+        >+{track.effects.length - CHIP_LIMIT}</button>
+      )}
+      {track.effects.slice(0, CHIP_LIMIT).map(e => {
+        const prm = primaryParam(e)
+        const parameter = prm ? `fx:${e.id}:${prm.key}` : null
+        const lane = parameter
+          ? project.automationLanes.find(l => l.trackId === track.id && l.parameter === parameter)
+          : null
+        const off = (e.params as unknown as { enabled?: boolean })?.enabled === false
+        return (
+          <button
+            key={e.id}
+            onClick={() => {
+              if (!prm || !parameter) { setSelectedTrackId(track.id); return }
+              if (lane) { dispatch({ type: 'REMOVE_AUTOMATION_LANE', laneId: lane.id }); return }
+              dispatch({
+                type: 'ADD_AUTOMATION_LANE',
+                lane: {
+                  id: crypto.randomUUID(), trackId: track.id, parameter,
+                  label: `${shortName(e.type)} ${prm.label}`,
+                  // ⚠️ The parameter's OWN range. An automation value reaches the
+                  // effect unchanged, so these are units, not drawing hints — a
+                  // filter lane declared 0–1 sets the cutoff to a fraction of a
+                  // Hertz and silences the track.
+                  min: prm.min, max: prm.max,
+                  defaultValue: Number((e.params as unknown as Record<string, unknown>)?.[prm.key] ?? prm.min),
+                  points: [], expanded: true,
+                },
+              })
+            }}
+            title={prm
+              ? `${shortName(e.type)}${off ? ' (bypassed)' : ''} — ${lane ? 'hide' : 'draw'} ${prm.label.toLowerCase()} under this track`
+              : `${shortName(e.type)} — open the device chain`}
+            style={{
+              fontSize: 7, height: 12, padding: '0 3px', borderRadius: 2, flexShrink: 0,
+              border: `1px solid ${lane ? 'var(--accent)' : 'var(--border)'}`,
+              background: lane ? 'rgb(var(--accent-rgb) / 0.25)' : 'var(--bg-surface)',
+              color: off ? 'var(--text-muted)' : lane ? 'var(--accent-light)' : 'var(--text-secondary)',
+              textDecoration: off ? 'line-through' : 'none',
+              cursor: 'pointer', fontWeight: 700, letterSpacing: 0.2,
+            }}
+          >{shortName(e.type)}</button>
+        )
+      })}
+    </div>
+  )
+}
+
 function AddAutoButton({ track }: { track: DawTrack }) {
   const { project, dispatch } = useDaw()
   const [open, setOpen]       = useState(false)
@@ -216,7 +305,28 @@ function AddAutoButton({ track }: { track: DawTrack }) {
   const opts: { label: string; parameter: string; min: number; max: number; def: number }[] = [
     { label: 'Volume', parameter: 'volume', min: 0, max: 1, def: track.volume },
     { label: 'Pan',    parameter: 'pan',    min: -1, max: 1, def: track.pan },
-    ...track.effects.map(e => ({ label: `${e.type.toUpperCase()} Wet`, parameter: `fx:${e.id}:wet`, min: 0, max: 1, def: 0.5 })),
+    // ── Every device parameter worth drawing, not just its wet ──────────
+    //
+    // Brae: "I want them to be editable under tracks so that users can adjust
+    // the graph of all active device chain effects in line with the track."
+    //
+    // This offered `:wet` and nothing else, which meant a filter cutoff could
+    // not be automated by hand at all — the voice command was the only thing in
+    // the studio that ever produced one. The lane type and the engine have both
+    // always handled any paramKey; only the menu was narrow.
+    //
+    // ⚠️ The min and max come from the shared table because they are the UNITS,
+    // not drawing hints: an automation value reaches the effect unchanged, so a
+    // filter lane declared 0–1 sets the cutoff to a fraction of a Hertz and
+    // silences the track. That is not hypothetical — it is the bug Brae found
+    // in the spoken version of this same feature.
+    ...track.effects.flatMap(e => automatableParams(e).map(prm => ({
+      label: `${shortName(e.type)} ${prm.label}`,
+      parameter: `fx:${e.id}:${prm.key}`,
+      min: prm.min,
+      max: prm.max,
+      def: Number((e.params as unknown as Record<string, unknown>)?.[prm.key] ?? prm.min),
+    }))),
     // Apollo tracks: automate the patch's own 8 performance macros
     ...(apolloParams ? [0, 1, 2, 3, 4, 5, 6, 7].map(i => ({
       label: apolloParams.macroNames?.[i] || `Macro ${i + 1}`,
@@ -1053,6 +1163,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 {track.name}
               </span>
             )}
+            <DeviceChips track={track} />
             {/* Voice chain badge — podcast mode only */}
             {audioMode === 'podcast' && track.effects.length > 0 && (
               <span title="Voice chain active" style={{
