@@ -1291,7 +1291,15 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
           const lib = heard?.library ?? []
           if (!lib.length) return { actions: [], say: 'I cannot see your library from here.' }
           const words = characterWordsIn(target || '')
-          if (!words.length) {
+          const saidLower = (target || '').toLowerCase()
+          const namedInstrument = ['piano', 'organ', 'guitar', 'strings', 'brass', 'mallets',
+            'woodwind', 'synth', 'drum', 'bass', 'keys', 'pad', 'lead']
+            .some(g => new RegExp(`\\b${g}s?\\b`).test(saidLower))
+          // ⚠️ The overview is what you get when nothing was asked for. It was
+          // checked before the instrument words, so "what pianos do I have"
+          // fell into it — no tag word in the sentence, therefore treated as
+          // no question at all.
+          if (!words.length && !namedInstrument) {
             const groups = new Map<string, number>()
             for (const p of lib) for (const t of presetTags(p)) groups.set(t, (groups.get(t) ?? 0) + 1)
             const top = [...groups.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
