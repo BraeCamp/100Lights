@@ -37,6 +37,8 @@ import { importTs } from '../lib/ts-import.mjs'
 const { VOICE_COMMANDS, COMMAND_VOCABULARY, commandHelp, COMMANDS_BY_ID } =
   await importTs('lib/voice/commands.ts')
 const { COMMAND_SUMMARIES } = await importTs('lib/voice/command-summaries.ts')
+const { initPatch } = await importTs('lib/apollo/patch.ts')
+const APOLLO_PATCH = initPatch()
 const { interpret } = await importTs('lib/voice/interpret.ts')
 const { planVoiceCall } = await importTs('lib/voice/execute-music.ts')
 const { MUSIC_TOOL_NAMES } = await importTs('lib/voice/music-tools.ts')
@@ -87,7 +89,10 @@ const PROJECT = {
   // nothing either way, and the suite would bless the broken version.
   tracks: [track('t1', 'Bass 2'), track('t2', 'Pad', 0.5), track('t3', 'Drums'),
     track('t4', 'Guitar', 0.8, { mute: true }), track('t5', 'Vocals'),
-    track('t6', 'Lead', 0.8, { solo: true }), track('t7', 'Keys')].map(t =>
+    track('t6', 'Lead', 0.8, { solo: true }), track('t7', 'Keys'),
+    // Apollo, because the sub and noise layers only exist on an Apollo patch
+    // and there was no such track to point an example at.
+    track('t8', 'Synth', 0.8, { instrument: { type: 'apollo', params: APOLLO_PATCH } })].map(t =>
     // Effects on SOME tracks, not all. Both cases have to exist in one project:
     // "take the reverb off the drums" needs a reverb to take off, and "put
     // reverb on the vocals" needs a track that has not got one — a fixture
@@ -115,6 +120,7 @@ const PROJECT = {
     clip('c4', 't4', 'Guitar clip', 4, 52),
     clip('c5', 't5', 'Vocals clip', 4, 64),
     clip('c6', 't6', 'Lead clip', 8, 72),
+    clip('c8', 't8', 'Synth clip', 0, 64),
     // ⚠️ On its OWN track. Putting it on the Pad gave that track two clips,
     // which made "the pad" ambiguous and broke transpose and duplicate_clip —
     // a fixture addition that quietly changed what other examples mean.

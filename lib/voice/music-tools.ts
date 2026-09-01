@@ -133,7 +133,7 @@ export const MUSIC_TOOLS = [
   },
   {
     name: 'set_tempo',
-    description: 'TEMPO — change the song tempo in BPM. "take it to 128", "slow down to 90".',
+    description: 'TEMPO — change the song tempo in BPM. "take it to 128", "slow down to 90". ⚠️ The SONG\'s speed, and nothing else. If the sentence names a TRACK it is not this tool — "the pad should be lower" is that track\'s volume (set_track), not the tempo, and "lower" never means slower when something is named.',
     input_schema: {
       type: 'object',
       properties: {
@@ -242,6 +242,26 @@ export const MUSIC_TOOLS = [
       required: ['pattern'],
     },
   },
+  {
+    name: 'set_apollo_layer',
+    description:
+      'APOLLO\'S OWN LAYERS — the sub, the noise, and the three oscillators inside an Apollo instrument. "add sub to the pad", "more sub on the bass", "turn the noise up", "take the sub off", "bring in oscillator two", "drop the sub an octave". ⚠️ This is INSIDE the instrument, not an effect after it and not a separate track: adding sub here thickens the sound the pad already makes. Only Apollo instruments have these layers; the studio will say so for anything else rather than pretend.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        layer: {
+          type: 'string',
+          description: 'sub, noise, or "osc 1" / "osc 2" / "osc 3". "Sub" is the commonest by far.',
+        },
+        on: { type: 'boolean', description: 'True to bring it in, false to take it out. Adding implies true.' },
+        level: { type: 'number', description: '0-100. Omit for a sensible default when switching it on.' },
+        octave: { type: 'number', description: 'For the sub: -2 or -1. Omit to leave it.' },
+      },
+      required: ['layer'],
+    },
+  },
+
   // ── The rest of the audit's open list ────────────────────────────────────
   //
   // Brae: "Let's build the 'still open' ones for AI"
@@ -1148,6 +1168,13 @@ export const MUSIC_SYSTEM_HINT = [
   // failure — the natural instinct is to tidy "boom ka" into "boom car" or to
   // ask what was meant. They are the request.
   'DRUM SYLLABLES ARE A BEAT, NOT A MISHEARING. "boom", "ka", "doom", "ts", "tss", "pah", "bap" and the like are somebody saying a rhythm out loud. "Can you make a beat like boom ka boom ka" is a make_beat call with pattern "boom ka boom ka". Pass the syllables through EXACTLY as they were said — do not correct them into real words, and do not ask what they meant. The rhythm comes from when they were said, so you only need to report which syllables there were, in order.',
+  // Brae: "I told it that the pad should be lower and to add sub to pad in
+  // Apollo and it just changed the tempo." Both sentences named a track. A
+  // model that cannot find the right tool reaches for a neighbouring one far
+  // more readily than it refuses, and the global commands are the most
+  // dangerous neighbours there are — they change everything at once and look
+  // nothing like what was asked for.
+  'IF THE SENTENCE NAMES A TRACK, THE COMMAND IS ABOUT THAT TRACK. Never answer a sentence that names a track with a song-wide change — set_tempo, set_time_signature, set_key_scale, set_master_volume and set_swing are about the WHOLE SONG and are almost never what somebody naming one track meant. "The pad should be lower" is the pad\'s volume. If you cannot find a tool for what they asked about that track, SAY SO in one sentence — a wrong global change is far worse than an admission, because it is loud, immediate and affects everything they have made.',
   'POINTING BEATS REMEMBERING. If the state summary says something was selected just now, "this track", "that clip", "it" and "here" mean the thing that is selected — even when an earlier message in this conversation was about something else. Somebody who clicks a track and then says "mute this" has told you which track twice, and the click is the more recent of the two.',
   'Percentages are 0-100. If a request is ambiguous or no tool fits, say so in one short sentence instead of guessing.',
 ].join(' ')

@@ -620,6 +620,9 @@ const COMMANDS: VoiceCommand[] = [
       // Same trap with feel words: "loosen UP the pad" is a groove, not a
       // level. "Up" is the most overloaded word in the vocabulary.
       if (w.has('loosen', 'groove', 'shuffle', 'feel')) return null
+      // And once more for Apollo's layers: "MORE sub on the pad" is the sub
+      // oscillator coming in, not the track fader going up.
+      if (w.has('sub', 'subs', 'noise', 'oscillator', 'osc')) return null
       if (EFFECTS.some(e => w.has(e))) return null
       const up = w.has(...UP)
       const down = w.has(...DOWN)
@@ -1085,6 +1088,39 @@ const COMMANDS: VoiceCommand[] = [
       }
     },
   },
+  {
+    id: 'set_apollo_layer',
+    tool: 'set_apollo_layer',
+    group: 'Notes',
+    what: 'Bring in Apollo\'s sub, noise or oscillators',
+    say: ['add sub to the synth', 'more sub on the synth', 'take the sub off the synth'],
+    match(w, ctx) {
+      const layer = w.has('sub', 'subs') ? 'sub'
+        : w.has('noise') ? 'noise'
+          : (w.has('oscillator', 'osc') && w.num() != null) ? `osc ${w.num()}` : null
+      if (!layer) return null
+      // A track has to be named, or "more sub" is about the mix and belongs to
+      // whoever asked for it rather than to a guess.
+      const named = nameOrSelected(w, ctx, ['add', 'more', 'less', 'take', 'off', 'bring',
+        'in', 'to', 'the', 'a', 'some', 'on', 'up', 'down', 'turn', 'sub', 'subs',
+        'noise', 'oscillator', 'osc', 'apollo'], { dropNums: true })
+      if (!named) return null
+      const off = w.has('off', 'remove', 'without') || (w.has('take') && w.has('out'))
+      const n = w.num()
+      return {
+        calls: [{
+          name: 'set_apollo_layer',
+          input: {
+            target: named.name, layer,
+            ...(off ? { on: false } : { on: true }),
+            ...(n != null && !/osc/.test(layer) ? { level: n } : {}),
+          },
+        }],
+        confidence: 0.9,
+      }
+    },
+  },
+
   // ── The rest of the audit's open list ────────────────────────────────────
   //
   // Built for the assistant first — the tool descriptions carry the weight —

@@ -1829,6 +1829,60 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── APOLLO'S OWN LAYERS ─────────────────────────────────────────────
+    //
+    // Brae: "I told it to 'add sub to pad in Apollo' and it just changed the
+    // tempo."
+    //
+    // ⚠️ There was no tool for this at all, which is the actual fault. A model
+    // with nothing right to reach for reaches for something wrong far more
+    // readily than it refuses — and the tempo is the worst possible neighbour,
+    // because it is loud, immediate and changes everything at once.
+    case 'set_apollo_layer': {
+      const track = resolveTrack(target, project) ?? (target ? null : null)
+      if (!track) return fail(`Say which track — "add sub to the pad".`)
+      const inst = track.instrument
+      if (inst?.type !== 'apollo') {
+        // Honest about WHY, and about what would fix it. "I can't" with no
+        // reason is the answer that sends somebody looking for a bug.
+        return fail(
+          `${track.name} is ${inst?.type === 'drum' ? 'a drum kit' : `a ${inst?.type ?? 'plain'} instrument`}, `
+          + 'and the sub and noise layers belong to Apollo. Put an Apollo instrument on it first.',
+        )
+      }
+
+      const said = str(i.layer).toLowerCase().trim()
+      const oscMatch = /(?:osc|oscillator)\s*([123])/.exec(said)
+      const which = oscMatch ? `osc${oscMatch[1]}` : /noise/.test(said) ? 'noise' : /sub|low|bottom/.test(said) ? 'sub' : null
+      if (!which) return fail(`I don't know a layer called "${str(i.layer)}". There is the sub, the noise, and oscillators 1 to 3.`)
+
+      const patch = JSON.parse(JSON.stringify(inst.params ?? {})) as Record<string, unknown>
+      const node = (oscMatch
+        ? (patch.oscs as Record<string, unknown>[] | undefined)?.[Number(oscMatch[1]) - 1]
+        : patch[which] as Record<string, unknown> | undefined)
+      if (!node) return fail(`That patch has no ${which === 'sub' ? 'sub' : which} to bring in.`)
+
+      const pct = spokenNumber(i.level as string)
+      // Asking for it at all means switching it on. "Add sub" with `on` unsaid
+      // is the commonest phrasing there is, and reading it as "leave it off but
+      // set its level" would be a command that does nothing audible.
+      const on = i.on === false ? false : true
+      node.enabled = on
+      if (pct != null) node.level = clamp(pct / 100, 0, 1)
+      else if (on && ((node.level as number) ?? 0) <= 0) node.level = 0.5
+
+      const oct = spokenNumber(i.octave as string)
+      if (oct != null && which === 'sub') node.octave = clamp(Math.round(oct), -3, 0)
+
+      const label = which === 'sub' ? 'sub' : which === 'noise' ? 'noise' : `oscillator ${oscMatch![1]}`
+      return {
+        actions: [{ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { ...inst, params: patch } }],
+        say: on
+          ? `${label} on ${track.name} at ${Math.round(((node.level as number) ?? 0.5) * 100)}%.`
+          : `Took the ${label} off ${track.name}.`,
+      }
+    }
+
     // ── A DIAL INSIDE A DEVICE ──────────────────────────────────────────
     //
     // ⚠️ Reads the SAME registry the automation lanes and the device UI read
