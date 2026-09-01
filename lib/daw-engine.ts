@@ -157,6 +157,21 @@ export class DawEngine extends EventTarget {
   // main cause of playback stutter in dense arrangements. Torn down on stop /
   // project change; rebuilt if the clip's sound signature changes.
   private _clipFxChains = new Map<string, { input: AudioNode; nodes: AudioNode[]; tailSec: number; sig: string }>()
+  /**
+   * Effect-bar chains built ONCE PER CLIP, for worklet instruments only.
+   *
+   * ⚠️ A per-note chain means a per-note ENGINE for Apollo and plugins, because
+   * they key one persistent worklet per destination node. And a per-note effect
+   * is not something a shared engine can express anyway: Apollo sums all its
+   * voices into one output, so the only way the old code could give each note
+   * its own chain was to give each note its own synth. Measured at 13 engines
+   * for four clips with one clip effect on ONE track, climbing for as long as
+   * the transport ran.
+   *
+   * So for those instruments the clip's bars are built once and every note of
+   * the clip plays through them. Torn down with the roll-FX chains.
+   */
+  private _clipBarChains = new Map<string, { input: AudioNode; nodes: AudioNode[]; oscs: OscillatorNode[] }>()
   // Per-clip cache of note occurrences + the unison-skip set. Both are position-
   // INDEPENDENT (clip-relative), yet were recomputed every 25ms scheduler tick —
   // and the unison guard is O(notes²), ~600k ops/tick for a 780-note clip. Cache
@@ -1800,10 +1815,19 @@ export class DawEngine extends EventTarget {
         if (noteStartAt < this.ctx.currentTime - 0.1) continue  // already past
         let noteDest: AudioNode = nodes.midiInput
         if (this._rollFxActive(rfx)) {
-          const chain = this._buildRollFxChain(rfx, noteDest, noteStartAt, noteDur, clip.lfoShape)
-          noteDest = chain.input
-          const ttlMs = (noteStartAt - this.ctx.currentTime + noteDur + sustainSec + chain.tailSec + 1.5) * 1000
-          setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
+          if (this._isWorkletInstrument(track)) {
+            // ⚠️ The SHARED per-clip chain, never a private one. See
+            // _isWorkletInstrument: a per-note destination here means a whole
+            // Helios polysynth per note. The clip's chain is one engine for the
+            // clip, and the filter still applies — what is lost is the envelope
+            // retriggering per note, which is the trade this caps the cost at.
+            noteDest = this._getClipFxChain(clip.id, rfx, nodes.midiInput, clip.lfoShape).input
+          } else {
+            const chain = this._buildRollFxChain(rfx, noteDest, noteStartAt, noteDur, clip.lfoShape)
+            noteDest = chain.input
+            const ttlMs = (noteStartAt - this.ctx.currentTime + noteDur + sustainSec + chain.tailSec + 1.5) * 1000
+            setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
+          }
         }
         if (clip.presetId) {
           const bufKey = `${clip.presetId}:${note.pitch}`
@@ -2471,6 +2495,17 @@ export class DawEngine extends EventTarget {
           }
           if (overlapping.length > 0) {
             clipEffectActive = true
+            // ⚠️ ONE CHAIN FOR THE WHOLE CLIP when the instrument is a worklet.
+            // See _clipBarChains: a fresh entry node per note is a fresh Apollo
+            // engine per note. Keyed by which bars are in play, so editing them
+            // builds a new chain rather than reusing a stale one.
+            const barKey = this._isWorkletInstrument(track)
+              ? `${clip.id}|${overlapping.map(e => e.id).join(',')}`
+              : null
+            const shared = barKey ? this._clipBarChains.get(barKey) : undefined
+            if (shared) {
+              noteDest = shared.input
+            } else {
             const entry = this.ctx.createGain()
             fxCleanup.nodes.push(entry)
             let last: AudioNode = entry
@@ -2484,12 +2519,21 @@ export class DawEngine extends EventTarget {
             }
             last.connect(nodes.midiInput)
             noteDest = entry
+            if (barKey) {
+              // Shared for the clip: it outlives this note, so it is released
+              // with the other cached chains rather than on a per-note timer.
+              this._clipBarChains.set(barKey, {
+                input: entry, nodes: fxCleanup.nodes.slice(), oscs: fxCleanup.oscs.slice(),
+              })
+            } else {
             // Tear the chain down after the note (plus a tail for time-based FX)
             const ttlMs = (startAt - contextNow + remaining + sustainSec + 3) * 1000
             setTimeout(() => {
               for (const o of fxCleanup.oscs)  { try { o.stop(); o.disconnect() } catch { /* ok */ } }
               for (const nd of fxCleanup.nodes) { try { nd.disconnect() } catch { /* ok */ } }
             }, Math.max(0, ttlMs))
+            }   // per-note teardown (non-worklet instruments only)
+            }   // built a fresh chain rather than reusing the clip's
           }
         }
 
@@ -2501,7 +2545,14 @@ export class DawEngine extends EventTarget {
         // that chain used to hold moves onto the note's own gain (`sharedEnv`).
         let sharedEnv = false
         if (this._rollFxActive(rfx)) {
-          const canShare = !note.fx && (rfx.filterEnv ?? 0) === 0 && !clipEffectActive
+          // ⚠️ A worklet instrument shares ALWAYS. The three conditions below are
+          // the reasons a note wants a chain of its OWN — its own FX, a filter
+          // envelope, an overlapping clip effect — and every one of them is a
+          // reason a per-note destination gets built. For Apollo and plugins
+          // that is a polysynth per note, so sharing is not an optimisation
+          // here, it is the difference between playable and not.
+          const canShare = this._isWorkletInstrument(track)
+            || (!note.fx && (rfx.filterEnv ?? 0) === 0 && !clipEffectActive)
           if (canShare) {
             noteDest = this._getClipFxChain(clip.id, rfx, nodes.midiInput, clip.lfoShape).input
             sharedEnv = true
@@ -3279,6 +3330,11 @@ export class DawEngine extends EventTarget {
   private _clearClipFxChains() {
     for (const c of this._clipFxChains.values()) this._teardownFxNodes(c.nodes)
     this._clipFxChains.clear()
+    for (const c of this._clipBarChains.values()) {
+      for (const o of c.oscs) { try { o.stop(); o.disconnect() } catch { /* already stopped */ } }
+      this._teardownFxNodes(c.nodes)
+    }
+    this._clipBarChains.clear()
   }
 
   /** Source-side pitch shaping for a sampled note: fine detune, a pitch-envelope
@@ -3995,6 +4051,32 @@ export class DawEngine extends EventTarget {
       curve[i] = ((Math.PI + k) * x) / (Math.PI + k * Math.abs(x))
     }
     return curve
+  }
+
+  /**
+   * Does this track's instrument live in a persistent AudioWorklet engine?
+   *
+   * ⚠️ THE ONE QUESTION THAT DECIDES WHETHER AN FX CHAIN IS AFFORDABLE.
+   *
+   * Apollo and Beacon plugins each keep ONE engine per destination node, held
+   * in a WeakMap keyed by that node (daw-instrument.ts, beacon-plugins/host.ts).
+   * Sampled and synth voices are the opposite: every note is its own
+   * BufferSource, so giving each one a private FX chain costs a few filters.
+   *
+   * Give a worklet instrument a private chain per note and you have asked for
+   * one whole polysynth per note. Measured on ONE Apollo track with a single
+   * clip effect: 15 live Helios engines after 5s of playing, 45 after 20s, 68
+   * after 40s, each rendering every 128-sample quantum, and nothing reclaiming
+   * them until stop. That is the report - "it just gets slower and slower even
+   * with just one track, cutting the audio every time it slows."
+   *
+   * It was invisible because an AudioWorkletProcessor does not live in the JS
+   * heap: the heap stayed flat at 42.6MB throughout.
+   */
+  private _isWorkletInstrument(track: { id: string } | undefined): boolean {
+    if (!track) return false
+    const t = this._resolveInstrument(track as never)?.type
+    return t === 'apollo' || t === 'plugin'
   }
 
   private _killAllSources() {
