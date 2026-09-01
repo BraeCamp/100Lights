@@ -76,16 +76,17 @@ const run = (name, input) => planVoiceCall({ name, input }, PROJECT)
 
 // ── Halfway means halfway to the ear ───────────────────────────────────────
 {
-  const plan = run('set_apollo_param', { target: 'pad', parameter: 'grain density on osc 1', percent: 50 })
-  const d = patchAfter(plan)?.oscs?.[0]?.gran?.density
-  // Linear halfway on 0.5..200 is 100 grains a second — the top of the useful
-  // range, not the middle of it. Logarithmic halfway is ten.
-  check('"grain density halfway" is a ratio, not a midpoint', d > 5 && d < 15, String(+d.toFixed(2)))
+  // An LFO rate runs 0.01 Hz to 1000 Hz, logarithmically. Linear halfway is
+  // 500 Hz — an audio-rate buzz, not the middle of anything anybody wants.
+  // Logarithmic halfway is about three.
+  const plan = run('set_apollo_param', { target: 'pad', parameter: 'lfo 1 rate', percent: 50 })
+  const r = patchAfter(plan)?.lfos?.[0]?.rate
+  check('"halfway" on a log dial is a ratio, not a midpoint', r > 1 && r < 10, `${+r.toFixed(2)} Hz`)
 
-  const up = run('set_apollo_param', { target: 'pad', parameter: 'grain density on osc 1', direction: 'more' })
-  const before = initPatch().oscs[0].gran.density
-  const after = patchAfter(up)?.oscs?.[0]?.gran?.density
-  check('and "more" moves it by a ratio too', after / before > 1.3, `${before} → ${+after.toFixed(1)}`)
+  const up = run('set_apollo_param', { target: 'pad', parameter: 'lfo 1 rate', direction: 'more' })
+  const before = initPatch().lfos[0].rate
+  const after = patchAfter(up)?.lfos?.[0]?.rate
+  check('and "more" moves it by a ratio too', after / before > 1.3, `${before} → ${+after.toFixed(2)}`)
 }
 
 // ── Refusing in the right two ways ─────────────────────────────────────────
@@ -186,6 +187,101 @@ const run = (name, input) => planVoiceCall({ name, input }, PROJECT)
     if (got?.name !== want) wrong.push(`"${line}" → ${got?.name ?? 'nothing'} (wanted ${want})`)
   }
   check('the sentences reach the right command', wrong.length === 0, wrong.join(' | '))
+}
+
+// ── Nothing reports success while changing nothing you can hear ────────────
+//
+// ⚠️ THE LARGEST TRAP IN THE SURFACE, and it was live. In a DEFAULT patch 84 of
+// the 166 registered parameters sit behind an off switch — including BOTH
+// FILTERS — so "cutoff to 800 hertz", the commonest sentence anybody says to a
+// synth, wrote 800 Hz into a filter that was not running and said "filter 1
+// cutoff: 800 Hz". A refusal would have been better: nothing tells you to look.
+{
+  const audible = [
+    ['filter 1 cutoff', { value: 800 }, p => p.filters[0].enabled],
+    ['filter 2 resonance', { percent: 60 }, p => p.filters[1].enabled],
+    ['sub level', { percent: 40 }, p => p.sub.enabled],
+    ['noise level', { percent: 30 }, p => p.noise.enabled],
+    ['oscillator 3 level', { percent: 50 }, p => p.oscs[2].enabled],
+    // A rate in Hertz is a request for a free-running LFO. While it is synced
+    // to the tempo the rate field is not read at all.
+    ['lfo 2 rate', { value: 5 }, p => p.lfos[1].sync === false],
+    ['scan rate on osc 1', { value: 2 }, p => p.oscs[0].wt.scan.mode !== 'off'],
+  ]
+  const silent = []
+  for (const [parameter, extra, isAudible] of audible) {
+    const plan = run('set_apollo_param', { target: 'pad', parameter, ...extra })
+    const patch = patchAfter(plan)
+    if (!patch || !isAudible(patch)) silent.push(`${parameter}: ${plan.problem ?? 'set but inaudible'}`)
+  }
+  check('every dial it sets is one you can hear', silent.length === 0, silent.join(' | '))
+
+  // ⚠️ And the other half of the judgement. Making these audible would be a
+  // BIGGER decision than the one asked for — switching an oscillator's engine
+  // is a different instrument, not a louder one, and picking a warp mode
+  // chooses a sound nobody asked for. Those explain instead.
+  const gran = run('set_apollo_param', { target: 'pad', parameter: 'grain density on osc 1', value: 40 })
+  check('a granular dial on a wavetable oscillator explains itself',
+    /granular engine/.test(gran.problem ?? ''), gran.problem ?? gran.say)
+  const warp = run('set_apollo_param', { target: 'pad', parameter: 'warp on osc 1', percent: 50 })
+  check('and an amount for a warp that is off names the modes',
+    /warp 1 is off/.test(warp.problem ?? '') && /sync/.test(warp.problem ?? ''), warp.problem ?? warp.say)
+}
+
+// ── The module number is not the value ─────────────────────────────────────
+//
+// ⚠️ "Macro 2 to 70" set macro 2 to TWO PERCENT, and "LFO 2 rate to 5 hertz"
+// set the rate to 2 Hz — which is the default, so it changed nothing and said
+// it had. The first number in "module N dial to V" is the module, every time.
+{
+  const ctx = { tracks: PROJECT.tracks, tempo: 120, clips: [] }
+  const cases = [
+    ['macro 2 to 70 on the pad', p => Math.abs(p.macros[1] - 0.7) < 1e-9, 'macro 2 = 70%'],
+    ['lfo 2 rate to 5 hertz on the pad', p => p.lfos[1].rate === 5, 'LFO 2 = 5 Hz'],
+    ['filter 2 resonance to 40 on the pad', p => Math.abs(p.filters[1].res - 0.4) < 1e-9, 'filter 2 res = 40%'],
+    ['osc 2 detune to 20 on the pad', p => Math.abs(p.oscs[1].detune - 0.2) < 1e-9, 'osc 2 detune = 20%'],
+  ]
+  const wrong = []
+  for (const [line, ok, want] of cases) {
+    const call = interpret(line, ctx).calls[0]
+    const plan = call ? planVoiceCall(call, PROJECT) : null
+    const patch = plan?.actions?.[0]?.instrument?.params
+    if (!patch || !ok(patch)) wrong.push(`"${line}" -> ${plan?.say ?? plan?.problem ?? 'nothing'} (wanted ${want})`)
+  }
+  check('the module number is never read as the value', wrong.length === 0, wrong.join(' | '))
+}
+
+// ── Sentences that must not become the wrong edit ──────────────────────────
+{
+  const ctx = { tracks: PROJECT.tracks, tempo: 120, clips: [] }
+  const cases = [
+    // ⚠️ "Sub level to 40 on the pad" turned the PAD DOWN to 40 percent — a
+    // loud, wrong edit to the mix in answer to a question about the synth.
+    ['sub level to 40 on the pad', 'set_apollo_param'],
+    // ⚠️ And this one switched oscillator 2 ON and never touched the detune,
+    // then said so as though it had done what was asked.
+    ['osc 2 detune to 20 on the pad', 'set_apollo_param'],
+    // Bringing a layer in is still its own command.
+    ['add sub to the pad', 'set_apollo_layer'],
+    ['turn the pad down', 'set_track'],
+    ['pan the pad left', 'set_track'],
+    ['more reverb on the pad', 'set_effect'],
+    // ⚠️ A SWEEP MOVES OVER TIME. "Open the filter" with no duration is a
+    // setting; it was becoming an 8-beat automation lane plus a new effect,
+    // and on a track with no clip, an error instead of an answer.
+    ['open the filter on the pad', 'set_sound'],
+    ['open the filter on the pad over 8 bars', 'automate_parameter'],
+    // A filter model on a track that is not Apollo is a filter DEVICE.
+    ['give the drums a ladder filter', 'add_effect'],
+    // And a device dial belongs to the device, not the instrument.
+    ['filter cutoff to 500 on the drums', 'set_device_param'],
+  ]
+  const wrong = []
+  for (const [line, want] of cases) {
+    const got = interpret(line, ctx).calls[0]
+    if (got?.name !== want) wrong.push(`"${line}" -> ${got?.name ?? 'nothing'} (wanted ${want})`)
+  }
+  check('each sentence reaches the command that owns it', wrong.length === 0, wrong.join(' | '))
 }
 
 console.log(failures ? `\n${failures} failing` : '\nApollo answers to its own names')

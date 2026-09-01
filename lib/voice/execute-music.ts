@@ -111,6 +111,72 @@ const notApollo = (name: string, type?: string): string =>
   `${name} is ${type === 'drum' ? 'a drum kit' : type === 'sampler' ? 'a sampler' : `a ${type ?? 'plain'} instrument`}, `
   + 'not Apollo. Put an Apollo instrument on it first.'
 
+/**
+ * Make the thing a dial belongs to audible, or say why it cannot be.
+ *
+ * ⚠️ THE LARGEST TRAP IN THE WHOLE APOLLO SURFACE. In a default patch 84 of the
+ * 166 registered parameters sit behind an off switch: BOTH FILTERS ARE
+ * DISABLED, so "cutoff to 800 hertz" — the commonest sentence anybody says to a
+ * synth — wrote 800 Hz into a filter that was not running and answered "Pad
+ * filter 1 cutoff: 800 Hz". Every one of those is a command that reports
+ * success and changes nothing you can hear, which is worse than a refusal
+ * because nothing tells you to look.
+ *
+ * Two remedies, and which one applies is a judgement about intent:
+ *
+ *   TURN IT ON when asking for the dial can only mean wanting to hear it. A
+ *   filter, a layer, an oscillator, a scan, an LFO you just gave a rate in
+ *   Hertz — nobody sets those meaning them to stay silent. This is the same
+ *   rule set_apollo_layer and set_apollo_filter already follow.
+ *
+ *   SAY SO when making it audible would be a bigger decision than the one that
+ *   was asked for. Switching an oscillator from wavetable to granular is a
+ *   different instrument, not a louder one, and choosing a warp mode on
+ *   somebody's behalf picks a sound they did not ask for. Those explain
+ *   instead, and name what would fix it.
+ */
+function makeAudible(patch: ApolloPatch, param: SpokenParam): string | null {
+  const path = param.def.path
+  const oscIdx = /^osc([012])\./.exec(path)?.[1]
+  if (oscIdx != null) {
+    const osc = patch.oscs?.[Number(oscIdx)]
+    if (!osc) return null
+    const label = `Oscillator ${Number(oscIdx) + 1}`
+    // The engine gates two thirds of the registry. Switching it is a different
+    // instrument, not a louder one — and with no sample loaded it is silence.
+    const needs = /\.gran\./.test(path) ? 'granular'
+      : /\.spec\./.test(path) ? 'spectral'
+        : /\.smp\./.test(path) ? 'sample' : null
+    if (needs && osc.engine !== needs) {
+      return `${label} is a ${osc.engine} oscillator, and ${param.dial} belongs to the ${needs} engine. Switch it to ${needs} in Apollo first.`
+    }
+    const warp = /\.wt\.warp([12])\./.exec(path)?.[1]
+    if (warp && osc.wt?.[`warp${warp}` as 'warp1']?.mode === 'off') {
+      return `${label}'s warp ${warp} is off, so the amount would do nothing. Choose a warp first — sync, bend, PWM, FM, saturate.`
+    }
+    if (/\.wt\.specWarp\./.test(path) && (osc.wt?.specWarp?.mode ?? 'off') === 'off') {
+      return `${label}'s spectral warp is off, so the amount would do nothing. Choose one first — stretch, shift, smear, low-pass.`
+    }
+    // A scan with no mode is the one gate worth opening: asking for a scan rate
+    // or a start point is asking for the table to travel.
+    if (/\.wt\.scan\./.test(path) && osc.wt?.scan && osc.wt.scan.mode === 'off') osc.wt.scan.mode = 'loop'
+    osc.enabled = true
+    return null
+  }
+  // ⚠️ Both filters ship DISABLED. This one line is the difference between the
+  // most-said sentence in the app working and silently doing nothing.
+  const f = /^f([12])\./.exec(path)?.[1]
+  if (f && patch.filters?.[Number(f) - 1]) patch.filters[Number(f) - 1].enabled = true
+  if (path.startsWith('sub.') && patch.sub) patch.sub.enabled = true
+  if (path.startsWith('noise.') && patch.noise) patch.noise.enabled = true
+  // A rate in Hertz is a request for a free-running LFO. While it is synced to
+  // the tempo the rate field is not read at all.
+  const lfo = /^lfo(\d+)\.rate$/.exec(path)?.[1]
+  if (lfo && patch.lfos?.[Number(lfo) - 1]?.sync) patch.lfos[Number(lfo) - 1].sync = false
+  return null
+}
+
+
 const pos = (v: unknown): MusicPosition | null => (v && typeof v === 'object' ? v as MusicPosition : null)
 const len = (v: unknown): MusicDuration | null => (v && typeof v === 'object' ? v as MusicDuration : null)
 
@@ -1935,6 +2001,8 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         direction: dir,
       })
       if (next == null) return fail(`Say what to set the ${param.def.label} to, or say more or less.`)
+      const silent = makeAudible(patch, param)
+      if (silent) return fail(silent)
       writeParam(patch, param, next)
       return {
         actions: [{ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { ...inst, params: patch } }],

@@ -40,7 +40,7 @@ const DRUM_WORDS = ['kick', 'snare', 'clap', 'crash', 'rim', 'hat', 'hihat', 'to
 
 import type { VoiceCall } from './execute-music'
 import { Words, near } from './words'
-import { matchApolloParam, matchFilterType } from '../apollo/spoken-params'
+import { matchApolloParam, matchFilterType, moduleHint } from '../apollo/spoken-params'
 
 export interface InterpretContext {
   /**
@@ -48,7 +48,12 @@ export interface InterpretContext {
    * "turn the bass up" has to know where the bass currently is — and are
    * optional so a caller with only names still gets everything else.
    */
-  tracks: { id: string; name?: string; volume?: number; pan?: number }[]
+  //
+  // `instrument` is read by the Apollo rules, which have to stand aside on a
+  // track that is not Apollo so the effect commands can take the sentence
+  // instead. Optional, and absence means UNKNOWN rather than no — a caller
+  // that only has names should not have every Apollo command declined.
+  tracks: { id: string; name?: string; volume?: number; pan?: number; instrument?: { type?: string } | null }[]
   /** Current song tempo, for "a bit faster". */
   tempo?: number
   /**
@@ -164,6 +169,19 @@ const nameConfidence = (score: number): number => Math.min(0.93, 0.55 + score * 
  * thing this whole mechanism exists to get right.
  */
 const nameWordCache = new WeakMap<object, Set<string>>()
+/**
+ * Is this track known NOT to be Apollo?
+ *
+ * ⚠️ Three-valued on purpose. False means "Apollo, or we cannot tell" — a
+ * context without instruments must not have every Apollo command declined, and
+ * the executor's refusal is a good answer when it really is the wrong track.
+ */
+export function isNotApollo(name: string, ctx: InterpretContext): boolean {
+  const t = ctx.tracks.find(x => foldName(x.name ?? '') === foldName(name))
+  const type = t?.instrument?.type
+  return type != null && type !== 'apollo'
+}
+
 export function nameWords(ctx: InterpretContext): Set<string> {
   let set = nameWordCache.get(ctx.tracks)
   if (!set) {
@@ -588,6 +606,11 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Set a track to an exact level',
     say: ['set the bass to 50 percent', 'drums volume 70', 'put the pad at 30 percent'],
     match(w, ctx) {
+      // ⚠️ Apollo's layers have levels too, and "sub level to 40 on the pad"
+      // turned the PAD down to 40 percent — a loud, wrong edit to the mix in
+      // answer to a question about the synth. Third time this trap has been
+      // sprung on a volume rule; the relative one has the same guard.
+      if (w.has('sub', 'subs', 'noise', 'oscillator', 'osc')) return null
       if (!w.has('percent', 'volume', 'level')) return null
       // A named effect makes this a different command entirely.
       if (EFFECTS.some(e => w.has(e))) return null
@@ -982,6 +1005,16 @@ const COMMANDS: VoiceCommand[] = [
       const open = w.has('open', 'opening', 'up', 'rising', 'ascending', 'opens')
       const close = w.has('close', 'closing', 'down', 'falling', 'descending', 'closes')
       if (open === close) return null
+      // ⚠️ A sweep MOVES OVER TIME. Either the sentence says how long, or it
+      // uses a word that can only mean a movement — "a rising filter" is a
+      // sweep with or without a length, but a bare "open the filter" is far
+      // more likely to mean the filter is too closed right now. Without this,
+      // a setting became a structural edit: a new effect plus an automation
+      // lane, and on a track with no clip, an error instead of an answer.
+      const moving = w.has('opening', 'closing', 'rising', 'falling', 'ascending',
+        'descending', 'sweep', 'sweeps', 'gradually', 'slowly', 'over', 'across')
+      if (!moving && !w.has('bar', 'bars', 'measure', 'measures', 'beat', 'beats',
+        'second', 'seconds')) return null
       const hit = nameFrom(w, ctx, ['open', 'opening', 'close', 'closing', 'up', 'down', 'rising',
           'falling', 'ascending', 'descending', 'filter', 'lowpass', 'cutoff', 'over',
           'across', 'bar', 'bars', 'measure', 'measures', 'beat', 'beats', 'second',
@@ -1100,6 +1133,11 @@ const COMMANDS: VoiceCommand[] = [
         : w.has('noise') ? 'noise'
           : (w.has('oscillator', 'osc') && w.num() != null) ? `osc ${w.num()}` : null
       if (!layer) return null
+      // ⚠️ "Osc 2 detune to 20" names a DIAL, and this rule was taking it —
+      // switching oscillator 2 on and never touching the detune, then saying so
+      // as though it had done what was asked. Bringing a layer IN and moving one
+      // of its dials are different commands that share every other word.
+      if (matchApolloParam(w.all.join(' ')).ok) return null
       // A track has to be named, or "more sub" is about the mix and belongs to
       // whoever asked for it rather than to a guess.
       const named = nameOrSelected(w, ctx, ['add', 'more', 'less', 'take', 'off', 'bring',
@@ -1129,7 +1167,7 @@ const COMMANDS: VoiceCommand[] = [
     what: "Any dial inside Apollo, by name",
     say: [
       'wavetable position halfway on the synth',
-      'more grain density on the synth',
+      'lfo 2 rate to 5 hertz on the synth',
       'filter 2 resonance to 40 on the synth',
       'macro 2 to 70 on the synth',
     ],
@@ -1159,7 +1197,15 @@ const COMMANDS: VoiceCommand[] = [
       const m = matchApolloParam(w.all.join(' '))
       if (!m.ok) return null
 
-      const n = w.num()
+      // ⚠️ THE FIRST NUMBER IS USUALLY THE MODULE, NOT THE VALUE. "Macro 2 to
+      // 70" set macro 2 to two percent; "LFO 2 rate to 5 hertz" set the rate to
+      // 2 Hz, which is the default — so it reported success and changed
+      // nothing, the exact failure this whole file keeps guarding against.
+      const nums = w.nums()
+      const moduleNum = Number(/(\d+)$/.exec(moduleHint(w.all.join(' ')) ?? '')?.[1] ?? NaN)
+      const idx = Number.isFinite(moduleNum) ? nums.indexOf(moduleNum) : -1
+      const values = idx >= 0 ? nums.filter((_, k) => k !== idx) : nums
+      const n = values.length ? values[0] : null
       const pct = w.has('percent', 'per cent') ? n : null
       const half = w.has('halfway', 'half') ? 50 : w.has('all') && w.has('way') ? 100 : null
       const dir = w.has('more', 'up', 'open', 'longer', 'higher', 'faster') ? 'more'
@@ -1171,6 +1217,12 @@ const COMMANDS: VoiceCommand[] = [
         'all', 'way', 'more', 'less', 'up', 'down', 'open', 'close', 'bit', 'touch',
         ...m.param.dial.split(' '), ...m.param.moduleLabel.split(' ')], { dropNums: true })
       if (!named) return null
+      // ⚠️ "Filter cutoff to 500 on the drums" is not an Apollo sentence, and
+      // answering it with "that is not Apollo" would be a refusal where
+      // set_device_param would simply have done it. Stand aside and let the
+      // effect commands read it. Unknown instrument still comes here, because
+      // the executor's refusal names the fix.
+      if (isNotApollo(named.name, ctx)) return null
 
       return {
         calls: [{
@@ -1210,6 +1262,9 @@ const COMMANDS: VoiceCommand[] = [
         'to', 'on', 'in', 'it', 'its', 'filter', 'apollo', 'db', 'pole',
         ...found.label.toLowerCase().split(/[\s/]+/)], { dropNums: true })
       if (!named) return null
+      // A ladder filter on a drum kit is add_effect's filter device, not a
+      // refusal — Apollo is not the only thing in the studio with a filter.
+      if (isNotApollo(named.name, ctx)) return null
       return {
         calls: [{ name: 'set_apollo_filter', input: { target: named.name, type: w.all.join(' '), filter: which } }],
         confidence: 0.9,
@@ -1233,14 +1288,23 @@ const COMMANDS: VoiceCommand[] = [
       'delay feedback to 40 percent on the guitar',
     ],
     match(w, ctx) {
-      const DEVICES = ['reverb', 'delay', 'compressor', 'limiter', 'gate', 'chorus', 'saturator', 'eq']
-      const PARAMS = ['threshold', 'ratio', 'feedback', 'ceiling', 'decay', 'predelay', 'rate', 'depth', 'mix']
+      // ⚠️ 'filter' and its dials were missing, so "filter cutoff to 500 on the
+      // drums" read as nothing at all — the one device everybody adjusts by
+      // name, and the sentence had nowhere to go.
+      const DEVICES = ['reverb', 'delay', 'compressor', 'limiter', 'gate', 'chorus', 'saturator', 'eq', 'filter']
+      const PARAMS = ['threshold', 'ratio', 'feedback', 'ceiling', 'decay', 'predelay', 'rate', 'depth', 'mix', 'cutoff', 'resonance']
       const device = DEVICES.find(d => w.has(d))
       const param = PARAMS.find(x => w.has(x))
       // ⚠️ BOTH required. A device on its own is add_effect or set_effect; a
       // parameter on its own is the instrument's own envelope (set_sound).
       // Naming both is the only sentence that is unambiguously this.
       if (!device || !param) return null
+      // ⚠️ "Filter 2 resonance" is Apollo's SECOND FILTER, not a device — a
+      // device has no number after its name. Without this the sentence added a
+      // filter effect and set its resonance to 2, reading the module index as
+      // the value, which is the same trap the Apollo rule already guards.
+      const after = w.all[w.all.indexOf(device) + 1]
+      if (device === 'filter' && /^(1|2|one|two)$/.test(after ?? '')) return null
       const n = w.num()
       const named = nameOrSelected(w, ctx, ['set', 'make', 'the', 'to', 'on', 'longer',
         'shorter', 'percent', 'a', 'bit', device, param], { dropNums: true })
@@ -1277,11 +1341,24 @@ const COMMANDS: VoiceCommand[] = [
         // setting are different commands that share the noun. 'cutoff' is
         // unambiguous.
         [['cutoff'], 'cutoff'],
+        // ⚠️ Was deliberately absent: automate_parameter owned the noun. It now
+        // owns only the sentences that MOVE over time, so "open the filter" —
+        // which is a setting, and the commonest thing anybody says to a synth —
+        // has somewhere to land. Still needs open or close: a bare "put a filter
+        // on it" is a device, and that is add_effect's.
+        [['filter'], 'cutoff'],
         [['resonance'], 'resonance'],
         [['detune'], 'detune'],
       ]
       const hit = MAP.find(([words]) => w.has(...words))
       if (!hit) return null
+      // "Filter to 40" is not a cutoff — the number belongs to a device amount.
+      // Only "open"/"close the filter" is this command.
+      if (hit[0][0] === 'filter' && !w.has('open', 'close', 'opened', 'closed')) return null
+      // And the reverse: "FILTER cutoff to 500" names a device and a dial, so
+      // it belongs to set_device_param. Only "open/close the filter" — the
+      // entry above, where the filter IS the dial — stays here.
+      if (hit[0][0] !== 'filter' && w.has('filter')) return null
       // A named device means they mean that device's dial, not the synth's.
       if (w.has('compressor', 'reverb', 'delay', 'limiter', 'gate', 'chorus')) return null
       const dir = w.has('slower', 'longer', 'more', 'open', 'up') ? 'more'
@@ -2088,10 +2165,13 @@ const COMMANDS: VoiceCommand[] = [
       // the synth rather than a device to add after it. Same shape as the sweep
       // guard above: the extra word is the whole difference. A bare "put a
       // filter on it" names no model and is still this command.
-      if (effect === 'filter' && matchFilterType(w.all.join(' '))) return null
       const hit = nameFrom(w, ctx, [...EFFECTS, 'put', 'add', 'give', 'stick', 'some',
         'percent', 'track'], { dropNums: true })
       if (!hit) return null
+      // ⚠️ Only defer on a track that HAS a synth filter to set. Deferring
+      // everywhere dropped "give the drums a ladder filter" on the floor —
+      // Apollo is not the only thing in the studio with a filter.
+      if (effect === 'filter' && matchFilterType(w.all.join(' ')) && !isNotApollo(hit.name, ctx)) return null
       const n = argNumbers(w, hit.name)[0]
       if (n != null) w.has('percent')
       return {
@@ -3135,6 +3215,13 @@ export const COMMANDS_BY_ID: Record<string, VoiceCommand> =
  * for the examples while the parser listens for something else.
  */
 const TRIGGER_WORDS: readonly string[] = [
+  // Apollo's own vocabulary. Not in any `say` example — the examples show
+  // sentences that work on a DEFAULT patch, and half of Apollo only exists once
+  // somebody has chosen an engine. The recogniser still needs the words.
+  'apollo', 'oscillator', 'osc', 'sub', 'noise', 'wavetable', 'grain', 'granular',
+  'spectral', 'warp', 'scan', 'formant', 'vowel', 'glide', 'portamento', 'spray',
+  'macro', 'lfo', 'envelope', 'resonance', 'detune', 'ladder', 'comb', 'notch',
+  'smear', 'density',
   'add', 'again', 'all', 'another', 'any', 'anything', 'arrangement', 'ascending', 'away',
   'back', 'bar', 'bars', 'beat', 'beats', 'beginning', 'bit', 'boost', 'bpm', 'call',
   'center', 'centre', 'change', 'chorus', 'clear', 'clip', 'clips', 'clone', 'close',
