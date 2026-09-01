@@ -25,7 +25,9 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Mic, Loader2, Settings2 } from 'lucide-react'
-import { useDaw, reducer as dawReducer, type DawAction } from '@/lib/daw-state'
+import { reducer as dawReducer, type DawAction } from '@/lib/daw-state'
+import { useLight } from '@/lib/voice/use-light'
+import { useRouter } from 'next/navigation'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { drumTake, chordTake, takeToNotes, describeTake } from '@/lib/voice/pass'
@@ -97,10 +99,12 @@ function writeVoiceEnter(on: boolean) { try { localStorage.setItem(ENTER_KEY, on
 
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
   const {
+    inStudio,
     project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId,
     metronome, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
     setSelectedClipIds, setSelectedClipId, setSelectedTrackId,
-  } = useDaw()
+  } = useLight()
+  const router = useRouter()
   const [listening, setListening] = useState(false)
   const [busy, setBusy] = useState(false)
   const [heard, setHeard] = useState('')
@@ -643,6 +647,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // for the same reason: nothing about it belongs in the saved document.
     if (act.type === 'METRONOME') { setMetronome?.((act as { on?: boolean }).on !== false); return }
 
+    // ⚠️ GOING SOMEWHERE. Not a change to the song, and not something the
+    // reducer could do — it is a change of screen. Possible at all because
+    // Light is mounted in the layout now: mounted in the transport bar, this
+    // action would have destroyed the component performing it.
+    if (act.type === 'NAVIGATE') {
+      const to = (act as unknown as { to?: string }).to
+      if (to) router.push(to)
+      return
+    }
+
     // Which editor is on screen is also the studio, not the song.
     if (act.type === 'OPEN_EDITOR') {
       const a = act as unknown as { editor: 'sequencer' | 'pianoroll'; clipId: string }
@@ -1162,6 +1176,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // a mishearing and reporting one.
     const local = heard ? resolveHeard(heard, ctx) : resolveLocally(text, ctx)
 
+    // ── Is there a studio to talk to? ──────────────────────────────────────
+    //
+    // Light now lives in the layout, so it is alive on the dashboard, in the
+    // library, everywhere — which means it hears song commands in rooms that
+    // have no song. The empty project makes those resolve to nothing found,
+    // and the dispatch would throw.
+    //
+    // ⚠️ So it says so, and says what would fix it. Failing silently here would
+    // be the same bug this file has been chasing all week, just with a better
+    // excuse.
+    if (!inStudio && local.calls.length) {
+      setBusy(false)
+      respond('There is no project open, so there is nothing to change yet. Open one and ask me again.')
+      return
+    }
+
     // ── The commands the editor carries out itself ───────────────────────────
     //
     // Undo needs the editor's history stack, which is not part of the project
@@ -1576,8 +1606,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // symptom would have been the same one this file has produced three times:
     // the closure holds the question as it was when it was built — null — so
     // "yes" is parsed as a fresh command and confirms nothing.
-  }, [project, runAction, pendingAsk, pendingAsk2, pendingOffer, pendingName, respond, undo, redo,
-    selectedTrackId, selectedClipId, queue])
+  }, [inStudio, project, runAction, pendingAsk, pendingAsk2, pendingOffer, pendingName, respond,
+    undo, redo, selectedTrackId, selectedClipId, queue])
 
   // Does the user still want to be listening? Asking for the microphone is
   // asynchronous and the first ask shows a dialog, so in hold-to-talk the

@@ -669,11 +669,15 @@ export const MUSIC_TOOLS = [
   {
     name: 'open_editor',
     description:
-      'OPEN AN EDITOR — show the step sequencer or the piano roll. "open the sequencer", "show me the piano roll for the pad", "make a new sequencer", "start a new drum pattern". Set `create` when they asked for a NEW one rather than to see an existing one.',
+      'OPEN SOMETHING — an editor, or a whole part of the app. Editors: "open the sequencer", "show me the piano roll for the pad", "make a new sequencer". Places: "open the video module", "take me to my projects", "open the library", "go to the community". Set `create` when they asked for a NEW editor rather than to see an existing one. ⚠️ Opening a place NAVIGATES — the studio stays open in the background and Light keeps listening, but the screen changes, so only do it when they asked to go somewhere.',
     input_schema: {
       type: 'object',
       properties: {
-        editor: { type: 'string', enum: ['sequencer', 'pianoroll'], description: 'sequencer for drums, pianoroll for notes.' },
+        editor: {
+          type: 'string',
+          enum: ['sequencer', 'pianoroll', 'video', 'audio', 'projects', 'library', 'community', 'dashboard', 'settings', 'apps', 'learn'],
+          description: 'sequencer for drums, pianoroll for notes — or a place: video, audio (the studio), projects, library, community, dashboard, settings, apps, learn.',
+        },
         target: { ...TARGET, description: 'Which track or clip. Omit for the selected one.' },
         create: { type: 'boolean', description: 'True to make a new empty one.' },
       },

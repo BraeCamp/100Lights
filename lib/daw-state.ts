@@ -948,6 +948,23 @@ export function useDaw(): DawContextValue {
   return ctx
 }
 
+/**
+ * The studio if there is one, and null if there is not.
+ *
+ * ⚠️ For things that live OUTSIDE the editor but still want it when it is
+ * there. The voice control is the reason this exists: it used to be rendered
+ * inside the transport bar, so it only existed while a project was open, and
+ * navigating anywhere at all destroyed it mid-conversation — the history, a
+ * pending question, whatever had been selected.
+ *
+ * Throwing is right for a component that cannot work without the studio.
+ * Returning null is right for one that can do LESS without it, and this is the
+ * hook for the second kind.
+ */
+export function useOptionalDaw(): DawContextValue | null {
+  return useContext(DawContext)
+}
+
 // ── Helper hooks ─────────────────────────────────────────────────────────
 
 /** Reactive "is the engine producing audio" flag, for gating meter/analyser

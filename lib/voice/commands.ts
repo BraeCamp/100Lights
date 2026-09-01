@@ -2099,6 +2099,40 @@ const COMMANDS: VoiceCommand[] = [
       'open the step sequencer on the drums', 'new piano roll',
     ],
     match(w, ctx) {
+      // ⚠️ A PLACE, not an editor — the same command, because "open the piano
+      // roll" and "open the video module" are one request in anybody's head.
+      // Checked first: "projects" and "library" are not editors, and reading
+      // them as one would open a sequencer on a track nobody named.
+      //
+      // ⚠️ EXACT, and behind a cheap gate. The first version tested eight place
+      // words with has(), which bends words and costs an edit-distance pass
+      // each — on a rule that runs for every sentence, inside a reader that
+      // tries many hypotheses. It pushed a long sentence from under 25 ms to
+      // 26.5 and the performance test caught it. Place names are distinctive
+      // nouns that nobody needs corrected into, so plain comparison is both
+      // faster and safer here — the same lesson as 'call' being bent to 'fall'.
+      // ⚠️ Read off the RAW sentence, not the content words. "Go to the
+      // community" reduces to just ["community"] — "go" is filler and is
+      // stripped before any rule sees it — so a gate that looked for the verb
+      // among the content words could never fire on the commonest phrasing
+      // there is. One regex, and no edit distance.
+      const going = /\b(open|opens|go|goto|going|take|switch|show|jump|navigate|bring)\b/
+        .test(w.raw.toLowerCase())
+      if (going) {
+        const PLACES = ['video', 'projects', 'library', 'community', 'dashboard',
+          'settings', 'apps', 'learn', 'studio']
+        const found = PLACES.find(x => w.all.includes(x))
+        if (found) {
+          const place = found === 'studio' ? 'audio' : found
+          w.has(found)              // account for the word, on the hit path only
+          return { calls: [{ name: 'open_editor', input: { editor: place } }], confidence: 0.9 }
+        }
+        if (w.all.includes('audio')) {
+          w.has('audio')
+          return { calls: [{ name: 'open_editor', input: { editor: 'audio' } }], confidence: 0.9 }
+        }
+      }
+
       const roll = w.has('pianoroll', 'roll') || (w.has('piano') && !w.has('sequencer'))
       const seq = w.has('sequencer', 'stepsequencer', 'steps')
       if (!roll && !seq) return null

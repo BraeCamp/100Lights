@@ -3115,6 +3115,43 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
     // OPEN AN EDITOR - the sequencer or the piano roll, on something.
     case 'open_editor': {
+      // ── Opening a PLACE, not an editor ────────────────────────────────
+      //
+      // Brae: "moving to the video module while keeping light alive".
+      //
+      // The same verb, widened, rather than a second command beside it: "open
+      // the piano roll" and "open the video module" are one request in
+      // anybody's head, and splitting them across two tools would mean two
+      // chances for a sentence to pick the wrong one.
+      //
+      // ⚠️ Only possible at all because Light now lives in the layout. Mounted
+      // in the transport bar, a command to leave the studio destroyed the thing
+      // carrying it out, halfway through carrying it out.
+      const PLACES: Record<string, { to: string; said: string }> = {
+        video:     { to: '/create?modules=video', said: 'the video module' },
+        audio:     { to: '/create?modules=audio&audioMode=music', said: 'the studio' },
+        studio:    { to: '/create?modules=audio&audioMode=music', said: 'the studio' },
+        projects:  { to: '/projects', said: 'your projects' },
+        library:   { to: '/library', said: 'your library' },
+        community: { to: '/community', said: 'the community' },
+        dashboard: { to: '/dashboard', said: 'the dashboard' },
+        settings:  { to: '/settings', said: 'settings' },
+        apps:      { to: '/apps', said: 'the apps' },
+        learn:     { to: '/learn', said: 'Learn' },
+      }
+      const asked = str(i.editor).toLowerCase().trim()
+      const place = PLACES[asked]
+        ?? Object.entries(PLACES).find(([k]) => asked.includes(k))?.[1]
+      if (place) {
+        return {
+          actions: [{ type: 'NAVIGATE', to: place.to }],
+          // Says where it is going BEFORE it goes. Navigation is the one action
+          // whose result is a different screen, so a read-back that arrives
+          // after the trip arrives somewhere nobody was looking.
+          say: `Opening ${place.said}.`,
+        }
+      }
+
       const editor = /piano|roll|note/i.test(str(i.editor)) ? 'pianoroll' : 'sequencer'
       const found = editorTarget(project, target, editor, i.create === true, maps)
       if (found.problem) return fail(found.problem)

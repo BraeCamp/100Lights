@@ -13,7 +13,11 @@ import nextDynamic from 'next/dynamic'
 const PluginMenu = nextDynamic(() => import('./PluginMenu'), { ssr: false })
 // Lazy: it pulls in speech recognition and the command executor, neither of
 // which belongs in the transport bar's first paint.
-const VoiceControl = nextDynamic(() => import('./VoiceControl'), { ssr: false })
+// ⚠️ Light is NOT mounted here any more. It lives in the app layout so that
+// navigating cannot destroy it mid-conversation — see components/LightMount.
+// This file now only says WHERE its button belongs; Light portals into the slot,
+// so it still sits in the transport bar exactly as before.
+import { setLightSlot } from '@/lib/voice/light-slot'
 import { createPortal } from 'react-dom'
 import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, Zap, RotateCcw } from 'lucide-react'
 import { TbMetronome } from 'react-icons/tb'
@@ -1076,7 +1080,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       {/* Say what you want done. Hold (or toggle) and speak — "loop bass 2
           three more times". Next to the plugin menu because both answer the
           same question: what is making this sound, and what should it do. */}
-      <VoiceControl />
+      <div ref={setLightSlot} style={{ display: 'inline-flex', alignItems: 'center' }} />
 
       {/* Admin-only tools. Renders nothing for anyone else, so it costs the
           toolbar no space for normal users. */}
