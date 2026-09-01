@@ -72,6 +72,8 @@ let _persistAsked = false
 export function initLibrary(userId: string | null) {
   const changed = userId !== _userId
   _userId = userId
+  // Different user means a different database — the snapshot is for the old one.
+  if (changed) cacheReset()
   // Ask the browser to protect our IndexedDB from storage-pressure eviction —
   // the library IS the user's sound collection; losing it silently is the
   // worst failure mode. One call is enough (idempotent, ignored if denied).
@@ -91,7 +93,7 @@ export function getLibraryUserId(): string | null { return _userId }
 
 // ── IndexedDB setup ───────────────────────────────────────────────────────────
 
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE      = 'entries'
 
 function getDbName() {
@@ -129,15 +131,24 @@ function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(name, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
-      if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, { keyPath: 'id' })
+      let store: IDBObjectStore
+      if (db.objectStoreNames.contains(STORE)) {
+        // Existing database being upgraded — reuse the version-change transaction.
+        store = req.transaction!.objectStore(STORE)
+      } else {
+        store = db.createObjectStore(STORE, { keyPath: 'id' })
         store.createIndex('category', 'category', { unique: false })
         store.createIndex('addedAt',  'addedAt',  { unique: false })
       }
+      // v2: look a folder up by name instead of reading all ~13k records.
+      // An entry with no `folder`/`parentFolder` simply is not in the index,
+      // which is exactly right — nothing queries for undefined.
+      if (!store.indexNames.contains('folder'))       store.createIndex('folder', 'folder', { unique: false })
+      if (!store.indexNames.contains('parentFolder')) store.createIndex('parentFolder', 'parentFolder', { unique: false })
     }
     req.onsuccess = () => {
       const db = req.result
-      const forget = () => { if (dbPromiseName === name) { dbPromise = null; dbPromiseName = '' } }
+      const forget = () => { if (dbPromiseName === name) { dbPromise = null; dbPromiseName = '' } cacheReset() }
       db.onclose = forget
       // Another tab upgrading the schema: close so it is not blocked, and let
       // the next call reopen at the new version.
@@ -192,16 +203,93 @@ async function tx<T>(
   }
 }
 
+// ── The warm snapshot ───────────────────────────────────────────────────────
+//
+// `getAll()` is a full deserialize of every record in the store — with ~13k
+// catalog entries that is tens of milliseconds of main thread, and the engine
+// used to call it ONCE PER (preset, pitch) while the transport was running
+// (see _loadPresetBuffer). A section entering the prefetch window fired dozens
+// of these concurrently, against the same 25ms tick that schedules audio, which
+// is what made playback degrade the longer you played.
+//
+// So the store is read once and kept. Writes patch the snapshot in place rather
+// than dropping it: libraryFulfill() persists a streamed blob through
+// libraryAdd() on first use of a catalog sound, so a blunt "invalidate on any
+// write" would re-scan the whole library repeatedly during playback — the exact
+// cost this removes. Surgical patching keeps the snapshot warm across those.
+//
+// Cross-tab writes are not seen here, same as the connection cache above; the
+// snapshot is dropped with the connection on `close`/`versionchange`, and on a
+// user switch, which covers the cases where it could go meaningfully stale.
+let allCache: LibraryEntry[] | null = null
+let allInFlight: Promise<LibraryEntry[]> | null = null
+
+/** Forget the snapshot entirely (user switch, connection dropped). */
+function cacheReset(): void { allCache = null; allInFlight = null }
+
+/** Keep the snapshot in step with a write instead of throwing it away. */
+function cachePut(entry: LibraryEntry): void {
+  if (!allCache) return
+  const i = allCache.findIndex(e => e.id === entry.id)
+  if (i >= 0) allCache[i] = entry
+  else allCache.push(entry)
+}
+
+function cacheDrop(id: string): void {
+  if (!allCache) return
+  const i = allCache.findIndex(e => e.id === id)
+  if (i >= 0) allCache.splice(i, 1)
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export async function libraryGetAll(): Promise<LibraryEntry[]> {
-  const db = await openDB()
-  return tx<LibraryEntry[]>(db, 'readonly', s => s.getAll())
+  // Callers filter, sort and splice the result, so hand out a copy of the
+  // snapshot rather than the snapshot itself. Copying 13k pointers is ~1000x
+  // cheaper than re-reading 13k records out of storage.
+  if (allCache) return allCache.slice()
+  if (allInFlight) return (await allInFlight).slice()
+  const job = (async () => {
+    const db = await openDB()
+    const rows = await tx<LibraryEntry[]>(db, 'readonly', s => s.getAll())
+    allCache = rows
+    return rows
+  })()
+  allInFlight = job
+  try {
+    return (await job).slice()
+  } finally {
+    if (allInFlight === job) allInFlight = null
+  }
+}
+
+/**
+ * Every entry filed under `folder`, either directly or as its parent.
+ *
+ * This is what the engine actually wants when it resolves a sampled preset: one
+ * instrument's notes, not the whole library. Backed by the v2 indexes, so it
+ * reads only the matching records. Falls back to the full scan if the indexes
+ * are not there yet (a database that has not run the v2 upgrade).
+ */
+export async function libraryGetByFolder(folder: string): Promise<LibraryEntry[]> {
+  if (allCache) return allCache.filter(e => e.folder === folder || e.parentFolder === folder)
+  try {
+    const db = await openDB()
+    const [own, children] = await Promise.all([
+      tx<LibraryEntry[]>(db, 'readonly', s => s.index('folder').getAll(folder)),
+      tx<LibraryEntry[]>(db, 'readonly', s => s.index('parentFolder').getAll(folder)),
+    ])
+    const seen = new Set(own.map(e => e.id))
+    return own.concat(children.filter(e => !seen.has(e.id)))
+  } catch {
+    return (await libraryGetAll()).filter(e => e.folder === folder || e.parentFolder === folder)
+  }
 }
 
 export async function libraryAdd(entry: LibraryEntry): Promise<void> {
   const db = await openDB()
   await tx(db, 'readwrite', s => s.put(entry))
+  cachePut(entry)
   // Mirror the user's own recorded/uploaded sounds up to their account so they
   // appear on their other devices. Fire-and-forget — never block the local add.
   void pushSound(entry)
@@ -216,12 +304,15 @@ export async function libraryUpdate(id: string, patch: Partial<Omit<LibraryEntry
   const db = await openDB()
   const existing = await tx<LibraryEntry>(db, 'readonly', s => s.get(id))
   if (!existing) return
-  await tx(db, 'readwrite', s => s.put({ ...existing, ...patch }))
+  const merged = { ...existing, ...patch }
+  await tx(db, 'readwrite', s => s.put(merged))
+  cachePut(merged)
 }
 
 export async function libraryDelete(id: string): Promise<void> {
   const db = await openDB()
   await tx(db, 'readwrite', s => s.delete(id))
+  cacheDrop(id)
   void deleteRemote(id)  // keep the account library in step; best-effort
 }
 
