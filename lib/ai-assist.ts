@@ -166,8 +166,27 @@ function staticSystemOther(moduleName: string): string {
  * it is different on every request by definition.
  */
 function systemBlocks(moduleName: string, stateSummary?: string) {
-  const blocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> = [
-    { type: 'text', text: staticSystem(moduleName), cache_control: { type: 'ephemeral' } },
+  const blocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl?: string } }> = [
+    // ⚠️ ONE HOUR, not the default five minutes.
+    //
+    // Brae: "people might like this so much that they use several hundred
+    // commands an hour and that could get pricey very quickly."
+    //
+    // The prefix is ~13,900 tokens of tool schemas and prompt, re-sent on every
+    // utterance. Read from cache it costs a tenth of that; written it costs
+    // more than the whole thing. So the entire bill turns on the HIT RATE, and
+    // the five-minute default loses the cache during any ordinary pause —
+    // listening back to a section, reading, thinking. Somebody working steadily
+    // with gaps longer than five minutes was paying a full cache WRITE on
+    // nearly every command: about 5.4M billed input tokens across 300 commands,
+    // against 500k when the cache holds.
+    //
+    // An hour costs 2x to write instead of 1.25x, and that is paid ONCE per
+    // session rather than on most commands. Verified live against the API
+    // before committing to it — the response reports the tokens under
+    // `cache_creation.ephemeral_1h_input_tokens`, so it is genuinely honoured
+    // and not silently downgraded.
+    { type: 'text', text: staticSystem(moduleName), cache_control: { type: 'ephemeral', ttl: '1h' } },
   ]
   if (stateSummary) {
     blocks.push({ type: 'text', text: `${moduleName === 'music' ? 'Current song' : 'Current project state'}: ${stateSummary}` })
@@ -188,7 +207,15 @@ export async function runAssist(opts: {
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    headers: {
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+      // Explicit rather than assumed. The parameter is accepted without it, but
+      // a request that silently falls back to five minutes would look identical
+      // in every way except the bill.
+      'anthropic-beta': 'extended-cache-ttl-2025-04-11',
+    },
     body: JSON.stringify({
       model: MODEL,
       max_tokens: opts.maxTokens ?? 1200,

@@ -22,19 +22,28 @@
 // here and a case in lib/voice/execute-music, and both are tested.
 
 /** Shared JSON-schema fragments, so every command speaks the same dialect. */
+// ⚠️ THESE THREE ARE REPEATED INTO EVERY TOOL THAT USES THEM, and the whole
+// tool list is re-sent on every single utterance. TARGET appeared 38 times at
+// 130 characters, POSITION 7 times at 412 — nine thousand characters of
+// identical text, 16% of a 15,400-token prefix, paid for on every command.
+//
+// So the explanation moves to the system prompt, where it is said ONCE, and
+// what stays here is only what the model cannot infer from the name. Nothing is
+// lost: the model reads the same words, in one place instead of forty. See
+// SHARED_ARGS in MUSIC_SYSTEM_HINT below.
 const POSITION = {
   type: 'object',
-  description: 'A place in the song. Give bar (+ optional beat), or seconds. Bars and beats count from 1.',
+  description: 'A place in the song — bar (+ optional beat), or seconds.',
   properties: {
-    bar: { type: 'number', description: 'Bar number, counting from 1. "the beginning" is bar 1.' },
-    beat: { type: 'number', description: 'Beat within that bar, counting from 1.' },
-    seconds: { type: 'number', description: 'Seconds from the start, if they gave a time instead.' },
+    bar: { type: 'number' },
+    beat: { type: 'number' },
+    seconds: { type: 'number' },
   },
 } as const
 
 const LENGTH = {
   type: 'object',
-  description: 'A length of time. Give bars, beats, or seconds — whichever they said.',
+  description: 'A length — bars, beats, or seconds.',
   properties: {
     bars: { type: 'number' },
     beats: { type: 'number' },
@@ -44,7 +53,7 @@ const LENGTH = {
 
 const TARGET = {
   type: 'string',
-  description: 'What they called it — a track or clip name, exactly as spoken ("bass 2"). The app resolves it.',
+  description: 'A track or clip name, as spoken.',
 } as const
 
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS } from '../daw-effect-catalog'
@@ -271,6 +280,22 @@ export const MUSIC_TOOLS = [
   // forty near-identical ones — "set a device parameter" with the parameter
   // named is one decision; twenty tools called set_reverb_decay, set_delay_time
   // and so on is twenty chances to pick the neighbour.
+  {
+    name: 'project_action',
+    description:
+      'THE PROJECT AS A DOCUMENT — open another one, start one, name a version, go back to one, or rename this one. "open Winter Drift", "make me a new project called Sketch", "save a version called before the drop", "put it back to before the drop", "what versions are there", "rename this project to Late Checkout". ⚠️ Opening or restoring REPLACES what is on screen; the studio saves as you work, so nothing is lost, but say what you are doing. For the SONG\'s contents use the ordinary commands — this is about the file, not the music.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['open', 'new', 'save_version', 'restore_version', 'list_versions', 'rename'],
+        },
+        name: { type: 'string', description: 'The project to open, the version to name or go back to, or the new name.' },
+      },
+      required: ['action'],
+    },
+  },
   {
     name: 'write_part',
     description:
@@ -1229,6 +1254,9 @@ export const MUSIC_SYSTEM_HINT = [
   // wrong-tool bug happened was that its layers were not reachable at all. The
   // assistant has to know the whole synth is now within reach, or it goes on
   // reaching for neighbours.
+  // Said ONCE here instead of repeated into every tool schema — see the note
+  // above POSITION. Identical information, ~2,500 tokens cheaper per command.
+  'SHARED ARGUMENTS. `target` is a track or clip name exactly as spoken ("bass 2", "the pad") and the app resolves it — never an id, and "this"/"it" means whatever is selected. `at`/`from`/`to` are a place in the song: give `bar` counting from 1, optionally `beat` within that bar counting from 1, or `seconds` from the start if they gave a time. `length` is a duration: `bars`, `beats` or `seconds`, whichever they said. "The beginning" is bar 1.',
   'APOLLO\'S DIALS ARE REACHABLE, ITS SWITCHES ARE NOT. set_apollo_param sets any of the 166 numbered parameters — filter cutoff and resonance, envelope stages, oscillator tuning and level, wavetable position, scan, granular and spectral controls, LFO rates, macros, glide. set_apollo_filter chooses the filter MODEL and set_apollo_layer brings in the sub, the noise or an oscillator. What is NOT reachable yet: which ENGINE an oscillator runs (wavetable, sample, granular, spectral), warp MODES, unison, octave switches, the modulation matrix and the arpeggiator. Say plainly that you cannot do those rather than choosing a nearby dial instead. Do not answer an Apollo question with an EFFECT (add_effect, set_effect) unless they asked for a separate device: the synth\'s own filter and an effect filter after it are different sounds and different things to undo.',
   'IF THE SENTENCE NAMES A TRACK, THE COMMAND IS ABOUT THAT TRACK. Never answer a sentence that names a track with a song-wide change — set_tempo, set_time_signature, set_key_scale, set_master_volume and set_swing are about the WHOLE SONG and are almost never what somebody naming one track meant. "The pad should be lower" is the pad\'s volume. If you cannot find a tool for what they asked about that track, SAY SO in one sentence — a wrong global change is far worse than an admission, because it is loud, immediate and affects everything they have made.',
   'POINTING BEATS REMEMBERING. If the state summary says something was selected just now, "this track", "that clip", "it" and "here" mean the thing that is selected — even when an earlier message in this conversation was about something else. Somebody who clicks a track and then says "mute this" has told you which track twice, and the click is the more recent of the two.',

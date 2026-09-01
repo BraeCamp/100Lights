@@ -218,6 +218,11 @@ function nameAfter(raw: string, lead: RegExp): string {
   return (end === -1 ? parts : parts.slice(0, end)).join(' ').trim()
 }
 
+/** "before the drop" → "Before The Drop". Names are shown, so they are cased. */
+function title(name: string): string {
+  return name.replace(/\b[a-z]/g, c => c.toUpperCase())
+}
+
 export function nameWords(ctx: InterpretContext): Set<string> {
   let set = nameWordCache.get(ctx.tracks)
   if (!set) {
@@ -1263,6 +1268,62 @@ const COMMANDS: VoiceCommand[] = [
         }],
         confidence: 0.9,
       }
+    },
+  },
+
+  {
+    id: 'project_action',
+    tool: 'project_action',
+    group: 'Project',
+    what: 'Open, start, version or rename a project',
+    say: [
+      'save a version called before the drop',
+      'what versions are there',
+      'rename this project to Late Checkout',
+    ],
+    match(w) {
+      const raw = w.raw.toLowerCase()
+      // ⚠️ "Version" is the word that makes this unambiguous. Without it,
+      // "open the drums" and "save" belong to other commands entirely, and a
+      // rule that grabbed either would be the greedy kind this file keeps
+      // having to un-greedy.
+      const versiony = w.has('version', 'versions')
+      // "called X" or "to X" — both are how people name a thing out loud.
+      const named = (/\s+(?:called|named)\s+(.+)$/.exec(raw)?.[1]
+        ?? /\s+to\s+(.+)$/.exec(raw)?.[1] ?? '')
+        .trim().replace(/[^a-z0-9\s'-]/g, '').trim()
+
+      // ⚠️ ORDER MATTERS, and getting it wrong cost the commonest sentence
+      // here: "save a version called before the drop" was answered by the
+      // LIST branch, because its trigger words were checked first and has()
+      // bends short words into them. The specific actions go first, and the
+      // list is what is left when nobody asked for one of them.
+      if (versiony && named && w.has('save', 'keep', 'snapshot')) {
+        return { calls: [{ name: 'project_action', input: { action: 'save_version', name: title(named) } }], confidence: 0.9 }
+      }
+      if (versiony && named && w.has('back', 'restore', 'revert', 'return')) {
+        return { calls: [{ name: 'project_action', input: { action: 'restore_version', name: title(named) } }], confidence: 0.9 }
+      }
+      // ⚠️ EXACT. "What versions are there" is a question, and the question
+      // words are short and ordinary — exactly the ones has() bends other words
+      // into. Third time this lesson has been learned in this file.
+      if (versiony && w.all.some(x => x === 'what' || x === 'which' || x === 'list' || x === 'many')) {
+        return { calls: [{ name: 'project_action', input: { action: 'list_versions' } }], confidence: 0.9 }
+      }
+      // Renaming the PROJECT, not a track or a clip — those rules require the
+      // word "track"/"clip" or a name that resolves to one.
+      if (w.has('project') && named && w.has('rename', 'name', 'call')) {
+        return { calls: [{ name: 'project_action', input: { action: 'rename', name: title(named) } }], confidence: 0.9 }
+      }
+      // ⚠️ EXACT, and it must say "new". has() bends "take" into "make", so
+      // "take me to my projects" — a NAVIGATION sentence — was creating a
+      // project. The fourth time a short verb has been bent into a command in
+      // this file; the answer is the same one every time.
+      if (w.has('project') && w.all.includes('new')
+        && w.all.some(x => x === 'start' || x === 'create' || x === 'make' || x === 'new')) {
+        return { calls: [{ name: 'project_action', input: { action: 'new', ...(named ? { name: title(named) } : {}) } }], confidence: 0.88 }
+      }
+      return null
     },
   },
 

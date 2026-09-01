@@ -2015,6 +2015,48 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── THE PROJECT AS A DOCUMENT ───────────────────────────────────────
+    //
+    // Opening, versioning and renaming — the things you do to the file rather
+    // than to the music. Every one of them was on the audit's unreachable list,
+    // and two of them (LOAD_PROJECT, SET_PROJECT_NAME) are reducer actions the
+    // voice control simply never emitted.
+    //
+    // ⚠️ Most of these need the NETWORK, and this planner is pure by design —
+    // no fetch, no dispatch, no clock, so that every command can be tested by
+    // reading the actions it produces. So it emits an intent and the studio
+    // carries it out, the same way NAVIGATE and RECORD_TAKE already work.
+    // Renaming is the exception: it is a reducer action and stays one.
+    case 'project_action': {
+      const what = str(i.action).toLowerCase().trim()
+      const name = str(i.name).trim()
+
+      if (what === 'rename') {
+        if (!name) return fail('Say what to call it.')
+        return {
+          actions: [{ type: 'SET_PROJECT_NAME', name }],
+          say: `Renamed the project to "${name}".`,
+        }
+      }
+      if ((what === 'open' || what === 'restore_version') && !name) {
+        return fail(what === 'open' ? 'Say which project to open.' : 'Say which version to go back to.')
+      }
+      if (what === 'save_version' && !name) {
+        // ⚠️ An unnamed version is a row nobody can identify later, which is
+        // the same as not having saved one.
+        return fail('Give the version a name — "save a version called before the drop".')
+      }
+      const SAY: Record<string, string> = {
+        open: `Opening "${name}".`,
+        new: name ? `Starting a new project called "${name}".` : 'Starting a new project.',
+        save_version: `Saved a version called "${name}".`,
+        restore_version: `Going back to "${name}".`,
+        list_versions: 'Looking at the versions…',
+      }
+      if (!SAY[what]) return fail(`I don't know how to "${what}" a project.`)
+      return { actions: [{ type: 'PROJECT_ACTION', action: what, name }], say: SAY[what] }
+    }
+
     // ── WRITE A PART, WITH A SOUND CHOSEN BY CHARACTER ──────────────────
     //
     // Brae: "Put in a baseline preset that uses low notes of 1 of the darker /

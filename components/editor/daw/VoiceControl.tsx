@@ -647,6 +647,80 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // for the same reason: nothing about it belongs in the saved document.
     if (act.type === 'METRONOME') { setMetronome?.((act as { on?: boolean }).on !== false); return }
 
+    // ⚠️ THE PROJECT AS A DOCUMENT — opening, versioning, going back.
+    //
+    // Asynchronous, which is why it cannot be a reducer action and is not one:
+    // the planner stays pure and hands over an intent, and the network lives
+    // here. Everything says what happened, including the failures — a version
+    // that did not save while the studio said it had is worse than one that
+    // never tried.
+    if (act.type === 'PROJECT_ACTION') {
+      const a = act as unknown as { action: string; name?: string }
+      const projectId = projectRef.current?.id
+      void (async () => {
+        try {
+          if (a.action === 'open') {
+            const res = await fetch('/api/projects')
+            // ⚠️ A bare ARRAY, not { projects }. Checked rather than assumed —
+            // the guess would have found nothing, every time, silently.
+            const body = await res.json()
+            const list: { id: string; name?: string }[] = Array.isArray(body) ? body : (body?.projects ?? [])
+            const want = (a.name ?? '').toLowerCase().trim()
+            // Exact first, then a contained match — "open winter drift" should
+            // find "Winter Drift" and also "Winter Drift v2" if that is all
+            // there is, but never prefer the longer one when both exist.
+            const hit = list.find((p: { name?: string }) => (p.name ?? '').toLowerCase() === want)
+              ?? list.find((p: { name?: string }) => (p.name ?? '').toLowerCase().includes(want))
+            if (!hit) { respond(`I could not find a project called "${a.name}".`, 'question'); return }
+            router.push(`/projects/${hit.id}`)
+            return
+          }
+          if (a.action === 'new') {
+            router.push(a.name ? `/create?name=${encodeURIComponent(a.name)}` : '/create')
+            return
+          }
+          if (!projectId) { respond('This project has not been saved yet, so there is nothing to version.', 'question'); return }
+
+          if (a.action === 'save_version') {
+            const res = await fetch(`/api/projects/${projectId}/versions`, {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ name: a.name }),
+            })
+            if (!res.ok) respond('I could not save that version.', 'question')
+            return
+          }
+          if (a.action === 'list_versions' || a.action === 'restore_version') {
+            const res = await fetch(`/api/projects/${projectId}/versions`)
+            const versions = (await res.json())?.versions ?? []
+            if (!versions.length) { respond('There are no saved versions of this project yet.'); return }
+            if (a.action === 'list_versions') {
+              respond(`${versions.length} version${versions.length === 1 ? '' : 's'}: ${versions.map((v: { name: string }) => v.name).join(', ')}.`)
+              return
+            }
+            const want = (a.name ?? '').toLowerCase().trim()
+            const hit = versions.find((v: { name?: string }) => (v.name ?? '').toLowerCase() === want)
+              ?? versions.find((v: { name?: string }) => (v.name ?? '').toLowerCase().includes(want))
+            if (!hit) { respond(`I could not find a version called "${a.name}".`, 'question'); return }
+            const one = await fetch(`/api/projects/${projectId}/versions/${hit.id}`)
+            // Returns the stored document itself, not { data }. The DAW project
+            // lives inside it — a version holds the whole file, modules and all.
+            const doc = await one.json()
+            const data = doc?.dawProject ?? doc
+            // ⚠️ LOAD_PROJECT replaces everything on screen. It is on the
+            // audit's unreachable list precisely because it is the biggest
+            // single action there is — so it only ever runs from a sentence
+            // that named a version out loud.
+            if (data) dispatch({ type: 'LOAD_PROJECT', project: data } as never)
+            else respond('That version would not load.', 'question')
+            return
+          }
+        } catch {
+          respond('I could not reach your projects just now.', 'question')
+        }
+      })()
+      return
+    }
+
     // ⚠️ GOING SOMEWHERE. Not a change to the song, and not something the
     // reducer could do — it is a change of screen. Possible at all because
     // Light is mounted in the layout now: mounted in the transport bar, this
