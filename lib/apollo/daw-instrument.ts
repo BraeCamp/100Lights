@@ -77,10 +77,21 @@ export function playApolloNote(
   velocity: number, // 0..127
   when: number,
   duration: number,
+  /**
+   * A filter for THIS note, applied inside the engine's own voice.
+   *
+   * ⚠️ The alternative was wiring a filter in front of the destination, and the
+   * destination is what an engine is keyed by — so a per-note filter meant a
+   * per-note engine, and one Apollo track grew to 68 live polysynths in 40
+   * seconds of playing. Helios has a filter per voice already; this is the DAW
+   * asking for it rather than building its own around the output.
+   */
+  noteFilter?: { cut?: number; res?: number },
 ): void {
   const m = ensure(ctx, dest, patch)
   const events: SchedEvent[] = [
-    { t: when, type: 'noteOn', note: pitch, vel: Math.max(0.05, velocity / 127) },
+    { t: when, type: 'noteOn', note: pitch, vel: Math.max(0.05, velocity / 127),
+      ...(noteFilter ? { nf: noteFilter } : {}) },
     { t: when + Math.max(0.02, duration), type: 'noteOff', note: pitch },
   ]
   if (m.isReady) m.engine.scheduleEvents(events)

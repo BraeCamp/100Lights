@@ -1814,8 +1814,15 @@ export class DawEngine extends EventTarget {
         const noteDur     = this._spanSeconds(noteAbsBeat, noteAbsBeat + note.durationBeats)
         if (noteStartAt < this.ctx.currentTime - 0.1) continue  // already past
         let noteDest: AudioNode = nodes.midiInput
+        let engineFilter: { cut?: number; res?: number } | null = null
         if (this._rollFxActive(rfx)) {
           if (this._isWorkletInstrument(track)) {
+            engineFilter = this._engineNoteFilter(rfx)
+          }
+          if (engineFilter) {
+            // Nothing to wire: the note keeps the track's own bus, so the whole
+            // track needs ONE engine however many notes carry a filter.
+          } else if (this._isWorkletInstrument(track)) {
             // ⚠️ The SHARED per-clip chain, never a private one. See
             // _isWorkletInstrument: a per-note destination here means a whole
             // Helios polysynth per note. The clip's chain is one engine for the
@@ -1899,7 +1906,7 @@ export class DawEngine extends EventTarget {
               noteStartAt, noteDur + sustainSec)
           }
         } else {
-          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, noteStartAt, noteDur + sustainSec)
+          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, noteStartAt, noteDur + sustainSec, 0, engineFilter ?? undefined)
           this._choke(trackId, h, noteStartAt)
         }
       }
@@ -2544,7 +2551,15 @@ export class DawEngine extends EventTarget {
         // what made dense arrangements stutter. The per-note amplitude envelope
         // that chain used to hold moves onto the note's own gain (`sharedEnv`).
         let sharedEnv = false
-        if (this._rollFxActive(rfx)) {
+        // ⚠️ Ask the ENGINE first. When a low-pass is all the note wants and the
+        // instrument can apply one per voice, no chain is built at all — so the
+        // note keeps the track's own bus and the whole track needs ONE engine,
+        // however many notes carry a filter. Only when the FX need real nodes
+        // (drive, delay, an amplitude shape) does a chain get built, and then it
+        // is the clip's shared one.
+        const engineFilterB = this._isWorkletInstrument(track) && !clipEffectActive
+          ? this._engineNoteFilter(rfx) : null
+        if (this._rollFxActive(rfx) && !engineFilterB) {
           // ⚠️ A worklet instrument shares ALWAYS. The three conditions below are
           // the reasons a note wants a chain of its OWN — its own FX, a filter
           // envelope, an overlapping clip effect — and every one of them is a
@@ -2702,7 +2717,7 @@ export class DawEngine extends EventTarget {
           // uses a sample resumes at the right phase instead of restarting when
           // the playhead enters mid-note.
           const noteOffsetSec = this.beatsToSeconds(alreadyBeats)
-          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec)
+          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec, engineFilterB ?? undefined)
           this._choke(track.id, h, startAt)
         }
 
@@ -4073,6 +4088,36 @@ export class DawEngine extends EventTarget {
    * It was invisible because an AudioWorkletProcessor does not live in the JS
    * heap: the heap stayed flat at 42.6MB throughout.
    */
+  /**
+   * A per-note filter the ENGINE can apply itself, or null.
+   *
+   * ⚠️ The whole point of _isWorkletInstrument is that these instruments cannot
+   * afford a chain per note. A low-pass is the commonest thing a note asks for
+   * and the one thing Helios already has per voice, so when that is ALL the
+   * note wants, it needs no chain at all — the track drops to a single engine.
+   *
+   * Anything else in the roll FX (drive, delay, bitcrush, an amplitude shape)
+   * is real signal processing that has to happen outside, so this returns null
+   * and the caller falls back to the clip's shared chain.
+   */
+  private _engineNoteFilter(rfx: RollFx): { cut?: number; res?: number } | null {
+    const lp = rfx.filterHz
+    // 17.5k and up is the "Off" end of the low-pass — see FX_FIELDS.
+    if (lp == null || lp >= 17_500) return null
+    for (const [k, v] of Object.entries(rfx)) {
+      if (k === 'filterHz' || k === 'filterQ') continue
+      const field = FX_FIELD_BY_KEY[k]
+      // A field sitting at its neutral value is not switched on.
+      if (!field || v == null || v === field.neutral) continue
+      return null   // something here needs real nodes
+    }
+    // norm = log(hz/8) / log(2500) — the inverse of the engine's cutoffHz().
+    const cut = Math.log(Math.max(8, lp) / 8) / Math.log(2500)
+    const q = rfx.filterQ
+    return { cut, ...(q != null && q !== FX_FIELD_BY_KEY.filterQ?.neutral
+      ? { res: Math.min(1, Math.max(0, (q - 0.1) / 11.9)) } : {}) }
+  }
+
   private _isWorkletInstrument(track: { id: string } | undefined): boolean {
     if (!track) return false
     const t = this._resolveInstrument(track as never)?.type

@@ -574,6 +574,10 @@ class Voice {
   }
   start(note, vel, patch, engine, legato, fromSeq) {
     this.note = note; this.vel = vel; this.gate = true; this.fromSeq = !!fromSeq
+    // Per-note filter from the host, set by noteOn straight after this. Cleared
+    // here so a voice reused from the pool cannot inherit the last note's.
+    this.noteCut = null
+    this.noteRes = null
     this.serial = ++VOICE_SERIAL
     const wasActive = this.active
     this.active = true
@@ -2423,7 +2427,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
         if (m.rowId) this.rowLuts.set(m.rowId, m.lut)
         else this.remapLuts.set(m.key, m.lut)
         break
-      case 'noteOn': this.noteOn(m.note, m.vel, false, m.ch || 0); break
+      case 'noteOn': this.noteOn(m.note, m.vel, false, m.ch || 0, m.nf); break
       case 'chanBend': this.chanBend[m.ch & 15] = m.semis; break
       case 'chanPressure': this.chanPressure[m.ch & 15] = m.value; break
       case 'noteOff': this.noteOff(m.note, false); break
@@ -2625,7 +2629,20 @@ class ApolloProcessor extends AudioWorkletProcessor {
     return best
   }
 
-  noteOn(note, vel, fromSeq, ch) {
+  /**
+   * @param nf Optional per-note filter from the host: { cut, res }.
+   *
+   * ⚠️ THIS EXISTS SO THE DAW DOES NOT HAVE TO BUILD A SYNTH PER NOTE.
+   *
+   * Beacon gives a note its own filter by wiring an external chain in front of
+   * its destination. That works for a sampled voice, which IS its own source —
+   * but Apollo keys one persistent engine per destination, so a per-note
+   * destination meant a per-note engine, and the DSP load climbed for as long
+   * as the transport ran. Helios already has a filter per VOICE, which is the
+   * right place for a per-note filter to live, so the host sends the value
+   * instead of building hardware around the output.
+   */
+  noteOn(note, vel, fromSeq, ch, nf) {
     if (!this.patch) return
     ch = ch || 0
     this.hyperRetrigFlag = true
@@ -2646,6 +2663,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const legato = !!v && mode === 'legato'
       if (!v) v = this.allocVoice()
       v.start(note, vel, patch, this, legato, fromSeq)
+      if (nf) { v.noteCut = nf.cut != null ? nf.cut : null; v.noteRes = nf.res != null ? nf.res : null }
       v.ch = ch
       v.srcNote = srcNote
       this.monoVoice = v
@@ -2654,6 +2672,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
     }
     const v = this.allocVoice()
     v.start(note, vel, patch, this, false, fromSeq)
+    if (nf) { v.noteCut = nf.cut != null ? nf.cut : null; v.noteRes = nf.res != null ? nf.res : null }
     v.ch = ch
     v.srcNote = srcNote
     this.port.postMessage({ type: 'voiceOn', note, fromSeq: !!fromSeq })
@@ -3048,8 +3067,17 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const fcfg1 = patch.filters[0], fcfg2 = patch.filters[1]
     const cutSpread = vs.voiceSpreadCutoff * spreadIdx * 0.02
     if (fcfg1.enabled) {
-      const cut = clamp(this.vp(v, 'f1.cutoff', fcfg1.cutoff) + ktBase * fcfg1.keytrack + cutSpread, 0, 1)
-      const res = clamp(this.vp(v, 'f1.res', fcfg1.res), 0, 1)
+      // ⚠️ THE LOWER OF THE TWO, never a replacement and never a sum.
+      //
+      // The host's per-note value stands in for a low-pass wired in FRONT of
+      // the voice, and a low-pass in series can only ever darken — so taking
+      // the minimum models it without a second filter, and a patch already
+      // darker than the note asked for is left alone. An offset would have
+      // brightened notes whose patch sits below the requested cutoff, which is
+      // the one thing adding a low-pass must never do.
+      const patchCut = clamp(this.vp(v, 'f1.cutoff', fcfg1.cutoff) + ktBase * fcfg1.keytrack + cutSpread, 0, 1)
+      const cut = v.noteCut != null ? Math.min(patchCut, clamp(v.noteCut, 0, 1)) : patchCut
+      const res = clamp(v.noteRes != null ? v.noteRes : this.vp(v, 'f1.res', fcfg1.res), 0, 1)
       const drv = clamp(this.vp(v, 'f1.drive', fcfg1.drive), 0, 1)
       const fat = clamp(this.vp(v, 'f1.fat', fcfg1.fat), 0, 1)
       const fmix = clamp(this.vp(v, 'f1.mix', fcfg1.mix), 0, 1)
