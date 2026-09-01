@@ -1,0 +1,29 @@
+# What NOT to upload to Vercel.
+#
+# ⚠️ VERCEL DOES NOT READ .gitignore. It reads this file, and otherwise skips
+# only node_modules and .git — so every local-only build artifact was being
+# uploaded with the source. That is invisible until one of them crosses the
+# 100 MB per-file limit and the deploy fails with nothing but
+# "File size limit exceeded (100 MB)", naming no file.
+#
+# Two of them cross it routinely: the packaged desktop installers, and the
+# turbopack dev cache that `npm run dev` grows in .next.
+#
+# Everything listed here is either rebuilt on Vercel or belongs to a build that
+# does not run there at all (the desktop app, the native bridge). Sources stay —
+# only outputs are excluded.
+
+# Rebuilt by Vercel; locally it also holds a multi-hundred-MB dev cache.
+.next
+
+# The desktop app: installers, the packaged .app, and its compiled main process.
+dist-electron
+dist-electron-apollo
+electron/dist
+electron/node_modules
+
+# The native Beacon Bridge — built with cmake, never on Vercel.
+bridge/build
+
+# Local Python environment for the CLAP embeddings.
+.venv-clap
