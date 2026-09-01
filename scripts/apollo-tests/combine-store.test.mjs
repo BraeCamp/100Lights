@@ -44,9 +44,10 @@ const check = (label, pass, extra = '') => {
 }
 
 // ── A very small IndexedDB, accurate where it matters ──────────────────────
+let failWrites = false
 function installFakeIDB() {
   const stores = new Map()
-  const stats = { opens: 0, closes: 0, throwsAfterClose: 0 }
+  const stats = { opens: 0, closes: 0, throwsAfterClose: 0, quotaThrows: 0 }
 
   const makeReq = value => {
     const req = { result: value, error: null, onsuccess: null, onerror: null }
@@ -66,7 +67,17 @@ function installFakeIDB() {
       tx.objectStore = () => ({
         get: k => makeReq(map.get(k)),
         getAll: () => makeReq([...map.values()]),
-        put: v => { map.set(v.stamp, v); return makeReq(undefined) },
+        put: v => {
+          // A full disk: the WRITE fails, the connection is untouched.
+          if (failWrites) {
+            stats.quotaThrows++
+            const e = new Error('QuotaExceededError'); e.name = 'QuotaExceededError'
+            tx.error = e
+            queueMicrotask(() => tx.onerror?.())
+            return { onsuccess: null, onerror: null }
+          }
+          map.set(v.stamp, v); return makeReq(undefined)
+        },
         delete: k => { map.delete(k); return makeReq(undefined) },
         // A cursor walks the keys as they were when it started, hands back one
         // record at a time, and only advances when continue() is called.
@@ -91,7 +102,7 @@ function installFakeIDB() {
       })
       // Real transactions stay open while requests are outstanding; completing
       // on the next microtask would let the prune resolve mid-walk.
-      setTimeout(() => tx.oncomplete?.(), 0)
+      setTimeout(() => { if (!failWrites) tx.oncomplete?.() }, 0)
       return tx
     }
   }
@@ -213,6 +224,35 @@ const store = await importTs('lib/apollo/combine-store.ts')
   await store.pruneCombined(new Set())
   check('it never holds more than one record of audio at a time',
     materialised <= 20, `${materialised} payload reads for 20 records`)
+}
+
+// ── A full disk must not cost the connection ───────────────────────────────
+//
+// Brae: "Try with lower cpu and ram limits as well."
+//
+// ⚠️ A REGRESSION I INTRODUCED YESTERDAY, found by asking that question of
+// storage rather than of memory. withDb() dropped the cached connection on ANY
+// error. A full disk raises QuotaExceededError on every write, so twelve failed
+// writes reopened the database ELEVEN TIMES — on precisely the small, full
+// device that can least afford it. The write failed; the connection was fine.
+{
+  const clips = stores.get('clips')
+  clips.clear()
+  await store.saveCombined('warm', fakeBuffer())
+  const before = stats.opens
+
+  failWrites = true
+  for (let i = 0; i < 12; i++) await store.saveCombined(`full${i}`, fakeBuffer())
+  const reopens = stats.opens - before
+  check('a full disk does not reopen the database on every write',
+    reopens === 0, `${stats.quotaThrows} quota errors caused ${reopens} reopens`)
+
+  failWrites = false
+  // ⚠️ And the renders already stored must survive it. A full disk costing you
+  // the cache you ALREADY have is the difference between a slow session and one
+  // that re-renders the whole song.
+  check('and what was already stored can still be read',
+    (await store.loadCombined('warm', ctx)) != null)
 }
 
 console.log(failures ? `\n${failures} failing` : '\nthe render cache reads back and is bounded')

@@ -534,13 +534,49 @@ function dropSupersededLayers(keep: string[]): void {
   }
 }
 
+/**
+ * Where each cached render sits in the song, so eviction can be about MUSIC.
+ *
+ * Filled as wants are computed; a key whose clip is unknown simply has no
+ * opinion and is evicted on insertion order, as before.
+ */
+const keyBeat = new Map<string, number>()
+
+/**
+ * Throw away what the listener is FURTHEST from, not what arrived first.
+ *
+ * ⚠️ This used to take `buffers.keys().next()` — Map insertion order. A song is
+ * rendered from the beginning, so the first thing inserted is the OPENING, and
+ * the opening is the one part of a song you hear on every single play. On any
+ * device where the budget genuinely bites, the cache was systematically
+ * discarding the most-heard music in the project and keeping the least-heard.
+ *
+ * Growing the budget to fit the project (setProjectNeed) hid this on roomy
+ * machines and did nothing for small ones, which is exactly where it hurts:
+ * a 2 GB phone gets a 60-second ceiling, and a seven-track song wants seven
+ * times its own length of cache. There, eviction is not an edge case, it is
+ * the normal state, and the order it happens in is the whole experience.
+ *
+ * The module already renders nearest-the-playhead first. Evicting
+ * furthest-from-the-playhead is the same idea pointed the other way.
+ */
 function evictIfNeeded(): void {
   let frames = 0
   for (const b of buffers.values()) frames += b.length
-  while (frames > MAX_FRAMES && buffers.size > 1) {
-    const oldest = buffers.keys().next().value as string
-    frames -= buffers.get(oldest)?.length ?? 0
-    buffers.delete(oldest)
+  if (frames <= MAX_FRAMES) return
+
+  // Sorted once per eviction rather than per removal: this runs after a render,
+  // not in the audio path, and a scan per dropped clip would be quadratic on
+  // precisely the small devices this exists to protect.
+  const order = [...buffers.keys()].sort((a, b) => {
+    const da = keyBeat.has(a) ? Math.abs(keyBeat.get(a)! - playheadBeat) : Infinity
+    const db = keyBeat.has(b) ? Math.abs(keyBeat.get(b)! - playheadBeat) : Infinity
+    return db - da                    // furthest away first
+  })
+  for (const key of order) {
+    if (frames <= MAX_FRAMES || buffers.size <= 1) break
+    frames -= buffers.get(key)?.length ?? 0
+    buffers.delete(key)
   }
 }
 
@@ -1033,9 +1069,13 @@ interface Want { clip: MidiClip; patch: ApolloPatch; key: string }
 
 /** The clips these groups want baked, each with the stamp it will cache under. */
 function wantsOf(groups: TrackRenderGroup[], bpm: number): Want[] {
-  return groups.flatMap(g => g.clips
+  const wants = groups.flatMap(g => g.clips
     .filter(c => c.notes.length > 0)
     .map(c => ({ clip: c, patch: g.patch, key: combinedStamp(c, g.patch, bpm) })))
+  // So eviction knows which music is near the listener. Cheap to keep, and it
+  // is the only place clip positions and cache keys are both in hand.
+  for (const w of wants) keyBeat.set(w.key, w.clip.startBeat)
+  return wants
 }
 
 /**
@@ -1615,7 +1655,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
 
 /** Drop everything (project close / user reset). */
 export function clearCombined(): void {
-  buffers.clear(); inFlight.clear(); failures.clear(); queue.length = 0
+  buffers.clear(); keyBeat.clear(); inFlight.clear(); failures.clear(); queue.length = 0
   resetCombineRetries()
 }
 

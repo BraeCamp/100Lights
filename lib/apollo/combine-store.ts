@@ -54,7 +54,15 @@ async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>): Promise<T> {
   try {
     return await fn(await openDb())
   } catch (err) {
-    dbPromise = null
+    // ⚠️ ONLY when the CONNECTION is what died. Dropping it on any failure at
+    // all looks careful and is not: a full disk raises QuotaExceededError on
+    // every write, and rebuilding the connection each time meant twelve failed
+    // writes reopened the database eleven times — on exactly the small, full
+    // device that can least afford it. The write failed; the connection is
+    // fine. InvalidStateError is the one that means it is closed or closing,
+    // and if a connection is broken in some other way the next transaction
+    // raises it anyway, so this self-corrects rather than guessing.
+    if ((err as { name?: string })?.name === 'InvalidStateError') dbPromise = null
     throw err
   }
 }
