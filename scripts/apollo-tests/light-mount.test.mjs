@@ -35,20 +35,35 @@ const check = (label, pass, extra = '') => {
   const transport = readFileSync('components/editor/daw/Transport.tsx', 'utf8')
   const mount = readFileSync('components/LightMount.tsx', 'utf8')
   const layout = readFileSync('app/(app)/AppLayoutClient.tsx', 'utf8')
+  const root = readFileSync('app/layout.tsx', 'utf8')
 
   check('the transport no longer mounts Light',
     !/<VoiceControl/.test(transport) && /setLightSlot/.test(transport))
   check('LightMount is the only thing that renders it', /<VoiceControl/.test(mount))
-  check('and the layout mounts LightMount', /<LightMount\s*\/>/.test(layout))
 
-  // ⚠️ THE WHOLE FIX. Each branch used to return its own provider tree, and
-  // React reconciles by position — so moving between the editor and the rest of
-  // the app swapped one tree for another and unmounted everything inside.
+  // ⚠️ AT THE ROOT, NOT IN (app). Brae: "it still dies when the page changes."
+  // community, apps, learn and store all live OUTSIDE the (app) group, and
+  // Light's own navigation offers three of them — so obeying "go to the
+  // community" walked Light off the edge of its own layout and ended it.
+  check('the ROOT layout mounts LightMount', /<LightMount\s*\/>/.test(root))
+  check('and the app layout no longer does too — one mount, not two',
+    !/<LightMount\s*\/>/.test(layout))
+  check('the desktop menu bridge moved with it, for the same reason',
+    /<DesktopMenu\s*\/>/.test(root) && !/<DesktopMenu\s*\/>/.test(layout))
+
+  // ⚠️ THE EARLIER FIX, STILL LOAD-BEARING. Each branch used to return its own
+  // provider tree, and React reconciles by position — so moving between the
+  // editor and the rest of the app swapped one tree for another and unmounted
+  // everything inside. Light no longer lives in there, but the studio does.
   const returns = (layout.match(/\n  return \(/g) ?? []).length
-  check('the layout has ONE return, so nothing is swapped out on navigation',
-    returns === 1, `${returns} returns`)
-  check('and Light sits outside the body that changes',
-    /\{\(isEditor \|\| isLauncher\) \? editorBody/.test(layout))
+  check('the app layout still has ONE return', returns === 1, `${returns} returns`)
+
+  // ⚠️ Existing everywhere is not the same as being ON SCREEN everywhere.
+  check('Light stays off the marketing and auth pages',
+    /NO_LIGHT/.test(mount) && /path === '\/'/.test(mount))
+  // The old guarantee came from the layout boundary, which is now gone.
+  check('and a desktop module window still gets no microphone of its own',
+    /desktop && path\.startsWith\('\/apps\/'\)/.test(mount))
 }
 
 // ── the studio is optional now ─────────────────────────────────────────────
@@ -124,6 +139,19 @@ const run = line => {
   const voice = readFileSync('components/editor/daw/VoiceControl.tsx', 'utf8')
   check('NAVIGATE has a handler', /act\.type === 'NAVIGATE'/.test(voice))
   check('and it actually navigates', /router\.push\(to\)/.test(voice))
+
+  // ⚠️ A NEW PROJECT LANDS IN THE STUDIO, NOT AT THE CHOOSER.
+  // Brae: "when I say to add a new DAW project it opens a project from All
+  // Projects so it isn't DAW specific and it needs naming which it can't do."
+  // Bare /create asks which kind of project and waits at a name field Light
+  // cannot type into, so the request stopped one step from done.
+  check('a new project goes straight to the DAW',
+    /modules: 'audio', audioMode: 'music'/.test(voice))
+  check('and carries the spoken name with it', /q\.set\('name', a\.name\)/.test(voice))
+  const create = readFileSync('app/(app)/create/NewProjectClient.tsx', 'utf8')
+  // The other half: the parameter was being sent to something that read it.
+  check('and /create actually reads that name',
+    /searchParams\.get\('name'\)/.test(create) && /useState\(nameParam/.test(create))
 }
 
 console.log(failures ? `\n${failures} failing` : '\nLight goes where you go')

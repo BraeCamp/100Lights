@@ -3,6 +3,7 @@
 import { SaveOfflineItem } from '@/components/projects/SaveOfflineItem'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil, Check, ExternalLink } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { readProjectFile } from '@/lib/project-serializer'
@@ -72,14 +73,19 @@ const isApolloRow = (r: { modules?: string[] | null }) => r.modules?.length === 
 
 /** Open an Apollo session as a Beacon track: fetch the session's patch, stash
  *  the neutral seed, land in the studio. */
-async function openSessionInBeacon(id: string, name: string) {
+async function openSessionInBeacon(id: string, name: string, go: (href: string) => void) {
   try {
     const res = await fetch(`/api/projects/${id}`)
     if (!res.ok) return
     const d = await res.json() as { apollo?: { patch?: object } }
     if (!d?.apollo?.patch) return
     sessionStorage.setItem('100lights-apollo-seed', JSON.stringify({ patch: d.apollo.patch, name }))
-    window.location.assign('/create?modules=audio&audioMode=music')
+    // ⚠️ NOT window.location. A full page load throws away the JavaScript
+    // context and everything living in it — including Light, which is mounted
+    // in the app layout precisely so that it can outlive the page you started
+    // talking on. Brae: "the voice controls don't stay alive when changing
+    // projects." This is one of the two places that was killing it.
+    go('/create?modules=audio&audioMode=music')
   } catch { /* offline */ }
 }
 
@@ -91,6 +97,7 @@ function formatDate(ms: number) {
 // ── Unified list (cloud + local folder, in one place) ───────────────────────
 
 function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloadKey: number }) {
+  const router = useRouter()
   const [cloud, setCloud]       = useState<CloudSummary[]>([])
   const [cloudErr, setCloudErr] = useState(false)
   const [cloudLoading, setCloudLoading] = useState(isSignedIn)
@@ -249,7 +256,8 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
     try {
       const { project } = await readProjectFile(await f.handle.getFile())
       localStorage.setItem(`cf_pending_cfproj_${project.id}`, JSON.stringify(project))
-      window.location.href = `/projects/${project.id}`
+      // Client-side, for the same reason as openSessionInBeacon above.
+      router.push(`/projects/${project.id}`)
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Could not open this file. It may be corrupted or not a valid 100Lights project.')
     } finally {
@@ -558,7 +566,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
               <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(row.ts)}</span>
               {isApolloRow(row) && (
                 <button
-                  onClick={(e) => { e.preventDefault(); void openSessionInBeacon(row.id, row.name) }}
+                  onClick={(e) => { e.preventDefault(); void openSessionInBeacon(row.id, row.name, href => router.push(href)) }}
                   title="Open this session as an Apollo track in the Beacon studio"
                   className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg text-xs font-semibold"
                   style={{ color: 'var(--accent-light)' }}

@@ -5,8 +5,6 @@ import { useEffect, useState } from 'react'
 import { Menu, X } from 'lucide-react'
 import Sidebar from '@/components/layout/Sidebar'
 import { UpgradeModalProvider } from '@/components/UpgradeModal'
-import LightMount from '@/components/LightMount'
-import DesktopMenu from '@/components/DesktopMenu'
 import { useIsMobile } from '@/lib/use-is-mobile'
 
 export default function AppLayoutClient({ children }: { children: React.ReactNode }) {
@@ -91,13 +89,8 @@ export default function AppLayoutClient({ children }: { children: React.ReactNod
   return (
     <UpgradeModalProvider>
       {(isEditor || isLauncher) ? editorBody : isMobile ? mobileBody : desktopBody}
-      {/* Mounted once, last, and outside the body that gets swapped — so a
-          conversation survives walking from the studio to the dashboard and
-          back. See components/LightMount.tsx. */}
-      <LightMount />
       {/* Same reason as Light: the menu bar has to reach an app that is still
           there when it arrives. */}
-      <DesktopMenu />
     </UpgradeModalProvider>
   )
 }

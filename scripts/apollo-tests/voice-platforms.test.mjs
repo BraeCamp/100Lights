@@ -148,14 +148,26 @@ const record = await importTs('lib/voice/record.ts')
 
 // ── one Light, not several ─────────────────────────────────────────────────
 //
-// ⚠️ A desktop app can have many windows, and every window that mounts the app
-// layout mounts another microphone. Module windows load /apps/*, which is
-// outside that layout; pop-outs are portals from the parent, not new apps.
+// ⚠️ A desktop app can have many windows, and every window that mounts Light
+// mounts another microphone. Module windows load /apps/*; pop-outs are portals
+// from the parent, not new apps.
+//
+// ⚠️ THIS GUARANTEE CHANGED HANDS. It used to come for free from the layout
+// boundary — /apps/* sat outside the (app) group, which is where Light was
+// mounted. Light now lives at the ROOT so it survives navigating to community,
+// apps and learn, and that boundary no longer protects anything. LightMount
+// has to exclude desktop module windows itself, or a five-window desktop
+// session has five microphones in it, each able to hear the others.
 {
   const main = readFileSync('electron/src/main.ts', 'utf8')
-  check('module windows load a route outside the app layout',
+  check('module windows load /apps/<key>',
     /loadURL\(`\$\{APP_URL\}\/apps\/\$\{moduleKey\}`\)/.test(main))
+
   const mount = readFileSync('components/LightMount.tsx', 'utf8')
+  check('and Light refuses to mount in a desktop module window',
+    /desktop && path\.startsWith\('\/apps\/'\)/.test(mount))
+  check('while a browser visiting the same page still gets it',
+    /In a BROWSER/.test(mount))
   check('and a popped-out panel is a portal, not a second app',
     /createPortal/.test(mount) && !/loadURL|window\.open\('\/'/.test(mount))
 }

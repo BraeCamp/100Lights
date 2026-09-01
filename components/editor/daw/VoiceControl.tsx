@@ -719,7 +719,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             return
           }
           if (a.action === 'new') {
-            router.push(a.name ? `/create?name=${encodeURIComponent(a.name)}` : '/create')
+            // ⚠️ THE STUDIO, NOT THE CHOOSER. Brae: "when I say to add a new
+            // DAW project it opens a project from All Projects so it isn't DAW
+            // specific and it needs naming which it can't do."
+            //
+            // Bare /create is the module picker: it asks which kind of project
+            // and waits at a name field — a field Light cannot type into, so
+            // the request stopped dead one step from done. These two parameters
+            // are what the projects page itself uses for "new song", and they
+            // take you straight into the DAW.
+            //
+            // ⚠️ And the name has to travel WITH it. /create ignored a name
+            // parameter entirely, so a project asked for by name arrived
+            // called "New Project" — which is why naming felt impossible.
+            const q = new URLSearchParams({ modules: 'audio', audioMode: 'music' })
+            if (a.name) q.set('name', a.name)
+            router.push(`/create?${q}`)
             return
           }
           if (!projectId) { respond('This project has not been saved yet, so there is nothing to version.', 'question'); return }

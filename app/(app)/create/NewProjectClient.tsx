@@ -31,6 +31,10 @@ export default function NewProjectClient({ flags }: Props) {
   const fixtureParam = searchParams.get('fixture')
   const demoProjectParam = searchParams.get('demoProject')   // editable recreation of an article clip
   const templateParam = searchParams.get('template')         // built-in starter template
+  // ⚠️ A project can arrive already named — Light creates one by voice, and
+  // there is no keyboard in that conversation. This was read by nothing, so a
+  // spoken name was accepted, echoed back, and then dropped on the floor.
+  const nameParam = searchParams.get('name')
   // Community deep-links, demo fixtures and templates always target the (audio) DAW
   const deepLink = starterParam || communityItemParam || fixtureParam || demoProjectParam || templateParam
   const moduleParam   = searchParams.get('modules') ?? (deepLink ? 'audio' : null)
@@ -47,7 +51,7 @@ export default function NewProjectClient({ flags }: Props) {
     : undefined
 
   const [phase, setPhase]       = useState<'pick' | 'edit'>(initModule !== null ? 'edit' : 'pick')
-  const [projectName, setProjectName] = useState('')
+  const [projectName, setProjectName] = useState(nameParam ?? '')
   const [selected, setSelected] = useState<ModuleKey | null>(initModule)
   const [templateId, setTemplateId] = useState<string | null>(templateParam)
   const audioAvailable = visibleMods.some(m => m.key === 'audio')

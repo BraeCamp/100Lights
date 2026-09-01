@@ -4,6 +4,8 @@ import { Geist, Geist_Mono } from "next/font/google"
 import { ClerkProvider } from "@clerk/nextjs"
 import { dark } from "@clerk/themes"
 import { PostHogProvider } from "@/components/PostHogProvider"
+import LightMount from "@/components/LightMount"
+import DesktopMenu from "@/components/DesktopMenu"
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar"
 import ReferralCapture from "@/components/ReferralCapture"
 import AnnouncementBanner from "@/components/AnnouncementBanner"
@@ -93,6 +95,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <AnnouncementBanner />
             {/* ⌘K quick switcher — renders nothing until opened */}
             <CommandK />
+            {/* ⚠️ LIGHT LIVES AT THE ROOT, not in the app layout.
+                Brae: "it still dies when the page changes."
+
+                It was mounted in (app), which covers the studio, projects and
+                the dashboard — but community, apps, learn and store are all
+                OUTSIDE that group, and Light's own navigation offers three of
+                them as destinations. So obeying "go to the community" ended
+                Light: it walked itself off the edge of its own layout, and
+                every question it had open went with it.
+
+                Here it is a sibling of every page there is, so no navigation
+                can unmount it. LightMount decides where it should be seen; the
+                point of this position is only that it never stops existing.
+                Inside HideOnEmbed so an embedded iframe stays bare. */}
+            <LightMount />
+            <DesktopMenu />
           </HideOnEmbed>
         </body>
       </html>
