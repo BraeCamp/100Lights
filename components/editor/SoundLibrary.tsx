@@ -9,7 +9,7 @@ import {
   initLibrary,
   getAudioDurationFromBlob,
   CATEGORY_LABELS, LIBRARY_CATEGORIES, CATEGORY_GROUPS,
-  TYPE_TAGS, CHARACTER_TAGS, CATEGORY_TO_TYPE_TAG, CATEGORY_CHAR_TAGS,
+  TYPE_TAGS, CHARACTER_TAGS, tagsOf,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
 import { detectMediaKind } from '@/lib/media-import'
@@ -1170,19 +1170,21 @@ function RecipeDetailCard({ recipe, spec, anchor, playing, onAudition, onClose }
 
 // ── Tag helpers ───────────────────────────────────────────────────────────────
 
+// ⚠️ Both of these now read the SHARED derivation in lib/sound-tags.ts rather
+// than repeating it. There were three implementations of "what tags does this
+// have" — this file's two, and the one the voice control needed — and they
+// already disagreed in small ways. A filter chip that finds a sound the voice
+// control does not is the kind of difference nobody reports as a bug; they just
+// conclude the search is unreliable.
 function getTypeTag(entry: LibraryEntry): string {
-  // Explicit type tags in the tags array take priority over category inference
-  const tagsSet = new Set(entry.tags ?? [])
-  for (const t of TYPE_TAGS) {
-    if (tagsSet.has(t)) return t
-  }
-  return CATEGORY_TO_TYPE_TAG[entry.category] ?? 'Other'
+  const all = tagsOf(entry)
+  // An explicit tag first, then whatever the category says — the shared
+  // function already puts them in that order.
+  return all.find(t => (TYPE_TAGS as readonly string[]).includes(t)) ?? 'Other'
 }
 
 function getCharTags(entry: LibraryEntry): string[] {
-  const catTags = CATEGORY_CHAR_TAGS[entry.category] ?? []
-  const entryTags = (entry.tags ?? []).filter(t => CHARACTER_TAGS.includes(t as typeof CHARACTER_TAGS[number]))
-  return [...new Set([...catTags, ...entryTags])]
+  return tagsOf(entry).filter(t => (CHARACTER_TAGS as readonly string[]).includes(t))
 }
 
 // ── Main SoundLibrary panel ───────────────────────────────────────────────────

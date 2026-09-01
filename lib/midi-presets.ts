@@ -25,6 +25,18 @@ export interface MidiPreset {
   /** The preset's own sound shaping — applied to every note that uses it.
    *  Set in the preset creator; travels with the preset (and community share). */
   sound?:    PresetSound
+  /**
+   * Free-form tags, the same field and the same vocabulary a library sample
+   * has — so "a dark pad" finds both, and one word never means two things.
+   *
+   * ⚠️ OPTIONAL, AND MOSTLY UNNECESSARY. `tagsOf()` in lib/sound-tags.ts
+   * already derives the type from `category`/`group` and the character from
+   * `sound.fx`, which covers every built-in preset without anybody writing a
+   * hundred tags by hand — and covers a preset the user makes tomorrow, which
+   * hand-tagging never would. This field is for what cannot be derived: a
+   * genre, an era, a project, a mood only the author knows.
+   */
+  tags?:     string[]
 }
 
 export const PRESET_GROUPS = ['Piano', 'Mallets', 'Organ', 'Guitar', 'Bass', 'Strings', 'Brass', 'Woodwinds', 'World', 'Synth', 'Custom'] as const

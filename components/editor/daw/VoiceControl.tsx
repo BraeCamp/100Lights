@@ -530,6 +530,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     library: combinePresets(projectRef.current?.presets).map(p => ({
       id: p.id, name: p.name, group: p.group,
       loNote: p.loNote, hiNote: p.hiNote, fx: p.sound?.fx ?? null,
+      // What it IS and what anybody called it — the type comes from the
+      // category, the character is measured from the shaping, and a tag the
+      // author wrote beats both. See lib/sound-tags.ts.
+      category: p.category ?? null, tags: p.tags ?? null,
     })),
   }), [engine])
 

@@ -10,7 +10,8 @@
 
 import type { BeatType, HitSpectral } from './beat-analyzer'
 
-export type LibraryCategory = BeatType | 'voice' | 'custom'
+import type { LibraryCategory } from './sound-tags'
+export type { LibraryCategory }
 
 /** Enough info to re-render a synthesized entry on demand (lazy download). */
 export interface RenderSpec {
@@ -494,70 +495,17 @@ export const CATEGORY_GROUPS: Array<{ label: string; categories: LibraryCategory
 export const LIBRARY_CATEGORIES: LibraryCategory[] = CATEGORY_GROUPS.flatMap(g => g.categories)
 
 // ── Filter tag system ─────────────────────────────────────────────────────────
-
-/** Ordered list of type tags shown in the filter bar */
-export const TYPE_TAGS = ['Drums', 'Percussion', 'Bass', 'Lead', 'Keys', 'Pad', 'Guitar', 'Strings', 'Arp', 'Brass', 'Wind', 'Voice', 'FX'] as const
-export type TypeTag = typeof TYPE_TAGS[number]
-
-/** Ordered list of character tags shown in the filter bar */
-export const CHARACTER_TAGS = ['Dark', 'Bright', 'Warm', 'Hard', 'Soft', 'Ambient', 'Crunchy', 'Glitchy'] as const
-export type CharacterTag = typeof CHARACTER_TAGS[number]
-
-/** Maps each LibraryCategory to a type tag for filter chip matching */
-export const CATEGORY_TO_TYPE_TAG: Record<LibraryCategory, TypeTag | null> = {
-  kick:              'Drums',
-  snare:             'Drums',
-  hihat:             'Drums',
-  'open-hihat':      'Drums',
-  clap:              'Drums',
-  tom:               'Drums',
-  crash:             'Drums',
-  rim:               'Drums',
-  '808':             'Drums',
-  ride:              'Drums',
-  shaker:            'Percussion',
-  'guitar-acoustic': 'Guitar',
-  'guitar-electric': 'Guitar',
-  'guitar-nylon':    'Guitar',
-  'piano-grand':     'Keys',
-  'piano-electric':  'Keys',
-  'piano-rhodes':    'Keys',
-  'synth-lead':      'Lead',
-  'synth-pad':       'Pad',
-  'synth-bass':      'Bass',
-  'synth-arp':       'Arp',
-  'synth-strings':   'Strings',
-  'synth-organ':     'Keys',
-  'synth-choir':     'Voice',
-  'synth-dark':      'Lead',
-  'synth-drone':     'FX',
-  'synth-pluck':     'Lead',
-  violin:            'Strings',
-  viola:             'Strings',
-  other:             null,
-  voice:             'Voice',
-  custom:            null,
-}
-
-/** Maps each LibraryCategory to implicit character tags */
-export const CATEGORY_CHAR_TAGS: Partial<Record<LibraryCategory, string[]>> = {
-  kick:         ['Hard'],
-  '808':        ['Dark', 'Hard'],
-  ride:         ['Bright'],
-  shaker:       ['Bright'],
-  snare:        ['Hard'],
-  hihat:        ['Bright'],
-  'open-hihat': ['Bright'],
-  crash:        ['Bright', 'Hard'],
-  'synth-bass': ['Dark', 'Warm'],
-  'synth-dark': ['Dark'],
-  'synth-drone':['Dark', 'Ambient'],
-  'synth-pluck':['Hard'],
-  'synth-pad':  ['Warm', 'Ambient', 'Soft'],
-  'synth-strings': ['Warm', 'Soft'],
-  'piano-grand': ['Bright', 'Warm'],
-  'piano-rhodes': ['Warm', 'Soft'],
-  'synth-lead': ['Bright'],
-  violin:       ['Bright', 'Warm'],
-  viola:        ['Warm', 'Soft'],
-}
+//
+// ⚠️ MOVED to lib/sound-tags.ts, and re-exported here so every existing import
+// keeps working. Presets needed the same words — a preset carries a category
+// from this very list — and a vocabulary that lives inside the sample library
+// cannot be shared with them without dragging IndexedDB along with it.
+//
+// One vocabulary matters more than where it lives: "Dark" meaning one thing in
+// the filter bar and something else to the voice control would be worse than
+// having no tags at all.
+export {
+  TYPE_TAGS, CHARACTER_TAGS, CATEGORY_TO_TYPE_TAG, CATEGORY_CHAR_TAGS,
+  ALL_TAGS, tagsOf, hasTags,
+} from './sound-tags'
+export type { TypeTag, CharacterTag, Taggable } from './sound-tags' 

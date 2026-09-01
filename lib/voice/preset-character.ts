@@ -20,6 +20,7 @@
 // low-pass 18000 (open), reverb 0, gain 1, EQ 0 dB.
 
 import type { RollFx } from '@/lib/daw-types'
+import { tagsOf, ALL_TAGS } from '@/lib/sound-tags'
 
 export interface PresetLike {
   id: string
@@ -29,6 +30,28 @@ export interface PresetLike {
   hiNote?: number
   /** The preset's own shaping — `MidiPreset.sound.fx`. */
   fx?: RollFx | null
+  /** `MidiPreset.category` / a sample's category — what it IS. */
+  category?: string | null
+  /** What a person wrote, if anything. Always beats a derivation. */
+  tags?: string[] | null
+}
+
+/**
+ * Every word this preset answers to — its own tags, what its category says it
+ * is, and what it measurably sounds like.
+ *
+ * Brae: "We should have tags on all presets and samples that the voice control,
+ * Light, can refer to." This is that list for one item, and it is the SAME
+ * function the sample library uses, so "a dark pad" means one thing everywhere.
+ */
+export function presetTags(preset: PresetLike): string[] {
+  return tagsOf({
+    name: preset.name,
+    category: preset.category,
+    group: preset.group,
+    tags: preset.tags,
+    measured: characterOf(preset),
+  })
 }
 
 export interface Character {
@@ -118,13 +141,25 @@ const WORDS: Record<string, Partial<Character>> = {
   crunchy: { grit: 0.9 }, gnarly: { grit: 0.9 },
 }
 
-/** Every character word, so the recogniser and the help panel can list them. */
-export const CHARACTER_WORDS: string[] = Object.keys(WORDS)
+/**
+ * Every word a person can use to pick a sound — the moods above AND the
+ * library's own tag words.
+ *
+ * ⚠️ One list. The filter bar's chips ("Pad", "Ambient", "Crunchy") are words
+ * people already see in this app, so they are the first ones they will say, and
+ * a voice control that did not know its own filter bar's vocabulary would be a
+ * strange thing to explain.
+ */
+export const CHARACTER_WORDS: string[] = [
+  ...Object.keys(WORDS),
+  ...ALL_TAGS.map(t => t.toLowerCase()).filter(t => !(t in WORDS)),
+]
 
 /** Does this sentence ask for a character at all? */
 export function characterWordsIn(text: string): string[] {
   const words = String(text ?? '').toLowerCase().replace(/[^a-z\s-]/g, ' ').split(/\s+/)
-  return words.filter(w => WORDS[w] != null)
+  const known = new Set(CHARACTER_WORDS)
+  return words.filter(w => known.has(w))
 }
 
 export interface PresetMatch {
@@ -164,6 +199,7 @@ export function matchPresetByCharacter(
   if (!pool.length) return null
   if (!Object.keys(wanted).length) return { preset: pool[0], why: pool[0].name, considered: pool.length }
 
+  const asked = opts.words.map(w => w.toLowerCase())
   let best: { preset: PresetLike; score: number; ch: Character } | null = null
   for (const preset of pool) {
     const ch = characterOf(preset)
@@ -171,6 +207,13 @@ export function matchPresetByCharacter(
     for (const [trait, weight] of Object.entries(wanted)) {
       score += ch[trait as keyof Character] * (weight as number)
     }
+    // ⚠️ A TAG COUNTS EVEN WHEN NOTHING MEASURES IT. "Pad", "Arp", "Glitchy"
+    // are not dials — no amount of reading `sound.fx` will tell you a preset is
+    // a pad — and a preset whose author tagged it by hand is stating something
+    // no derivation can. Weighted above a measured trait for exactly that
+    // reason: somebody wrote it down.
+    const mine = new Set(presetTags(preset).map(t => t.toLowerCase()))
+    for (const word of asked) if (mine.has(word)) score += 1.2
     // A preset whose NAME says the word is a deliberate statement by whoever
     // made it, and worth a nudge — but only a nudge, so a preset that merely
     // says "dark" cannot beat one that measurably is.
