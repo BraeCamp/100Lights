@@ -103,7 +103,35 @@ function toWavBlob(buf: AudioBuffer): Blob {
 const SF_NOTE_NAMES  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B']
 // Same twelve names everything else uses — see lib/scale-constants.
 const SF_NOTE_SHARP = ROOT_NOTES
+// A parsed soundfont is a map of note → base64 data URL: megabytes of JS
+// strings, held for the lifetime of the tab. Unbounded, a session that touches
+// a dozen soundfonts never gives any of them back. Bounded by bytes (character
+// count is a fair proxy — these are base64, one byte per char) and evicted
+// least-recently-used, since re-fetching one is a network round trip, not a
+// correctness problem.
 const sfCache        = new Map<string, Record<string, string>>()
+const SF_CACHE_MAX_BYTES = 96 * 1024 * 1024
+let sfCacheBytes = 0
+
+function sfEntryBytes(map: Record<string, string>): number {
+  let n = 0
+  for (const k in map) n += k.length + map[k].length
+  return n
+}
+
+function sfCachePut(url: string, map: Record<string, string>): void {
+  const prev = sfCache.get(url)
+  if (prev) sfCacheBytes -= sfEntryBytes(prev)
+  sfCache.delete(url)
+  sfCache.set(url, map)
+  sfCacheBytes += sfEntryBytes(map)
+  for (const k of sfCache.keys()) {
+    if (sfCacheBytes <= SF_CACHE_MAX_BYTES || sfCache.size <= 1) break
+    if (k === url) continue
+    sfCacheBytes -= sfEntryBytes(sfCache.get(k)!)
+    sfCache.delete(k)
+  }
+}
 
 // One shared, reused AudioContext for decodeAudioData. Creating a fresh
 // `new AudioContext()` per note (as this used to) blows past the browser's
@@ -233,7 +261,8 @@ export async function importSoundfontToLibrary(
 
 const sfInflight = new Map<string, Promise<Record<string, string>>>()
 async function fetchSoundfont(url: string): Promise<Record<string, string>> {
-  if (sfCache.has(url)) return sfCache.get(url)!
+  const cached = sfCache.get(url)
+  if (cached) { sfCache.delete(url); sfCache.set(url, cached); return cached }   // refresh LRU recency
   const existing = sfInflight.get(url)
   if (existing) return existing   // dedup concurrent fetches of the same soundfont file
   const job = (async () => {
@@ -246,7 +275,7 @@ async function fetchSoundfont(url: string): Promise<Record<string, string>> {
     if (start === -1 || end === -1 || end <= start) throw new Error('Could not parse soundfont JS')
     const raw = text.slice(start, end + 1).replace(/,\s*}$/, '}')
     const map = JSON.parse(raw) as Record<string, string>
-    sfCache.set(url, map)
+    sfCachePut(url, map)
     return map
   })()
   sfInflight.set(url, job)
@@ -311,7 +340,15 @@ export async function renderSoundfont(
 // re-render (e.g. after the maker clears an unsaved bounce) fast. Bounded so a
 // long session can't grow it without limit; entries are tiny (one short note).
 const _presetRenderCache = new Map<string, AudioBuffer | null>()
-const PRESET_CACHE_MAX = 3000
+// Was a cap of 3000 ENTRIES, which bounds nothing that matters: 3000 decoded
+// buffers is comfortably several GB. What costs memory is samples, so that is
+// what is counted.
+const PRESET_CACHE_MAX_BYTES = 192 * 1024 * 1024
+let _presetRenderBytes = 0
+
+function presetBufBytes(buf: AudioBuffer | null): number {
+  return buf ? buf.length * buf.numberOfChannels * 4 : 0
+}
 async function renderPresetAtPitchInner(spec: RenderSpec, pitch: number): Promise<AudioBuffer | null> {
   try {
     if (spec.kind === 'soundfont' && spec.soundfontUrl) return await renderSoundfont(spec.soundfontUrl, pitch)
@@ -323,11 +360,20 @@ async function renderPresetAtPitchInner(spec: RenderSpec, pitch: number): Promis
 export async function renderPresetAtPitch(spec: RenderSpec, pitch: number): Promise<AudioBuffer | null> {
   const key = `${spec.kind}|${spec.soundfontUrl ?? spec.beatType ?? ''}|${spec.midiNote ?? ''}|${spec.duration ?? ''}|${spec.channels ?? ''}|${pitch}`
   const hit = _presetRenderCache.get(key)
-  if (hit !== undefined) return hit
+  if (hit !== undefined) {
+    _presetRenderCache.delete(key); _presetRenderCache.set(key, hit)   // refresh LRU recency
+    return hit
+  }
   const buf = await renderPresetAtPitchInner(spec, pitch)
   if (buf) {   // only cache successful renders; a null may be a transient fetch failure worth retrying
-    if (_presetRenderCache.size >= PRESET_CACHE_MAX) _presetRenderCache.delete(_presetRenderCache.keys().next().value!)
     _presetRenderCache.set(key, buf)
+    _presetRenderBytes += presetBufBytes(buf)
+    for (const k of _presetRenderCache.keys()) {
+      if (_presetRenderBytes <= PRESET_CACHE_MAX_BYTES || _presetRenderCache.size <= 1) break
+      if (k === key) continue
+      _presetRenderBytes -= presetBufBytes(_presetRenderCache.get(k)!)
+      _presetRenderCache.delete(k)
+    }
   }
   return buf
 }

@@ -23,7 +23,7 @@ import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from 
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
-import { libraryGetAll } from './sound-library'
+import { libraryGetByFolder } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
 import type { MidiPreset } from './midi-presets'
 import { captureAudioInput } from './audio-capture'
@@ -198,7 +198,74 @@ export class DawEngine extends EventTarget {
 
   // MIDI preset playback
   private _presets:         MidiPreset[] = []
-  private _presetBufCache = new Map<string, AudioBuffer | null>()   // key: `${presetId}:${pitch}`
+  // ── Decoded sampled-note cache ────────────────────────────────────────────
+  //
+  // key: `${presetId}:${pitch}` → the decoded sample for that note.
+  //
+  // Decoded audio is uncompressed float32 — roughly 100x the source file — so
+  // this is the biggest thing the engine holds. It used to be cleared NOWHERE:
+  // not on stop, not on project load, not in dispose(). Across a session it
+  // only ever grew, and once the heap was bloated the GC pressure made playback
+  // jittery no matter what was actually sounding, which is why going back to
+  // the start of a song did not make it smooth again.
+  //
+  // Now it is bounded by bytes and evicted least-recently-used, and dropped
+  // when a different project loads. The budget is deliberately generous: the
+  // working set is one project's distinct (preset, pitch) pairs, and evicting
+  // below that would thrash — every eviction costs a re-decode. The cap is a
+  // safety net for an unusually large project, not the everyday mechanism.
+  private _presetBufCache = new Map<string, AudioBuffer | null>()
+  private _presetBufBytes = 0
+  /** Which project the cache above is for; a different one starts fresh. */
+  private _presetBufProjectId: string | null = null
+
+  private static bufBytes(buf: AudioBuffer | null): number {
+    return buf ? buf.length * buf.numberOfChannels * 4 : 0
+  }
+
+  /** Device-aware ceiling for the decoded-sample cache. */
+  private static presetCacheBudget(): number {
+    if (typeof navigator === 'undefined') return 256 * 1024 * 1024
+    const nav = navigator as Navigator & { deviceMemory?: number }
+    const mobile = /Android|iPhone|iPad|iPod/i.test(nav.userAgent)
+    const gb = nav.deviceMemory ?? (mobile ? 2 : 8)
+    if (mobile || gb <= 2) return 48 * 1024 * 1024
+    if (gb <= 4) return 96 * 1024 * 1024
+    if (gb <= 8) return 192 * 1024 * 1024
+    return 384 * 1024 * 1024
+  }
+
+  /** Read through the cache, refreshing recency so eviction takes cold entries. */
+  private _presetBufGet(key: string): AudioBuffer | null | undefined {
+    if (!this._presetBufCache.has(key)) return undefined
+    const buf = this._presetBufCache.get(key)!
+    // Map iterates in insertion order, so re-inserting moves this to the newest
+    // end and the eviction loop below meets the genuinely cold entries first.
+    this._presetBufCache.delete(key)
+    this._presetBufCache.set(key, buf)
+    return buf
+  }
+
+  private _presetBufSet(key: string, buf: AudioBuffer | null): void {
+    const prev = this._presetBufCache.get(key)
+    if (prev !== undefined) this._presetBufBytes -= DawEngine.bufBytes(prev)
+    this._presetBufCache.delete(key)
+    this._presetBufCache.set(key, buf)
+    this._presetBufBytes += DawEngine.bufBytes(buf)
+    const budget = DawEngine.presetCacheBudget()
+    if (this._presetBufBytes <= budget) return
+    for (const k of this._presetBufCache.keys()) {
+      if (this._presetBufBytes <= budget || this._presetBufCache.size <= 1) break
+      if (k === key) continue   // never evict what we just asked for
+      this._presetBufBytes -= DawEngine.bufBytes(this._presetBufCache.get(k)!)
+      this._presetBufCache.delete(k)
+    }
+  }
+
+  private _clearPresetBufCache(): void {
+    this._presetBufCache.clear()
+    this._presetBufBytes = 0
+  }
   /** Presets already reported as having no samples — warn once, not per note. */
   private _warnedMissingPreset = new Set<string>()
   private _presetLoading  = new Map<string, Promise<void>>()   // key → in-flight load, so awaiters share the same decode
@@ -370,6 +437,73 @@ export class DawEngine extends EventTarget {
    *  and ringing — the buffer would play on top of them, the same music twice.
    *  Cleared whenever the transport restarts, so the next pass uses buffers. */
   private _liveScheduledClips = new Set<string>()
+
+  // ── Per-edit scheduling plan ──────────────────────────────────────────────
+  //
+  // _tick() runs 40x a second over every clip in the project. The duplicate
+  // guards below it used to be recomputed on each of those passes: the audio
+  // one is O(clips^2) with string comparisons, and the MIDI one builds a
+  // template string per clip. None of it can change between edits — clips are
+  // only replaced through updateProject — so it is computed once per edit and
+  // read on the tick, the same trick _unisonCache already uses for the notes.
+  private _dupAudioClipIds = new Set<string>()
+  private _dupMidiClipIds  = new Set<string>()
+  private _midiFxCache     = new Map<string, MidiNote[]>()
+  private _tickPlanDirty   = true
+
+  private _rebuildTickPlan(): void {
+    this._tickPlanDirty = false
+    this._dupAudioClipIds.clear()
+    this._dupMidiClipIds.clear()
+
+    // Identical audio clips stacked at (or within ~10ms of) the same spot would
+    // play doubled — and a few-ms offset comb-filters, which reads as feedback.
+    // Only the first plays. 0.02 beats is ~10ms at 120bpm; any intentional
+    // doubling lives further apart than that.
+    const seen: Array<{ trackId: string; startBeat: number; durationBeats: number; sig: string }> = []
+    for (const clip of this._clips) {
+      const sig = `${clip.r2Key ?? clip.libraryId ?? clip.audioUrl ?? clip.name}`
+      const dup = seen.some(o =>
+        o.trackId === clip.trackId && o.sig === sig &&
+        Math.abs(o.startBeat - clip.startBeat) < 0.02 &&
+        Math.abs(o.durationBeats - clip.durationBeats) < 0.02)
+      if (dup) { this._dupAudioClipIds.add(clip.id); continue }
+      seen.push({ trackId: clip.trackId, startBeat: clip.startBeat, durationBeats: clip.durationBeats, sig })
+    }
+
+    // Same exact-overlay guard for MIDI: an identical clip pasted onto itself
+    // would double every note.
+    const seenMidi = new Set<string>()
+    for (const clip of this._midiClips) {
+      const key = `${clip.trackId}|${clip.startBeat.toFixed(4)}|${clip.durationBeats.toFixed(4)}|${clip.presetId ?? ''}|${clip.notes.length}|${clip.name}`
+      if (seenMidi.has(key)) this._dupMidiClipIds.add(clip.id)
+      else seenMidi.add(key)
+    }
+  }
+
+  /** MIDI-effect output for a clip, rebuilt only when the project changes. */
+  private _processedNotes(clip: MidiClip, track: DawTrack): MidiNote[] {
+    const hit = this._midiFxCache.get(clip.id)
+    if (hit) return hit
+    const out = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+    this._midiFxCache.set(clip.id, out)
+    return out
+  }
+
+  // How many live sources each clip has, so the tick can ask "already
+  // scheduled?" without scanning the whole scheduledSources array per clip.
+  private _scheduledClipCounts = new Map<string, number>()
+
+  private _countScheduled(clipId: string, delta: number): void {
+    const n = (this._scheduledClipCounts.get(clipId) ?? 0) + delta
+    if (n > 0) this._scheduledClipCounts.set(clipId, n)
+    else this._scheduledClipCounts.delete(clipId)
+  }
+
+  private _recountScheduled(): void {
+    this._scheduledClipCounts.clear()
+    for (const s of this.scheduledSources) this._countScheduled(s.clipId, 1)
+  }
 
   /** Slim patches expanded once per params object, then cached.
    *
@@ -1051,6 +1185,14 @@ export class DawEngine extends EventTarget {
 
   updateProject(project: DawProject) {
     if (this.ctx.state === 'closed') return
+    // A DIFFERENT project — not an edit to this one. Its decoded samples are
+    // dead weight from here on, so drop them rather than carrying every project
+    // opened this session. Edits keep the cache (clearing per keystroke would
+    // re-decode the whole instrument set on every tweak).
+    if (this._presetBufProjectId !== project.id) {
+      if (this._presetBufProjectId !== null) this._clearPresetBufCache()
+      this._presetBufProjectId = project.id
+    }
     const newSegs = tempoSegments(project)
     const segsChanged = newSegs.length !== this._tempoSegs.length ||
       newSegs.some((s, i) => s.beat !== this._tempoSegs[i].beat || s.bpm !== this._tempoSegs[i].bpm)
@@ -1080,6 +1222,10 @@ export class DawEngine extends EventTarget {
     // Notes may have changed — drop the cached occurrences/unison sets so they
     // rebuild from the new note data on the next tick. (Fires only on edits.)
     this._unisonCache.clear()
+    // Same for the tick plan: duplicate-overlay sets and MIDI-effect output are
+    // derived from the clips that just changed.
+    this._midiFxCache.clear()
+    this._tickPlanDirty = true
     // Pre-warm audio buffers too: clips resolving through slow paths (r2,
     // library fallback) were silent for the first pass after a reload and
     // "appeared" a few plays later once their buffer finally cached.
@@ -1095,7 +1241,7 @@ export class DawEngine extends EventTarget {
     for (const clip of [...this._midiClips, ...sessionMidi]) {
       if (!clip.presetId) continue
       for (const note of clip.notes) {
-        if (!this._presetBufCache.has(`${clip.presetId}:${note.pitch}`)) {
+        if (this._presetBufGet(`${clip.presetId}:${note.pitch}`) === undefined) {
           void this._loadPresetBuffer(clip.presetId, note.pitch)
         }
       }
@@ -1337,6 +1483,7 @@ export class DawEngine extends EventTarget {
       } catch { /* ok */ }
     }
     this.scheduledSources = keep
+    this._recountScheduled()
   }
 
   /** Release every session takeover: arrangement content resumes scheduling on
@@ -1660,7 +1807,7 @@ export class DawEngine extends EventTarget {
         }
         if (clip.presetId) {
           const bufKey = `${clip.presetId}:${note.pitch}`
-          const buf    = this._presetBufCache.get(bufKey)
+          const buf    = this._presetBufGet(bufKey)
           if (buf === undefined) void this._loadPresetBuffer(clip.presetId, note.pitch)
           if (buf) {
             const target = (note.velocity ?? 100) / 127
@@ -1819,11 +1966,14 @@ export class DawEngine extends EventTarget {
     const job = (async () => {
       try {
         const preset = this._presets.find(p => p.id === presetId)
-        if (!preset) { this._presetBufCache.set(key, null); return }
+        if (!preset) { this._presetBufSet(key, null); return }
 
-        const entries = await libraryGetAll()
+        // Folder-scoped, not the whole library: this runs once per (preset,
+        // pitch), and _prefetchUpcoming fires it for every upcoming note, so a
+        // full getAll() here meant dozens of concurrent 13k-record scans on the
+        // main thread while the transport was running.
+        const inFolder = await libraryGetByFolder(preset.folder)
         const noteName = midiToNoteName(pitch)
-        const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
         const exact    = inFolder.find(e => e.name === noteName)
         const entry    = exact ?? inFolder.reduce<typeof inFolder[0] | null>((best, e) => {
           if (!best) return e
@@ -1831,7 +1981,7 @@ export class DawEngine extends EventTarget {
           const bMidi  = best.renderSpec?.midiNote ?? 60
           return Math.abs(eMidi - pitch) < Math.abs(bMidi - pitch) ? e : best
         }, null)
-        if (!entry) { this._presetBufCache.set(key, null); return }
+        if (!entry) { this._presetBufSet(key, null); return }
 
         let buf: AudioBuffer | null = null
         if (exact) {
@@ -1844,9 +1994,9 @@ export class DawEngine extends EventTarget {
           // range was C3–C5, so a G5 lead note used to fold down to C5).
           buf = await renderPresetAtPitch(entry.renderSpec, pitch)
         }
-        this._presetBufCache.set(key, buf)
+        this._presetBufSet(key, buf)
       } catch {
-        this._presetBufCache.set(key, null)
+        this._presetBufSet(key, null)
       } finally {
         this._presetLoading.delete(key)
       }
@@ -1868,7 +2018,7 @@ export class DawEngine extends EventTarget {
       if (clip.startBeat > until || clip.startBeat + clip.durationBeats < now) continue
       for (const note of clip.notes) {
         const key = `${clip.presetId}:${note.pitch}`
-        if (!this._presetBufCache.has(key) && !this._presetLoading.has(key)) {
+        if (this._presetBufGet(key) === undefined && !this._presetLoading.has(key)) {
           void this._loadPresetBuffer(clip.presetId, note.pitch)
         }
       }
@@ -2140,23 +2290,14 @@ export class DawEngine extends EventTarget {
     if (!offline) this._prefetchUpcoming(now)
 
     // ── Arrangement audio clips ──────────────────────────────────────────
-    // Overlay guard: identical clips stacked at (or within ~10ms of) the same
-    // spot would play doubled — and a few-ms offset comb-filters, which reads
-    // as feedback. Only the first plays. 0.02 beats ≈ 10ms at 120bpm; any
-    // intentional doubling lives further apart than that.
-    const seenOverlay: Array<{ trackId: string; startBeat: number; durationBeats: number; sig: string }> = []
+    // Duplicate-overlay guard and the live-source count are both per-edit, not
+    // per-tick — see _rebuildTickPlan.
+    if (this._tickPlanDirty) this._rebuildTickPlan()
 
     for (const clip of this._clips) {
       if (this._sessionTakeover.has(clip.trackId)) continue  // session owns the track
-      const sig = `${clip.r2Key ?? clip.libraryId ?? clip.audioUrl ?? clip.name}`
-      const dup = seenOverlay.some(o =>
-        o.trackId === clip.trackId && o.sig === sig &&
-        Math.abs(o.startBeat - clip.startBeat) < 0.02 &&
-        Math.abs(o.durationBeats - clip.durationBeats) < 0.02)
-      if (dup) continue
-      seenOverlay.push({ trackId: clip.trackId, startBeat: clip.startBeat, durationBeats: clip.durationBeats, sig })
-      const alreadyScheduled = this.scheduledSources.some(s => s.clipId === clip.id)
-      if (alreadyScheduled) continue
+      if (this._dupAudioClipIds.has(clip.id)) continue
+      if (this._scheduledClipCounts.has(clip.id)) continue
 
       const clipEnd = clip.startBeat + clip.durationBeats
       if (clipEnd < now) continue
@@ -2172,14 +2313,8 @@ export class DawEngine extends EventTarget {
     }
 
     // ── Arrangement MIDI clips ───────────────────────────────────────────
-    // Same exact-overlay guard for MIDI clips: an identical clip pasted onto
-    // itself would double every note.
-    const seenMidiOverlay = new Set<string>()
-
     for (const clip of this._midiClips) {
-      const midiOverlayKey = `${clip.trackId}|${clip.startBeat.toFixed(4)}|${clip.durationBeats.toFixed(4)}|${clip.presetId ?? ''}|${clip.notes.length}|${clip.name}`
-      if (seenMidiOverlay.has(midiOverlayKey)) continue
-      seenMidiOverlay.add(midiOverlayKey)
+      if (this._dupMidiClipIds.has(clip.id)) continue
       if (this._sessionTakeover.has(clip.trackId)) continue  // session owns the track
       const track = this._tracks.find(t => t.id === clip.trackId)
       if (!track || track.mute) continue
@@ -2198,7 +2333,7 @@ export class DawEngine extends EventTarget {
       const grooveLut = clip.groove && clip.groove.length >= 2 ? sampleAutomation(clip.groove, 1, 64) : null
       const volLut    = clip.volGraph && clip.volGraph.length >= 2 ? sampleAutomation(clip.volGraph, 1, 64) : null
       const barBeats  = this._beatsPerBar || 4
-      const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+      const processedNotes = this._processedNotes(clip, track)
 
       // Looped clips repeat the note pattern every loopLengthBeats until the
       // clip end. Each occurrence is a (note, repetition) pair with its own
@@ -2381,7 +2516,7 @@ export class DawEngine extends EventTarget {
         // Use clip-level preset if set, otherwise fall back to track instrument
         if (clip.presetId) {
           const bufKey = `${clip.presetId}:${note.pitch}`
-          const buf    = this._presetBufCache.get(bufKey)
+          const buf    = this._presetBufGet(bufKey)
           if (buf === undefined) {
             void this._loadPresetBuffer(clip.presetId, note.pitch)
             continue
@@ -2943,9 +3078,10 @@ export class DawEngine extends EventTarget {
 
     const entry: ScheduledSource = { source, gainNode: fadeGain, clipId: clip.id, basePlaybackRate }
     this.scheduledSources.push(entry)
+    this._countScheduled(clip.id, 1)
     source.onended = () => {
       const idx = this.scheduledSources.indexOf(entry)
-      if (idx !== -1) this.scheduledSources.splice(idx, 1)
+      if (idx !== -1) { this.scheduledSources.splice(idx, 1); this._countScheduled(clip.id, -1) }
       source.disconnect()
 
       const cleanupTail = () => {
@@ -3880,6 +4016,7 @@ export class DawEngine extends EventTarget {
       if (tailOscs)  for (const o of tailOscs)  { try { o.stop(stopAt); o.disconnect() } catch { /* ok */ } }
     }
     this.scheduledSources = []
+    this._scheduledClipCounts.clear()
 
     // Hard-stop every registered sampled MIDI voice (looped drones included) —
     // scheduled ramps are cancelled so nothing can resurrect them.
@@ -4586,6 +4723,13 @@ export class DawEngine extends EventTarget {
     this.setMetronome(false)
     void this.stopRecording()
     this.stopJamBuffer()
+    // Let the decoded audio go with the engine. A disposed engine that still
+    // holds hundreds of MB of samples is the leak this cache used to be.
+    this._clearPresetBufCache()
+    this.bufferCache.clear()
+    this._loopMeta.clear()
+    this._lfoBufCache.clear()
+    this._irCache.clear()
     try { this._exclusiveChan?.close() } catch { /* ok */ }
     this.ctx.close()
   }
