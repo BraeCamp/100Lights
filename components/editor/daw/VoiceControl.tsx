@@ -34,7 +34,7 @@ import { drumTake, chordTake, takeToNotes, describeTake } from '@/lib/voice/pass
 import { detectOnsets, monoOf } from '@/lib/voice/onsets'
 import { combinePresets } from '@/lib/midi-presets'
 import { hearBetter } from '@/lib/voice/hear-better'
-import { resolveLocally, resolveHeard, confidentEnough, runsLocally } from '@/lib/voice/local-resolve'
+import { resolveLocally, resolveHeard, confidentEnough, runsLocally, needsNoProject } from '@/lib/voice/local-resolve'
 import type { Heard } from '@/lib/voice/hypotheses'
 import { COMMAND_VOCABULARY, commandHelp } from '@/lib/voice/interpret'
 import { remember, markFailed } from '@/lib/voice/voice-memory'
@@ -1288,7 +1288,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // ⚠️ So it says so, and says what would fix it. Failing silently here would
     // be the same bug this file has been chasing all week, just with a better
     // excuse.
-    if (!inStudio && local.calls.length) {
+    // ⚠️ Only the commands that genuinely need a song. Refusing everything was
+    // refusing the very commands that get you into a project — "start a new
+    // project" was answered with "there is no project open".
+    if (!inStudio && local.calls.length && !needsNoProject(local.calls)) {
       setBusy(false)
       respond('There is no project open, so there is nothing to change yet. Open one and ask me again.')
       return

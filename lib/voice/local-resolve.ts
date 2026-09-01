@@ -185,3 +185,33 @@ export function runsLocally(
   if (assistant === 'rules') return true
   return local.calls.length > 0 && local.calls.every(c => INSTANT_COMMANDS.has(c.name))
 }
+
+
+/**
+ * Commands that do not need a project open.
+ *
+ * Brae: "I'll say a command like 'Create new project' and it will say [there is
+ * no project open], which means that it should work while not in a project."
+ *
+ * ⚠️ Exactly right, and the gate was too broad: it refused EVERY command
+ * outside the studio, including the ones whose whole purpose is to get you into
+ * one. Going somewhere, opening or starting a project, asking what is in your
+ * library, asking what Light can do — none of those touch a song.
+ *
+ * The list is the small closed set that genuinely works with no project. Adding
+ * a song command here would mean a command that reports success against an
+ * empty project, which is the failure this codebase keeps finding.
+ */
+export const WORKS_ANYWHERE: ReadonlySet<string> = new Set([
+  'open_editor',      // navigation: "open the video module", "take me to my projects"
+  'project_action',   // "open Winter Drift", "start a new project"
+  'describe',         // the library, and "what can you do"
+  'transport',        // harmless with nothing loaded, and never surprising
+  'metronome',
+  'undo', 'redo',
+])
+
+/** Can this reading run with no project open? */
+export function needsNoProject(calls: { name: string }[]): boolean {
+  return calls.length > 0 && calls.every(c => WORKS_ANYWHERE.has(c.name))
+}

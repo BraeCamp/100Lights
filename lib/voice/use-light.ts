@@ -25,6 +25,7 @@
 
 import { useMemo } from 'react'
 import { useOptionalDaw } from '@/lib/daw-state'
+import { useActiveStudio } from '@/lib/voice/studio-registry'
 import type { DawContextValue } from '@/lib/daw-state'
 import type { DawProject } from '@/lib/daw-types'
 
@@ -64,7 +65,16 @@ export interface LightStudio {
 }
 
 export function useLight(): LightStudio {
-  const daw = useOptionalDaw()
+  // ⚠️ THE REGISTRY FIRST, and the context only as a fallback.
+  //
+  // Light is mounted in the layout, BESIDE the page rather than inside it, so
+  // it is not a descendant of the DAW's provider and context cannot reach it —
+  // it returned null in the studio as reliably as it did on the dashboard. The
+  // editor publishes itself to the registry instead. The context read stays for
+  // anything that IS rendered inside the provider.
+  const registered = useActiveStudio()
+  const fromContext = useOptionalDaw()
+  const daw = registered ?? fromContext
   return useMemo(() => {
     if (daw) return { ...daw, inStudio: true }
     return {

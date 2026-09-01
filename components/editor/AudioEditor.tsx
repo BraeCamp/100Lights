@@ -24,6 +24,7 @@ import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
 import PopOut from '@/components/PopOut'
+import { setActiveStudio } from '@/lib/voice/studio-registry'
 import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X, Link2, Upload, ExternalLink, Minimize2 } from 'lucide-react'
 import { LogoMark } from '@/components/Logo'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
@@ -3159,6 +3160,18 @@ export default function AudioEditor(props: AudioEditorProps) {
     setPosition, setMetronome, setSelectedClipId, setSelectedClipIds, setExpandedPianoRollClipId,
     setShowPads, setSidebarOpen, setShowAppearance,
   ])
+
+  // ⚠️ Publish the studio so things OUTSIDE the editor can reach it.
+  //
+  // Light lives in the app layout now — beside the page, not inside it — so it
+  // is not a descendant of the provider below and context cannot reach it. It
+  // asked, was told there was no studio, and refused every command in the
+  // studio it was sitting in. The registry is how anything outside this tree
+  // finds the editor while it is on screen.
+  useEffect(() => {
+    setActiveStudio(contextValue)
+    return () => setActiveStudio(null)
+  }, [contextValue])
 
   // ── Render ───────────────────────────────────────────────────────────────────
   const editorContent = (
