@@ -117,6 +117,45 @@ export function markFailed(why: string): void {
 export function allExchanges(): VoiceExchange[] { load(); return ring.slice() }
 
 /**
+ * The last few exchanges, as one line each, for the assistant to read.
+ *
+ * ⚠️ Brae: "We probably need it to remember the last 5 or 10 commands too so
+ * that it knows the context. This is especially important because it answers in
+ * a way that asks for specifics then doesn't know what to do when I give them
+ * because it forgets."
+ *
+ * The conversation array the assistant already receives is cleared the moment a
+ * command succeeds, deliberately: replaying a tool_use turn into the next
+ * sentence would need its results alongside it, and a conversation carrying one
+ * without the other is rejected outright. So every finished command left no
+ * trace, and "make that one louder too" had no "that one" to point at.
+ *
+ * This is the missing half, and it sidesteps that problem by not being
+ * conversation at all — just a few lines of plain text saying what was asked
+ * and what happened. It goes in AFTER the cached prefix, next to the song
+ * state, so it costs a few dozen tokens and no cache hit.
+ *
+ * Old exchanges are worse than none: a command from this morning is not context
+ * for this sentence, it is a red herring. Hence the window.
+ */
+export function recentContext(n = 10, withinMs = 10 * 60_000): string {
+  load()
+  const cutoff = Date.now() - withinMs
+  const lines = ring
+    .filter(e => e.t >= cutoff && !e.undone)   // an undone edit is a wrong example
+    .slice(-n)
+    .map(e => {
+      const said = e.said.length > 90 ? e.said.slice(0, 88) + '…' : e.said
+      const outcome = e.failed ? `failed: ${e.failed}`
+        : e.asked ? `asked back: ${e.asked}`
+        : e.said_back || (e.calls.length ? e.calls.map(c => c.name).join(', ') : 'nothing')
+      const short = outcome.length > 90 ? outcome.slice(0, 88) + '…' : outcome
+      return `- "${said}" → ${short}`
+    })
+  return lines.join('\n')
+}
+
+/**
  * What the assistant is being asked that the local resolver cannot do.
  *
  * The build order for replacing it, in the order the answer matters: grouped by

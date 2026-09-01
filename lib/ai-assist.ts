@@ -165,7 +165,7 @@ function staticSystemOther(moduleName: string): string {
  * full every single time. The song's state sits after the breakpoint because
  * it is different on every request by definition.
  */
-function systemBlocks(moduleName: string, stateSummary?: string) {
+function systemBlocks(moduleName: string, stateSummary?: string, recent?: string) {
   const blocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl?: string } }> = [
     // ⚠️ ONE HOUR, not the default five minutes.
     //
@@ -191,6 +191,17 @@ function systemBlocks(moduleName: string, stateSummary?: string) {
   if (stateSummary) {
     blocks.push({ type: 'text', text: `${moduleName === 'music' ? 'Current song' : 'Current project state'}: ${stateSummary}` })
   }
+  // ⚠️ AFTER THE BREAKPOINT, with the song state, because it changes every
+  // time. What was asked a moment ago is context this conversation no longer
+  // carries: the message array is cleared whenever a command succeeds, so
+  // without these lines every finished command left no trace and a follow-up
+  // like "do that to the bass as well" had nothing to point at.
+  if (recent) {
+    blocks.push({ type: 'text', text:
+      `Recent commands in this session, oldest first. Use them to resolve `
+      + `references like "that one", "again", "the same thing", and to remember `
+      + `what you last asked about:\n${recent}` })
+  }
   return blocks
 }
 
@@ -200,6 +211,8 @@ export async function runAssist(opts: {
   messages: AssistMessage[]
   module?: string
   stateSummary?: string
+  /** A few lines of what was asked recently — see recentContext(). */
+  recent?: string
   maxTokens?: number
 }): Promise<AssistResult> {
   const key = process.env.ANTHROPIC_API_KEY
@@ -219,7 +232,7 @@ export async function runAssist(opts: {
     body: JSON.stringify({
       model: MODEL,
       max_tokens: opts.maxTokens ?? 1200,
-      system: systemBlocks(opts.module ?? 'video', opts.stateSummary),
+      system: systemBlocks(opts.module ?? 'video', opts.stateSummary, opts.recent),
       tools: toolsFor(opts.module ?? 'video'),
       messages: opts.messages.map(m => ({ role: m.role, content: m.content })),
     }),

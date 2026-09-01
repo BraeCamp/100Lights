@@ -87,6 +87,21 @@ export interface AttentionInput {
   lastAcceptedAt: number
   /** False for push-to-talk, where holding the button IS the address. */
   continuous?: boolean
+  /**
+   * Has the studio asked a question that is still unanswered?
+   *
+   * ⚠️ A QUESTION HOLDS THE CONVERSATION OPEN. Brae: "it answers in a way that
+   * asks for specifics then doesn't know what to do when I give them because it
+   * forgets."
+   *
+   * Attention was decided entirely by how recently a COMMAND was accepted. But
+   * the studio asking "which track did you mean?" is the strongest invitation
+   * to speak there is — stronger than having just run a command — and it
+   * counted for nothing. Think about your answer for longer than the attention
+   * window and the reply was thrown away as something overheard, leaving a
+   * question on screen that could no longer be answered out loud.
+   */
+  awaitingAnswer?: boolean
 }
 
 export type AttentionVerdict =
@@ -282,6 +297,12 @@ export function considerUtterance(input: AttentionInput): AttentionVerdict {
     // a complete and reasonable thing to say. It wakes and waits.
     return { act: true, text: rest, addressed: true }
   }
+
+  // The studio asked something and is still waiting. Whatever comes next is
+  // the answer — it does not have to be addressed, and it does not expire on
+  // the ordinary attention timer, because a person thinking about their answer
+  // is still in the conversation.
+  if (input.awaitingAnswer) return { act: true, text: input.text, addressed: false }
 
   // Still in the conversation: a command was accepted moments ago, so this is
   // almost certainly the next one.

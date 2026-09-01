@@ -37,7 +37,7 @@ import { hearBetter } from '@/lib/voice/hear-better'
 import { resolveLocally, resolveHeard, confidentEnough, runsLocally, needsNoProject } from '@/lib/voice/local-resolve'
 import type { Heard } from '@/lib/voice/hypotheses'
 import { COMMAND_VOCABULARY, commandHelp } from '@/lib/voice/interpret'
-import { remember, markFailed } from '@/lib/voice/voice-memory'
+import { remember, markFailed, recentContext } from '@/lib/voice/voice-memory'
 import {
   startRecording, preferredTranscriber, setPreferredTranscriber, micProblemMessage,
   type Recording, type StopResult, type MicReport,
@@ -46,6 +46,7 @@ import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execu
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn } from '@/lib/voice/attention'
+import { stitch, worthHolding } from '@/lib/voice/stitch'
 import { interpretSequence } from '@/lib/voice/sequence'
 import { interpret } from '@/lib/voice/interpret'
 import {
@@ -159,6 +160,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // one from when the callback was built, which is the stale-closure bug this
   // file has produced several times.
   const askingRef = useRef('')
+  // A sentence the studio could make nothing of, kept in case the next one is
+  // the rest of it. See lib/voice/stitch.ts.
+  const heldFragment = useRef<{ text: string; at: number } | null>(null)
 
   const projectRef = useRef(project)
   const selectedTrackIdRef = useRef(selectedTrackId)
@@ -1027,7 +1031,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // magic word first.
     const heardFrom = spoken
 
-    const text = stripWakeWord(heardFrom)
+    // `let`: a sentence cut in half is rejoined below before anything reads it.
+    let text = stripWakeWord(heardFrom)
     if (!text) {
       // ⚠️ NOT while a question is on screen. With the microphone held open,
       // the pause after the studio asks something is full of room noise, and
@@ -1112,20 +1117,59 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // first used is deliberately narrow: it reads "mute the drums" and does not
     // read "take the bass up", so a gate built on it would have silently ignored
     // real commands — swapping one kind of not-listening for another.
+    // ⚠️ THE OTHER HALF OF A SENTENCE THAT WAS CUT IN TWO.
+    // Brae: "when I talk more slowly it thinks that I'm saying different
+    // sentences." Waiting longer cannot fix that alone: on the recorder path
+    // our VAD already waits 2.2 seconds, but a browser using SpeechRecognition
+    // is endpointed by the BROWSER, well under a second, with no setting for
+    // it. So the repair happens here, above both paths.
+    //
+    // Only ever when the new words read as nothing on their own AND the joined
+    // version reads as something — joining two sentences that were meant to be
+    // separate would run a command nobody asked for, which is far worse than
+    // failing to join one that was split.
+    let readable = interpret(text, ctx).calls.length > 0
+    if (!readable) {
+      const joined = stitch(heldFragment.current, text, Date.now())
+      if (joined && interpret(joined, ctx).calls.length > 0) {
+        text = joined
+        readable = true
+        heldFragment.current = null
+        setTaking('')
+      }
+    }
+    if (readable) heldFragment.current = null
+
     if (!shouldActOn({
       held: !!heard && continuousRef.current,
       collecting: collectingRef.current,
       // pendingAsk belongs here with the rest: "yes" reads as no command at
       // all, so without it the answer to the studio's own question is dropped
       // as overheard chatter before it ever reaches the handler below.
-      answering: confirmed || pendingAsk !== null
+      //
+      // ⚠️ AND SO DOES askingRef — THE ASSISTANT'S OWN QUESTIONS.
+      // Brae: "it answers in a way that asks for specifics then doesn't know
+      // what to do when I give them because it forgets."
+      //
+      // The structured asks were all listed here; the free-form one the
+      // assistant itself raises — "which track did you mean?" — was not. Its
+      // answer is exactly the kind of sentence this gate throws away: "the bass
+      // one" reads as no command at all. So the studio asked a question and
+      // then stopped listening for the reply, which is indistinguishable from
+      // forgetting it had asked. Read off the ref so this does not rebuild the
+      // handler on every keystroke of a question being typed.
+      answering: confirmed || pendingAsk !== null || !!askingRef.current
         || !!pendingAsk2 || !!pendingOffer || !!pendingName,
-      readable: interpret(text, ctx).calls.length > 0,
+      readable,
       // Already handled above; named here so the rule reads completely.
       queueWord: !!control,
       assistantActs: assistRef.current === 'auto',
     })) {
       setBusy(false)
+      // ⚠️ Kept, not discarded. This is exactly where half a slowly-spoken
+      // sentence dies: unreadable on its own, dropped as overheard. Holding it
+      // costs nothing and gives the rest of the sentence something to join.
+      if (worthHolding(text, false)) heldFragment.current = { text, at: Date.now() }
       // Silently. With the name no longer required this is the ordinary fate
       // of an overheard sentence rather than a correctable mistake, and the
       // card shows the sentence in progress rather than a log to record it in.
@@ -1161,6 +1205,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         } else if (ran.length) {
           respond(ran.join(' '))
         } else {
+          // Held for the same reason as at the attention gate: this may be
+          // the first half of something, and the words are being thrown away
+          // anyway. See lib/voice/stitch.ts.
+          if (worthHolding(text, false)) heldFragment.current = { text, at: Date.now() }
           respond(failed[0] ?? 'I didn\'t catch that.', 'problem')
         }
         return
@@ -1526,6 +1574,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           body: JSON.stringify({
             module: 'music',
             messages: msgs,
+            // ⚠️ What was asked a moment ago. The message array above is
+            // cleared whenever a command succeeds — it has to be, since a
+            // tool_use turn cannot be replayed without its results — so
+            // without this every finished command left no trace and a
+            // follow-up had nothing to refer back to.
+            recent: recentContext(),
             // Re-read every turn: after the first pass the song is not what it
             // was, and a summary from before the edits would have the assistant
             // checking its work against the project it started with.
