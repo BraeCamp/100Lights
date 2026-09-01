@@ -27,7 +27,37 @@ interface StoredClip {
 // One connection, reused — see the note in lib/sound-library.ts. This store is
 // read once per clip and written once per clip, so a 42-clip song opened the
 // database 84 times to do 84 operations.
+//
+// ⚠️ AND NOBODY MAY CLOSE IT. Every function here used to call db.close() when
+// it finished, which is correct for a connection you opened and wrong for one
+// you were handed. Explicit close() fires NO event — the `close` event is for
+// abnormal closure — so `dbPromise` went on handing out a CLOSED connection and
+// every later transaction threw InvalidStateError into a catch that returns
+// null. From the caller a dead cache and a miss look identical: the clip just
+// renders again. Writes kept working because they go through the worker, which
+// has its own connection and never closes it, so the store filled up with
+// renders that could never be read back. That is why loading got slower every
+// reload rather than merely being slow.
+//
+// combine-store.worker.ts already had the right shape. This now matches it.
 let dbPromise: Promise<IDBDatabase> | null = null
+
+/**
+ * Run one transaction, and drop the cached connection if it turns out dead.
+ *
+ * A connection CAN legitimately die — the tab is evicted, the database is
+ * deleted from another tab, storage is cleared. What must not happen is one
+ * bad connection poisoning every later call, which is exactly what a memoised
+ * promise does unless something clears it.
+ */
+async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>): Promise<T> {
+  try {
+    return await fn(await openDb())
+  } catch (err) {
+    dbPromise = null
+    throw err
+  }
+}
 
 function openDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise
@@ -64,13 +94,11 @@ const fromPcm16 = (b: ArrayBuffer, into: Float32Array): void => {
 /** Read one stored render back as an AudioBuffer. Null when absent. */
 export async function loadCombined(stamp: string, ctx: BaseAudioContext): Promise<AudioBuffer | null> {
   try {
-    const db = await openDb()
-    const rec = await new Promise<StoredClip | undefined>((resolve, reject) => {
+    const rec = await withDb(db => new Promise<StoredClip | undefined>((resolve, reject) => {
       const r = db.transaction(STORE, 'readonly').objectStore(STORE).get(stamp)
       r.onsuccess = () => resolve(r.result as StoredClip | undefined)
       r.onerror = () => reject(r.error)
-    })
-    db.close()
+    }))
     if (!rec || !rec.length) return null
     const buf = ctx.createBuffer(rec.channels.length || 2, rec.length, rec.sampleRate)
     for (let ch = 0; ch < buf.numberOfChannels; ch++) {
@@ -124,34 +152,93 @@ export async function saveCombined(stamp: string, buf: AudioBuffer): Promise<voi
   try {
     const channels: ArrayBuffer[] = []
     for (let ch = 0; ch < chCount; ch++) channels.push(toPcm16(buf.getChannelData(ch)))
-    const db = await openDb()
-    await new Promise<void>((resolve, reject) => {
+    await withDb(db => new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite')
       tx.objectStore(STORE).put({ stamp, sampleRate: buf.sampleRate, length: buf.length, channels, savedAt: Date.now() } as StoredClip)
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
-    })
-    db.close()
+    }))
   } catch { /* quota or private mode — the memory cache still works this session */ }
 }
 
-/** Drop renders not seen in a while, so an edited project does not grow forever. */
-export async function pruneCombined(keepStamps: Set<string>, maxAgeMs = 1000 * 60 * 60 * 24 * 14): Promise<void> {
+/**
+ * Drop renders no project has wanted for a fortnight, and cap the total size.
+ *
+ * ⚠️ Nothing called this for its entire life. Every edit mints a new stamp and a
+ * combined render is 16-bit stereo PCM — roughly 11 MB per minute of audio, per
+ * clip variant — so the store only ever grew, and a week of work left behind
+ * every intermediate version of every clip. That is why loading got slower with
+ * each reload rather than merely being slow.
+ *
+ * TWO RULES, because age alone is not enough. A fortnight of grace exists so
+ * that undo, and reopening yesterday's version, do not cost a re-render — but
+ * somebody who works hard for three days can fill a disk well inside it. So
+ * anything genuinely old goes, and then the oldest go until the total fits.
+ *
+ * ⚠️ CURSORED, NOT getAll(). getAll deserialises every record — including the
+ * audio — into one array, which on the very store this is meant to rescue could
+ * be gigabytes, and pruning a bloated cache must not be the thing that kills the
+ * tab. The cursor holds one record at a time and keeps only its metadata.
+ *
+ * Returns how many it dropped.
+ */
+export async function pruneCombined(
+  keepStamps: Set<string>,
+  maxAgeMs = 1000 * 60 * 60 * 24 * 14,
+  maxBytes = Infinity,
+): Promise<number> {
   try {
-    const db = await openDb()
-    const all = await new Promise<StoredClip[]>((resolve, reject) => {
-      const r = db.transaction(STORE, 'readonly').objectStore(STORE).getAll()
-      r.onsuccess = () => resolve(r.result as StoredClip[])
-      r.onerror = () => reject(r.error)
-    })
     const cutoff = Date.now() - maxAgeMs
-    const dead = all.filter(c => !keepStamps.has(c.stamp) && c.savedAt < cutoff).map(c => c.stamp)
-    if (dead.length) {
+    const alive: { stamp: string; savedAt: number; bytes: number }[] = []
+    let dropped = 0
+
+    await withDb(db => new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite')
-      for (const s of dead) tx.objectStore(STORE).delete(s)
+      const req = tx.objectStore(STORE).openCursor()
+      req.onsuccess = () => {
+        const cur = req.result as IDBCursorWithValue | null
+        if (!cur) return
+        const rec = cur.value as StoredClip
+        // Bytes from the shape, not from the buffers: this is 16-bit PCM, so it
+        // is two per sample per channel, and asking the record is free.
+        const bytes = (rec.length ?? 0) * 2 * Math.max(1, rec.channels?.length ?? 2)
+        if (!keepStamps.has(rec.stamp) && (rec.savedAt ?? 0) < cutoff) {
+          cur.delete()
+          dropped++
+        } else {
+          alive.push({ stamp: rec.stamp, savedAt: rec.savedAt ?? 0, bytes })
+        }
+        cur.continue()
+      }
+      req.onerror = () => reject(req.error)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    }))
+
+    // Then the size cap, oldest first, never touching what this project wants.
+    let total = alive.reduce((n, c) => n + c.bytes, 0)
+    if (total > maxBytes) {
+      const evictable = alive
+        .filter(c => !keepStamps.has(c.stamp))
+        .sort((a, b) => a.savedAt - b.savedAt)
+      const doomed: string[] = []
+      for (const c of evictable) {
+        if (total <= maxBytes) break
+        doomed.push(c.stamp)
+        total -= c.bytes
+      }
+      if (doomed.length) {
+        await withDb(db => new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(STORE, 'readwrite')
+          for (const stamp of doomed) tx.objectStore(STORE).delete(stamp)
+          tx.oncomplete = () => resolve()
+          tx.onerror = () => reject(tx.error)
+        }))
+        dropped += doomed.length
+      }
     }
-    db.close()
-  } catch { /* best effort */ }
+    return dropped
+  } catch { return 0 }
 }
 
 /**

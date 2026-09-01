@@ -25,7 +25,7 @@ import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import { layersFor, patchForLayer, layerLabel } from './render-layers'
 import type { ApolloPatch } from '@/lib/apollo/patch'
 import { renderApolloProject, freezeStamp, type TrackRenderGroup } from '@/lib/apollo/daw-freeze'
-import { loadCombined, saveCombined, clearStoredCombines } from '@/lib/apollo/combine-store'
+import { loadCombined, saveCombined, clearStoredCombines, pruneCombined } from '@/lib/apollo/combine-store'
 import { keepForNextTime, setCombineWriter, setStorageTransportPlaying, storagePolicy } from '@/lib/apollo/storage-policy'
 
 // The policy module does the deciding; the store does the writing. Wiring them
@@ -72,6 +72,10 @@ export type LoadEventKind =
   // the clip plays live. Filing it as a failure is what made "gave up trying"
   // read like a broken loader instead of a missing feature.
   | 'server-refused'
+  // Housekeeping, not trouble: what the once-a-session sweep threw away. Worth
+  // a line because an unbounded cache is invisible until it is enormous, and
+  // this one grew unbounded for its whole life without anyone seeing it.
+  | 'pruned'
 
 export interface LoadEvent {
   t: number             // ms since the page loaded — comparable with everything else
@@ -1071,7 +1075,41 @@ async function loadFromDisk(wants: Want[]): Promise<number> {
       } catch { /* a clip that will not load simply renders instead */ }
     }
   }))
+  void sweepOnce(pending, policy.quotaBytes)
   return got
+}
+
+/**
+ * Throw away renders no project has wanted for a fortnight. Once per session.
+ *
+ * ⚠️ pruneCombined was written with this docstring — "so an edited project does
+ * not grow forever" — AND NEVER CALLED FROM ANYWHERE. Nothing has ever deleted
+ * a stamp. Every edit mints a new one and a combined render is 16-bit stereo
+ * PCM, roughly 11 MB a minute of audio, so a project worked on for a week
+ * leaves behind every intermediate version it ever had. That growth is the
+ * reason loading got slower with each reload rather than merely being slow.
+ *
+ * AFTER loadFromDisk, never before: the reads have already taken what this
+ * session wants, so a slow sweep cannot delay the first sound.
+ *
+ * Age AND absence, both — which is pruneCombined's own rule and worth keeping.
+ * Deleting everything outside the current edit would make every undo, and every
+ * reopening of yesterday's version, a full re-render.
+ */
+let swept = false
+async function sweepOnce(wants: Want[], quotaBytes: number | null): Promise<void> {
+  if (swept) return
+  swept = true
+  try {
+    // ⚠️ Sized off the DEVICE, not off a number somebody liked. A quarter of the
+    // origin's quota leaves room for the sound library, the projects and the
+    // snapshots, all of which share it — and on a machine with almost nothing
+    // free that quarter is correspondingly small, which is the right answer
+    // rather than a policy that only works on a roomy laptop.
+    const budget = quotaBytes != null ? quotaBytes * 0.25 : Infinity
+    const dropped = await pruneCombined(new Set(wants.map(w => w.key)), undefined, budget)
+    if (dropped) logEvent('pruned', { detail: `dropped ${dropped} stored render${dropped === 1 ? '' : 's'}` })
+  } catch { /* best effort: a cache that will not prune must still play */ }
 }
 
 /**
