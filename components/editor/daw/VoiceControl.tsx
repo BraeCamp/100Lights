@@ -491,6 +491,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const voiceCtx = useCallback(() => ({
     words: heardRef.current?.words,
     atBeat: engine?.currentBeat,
+    // The library, so a preset can be chosen by CHARACTER inside the executor —
+    // "one of the darker piano presets" is a question about what is installed
+    // on this machine, and the executor cannot see the machine. Carries the
+    // sampled range and the preset's own shaping, which is what "darker" and
+    // "low notes" are actually measured against.
+    library: combinePresets(projectRef.current?.presets).map(p => ({
+      id: p.id, name: p.name, group: p.group,
+      loNote: p.loNote, hiNote: p.hiNote, fx: p.sound?.fx ?? null,
+    })),
   }), [engine])
 
   /**

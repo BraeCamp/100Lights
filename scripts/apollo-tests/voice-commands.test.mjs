@@ -41,6 +41,18 @@ const { initPatch } = await importTs('lib/apollo/patch.ts')
 const APOLLO_PATCH = initPatch()
 const { interpret } = await importTs('lib/voice/interpret.ts')
 const { planVoiceCall } = await importTs('lib/voice/execute-music.ts')
+const { PRESET_VARIANTS } = await importTs('lib/preset-variants.ts')
+
+// ⚠️ The library is not part of the project — it lives on the machine — so the
+// executor is handed it in the voice context. A command that chooses a sound by
+// character needs it, and without it every such example reads as "I cannot see
+// your sound library from here", which is a correct refusal and a useless test.
+const HEARD = {
+  library: PRESET_VARIANTS.map((v, i) => ({
+    id: `builtin-${i}`, name: v.name, group: v.group,
+    loNote: v.loNote, hiNote: v.hiNote, fx: v.sound?.fx ?? null,
+  })),
+}
 const { MUSIC_TOOL_NAMES } = await importTs('lib/voice/music-tools.ts')
 
 let failures = 0
@@ -187,7 +199,7 @@ for (const command of VOICE_COMMANDS) {
     // changes nothing and replies in words, and that is a complete and
     // successful command, not an empty plan. Requiring actions of everything
     // would make the suite reject the one command family that cannot have any.
-    const plan = planVoiceCall(got.calls[0], PROJECT)
+    const plan = planVoiceCall(got.calls[0], PROJECT, HEARD)
     if (plan.problem || (!plan.actions.length && !plan.say)) {
       check(`${command.id} — "${phrase}" → does something`, false,
         plan.problem || 'neither actions nor an answer')
@@ -217,7 +229,7 @@ check('every command names a real tool',
     if (command.handledBy === 'ui') continue
     const got = interpret(command.say[0], CTX)
     if (got.matched !== command.id) continue
-    const plan = planVoiceCall(got.calls[0], PROJECT)
+    const plan = planVoiceCall(got.calls[0], PROJECT, HEARD)
     const isQuestion = command.group === 'Questions'
     if (isQuestion && plan.actions.length) wrong.push(`${command.id} changed something`)
     if (!isQuestion && !plan.actions.length) wrong.push(`${command.id} changed nothing`)

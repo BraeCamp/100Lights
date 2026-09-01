@@ -27,7 +27,7 @@
 // downstream can tell this file ran.
 
 import { interpret, type Interpretation } from './interpret'
-import type { InterpretContext } from './commands'
+import { isTriggerWord, type InterpretContext } from './commands'
 import { contentWords } from './words'
 
 /** How sure a span must be to be taken as a command in its own right. Higher
@@ -65,7 +65,19 @@ export function interpretSequence(sentence: string, ctx: InterpretContext): Segm
   // looked further.
   const whole = interpret(sentence, ctx)
   const wholeCoverage = whole.candidates[0]?.coverage ?? 0
-  if (whole.calls.length && wholeCoverage >= 0.8) {
+  // ⚠️ A ratio is not enough on its own. "Turn the bass up and pan it left"
+  // scored exactly 0.80 — clearing this bar — with the word "pan" left over,
+  // and quietly did half of what was asked. One unexplained COMMAND WORD is
+  // stronger evidence of a second command than four unexplained filler words
+  // are of anything, so it is checked separately rather than averaged away.
+  //
+  // Worst case this sends a genuine single command to the segmenter, which
+  // finds nothing better and hands the same reading back a few milliseconds
+  // later. The cost of being wrong here is time; the cost of being wrong the
+  // other way is a command nobody notices was dropped.
+  const leftOver = whole.candidates[0]?.unexplained ?? []
+  const missedCommand = leftOver.some(isTriggerWord)
+  if (whole.calls.length && wholeCoverage >= 0.8 && !missedCommand) {
     return [{ text: sentence.trim(), reading: whole }]
   }
 
@@ -75,6 +87,40 @@ export function interpretSequence(sentence: string, ctx: InterpretContext): Segm
 
   const out: Segment[] = []
   let i = 0
+  // ⚠️ "IT" IN THE SECOND CLAUSE MEANS THE FIRST CLAUSE'S TRACK. "Turn the bass
+  // up and pan it left" is two commands about ONE track, and the second half
+  // names nothing — so on its own "pan it left" reads as nothing at all, the
+  // split fails for want of a second segment, and the whole sentence falls back
+  // to a single reading that does half of what was asked.
+  //
+  // The studio already has this idea: a selected track is what "it" means when
+  // a sentence names nothing. A sentence is its own, smaller context — whatever
+  // the last segment was about is what the next one means by "it".
+  let ctxNow = ctx
+  let carried: string | null = null
+  const carryTarget = (reading: Interpretation): void => {
+    const named = reading.calls
+      // `target` for a command aimed at a track, `name` for one that just made
+      // one — "add a track called Keys and turn it down" means turn KEYS down.
+      .map(c => {
+        const input = c.input as { target?: string; name?: string } | undefined
+        return input?.target ?? input?.name
+      })
+      .find(t => typeof t === 'string' && t.trim())
+    if (!named) return
+    carried = named
+    // ⚠️ And the track has to EXIST for the next clause. "Add a track called
+    // Keys and turn it down" carries the name fine, but the volume rule needs
+    // the track's current level to nudge from — and a track created a
+    // millisecond ago is not in the context yet. Same staleness as planning
+    // every call against the original project, one layer up.
+    const known = ctxNow.tracks.some(t => (t.name ?? '').toLowerCase() === named.toLowerCase())
+    ctxNow = {
+      ...ctxNow,
+      selectedTrackName: named,
+      tracks: known ? ctxNow.tracks : [...ctxNow.tracks, { id: `pending-${named}`, name: named, volume: 0.8, pan: 0 }],
+    }
+  }
   while (i < words.length && out.length < MAX_SEGMENTS) {
     let taken = 0
     // Longest first. A shorter span that also reads as a command is a worse
@@ -82,13 +128,37 @@ export function interpretSequence(sentence: string, ctx: InterpretContext): Segm
     // is the same command aimed at the wrong track.
     for (let j = words.length; j > i; j--) {
       const span = words.slice(i, j).join(' ')
-      const reading = interpret(span, ctx)
+      const reading = interpret(span, ctxNow)
       if (!reading.calls.length) continue
-      if (reading.confidence < SEGMENT_CONFIDENCE) continue
+      // ⚠️ A PRONOUN WHOSE REFERENT WAS JUST NAMED IS NOT A GUESS. A reading
+      // that leans on the selected track scores lower than one that names it —
+      // rightly, in isolation, because the selection might be stale. Inside a
+      // sentence it is the opposite: "turn the bass up and pan it left" said
+      // "bass" a breath ago, in this same sentence, and there is nothing
+      // ambiguous about "it".
+      //
+      // Without this the second clause read perfectly — full coverage, no
+      // corrections — and was thrown out for scoring 0.85 against a bar of
+      // 0.88, so the sentence collapsed back to doing only its first half.
+      //
+      // The relaxation is narrow on purpose: only after a segment has already
+      // been taken, and only when this reading is about THAT SAME track.
+      const refersToCarried = carried != null
+        && reading.calls.some(c => {
+          const t = (c.input as { target?: string } | undefined)?.target
+          return typeof t === 'string' && t.toLowerCase() === carried!.toLowerCase()
+        })
+      const bar = out.length && refersToCarried ? SEGMENT_CONFIDENCE - 0.05 : SEGMENT_CONFIDENCE
+      if (reading.confidence < bar) continue
       // The span has to be about itself. A command found inside a longer run of
       // words it cannot explain is the search finding what it went looking for.
       const top = reading.candidates[0]
       if ((top?.coverage ?? 0) < 0.75) continue
+      // ⚠️ And the same rule as the whole sentence, for the same reason: a span
+      // that leaves a COMMAND WORD unexplained is not one command, it is two
+      // with the second thrown away. Without this the longest span — the entire
+      // sentence — was taken as segment one and there was never a segment two.
+      if ((top?.unexplained ?? []).some(isTriggerWord)) continue
       // And it has to be about itself WITHOUT being bent into shape. Reading
       // every span of a sentence gives a near-miss many more chances to land:
       // "that take was better than the LAST one" offered the word "last", which
@@ -97,6 +167,7 @@ export function interpretSequence(sentence: string, ctx: InterpretContext): Segm
       // evidence in the middle of a sentence about something else.
       if ((reading.corrections ?? 0) > 0) continue
       out.push({ text: span, reading })
+      carryTarget(reading)
       taken = j - i
       i = j
       break

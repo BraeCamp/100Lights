@@ -34,6 +34,8 @@ import {
   defaultVelocityMidi, defaultScaleMidi, defaultChordMidi, defaultArpMidi,
 } from '../daw-types'
 import { findByName, foldName, spokenNumber, spokenFraction } from './resolve'
+import { matchPresetByCharacter, characterWordsIn, type PresetLike } from './preset-character'
+import { SCALE_INTERVALS, type ScaleType } from '../scale-constants'
 import {
   matchApolloParam, matchFilterType, resolveValue, readParam, writeParam,
   describeValue, FILTER_NAMES, type SpokenParam,
@@ -625,6 +627,18 @@ export interface VoiceContext {
    *  document and this is a moment - so anything that answers "what is playing
    *  RIGHT NOW" has to be told. */
   atBeat?: number
+  /**
+   * The sound library, so a preset can be chosen by CHARACTER here rather than
+   * by the caller.
+   *
+   * ⚠️ set_instrument makes the caller resolve a preset name to an id, which is
+   * right for a name — the library lives on the machine, not in the song. But
+   * "one of the darker piano presets" is not a name, it is a QUESTION about the
+   * library, and asking it in two different places (once in the local rules,
+   * once in whatever the assistant does) is how the two paths drift apart. One
+   * matcher, given the library, answers for both.
+   */
+  library?: PresetLike[]
 }
 
 const PITCH_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -2001,6 +2015,103 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── WRITE A PART, WITH A SOUND CHOSEN BY CHARACTER ──────────────────
+    //
+    // Brae: "Put in a baseline preset that uses low notes of 1 of the darker /
+    // melancolic and sad piano presets... It needs to take commands that
+    // require multiple steps."
+    //
+    // ⚠️ That sentence is THREE edits — make a track, choose a sound, write
+    // notes — and it could not be done as three commands either, because
+    // set_instrument refuses a track with no clips ("has no clips to put that
+    // on"). Split into steps it fails in the middle; the steps have to arrive
+    // together, which is what one call emitting several actions is for. The id
+    // is minted here and referenced by the actions that follow it, the same way
+    // effectOn already works in this file.
+    case 'write_part': {
+      const lib = heard?.library ?? []
+      if (!lib.length) return fail('I cannot see your sound library from here.')
+
+      const said = `${str(i.character)} ${str(i.instrument)}`.trim()
+      const words = characterWordsIn(said || str(i.character))
+      const wantGroup = str(i.instrument).trim() || null
+      const match = matchPresetByCharacter(lib, { words, instrument: wantGroup })
+      if (!match) {
+        return fail(words.length
+          ? `I could not find ${words.join(' and ')} ${wantGroup || 'sound'} in your library.`
+          : `I could not find a ${wantGroup || 'sound'} in your library.`)
+      }
+      const preset = match.preset
+
+      // ── the notes ──────────────────────────────────────────────────────
+      const bars = Math.max(1, Math.min(32, Math.round(spokenNumber(i.bars as string) ?? 8)))
+      const beatsPerBar = project.timeSignatureNum || 4
+      const startBeat = positionToBeat(i.at as MusicPosition | undefined, maps) ?? 0
+
+      // ⚠️ project.key is a NUMBER, 0-11 with C=0 — not a note name. Reading it
+      // as a name gave C for every key in the project.
+      const rootIdx = ((Math.round(project.key ?? 0) % 12) + 12) % 12
+      const scale = ((project.scale ?? 'minor') as ScaleType)
+      const steps = SCALE_INTERVALS[scale] ?? SCALE_INTERVALS.minor
+
+      // ⚠️ INSIDE THE SAMPLED RANGE. A preset is samples per note, and notes
+      // outside loNote..hiNote are repitched — which is the "plays a bit off"
+      // problem. "Low notes" therefore means low FOR THIS PRESET: a fourth
+      // above its bottom, which is low without being at the edge where the
+      // samples are thinnest.
+      const lo = preset.loNote ?? 36
+      const hi = preset.hiNote ?? 84
+      let root = lo + 5
+      while (root + 12 <= Math.min(hi, lo + 24) && root < 48) root += 12
+      root = Math.max(lo, Math.min(hi, root - ((root - rootIdx) % 12 + 12) % 12))
+      if (root < lo) root += 12
+
+      // A bass movement, not a tune. Scale degrees 1 - 6 - 3 - 7, which is the
+      // shape most minor-key songs walk, and it is deliberately NOT a melody:
+      // Brae's standing rule is that lead lines get written by hand.
+      const DEGREES = [0, 5, 2, 6]
+      // Fixed, not random. An unseeded velocity would make the same command
+      // produce a different part every time, and this project has already been
+      // bitten once by unseeded randomness in a render.
+      const VELS = [92, 84, 88, 80]
+
+      const notes = Array.from({ length: bars }, (_, b) => {
+        const degree = DEGREES[b % DEGREES.length]
+        const pitch = Math.max(lo, Math.min(hi, root + (steps[degree % steps.length] ?? 0)))
+        return {
+          id: newId(),
+          pitch,
+          startBeat: b * beatsPerBar,
+          // ⚠️ Short of the bar line on purpose. A note held the FULL bar is
+          // still sounding when the next one starts, which stacks voices and
+          // costs polyphony for something nobody can hear.
+          durationBeats: beatsPerBar - 0.2,
+          velocity: VELS[b % VELS.length],
+        }
+      })
+
+      const trackId = newId()
+      const name = str(i.name).trim() || 'Bass'
+      return {
+        actions: [
+          { type: 'ADD_TRACK', id: trackId, name },
+          {
+            type: 'ADD_CLIP',
+            clip: {
+              kind: 'midi', id: newId(), trackId, name: `${name} 1`,
+              startBeat, durationBeats: bars * beatsPerBar,
+              // The preset lives on the CLIP — a sampled instrument is what a
+              // clip plays through, not a property of the track.
+              presetId: preset.id,
+              notes,
+            },
+          },
+        ],
+        say: `Added "${name}" playing ${match.why}, ${bars} bars from ${describeBeat(startBeat, maps)}, `
+          + `low ${pitchName(notes[0].pitch)}.`,
+      }
+    }
+
     // ── ANY DIAL IN APOLLO, BY NAME ─────────────────────────────────────
     //
     // Apollo has 166 registered parameters. This is one command for all of
@@ -3114,11 +3225,56 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
  * and add a filter" leaving the loop without the filter is worse than doing
  * nothing and saying why.
  */
+/**
+ * A view of the project that INCLUDES what earlier calls in this same sentence
+ * have just created.
+ *
+ * Brae: "It needs to take commands that require multiple steps, so it needs to
+ * look for more than one command type sometimes."
+ *
+ * ⚠️ Every call in a sentence was planned against the ORIGINAL project, so a
+ * step could never see what the step before it made. "Add a track called Keys
+ * and mute it" failed outright — the mute looked for Keys in a project that did
+ * not have it yet — and it failed at the FIRST step's expense too, because a
+ * problem in any call abandons the whole sentence. Two correct commands, one
+ * refusal.
+ *
+ * Only ADDITIONS are replayed, and only the two that later steps actually look
+ * things up by. This is deliberately not a second reducer: it is the smallest
+ * thing that lets a name resolve, the ids are the ones the real actions carry,
+ * and anything it does not model simply behaves as it did before. Mirrors the
+ * ADD_TRACK case in daw-state.ts for the fields resolution reads.
+ */
+function withCreated(project: DawProject, actions: unknown[]): DawProject {
+  let tracks = project.tracks
+  let clips = project.arrangementClips ?? []
+  for (const raw of actions) {
+    const a = raw as { type?: string; id?: string; name?: string; kind?: string; clip?: DawClip }
+    if (a.type === 'ADD_TRACK' && a.id) {
+      if (tracks.some(t => t.id === a.id)) continue
+      tracks = [...tracks, {
+        id: a.id,
+        name: a.name ?? (a.kind === 'group' ? 'Group' : `Track ${tracks.length + 1}`),
+        type: 'audio', volume: 0.8, pan: 0, mute: false, solo: false, armed: false,
+        // The real reducer gives it the default instrument; nothing that
+        // resolves a NAME looks at the instrument, so a null here is honest
+        // rather than a guess at what the reducer will choose.
+        height: 64, effects: [], instrument: null,
+      } as unknown as DawTrack]
+    } else if (a.type === 'ADD_CLIP' && a.clip) {
+      if (!clips.some(c => c.id === a.clip!.id)) clips = [...clips, a.clip]
+    }
+  }
+  return tracks === project.tracks && clips === (project.arrangementClips ?? [])
+    ? project
+    : { ...project, tracks, arrangementClips: clips }
+}
+
 export function planVoiceCalls(calls: VoiceCall[], project: DawProject, heard?: VoiceContext): VoicePlan {
   const actions: unknown[] = []
   const said: string[] = []
   for (const c of calls) {
-    const plan = planVoiceCall(c, project, heard)
+    const plan = planVoiceCall(c, withCreated(project, actions), heard)
     if (plan.problem) return { actions: [], say: '', problem: plan.problem }
     // A question stops the whole sentence. Running the first half of "loop the
     // bass and play it" while asking which bass would leave the project half

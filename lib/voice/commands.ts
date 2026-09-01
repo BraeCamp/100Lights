@@ -41,6 +41,7 @@ const DRUM_WORDS = ['kick', 'snare', 'clap', 'crash', 'rim', 'hat', 'hihat', 'to
 import type { VoiceCall } from './execute-music'
 import { Words, near } from './words'
 import { matchApolloParam, matchFilterType, moduleHint } from '../apollo/spoken-params'
+import { characterWordsIn } from './preset-character'
 
 export interface InterpretContext {
   /**
@@ -180,6 +181,41 @@ export function isNotApollo(name: string, ctx: InterpretContext): boolean {
   const t = ctx.tracks.find(x => foldName(x.name ?? '') === foldName(name))
   const type = t?.instrument?.type
   return type != null && type !== 'apollo'
+}
+
+/**
+ * The name after "called"/"as", stopping where the name stops.
+ *
+ * ⚠️ A name ends at a conjunction. Without that, "add a track called Keys and
+ * turn it down" is a track named "Keys And Turn It Down", and the reading marks
+ * every word as used — so it scores full coverage and the sentence never splits
+ * into the two commands it obviously is. Over-claiming coverage is worse than
+ * under-claiming: it silences the machinery built to notice a second command.
+ */
+function nameAfter(raw: string, lead: RegExp): string {
+  const after = raw.toLowerCase().split(lead)[1]
+  if (!after) return ''
+  const upToConjunction = after
+    .split(/\s+(?:and|then|,|plus|also)\s+/)[0]
+    .trim()
+    .replace(/[^a-z0-9\s'-]/g, '')
+    .replace(/^the\s+/, '')
+    .trim()
+  // ⚠️ And it stops at a COMMAND WORD too, after the first word of the name.
+  //
+  // The sequence reader rebuilds each span from CONTENT words, which throws the
+  // conjunction away before any rule sees it — so inside a span "called keys
+  // turn down" has no "and" to stop at, the name swallowed "turn down", the
+  // reading claimed full coverage, and the sentence stopped splitting. The
+  // conjunction is the better cue and it is used first; this is the fallback
+  // for when it has already been discarded.
+  //
+  // After the FIRST word, deliberately: a track really can be called "Stop",
+  // and a name that is one command word is a name. A name that CONTINUES into
+  // one is a sentence carrying on.
+  const parts = upToConjunction.split(/\s+/)
+  const end = parts.findIndex((word, idx) => idx > 0 && isTriggerWord(word))
+  return (end === -1 ? parts : parts.slice(0, end)).join(' ').trim()
 }
 
 export function nameWords(ctx: InterpretContext): Set<string> {
@@ -696,6 +732,16 @@ const COMMANDS: VoiceCommand[] = [
       // not even look at the number. eq_band owns anything that names a
       // frequency; see spokenHz.
       if (readsAsEq(w)) return null
+      // ⚠️ ACCOUNT FOR THE VERB. "Turn", "bring" and "make" were never passed
+      // to has(), so they came back UNEXPLAINED and "turn the bass up" scored
+      // 0.67 coverage — under the 0.75 a span needs to be taken as one command
+      // inside a longer sentence. Invisible on its own, fatal in company:
+      // "turn the bass up and pan it left" could not be split, so the volume
+      // half was silently dropped and only the pan happened.
+      //
+      // They are already in the ignore list below, but that only keeps them
+      // out of the NAME; it does not say the reading used them. This does.
+      w.has('turn', 'bring', 'make', 'push', 'pull', 'crank')
       const up = w.has(...UP)
       const down = w.has(...DOWN)
       // Both directions in one sentence is not a nudge, it is a sentence this
@@ -1204,6 +1250,69 @@ const COMMANDS: VoiceCommand[] = [
           },
         }],
         confidence: 0.9,
+      }
+    },
+  },
+
+  {
+    id: 'write_part',
+    tool: 'write_part',
+    group: 'Notes',
+    what: 'Add a new part, with a sound picked by how it should feel',
+    say: [
+      'put in a bassline using one of the darker sad piano presets',
+      'add a warm bass part',
+      'give me eight bars of low notes on a mellow piano',
+    ],
+    match(w) {
+      // Something that does not exist yet. "Put in", "add", "give me" — a
+      // request to CREATE, not to change what is already there.
+      if (!w.has('put', 'add', 'give', 'make', 'create', 'write')) return null
+      // ⚠️ And it has to say what KIND of part. Without this the rule competes
+      // with add_track and add_effect for every "add ..." sentence there is.
+      // ⚠️ It has to say a PART is wanted, not merely mention a bass. Matching
+      // on the word "bass" alone made "put a low pass bar on the bass 2 for 4
+      // bars" — an effect bar — read as a request for a new bassline.
+      const bass = w.has('bassline', 'baseline')
+        || (w.has('bass') && w.has('part', 'line'))
+        || (w.has('low') && w.has('notes'))
+      if (!bass) return null
+      // A clip, a take, an automation lane: things you put ON something that
+      // already exists, which is the opposite of making a part. "Bars" is NOT
+      // here — "eight bars of low notes" is a length, not a lane.
+      if (w.has('clip', 'take', 'lane', 'automation')) return null
+      // ⚠️ "Put a LOW PASS bar on the bass 2" is an effect bar. EFFECTS catches
+      // the one-word spellings; said as two words it needs this.
+      //
+      // ⚠️⚠️ EXACT, not has(). "bass" is ONE EDIT from "pass", and has() bends
+      // words — so `w.has('pass')` was true for "add a warm bass PART" and this
+      // rule declined the very sentence it exists for. The one-edit trap, walked
+      // into while guarding against a different collision. A guard against a
+      // word that is one edit from your own trigger word must not be fuzzy.
+      if (w.all.includes('pass') || w.all.includes('lowpass') || w.all.includes('highpass')) return null
+      // "Add reverb to the bass" is not a new part.
+      if (EFFECTS.some(e => w.has(e))) return null
+
+      const words = characterWordsIn(w.raw)
+      const INSTRUMENTS = ['piano', 'bass', 'strings', 'synth', 'guitar', 'organ',
+        'mallets', 'brass', 'woodwinds', 'keys']
+      const instrument = INSTRUMENTS.find(g => w.has(g)) ?? null
+      // A bare "add a bass" with no character and no instrument is add_track's.
+      if (!words.length && !instrument) return null
+
+      const n = w.num()
+      const bars = n != null && w.has('bar', 'bars') ? n : null
+      return {
+        calls: [{
+          name: 'write_part',
+          input: {
+            part: 'bass',
+            character: words.join(' '),
+            ...(instrument ? { instrument } : {}),
+            ...(bars != null ? { bars } : {}),
+          },
+        }],
+        confidence: 0.87,
       }
     },
   },
@@ -1747,6 +1856,12 @@ const COMMANDS: VoiceCommand[] = [
       'darken the pad', 'make the vocals fuller', 'make the guitar thinner',
     ],
     match(w, ctx) {
+      // ⚠️ Shaping something that EXISTS is not the same as asking for a new
+      // part that sounds a certain way. "Add a warm bass part" wants a bass
+      // written with a warm sound; warming up the bass already there is a
+      // different edit, and it was winning because it saw "warm" first.
+      if (w.has('bassline', 'baseline')
+        || (w.has('part', 'line') && w.has('add', 'put', 'give', 'write', 'create'))) return null
       const QUALITY: Array<[string[], string]> = [
         [['brighter', 'brighten', 'bright'], 'brighter'],
         // ⚠️ No 'duller': it is one edit from 'fuller', and this entry is
@@ -2088,7 +2203,21 @@ const COMMANDS: VoiceCommand[] = [
       // "add a kick on bar 9" is an insert, and "add a track" is this. The
       // difference is the word "track", which is why it is required above.
       if (w.has('delete', 'remove', 'duplicate', 'rename', 'copy')) return null
-      return { calls: [{ name: 'add_track', input: {} }], confidence: 0.88 }
+      // ⚠️ The name was never read. add_track's tool takes one and its executor
+      // uses it, but this rule sent `{}` every time, so "add a track called
+      // Keys" made a track called "Track 4" — and left "called Keys"
+      // unexplained, which dragged coverage to 0.5 and stopped the sentence
+      // splitting as well. Same shape as add_marker, which reads its name the
+      // same way.
+      const name = nameAfter(w.raw, /\s+(?:called|named|labell?ed)\s+/)
+      if (name) {
+        w.has('called', 'named', 'labelled', 'labeled')
+        for (const word of name.split(/\s+/)) w.markWord(word, 0)
+      }
+      return {
+        calls: [{ name: 'add_track', input: name ? { name: name.replace(/\b[a-z]/g, c => c.toUpperCase()) } : {} }],
+        confidence: 0.88,
+      }
     },
   },
   {
@@ -2180,8 +2309,7 @@ const COMMANDS: VoiceCommand[] = [
       // no marker at all — a different action, silently, for a phrasing at
       // least as common as the one that worked. "Put a marker here called drop"
       // resolved to nothing whatsoever.
-      const after = w.raw.toLowerCase().split(/\s+(?:as|called|named|labell?ed)\s+/)[1]
-      const name = (after ?? '').trim().replace(/[^a-z0-9\s'-]/g, '').replace(/^the\s+/, '').trim()
+      const name = nameAfter(w.raw, /\s+(?:as|called|named|labell?ed)\s+/)
       if (!name) return null
       const bar = w.has('bar', 'measure') ? w.num() : null
       // "Put a marker HERE" is the playhead, which is where a marker goes when
@@ -3274,7 +3402,26 @@ export const COMMANDS_BY_ID: Record<string, VoiceCommand> =
  * to a word that is not here. That is what stops the transcriber being primed
  * for the examples while the parser listens for something else.
  */
+/**
+ * Is this word one the rules react to?
+ *
+ * ⚠️ Used by the sequence reader to decide whether a single reading really has
+ * explained a sentence. A RATIO cannot tell the difference between four
+ * unexplained filler words and one unexplained "pan" — and the second is a
+ * command going in the bin. "Turn the bass up and pan it left" scored exactly
+ * 0.80 with "pan" left over, cleared the 0.8 bar, and did half of what was
+ * asked without saying so.
+ */
+export function isTriggerWord(word: string): boolean {
+  return TRIGGER_SET.has(word.toLowerCase())
+}
+
 const TRIGGER_WORDS: readonly string[] = [
+  // The volume verbs. They ARE words the rules react to — the relative volume
+  // rule reads them — and leaving them out meant a name could run straight
+  // through one ("a track called Keys turn down") and a span could look
+  // complete while a command sat unexplained inside it.
+  'turn', 'bring', 'crank', 'push', 'pull',
   // Apollo's own vocabulary. Not in any `say` example — the examples show
   // sentences that work on a DEFAULT patch, and half of Apollo only exists once
   // somebody has chosen an engine. The recogniser still needs the words.
@@ -3330,6 +3477,8 @@ const KEY_PHRASES: readonly string[] = [
   'fade in', 'fade out', 'time signature', 'tap tempo',
   'go ahead', 'read them back', 'start collecting',
 ]
+
+const TRIGGER_SET = new Set<string>(TRIGGER_WORDS)
 
 export const COMMAND_VOCABULARY: readonly string[] = (() => {
   const skip = new Set([

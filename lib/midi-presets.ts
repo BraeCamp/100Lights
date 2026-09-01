@@ -152,7 +152,7 @@ export function getPresets(): MidiPreset[] {
   // an existing sample folder as a distinct preset (e.g. "Sub Drone" over the
   // Synth Bass samples with its own sound shaping). Samples still resolve by
   // folder; only the preset's identity/metadata is name-scoped.
-  const bkey = (p: { folder: string; name: string }) => `${p.folder} ${p.name}`
+  const bkey = (p: { folder: string; name: string }) => `${p.folder}\x00${p.name}`
   const hasAllBuiltIns = BUILT_IN.every(b => stored.some(p => p.builtIn && bkey(p) === bkey(b)))
 
   if (!hasAllBuiltIns) {

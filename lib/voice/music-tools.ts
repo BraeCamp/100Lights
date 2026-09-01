@@ -272,6 +272,23 @@ export const MUSIC_TOOLS = [
   // named is one decision; twenty tools called set_reverb_decay, set_delay_time
   // and so on is twenty chances to pick the neighbour.
   {
+    name: 'write_part',
+    description:
+      'MAKE A NEW PART — a track, a sound chosen by CHARACTER, and notes to play, all in one. "put in a bassline using one of the darker sad piano presets", "add a warm bass part", "give me 8 bars of low notes on a mellow piano". ⚠️ Use this when the sentence asks for something that does not exist yet AND says what it should sound like. It is one command on purpose: a track with no clips cannot be given a sampled preset, so these steps fail if they are sent separately. For changing a sound that is already there use set_instrument; for notes on an existing track use insert_clip.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        character: { type: 'string', description: 'The mood, as they said it: dark, darker, sad, melancholic, moody, mellow, soft, warm, bright, spacious, cinematic, lofi, gritty. Pass the words themselves — the library is searched by what each preset MEASURABLY sounds like, not by tags.' },
+        instrument: { type: 'string', description: 'piano, bass, strings, synth, guitar, organ, mallets, brass, woodwinds — or a preset name.' },
+        part: { type: 'string', enum: ['bass'], description: 'What to write. Bass is a low root movement; lead lines are written by hand, not generated.' },
+        bars: { type: 'number', description: 'How long. Default 8.' },
+        at: POSITION,
+        name: { type: 'string', description: 'What to call the track. Default "Bass".' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'set_apollo_param',
     description:
       'ANY DIAL INSIDE APOLLO, BY NAME — the synth\'s own 166 parameters, not an effect after it. "open the filter on the pad", "cutoff to 800 hertz", "more resonance on filter 2", "wavetable position halfway on oscillator 2", "grain density up on the texture", "osc A detune to 20 percent", "LFO 3 rate to 5 hertz", "macro 2 to 70", "longer glide". ⚠️ Only works on a track whose instrument is Apollo. Names the module it moved, so a wrong guess is visible at once. If the dial exists in several places (level, pan, rate) SAY WHICH — "the sub level", "LFO 2 rate" — or it will ask.',
