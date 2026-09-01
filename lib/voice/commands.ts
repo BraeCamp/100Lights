@@ -1244,6 +1244,13 @@ const COMMANDS: VoiceCommand[] = [
         : w.has('noise') ? 'noise'
           : (w.has('oscillator', 'osc') && w.num() != null) ? `osc ${w.num()}` : null
       if (!layer) return null
+      // ⚠️ And a SWITCH is not a layer either. "Make oscillator 2 granular"
+      // names the engine it should run; bringing the oscillator in is a
+      // side effect of that, not the request. Same shape as the dial guard
+      // below, and the same reason: this rule sees "osc" + a number and would
+      // otherwise answer every sentence that contains both.
+      if (w.all.some(x => ['wavetable', 'sample', 'granular', 'spectral', 'multisample',
+        'engine', 'unison', 'warp'].includes(x))) return null
       // ⚠️ "Osc 2 detune to 20" names a DIAL, and this rule was taking it —
       // switching oscillator 2 on and never touching the detune, then saying so
       // as though it had done what was asked. Bringing a layer IN and moving one
@@ -1267,6 +1274,68 @@ const COMMANDS: VoiceCommand[] = [
           },
         }],
         confidence: 0.9,
+      }
+    },
+  },
+
+  {
+    id: 'edit_note',
+    tool: 'edit_note',
+    group: 'Notes',
+    what: 'Put in or take out a single note',
+    say: ['put a C on beat 3 of the bass', 'delete the last note of the bass', 'add an E flat at bar 2 of the bass'],
+    match(w, ctx) {
+      // ⚠️ The word "note", singular, is what separates this from every bulk
+      // command. "Make the notes longer" is note_length; "put a note in" is
+      // this one. Plus the pitch form — "put a C on beat three" names no note
+      // word at all, so a bare pitch letter counts too.
+      // ⚠️ "A" IS BOTH AN ARTICLE AND A NOTE. "Put a C on beat three" matched
+      // the article first and added an A. Collect every candidate and drop a
+      // bare "a" when there is another — but keep it when it is the only one,
+      // because "put an A on beat three" means exactly that note.
+      const candidates = [...w.raw.matchAll(/\b([a-g])\s?(sharp|flat|#|b)?\s?(-?\d)?\b/gi)]
+      const pitch = candidates.find(m => m[1].toLowerCase() !== 'a' || m[2] || m[3])
+        ?? candidates.find(m => m[1].toLowerCase() !== 'a')
+        ?? candidates[0] ?? null
+      const saysNote = w.has('note')
+      if (!saysNote && !pitch) return null
+
+      const removing = w.has('delete', 'remove') || (w.has('take') && w.has('out'))
+      if (removing) {
+        if (!saysNote) return null      // "take the bass out" is a mute, not a note
+        const which = w.has('first') ? 'first' : w.has('highest') ? 'highest'
+          : w.has('lowest') ? 'lowest' : 'last'
+        const named = nameOrSelected(w, ctx, ['delete', 'remove', 'take', 'out', 'the', 'note',
+          'last', 'first', 'highest', 'lowest', 'of', 'from'], { dropNums: true })
+        if (!named) return null
+        return {
+          calls: [{ name: 'edit_note', input: { action: 'remove', target: named.name, which } }],
+          confidence: 0.88,
+          destructive: true,
+        }
+      }
+
+      if (!w.has('put', 'add', 'place')) return null
+      if (!pitch) return null
+      // A bar/beat if one was said. lengthWith/positions are handled by the
+      // shared readers everywhere else; here only bar and beat make sense.
+      const bar = w.has('bar', 'measure') ? w.num() : null
+      const beat = w.has('beat') ? (w.nums()[bar != null ? 1 : 0] ?? null) : null
+      if (bar == null && beat == null) return null
+      const note = `${pitch[1]}${pitch[2] ? ` ${pitch[2]}` : ''}${pitch[3] ?? ''}`.trim()
+      const named = nameOrSelected(w, ctx, ['put', 'add', 'place', 'a', 'an', 'the', 'note',
+        'on', 'at', 'of', 'in', 'to', 'bar', 'measure', 'beat', 'sharp', 'flat',
+        pitch[1].toLowerCase()], { dropNums: true })
+      if (!named) return null
+      return {
+        calls: [{
+          name: 'edit_note',
+          input: {
+            action: 'add', target: named.name, note,
+            at: { ...(bar != null ? { bar } : {}), ...(beat != null ? { beat } : {}) },
+          },
+        }],
+        confidence: 0.87,
       }
     },
   },
@@ -1469,6 +1538,56 @@ const COMMANDS: VoiceCommand[] = [
           },
         }],
         confidence: 0.88,
+      }
+    },
+  },
+
+  {
+    id: 'set_apollo_switch',
+    tool: 'set_apollo_switch',
+    group: 'Notes',
+    what: "Apollo's choices — engine, warp, unison, octave",
+    say: [
+      'make oscillator 2 granular on the synth',
+      'set the warp to sync on the synth',
+      'unison of 4 on oscillator 1 of the synth',
+    ],
+    match(w, ctx) {
+      const ENGINES = ['wavetable', 'sample', 'granular', 'spectral', 'multisample']
+      const engine = ENGINES.find(e => w.all.includes(e))
+      const warpy = w.has('warp')
+      const unison = w.has('unison')
+      const octave = w.has('octave') && w.has('osc', 'oscillator', 'sub')
+      if (!engine && !warpy && !unison && !octave) return null
+
+      const setting = engine ? 'engine' : warpy ? 'warp' : unison ? 'unison' : 'octave'
+      // ⚠️ The warp MODE, not the warp amount — "more warp" is a dial and
+      // set_apollo_param owns it. A mode has to be named.
+      const WARPS = ['off', 'sync', 'bend', 'pwm', 'asym', 'flip', 'mirror', 'quantize',
+        'squeeze', 'fm', 'am', 'rm', 'saturate', 'shift']
+      const warpMode = warpy ? WARPS.find(x => w.all.includes(x)) : null
+      if (setting === 'warp' && !warpMode) return null
+
+      const n = w.nums()
+      // "Oscillator 2 ... unison of 4" — the first number is the module.
+      const moduleNum = /(\d+)$/.exec(moduleHint(w.all.join(' ')) ?? '')?.[1]
+      const values = moduleNum ? n.filter((x, k) => !(k === 0 && String(x) === moduleNum)) : n
+      const value = setting === 'engine' ? engine
+        : setting === 'warp' ? warpMode
+          : String(values[0] ?? (w.has('up') ? 1 : w.has('down') ? -1 : ''))
+      if (!value) return null
+
+      const named = nameOrSelected(w, ctx, ['make', 'set', 'put', 'the', 'a', 'an', 'to', 'on', 'of',
+        'osc', 'oscillator', 'sub', 'engine', 'warp', 'unison', 'octave', 'voices', 'up', 'down',
+        ...ENGINES, ...WARPS], { dropNums: true })
+      if (!named) return null
+      if (isNotApollo(named.name, ctx)) return null
+      return {
+        calls: [{
+          name: 'set_apollo_switch',
+          input: { target: named.name, setting, value: String(value), module: moduleHint(w.all.join(' ')) ?? undefined },
+        }],
+        confidence: 0.89,
       }
     },
   },

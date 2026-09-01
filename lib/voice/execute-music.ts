@@ -37,7 +37,7 @@ import { findByName, foldName, spokenNumber, spokenFraction } from './resolve'
 import { matchPresetByCharacter, characterWordsIn, presetTags, type PresetLike } from './preset-character'
 import { SCALE_INTERVALS, type ScaleType } from '../scale-constants'
 import {
-  matchApolloParam, matchFilterType, resolveValue, readParam, writeParam,
+  matchApolloParam, matchFilterType, moduleHint, resolveValue, readParam, writeParam,
   describeValue, FILTER_NAMES, type SpokenParam,
 } from '../apollo/spoken-params'
 import { FILTER_TYPES } from '../apollo/patch'
@@ -649,6 +649,29 @@ export interface VoiceContext {
 }
 
 const PITCH_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+/**
+ * A single spoken note → a MIDI number. "C", "E flat", "F#4", "b flat 3".
+ *
+ * ⚠️ Deliberately not parseChord(): that reads a CHORD and returns a triad,
+ * which is a different question. Asking it for "C" would put three notes where
+ * somebody asked for one.
+ *
+ * Returns a pitch in octave 4 when no octave is said; the caller moves it to
+ * sit with the rest of the part, because a bare "C" in a bass line is a low C.
+ */
+function spokenPitch(said: string): number | null {
+  const t = String(said ?? '').toLowerCase().trim()
+    .replace(/\bsharp\b/g, '#').replace(/\bflat\b/g, 'b').replace(/\s+/g, '')
+  const m = /^([a-g])(#|b)?(-?\d)?$/.exec(t)
+  if (!m) return null
+  const base = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }[m[1]]
+  if (base == null) return null
+  const accidental = m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0
+  const octave = m[3] != null ? Number(m[3]) : 4
+  const pitch = (octave + 1) * 12 + base + accidental
+  return pitch >= 0 && pitch <= 127 ? pitch : null
+}
 
 /** "C#4" - a pitch as a person would say it. */
 function pitchName(pitch: number): string {
@@ -2089,6 +2112,64 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── ONE NOTE ────────────────────────────────────────────────────────
+    //
+    // ⚠️ Light could transpose, quantise, harmonise, lengthen and reverse notes
+    // in bulk — and could not add or delete a single one, because ADD_MIDI_NOTE
+    // and REMOVE_MIDI_NOTE were never emitted. That is the gap somebody hits
+    // the moment they have the piano roll open and want one more note in it.
+    case 'edit_note': {
+      const chosen = resolveClipOrAsk(target, project, maps, 'edit_note', i)
+      if (chosen.ask) return { actions: [], say: '', ask: chosen.ask }
+      const clip = chosen.clip
+      if (!clip || clip.kind !== 'midi') return fail(`I couldn't find a part called "${target || 'that'}".`)
+      const notes = (clip as MidiClip).notes ?? []
+      const doing = str(i.action).toLowerCase() || 'add'
+
+      if (doing === 'remove') {
+        if (!notes.length) return fail(`"${clip.name}" has no notes in it.`)
+        const which = str(i.which).toLowerCase()
+        const said = spokenPitch(str(i.note))
+        const pick = said != null
+          ? [...notes].reverse().find(n => n.pitch === said)
+          : which === 'first' ? [...notes].sort((a, b) => a.startBeat - b.startBeat)[0]
+            : which === 'highest' ? [...notes].sort((a, b) => b.pitch - a.pitch)[0]
+              : which === 'lowest' ? [...notes].sort((a, b) => a.pitch - b.pitch)[0]
+                // "The last note" is the one that starts last, which is what
+                // anybody means — not the last one in the array.
+                : [...notes].sort((a, b) => b.startBeat - a.startBeat)[0]
+        if (!pick) return fail(said != null ? `There is no ${pitchName(said)} in "${clip.name}".` : 'I could not tell which note.')
+        return {
+          actions: [{ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: pick.id }],
+          say: `Took the ${pitchName(pick.pitch)} out of "${clip.name}".`,
+        }
+      }
+
+      const pitch = spokenPitch(str(i.note))
+      if (pitch == null) return fail('Say which note — "put a C on beat three".')
+      // ⚠️ Placed relative to the CLIP, not the song: a note "on beat three"
+      // means the third beat of the part being edited, and a position measured
+      // from the song's start would land it somewhere nobody asked for.
+      const at = positionToBeat(i.at as MusicPosition | undefined, maps)
+      const startBeat = Math.max(0, (at ?? clip.startBeat) - clip.startBeat)
+      const length = durationToBeats(i.length as MusicDuration | undefined, clip.startBeat + startBeat, maps)
+      // Sits in the same octave as the rest of the part unless an octave was
+      // said — a bare "C" in a bass part means a low C.
+      const octaveless = !/\d/.test(str(i.note))
+      const near = notes.length ? Math.round(notes.reduce((n, x) => n + x.pitch, 0) / notes.length) : 60
+      const placed = octaveless
+        ? pitch + 12 * Math.round((near - pitch) / 12)
+        : pitch
+      return {
+        actions: [{
+          type: 'ADD_MIDI_NOTE',
+          clipId: clip.id,
+          note: { id: newId(), pitch: placed, startBeat, durationBeats: length ?? 1, velocity: 90 },
+        }],
+        say: `Put a ${pitchName(placed)} in "${clip.name}" at ${describeBeat(clip.startBeat + startBeat, maps)}.`,
+      }
+    }
+
     // ── THE PROJECT AS A DOCUMENT ───────────────────────────────────────
     //
     // Opening, versioning and renaming — the things you do to the file rather
@@ -2274,6 +2355,106 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         // wrong is visible immediately rather than a week later.
         say: `${track.name} ${param.moduleLabel} ${param.dial}: ${describeValue(param, next)}.`,
       }
+    }
+
+    // ── APOLLO'S SWITCHES ───────────────────────────────────────────────
+    //
+    // The audit's last Apollo gap: every one of the 166 dials was reachable and
+    // none of the CHOICES were. The engine switch matters most — it gates 66 of
+    // those dials, so the granular, sample and spectral controls were reachable
+    // in name only, on an oscillator that could never be running them.
+    case 'set_apollo_switch': {
+      const track = resolveTrack(target, project) ?? (target ? null : null)
+      if (!track) return fail('Say which track.')
+      const inst = track.instrument
+      if (inst?.type !== 'apollo') return fail(notApollo(track.name, inst?.type))
+
+      const patch = JSON.parse(JSON.stringify(inst.params ?? {})) as ApolloPatch
+      const which = moduleHint(str(i.module) || str(i.target) || 'osc 1') ?? 'osc1'
+      const oscIdx = /^osc([123])$/.exec(which) ? Number(which.slice(3)) - 1 : 0
+      const osc = patch.oscs?.[oscIdx]
+      const setting = str(i.setting).toLowerCase().trim()
+      const said = str(i.value).toLowerCase().trim()
+
+      if (setting === 'engine') {
+        if (!osc) return fail(`That patch has no oscillator ${oscIdx + 1}.`)
+        const ENGINES = ['wavetable', 'sample', 'multisample', 'granular', 'spectral']
+        const engine = ENGINES.find(e => said.includes(e) || e.startsWith(said))
+        if (!engine) return fail(`I don't know an engine called "${said}". There is ${ENGINES.join(', ')}.`)
+        osc.enabled = true
+        const before = osc.engine
+        osc.engine = engine as typeof osc.engine
+        // ⚠️ SAYS WHEN IT WILL BE SILENT. Sample, granular and spectral all
+        // play a LOADED SAMPLE — switching to one with an empty slot is an
+        // oscillator that makes no sound, and reporting "done" there is the
+        // exact failure this file keeps guarding against.
+        const needsSample = engine === 'sample' || engine === 'granular' || engine === 'spectral'
+        const slot = engine === 'sample' ? osc.smp?.sampleId
+          : engine === 'granular' ? osc.gran?.sampleId : osc.spec?.sampleId
+        return {
+          actions: [{ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { ...inst, params: patch } }],
+          say: `Oscillator ${oscIdx + 1} on ${track.name}: ${before} → ${engine}.`
+            + (needsSample && !slot ? ' It needs a sample before it makes a sound — pick one from your library.' : ''),
+        }
+      }
+
+      if (setting === 'warp') {
+        if (!osc?.wt) return fail(`That patch has no oscillator ${oscIdx + 1}.`)
+        const MODES: Record<string, string> = {
+          off: 'off', sync: 'sync', bend: 'bendPlus', pwm: 'pwm', asym: 'asym', flip: 'flip',
+          mirror: 'mirror', quantize: 'quantize', squeeze: 'squeeze', fm: 'fm', am: 'am',
+          rm: 'rm', saturate: 'saturate', shift: 'shift',
+        }
+        const mode = MODES[said] ?? Object.entries(MODES).find(([k]) => said.includes(k))?.[1]
+        if (!mode) return fail(`I don't know a warp called "${said}". There is ${Object.keys(MODES).join(', ')}.`)
+        osc.wt.warp1 = { ...osc.wt.warp1, mode: mode as typeof osc.wt.warp1.mode }
+        // A warp at zero amount is a mode nobody can hear — the same trap the
+        // dials have, so choosing one gives it something to work with.
+        if (mode !== 'off' && (osc.wt.warp1.amount ?? 0) <= 0) osc.wt.warp1.amount = 0.35
+        osc.enabled = true
+        return {
+          actions: [{ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { ...inst, params: patch } }],
+          say: `Oscillator ${oscIdx + 1} warp: ${said}${mode !== 'off' ? ` at ${Math.round((osc.wt.warp1.amount ?? 0) * 100)}%` : ''}.`,
+        }
+      }
+
+      if (setting === 'unison') {
+        if (!osc) return fail(`That patch has no oscillator ${oscIdx + 1}.`)
+        const n = spokenNumber(said)
+        if (n == null) return fail('Say how many voices — 1 to 16.')
+        osc.unison = Math.max(1, Math.min(16, Math.round(n)))
+        osc.enabled = true
+        // ⚠️ Unison multiplies what one note costs. It does not consume
+        // allocator slots — poly counts NOTES — but it does multiply the summed
+        // level, which is what makes dense chords duck.
+        return {
+          actions: [{ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { ...inst, params: patch } }],
+          say: `Oscillator ${oscIdx + 1}: ${osc.unison} voice${osc.unison === 1 ? '' : 's'}.`
+            + (osc.unison > 6 ? ' That is a lot per note — chords will get loud.' : ''),
+        }
+      }
+
+      if (setting === 'octave') {
+        const n = spokenNumber(said)
+        if (n == null) return fail('Say which octave — up one, down one.')
+        if (which === 'sub') {
+          if (!patch.sub) return fail('That patch has no sub.')
+          patch.sub.octave = Math.max(-2, Math.min(0, Math.round(n)))
+          patch.sub.enabled = true
+          pinSubReference(patch, patch.sub.enabled)
+          return {
+            actions: [{ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { ...inst, params: patch } }],
+            say: `Sub octave ${patch.sub.octave}.`,
+          }
+        }
+        if (!osc) return fail(`That patch has no oscillator ${oscIdx + 1}.`)
+        osc.octave = Math.max(-4, Math.min(4, Math.round(n)))
+        return {
+          actions: [{ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { ...inst, params: patch } }],
+          say: `Oscillator ${oscIdx + 1} octave ${osc.octave > 0 ? '+' : ''}${osc.octave}.`,
+        }
+      }
+      return fail(`I don't know a switch called "${setting}".`)
     }
 
     // ── WHICH FILTER APOLLO IS USING ────────────────────────────────────

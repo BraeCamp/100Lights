@@ -330,6 +330,21 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_apollo_switch',
+    description:
+      'A CHOICE INSIDE APOLLO, rather than a number — the things that are a setting, not a dial. "make oscillator two granular", "put osc 1 on the sample engine", "set the warp to sync", "unison of 4 on oscillator 1", "drop the sub an octave". ⚠️ Switching an ENGINE changes what an oscillator IS (wavetable, sample, granular, spectral) and the granular/sample/spectral dials only work once it has — but it needs a sample loaded to make a sound, so it says so rather than leaving silence.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        setting: { type: 'string', enum: ['engine', 'warp', 'unison', 'octave'], description: 'Which switch.' },
+        value: { type: 'string', description: 'engine: wavetable, sample, granular, spectral. warp: off, sync, bend, pwm, fm, am, rm, saturate, mirror, flip, quantize. unison: a number 1-16. octave: -2 to 2.' },
+        module: { type: 'string', description: 'Which one — "oscillator 2", "sub". Defaults to oscillator 1.' },
+      },
+      required: ['setting', 'value'],
+    },
+  },
+  {
     name: 'set_apollo_filter',
     description:
       'WHICH FILTER MODEL APOLLO IS USING — the single biggest change to a patch\'s character. "give the pad a ladder filter", "make it an acid filter", "24 dB low pass on the bass", "put a comb filter on it", "vowel filter", "phaser filter". ⚠️ This CHANGES THE FILTER TYPE. For moving the cutoff or resonance use set_apollo_param; for a separate filter device after the synth use add_effect.',
@@ -951,6 +966,23 @@ export const MUSIC_TOOLS = [
         strength: { type: 'number', description: 'Percentage, 0-100. Omit for 100.' },
       },
       required: ['target'],
+    },
+  },
+  {
+    name: 'edit_note',
+    description:
+      'ONE NOTE — put a single note in, or take one out. "put a C on beat three", "add an E flat at bar 5 beat 2", "delete the last note", "take out the highest note". ⚠️ For changing notes in BULK — transposing, quantising, lengthening, making them softer — use those commands instead; this is the one for a single note, which everything else could do except add or remove one.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        action: { type: 'string', enum: ['add', 'remove'] },
+        note: { type: 'string', description: 'For add: the note as said — "C", "E flat", "F#4". Without an octave it lands near the rest of the part.' },
+        at: POSITION,
+        length: LENGTH,
+        which: { type: 'string', enum: ['last', 'first', 'highest', 'lowest'], description: 'For remove, when they did not say a pitch.' },
+      },
+      required: ['action'],
     },
   },
   {

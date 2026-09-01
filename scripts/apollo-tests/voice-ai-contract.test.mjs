@@ -103,6 +103,8 @@ const CALLS = {
   set_apollo_layer: { target: 'pad', layer: 'sub', on: true },
   write_part: { part: 'bass', character: 'dark sad', instrument: 'piano' },
   project_action: { action: 'save_version', name: 'Before the drop' },
+  edit_note: { target: 'pad', action: 'add', note: 'C', at: { bar: 1, beat: 3 } },
+  set_apollo_switch: { target: 'pad', setting: 'unison', value: '4', module: 'osc1' },
   set_apollo_param: { target: 'pad', parameter: 'filter 1 cutoff', value: 800 },
   set_apollo_filter: { target: 'pad', type: 'ladder filter' },
   set_device_param: { target: 'pad', device: 'reverb', parameter: 'decay', percent: 70 },
