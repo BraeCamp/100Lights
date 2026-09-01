@@ -718,6 +718,22 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Nudge a track louder or quieter',
     say: ['turn the bass up', 'bring the drums down a bit', 'make the pad louder'],
     match(w, ctx) {
+      // ⚠️ THE TRIGGER FIRST, THEN THE GUARDS.
+      //
+      // Every guard below is a fuzzy word search, and EFFECTS.some runs one per
+      // effect name — all of it before asking whether the sentence contains an
+      // up or a down at all. Most sentences do not, so most of that work was
+      // being done to reach a `return null`. Measured at 164µs per sentence,
+      // the most expensive rule of the hundred, and this rule is read once per
+      // hypothesis per span.
+      //
+      // Pure reordering: the guards only ever mattered when the trigger had
+      // matched, and a rule that returns null marks nothing — the reading is
+      // discarded whole, so the accounting cannot drift.
+      const up = w.has(...UP)
+      const down = w.has(...DOWN)
+      if (!up && !down) return null
+
       // ⚠️ Tone words share "up" and "more" with volume — "warm UP the guitar"
       // and "MORE punch" are not level changes, and this rule sees them first
       // because it is looking for exactly those two words. Naming a quality
@@ -747,8 +763,6 @@ const COMMANDS: VoiceCommand[] = [
       // They are already in the ignore list below, but that only keeps them
       // out of the NAME; it does not say the reading used them. This does.
       w.has('turn', 'bring', 'make', 'push', 'pull', 'crank')
-      const up = w.has(...UP)
-      const down = w.has(...DOWN)
       // Both directions in one sentence is not a nudge, it is a sentence this
       // parser has misread. Saying so costs nothing; guessing costs a mix.
       if (up === down) return null

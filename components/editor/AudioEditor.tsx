@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useReducer, useRef, useCallback, useMemo } from 'react'
+import Link from 'next/link'
 import { createPortal } from 'react-dom'
 import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch } from '@/lib/daw-undo'
@@ -3479,7 +3480,7 @@ export default function AudioEditor(props: AudioEditorProps) {
               borderRight: sidebarOpen ? '1px solid var(--border)' : 'none',
             }}>
               {/* Logo — takes the user straight home */}
-              <a
+              <Link
                 href="/dashboard"
                 title="Home"
                 data-help-id="home"
@@ -3489,10 +3490,10 @@ export default function AudioEditor(props: AudioEditorProps) {
                 }}
               >
                 <LogoMark size={22} />
-              </a>
+              </Link>
               {/* Return to the projects list. (The sidebar still opens from the
                   Sound Library / Code tab buttons just below.) */}
-              <a
+              <Link
                 href="/projects"
                 title="Return to projects"
                 data-help-id="return-to-projects"
@@ -3506,7 +3507,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
               >
                 <FolderOpen size={15} />
-              </a>
+              </Link>
               {/* Open a project file, or import media into a new video project.
                   Tinted (not muted) so it reads as an action in the icon rail. */}
               <button

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import Link from 'next/link'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import dynamic from 'next/dynamic'
 import { MoveHorizontal, Download, Film, Palette, Music, Package, MousePointer2, Scissors, Undo2, Redo2, Save, Cloud, HardDrive, ChevronDown, CheckCircle2, FilePlus, AudioLines, PanelsTopBottom, Mic, Share2, Link2, Check as CheckIcon, Plus, Type, X, Loader2, Upload, Layers, SwatchBook, FolderOpen, Clapperboard, Wand2, Sparkles } from 'lucide-react'
@@ -4630,7 +4631,7 @@ export default function VideoEditor({
                 borderRight: videoSidebarOpen ? '1px solid var(--border)' : 'none',
               }}>
                 {/* Logo — takes the user straight home */}
-                <a
+                <Link
                   href="/dashboard"
                   title="Home"
                   data-help-id="home"
@@ -4640,9 +4641,9 @@ export default function VideoEditor({
                   }}
                 >
                   <LogoMark size={22} />
-                </a>
+                </Link>
                 {/* Return to the projects list */}
-                <a
+                <Link
                   href="/projects"
                   title="Return to projects"
                   data-help-id="return-to-projects"
@@ -4656,7 +4657,7 @@ export default function VideoEditor({
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
                 >
                   <FolderOpen size={15} />
-                </a>
+                </Link>
                 {/* Media library + Auto-Edit toggles */}
                 {([
                   { tab: 'media' as const, Icon: Clapperboard, label: 'Media library', help: 'media-library' },
