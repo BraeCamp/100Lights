@@ -72,29 +72,41 @@ export async function POST(req: Request) {
       RETURNING user_id
     `
   } else if (days === null || days === undefined) {
-    // Indefinite gift
+    // ── Indefinite gift ───────────────────────────────────────────────────
+    //
+    // ⚠️ INSERT, not UPDATE. A plain UPDATE matches nothing when the account
+    // has no subscriptions row, and plenty of real accounts have none: the row
+    // is written by the Clerk signup webhook, so anybody who signed up while it
+    // was misconfigured, or before it existed, or on a database restored
+    // without it, simply has no row. Gifting them failed with "they need to
+    // sign in once so their account is provisioned" — advice that cannot work,
+    // because signing in again does not create it either. The gift is the
+    // moment we know what the row should say, so it writes one.
     rows = await sql`
-      UPDATE subscriptions
-      SET gift_plan = ${plan}, gift_until = NULL, updated_at = NOW()
-      WHERE user_id = ${userId}
+      INSERT INTO subscriptions (user_id, plan, status, gift_plan, gift_until, updated_at)
+      VALUES (${userId}, 'free', 'active', ${plan}, NULL, NOW())
+      ON CONFLICT (user_id) DO UPDATE
+        SET gift_plan = ${plan}, gift_until = NULL, updated_at = NOW()
       RETURNING user_id
     `
   } else {
-    // Timed gift — extend from the later of NOW() and the current gift_until
+    // Timed gift — extend from the later of NOW() and the current gift_until,
+    // and create the row the same way if it is not there.
     rows = await sql`
-      UPDATE subscriptions
-      SET gift_plan  = ${plan},
-          gift_until = GREATEST(NOW(), COALESCE(gift_until, NOW())) + (${days}::int * INTERVAL '1 day'),
-          updated_at = NOW()
-      WHERE user_id = ${userId}
+      INSERT INTO subscriptions (user_id, plan, status, gift_plan, gift_until, updated_at)
+      VALUES (${userId}, 'free', 'active', ${plan}, NOW() + (${days}::int * INTERVAL '1 day'), NOW())
+      ON CONFLICT (user_id) DO UPDATE
+        SET gift_plan  = ${plan},
+            gift_until = GREATEST(NOW(), COALESCE(subscriptions.gift_until, NOW())) + (${days}::int * INTERVAL '1 day'),
+            updated_at = NOW()
       RETURNING user_id
     `
   }
 
-  // No row updated → this user has no subscriptions record (e.g. the Clerk
-  // signup webhook never created one). Surface it instead of a false success.
-  if (rows.length === 0) {
-    return Response.json({ error: 'No subscription record for this user yet — they need to sign in once so their account is provisioned.' }, { status: 404 })
+  // Removing a gift from an account that has no row is already the state being
+  // asked for; the two branches above can no longer come back empty.
+  if (rows.length === 0 && plan != null) {
+    return Response.json({ error: 'Could not write the gift for this user.' }, { status: 500 })
   }
 
   await logAdmin(plan ? 'gift.grant' : 'gift.remove', userId, plan ? { plan, days: days ?? 'indefinite' } : undefined)
