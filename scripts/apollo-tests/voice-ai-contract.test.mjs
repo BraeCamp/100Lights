@@ -37,6 +37,10 @@ const PROJECT = {
     { id: 'cd', trackId: 'td', kind: 'midi', name: 'Drums clip', startBeat: 8, durationBeats: 8, notes: [...notes], fadeIn: 0, fadeOut: 0 },
   ],
   cueMarkers: [{ id: 'm1', beat: 8, name: 'Chorus' }, { id: 'm2', beat: 24, name: 'Drop' }],
+  // A return track and a loop, so the send and selection probes have something
+  // real to aim at rather than passing by refusing.
+  returnTracks: [{ id: 'r1', name: 'Reverb', volume: 0.8, pan: 0, mute: false, effects: [] }],
+  loopStart: 0, loopEnd: 8, key: 0, scale: 'major',
 }
 
 // A plausible model call per tool: required fields filled the way the schema
@@ -96,6 +100,16 @@ const CALLS = {
   add_midi_effect: { target: 'pad', effect: 'arp' },
   remove_midi_effect: { target: 'pad', effect: 'arp' },
   remove_effect: { target: 'pad', effect: 'reverb' },
+  set_device_param: { target: 'pad', device: 'reverb', parameter: 'decay', percent: 70 },
+  set_sound: { target: 'pad', parameter: 'attack', value: 0.5 },
+  eq_band: { target: 'pad', frequency: 300, action: 'cut' },
+  send_to: { target: 'pad', to: 'reverb', amount: 30 },
+  nudge: { target: 'pad clip', direction: 'later', milliseconds: 20 },
+  tempo_ramp: { to: { bar: 5 }, bpm: 100 },
+  select: { what: 'all' },
+  strip_back: { keep: ['drums'] },
+  chord_inversion: { target: 'pad clip', direction: 'up' },
+  modulate: { semitones: 2 },
   undo: {},
   redo: {},
 }

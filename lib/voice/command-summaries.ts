@@ -32,6 +32,7 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   'set_track.pan': 'Places a track in the stereo field. "Pan the guitar hard left", "put the keys slightly right", "centre the bass".',
   'set_all_tracks.mute': 'Mutes or unmutes everything at once. The fastest way back from a mix you have soloed into a corner.',
   'set_all_tracks.solo_off': 'Clears every solo. Say this when something is inaudible and you cannot remember what you soloed.',
+  strip_back: 'Leaves only the tracks you name and mutes everything else, or brings it all back. The fastest way to hear an arrangement idea, and worth several separate mute commands.',
   set_master_volume: 'Sets the level of the whole mix, after every track and effect. Use it for the room, not for balance.',
   add_effect: 'Puts a device on a track — reverb, delay, EQ, compressor, saturator and the rest. It goes on the end of the chain, which is where you almost always want it.',
   remove_effect: 'Takes a device off a track. Naming the type is enough; you do not have to say which one if there is only one.',
@@ -42,6 +43,11 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
 
   balance_levels: 'Sets track levels by MEASURING them rather than by guessing. It renders each track on its own, works out how loud it actually sounds, and moves the faders to match — so it takes a few seconds and says so. ⚠️ Measured with K-weighting, not raw level: a bass and a hi-hat at the same RMS are nowhere near equally loud, and matching by raw level is what leaves the bass booming and the vocal buried.',
   crossfade: 'Fades one clip out as the next fades in, so the join is smooth instead of a click. If the two clips do not overlap, the second is pulled back to meet the first — there is no other way to make them cross. An overlap you already set up is honoured rather than overruled.',
+
+  set_device_param: 'Sets a named dial inside an effect — compressor ratio, reverb decay, delay feedback, limiter ceiling, gate threshold. Reads the same parameter registry the device UI and the automation lanes read, so a value here means what it means everywhere else. If the device is not on the track yet it is added first, so "put a compressor on and set the ratio to 4" is one sentence.',
+  set_sound: 'Shapes the INSTRUMENT — its envelope and its own filter — rather than an effect after it. "A slower attack", "shorten the release", "more resonance". ⚠️ Only synths have an envelope to shape; a drum kit or a sampler will say so rather than pretend. The cutoff moves by ratio rather than by a fixed number of Hertz, because 2 kHz up from 200 Hz and 2 kHz up from 10 kHz are not the same move.',
+  eq_band: 'Cuts or boosts at a frequency you name — the commonest sentence in any mixing session. "Cut 300 hertz on the guitar", "boost 5k on the vocals". The frequency decides which of the three bands moves, and that band\'s crossover is placed where you asked.',
+  send_to: 'Feeds some of a track into a shared return bus instead of putting an effect on the track. This is how several tracks share one reverb, which is cheaper and is how a mix hangs together. Send 0 takes it back out.',
 
   // ── Timing ───────────────────────────────────────────────────────────────
   set_tempo: 'Changes the song tempo in BPM, or adds a tempo change at a bar if you say where.',
@@ -57,8 +63,12 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
 
   apply_groove: 'Gives one part a named feel — shuffle, laid back, pushed, off-grid, straight — by moving its notes and shaping its accents. ⚠️ Not the same as swing: swing is one number applied to the whole song at playback time and only ever moves the offbeats. A groove is baked into the notes of one part, so you can see it in the piano roll, and it can move downbeats and change accents, which uniform swing cannot.',
 
+  tempo_ramp: 'A ritardando or accelerando — speeding up or slowing down ACROSS a stretch rather than at a point. Written as a handful of tempo markers instead of a curve: few enough to see and move by hand afterwards, close enough together to hear as a slide.',
+  modulate: 'Changes key from a point onwards: transposes the notes from there AND moves the key setting. That second half is the whole difference between a key change and a transpose — without it the scale highlighting disagrees with the song.',
+
   // ── Arrangement ──────────────────────────────────────────────────────────
   duplicate_clip: 'Repeats a clip back to back, as many times as you say. The copies follow on immediately rather than landing on top of each other.',
+  nudge: 'Moves something by a few milliseconds — the adjustment you make when a part is nearly right. ⚠️ Not move_clips: that works in bars and beats, which are musical distances. A nudge is a fixed amount of TIME, so it converts through the tempo and stays the same nudge whatever the grid says.',
   move_clips: 'Shifts clips later or earlier by bars or beats. Nothing is ever moved before the start of the song.',
   insert_clip: 'Drops a single sound into the arrangement at a position — a crash on bar 17, a hit at the top.',
   split_clip: 'Cuts a clip in two at a bar, so the halves can be moved or deleted separately.',
@@ -73,6 +83,8 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   add_clip_effect: 'Dials a parameter in and out across a stretch of a clip, for movement inside a part rather than across the mix.',
 
   // ── Notes ────────────────────────────────────────────────────────────────
+  chord_inversion: 'Moves the bottom note of each chord up an octave, or the top note down — same chord, different voicing and a different bass note. Each chord is inverted separately, which is what keeps a progression a progression; inverting the whole part by pitch would move notes between chords.',
+  select: 'Chooses what "this" refers to without touching the mouse — everything, the clips inside the loop, everything on one track, or nothing. Worth saying before a command that acts on the selection.',
   transpose: 'Moves a part up or down in semitones. Twelve is an octave.',
   quantize: 'Pulls notes onto the grid. Say a strength below 100 to tighten a performance without flattening it — full strength is a snap, and it is not always what you want.',
   set_velocity: 'Makes a part play harder or softer. This is how hard the notes are struck, not the track fader, so the instrument changes character rather than just level.',

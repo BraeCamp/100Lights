@@ -87,7 +87,7 @@ const PROJECT = {
   // nothing either way, and the suite would bless the broken version.
   tracks: [track('t1', 'Bass 2'), track('t2', 'Pad', 0.5), track('t3', 'Drums'),
     track('t4', 'Guitar', 0.8, { mute: true }), track('t5', 'Vocals'),
-    track('t6', 'Lead', 0.8, { solo: true })].map(t =>
+    track('t6', 'Lead', 0.8, { solo: true }), track('t7', 'Keys')].map(t =>
     // Effects on SOME tracks, not all. Both cases have to exist in one project:
     // "take the reverb off the drums" needs a reverb to take off, and "put
     // reverb on the vocals" needs a track that has not got one — a fixture
@@ -115,11 +115,24 @@ const PROJECT = {
     clip('c4', 't4', 'Guitar clip', 4, 52),
     clip('c5', 't5', 'Vocals clip', 4, 64),
     clip('c6', 't6', 'Lead clip', 8, 72),
+    // ⚠️ On its OWN track. Putting it on the Pad gave that track two clips,
+    // which made "the pad" ambiguous and broke transpose and duplicate_clip —
+    // a fixture addition that quietly changed what other examples mean.
+    {
+      kind: 'midi', id: 'c7', trackId: 't7', name: 'Chord stack', startBeat: 0, durationBeats: 8,
+      isDrumClip: false,
+      notes: [60, 64, 67].map((pitch, n) => ({
+        id: `ch-${n}`, pitch, startBeat: 0, durationBeats: 2, velocity: 100,
+      })),
+    },
   ],
   scenes: [], sessionGrid: {}, loopStart: 0, loopEnd: 16, loopEnabled: false,
   masterVolume: 1, automationLanes: [], clipEffects: [], returnTracks: [],
   takeLanes: [], crossfaderValue: 0.5, waveformZoom: 1, swing: 0,
   // Markers, so removing one is testable.
+  // Added for the commands that need them, and ADDED rather than changed: a
+  // chord in an existing clip would move every note count in this file.
+  returnTracks: [{ id: 'r1', name: 'Reverb', color: '#888', volume: 0.8, pan: 0, mute: false, effects: [] }],
   cueMarkers: [
     { id: 'm1', beat: 32, name: 'Chorus' },
     { id: 'm2', beat: 64, name: 'Drop' },

@@ -40,7 +40,7 @@ import {
   type MusicMaps, type MusicPosition, type MusicDuration,
 } from './position'
 import { beatToSeconds } from '../tempo-map'
-import { LOWPASS_HZ, HIGHPASS_HZ } from '../daw-effect-params'
+import { LOWPASS_HZ, HIGHPASS_HZ, automatableParams, shortNameOf, type AutomatableParam } from '../daw-effect-params'
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '../daw-effect-catalog'
 import { nameChord, groupIntoChords } from '../chord-analysis'
 import { rngFor } from '../seeded-random'
@@ -121,7 +121,33 @@ const EFFECT_DEFAULTS: Partial<Record<EffectType, () => TrackEffect['params']>> 
  * ('phaser', 'octaver') builds the 'helios' wrapper the menu builds, and a
  * Beacon name builds its own defaults.
  */
-function buildSpokenEffect(name: string): { type: EffectType; params: TrackEffect['params'] } | null {
+/**
+ * The words people use for devices whose type has a different spelling.
+ *
+ * ⚠️ Eight devices Beacon already had were unreachable by voice because the
+ * lookup wanted their exact type: nobody says "noisegate", "deesser" or
+ * "redux". The refusal read as "we don't have a gate", which is the wrong
+ * lesson entirely.
+ */
+const DEVICE_ALIASES: Record<string, string> = {
+  gate: 'noisegate', 'noise gate': 'noisegate',
+  'de-ess': 'deesser', deess: 'deesser', 'de-esser': 'deesser', esser: 'deesser', sibilance: 'deesser',
+  bitcrush: 'redux', 'bit crush': 'redux', crush: 'redux', lofi: 'redux', 'lo-fi': 'redux',
+  multiband: 'multibandcomp', 'multiband compressor': 'multibandcomp',
+  'transient shaper': 'transientshaper', transient: 'transientshaper', punch: 'transientshaper',
+  'dynamic eq': 'dyneq',
+  'auto pan': 'autopan', autopan: 'autopan', panner: 'autopan',
+  duck: 'unmask', ducker: 'unmask', sidechain: 'unmask',
+  width: 'utility', stereo: 'utility', trim: 'utility', gain: 'utility',
+  eq: 'eq3', equaliser: 'eq3', equalizer: 'eq3',
+  saturation: 'saturator', warmth: 'saturator', drive: 'saturator', tape: 'saturator',
+  comp: 'compressor', compression: 'compressor',
+  flanger: 'chorus', verb: 'reverb', echo: 'delay',
+  limit: 'limiter', maximiser: 'limiter', maximizer: 'limiter',
+}
+
+function buildSpokenEffect(rawName: string): { type: EffectType; params: TrackEffect['params'] } | null {
+  const name = DEVICE_ALIASES[rawName.toLowerCase().trim()] ?? rawName
   const apollo = APOLLO_ADD_OPTIONS.find(o => o.fx === name)
   if (apollo) return { type: 'helios', params: makeDefaultParams('helios', apollo.fx) as TrackEffect['params'] }
   const beacon = ADD_OPTIONS.find(o => o.type === name)
@@ -672,6 +698,49 @@ function effectOn(
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+
+/**
+ * A flam or a ghost note — drum detail that is not a repeat.
+ *
+ * A flam is a grace note a hair BEFORE the beat, quieter than the hit it leans
+ * on; a ghost note is a quiet one between the hits. Both are what separate a
+ * played drum part from a programmed one, and neither is expressible as
+ * "repeat this faster".
+ */
+function flamOrGhost(clip: MidiClip, how: string, kind: 'flam' | 'ghost'): VoicePlan {
+  const notes = clip.notes
+  if (!notes.length) return { actions: [], say: '', problem: 'That clip has no notes.' }
+  const extra = kind === 'flam'
+    ? notes.map(n => ({
+      ...n, id: newId(),
+      // A 32nd before, and much quieter: a flam whose grace note is as loud as
+      // the hit is just two hits.
+      startBeat: Math.max(0, n.startBeat - 0.125),
+      durationBeats: Math.min(0.1, n.durationBeats),
+      velocity: Math.max(15, Math.round(n.velocity * 0.45)),
+    }))
+    : (() => {
+      // Between the hits, on the sixteenths nothing is already using.
+      const taken = new Set(notes.map(n => +n.startBeat.toFixed(3)))
+      const out: typeof notes = []
+      for (const n of notes) {
+        const at = +(n.startBeat + 0.25).toFixed(3)
+        if (taken.has(at) || at >= clip.durationBeats) continue
+        taken.add(at)
+        out.push({
+          ...n, id: newId(), startBeat: at,
+          durationBeats: Math.min(0.2, n.durationBeats),
+          velocity: Math.max(12, Math.round(n.velocity * 0.3)),
+        })
+      }
+      return out
+    })()
+  if (!extra.length) return { actions: [], say: '', problem: `There is no room for ${kind} notes in ${how}.` }
+  return {
+    actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: [...notes, ...extra] } }],
+    say: `Added ${extra.length} ${kind} note${extra.length === 1 ? '' : 's'} to ${how}.`,
+  }
+}
 
 export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: VoiceContext): VoicePlan {
   const maps = mapsOf(project)
@@ -1361,7 +1430,17 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (!notes.length) return fail('That clip has no notes.')
 
       // A quarter note by default: the grid people mean when they do not say.
-      const division = spokenNumber(i.division as string) ?? 1
+      //
+      // ⚠️ Triplets and dotted values are a MULTIPLIER on the division, not a
+      // division of their own — a triplet eighth is two thirds of an eighth,
+      // and a dotted eighth is one and a half of one. Treating "triplet" as a
+      // separate grid is how a swung part gets quantised onto straight
+      // sixteenths and loses the thing that made it swing.
+      const said = str(i.division).toLowerCase() + ' ' + str(i.feel).toLowerCase()
+      const triplet = /triplet|trip|third/.test(said)
+      const dotted = /dotted|dot/.test(said)
+      const base = spokenNumber(i.division as string) ?? 1
+      const division = triplet ? base * (3 / 2) : dotted ? base / 1.5 : base
       if (!(division > 0)) return fail('That is not a grid I can quantize to.')
       const pct = spokenNumber(i.strength as string)
       const strength = pct == null ? 1 : Math.max(0, Math.min(1, pct / 100))
@@ -1750,6 +1829,388 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── A DIAL INSIDE A DEVICE ──────────────────────────────────────────
+    //
+    // ⚠️ Reads the SAME registry the automation lanes and the device UI read
+    // (automatableParams), so a parameter's range here cannot drift from the
+    // one the knob uses. Twenty hand-written parameter tables is how "set the
+    // ratio to 4" ends up meaning something different in two places.
+    case 'set_device_param': {
+      const track = resolveTrack(target, project) ?? (target ? null : (project.tracks ?? [])[0])
+      if (!track) return fail(`I couldn't find "${target || 'that track'}".`)
+      const deviceWord = str(i.device).toLowerCase().trim()
+      const wantType = DEVICE_ALIASES[deviceWord] ?? deviceWord
+
+      // The device they named, or — if they only named a dial — whichever
+      // device on the track actually has it. "More feedback" is unambiguous
+      // when only the delay has feedback.
+      const said = str(i.parameter).toLowerCase().trim()
+      const PARAM_WORDS: Record<string, string[]> = {
+        decay: ['decay', 'size', 'length', 'tail'],
+        time: ['time', 'delay'],
+        feedback: ['feedback', 'repeats', 'regen'],
+        threshold: ['threshold'],
+        ratio: ['ratio'],
+        attack: ['attack'],
+        release: ['release'],
+        ceilingDb: ['ceiling', 'limit'],
+        frequency: ['frequency', 'freq', 'cutoff', 'hz'],
+        rate: ['rate', 'speed'],
+        depth: ['depth', 'amount'],
+        mix: ['mix', 'wet'],
+        q: ['q', 'resonance', 'width'],
+      }
+      const candidates = (track.effects ?? []).filter(e => !wantType || e.type === wantType)
+      let hit: { effect: TrackEffect; param: AutomatableParam } | null = null
+      for (const e of candidates) {
+        for (const p of automatableParams(e)) {
+          const words = PARAM_WORDS[p.key] ?? [p.key.toLowerCase()]
+          if (words.some(w => said === w || said.includes(w))) { hit = { effect: e, param: p }; break }
+        }
+        if (hit) break
+      }
+
+      const actions: unknown[] = []
+      if (!hit) {
+        // Nothing to set: add the device they named, then aim at it. Refusing
+        // instead would mean "put a compressor on and set its ratio" needs two
+        // sentences, which is exactly the friction this is meant to remove.
+        if (!wantType) return fail(`I couldn't find a "${said}" dial on ${track.name}.`)
+        const built = buildSpokenEffect(wantType)
+        if (!built) return fail(`I don't know a device called "${str(i.device)}".`)
+        const id = newId()
+        const effect = { id, type: built.type, params: built.params } as TrackEffect
+        actions.push({ type: 'ADD_EFFECT', trackId: track.id, effect })
+        const param = automatableParams(effect).find(p => {
+          const words = PARAM_WORDS[p.key] ?? [p.key.toLowerCase()]
+          return words.some(w => said === w || said.includes(w))
+        })
+        if (!param) return fail(`A ${str(i.device)} has no "${said}" to set.`)
+        hit = { effect, param }
+      }
+
+      const pct = spokenNumber(i.percent as string)
+      const raw = spokenNumber(i.value as string)
+      const { param, effect } = hit
+      const value = raw != null
+        ? clamp(raw, param.min, param.max)
+        : pct != null
+          ? (param.curve === 'log'
+            ? param.min * Math.pow(param.max / param.min, clamp(pct / 100, 0, 1))
+            : param.min + clamp(pct / 100, 0, 1) * (param.max - param.min))
+          : null
+      if (value == null) return fail(`Say what to set the ${param.label.toLowerCase()} to.`)
+
+      actions.push({
+        type: 'UPDATE_EFFECT', trackId: track.id, effectId: effect.id,
+        patch: {
+          params: {
+            ...(effect.params as object),
+            [param.key]: value,
+          } as unknown as TrackEffect['params'],
+        },
+      })
+      return {
+        actions,
+        say: `${shortNameOf(effect)} ${param.label.toLowerCase()} on ${track.name}: ${+value.toFixed(2)}${param.unit ?? ''}.`,
+      }
+    }
+
+    // ── THE INSTRUMENT'S OWN SHAPE ──────────────────────────────────────
+    case 'set_sound': {
+      const track = resolveTrack(target, project) ?? (target ? null : (project.tracks ?? [])[0])
+      if (!track) return fail(`I couldn't find "${target || 'that track'}".`)
+      const inst = track.instrument
+      // ⚠️ Only the synth has an envelope to shape. A drum kit and a sampler
+      // have their own ideas of attack, and pretending otherwise would write a
+      // field nothing reads — a command that reports success and does nothing.
+      if (!inst || (inst.type !== 'poly' && inst.type !== 'wavetable' && inst.type !== 'fm')) {
+        return fail(`${track.name} is ${inst?.type === 'drum' ? 'a drum kit' : 'not a synth'}, so it has no envelope to shape.`)
+      }
+      const SOUND_PARAMS: Record<string, { key: string; label: string; min: number; max: number; unit: string; step: number }> = {
+        attack: { key: 'attack', label: 'attack', min: 0, max: 4, unit: 's', step: 0.08 },
+        decay: { key: 'decay', label: 'decay', min: 0, max: 4, unit: 's', step: 0.1 },
+        sustain: { key: 'sustain', label: 'sustain', min: 0, max: 1, unit: '', step: 0.12 },
+        release: { key: 'release', label: 'release', min: 0, max: 6, unit: 's', step: 0.15 },
+        cutoff: { key: 'filterCutoff', label: 'cutoff', min: 40, max: 18000, unit: 'Hz', step: 0 },
+        resonance: { key: 'filterResonance', label: 'resonance', min: 0.1, max: 18, unit: '', step: 1.2 },
+        detune: { key: 'detune', label: 'detune', min: -100, max: 100, unit: '¢', step: 6 },
+        'lfo rate': { key: 'lfoRate', label: 'LFO rate', min: 0.1, max: 20, unit: 'Hz', step: 1 },
+        'lfo depth': { key: 'lfoDepth', label: 'LFO depth', min: 0, max: 1, unit: '', step: 0.15 },
+      }
+      const said = str(i.parameter).toLowerCase().trim()
+      const spec = SOUND_PARAMS[said]
+        ?? Object.entries(SOUND_PARAMS).find(([k]) => said.includes(k))?.[1]
+      if (!spec) return fail(`I don't shape "${said || 'that'}" on an instrument.`)
+
+      const params = (inst.params ?? {}) as Record<string, number>
+      const now = params[spec.key] ?? (spec.key === 'filterCutoff' ? 8000 : spec.min)
+      const raw = spokenNumber(i.value as string)
+      const dir = str(i.direction).toLowerCase()
+      const next = raw != null
+        ? clamp(raw, spec.min, spec.max)
+        : spec.key === 'filterCutoff'
+          // A cutoff moves by ratio: 2 kHz up from 200 Hz is a different move
+          // from 2 kHz up from 10 kHz, and only one of them is audible.
+          ? clamp(now * (dir === 'less' ? 0.5 : 2), spec.min, spec.max)
+          : clamp(now + (dir === 'less' ? -spec.step : spec.step), spec.min, spec.max)
+      if (raw == null && !dir) return fail(`Say what to set the ${spec.label} to, or say more or less.`)
+
+      return {
+        actions: [{
+          type: 'SET_INSTRUMENT', trackId: track.id,
+          instrument: { ...inst, params: { ...params, [spec.key]: next } },
+        }],
+        say: `${track.name} ${spec.label}: ${+next.toFixed(2)}${spec.unit}.`,
+      }
+    }
+
+    // ── CUT OR BOOST AT A FREQUENCY ─────────────────────────────────────
+    case 'eq_band': {
+      const track = resolveTrack(target, project) ?? (target ? null : (project.tracks ?? [])[0])
+      if (!track) return fail(`I couldn't find "${target || 'that track'}".`)
+      const hz = spokenNumber(i.frequency as string)
+      if (hz == null || hz < 20 || hz > 20000) return fail('Say a frequency between 20 hertz and 20k.')
+      const gainSaid = spokenNumber(i.gain as string)
+      const cutting = /cut|reduce|less|remove|take/i.test(str(i.action)) || (gainSaid ?? 0) < 0
+      const gain = gainSaid != null ? gainSaid : (cutting ? -3 : 3)
+
+      const fx = effectOn(track, 'eq3', () => ({ ...defaultEq3() } as never))
+      // Three bands, so the frequency picks one and moves ITS crossover to sit
+      // where they asked. An EQ that boosted "5k" by moving the low band would
+      // be worse than refusing.
+      const band = hz < 400 ? 'low' : hz < 3000 ? 'mid' : 'high'
+      const gainKey = `${band}Gain`
+      const freqKey = `${band}Freq`
+      const now = (fx.params[gainKey] as number) ?? 0
+      return {
+        actions: [
+          ...fx.actions,
+          {
+            type: 'UPDATE_EFFECT', trackId: track.id, effectId: fx.id,
+            patch: {
+              params: {
+                ...fx.params,
+                [gainKey]: clamp(now + gain, -18, 18),
+                [freqKey]: Math.round(hz),
+              } as unknown as TrackEffect['params'],
+            },
+          },
+        ],
+        say: `${gain < 0 ? 'Cut' : 'Boosted'} ${Math.abs(gain)} dB at ${hz >= 1000 ? `${+(hz / 1000).toFixed(1)}k` : `${Math.round(hz)} Hz`} on ${track.name}.`,
+      }
+    }
+
+    // ── SEND TO A RETURN ────────────────────────────────────────────────
+    case 'send_to': {
+      const track = resolveTrack(target, project) ?? (target ? null : null)
+      if (!track) return fail(`Say which track to send to the ${str(i.to) || 'return'}.`)
+      const returns = project.returnTracks ?? []
+      if (!returns.length) return fail('There are no return tracks yet — add one with the +Ret button first.')
+      const want = foldName(str(i.to))
+      const ret = returns.find(r => foldName(r.name ?? '').includes(want) || want.includes(foldName(r.name ?? '')))
+      if (!ret) return fail(`I couldn't find a return called "${str(i.to)}". There is ${returns.map(r => r.name).join(', ')}.`)
+      const pct = spokenNumber(i.amount as string)
+      const amount = pct == null ? 0.35 : clamp(pct / 100, 0, 1)
+      return {
+        actions: [{
+          type: 'UPDATE_TRACK', trackId: track.id,
+          patch: { sendAmounts: { ...(track.sendAmounts ?? {}), [ret.id]: amount } },
+        }],
+        say: amount === 0
+          ? `${track.name} is out of the ${ret.name} send.`
+          : `${track.name} → ${ret.name} at ${Math.round(amount * 100)}%.`,
+      }
+    }
+
+    // ── NUDGE ───────────────────────────────────────────────────────────
+    case 'nudge': {
+      const found = resolveClip(target, project)
+      if (!found) return fail(`I couldn't find "${target || 'that'}" to nudge.`)
+      const later = !/earl|forward|back|ahead|before/i.test(str(i.direction)) || /later|back/i.test(str(i.direction))
+      const ms = spokenNumber(i.milliseconds as string) ?? 25
+      // Milliseconds into beats at THIS tempo — a nudge is a fixed amount of
+      // time, not a fraction of a beat, which is the whole reason it is not
+      // move_clips.
+      const beats = (ms / 1000) * ((project.tempo || 120) / 60)
+      const delta = /earl|forward|ahead|before/i.test(str(i.direction)) ? -beats : beats
+      const next = Math.max(0, found.clip.startBeat + delta)
+      return {
+        actions: [{ type: 'MOVE_CLIP', clipId: found.clip.id, startBeat: next }],
+        say: `Nudged ${found.how} ${Math.round(ms)}ms ${delta < 0 ? 'earlier' : 'later'}.`,
+      }
+    }
+
+    // ── RITARDANDO / ACCELERANDO ────────────────────────────────────────
+    case 'tempo_ramp': {
+      const from = positionToBeat(pos(i.at ?? i.from), maps) ?? 0
+      const toBeat = positionToBeat(pos(i.to), maps)
+      const now = project.tempo || 120
+      const asked = spokenNumber(i.bpm as string)
+      const dir = str(i.direction).toLowerCase()
+      const end = asked != null ? asked : dir === 'faster' ? now * 1.15 : now * 0.85
+      if (end < 20 || end > 300) return fail('Say a tempo between 20 and 300.')
+      const last = toBeat ?? Math.max(from + 16, ...(project.arrangementClips ?? []).map(c => c.startBeat + c.durationBeats))
+      if (last <= from) return fail('The ramp has to end after it starts.')
+
+      // ⚠️ Stepped, not a curve. The tempo map holds markers, so a ramp is a
+      // handful of them — few enough to see and move by hand afterwards, close
+      // enough together that it is heard as a slide rather than as steps.
+      const STEPS = 6
+      const markers = Array.from({ length: STEPS }, (_, n) => {
+        const t = (n + 1) / STEPS
+        return {
+          type: 'ADD_TEMPO_MARKER',
+          marker: {
+            id: newId(),
+            beat: +(from + (last - from) * t).toFixed(3),
+            tempo: Math.round(now + (end - now) * t),
+          },
+        }
+      })
+      return {
+        actions: markers,
+        say: `${end < now ? 'Slowing' : 'Speeding up'} from ${Math.round(now)} to ${Math.round(end)} bpm between ${describeBeat(from, maps)} and ${describeBeat(last, maps)}.`,
+      }
+    }
+
+    // ── SELECT ──────────────────────────────────────────────────────────
+    case 'select': {
+      const what = str(i.what).toLowerCase() || 'all'
+      const clips = allClips(project)
+      if (what === 'none') return { actions: [{ type: 'SELECT', clipIds: [] }], say: 'Nothing selected.' }
+      if (what === 'track') {
+        const track = resolveTrack(target, project)
+        if (!track) return fail(`I couldn't find "${target || 'that track'}".`)
+        const ids = clips.filter(c => c.trackId === track.id).map(c => c.id)
+        return {
+          actions: [{ type: 'SELECT', clipIds: ids, trackId: track.id }],
+          say: `Selected ${ids.length} clip${ids.length === 1 ? '' : 's'} on ${track.name}.`,
+        }
+      }
+      if (what === 'loop') {
+        const a = project.loopStart ?? 0
+        const b = project.loopEnd ?? 0
+        if (b <= a) return fail('There is no loop set.')
+        const ids = clips.filter(c => c.startBeat < b && c.startBeat + c.durationBeats > a).map(c => c.id)
+        return {
+          actions: [{ type: 'SELECT', clipIds: ids }],
+          say: `Selected ${ids.length} clip${ids.length === 1 ? '' : 's'} in the loop.`,
+        }
+      }
+      return {
+        actions: [{ type: 'SELECT', clipIds: clips.map(c => c.id) }],
+        say: `Selected all ${clips.length} clips.`,
+      }
+    }
+
+    // ── STRIP BACK ──────────────────────────────────────────────────────
+    case 'strip_back': {
+      const tracks = (project.tracks ?? []).filter(t => t.kind !== 'group')
+      if (i.restore === true) {
+        return {
+          actions: tracks.map(t => ({ type: 'UPDATE_TRACK', trackId: t.id, patch: { mute: false } })),
+          say: 'Everything is back in.',
+        }
+      }
+      const names = Array.isArray(i.keep) ? (i.keep as unknown[]).map(str) : []
+      if (!names.length) return fail('Say which tracks to keep — "just the drums and the bass".')
+      const keep: string[] = []
+      for (const n of names) {
+        const t = resolveTrack(n, project)
+        if (!t) return fail(`I couldn't find a track called "${n}".`)
+        keep.push(t.id)
+      }
+      return {
+        actions: tracks.map(t => ({
+          type: 'UPDATE_TRACK', trackId: t.id, patch: { mute: !keep.includes(t.id) },
+        })),
+        say: `Just ${keep.map(id => tracks.find(t => t.id === id)?.name).join(' and ')} — everything else is muted.`,
+      }
+    }
+
+    // ── INVERSION ───────────────────────────────────────────────────────
+    case 'chord_inversion': {
+      const got = midiClipFor(target, project, 'invert')
+      if ('problem' in got) return fail(got.problem)
+      const { clip, how } = got
+      const up = !/down|lower|drop/i.test(str(i.direction))
+      const times = Math.max(1, Math.min(3, spokenNumber(i.times as string) ?? 1))
+
+      // A chord is the notes sharing a start. Inverting each one separately is
+      // what keeps a progression a progression — inverting the whole clip by
+      // pitch would move notes between chords.
+      const byStart = new Map<number, typeof clip.notes>()
+      for (const n of clip.notes) {
+        const k = +n.startBeat.toFixed(4)
+        byStart.set(k, [...(byStart.get(k) ?? []), n])
+      }
+      const patches: unknown[] = []
+      for (const group of byStart.values()) {
+        if (group.length < 2) continue
+        const sorted = [...group].sort((a, b) => a.pitch - b.pitch)
+        for (let t = 0; t < times; t++) {
+          if (up) {
+            const bottom = sorted.shift()!
+            sorted.push({ ...bottom, pitch: bottom.pitch + 12 })
+          } else {
+            const top = sorted.pop()!
+            sorted.unshift({ ...top, pitch: top.pitch - 12 })
+          }
+        }
+        for (const n of sorted) {
+          patches.push({
+            type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
+            patch: { pitch: Math.max(0, Math.min(127, n.pitch)) },
+          })
+        }
+      }
+      if (!patches.length) return fail('There are no chords in that — inverting needs notes stacked together.')
+      return {
+        actions: patches,
+        say: `Inverted ${how} ${times === 1 ? 'once' : `${times} times`} ${up ? 'up' : 'down'}.`,
+      }
+    }
+
+    // ── KEY CHANGE ──────────────────────────────────────────────────────
+    case 'modulate': {
+      const NOTE_PC: Record<string, number> = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }
+      let semis = spokenNumber(i.semitones as string)
+      let newKey: number | null = null
+      const keyWords = str(i.key).trim()
+      if (keyWords) {
+        const m = /^\s*([a-g])\s*(sharp|#|flat|b|♭)?\s*(major|minor|maj|min)?\s*$/i.exec(keyWords)
+        if (!m) return fail(`I couldn't read "${keyWords}" as a key.`)
+        const acc = m[2]?.toLowerCase()
+        newKey = (((NOTE_PC[m[1].toLowerCase()] + (acc === 'sharp' || acc === '#' ? 1 : acc ? -1 : 0)) % 12) + 12) % 12
+        // The distance from the key it is in now, so the notes end up in the
+        // key they asked for rather than merely moving by some interval.
+        if (semis == null) semis = ((newKey - (project.key ?? 0) + 12) % 12)
+      }
+      if (semis == null || semis === 0) return fail('Say how far to modulate, or which key to move to.')
+
+      const at = positionToBeat(pos(i.at), maps)
+      const clips = allClips(project).filter(
+        (c): c is MidiClip => (c as MidiClip).kind === 'midi' && !!(c as MidiClip).notes?.length,
+      ).filter(c => at == null || c.startBeat >= at)
+      if (!clips.length) return fail(at == null ? 'There are no notes to modulate.' : `There is nothing after ${describeBeat(at, maps)}.`)
+
+      const actions: unknown[] = clips.flatMap(c => c.notes.map(n => ({
+        type: 'UPDATE_MIDI_NOTE', clipId: c.id, noteId: n.id,
+        patch: { pitch: Math.max(0, Math.min(127, n.pitch + semis!)) },
+      })))
+      // The key setting moves with the notes, or the scale highlighting now
+      // disagrees with the song — which is the whole difference between a key
+      // change and a transpose.
+      const key = newKey ?? ((((project.key ?? 0) + semis) % 12) + 12) % 12
+      actions.push({ type: 'SET_KEY_SCALE', key, scale: project.scale ?? 'major' })
+      const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+      return {
+        actions,
+        say: `Modulated ${semis > 0 ? 'up' : 'down'} ${Math.abs(semis)} semitone${Math.abs(semis) === 1 ? '' : 's'} to ${NAMES[key]}${at == null ? '' : ` from ${describeBeat(at, maps)}`}.`,
+      }
+    }
+
     // ── BALANCE / LEVEL MATCH ───────────────────────────────────────────
     //
     // ⚠️ The planner cannot do this one. Measuring a track means RENDERING it,
@@ -1860,6 +2321,13 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const got = midiClipFor(target, project, 'stutter')
       if ('problem' in got) return fail(got.problem)
       const { clip, how } = got
+      const style = str(i.style).toLowerCase()
+      // A flam is a grace note a hair before the beat; a ghost note is a quiet
+      // one between the hits. Neither is a repeat, so neither goes through the
+      // roll arithmetic below.
+      if (/flam|grace/.test(style)) return flamOrGhost(clip, how, 'flam')
+      if (/ghost|quiet/.test(style)) return flamOrGhost(clip, how, 'ghost')
+
       const div = spokenNumber(i.division as string) ?? 16
       if (![4, 8, 16, 32].includes(div)) return fail('Say 8, 16 or 32 for how fast the repeats are.')
       const step = 4 / div                       // a 16th is 0.25 beats
@@ -2067,6 +2535,21 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const pct = spokenNumber(i.amount as string)
       const notes = [...clip.notes].sort((a, b) => a.startBeat - b.startBeat)
 
+      if (style === 'slide' || style === 'portamento' || style === 'glissando') {
+        // ⚠️ Not a note length at all — it is an articulation the engine reads
+        // off the clip's rollFx bag. It lives in this command because "legato"
+        // is right next to it in anybody's head, and a separate tool claiming
+        // the same words would be one command with a coin flip.
+        const amount = pct == null ? 0.5 : clamp(pct / 100, 0, 1)
+        return {
+          actions: [{
+            type: 'UPDATE_CLIP', clipId: clip.id,
+            patch: { rollFx: { ...((clip as { rollFx?: object }).rollFx ?? {}), slide: amount } },
+          }],
+          say: amount === 0 ? `${how} no longer slides.` : `${how} slides between notes.`,
+        }
+      }
+
       if (style === 'legato') {
         // Each note runs to the next one that starts later. Notes stacked in a
         // chord share a start, so "the next note" is the next START, not the
@@ -2197,6 +2680,29 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
             { type: 'SET_LOOP_ENABLED', enabled: true },
           ],
           say: `Looping ${label} — ${describeBeat(from, maps)} to ${describeBeat(to, maps)}.`,
+        }
+      }
+      if (action === 'delete' || action === 'remove') {
+        const inside = (project.arrangementClips ?? []).filter(c => c.startBeat >= from && c.startBeat < to)
+        if (!inside.length) return fail(`There is nothing in ${label} to delete.`)
+        return {
+          actions: inside.map(c => ({ type: 'REMOVE_CLIP', clipId: c.id })),
+          say: `Deleted ${inside.length} clip${inside.length === 1 ? '' : 's'} in ${label}.`,
+        }
+      }
+      if (action === 'move') {
+        const dest = positionToBeat(pos(i.at), maps)
+        if (dest == null) return fail(`Say where to move ${label} to.`)
+        const inside = (project.arrangementClips ?? []).filter(c => c.startBeat >= from && c.startBeat < to)
+        if (!inside.length) return fail(`There is nothing in ${label} to move.`)
+        const shift = dest - from
+        return {
+          // Every clip keeps its position RELATIVE to the section, so the
+          // section arrives intact rather than collapsed onto one beat.
+          actions: inside.map(c => ({
+            type: 'MOVE_CLIP', clipId: c.id, startBeat: Math.max(0, c.startBeat + shift),
+          })),
+          say: `Moved ${label} to ${describeBeat(dest, maps)}.`,
         }
       }
       if (action === 'duplicate') {

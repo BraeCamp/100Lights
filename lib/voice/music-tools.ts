@@ -242,6 +242,158 @@ export const MUSIC_TOOLS = [
       required: ['pattern'],
     },
   },
+  // ── The rest of the audit's open list ────────────────────────────────────
+  //
+  // Brae: "Let's build the 'still open' ones for AI"
+  //
+  // Written as FEW tools with a parameter, rather than one tool per term. A
+  // model chooses better from a short list of well-described tools than from
+  // forty near-identical ones — "set a device parameter" with the parameter
+  // named is one decision; twenty tools called set_reverb_decay, set_delay_time
+  // and so on is twenty chances to pick the neighbour.
+  {
+    name: 'set_device_param',
+    description:
+      'A DEVICE PARAMETER BY NAME — the dials inside an effect, rather than one overall amount. "set the compressor ratio to 4 on the drums", "make the reverb decay longer on the vocals", "delay feedback to 40 percent", "limiter ceiling at minus one", "gate threshold minus 30". ⚠️ Use set_effect when they mean HOW MUCH of the effect ("more reverb"); use this when they name a specific dial. If the device is not on the track yet it is added first.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        device: { type: 'string', description: 'reverb, delay, compressor, limiter, gate, de-esser, eq, saturator, chorus, bitcrush, lfo, auto pan, transient shaper, multiband, dynamic eq.' },
+        parameter: { type: 'string', description: 'The dial, as they said it: decay, size, time, feedback, threshold, ratio, attack, release, ceiling, frequency, rate, depth, mix.' },
+        value: { type: 'number', description: 'In the parameter\'s own unit — dB, Hz, seconds, or a ratio. Use this OR percent.' },
+        percent: { type: 'number', description: '0-100 across the parameter\'s range, when they said "halfway" or "all the way up".' },
+      },
+      required: ['parameter'],
+    },
+  },
+  {
+    name: 'set_sound',
+    description:
+      'THE INSTRUMENT ITSELF — envelope and filter, not an effect after it. "give the pad a slower attack", "shorten the release on the bass", "open the filter on the keys", "more resonance", "longer decay". ⚠️ This is the synth\'s own shape. A filter here is the instrument\'s filter; add_effect puts a separate filter device after it, which is a different sound and a different thing to undo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        parameter: {
+          type: 'string',
+          enum: ['attack', 'decay', 'sustain', 'release', 'cutoff', 'resonance', 'detune', 'lfo rate', 'lfo depth'],
+        },
+        value: { type: 'number', description: 'Seconds for envelope stages, Hz for cutoff. Use this OR direction.' },
+        direction: { type: 'string', enum: ['more', 'less'], description: 'A step up or down, for "a slower attack" with no number.' },
+      },
+      required: ['parameter'],
+    },
+  },
+  {
+    name: 'eq_band',
+    description:
+      'CUT OR BOOST AT A FREQUENCY — the commonest sentence in any mixing session. "cut 300 hertz on the guitar", "boost 5k on the vocals", "take out some 200 on the bass", "add a bit of top at 10k". Says which of the three bands it lands in and moves that one. ⚠️ For a general tone move with no frequency named, shape_tone is the better tool.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        frequency: { type: 'number', description: 'In Hertz. "5k" is 5000.' },
+        gain: { type: 'number', description: 'dB. Negative cuts, positive boosts. Omit with `action` for a default 3 dB move.' },
+        action: { type: 'string', enum: ['cut', 'boost'] },
+      },
+      required: ['frequency'],
+    },
+  },
+  {
+    name: 'send_to',
+    description:
+      'SEND TO A RETURN — feed some of a track into a shared effect bus instead of putting the effect on the track. "send the vocals to the reverb", "put a bit of the snare into the delay return", "take the bass out of the reverb bus". This is how several tracks share one reverb, which is both cheaper and how a mix hangs together.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        to: { type: 'string', description: 'The return track: "reverb", "delay", or whatever it is called.' },
+        amount: { type: 'number', description: '0-100. 0 takes it out of the send.' },
+      },
+      required: ['to'],
+    },
+  },
+  {
+    name: 'nudge',
+    description:
+      'NUDGE — move something by a small amount, the way you do when it is nearly right. "nudge the snare a bit later", "pull the vocal forward slightly", "move it back 20 milliseconds". ⚠️ move_clips is the tool for musical distances (bars and beats); this is for the sub-beat amounts that have no musical name.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        direction: { type: 'string', enum: ['later', 'earlier'] },
+        milliseconds: { type: 'number', description: 'How far. Omit for a small default nudge.' },
+      },
+      required: ['direction'],
+    },
+  },
+  {
+    name: 'tempo_ramp',
+    description:
+      'SPEED UP OR SLOW DOWN OVER TIME — a ritardando or accelerando, rather than a jump. "slow down into the last chorus", "gradually speed up from bar 9 to bar 17", "ritardando at the end". Writes tempo changes across the stretch. ⚠️ set_tempo is a single change at one point; this is a gradual one between two.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        from: POSITION,
+        to: POSITION,
+        bpm: { type: 'number', description: 'The tempo to arrive at.' },
+        direction: { type: 'string', enum: ['slower', 'faster'], description: 'Instead of a bpm, for "slow down a bit".' },
+      },
+    },
+  },
+  {
+    name: 'select',
+    description:
+      'SELECT — choose what "this" refers to, without touching the mouse. "select everything on the bass", "select the loop", "select all the clips", "select nothing". Useful before a command that acts on the selection, and the answer to "how do I tell it which one I mean".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        what: { type: 'string', enum: ['all', 'none', 'track', 'loop'] },
+        target: { ...TARGET, description: 'For "track" — which one.' },
+      },
+      required: ['what'],
+    },
+  },
+  {
+    name: 'strip_back',
+    description:
+      'STRIP BACK — leave only what they name and mute the rest, or bring it all back. "just the drums", "mute everything except the bass and the pad", "strip it back to the vocal", "bring everything back in". The fastest way to hear an arrangement idea, and worth several mute commands.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        keep: { type: 'array', items: { type: 'string' }, description: 'The tracks to leave audible.' },
+        restore: { type: 'boolean', description: 'True to unmute everything instead.' },
+      },
+    },
+  },
+  {
+    name: 'chord_inversion',
+    description:
+      'INVERT A CHORD — move the bottom note up an octave, or the top note down, keeping the same chord. "invert the chords", "take the pad up an inversion", "put it in first inversion", "drop the top note". Changes the voicing and the bass note, not the harmony.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        direction: { type: 'string', enum: ['up', 'down'] },
+        times: { type: 'number', description: 'How many inversions. Omit for one.' },
+      },
+    },
+  },
+  {
+    name: 'modulate',
+    description:
+      'KEY CHANGE — move the song into a new key from a point onwards. "modulate up a tone for the last chorus", "key change at bar 33", "take it up a semitone from the drop". Transposes the notes from that point AND sets the key, which is the difference between a key change and a transpose.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        at: { ...POSITION, description: 'Where the new key starts. Omit for the whole song.' },
+        semitones: { type: 'number', description: 'How far. 2 is a tone up, -1 a semitone down.' },
+        key: { type: 'string', description: 'Or the key by name: "D minor". Use this OR semitones.' },
+      },
+    },
+  },
+
   // ── The four the audit called "needs work" ───────────────────────────────
   //
   // Brae: "Let's do the ones that are labeled 'Needs work'... Remember that we
@@ -303,6 +455,10 @@ export const MUSIC_TOOLS = [
       properties: {
         target: TARGET,
         division: { type: 'number', description: '8, 16 or 32. Omit for 16ths.' },
+        style: {
+          type: 'string', enum: ['roll', 'flam', 'ghost'],
+          description: 'roll repeats the note (the default); flam adds a grace note just before each hit; ghost adds quiet notes between them.',
+        },
         scope: {
           type: 'string', enum: ['last', 'all'],
           description: '"last" repeats only the final note or chord, which is the usual ask. Omit for last.',
@@ -387,7 +543,7 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         target: TARGET,
-        style: { type: 'string', enum: ['legato', 'staccato', 'longer', 'shorter'] },
+        style: { type: 'string', enum: ['legato', 'staccato', 'longer', 'shorter', 'slide'] },
         amount: { type: 'number', description: 'Percent, 0-100.' },
       },
       required: ['style'],
@@ -437,7 +593,8 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         name: { type: 'string', description: 'The marker name: chorus, verse, bridge, drop…' },
-        action: { type: 'string', enum: ['loop', 'go', 'duplicate'], description: 'Omit for "go".' },
+        action: { type: 'string', enum: ['loop', 'go', 'duplicate', 'move', 'delete'], description: 'Omit for "go". `move` needs `at`.' },
+        at: { ...POSITION, description: 'For `move` — where the section goes.' },
       },
       required: ['name'],
     },

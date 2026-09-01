@@ -1085,6 +1085,267 @@ const COMMANDS: VoiceCommand[] = [
       }
     },
   },
+  // ── The rest of the audit's open list ────────────────────────────────────
+  //
+  // Built for the assistant first — the tool descriptions carry the weight —
+  // but each one gets a rule so the same sentence works with the assistant off
+  // and is not dropped at the attention gate in a held-open session.
+  {
+    id: 'set_device_param',
+    tool: 'set_device_param',
+    group: 'Mixer',
+    what: 'Set a dial inside an effect by name',
+    say: [
+      'set the compressor ratio to 4 on the pad',
+      'make the reverb decay longer on the vocals',
+      'delay feedback to 40 percent on the guitar',
+    ],
+    match(w, ctx) {
+      const DEVICES = ['reverb', 'delay', 'compressor', 'limiter', 'gate', 'chorus', 'saturator', 'eq']
+      const PARAMS = ['threshold', 'ratio', 'feedback', 'ceiling', 'decay', 'predelay', 'rate', 'depth', 'mix']
+      const device = DEVICES.find(d => w.has(d))
+      const param = PARAMS.find(x => w.has(x))
+      // ⚠️ BOTH required. A device on its own is add_effect or set_effect; a
+      // parameter on its own is the instrument's own envelope (set_sound).
+      // Naming both is the only sentence that is unambiguously this.
+      if (!device || !param) return null
+      const n = w.num()
+      const named = nameOrSelected(w, ctx, ['set', 'make', 'the', 'to', 'on', 'longer',
+        'shorter', 'percent', 'a', 'bit', device, param], { dropNums: true })
+      if (!named) return null
+      return {
+        calls: [{
+          name: 'set_device_param',
+          input: {
+            target: named.name, device, parameter: param,
+            ...(n != null ? (w.has('percent') ? { percent: n } : { value: n }) : {}),
+            ...(n == null && w.has('longer', 'more') ? { percent: 75 } : {}),
+            ...(n == null && w.has('shorter', 'less') ? { percent: 25 } : {}),
+          },
+        }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'set_sound',
+    tool: 'set_sound',
+    group: 'Notes',
+    what: 'Shape the instrument itself — attack, release, cutoff',
+    say: [
+      'give the pad a slower attack', 'shorten the release on the pad',
+      'more cutoff on the pad', 'more resonance on the pad',
+    ],
+    match(w, ctx) {
+      const MAP: Array<[string[], string]> = [
+        [['attack'], 'attack'],
+        [['release'], 'release'],
+        [['sustain'], 'sustain'],
+        // ⚠️ No 'filter': automate_parameter owns it, and a sweep and a
+        // setting are different commands that share the noun. 'cutoff' is
+        // unambiguous.
+        [['cutoff'], 'cutoff'],
+        [['resonance'], 'resonance'],
+        [['detune'], 'detune'],
+      ]
+      const hit = MAP.find(([words]) => w.has(...words))
+      if (!hit) return null
+      // A named device means they mean that device's dial, not the synth's.
+      if (w.has('compressor', 'reverb', 'delay', 'limiter', 'gate', 'chorus')) return null
+      const dir = w.has('slower', 'longer', 'more', 'open', 'up') ? 'more'
+        : w.has('faster', 'shorter', 'less', 'close', 'down') ? 'less' : null
+      const n = w.num()
+      if (dir == null && n == null) return null
+      const named = nameOrSelected(w, ctx, ['give', 'make', 'the', 'a', 'an', 'to', 'on',
+        'slower', 'faster', 'longer', 'shorter', 'more', 'less', 'open', 'close', 'up', 'down',
+        'bit', ...hit[0]], { dropNums: true })
+      if (!named) return null
+      return {
+        calls: [{
+          name: 'set_sound',
+          input: { target: named.name, parameter: hit[1], ...(n != null ? { value: n } : { direction: dir }) },
+        }],
+        confidence: 0.88,
+      }
+    },
+  },
+  {
+    id: 'eq_band',
+    tool: 'eq_band',
+    group: 'Mixer',
+    what: 'Cut or boost at a frequency',
+    say: ['cut 300 hertz on the pad', 'boost 5 k on the vocals'],
+    match(w, ctx) {
+      if (!w.has('hertz', 'hz', 'k', 'khz')) return null
+      const cut = w.has('cut', 'reduce', 'remove', 'notch')
+      const boost = w.has('boost', 'add', 'lift', 'raise')
+      if (!cut && !boost) return null
+      const n = w.num()
+      if (n == null) return null
+      // "5 k" means five thousand. Said as two tokens more often than one.
+      const hz = w.has('k', 'khz') && n < 25 ? n * 1000 : n
+      const named = nameOrSelected(w, ctx, ['cut', 'boost', 'reduce', 'remove', 'notch',
+        'add', 'lift', 'raise', 'the', 'a', 'bit', 'of', 'at', 'on', 'some',
+        'hertz', 'hz', 'k', 'khz'], { dropNums: true })
+      if (!named) return null
+      return {
+        calls: [{ name: 'eq_band', input: { target: named.name, frequency: hz, action: cut ? 'cut' : 'boost' } }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'send_to',
+    tool: 'send_to',
+    group: 'Mixer',
+    what: 'Send a track to a return bus',
+    say: ['send the pad to the reverb', 'send the vocals to the reverb'],
+    match(w, ctx) {
+      if (!w.has('send', 'sending')) return null
+      const m = /\bsend\w*\s+(?:the\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s*$/i.exec(w.raw)
+      if (!m) return null
+      const track = findByName(m[1].trim(), ctx.tracks ?? [])
+      if (!track) return null
+      for (const word of w.all) w.has(word)
+      return {
+        calls: [{ name: 'send_to', input: { target: track.item.name, to: m[2].trim().replace(/\b(return|bus|send)\b/gi, '').trim() } }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'nudge',
+    tool: 'nudge',
+    group: 'Arrangement',
+    what: 'Move something by a few milliseconds',
+    say: ['nudge the pad clip later', 'nudge the drums clip earlier'],
+    match(w, ctx) {
+      if (!w.has('nudge', 'nudged')) return null
+      const dir = w.has('earlier', 'forward', 'ahead', 'before') ? 'earlier' : 'later'
+      const n = w.num()
+      const named = nameOrSelected(w, ctx, ['nudge', 'nudged', 'the', 'a', 'bit',
+        'later', 'earlier', 'forward', 'ahead', 'before', 'back', 'milliseconds', 'ms'],
+      { dropNums: true })
+      if (!named) return null
+      return {
+        calls: [{ name: 'nudge', input: { target: named.name, direction: dir, ...(n != null ? { milliseconds: n } : {}) } }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'tempo_ramp',
+    tool: 'tempo_ramp',
+    group: 'Timing',
+    what: 'Speed up or slow down gradually',
+    say: ['gradually slow down to 100', 'ritardando to 90'],
+    match(w) {
+      const named = w.has('ritardando', 'rit', 'accelerando', 'accel')
+      // ⚠️ "slow down" alone belongs to set_tempo.relative — the difference is
+      // that this one happens OVER a stretch, so a gradual word is required.
+      const gradual = w.has('gradually', 'slowly', 'over', 'into')
+      if (!named && !gradual) return null
+      if (!named && !w.has('slow', 'speed', 'faster', 'slower')) return null
+      const n = w.num()
+      const dir = w.has('accelerando', 'accel', 'speed', 'faster') ? 'faster' : 'slower'
+      return {
+        calls: [{ name: 'tempo_ramp', input: { ...(n != null ? { bpm: n } : { direction: dir }) } }],
+        confidence: 0.88,
+      }
+    },
+  },
+  {
+    id: 'select',
+    tool: 'select',
+    group: 'Project',
+    what: 'Choose what "this" means, without the mouse',
+    say: ['select everything', 'select the loop', 'select nothing', 'select the pad'],
+    match(w, ctx) {
+      if (!w.has('select', 'selected')) return null
+      if (w.has('nothing', 'none', 'deselect')) {
+        return { calls: [{ name: 'select', input: { what: 'none' } }], confidence: 0.93 }
+      }
+      if (w.has('loop')) return { calls: [{ name: 'select', input: { what: 'loop' } }], confidence: 0.93 }
+      const named = nameOrSelected(w, ctx, ['select', 'selected', 'the', 'all', 'everything',
+        'clips', 'clip', 'on'])
+      if (named && !w.has('all', 'everything')) {
+        return { calls: [{ name: 'select', input: { what: 'track', target: named.name } }], confidence: 0.9 }
+      }
+      return { calls: [{ name: 'select', input: { what: 'all' } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'strip_back',
+    tool: 'strip_back',
+    group: 'Mixer',
+    what: 'Leave only the tracks you name',
+    say: ['just the drums', 'mute everything except the pad', 'bring everything back in'],
+    match(w, ctx) {
+      // ⚠️ No 'unmute': set_all_tracks already owns "unmute everything", and
+      // two commands claiming one sentence is one command with a coin flip.
+      // "Bring it back in" is the phrase that belongs to stripping back.
+      const restore = w.has('bring') && w.has('back', 'everything', 'all')
+      if (restore) return { calls: [{ name: 'strip_back', input: { restore: true } }], confidence: 0.9 }
+      // ⚠️ said(), not has(): "just" is filler everywhere else in the language
+      // and is stripped before any rule sees it — the same trap "go" and "thin"
+      // fell into.
+      const only = w.said('just') || w.has('only') || (w.has('except', 'apart') && w.has('mute', 'everything'))
+      if (!only) return null
+      const named = nameOrSelected(w, ctx, ['just', 'only', 'the', 'mute', 'everything',
+        'except', 'apart', 'from', 'but', 'leave', 'strip', 'back', 'to'])
+      if (!named) return null
+      return { calls: [{ name: 'strip_back', input: { keep: [named.name] } }], confidence: 0.88 }
+    },
+  },
+  {
+    id: 'chord_inversion',
+    tool: 'chord_inversion',
+    group: 'Notes',
+    what: 'Invert the chords in a part',
+    say: ['invert the keys', 'invert the keys down'],
+    match(w, ctx) {
+      if (!w.has('invert', 'inverted', 'inversion')) return null
+      const down = w.has('down', 'lower')
+      const named = nameOrSelected(w, ctx, ['invert', 'inverted', 'inversion', 'the',
+        'up', 'down', 'lower', 'higher', 'a'], { dropNums: true })
+      if (!named) return null
+      const n = w.num()
+      return {
+        calls: [{
+          name: 'chord_inversion',
+          input: { target: named.name, direction: down ? 'down' : 'up', ...(n != null ? { times: n } : {}) },
+        }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'modulate',
+    tool: 'modulate',
+    group: 'Timing',
+    what: 'Change key from a point onwards',
+    say: ['modulate up 2 semitones', 'modulate down 3 semitones'],
+    match(w) {
+      if (!w.has('modulate', 'modulation')) return null
+      const down = w.has('down', 'lower')
+      let n = w.num()
+      // ⚠️ said(), and NOT in the examples below. "a tone" is two semitones and
+      // it is what people say — but as a three-letter vocabulary word it became
+      // a rewrite target for every sentence: at low confidence "what time is
+      // it" was rewritten to "hat tone is it", where "hat" is one edit from
+      // "halt", and the studio stopped playback in answer to a clock question.
+      // Reading it from the raw sentence keeps the phrase working without
+      // putting the word in the recogniser's substitution pool.
+      if (n == null && w.said('tone')) n = 2
+      if (n == null && w.has('semitone', 'semitones')) n = 1
+      if (n == null) return null
+      return {
+        calls: [{ name: 'modulate', input: { semitones: down ? -Math.abs(n) : Math.abs(n) } }],
+        confidence: 0.9,
+      }
+    },
+  },
+
   // ── The four the audit called "needs work" ───────────────────────────────
   //
   // Built for AI mode first, so the tool descriptions carry the weight. These
