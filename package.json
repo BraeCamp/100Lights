@@ -27,6 +27,8 @@
     "check:layers": "node scripts/check-render-layers.mjs",
     "check:capacity": "node scripts/check-cache-capacity.mjs",
     "check:voice": "node scripts/check-voice-control.mjs",
+    "check:worklet-leak": "node scripts/check-worklet-leak.mjs",
+    "check:library-migration": "node scripts/check-library-migration.mjs",
     "check:determinism": "node scripts/check-render-determinism.mjs",
     "check:server-render": "node scripts/check-server-render.mjs",
     "check:voice-cache": "node --experimental-strip-types scripts/check-voice-cache.mjs",
