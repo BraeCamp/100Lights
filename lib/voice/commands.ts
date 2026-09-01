@@ -40,6 +40,7 @@ const DRUM_WORDS = ['kick', 'snare', 'clap', 'crash', 'rim', 'hat', 'hihat', 'to
 
 import type { VoiceCall } from './execute-music'
 import { Words, near } from './words'
+import { matchApolloParam, matchFilterType } from '../apollo/spoken-params'
 
 export interface InterpretContext {
   /**
@@ -1121,6 +1122,101 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
 
+  {
+    id: 'set_apollo_param',
+    tool: 'set_apollo_param',
+    group: 'Notes',
+    what: "Any dial inside Apollo, by name",
+    say: [
+      'wavetable position halfway on the synth',
+      'more grain density on the synth',
+      'filter 2 resonance to 40 on the synth',
+      'macro 2 to 70 on the synth',
+    ],
+    match(w, ctx) {
+      // ⚠️ THE GATE, and the whole reason this rule is safe.
+      //
+      // The matcher knows 166 dials, and their names include level, pan, rate,
+      // width, mix, drive, phase and attack — words that belong to the mixer,
+      // to set_width, to the effects. A rule that fired on those would answer a
+      // sentence about the track with a change inside the synth, which is the
+      // same class of mistake as answering it with the tempo.
+      //
+      // So a sentence has to SAY it is about the synth's insides: Apollo by
+      // name, or one of its modules, or a dial that exists nowhere else.
+      //
+      // ⚠️ cutoff, resonance and detune are deliberately NOT here. They are
+      // set_sound's, and set_sound now hands them to Apollo itself — two rules
+      // reading the same sentence and letting the score decide is how a command
+      // starts landing somewhere different depending on how it was phrased.
+      // "Filter 2 resonance" still reaches this rule, through `filter`.
+      const inside = w.has('apollo', 'osc', 'oscillator', 'sub', 'noise', 'wavetable',
+        'wavetables', 'grain', 'grains', 'granular', 'spectral', 'warp', 'scan',
+        'formant', 'glide', 'portamento', 'spray', 'macro', 'lfo', 'filter')
+      if (!inside) return null
+      // The layer command owns turning a layer ON. This one moves a dial, so a
+      // bare "add sub to the pad" with no dial in it is not ours.
+      const m = matchApolloParam(w.all.join(' '))
+      if (!m.ok) return null
+
+      const n = w.num()
+      const pct = w.has('percent', 'per cent') ? n : null
+      const half = w.has('halfway', 'half') ? 50 : w.has('all') && w.has('way') ? 100 : null
+      const dir = w.has('more', 'up', 'open', 'longer', 'higher', 'faster') ? 'more'
+        : w.has('less', 'down', 'close', 'shorter', 'lower', 'slower') ? 'less' : null
+      if (n == null && half == null && !dir) return null
+
+      const named = nameOrSelected(w, ctx, ['set', 'the', 'a', 'an', 'to', 'on', 'in', 'of',
+        'make', 'give', 'it', 'its', 'apollo', 'percent', 'hertz', 'hz', 'halfway', 'half',
+        'all', 'way', 'more', 'less', 'up', 'down', 'open', 'close', 'bit', 'touch',
+        ...m.param.dial.split(' '), ...m.param.moduleLabel.split(' ')], { dropNums: true })
+      if (!named) return null
+
+      return {
+        calls: [{
+          name: 'set_apollo_param',
+          input: {
+            target: named.name,
+            // The phrase, not the resolved path — the executor re-reads it, so
+            // there is ONE matcher and the local and AI paths cannot disagree
+            // about what "the level" meant.
+            parameter: w.all.join(' '),
+            ...(half != null ? { percent: half }
+              : pct != null ? { percent: pct }
+                : n != null ? { value: n } : { direction: dir }),
+          },
+        }],
+        confidence: 0.88,
+      }
+    },
+  },
+
+  {
+    id: 'set_apollo_filter',
+    tool: 'set_apollo_filter',
+    group: 'Notes',
+    what: 'Change which filter model Apollo is using',
+    say: ['give the synth a ladder filter', 'put a comb filter on the synth'],
+    match(w, ctx) {
+      // A filter TYPE has to be named. "More filter on the pad" is a different
+      // command about a different thing, and this rule must not take it.
+      if (!w.has('filter')) return null
+      const found = matchFilterType(w.all.join(' '))
+      if (!found) return null
+      // ⚠️ add_effect owns "put a filter on it" as a separate device. This is
+      // only ever the synth's own filter, so the sentence has to name a model.
+      const which = w.has('2', 'two') && w.has('filter') ? 2 : 1
+      const named = nameOrSelected(w, ctx, ['give', 'put', 'make', 'set', 'the', 'a', 'an',
+        'to', 'on', 'in', 'it', 'its', 'filter', 'apollo', 'db', 'pole',
+        ...found.label.toLowerCase().split(/[\s/]+/)], { dropNums: true })
+      if (!named) return null
+      return {
+        calls: [{ name: 'set_apollo_filter', input: { target: named.name, type: w.all.join(' '), filter: which } }],
+        confidence: 0.9,
+      }
+    },
+  },
+
   // ── The rest of the audit's open list ────────────────────────────────────
   //
   // Built for the assistant first — the tool descriptions carry the weight —
@@ -1988,6 +2084,11 @@ const COMMANDS: VoiceCommand[] = [
       if (w.has('descending', 'ascending', 'rising', 'falling', 'opening', 'closing', 'sweep')) {
         return null
       }
+      // ⚠️ And "a LADDER filter" is a filter MODEL, which is a choice inside
+      // the synth rather than a device to add after it. Same shape as the sweep
+      // guard above: the extra word is the whole difference. A bare "put a
+      // filter on it" names no model and is still this command.
+      if (effect === 'filter' && matchFilterType(w.all.join(' '))) return null
       const hit = nameFrom(w, ctx, [...EFFECTS, 'put', 'add', 'give', 'stick', 'some',
         'percent', 'track'], { dropNums: true })
       if (!hit) return null
@@ -2023,6 +2124,11 @@ const COMMANDS: VoiceCommand[] = [
       // two were scoring within a hair of each other — which would have made
       // the studio stop and ask about a sentence that means one thing.
       if (w.has('remove', 'delete', 'lose') || (w.has('take') && w.said('off'))) return null
+      // ⚠️ A NAMED DIAL is not an amount. "Filter 2 resonance to 40" was read
+      // here as forty percent of a filter effect — the number is the same, and
+      // nothing else in the sentence distinguishes them except the word that
+      // says which dial. set_device_param and set_apollo_param own those.
+      if (w.has('resonance', 'cutoff', 'ratio', 'threshold', 'feedback', 'ceiling', 'depth')) return null
       const hit = nameFrom(w, ctx, [...EFFECTS, 'more', 'less', 'percent', 'track',
         'take', 'off', 'up', 'down'], { dropNums: true })
       if (!hit) return null

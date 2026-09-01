@@ -272,6 +272,36 @@ export const MUSIC_TOOLS = [
   // named is one decision; twenty tools called set_reverb_decay, set_delay_time
   // and so on is twenty chances to pick the neighbour.
   {
+    name: 'set_apollo_param',
+    description:
+      'ANY DIAL INSIDE APOLLO, BY NAME — the synth\'s own 166 parameters, not an effect after it. "open the filter on the pad", "cutoff to 800 hertz", "more resonance on filter 2", "wavetable position halfway on oscillator 2", "grain density up on the texture", "osc A detune to 20 percent", "LFO 3 rate to 5 hertz", "macro 2 to 70", "longer glide". ⚠️ Only works on a track whose instrument is Apollo. Names the module it moved, so a wrong guess is visible at once. If the dial exists in several places (level, pan, rate) SAY WHICH — "the sub level", "LFO 2 rate" — or it will ask.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        parameter: { type: 'string', description: 'The dial as they said it, INCLUDING the module when they named one: "filter 2 cutoff", "sub level", "oscillator 2 wavetable position", "envelope 3 attack", "LFO 1 rate", "grain size", "spray", "formant", "glide", "master".' },
+        value: { type: 'number', description: 'In the dial\'s own unit — Hertz for a cutoff or an LFO rate, seconds for an envelope stage, cents for fine tune, semitones for coarse. On a 0-1 dial a number above 1 is read as a percentage.' },
+        percent: { type: 'number', description: '0-100 across the dial\'s own range, for "halfway" or "all the way up". Follows the dial\'s curve, so halfway sounds halfway.' },
+        direction: { type: 'string', enum: ['more', 'less'], description: 'A step up or down, for "a bit more resonance" with no number.' },
+      },
+      required: ['parameter'],
+    },
+  },
+  {
+    name: 'set_apollo_filter',
+    description:
+      'WHICH FILTER MODEL APOLLO IS USING — the single biggest change to a patch\'s character. "give the pad a ladder filter", "make it an acid filter", "24 dB low pass on the bass", "put a comb filter on it", "vowel filter", "phaser filter". ⚠️ This CHANGES THE FILTER TYPE. For moving the cutoff or resonance use set_apollo_param; for a separate filter device after the synth use add_effect.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        type: { type: 'string', description: 'As they said it: ladder, moog, acid, EMS, german, french, formant, vowel, comb, flange, phaser, ring mod, sample and hold, downsample, DJ, diffuser, notch, peak, band pass, high pass, low pass. A slope in the sentence ("24 dB") is honoured.' },
+        filter: { type: 'number', description: '1 or 2. Defaults to 1, the one people mean.' },
+      },
+      required: ['type'],
+    },
+  },
+  {
     name: 'set_device_param',
     description:
       'A DEVICE PARAMETER BY NAME — the dials inside an effect, rather than one overall amount. "set the compressor ratio to 4 on the drums", "make the reverb decay longer on the vocals", "delay feedback to 40 percent", "limiter ceiling at minus one", "gate threshold minus 30". ⚠️ Use set_effect when they mean HOW MUCH of the effect ("more reverb"); use this when they name a specific dial. If the device is not on the track yet it is added first.',
@@ -1174,6 +1204,11 @@ export const MUSIC_SYSTEM_HINT = [
   // more readily than it refuses, and the global commands are the most
   // dangerous neighbours there are — they change everything at once and look
   // nothing like what was asked for.
+  // Apollo is the instrument this app is built around, and the reason the last
+  // wrong-tool bug happened was that its layers were not reachable at all. The
+  // assistant has to know the whole synth is now within reach, or it goes on
+  // reaching for neighbours.
+  'APOLLO IS FULLY REACHABLE. Every dial in the synth — filter cutoff and model, envelopes, oscillators, wavetable position, granular and spectral controls, LFO rates, macros, glide — is set_apollo_param, and its layers are set_apollo_layer. Do not answer an Apollo question with an EFFECT (add_effect, set_effect) unless they asked for a separate device: the synth\'s own filter and an effect filter after it are different sounds and different things to undo.',
   'IF THE SENTENCE NAMES A TRACK, THE COMMAND IS ABOUT THAT TRACK. Never answer a sentence that names a track with a song-wide change — set_tempo, set_time_signature, set_key_scale, set_master_volume and set_swing are about the WHOLE SONG and are almost never what somebody naming one track meant. "The pad should be lower" is the pad\'s volume. If you cannot find a tool for what they asked about that track, SAY SO in one sentence — a wrong global change is far worse than an admission, because it is loud, immediate and affects everything they have made.',
   'POINTING BEATS REMEMBERING. If the state summary says something was selected just now, "this track", "that clip", "it" and "here" mean the thing that is selected — even when an earlier message in this conversation was about something else. Somebody who clicks a track and then says "mute this" has told you which track twice, and the click is the more recent of the two.',
   'Percentages are 0-100. If a request is ambiguous or no tool fits, say so in one short sentence instead of guessing.',

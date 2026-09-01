@@ -101,6 +101,8 @@ const CALLS = {
   remove_midi_effect: { target: 'pad', effect: 'arp' },
   remove_effect: { target: 'pad', effect: 'reverb' },
   set_apollo_layer: { target: 'pad', layer: 'sub', on: true },
+  set_apollo_param: { target: 'pad', parameter: 'filter 1 cutoff', value: 800 },
+  set_apollo_filter: { target: 'pad', type: 'ladder filter' },
   set_device_param: { target: 'pad', device: 'reverb', parameter: 'decay', percent: 70 },
   set_sound: { target: 'pad', parameter: 'attack', value: 0.5 },
   eq_band: { target: 'pad', frequency: 300, action: 'cut' },

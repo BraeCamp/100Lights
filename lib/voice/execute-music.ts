@@ -34,6 +34,12 @@ import {
   defaultVelocityMidi, defaultScaleMidi, defaultChordMidi, defaultArpMidi,
 } from '../daw-types'
 import { findByName, foldName, spokenNumber, spokenFraction } from './resolve'
+import {
+  matchApolloParam, matchFilterType, resolveValue, readParam, writeParam,
+  describeValue, FILTER_NAMES, type SpokenParam,
+} from '../apollo/spoken-params'
+import { FILTER_TYPES } from '../apollo/patch'
+import type { ApolloPatch } from '../apollo/patch'
 import type { VoiceAsk, AskOption } from './ask'
 import {
   musicMaps, positionToBeat, durationToBeats, describeBeat, describeDuration,
@@ -93,6 +99,18 @@ const fmtHz = (v: number): string =>
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `v${Math.random().toString(36).slice(2)}`)
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const fail = (problem: string): VoicePlan => ({ actions: [], say: '', problem })
+
+/**
+ * Why an Apollo command cannot run here, and what would fix it.
+ *
+ * ⚠️ "I can't do that" with no reason is the answer that sends somebody hunting
+ * for a bug in their own project. Every Apollo command shares this wording so
+ * the explanation cannot drift between them.
+ */
+const notApollo = (name: string, type?: string): string =>
+  `${name} is ${type === 'drum' ? 'a drum kit' : type === 'sampler' ? 'a sampler' : `a ${type ?? 'plain'} instrument`}, `
+  + 'not Apollo. Put an Apollo instrument on it first.'
+
 const pos = (v: unknown): MusicPosition | null => (v && typeof v === 'object' ? v as MusicPosition : null)
 const len = (v: unknown): MusicDuration | null => (v && typeof v === 'object' ? v as MusicDuration : null)
 
@@ -1845,10 +1863,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (inst?.type !== 'apollo') {
         // Honest about WHY, and about what would fix it. "I can't" with no
         // reason is the answer that sends somebody looking for a bug.
-        return fail(
-          `${track.name} is ${inst?.type === 'drum' ? 'a drum kit' : `a ${inst?.type ?? 'plain'} instrument`}, `
-          + 'and the sub and noise layers belong to Apollo. Put an Apollo instrument on it first.',
-        )
+        return fail(notApollo(track.name, inst?.type))
       }
 
       const said = str(i.layer).toLowerCase().trim()
@@ -1880,6 +1895,83 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         say: on
           ? `${label} on ${track.name} at ${Math.round(((node.level as number) ?? 0.5) * 100)}%.`
           : `Took the ${label} off ${track.name}.`,
+      }
+    }
+
+    // ── ANY DIAL IN APOLLO, BY NAME ─────────────────────────────────────
+    //
+    // Apollo has 166 registered parameters. This is one command for all of
+    // them, because the registry already knows every one's path, range, curve
+    // and unit — PARAMS is what the mod matrix and the panels read, so a voice
+    // command that reads it too cannot drift away from the synth. A tool per
+    // dial would have been 166 chances to disagree.
+    //
+    // See lib/apollo/spoken-params.ts for the half a registry cannot hold:
+    // what people actually call these things out loud.
+    case 'set_apollo_param': {
+      const track = resolveTrack(target, project) ?? (target ? null : null)
+      if (!track) return fail(`Say which track — "open the filter on the pad".`)
+      const inst = track.instrument
+      if (inst?.type !== 'apollo') return fail(notApollo(track.name, inst?.type))
+
+      const said = str(i.parameter)
+      const match = matchApolloParam(said)
+      if (!match.ok) {
+        // ⚠️ Two different refusals, because they are two different problems.
+        // "Which level?" is answerable in one word; "I don't know that dial"
+        // is not, and running them together helps nobody.
+        return match.reason === 'needs-module'
+          ? fail(`There are several: ${match.options.join(', ')}. Say which — "the sub level".`)
+          : fail(`I don't know a dial called "${said}" in Apollo.`)
+      }
+      const param = match.param
+      const patch = JSON.parse(JSON.stringify(inst.params ?? {})) as ApolloPatch
+      const now = readParam(patch, param)
+      const dir = /more|up|open|brighter|longer|slower|higher|increase/i.test(str(i.direction)) ? 'more'
+        : /less|down|close|darker|shorter|faster|lower|decrease/i.test(str(i.direction)) ? 'less' : null
+      const next = resolveValue(param, now, {
+        value: spokenNumber(i.value as string),
+        percent: spokenNumber(i.percent as string),
+        direction: dir,
+      })
+      if (next == null) return fail(`Say what to set the ${param.def.label} to, or say more or less.`)
+      writeParam(patch, param, next)
+      return {
+        actions: [{ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { ...inst, params: patch } }],
+        // The module is named even when it was assumed, so a default that was
+        // wrong is visible immediately rather than a week later.
+        say: `${track.name} ${param.moduleLabel} ${param.dial}: ${describeValue(param, next)}.`,
+      }
+    }
+
+    // ── WHICH FILTER APOLLO IS USING ────────────────────────────────────
+    //
+    // The single biggest change to a sound Apollo can make. A ladder and a comb
+    // at the same cutoff are not the same instrument, which is why this is a
+    // command and not a dial — and why it is not in PARAMS, where everything is
+    // a number the mod matrix can sweep.
+    case 'set_apollo_filter': {
+      const track = resolveTrack(target, project) ?? (target ? null : null)
+      if (!track) return fail(`Say which track — "give the pad a ladder filter".`)
+      const inst = track.instrument
+      if (inst?.type !== 'apollo') return fail(notApollo(track.name, inst?.type))
+
+      const said = str(i.type)
+      const found = matchFilterType(said)
+      if (!found) return fail(`I don't know a filter called "${said}". There is ${FILTER_NAMES.slice(0, 8).join(', ')}, and more.`)
+      const which = Math.round(spokenNumber(i.filter as string) ?? 1) === 2 ? 1 : 0
+
+      const patch = JSON.parse(JSON.stringify(inst.params ?? {})) as ApolloPatch
+      const f = patch.filters?.[which]
+      if (!f) return fail(`That patch has no filter ${which + 1}.`)
+      f.type = found.id
+      // ⚠️ Choosing a filter and hearing one are different things. A patch whose
+      // filter is switched off answers "make it a ladder" with silence and a
+      // success message, which is the worst pairing there is.
+      f.enabled = true
+      return {
+        actions: [{ type: 'SET_INSTRUMENT', trackId: track.id, instrument: { ...inst, params: patch } }],
+        say: `${track.name} filter ${which + 1}: ${found.label}.`,
       }
     }
 
@@ -1978,6 +2070,34 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // ⚠️ Only the synth has an envelope to shape. A drum kit and a sampler
       // have their own ideas of attack, and pretending otherwise would write a
       // field nothing reads — a command that reports success and does nothing.
+      // ⚠️ Apollo first. This tool used to refuse it — the one command named
+      // for the instrument itself turned away the instrument this app is built
+      // around, and "open the filter on the pad" failed on every Apollo track
+      // in the project. Its nine names are all real Apollo dials; they just sit
+      // at registry paths rather than in a flat params object.
+      if (inst?.type === 'apollo') {
+        const APOLLO_EQUIV: Record<string, string> = {
+          attack: 'envelope 1 attack', decay: 'envelope 1 decay',
+          sustain: 'envelope 1 sustain', release: 'envelope 1 release',
+          cutoff: 'filter 1 cutoff', resonance: 'filter 1 resonance',
+          detune: 'oscillator 1 detune', 'lfo rate': 'lfo 1 rate',
+        }
+        const askedFor = str(i.parameter).toLowerCase().trim()
+        const equiv = APOLLO_EQUIV[askedFor] ?? Object.entries(APOLLO_EQUIV).find(([k]) => askedFor.includes(k))?.[1]
+        // ⚠️ LFO DEPTH is the one that has no equivalent: in Apollo how far an
+        // LFO reaches is the amount on its matrix route, not a dial on the LFO.
+        // Writing it somewhere plausible would be a command that reports
+        // success and changes nothing.
+        if (!equiv) {
+          return fail(askedFor.includes('depth')
+            ? `In Apollo an LFO's depth is the amount on its modulation route, not a dial on the LFO. Say "modulate the cutoff with LFO 1 by 30 percent".`
+            : `I don't shape "${askedFor || 'that'}" on an Apollo patch.`)
+        }
+        return planVoiceCall(
+          { ...call, name: 'set_apollo_param', input: { target: i.target, parameter: equiv, value: i.value, direction: i.direction } },
+          project, heard,
+        )
+      }
       if (!inst || (inst.type !== 'poly' && inst.type !== 'wavetable' && inst.type !== 'fm')) {
         return fail(`${track.name} is ${inst?.type === 'drum' ? 'a drum kit' : 'not a synth'}, so it has no envelope to shape.`)
       }
