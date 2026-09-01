@@ -1325,10 +1325,26 @@ async function bake(bpm: number, groups: TrackRenderGroup[], wanted: Want[], job
       const layerGroups = layer.full
         ? groups
         : groups.map(g => ({ ...g, patch: patchForLayer(g.patch, layer) }))
-      const finished = await bakeLayer(
-        layerGroups, bpm, layerLabel(layers, li), li, layers.length, aside, silentOnce,
-        () => ({ done: wanted.length - missing().length, total: wanted.length }),
-      )
+      // ⚠️ A THROW IN ONE RUNG USED TO KILL THE LADDER. It propagated to the
+      // job's catch, was filed as 'job-error', and every later rung — the ones
+      // that sound BETTER — was skipped. 'layer-error' was declared in
+      // LoadEventKind, given display text, counted by loadIsStruggling and
+      // mirrored into the journal, for a state nothing could ever reach.
+      //
+      // A rung failing is not the job failing. The dry rung and the full rung
+      // fail for different reasons, and the retry, stall and gave-up machinery
+      // already bounds what this can cost.
+      let finished = false
+      try {
+        finished = await bakeLayer(
+          layerGroups, bpm, layerLabel(layers, li), li, layers.length, aside, silentOnce,
+          () => ({ done: wanted.length - missing().length, total: wanted.length }),
+        )
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e)
+        logEvent('layer-error', { layer: layerLabel(layers, li), detail: lastError.slice(0, 160) })
+        continue
+      }
       if (!finished) { parked = true; break }
     }
     timings.renderMs = Date.now() - tRender

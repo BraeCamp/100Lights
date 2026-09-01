@@ -518,6 +518,44 @@ const THE_SONG = [
 ]
 
 /** Words that mean "make it bigger" and "make it smaller". */
+/**
+ * The frequency in a sentence, if it names one.
+ *
+ * ⚠️ "Boost 5k on the vocals" — which eq_band's own description calls the
+ * commonest sentence in any mixing session — was setting the VOCAL FADER to 95%.
+ * Two reasons, and both are about tokens rather than meaning:
+ *
+ *   "5k" is ONE token. The rule tested w.has('k'), which only matches a
+ *   standalone "k", so it read "boost 5 k" (spaced) and missed "boost 5k",
+ *   which is how everybody actually says and writes it.
+ *
+ *   "boost" is in UP, so the volume rule took the sentence instead — and it
+ *   ignores the number entirely, nudging the fader by a step. An EQ request
+ *   silently became a level change.
+ *
+ * Read off `raw` rather than the tokens, because the tokeniser splits "1.5k"
+ * into "1" and "5k" and there is no recovering 1.5 from that afterwards.
+ */
+export function spokenHz(w: Words): number | null {
+  const m = w.raw.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(khz|k|hz|hertz)\b/)
+  if (!m) return null
+  const n = parseFloat(m[1])
+  if (!isFinite(n)) return null
+  const hz = /^k/.test(m[2]) ? n * 1000 : n
+  return hz >= 20 && hz <= 20000 ? hz : null
+}
+
+/** Is this sentence asking to cut or boost AT A FREQUENCY? */
+function readsAsEq(w: Words): boolean {
+  if (!w.has('cut', 'reduce', 'remove', 'notch', 'boost', 'add', 'lift', 'raise')) return false
+  if (w.has('percent', 'volume', 'level', 'db', 'decibels')) return false
+  if (spokenHz(w) != null) return true
+  // A bare number in the audible range, with a cut or boost word and no unit of
+  // level anywhere. A fader runs 0-100, so "boost 5000" cannot be one.
+  const n = w.num()
+  return n != null && n >= 100 && n <= 20000
+}
+
 const UP = ['up', 'louder', 'boost', 'raise', 'increase', 'higher', 'more']
 // "Softer" is deliberately NOT here. On a fader it means quieter; on a MIDI
 // part it means played more gently, and those are different edits with
@@ -611,6 +649,11 @@ const COMMANDS: VoiceCommand[] = [
       // answer to a question about the synth. Third time this trap has been
       // sprung on a volume rule; the relative one has the same guard.
       if (w.has('sub', 'subs', 'noise', 'oscillator', 'osc')) return null
+      // ⚠️ A FREQUENCY IS NOT A LEVEL. "Boost 5k on the vocals" was landing
+      // here and nudging the fader, because 'boost' is in UP and this rule does
+      // not even look at the number. eq_band owns anything that names a
+      // frequency; see spokenHz.
+      if (readsAsEq(w)) return null
       if (!w.has('percent', 'volume', 'level')) return null
       // A named effect makes this a different command entirely.
       if (EFFECTS.some(e => w.has(e))) return null
@@ -648,6 +691,11 @@ const COMMANDS: VoiceCommand[] = [
       // oscillator coming in, not the track fader going up.
       if (w.has('sub', 'subs', 'noise', 'oscillator', 'osc')) return null
       if (EFFECTS.some(e => w.has(e))) return null
+      // ⚠️ A FREQUENCY IS NOT A LEVEL. "Boost 5k on the vocals" was landing
+      // here and nudging the fader, because 'boost' is in UP and this rule does
+      // not even look at the number. eq_band owns anything that names a
+      // frequency; see spokenHz.
+      if (readsAsEq(w)) return null
       const up = w.has(...UP)
       const down = w.has(...DOWN)
       // Both directions in one sentence is not a nudge, it is a sentence this
@@ -1383,16 +1431,15 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'eq_band',
     group: 'Mixer',
     what: 'Cut or boost at a frequency',
-    say: ['cut 300 hertz on the pad', 'boost 5 k on the vocals'],
+    say: ['cut 300 hertz on the pad', 'boost 5k on the vocals'],
     match(w, ctx) {
-      if (!w.has('hertz', 'hz', 'k', 'khz')) return null
       const cut = w.has('cut', 'reduce', 'remove', 'notch')
       const boost = w.has('boost', 'add', 'lift', 'raise')
       if (!cut && !boost) return null
-      const n = w.num()
-      if (n == null) return null
-      // "5 k" means five thousand. Said as two tokens more often than one.
-      const hz = w.has('k', 'khz') && n < 25 ? n * 1000 : n
+      if (!readsAsEq(w)) return null
+      // "5k", "5 k", "5 khz", "300 hertz" and a bare "5000" all land here.
+      const hz = spokenHz(w) ?? w.num()
+      if (hz == null) return null
       const named = nameOrSelected(w, ctx, ['cut', 'boost', 'reduce', 'remove', 'notch',
         'add', 'lift', 'raise', 'the', 'a', 'bit', 'of', 'at', 'on', 'some',
         'hertz', 'hz', 'k', 'khz'], { dropNums: true })
@@ -2124,14 +2171,22 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'add_marker',
     group: 'Arrangement',
     what: 'Name a place in the song',
-    say: ['mark this as the chorus', 'mark bar 17 as the drop'],
+    say: ['mark this as the chorus', 'mark bar 17 as the drop', 'add a marker at bar 9 called drop'],
     match(w) {
       if (!w.has('mark', 'marker', 'label')) return null
-      // "mark X as Y" — the name is what follows "as".
-      const after = w.raw.toLowerCase().split(/\s+as\s+/)[1]
+      // ⚠️ The name used to have to follow the word "as", and nothing else.
+      // "Add a marker at bar 9 CALLED drop" therefore matched nothing here and
+      // fell through to transport, which MOVED THE PLAYHEAD to bar 9 and made
+      // no marker at all — a different action, silently, for a phrasing at
+      // least as common as the one that worked. "Put a marker here called drop"
+      // resolved to nothing whatsoever.
+      const after = w.raw.toLowerCase().split(/\s+(?:as|called|named|labell?ed)\s+/)[1]
       const name = (after ?? '').trim().replace(/[^a-z0-9\s'-]/g, '').replace(/^the\s+/, '').trim()
       if (!name) return null
       const bar = w.has('bar', 'measure') ? w.num() : null
+      // "Put a marker HERE" is the playhead, which is where a marker goes when
+      // no bar is named — the executor's own default. Saying it explicitly is
+      // not a different request.
       for (const word of w.all) w.markWord(word, 0)
       return {
         calls: [{
@@ -2996,6 +3051,11 @@ const COMMANDS: VoiceCommand[] = [
     say: ['go to bar 9', 'jump to bar 17', 'take me to bar 5'],
     match(w) {
       if (!w.has('bar', 'measure')) return null
+      // ⚠️ This rule fires on ANY sentence with a bar number in it and no verb
+      // of its own, so it quietly won sentences that were about something else
+      // entirely: "add a marker at bar 9" moved the playhead and made no
+      // marker. Naming a thing to PUT at that bar is not asking to go there.
+      if (w.has('mark', 'marker', 'label')) return null
       const n = w.num()
       if (n == null || n <= 0) return null
       return {

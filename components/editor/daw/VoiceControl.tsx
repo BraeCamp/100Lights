@@ -89,6 +89,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const {
     project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId,
     metronome, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
+    setSelectedClipIds, setSelectedClipId, setSelectedTrackId,
   } = useDaw()
   const [listening, setListening] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -603,6 +604,24 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const a = act as unknown as { editor: 'sequencer' | 'pianoroll'; clipId: string }
       if (a.editor === 'pianoroll') { setExpandedStepSeqClipId?.(null); setExpandedPianoRollClipId?.(a.clipId) }
       else { setExpandedPianoRollClipId?.(null); setExpandedStepSeqClipId?.(a.clipId) }
+      return
+    }
+
+    // ⚠️ SELECTING IS THE STUDIO, NOT THE SONG — and nothing was handling it.
+    // The executor emits SELECT from four places and says "Selected 3 clips on
+    // Bass", but the reducer has no such action and this function did not catch
+    // it either, so the sentence reported success and selected NOTHING. That
+    // matters more than it looks: the selection is what "this track" and "this
+    // clip" resolve against, so a failed select left every following pronoun
+    // pointing at whatever was selected before.
+    if (act.type === 'SELECT') {
+      const a = act as unknown as { clipIds?: string[]; trackId?: string }
+      const ids = a.clipIds ?? []
+      setSelectedClipIds?.(new Set(ids))
+      // The single-selection field drives the editors, which only ever open one
+      // clip. One selected clip is that clip; several is not a single anything.
+      setSelectedClipId?.(ids.length === 1 ? ids[0] : null)
+      if (a.trackId) setSelectedTrackId?.(a.trackId)
       return
     }
 
