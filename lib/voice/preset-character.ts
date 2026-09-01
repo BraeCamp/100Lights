@@ -159,7 +159,17 @@ export const CHARACTER_WORDS: string[] = [
 export function characterWordsIn(text: string): string[] {
   const words = String(text ?? '').toLowerCase().replace(/[^a-z\s-]/g, ' ').split(/\s+/)
   const known = new Set(CHARACTER_WORDS)
-  return words.filter(w => known.has(w))
+  const out: string[] = []
+  for (const raw of words) {
+    // ⚠️ PLURALS. Nobody asks for "a dark pad" when browsing — they ask "what
+    // dark PADS do I have", and the tag is "Pad". The plural was simply not
+    // matching, so the type word fell out of the question and the answer came
+    // back full of pianos. Exact first, then the singular.
+    if (known.has(raw)) { out.push(raw); continue }
+    const singular = raw.replace(/e?s$/, '')
+    if (singular && known.has(singular)) out.push(singular)
+  }
+  return out
 }
 
 export interface PresetMatch {

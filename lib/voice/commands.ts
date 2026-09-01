@@ -2980,6 +2980,66 @@ const COMMANDS: VoiceCommand[] = [
   // Every one of them is computed from the project. None costs anything and
   // none needs the assistant.
   {
+    id: 'describe.library',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask what sounds you have',
+    say: ['what dark pads do I have', 'what pianos do I have', 'what is in my library'],
+    match(w) {
+      // ⚠️ "Have" and "my" are what make this a question about the LIBRARY
+      // rather than about the song. "What tracks do I have" is the song, and
+      // describe.tracks owns it, so the noun has to be a library one.
+      const INSTRUMENTS = /\b(pianos?|organs?|guitars?|strings?|brass|mallets?|woodwinds?|synths?|basses|pads?|leads?|keys)\b/
+      const asksWhatIHave = w.has('have') && (characterWordsIn(w.raw).length > 0 || INSTRUMENTS.test(w.raw.toLowerCase()))
+      // ⚠️ IT HAS TO BE A QUESTION. "Sounds" bends from "sound", so "make it
+      // SOUND better" — a tone request — was being answered with a list of
+      // presets. Fifth time a short word has been bent into a command here.
+      // A question word, or the word "library", or an explicit "do I have".
+      // ⚠️ And it must not be a request to MAKE something. Brae's own sentence
+      // — "put in a baseline preset that uses ... sad piano presets" — contains
+      // the word "presets", so a question rule keyed on that word answered a
+      // request to write music with a list of instruments. A question does not
+      // ask for anything to be put anywhere.
+      if (w.all.some(x => x === 'put' || x === 'add' || x === 'make' || x === 'give'
+        || x === 'write' || x === 'create' || x === 'use' || x === 'set')) return null
+      // ⚠️ A QUESTION WORD, or the word "library". Nothing weaker.
+      //
+      // Keying on "presets" or "sounds" was too weak twice over: it answered
+      // "make it SOUND better" with a list, and — because the sequence reader
+      // tries SPANS of a sentence, not just the whole thing — a fragment like
+      // "sad piano presets" inside a request to write a bassline read as a
+      // question on its own. A guard on the whole sentence cannot help there;
+      // the trigger itself has to be question-shaped.
+      const isQuestion = w.all.some(x => x === 'what' || x === 'which' || x === 'any')
+        || w.has('library')
+      if (!isQuestion && !asksWhatIHave) return null
+      if (!w.has('library', 'sounds', 'presets', 'instruments') && !asksWhatIHave) return null
+      if (w.has('track', 'tracks', 'clip', 'clips')) return null
+      // The whole sentence goes as `target` — the executor reads both the tag
+      // words and the instrument words out of it, and it is the only thing that
+      // knows which is which.
+      const words = characterWordsIn(w.raw)
+      const asked = words.length || INSTRUMENTS.test(w.raw.toLowerCase())
+      return {
+        calls: [{ name: 'describe', input: { topic: 'library', ...(asked ? { target: w.raw } : {}) } }],
+        confidence: 0.9,
+      }
+    },
+  },
+  {
+    id: 'describe.loading',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask whether the song has finished loading',
+    say: ['is it still loading', 'is it ready yet', 'how far along is the loading'],
+    match(w) {
+      if (!w.has('loading', 'loaded', 'ready', 'baking', 'rendering')) return null
+      // "Load the project" is an instruction; this is a question about state.
+      if (w.has('project', 'file')) return null
+      return { calls: [{ name: 'describe', input: { topic: 'loading' } }], confidence: 0.9 }
+    },
+  },
+  {
     id: 'describe.tempo',
     tool: 'describe',
     group: 'Questions',

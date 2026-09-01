@@ -427,6 +427,30 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   }, [engine, listening])
   /** Guards the unmute against an answer that starts while the last one settles. */
   const unmuteToken = useRef(0)
+  /**
+   * The bake's progress, refreshed on a slow tick.
+   *
+   * ⚠️ Polled rather than read at question time: combineStats() walks every
+   * cached buffer to compute peaks, which is far too much work to do inside a
+   * sentence — and this only needs to be roughly right.
+   */
+  const loadingRef = useRef<{ done: number; total: number; error?: string | null } | null>(null)
+  useEffect(() => {
+    if (!inStudio) return
+    let alive = true
+    const tick = async () => {
+      try {
+        const { combineStats } = await import('@/lib/apollo/freeze-cache')
+        const s = combineStats()
+        if (!alive) return
+        const total = s.progress?.total ?? 0
+        loadingRef.current = total ? { done: s.progress?.done ?? 0, total, error: s.lastError } : null
+      } catch { /* not in a studio that bakes */ }
+    }
+    void tick()
+    const iv = setInterval(tick, 4000)
+    return () => { alive = false; clearInterval(iv) }
+  }, [inStudio])
   const handle = useRef<SpeechHandle | null>(null)
   /** Set when recording instead of using the browser's recogniser. */
   const recorder = useRef<Recording | null>(null)
@@ -531,6 +555,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // on this machine, and the executor cannot see the machine. Carries the
     // sampled range and the preset's own shaping, which is what "darker" and
     // "low notes" are actually measured against.
+    // How far the bake has got, so "is it still loading" can be answered. Read
+    // fresh each time — it is a moment, not a document, and a stale answer to
+    // that question is worse than no answer.
+    loading: loadingRef.current,
     library: combinePresets(projectRef.current?.presets).map(p => ({
       id: p.id, name: p.name, group: p.group,
       loNote: p.loNote, hiNote: p.hiNote, fx: p.sound?.fx ?? null,

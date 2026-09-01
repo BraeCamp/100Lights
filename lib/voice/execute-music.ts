@@ -34,7 +34,7 @@ import {
   defaultVelocityMidi, defaultScaleMidi, defaultChordMidi, defaultArpMidi,
 } from '../daw-types'
 import { findByName, foldName, spokenNumber, spokenFraction } from './resolve'
-import { matchPresetByCharacter, characterWordsIn, type PresetLike } from './preset-character'
+import { matchPresetByCharacter, characterWordsIn, presetTags, type PresetLike } from './preset-character'
 import { SCALE_INTERVALS, type ScaleType } from '../scale-constants'
 import {
   matchApolloParam, matchFilterType, resolveValue, readParam, writeParam,
@@ -639,6 +639,13 @@ export interface VoiceContext {
    * matcher, given the library, answers for both.
    */
   library?: PresetLike[]
+  /**
+   * How far the song has got with preparing itself.
+   *
+   * Not in the project — a document cannot say whether it has finished
+   * rendering — so the studio passes it in, the same way the library is.
+   */
+  loading?: { done: number; total: number; error?: string | null } | null
 }
 
 const PITCH_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -1251,6 +1258,73 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         // ⚠️ 'help' was in the schema's enum and had no case, so a model asking
         // "what can you do" got "I don't know how to answer that" — the worst
         // possible answer to that particular question.
+        // ── WHAT IS IN THE LIBRARY ──────────────────────────────────
+        //
+        // ⚠️ The tag vocabulary and the matching were already built and shared
+        // between samples and presets — nothing could SAY them. The audit
+        // called this the shortest distance between something built and
+        // something usable, and it was right: this reads what already exists.
+        case 'library': {
+          const lib = heard?.library ?? []
+          if (!lib.length) return { actions: [], say: 'I cannot see your library from here.' }
+          const words = characterWordsIn(target || '')
+          if (!words.length) {
+            const groups = new Map<string, number>()
+            for (const p of lib) for (const t of presetTags(p)) groups.set(t, (groups.get(t) ?? 0) + 1)
+            const top = [...groups.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+            return {
+              actions: [],
+              say: `${lib.length} sounds. Mostly ${top.map(([t, n]) => `${t.toLowerCase()} (${n})`).join(', ')}. `
+                + 'Ask for a kind — "what dark pads do I have".',
+            }
+          }
+          const wanted = words.map(x => x.toLowerCase())
+          // ⚠️ People name INSTRUMENTS, not tags. "What pianos do I have" is the
+          // obvious question and "piano" is not a tag — the tag is Keys. So a
+          // word that is not a tag is matched against the group and the name
+          // instead, which is how somebody would look for it by eye.
+          const said = (target || '').toLowerCase()
+          const instrument = ['piano', 'organ', 'guitar', 'strings', 'brass', 'mallets',
+            'woodwind', 'synth', 'drum', 'bass', 'keys', 'pad', 'lead']
+            .find(g => new RegExp(`\\b${g}s?\\b`).test(said) && !wanted.includes(g))
+          const hits = lib.filter(p => {
+            const mine = new Set(presetTags(p).map(t => t.toLowerCase()))
+            if (!wanted.every(x => mine.has(x))) return false
+            if (!instrument) return true
+            return (p.group ?? '').toLowerCase().includes(instrument)
+              || p.name.toLowerCase().includes(instrument)
+          })
+          const asked = [...words, ...(instrument ? [instrument] : [])]
+          if (!hits.length) {
+            return { actions: [], say: `Nothing in your library is ${asked.join(' and ')}.` }
+          }
+          // ⚠️ Names, not a count. "You have 14" is not an answer anybody can
+          // act on; the point of asking is to pick one.
+          const names = hits.slice(0, 6).map(p => p.name)
+          return {
+            actions: [],
+            say: `${hits.length} ${asked.join(' ')}: ${names.join(', ')}`
+              + `${hits.length > names.length ? `, and ${hits.length - names.length} more` : ''}.`,
+          }
+        }
+
+        // ── IS IT READY YET ─────────────────────────────────────────────
+        //
+        // Studio state rather than document state — the project cannot say
+        // whether it has finished rendering itself, so the studio tells us.
+        case 'loading': {
+          const l = heard?.loading
+          if (!l) return { actions: [], say: 'Everything is ready.' }
+          if (l.error) return { actions: [], say: `Loading had trouble: ${l.error}` }
+          if (!l.total || l.done >= l.total) return { actions: [], say: 'Everything is ready.' }
+          const pct = Math.round((l.done / l.total) * 100)
+          return {
+            actions: [],
+            say: `${l.done} of ${l.total} parts ready, about ${pct}%. `
+              + 'The rest play live until they are — you can keep working.',
+          }
+        }
+
         case 'help': {
           const groups = commandHelp()
           const total = groups.reduce((n, g) => n + g.items.length, 0)

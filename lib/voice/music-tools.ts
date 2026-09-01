@@ -863,7 +863,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'describe',
     description:
-      'ANSWER A QUESTION about the song without changing anything. "what is the tempo", "how many tracks are there", "is anything muted", "how long is it", "how many clips are on the bass".',
+      'ANSWER A QUESTION without changing anything. About the song: "what is the tempo", "how many tracks are there", "is anything muted", "how long is it", "what notes are on the bass". About the LIBRARY: "what dark pads do I have", "what pianos are there" — pass the words they used in `target`. About LOADING: "is it still loading", "is it ready yet".',
     input_schema: {
       type: 'object',
       properties: {
@@ -874,6 +874,12 @@ export const MUSIC_TOOLS = [
             // What a part is actually playing, and what is on it. Answerable
             // from the project alone — every note, effect and lane is here.
             'notes', 'effects', 'instrument', 'automation',
+            // What is INSTALLED, not what is in the song — the library was
+            // unreachable by voice even though the tag matching already existed.
+            'library',
+            // Whether the song has finished preparing itself. Studio state, not
+            // document state, so it is passed in rather than read from the project.
+            'loading',
           ],
         },
         target: { ...TARGET, description: 'For "clips" and "volume" — which track they asked about.' },
