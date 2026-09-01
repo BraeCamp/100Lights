@@ -27,3 +27,11 @@ bridge/build
 
 # Local Python environment for the CLAP embeddings.
 .venv-clap
+
+# ⚠️ Local secrets. Vercel takes its environment from its own dashboard and
+# never needs these — and since it does not read .gitignore, nothing else was
+# keeping them out of the upload. Belt and braces: the deploy has no reason to
+# carry the Apple signing credentials or anything else that lives here.
+.env
+.env.*
+!.env.example
