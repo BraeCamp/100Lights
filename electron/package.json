@@ -77,7 +77,9 @@
         }
       ],
       "extendInfo": {
-        "NSDocumentsFolderUsageDescription": "100Lights opens and saves your projects here."
+        "NSDocumentsFolderUsageDescription": "100Lights opens and saves your projects here.",
+        "NSMicrophoneUsageDescription": "100Lights uses the microphone for voice control and for recording audio into your projects.",
+        "NSCameraUsageDescription": "100Lights uses the camera only if you record video into a project."
       }
     },
     "dmg": {

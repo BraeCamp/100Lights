@@ -39,7 +39,7 @@ import type { Heard } from '@/lib/voice/hypotheses'
 import { COMMAND_VOCABULARY, commandHelp } from '@/lib/voice/interpret'
 import { remember, markFailed } from '@/lib/voice/voice-memory'
 import {
-  startRecording, preferredTranscriber, setPreferredTranscriber,
+  startRecording, preferredTranscriber, setPreferredTranscriber, micProblemMessage,
   type Recording, type StopResult, type MicReport,
 } from '@/lib/voice/record'
 import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execute-music'
@@ -865,7 +865,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         sampleRate: engine?.ctx?.sampleRate,
         audioContext: engine?.ctx,
       })
-      if (!rec) { respond('I could not open the microphone.', 'problem'); setTaking(''); return }
+      if (!rec) { respond(micProblemMessage(), 'problem'); setTaking(''); return }
 
       // Audible either way — Brae asked for the countdown whether or not the
       // click is on afterwards.
@@ -1863,7 +1863,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // how the code is best read.
       onSilence: () => { finishRef.current?.() },
     })
-    if (!rec) { setProblem('Could not open the microphone.'); return }
+    if (!rec) { setProblem(micProblemMessage()); return }
     setMic(rec.mic)
     if (rec.mic.degraded) {
       // Not our doing, and not fixable from a browser: a headset that carries
@@ -2052,7 +2052,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     })
     if (!rec) {
       setCalibrating(null)
-      setProblem('Could not open the microphone.')
+      setProblem(micProblemMessage())
       return
     }
 

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, shell, session, ipcMain, desktopCapturer, globalShortcut } from 'electron'
 import path from 'path'
+import fs from 'fs'
 import log from 'electron-log'
 import { setupMenu, watchWindowsForMenu } from './menu'
 import { setupUpdater } from './updater'
@@ -516,6 +517,28 @@ function setupModuleIpc(): void {
   ipcMain.handle('window:isFullScreen', (event) => {
     return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
   })
+  /**
+   * "Home" from inside a project window.
+   *
+   * ⚠️ This used to be handled by will-navigate, which only fires for a FULL
+   * PAGE LOAD. The web app now goes home with the client router — so that the
+   * layout, Light and any popped-out panels survive the trip — and a
+   * History-API navigation fires no such event. The desktop behaviour
+   * (surface the launcher, close the orphaned project window) silently stopped
+   * happening the moment the anchor became a <Link>.
+   *
+   * So the renderer asks instead of being intercepted. Returns true when it
+   * handled it, and the web app does nothing further; false in the launcher
+   * itself, where going to the dashboard is an ordinary navigation.
+   */
+  ipcMain.handle('window:goHome', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win === launcherWindow) return false
+    launcherWindow?.show()
+    launcherWindow?.focus()
+    win.close()
+    return true
+  })
 }
 
 /**
@@ -546,7 +569,29 @@ const pendingFiles: string[] = []
 function deliverFile(filePath: string): void {
   const win = launcherWindow ?? BrowserWindow.getAllWindows()[0]
   if (!win || win.webContents.isLoading()) { pendingFiles.push(filePath); return }
-  win.webContents.send('menu:command', { command: 'open-file', arg: filePath })
+  // ⚠️ The MAIN process reads it and sends the contents, rather than handing
+  // the renderer a path and a way to read paths. A general readFile exposed to
+  // the web layer is a much wider door than this needs: the only files that
+  // come through here are ones the operating system has explicitly handed us,
+  // because somebody double-clicked them.
+  let text: string
+  try {
+    const stat = fs.statSync(filePath)
+    // A project file is JSON; anything of this size is not one, and reading it
+    // would block the main process — which is the thread drawing every window.
+    if (stat.size > 64 * 1024 * 1024) {
+      log.warn('Refusing to open an implausibly large project file:', filePath, stat.size)
+      return
+    }
+    text = fs.readFileSync(filePath, 'utf8')
+  } catch (err) {
+    log.warn('Could not read the project file handed to us:', filePath, err)
+    return
+  }
+  win.webContents.send('menu:command', {
+    command: 'open-file',
+    arg: { name: path.basename(filePath), text },
+  })
   if (win.isMinimized()) win.restore()
   win.focus()
 }
@@ -567,8 +612,44 @@ function flushPendingFiles(): void {
   for (const f of queued) deliverFile(f)
 }
 
+/** Module windows load /apps/* — outside the app layout, so nothing in them
+ *  is listening for a menu command. */
+function isModuleWindow(win: BrowserWindow | null): boolean {
+  if (!win) return false
+  for (const w of moduleWindows.values()) if (w === win) return true
+  return false
+}
+
+/** The last app-layout window to have focus — see the note in target(). */
+let lastAppWindow: BrowserWindow | null = null
+
 function setupGlobalShortcuts(): void {
-  const target = () => BrowserWindow.getFocusedWindow() ?? launcherWindow ?? BrowserWindow.getAllWindows()[0]
+  // Whichever window the person was last actually working in, ignoring the
+  // module windows, which cannot answer.
+  app.on('browser-window-focus', (_e, win) => {
+    if (!isModuleWindow(win)) lastAppWindow = win
+  })
+
+  /**
+   * ⚠️ THE FOCUSED WINDOW IS NOT ALWAYS ONE THAT CAN ANSWER.
+   *
+   * These are global shortcuts — "play/stop from anywhere", "start Light from
+   * anywhere" — and anywhere includes a module window. Those load /apps/*,
+   * which is outside the app layout, so they mount neither the menu bridge nor
+   * Light: the command went to the focused window, found no listener, and did
+   * nothing. Pressing a shortcut advertised as working from anywhere and
+   * getting silence reads as a broken feature, not as a scoping rule.
+   *
+   * So it goes to the window that has the studio in it instead.
+   */
+  const target = () => {
+    const focused = BrowserWindow.getFocusedWindow()
+    if (focused && !isModuleWindow(focused)) return focused
+    if (lastAppWindow && !lastAppWindow.isDestroyed()) return lastAppWindow
+    return launcherWindow
+      ?? BrowserWindow.getAllWindows().find(w => !isModuleWindow(w) && !w.isDestroyed())
+      ?? null
+  }
   const send = (command: string) => () => target()?.webContents.send('menu:command', { command })
 
   const shortcuts: Array<[string, () => void]> = [

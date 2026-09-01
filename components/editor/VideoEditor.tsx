@@ -4633,6 +4633,17 @@ export default function VideoEditor({
                 {/* Logo — takes the user straight home */}
                 <Link
                   href="/dashboard"
+                  onClick={e => {
+                    // ⚠️ Desktop: a project window going Home should close itself
+                    // and surface the launcher — behaviour that used to come from
+                    // Electron's will-navigate, which a client-side <Link> does
+                    // not trigger. The browser keeps the client navigation, which
+                    // is what keeps Light and the popped-out panels alive.
+                    const api = (window as unknown as { electronAPI?: { goHome?: () => Promise<boolean> } }).electronAPI
+                    if (!api?.goHome) return
+                    e.preventDefault()
+                    void api.goHome().then(handled => { if (!handled) window.location.assign('/dashboard') })
+                  }}
                   title="Home"
                   data-help-id="home"
                   style={{

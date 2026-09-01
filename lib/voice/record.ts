@@ -251,10 +251,70 @@ const IDLE_RESET_MS = 2_500
  * The microphone is released the moment recording ends — a studio that leaves
  * the tab's recording indicator lit is one nobody trusts.
  */
+/**
+ * WHY the microphone did not open.
+ *
+ * ⚠️ THE TWO PLATFORMS FAIL DIFFERENTLY, AND ONLY ONE OF THEM EXPLAINS ITSELF.
+ * A browser that denies the microphone has shown a prompt, put an indicator in
+ * the address bar, and left a control there to change the answer — "I could not
+ * open the microphone" is enough, because the way back is visible.
+ *
+ * The desktop app has none of that. macOS asks ONCE, ever, and a person who
+ * said no — or clicked away — is never asked again; the app simply gets nothing
+ * from then on, with no icon, no prompt and nothing to click. Light's only
+ * transcription path on the desktop is this recorder, so the whole voice system
+ * is dead and the reason is in a settings pane the person has no reason to open.
+ *
+ * So the reason is kept, and whoever reports it can say what to actually do.
+ */
+export type MicProblem = 'denied' | 'none' | 'busy' | 'unsupported' | 'unknown' | null
+let micProblem: MicProblem = null
+
+/** Why the last startRecording returned null. Cleared when one succeeds. */
+export function lastMicProblem(): MicProblem { return micProblem }
+
+function readMicProblem(err: unknown): MicProblem {
+  const name = (err as { name?: string } | undefined)?.name
+  // These names are specified, and both platforms use them.
+  if (name === 'NotAllowedError' || name === 'SecurityError') return 'denied'
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'none'
+  if (name === 'NotReadableError' || name === 'AbortError') return 'busy'
+  return 'unknown'
+}
+
+/**
+ * What to tell somebody whose microphone did not open.
+ *
+ * The desktop answers name the settings pane, because on the desktop that pane
+ * is the only way back and nothing on screen points at it.
+ */
+export function micProblemMessage(problem: MicProblem = lastMicProblem()): string {
+  const api = typeof window !== 'undefined'
+    ? (window as unknown as { electronAPI?: { isElectron?: boolean; platform?: string } }).electronAPI
+    : undefined
+  const desktop = !!api?.isElectron
+  const settings = api?.platform === 'win32'
+    ? 'Settings \u203a Privacy & security \u203a Microphone'
+    : 'System Settings \u203a Privacy & Security \u203a Microphone'
+
+  if (problem === 'denied') {
+    return desktop
+      // ⚠️ macOS asks once and never again, so "try again" alone is a dead end.
+      ? `The microphone is turned off for this app. Switch it on in ${settings}, then ask me again.`
+      : 'The microphone is blocked for this site. Allow it and ask me again.'
+  }
+  if (problem === 'none') return 'I could not find a microphone to listen with.'
+  if (problem === 'busy') return 'Something else is using the microphone right now.'
+  if (problem === 'unsupported') return 'This browser will not let me record audio.'
+  return 'I could not open the microphone.'
+}
+
 export async function startRecording(opts: RecordOptions | string[] = {}): Promise<Recording | null> {
   const o: RecordOptions = Array.isArray(opts) ? { vocabulary: opts } : opts
-  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return null
-  if (typeof MediaRecorder === 'undefined') return null
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+    micProblem = 'unsupported'; return null
+  }
+  if (typeof MediaRecorder === 'undefined') { micProblem = 'unsupported'; return null }
 
   // ── What opening the microphone does to the SPEAKERS ─────────────────────
   //
@@ -308,9 +368,17 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
       audio: wantsRaw ? raw : ({ ...base, voiceIsolation: true } as MediaTrackConstraints),
     })
   } catch {
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: base }) } catch { return null }
+    // The first attempt asks for constraints not every device supports, so a
+    // failure here is expected and means nothing. The SECOND one is the answer.
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: base })
+    } catch (err) {
+      micProblem = readMicProblem(err)
+      return null
+    }
   }
   if (!stream) return null
+  micProblem = null
 
   // ── Clean it before it is recorded ────────────────────────────────────────
   // High-pass below the voice removes rumble and handling noise without

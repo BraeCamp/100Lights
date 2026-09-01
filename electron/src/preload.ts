@@ -48,6 +48,9 @@ export interface ElectronAPI {
 
   // Window state — lets the renderer drop traffic-light padding in fullscreen
   isFullScreen: () => Promise<boolean>
+  /** "Home" from a project window: true if the desktop handled it by closing
+   *  this window and surfacing the launcher. */
+  goHome: () => Promise<boolean>
   onFullScreenChanged: (cb: (fullscreen: boolean) => void) => () => void
 
   /**
@@ -88,6 +91,7 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on('menu:command', listener)
     return () => ipcRenderer.removeListener('menu:command', listener)
   },
+  goHome: () => ipcRenderer.invoke('window:goHome'),
   openModule: (moduleKey) => ipcRenderer.invoke('module:open', moduleKey),
   focusModule: (moduleKey) => ipcRenderer.invoke('module:focus', moduleKey),
   showLauncher: () => ipcRenderer.invoke('launcher:show'),
