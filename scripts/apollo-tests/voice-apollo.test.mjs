@@ -284,5 +284,45 @@ const run = (name, input) => planVoiceCall({ name, input }, PROJECT)
   check('each sentence reaches the command that owns it', wrong.length === 0, wrong.join(' | '))
 }
 
+// ── Turning the sub on must not stack one per note ─────────────────────────
+//
+// Brae: "Audio cutting out again. It isn't slowing down or lagging. Is it the
+// computer trying to play every separate note in a piano roll?"
+//
+// ⚠️ The engine reads an ABSENT sub.ref as 'each' — one sub oscillator per
+// voice — and it has to keep doing that, because presets saved before the
+// option existed were voiced against per-note subs. But a sub being switched on
+// NOW was silent a moment ago, so there is no voicing to preserve, and per-note
+// is the wrong default for a piano roll: a triad stacks three subs, the low end
+// triples, and the master limiter clamps the whole track. That is the cutting
+// out, and the engine's own comment says so.
+{
+  // An older patch: sub present, never given a reference note.
+  const old = initPatch()
+  delete old.sub.ref
+  const proj = { ...PROJECT, tracks: [{ id: 'to', name: 'Old', instrument: { type: 'apollo', params: old }, effects: [], volume: 0.8 }] }
+
+  const layer = planVoiceCall({ name: 'set_apollo_layer', input: { target: 'old', layer: 'sub' } }, proj)
+  const p1 = layer.actions?.[0]?.instrument?.params
+  check('adding the sub to an old patch pins it to one note',
+    p1?.sub?.enabled === true && p1?.sub?.ref === 'lowest', `enabled=${p1?.sub?.enabled} ref=${p1?.sub?.ref}`)
+
+  const lvl = planVoiceCall({ name: 'set_apollo_param', input: { target: 'old', parameter: 'sub level', percent: 40 } }, proj)
+  check('and so does setting its level',
+    lvl.actions?.[0]?.instrument?.params?.sub?.ref === 'lowest',
+    String(lvl.actions?.[0]?.instrument?.params?.sub?.ref))
+
+  // ⚠️ But an ALREADY-SOUNDING sub is somebody's voicing, and changing what it
+  // follows would restage a sound they have already balanced.
+  const voiced = initPatch()
+  voiced.sub.enabled = true
+  delete voiced.sub.ref
+  const proj2 = { ...PROJECT, tracks: [{ id: 'tv', name: 'Voiced', instrument: { type: 'apollo', params: voiced }, effects: [], volume: 0.8 }] }
+  const more = planVoiceCall({ name: 'set_apollo_param', input: { target: 'voiced', parameter: 'sub level', percent: 60 } }, proj2)
+  check('an already-sounding sub keeps the voicing it had',
+    more.actions?.[0]?.instrument?.params?.sub?.ref === undefined,
+    String(more.actions?.[0]?.instrument?.params?.sub?.ref))
+}
+
 console.log(failures ? `\n${failures} failing` : '\nApollo answers to its own names')
 assert.equal(failures, 0)

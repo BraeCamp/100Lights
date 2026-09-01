@@ -135,6 +135,36 @@ const notApollo = (name: string, type?: string): string =>
  *   somebody's behalf picks a sound they did not ask for. Those explain
  *   instead, and name what would fix it.
  */
+/**
+ * Turning the sub ON has to say WHICH NOTE it follows.
+ *
+ * Brae: "Audio cutting out again. It isn't slowing down or lagging. Is it the
+ * computer trying to play every separate note in a piano roll?"
+ *
+ * ⚠️ Yes — and this is how a voice command causes it. The engine reads an
+ * ABSENT `sub.ref` as 'each', which is one sub oscillator per voice. That is
+ * deliberate: a patch saved before the option existed was voiced against
+ * per-note subs, and changing it under those presets stripped their low end
+ * (qa-synth caught the wavetable strings jumping from a 164 Hz centroid to
+ * 994 Hz). So absent MUST keep meaning 'each' in the engine.
+ *
+ * But a sub that is being switched on right now has no voicing to preserve —
+ * it was silent. And per-note is the wrong default for a piano roll: a triad
+ * stacks three subs, the low end triples, and the master limiter (instant
+ * attack, 0.98 ceiling, 120 ms release) clamps EVERYTHING down to a fraction
+ * for a tenth of a second. That is not a click or a lag. It sounds exactly like
+ * the audio cutting out, and the engine's own comment says so.
+ *
+ * So: only when turning it on from off, and only when the patch never expressed
+ * a preference, pin it to 'lowest' — one sub, following the lowest note, which
+ * is what a sub is musically for.
+ */
+function pinSubReference(patch: ApolloPatch, wasEnabled: boolean): void {
+  if (wasEnabled) return          // an existing voicing is not ours to change
+  if (!patch.sub || patch.sub.ref) return
+  patch.sub.ref = 'lowest'
+}
+
 function makeAudible(patch: ApolloPatch, param: SpokenParam): string | null {
   const path = param.def.path
   const oscIdx = /^osc([012])\./.exec(path)?.[1]
@@ -167,7 +197,10 @@ function makeAudible(patch: ApolloPatch, param: SpokenParam): string | null {
   // most-said sentence in the app working and silently doing nothing.
   const f = /^f([12])\./.exec(path)?.[1]
   if (f && patch.filters?.[Number(f) - 1]) patch.filters[Number(f) - 1].enabled = true
-  if (path.startsWith('sub.') && patch.sub) patch.sub.enabled = true
+  if (path.startsWith('sub.') && patch.sub) {
+    pinSubReference(patch, patch.sub.enabled)
+    patch.sub.enabled = true
+  }
   if (path.startsWith('noise.') && patch.noise) patch.noise.enabled = true
   // A rate in Hertz is a request for a free-running LFO. While it is synced to
   // the tempo the rate field is not read at all.
@@ -1948,6 +1981,10 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // is the commonest phrasing there is, and reading it as "leave it off but
       // set its level" would be a command that does nothing audible.
       const on = i.on === false ? false : true
+      // ⚠️ Before the switch flips: a sub coming on with no reference note set
+      // renders one per voice, and a chord in a piano roll then buries the low
+      // end until the master limiter clamps the whole mix. See pinSubReference.
+      if (which === 'sub' && on) pinSubReference(patch as unknown as ApolloPatch, node.enabled === true)
       node.enabled = on
       if (pct != null) node.level = clamp(pct / 100, 0, 1)
       else if (on && ((node.level as number) ?? 0) <= 0) node.level = 0.5
