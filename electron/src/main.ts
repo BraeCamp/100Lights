@@ -88,6 +88,45 @@ const oauthPopupOptions = {
 
 // The detachable "Build history" controls open in their own small window so they
 // can be dragged to another monitor; they drive the studio window via postMessage.
+/**
+ * A panel asking to become its own OS window.
+ *
+ * Brae: "can we make it so that windows and menus opened through the desktop
+ * app can move outside of the window?"
+ *
+ * ⚠️ Matched on the window NAME rather than the URL, because these windows have
+ * no URL — they open blank and the app draws into them through a React portal,
+ * so there is one copy of the project and one audio engine no matter how many
+ * panels are floating. A URL-based rule would have nothing to match.
+ *
+ * ⚠️ AND IT HAS TO COME BEFORE isInternal, which navigates the MAIN window to
+ * whatever was opened. That is right for a link and catastrophic here: popping
+ * out the mixer would have replaced the studio with it.
+ */
+function isPopOut(frameName: string): boolean {
+  return frameName.startsWith('100lights-popout')
+}
+
+/**
+ * Deliberately plain. No menu bar, no fullscreen, resizable and always
+ * closable — this is a panel that happens to be a window, and it should behave
+ * like a plugin window in any DAW: move it anywhere, put it on the other
+ * screen, close it and the work is untouched.
+ */
+const popOutOptions = {
+  minWidth: 280,
+  minHeight: 200,
+  resizable: true,
+  fullscreenable: false,
+  backgroundColor: '#14121a',
+  autoHideMenuBar: true,
+  webPreferences: {
+    preload: path.join(__dirname, 'preload.js'),
+    nodeIntegration: false,
+    contextIsolation: true,
+  },
+}
+
 function isHistoryControl(url: string): boolean {
   try { return new URL(url).pathname.startsWith('/history-control') } catch { return false }
 }
@@ -206,7 +245,12 @@ function openModuleWindow(moduleKey: string): void {
     }
   })
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // Before anything else: a popped-out panel is not a link, and the
+    // isInternal branch below would load it over the top of the studio.
+    if (isPopOut(frameName)) {
+      return { action: 'allow', overrideBrowserWindowOptions: popOutOptions }
+    }
     if (isExternalPayment(url)) {
       shell.openExternal(url)
       return { action: 'deny' }
@@ -271,7 +315,10 @@ function openProjectWindow(url: string): void {
     if (isDev) win.webContents.openDevTools({ mode: 'detach' })
   })
 
-  win.webContents.setWindowOpenHandler(({ url: u }) => {
+  win.webContents.setWindowOpenHandler(({ url: u, frameName }) => {
+    // Same rule as the main window: a popped-out panel opens as its own window
+    // rather than replacing this one.
+    if (isPopOut(frameName)) return { action: 'allow', overrideBrowserWindowOptions: popOutOptions }
     if (isExternalPayment(u)) { shell.openExternal(u); return { action: 'deny' } }
     if (isOAuthProvider(u)) { return { action: 'allow', overrideBrowserWindowOptions: oauthPopupOptions } }
     if (isHistoryControl(u)) { return { action: 'allow', overrideBrowserWindowOptions: historyPopupOptions } }

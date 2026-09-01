@@ -831,8 +831,8 @@ export interface DawContextValue {
   /** `seed: null` means "build it from the track on open". `follow` retargets
    *  the window as the track selection changes, which is what makes it usable
    *  as a left-open panel rather than a per-track dialog. */
-  apolloRack: { trackId: string; seed: unknown; follow?: boolean } | null
-  setApolloRack: (v: { trackId: string; seed: unknown; follow?: boolean } | null) => void
+  apolloRack: { trackId: string; seed: unknown; follow?: boolean; detached?: boolean } | null
+  setApolloRack: (v: { trackId: string; seed: unknown; follow?: boolean; detached?: boolean } | null) => void
   selectedEffectIds: Set<string>
   setSelectedEffectIds: React.Dispatch<React.SetStateAction<Set<string>>>
   // Pad/voice MIDI card

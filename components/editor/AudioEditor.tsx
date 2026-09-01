@@ -23,7 +23,8 @@ import { readWorkspace, writeWorkspace } from '@/lib/editor-workspace'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
-import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X, Link2, Upload } from 'lucide-react'
+import PopOut from '@/components/PopOut'
+import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X, Link2, Upload, ExternalLink, Minimize2 } from 'lucide-react'
 import { LogoMark } from '@/components/Logo'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { UITierProvider } from './UITierProvider'
@@ -421,7 +422,7 @@ const DEFAULT_PODCAST_META: PodcastMeta = {
 // panel that opens it (and so it can be moved/resized over Beacon while you
 // keep working).
 const ApolloCardLazy = dynamic(() => import('@/components/apps/apollo/ApolloCard'), { ssr: false })
-function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow, onChange, onClose }: {
+function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow, onChange, onClose, detached, onToggleDetach }: {
   trackId: string
   seed: unknown
   trackName: string
@@ -429,6 +430,9 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
   onToggleFollow: () => void
   onChange: (next: { fxMain: unknown[] }) => void
   onClose: () => void
+  /** True while this rack is drawn in its own OS window. */
+  detached?: boolean
+  onToggleDetach?: () => void
 }) {
   // Opened from the transport there is no seed yet: build one from this
   // track's FX chain. Rebuilt when the window retargets to another track.
@@ -539,9 +543,31 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
         />
       }
       headerExtra={
-        // Following means "always show the selected track". Pinning holds the
-        // window on one track so picking sounds elsewhere in Beacon can't yank
-        // an edit-in-progress away.
+        <>
+        {/* ⚠️ Desktop only. A browser can open a popup, but it is blocked by
+            default and buried behind the window often enough that the button
+            would mostly appear to do nothing. The desktop app opens a real
+            panel window every time, which is the whole point of asking. */}
+        {onToggleDetach && typeof window !== 'undefined' && !!window.electronAPI && (
+          <button
+            onClick={onToggleDetach}
+            title={detached
+              ? 'Put it back in the main window'
+              : 'Open in its own window — move it anywhere, including another screen'}
+            style={{
+              width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              borderRadius: 7, cursor: 'pointer',
+              border: `1px solid ${detached ? 'var(--accent)' : 'var(--border)'}`,
+              background: detached ? 'rgb(var(--accent-rgb) / .22)' : 'var(--bg-elevated, #16181d)',
+              color: detached ? 'var(--accent-light)' : 'var(--text-muted)',
+            }}
+          >
+            {detached ? <Minimize2 size={13} /> : <ExternalLink size={13} />}
+          </button>
+        )}
+        {/* Following means "always show the selected track". Pinning holds the
+            window on one track so picking sounds elsewhere in Beacon can't yank
+            an edit-in-progress away. */}
         <button
           onClick={onToggleFollow}
           data-apollo-follow={following ? '1' : '0'}
@@ -554,6 +580,7 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
             border: `1px solid ${following ? 'var(--accent, #4aa9ff)' : 'var(--border, #262c35)'}`,
           }}
         ><PinGlyph pinned={!following} />{following ? 'FOLLOWING' : 'PINNED'}</button>
+        </>
       }
       onChange={(next: unknown) => {
         onChange(next as { fxMain: unknown[] })
@@ -2112,7 +2139,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [selectedClipId, project.arrangementClips, selectedTrackId])
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [soundPanel, setSoundPanel] = useState<{ x: number; y: number } | null>(null)
-  const [apolloRack, setApolloRack] = useState<{ trackId: string; seed: unknown; follow?: boolean } | null>(null)
+  const [apolloRack, setApolloRack] = useState<{ trackId: string; seed: unknown; follow?: boolean; detached?: boolean } | null>(null)
 
   // Dev console access to the multi-selection (window.__dawSelection)
   useEffect(() => {
@@ -3672,24 +3699,48 @@ export default function AudioEditor(props: AudioEditorProps) {
       {apolloRack?.follow && followTrackId && apolloRack.trackId !== followTrackId && (
         <ApolloFollow trackId={followTrackId} onRetarget={id => setApolloRack({ trackId: id, seed: null, follow: true })} />
       )}
-      {apolloRack && (
-        <ApolloRackWindow
-          trackId={apolloRack.trackId}
-          seed={apolloRack.seed}
-          trackName={project.tracks.find(t => t.id === apolloRack.trackId)?.name ?? 'Track'}
-          following={!!apolloRack.follow}
-          onToggleFollow={() => setApolloRack({ ...apolloRack, follow: !apolloRack.follow })}
-          onChange={next => {
-            const track = projectRef.current.tracks.find(t => t.id === apolloRack.trackId)
-            if (!track) return
-            void import('@/lib/apollo/daw-fx').then(({ applyRackEdit }) => {
-              const eff = applyRackEdit(track.effects, next.fxMain as never)
-              dispatch({ type: 'SET_TRACK_EFFECTS', trackId: apolloRack.trackId, effects: eff })
-            })
-          }}
-          onClose={() => setApolloRack(null)}
-        />
-      )}
+      {apolloRack && (() => {
+        const trackName = project.tracks.find(t => t.id === apolloRack.trackId)?.name ?? 'Track'
+        const rack = (
+          <ApolloRackWindow
+            trackId={apolloRack.trackId}
+            seed={apolloRack.seed}
+            trackName={trackName}
+            following={!!apolloRack.follow}
+            onToggleFollow={() => setApolloRack({ ...apolloRack, follow: !apolloRack.follow })}
+            detached={!!apolloRack.detached}
+            onToggleDetach={() => setApolloRack({ ...apolloRack, detached: !apolloRack.detached })}
+            onChange={next => {
+              const track = projectRef.current.tracks.find(t => t.id === apolloRack.trackId)
+              if (!track) return
+              void import('@/lib/apollo/daw-fx').then(({ applyRackEdit }) => {
+                const eff = applyRackEdit(track.effects, next.fxMain as never)
+                dispatch({ type: 'SET_TRACK_EFFECTS', trackId: apolloRack.trackId, effects: eff })
+              })
+            }}
+            onClose={() => setApolloRack(null)}
+          />
+        )
+        // ⚠️ The SAME element either way. Detaching moves where it is drawn and
+        // nothing else — the patch, the motion recording and the undo history
+        // all live above this and never learn that the panel moved. Rendering a
+        // different tree for the detached case is how a popped-out panel starts
+        // quietly disagreeing with the one it replaced.
+        return apolloRack.detached
+          ? (
+            <PopOut
+              title={`Apollo — ${trackName}`}
+              width={980}
+              height={660}
+              // Closing the OS window puts the rack back rather than closing it
+              // outright: the person shut a window, they did not abandon an edit.
+              onClose={() => setApolloRack(r => (r ? { ...r, detached: false } : r))}
+            >
+              {rack}
+            </PopOut>
+          )
+          : rack
+      })()}
               {view === 'arrangement' && <ArrangementView />}
               {view === 'mixer' && <Mixer />}
             </div>
