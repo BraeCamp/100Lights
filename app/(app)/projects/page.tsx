@@ -543,10 +543,10 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
               {/* Hard navigation (plain <a>): a full load reliably hits the
                   canonical server route, avoiding client-router quirks with the
                   @-prefixed path. Opening a project reloads the editor anyway. */}
-              <a href={cloudHref(row)} draggable={false} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
+              <Link href={cloudHref(row)} draggable={false} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
                 {row.thumbnail ? <img src={row.thumbnail} draggable={false} className="w-full h-full object-cover" alt="" /> : <Film size={16} color="var(--text-secondary)" />}
-              </a>
-              <a href={cloudHref(row)} draggable={false} className="flex-1 min-w-0">
+              </Link>
+              <Link href={cloudHref(row)} draggable={false} className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{row.name}</span>
                   <SourceBadge source="cloud" />
@@ -554,7 +554,7 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
                 <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                   {row.clips} clip{row.clips !== 1 ? 's' : ''} · {row.media} media file{row.media !== 1 ? 's' : ''}
                 </div>
-              </a>
+              </Link>
               <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(row.ts)}</span>
               {isApolloRow(row) && (
                 <button
