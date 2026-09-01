@@ -32,7 +32,7 @@ import { drumTake, chordTake, takeToNotes, describeTake } from '@/lib/voice/pass
 import { detectOnsets, monoOf } from '@/lib/voice/onsets'
 import { combinePresets } from '@/lib/midi-presets'
 import { hearBetter } from '@/lib/voice/hear-better'
-import { resolveLocally, resolveHeard, confidentEnough } from '@/lib/voice/local-resolve'
+import { resolveLocally, resolveHeard, confidentEnough, runsLocally } from '@/lib/voice/local-resolve'
 import type { Heard } from '@/lib/voice/hypotheses'
 import { COMMAND_VOCABULARY, commandHelp } from '@/lib/voice/interpret'
 import { remember, markFailed } from '@/lib/voice/voice-memory'
@@ -71,6 +71,16 @@ const C = {
   textPrimary: '#e8e8e8',
   textMuted: '#7c7c7c',
 } as const
+
+/**
+ * How long the microphone stays deaf AFTER the studio stops speaking.
+ *
+ * Long enough to cover the output buffer and a small room's decay, short enough
+ * that answering straight back still works. Somebody who talks over the
+ * read-back is already covered — the mute is lifted the moment this elapses,
+ * not when they stop.
+ */
+const ECHO_TAIL_MS = 350
 
 export type VoiceMode = 'hold' | 'toggle'
 const MODE_KEY = 'beacon.voice.mode'
@@ -377,10 +387,29 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     if (held) {
       held.setMuted(true)
       setTalking(true)
+      // ⚠️ AND A MOMENT AFTERWARDS. Brae: "add something that makes it so that
+      // the program doesn't hear its own responses."
+      //
+      // Muting for the utterance was already here and is not enough. `onended`
+      // fires when the audio ELEMENT finishes, which is before the sound has
+      // finished leaving the speaker and well before it has finished bouncing
+      // off the room — so unmuting on that edge hands the recogniser the tail
+      // of the studio's own voice, which is exactly the part that sounds like
+      // somebody muttering a command.
+      //
+      // The token is what makes this safe: if another answer begins during the
+      // wait, its own mute wins and this one must not undo it.
+      unmuteToken.current += 1
+      const mine = unmuteToken.current
       speak(text, {
         kind,
         playing: !!engine?.isPlaying,
-        onDone: () => { held.setMuted(false); setTalking(false) },
+        onDone: () => {
+          setTalking(false)
+          window.setTimeout(() => {
+            if (unmuteToken.current === mine) held.setMuted(false)
+          }, ECHO_TAIL_MS)
+        },
       })
     } else {
       setTalking(true)
@@ -392,6 +421,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       })
     }
   }, [engine, listening])
+  /** Guards the unmute against an answer that starts while the last one settles. */
+  const unmuteToken = useRef(0)
   const handle = useRef<SpeechHandle | null>(null)
   /** Set when recording instead of using the browser's recogniser. */
   const recorder = useRef<Recording | null>(null)
@@ -1132,7 +1163,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // Undo needs the editor's history stack, which is not part of the project
     // and cannot be — so it is the one family that does not become reducer
     // actions. Intercepted here rather than pretended at in the executor.
-    if (confidentEnough(local, heardConfidence)) {
+    // ⚠️ With the assistant on, the rules step back — see runsLocally. They were
+    // acting first on anything they felt confident about, so a wrong rule could
+    // not be corrected by the model that was supposed to be in charge. Undo and
+    // redo are on the instant list, so this still fires.
+    const localRuns = runsLocally(local, heardConfidence, assistantMode())
+    if (localRuns) {
       const name = local.calls[0]?.name
       if (name === 'undo' || name === 'redo') {
         const step = name === 'undo' ? undo : redo
@@ -1148,7 +1184,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       }
     }
 
-    if (confidentEnough(local, heardConfidence)) {
+    if (localRuns) {
       const plan = planVoiceCalls(local.calls, project, voiceCtx())
       if (!plan.problem && local.destructive && !confirmed) {
         // Understood perfectly, and still not run: the read-back says exactly
@@ -1496,6 +1532,26 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       setSaid(lastSay || spoke)
     } catch (err) {
       const timedOut = (err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError'
+      // ⚠️ THE RULES ARE THE SAFETY NET, even though they no longer go first.
+      // Standing back from the assistant must not mean a studio that does
+      // nothing when the assistant cannot be reached — before this, "mute the
+      // drums" would simply have failed on a bad connection, which is a much
+      // worse experience than the rule being occasionally wrong.
+      //
+      // It SAYS it used its own reading, because the answer may differ from
+      // what the assistant would have done and silently substituting one for
+      // the other is how somebody stops trusting either.
+      if (confidentEnough(local, heardConfidence) && !local.destructive) {
+        const plan = planVoiceCalls(local.calls, project, voiceCtx())
+        if (!plan.problem && plan.actions.length) {
+          for (const a of plan.actions) runAction(a)
+          lastAcceptedAt.current = Date.now()
+          respond(`${plan.say} (the assistant is unreachable, so I used what I understood myself.)`)
+          markFailed(timedOut ? 'assistant timeout' : 'assistant unreachable')
+          setBusy(false)
+          return
+        }
+      }
       setProblem(timedOut
         ? 'The assistant took too long. Say it again — it usually comes back.'
         : 'Couldn\'t reach the assistant.')
@@ -2229,9 +2285,23 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   //
   // Not on `heard`: that fires on every syllable, and a panel that opens
   // because somebody started talking is a panel nobody can keep closed.
+  // ⚠️ Brae: "the voice control panel has moments where it won't allow me to
+  // close it."
+  //
+  // `question` is a JSX FRAGMENT, built fresh on every render — so as a
+  // dependency it has always changed, this effect ran on every render, and any
+  // render at all while a question or a read-back was on screen re-opened the
+  // panel the instant it was closed. Nothing was wrong with the close button;
+  // it was being undone a frame later.
+  //
+  // The fix is to depend on WHETHER there is a question, not on the markup that
+  // shows it. Now the panel opens when one arrives and stays shut once shut,
+  // until something new actually happens.
+  const hasQuestion = !!(pendingAsk2 || pendingOffer || pendingName || pendingDo
+    || choices || pendingAsk !== null || asking)
   useEffect(() => {
-    if (question || problem || said) setPanelOpen(true)
-  }, [question, problem, said])
+    if (hasQuestion || problem || said) setPanelOpen(true)
+  }, [hasQuestion, problem, said])
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', ...style }}>

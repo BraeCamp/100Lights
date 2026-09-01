@@ -845,6 +845,18 @@ const COMMANDS: VoiceCommand[] = [
       const announced = w.has('time', 'signature', 'meter', 'switch', 'change', 'put', 'make')
         || w.said('over')
       if (!announced) return null
+      // ⚠️ AND THE PAIR HAS TO BE SAID AS A PAIR. Brae: "Change the name of the
+      // item drums 1 to drums 2" changed the TIME SIGNATURE — "change" cleared
+      // the announcement test above, and the 1 and the 2 became 1/2.
+      //
+      // A meter is always adjacent: "three four", "6/8", "5 4". Numbers with
+      // words between them are two different arguments to something else, and
+      // that is true of every sentence this rule was stealing — renaming an
+      // item, moving clip 1 to bar 2, taking take 2 to lane 3.
+      //
+      // Read off the raw sentence, because the tokeniser has already thrown
+      // away what sat between them.
+      if (!/\b\d{1,2}\s*[\/\-]?\s*\d{1,2}\b/.test(w.raw)) return null
       const [num, den] = ns
       if (!(num >= 1 && num <= 32)) return null
       if (![1, 2, 4, 8, 16, 32].includes(den)) return null
@@ -1990,8 +2002,13 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Build or fall away across a part',
     say: ['crescendo the pad', 'diminuendo the guitar', 'make the drums build'],
     match(w, ctx) {
+      // ⚠️ 'fall' is EXACT, not fuzzy. "Call drums 1 the intro" was becoming a
+      // DIMINUENDO, because "call" is one edit from "fall" and has() bends
+      // words. A trigger this short and this ordinary cannot also be a spelling
+      // correction target — the musical word is "diminuendo", and "fall" is a
+      // convenience that must not go looking for near misses.
       const dir = w.has('crescendo', 'build', 'swell') ? 'crescendo'
-        : w.has('diminuendo', 'decrescendo', 'fall') ? 'diminuendo' : null
+        : (w.has('diminuendo', 'decrescendo') || w.all.includes('fall')) ? 'diminuendo' : null
       if (!dir) return null
       // A fade is a VOLUME move over time and already has a command; this is a
       // performance getting harder. Sharing the word would make one of them
@@ -3096,17 +3113,33 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'rename_clip',
     group: 'Arrangement',
     what: 'Rename a clip',
-    say: ['rename the bass 2 clip to intro', 'rename the drums clip to verse'],
+    say: ['rename the bass 2 clip to intro', 'rename the drums clip to verse',
+      'change the name of the item guitar clip to intro'],
     match(w, ctx) {
-      if (!w.has('rename')) return null
-      if (!w.has('clip', 'item')) return null
+      // "Rename X to Y", and also "CHANGE THE NAME OF X TO Y", which is how
+      // Brae said it and which reached no rule at all.
+      const asksToRename = w.has('rename')
+        || (w.has('name') && w.has('change', 'set', 'make', 'call'))
+      if (!asksToRename) return null
       const parts = w.raw.toLowerCase().split(/\s+to\s+/)
       if (parts.length !== 2) return null
       const fresh = parts[1].trim().replace(/[^a-z0-9\s'-]/g, '').trim()
       if (!fresh) return null
-      const said = parts[0].replace(/\b(rename|call|the|clip|item|please)\b/g, ' ').trim()
-      const hit = said ? findByName(said, ctx.tracks) : null
+      const said = parts[0]
+        .replace(/\b(rename|change|set|make|call|the|name|of|clip|item|track|please)\b/g, ' ')
+        .trim()
+      // ⚠️ IT SEARCHED ctx.tracks FOR A CLIP NAME. There is no TRACK called
+      // "Drums 1", so renaming a clip could never resolve and the sentence fell
+      // through to whatever else would take it. Clips are in ctx.clips.
+      const hit = said ? findByName(said, ctx.clips ?? []) : null
       if (!hit || hit.score < 0.6) return null
+      // Saying "clip" or "item" is not required when the name IS a clip's — but
+      // when the same words also name a track, the word decides which was meant
+      // and rename_track owns the sentence without it.
+      if (!w.has('clip', 'item')) {
+        const alsoATrack = findByName(said, ctx.tracks)
+        if (alsoATrack && alsoATrack.score >= hit.score) return null
+      }
       for (const word of w.all) w.markWord(word, 0)
       return {
         calls: [{

@@ -144,3 +144,44 @@ export function confidentEnough(local: LocalResult, heardConfidence: number): bo
 
   return true
 }
+
+
+/**
+ * The commands that must never wait for a model.
+ *
+ * Brae: "When AI mode is enabled, is it still using the rules for the non AI
+ * variant? It shouldn't be doing that, instead letting the AI do the work."
+ *
+ * It was, for everything — the local reading ran first whenever it was
+ * confident, and the assistant never saw the sentence. That is how "change the
+ * name of the item drums 1 to drums 2" became a TIME SIGNATURE with AI mode on:
+ * no model was involved in that decision at all.
+ *
+ * ⚠️ But not everything should go to a model. "Stop" has to stop NOW — a
+ * round-trip is another second of a song playing while somebody waits — and
+ * these are the ones where latency IS the experience and the action is
+ * trivially undone. Everything else, including anything that edits the song,
+ * goes to the assistant when the assistant is on.
+ *
+ * Keep this list SHORT. Every name on it is a sentence the model never gets to
+ * read, which is the shape of the bug above.
+ */
+export const INSTANT_COMMANDS: ReadonlySet<string> = new Set([
+  'transport', 'metronome', 'undo', 'redo',
+])
+
+/**
+ * Should the local reading run, or should this go to the assistant?
+ *
+ * In 'rules' mode the local reading IS the studio and nothing changes. With the
+ * assistant on, the rules step back to the instant commands above.
+ */
+export function runsLocally(
+  local: LocalResult,
+  heardConfidence: number,
+  assistant: 'rules' | 'ask' | 'auto',
+): boolean {
+  if (!confidentEnough(local, heardConfidence)) return false
+  if (assistant === 'rules') return true
+  return local.calls.length > 0 && local.calls.every(c => INSTANT_COMMANDS.has(c.name))
+}
