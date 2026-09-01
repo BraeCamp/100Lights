@@ -50,6 +50,16 @@ export interface ElectronAPI {
   isFullScreen: () => Promise<boolean>
   onFullScreenChanged: (cb: (fullscreen: boolean) => void) => () => void
 
+  /**
+   * Menu items and global shortcuts, arriving as commands.
+   *
+   * ⚠️ One channel for all of them. The menu used to reach the app by running
+   * `window.location.href = ...` inside it, which is a full page load — every
+   * File-menu item silently ended whatever was going on, including a voice
+   * conversation. A command the app can answer with its own router does not.
+   */
+  onMenuCommand: (cb: (msg: { command: string; arg?: unknown }) => void) => () => void
+
   // Beacon Bridge (native AU / VST3 hosting)
   bridgeStatus: () => Promise<BridgeStatus>
   startBridge: () => Promise<BridgeStatus>
@@ -72,6 +82,11 @@ const electronAPI: ElectronAPI = {
     const listener = (_e: Electron.IpcRendererEvent, fullscreen: boolean) => cb(fullscreen)
     ipcRenderer.on('window:fullscreen-changed', listener)
     return () => ipcRenderer.removeListener('window:fullscreen-changed', listener)
+  },
+  onMenuCommand: (cb) => {
+    const listener = (_e: Electron.IpcRendererEvent, msg: { command: string; arg?: unknown }) => cb(msg)
+    ipcRenderer.on('menu:command', listener)
+    return () => ipcRenderer.removeListener('menu:command', listener)
   },
   openModule: (moduleKey) => ipcRenderer.invoke('module:open', moduleKey),
   focusModule: (moduleKey) => ipcRenderer.invoke('module:focus', moduleKey),

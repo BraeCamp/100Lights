@@ -773,6 +773,24 @@ export default function AudioEditor(props: AudioEditorProps) {
   /** Progress text while baking synth tracks to audio; null when not freezing. */
   const [freezing, setFreezing] = useState<string | null>(null)
   const dirtyReadyRef = useRef(false)   // skip the first post-load settle
+  /**
+   * Has anything actually changed since the last successful save?
+   *
+   * Brae: "I don't want to save then leave and have an unsaved file from a
+   * previous edit telling me that I have unsaved changes."
+   *
+   * ⚠️ THE ACT OF LEAVING WAS CAUSING IT. Hiding the tab flushes a snapshot,
+   * and that flush wrote `synced: false` unconditionally — so saving and then
+   * closing the window marked the file unsynced ON THE WAY OUT, and the next
+   * open found an unsynced snapshot and offered to restore an edit that had
+   * already been saved. The debounced write could do the same thing, landing
+   * 1.5 seconds after a save that had just marked the snapshot clean.
+   *
+   * A snapshot still gets written either way — losing the recovery copy would
+   * be a far worse trade — but it is only marked UNSYNCED when there is
+   * genuinely something the server has not got.
+   */
+  const changedSinceSaveRef = useRef(false)
   // Offline sync (Phase C): a pending 3-way merge whose conflicts need resolving.
   const [pendingMerge, setPendingMerge] = useState<{ merged: DawProject; conflicts: MergeConflict[] } | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -863,10 +881,12 @@ export default function AudioEditor(props: AudioEditorProps) {
     // The first run after the restore resolves is the loaded project settling —
     // not a user edit — so don't light the dot for it.
     if (!dirtyReadyRef.current) dirtyReadyRef.current = true
-    else setDawDirty(true)
+    else { setDawDirty(true); changedSinceSaveRef.current = true }
     if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current)
     autosaveTimerRef.current = window.setTimeout(() => {
-      void saveSnapshot(snapshotKey, projectRef.current).catch(() => {})
+      // Unsynced only if the server really is behind. A snapshot written after
+      // a save, for a project nothing has touched since, is the SAVED state.
+      void saveSnapshot(snapshotKey, projectRef.current, { synced: !changedSinceSaveRef.current }).catch(() => {})
       setDawDirty(false)   // recoverable now
     }, 1500)
     return () => { if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current) }
@@ -877,7 +897,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     function flush() {
       if (!restoreResolvedRef.current) return
       if (document.visibilityState === 'hidden') {
-        void saveSnapshot(snapshotKey, projectRef.current).catch(() => {})
+        // ⚠️ This is the one that produced the phantom. Leaving is not editing.
+        void saveSnapshot(snapshotKey, projectRef.current, { synced: !changedSinceSaveRef.current }).catch(() => {})
       }
     }
     document.addEventListener('visibilitychange', flush)
@@ -2354,6 +2375,15 @@ export default function AudioEditor(props: AudioEditorProps) {
         const p = projectRef.current
         const { tracks, dawProject } = collectSnapshot()
         await onSaveRef.current(tracks, { audioMode: props.audioMode, podcastMeta, dawProject })
+        // ⚠️ CANCEL THE WRITE ALREADY IN FLIGHT. A snapshot scheduled a moment
+        // before the save lands a moment after it, and would put the unsynced
+        // marker straight back on a project that has just been saved.
+        if (autosaveTimerRef.current !== null) {
+          window.clearTimeout(autosaveTimerRef.current)
+          autosaveTimerRef.current = null
+        }
+        changedSinceSaveRef.current = false
+        setDawDirty(false)
         void saveSnapshot(props.projectId ?? `unsaved:${props.audioMode ?? 'music'}`, p, { synced: true }).catch(() => {})
         setSaveStatus('saved')
         setSaveError('')
@@ -2460,6 +2490,39 @@ export default function AudioEditor(props: AudioEditorProps) {
     if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
     return true
   }, [rawDispatch])
+
+  // ── What the desktop menu bar and the global shortcuts reach ─────────────
+  //
+  // The menu sends a command; DesktopMenu turns it into this event; the studio
+  // is the only thing that knows how to carry it out. Deliberately an event
+  // rather than a prop chain: the menu is outside the editor and above it, and
+  // threading a callback down from the layout would couple the two for no gain.
+  useEffect(() => {
+    const onMenu = (e: Event) => {
+      const command = (e as CustomEvent<{ command: string }>).detail?.command
+      if (command === 'undo') { doUndo(); return }
+      if (command === 'redo') { doRedo(); return }
+      if (command === 'transport-toggle') {
+        // ⚠️ The STUDIO's transport, not the browser's spacebar handling —
+        // this arrives when 100Lights is not even the focused app.
+        if (engineRef.current?.isPlaying) engineRef.current?.stop()
+        else void engineRef.current?.play()
+        return
+      }
+      if (command === 'save-version') {
+        const name = window.prompt('Name this version — "before the drop"')
+        if (!name?.trim() || !props.projectId) return
+        void fetch(`/api/projects/${props.projectId}/versions`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: name.trim() }),
+        })
+        return
+      }
+    }
+    window.addEventListener('100lights:menu', onMenu)
+    return () => window.removeEventListener('100lights:menu', onMenu)
+  }, [doUndo, doRedo, props.projectId])
+
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {

@@ -1,7 +1,7 @@
-import { app, BrowserWindow, shell, session, ipcMain, desktopCapturer } from 'electron'
+import { app, BrowserWindow, shell, session, ipcMain, desktopCapturer, globalShortcut } from 'electron'
 import path from 'path'
 import log from 'electron-log'
-import { setupMenu } from './menu'
+import { setupMenu, watchWindowsForMenu } from './menu'
 import { setupUpdater } from './updater'
 import { setupIpc } from './ipc'
 import { disposeBridge } from './bridge'
@@ -518,6 +518,76 @@ function setupModuleIpc(): void {
   })
 }
 
+/**
+ * Keys that work when 100Lights is NOT the focused app.
+ *
+ * The one thing a desktop build can do that a browser tab genuinely cannot.
+ * You are reading about a chord voicing in another window; you want to hear the
+ * bar again without going and finding the studio first.
+ *
+ * ⚠️ TOGGLE, NOT PUSH-TO-TALK. Electron's globalShortcut fires on press and has
+ * no key-up event at all, so "hold to talk" cannot be built on it — only
+ * "press to start, press to stop". Naming it push-to-talk and having it behave
+ * like a latch is the kind of small lie people discover mid-sentence.
+ *
+ * ⚠️ And deliberately few. A global shortcut is taken from EVERY application on
+ * the machine — registering something ordinary would break it everywhere else,
+ * which is why these are all behind Cmd+Shift.
+ */
+/**
+ * A project file arriving from outside — double-clicked, or dropped on the dock.
+ *
+ * ⚠️ macOS delivers these through `open-file`, which can fire BEFORE the app is
+ * ready. Queuing is not optional: without it, opening 100Lights by
+ * double-clicking a project silently opens an empty studio instead, which looks
+ * like the file was corrupt.
+ */
+const pendingFiles: string[] = []
+function deliverFile(filePath: string): void {
+  const win = launcherWindow ?? BrowserWindow.getAllWindows()[0]
+  if (!win || win.webContents.isLoading()) { pendingFiles.push(filePath); return }
+  win.webContents.send('menu:command', { command: 'open-file', arg: filePath })
+  if (win.isMinimized()) win.restore()
+  win.focus()
+}
+
+function setupFileOpening(): void {
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault()
+    deliverFile(filePath)
+  })
+  // Windows and Linux pass the path as an argument instead.
+  const fromArgv = process.argv.find(a => a.endsWith('.cfproj'))
+  if (fromArgv) pendingFiles.push(fromArgv)
+}
+
+/** Hand over anything that arrived before there was a window to hand it to. */
+function flushPendingFiles(): void {
+  const queued = pendingFiles.splice(0, pendingFiles.length)
+  for (const f of queued) deliverFile(f)
+}
+
+function setupGlobalShortcuts(): void {
+  const target = () => BrowserWindow.getFocusedWindow() ?? launcherWindow ?? BrowserWindow.getAllWindows()[0]
+  const send = (command: string) => () => target()?.webContents.send('menu:command', { command })
+
+  const shortcuts: Array<[string, () => void]> = [
+    // Play/stop from anywhere.
+    ['CommandOrControl+Shift+Space', send('transport-toggle')],
+    // Start or stop Light listening from anywhere.
+    ['CommandOrControl+Shift+L', send('voice-toggle')],
+  ]
+  for (const [accel, fn] of shortcuts) {
+    // ⚠️ register() returns false when another app already owns the
+    // combination. Silently failing there would look like a broken feature, so
+    // it is logged — the person can change it, but only if they know.
+    if (!globalShortcut.register(accel, fn)) {
+      log.warn(`Global shortcut ${accel} is already taken by another app — not registered`)
+    }
+  }
+  app.on('will-quit', () => globalShortcut.unregisterAll())
+}
+
 // Single-instance enforcement — second launch focuses the launcher
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -530,12 +600,21 @@ if (!gotLock) {
     }
   })
 
+  // ⚠️ Registered OUTSIDE whenReady: macOS can deliver open-file before the app
+  // is ready, and a listener attached afterwards never hears it.
+  setupFileOpening()
+
   app.whenReady().then(async () => {
     setupIpc()
     setupModuleIpc()
     await createLauncherWindow()
     if (launcherWindow) {
       setupMenu(launcherWindow, isDev)
+      // The Window menu lists panels that come and go, so it cannot be built
+      // once at startup and left alone.
+      watchWindowsForMenu(launcherWindow, isDev)
+      setupGlobalShortcuts()
+      flushPendingFiles()
       setupUpdater(isDev)
     }
   })

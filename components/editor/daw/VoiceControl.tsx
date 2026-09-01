@@ -1939,6 +1939,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     void run(words, 1)
   }, [run])
 
+
+
   /**
    * What to do with a finished take.
    *
@@ -2078,6 +2080,28 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     setListening(false)
     continuousRef.current = false
   }, [heardSentence])
+
+  /**
+   * The global shortcut, and the menu bar, reaching Light.
+   *
+   * ⚠️ A TOGGLE, because that is what the platform can actually do. Electron's
+   * globalShortcut fires on key DOWN and reports nothing on release, so a
+   * hold-to-talk key cannot be built on it. Calling it push-to-talk and having
+   * it latch is a small lie somebody discovers mid-sentence, so it presses to
+   * start and presses again to stop.
+   *
+   * Works while 100Lights is not the focused app, which is the whole point:
+   * the studio is behind a browser window and you want to say something to it.
+   */
+  useEffect(() => {
+    const onMenu = (e: Event) => {
+      if ((e as CustomEvent<{ command: string }>).detail?.command !== 'voice-toggle') return
+      if (listening) finish()
+      else void start()
+    }
+    window.addEventListener('100lights:menu', onMenu)
+    return () => window.removeEventListener('100lights:menu', onMenu)
+  }, [listening, start, finish])
 
   // The recorder can finish a take on its own when talking stops; keep the ref
   // pointing at the current handler so it never calls a stale one.
