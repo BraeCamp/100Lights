@@ -161,7 +161,22 @@ export function apolloStopAll(ctx: BaseAudioContext): void {
     try {
       m.engine.clearScheduled()
       m.engine.panic()
-      m.engine.node?.disconnect()
+      // ⚠️ release(), not just node.disconnect().
+      //
+      // The transport rebuilds these on the next play — including on every pass
+      // around a LOOP, via _killAllSources — so a stop that only disconnects
+      // leaves a fully live engine behind each time. And they were never
+      // collected: wireResumeWatchdog() had added a closure over the engine to
+      // `document` and to the shared AudioContext and never removed it, so
+      // every engine ever built stayed reachable, with its worklet processor
+      // still running on the audio thread.
+      //
+      // Measured before this change, 7-track song, a few minutes of ordinary
+      // play/stop and looping: 544 worklets built, 544 still reachable after a
+      // forced GC. The JS heap was flat throughout, because an
+      // AudioWorkletProcessor does not live in it — which is why this looked
+      // like "it just gets slower" with nothing to point at.
+      m.engine.release()
     } catch { /* already gone */ }
   }
   set.clear()

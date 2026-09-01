@@ -97,6 +97,8 @@ export class ApolloEngine extends EventTarget {
   ready = false
 
   private _flushId = 0
+  /** True only when init() created the AudioContext itself — see dispose(). */
+  private ownsCtx = false
 
   /**
    * Wait until everything already posted has actually REACHED the processor.
@@ -149,6 +151,7 @@ export class ApolloEngine extends EventTarget {
     const external = !!opts?.ctx
     const ctx = (opts?.ctx as AudioContext) || new AudioContext({ latencyHint: 'interactive' })
     this.ctx = ctx
+    this.ownsCtx = !external
     await ctx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const node = new AudioWorkletNode(ctx, 'apollo-engine', {
       numberOfInputs: opts?.fxInput ? 2 : 0, numberOfOutputs: 1, outputChannelCount: [2],
@@ -233,6 +236,22 @@ export class ApolloEngine extends EventTarget {
    * — the "audio just cuts out" report. Auto-resume whenever the tab is
    * visible and the context leaves 'running'. */
   private watchdogWired = false
+  /**
+   * Listener refs, so the watchdog can be UNWIRED.
+   *
+   * ⚠️ This is what made every engine immortal. `kick` closes over `this`, and
+   * it was added to two things that outlive any one engine — the DAW's shared
+   * AudioContext and `document` — and never removed. So `document` held a
+   * strong reference to every ApolloEngine ever built, each holding its
+   * AudioWorkletNode, whose processor keeps running on the audio thread.
+   *
+   * Measured on a 7-track song: 544 of 544 worklet nodes still reachable after
+   * a forced GC, after only a few minutes of ordinary play/stop and looping.
+   * It never showed up in the JS heap because an AudioWorkletProcessor does
+   * not live there.
+   */
+  private watchdogTargets: Array<{ target: EventTarget; type: string; fn: () => void }> = []
+
   wireResumeWatchdog(): void {
     if (this.watchdogWired || !this.ctx || typeof document === 'undefined') return
     this.watchdogWired = true
@@ -241,6 +260,59 @@ export class ApolloEngine extends EventTarget {
     }
     this.ctx.addEventListener('statechange', kick)
     document.addEventListener('visibilitychange', kick)
+    this.watchdogTargets = [
+      { target: this.ctx, type: 'statechange', fn: kick },
+      { target: document, type: 'visibilitychange', fn: kick },
+    ]
+  }
+
+  private unwireResumeWatchdog(): void {
+    for (const { target, type, fn } of this.watchdogTargets) {
+      try { target.removeEventListener(type, fn) } catch { /* target already gone */ }
+    }
+    this.watchdogTargets = []
+    this.watchdogWired = false
+  }
+
+  /**
+   * Let this engine go, WITHOUT touching the context it was hosted in.
+   *
+   * The DAW hands every Apollo track a destination on its own shared
+   * AudioContext and rebuilds the engines whenever the transport stops — which
+   * includes every pass around a loop. dispose() cannot be used for that: it
+   * closes the context, and in DAW-instrument mode the context is the whole
+   * studio's. So teardown that frees the engine and nothing else lives here,
+   * and apolloStopAll() calls it.
+   *
+   * Order matters. The port keeps the node alive while it has a listener, so
+   * the handler goes first and the port is closed after; disconnecting a node
+   * whose port is still open and listening does not free it.
+   */
+  release(): void {
+    this.unwireResumeWatchdog()
+    const node = this.node
+    if (node) {
+      // ⚠️ THE line that matters. engine.js returns true from process() on every
+      // path, and a processor that keeps returning true is kept alive by the
+      // browser for ever: disconnecting does not end it, and neither does
+      // dropping every reference to the node. Since the DAW rebuilds an engine
+      // per Apollo track on every stop — and every loop wraparound — the
+      // discarded ones accumulated and went on rendering. Measured at 530 live
+      // processors after a few minutes of play/stop and looping.
+      //
+      // Posted BEFORE the port is closed, or it never arrives.
+      try { node.port.postMessage({ type: 'shutdown' }) } catch { /* port already gone */ }
+      try { node.onprocessorerror = null } catch { /* ok */ }
+      try { node.port.onmessage = null } catch { /* ok */ }
+      try { node.port.close() } catch { /* already closed */ }
+      try { node.disconnect() } catch { /* already disconnected */ }
+    }
+    try { this.analyser?.disconnect() } catch { /* ok */ }
+    try { this.master?.disconnect() } catch { /* ok */ }
+    if (this.pvTimer) { clearTimeout(this.pvTimer); this.pvTimer = null }
+    this.node = null; this.analyser = null; this.master = null
+    this.ready = false
+    this.tablesSent.clear(); this.spectralSent.clear()
   }
 
   private post(msg: unknown, transfer?: Transferable[]): void {
@@ -430,10 +502,15 @@ export class ApolloEngine extends EventTarget {
   clearScheduled(): void { this.post({ type: 'clearScheduled' }) }
 
   dispose(): void {
-    this.node?.disconnect()
-    void this.ctx?.close()
-    this.ctx = null; this.node = null; this.ready = false
-    this.tablesSent.clear(); this.spectralSent.clear()
+    const ctx = this.ctx
+    this.release()
+    // ⚠️ Only close a context this engine MADE. In DAW-instrument mode the
+    // context belongs to the studio, and closing it would take the whole mix
+    // down — which is why the stop path could never call dispose() and had to
+    // half-tear-down by hand instead.
+    if (ctx && this.ownsCtx) void ctx.close()
+    this.ctx = null
+    this.ownsCtx = false
   }
 
   // Offline render: replay full state into an OfflineAudioContext instance of

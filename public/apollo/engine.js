@@ -2474,6 +2474,24 @@ class ApolloProcessor extends AudioWorkletProcessor {
       case 'clearScheduled':
         if (this.absEvents) this.absEvents.length = 0
         break
+      // ── Let this processor actually END ──────────────────────────────────
+      //
+      // ⚠️ process() returns true on EVERY path, and a worklet processor that
+      // keeps returning true is kept alive by the browser for ever — being
+      // disconnected does not end it, and neither does dropping every JS
+      // reference to its node. The DAW rebuilds an engine per Apollo track on
+      // every transport stop, which includes every pass around a loop, so the
+      // discarded ones simply accumulated: measured at 530 live apollo-engine
+      // processors after a few minutes of ordinary play/stop and looping on a
+      // seven-track song, all of them still rendering audio every quantum.
+      //
+      // The JS heap stayed flat the whole time, because a processor does not
+      // live in it. That is why this read as "everything just gets slower" with
+      // nothing to point at, and why it never recovered on going back to the
+      // start of the song.
+      case 'shutdown':
+        this.dead = true
+        break
     }
   }
 
@@ -3292,6 +3310,10 @@ class ApolloProcessor extends AudioWorkletProcessor {
   }
 
   process(inputs, outputs) {
+    // Released by the host: returning false ends this processor permanently and
+    // lets the node and its DSP be reclaimed. Must come before anything else —
+    // the point is to stop doing work.
+    if (this.dead) return false
     // Crash armor: an uncaught exception in an AudioWorklet's process() kills
     // the processor PERMANENTLY (silent until reload). Any edge case — a stale
     // autosaved patch shape, a corrupt FX state — must degrade to one silent
