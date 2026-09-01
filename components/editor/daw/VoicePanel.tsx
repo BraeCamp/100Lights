@@ -25,7 +25,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
   X, Mic, ListChecks, GripVertical, Sparkles, Lock, Volume2, Gauge, Keyboard, Waves,
-  Settings, BookOpen, ChevronLeft,
+  Settings, BookOpen, ChevronLeft, Video,
 } from 'lucide-react'
 import { commandHelp } from '@/lib/voice/interpret'
 import type { AssistantMode } from '@/lib/voice/speak'
@@ -97,6 +97,9 @@ export interface VoicePanelProps {
   initialTab?: 'talk' | 'settings' | 'help'
   /** Open the library window — everything Light can do. */
   onLibrary: () => void
+  /** Big on-screen captions of what was said, for screen recordings. */
+  caption: boolean
+  onCaption: (on: boolean) => void
   /**
    * What the microphone actually turned out to be.
    *
@@ -465,7 +468,7 @@ function Segmented<T extends string>({ value, options, onChange, C, disabled }: 
 export default function VoicePanel({
   listening, continuous, level, hud,
   talking = false, saying = '', reply = '', problem = '', question,
-  onHud, onClose, onLibrary, colors: C,
+  onHud, onClose, onLibrary, caption, onCaption, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
   initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
@@ -919,6 +922,19 @@ export default function VoicePanel({
                 <BookOpen size={11} />
                 What you can say
               </button>
+            </Group>
+
+            <Group C={C} icon={<Video size={11} />} title="Recording">
+              <Toggle
+                C={C}
+                on={caption}
+                onChange={onCaption}
+                label="Show what I say, big"
+                note={'Puts what you said and what the studio did on screen in large type, '
+                  + 'and clears them a few seconds later. Meant for screen recordings — on a '
+                  + 'phone the card in the corner is too small to read, and a voice demo '
+                  + 'where you cannot see the words is a studio changing for no visible reason.'}
+              />
             </Group>
 
             {/* ── How you talk to it ───────────────────────────────────────── */}

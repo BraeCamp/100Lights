@@ -55,6 +55,7 @@ import {
 } from '@/lib/voice/calibrate'
 import VoicePanel from './VoicePanel'
 import VoiceLibrary from './VoiceLibrary'
+import VoiceCaption, { readVoiceCaption, writeVoiceCaption } from './VoiceCaption'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
@@ -211,6 +212,18 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   /** The library of everything Light can do — its own window, not a view in
    *  the card. See VoiceLibrary.tsx for why. */
   const [libraryOpen, setLibraryOpen] = useState(false)
+  /** Big on-screen captions of what was said — a recording aid, off by
+   *  default. See VoiceCaption.tsx for why it is not a feature. */
+  const [caption, setCaption] = useState(false)
+  /** The sentence AS SPOKEN, for the caption.
+   *
+   *  ⚠️ Not `heard`, which is the name-repaired version: "make the pad
+   *  brighter" becomes "make Pad brighter" once hearBetter has matched the
+   *  track name. That is the right thing for the studio to act on and the
+   *  wrong thing to put under somebody's face in a video — a subtitle that
+   *  does not match what was said reads as a transcription error, in a demo
+   *  whose whole point is that it heard correctly. */
+  const [spokenRaw, setSpokenRaw] = useState('')
   const [hud, setHudState] = useState(false)
   /** What the microphone turned out to be, for the panel and for diagnosing a
    *  device that cannot record and monitor at the same time. */
@@ -414,6 +427,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const ear = preferredTranscriber()
     setEarState(ear)
     setEnterRuns(readVoiceEnter())
+    setCaption(readVoiceCaption())
   }, [])
 
   /** The last thing the microphone reported, for the planners that need more
@@ -772,6 +786,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // Kept for the planners: a typed command clears it, so a beat can never be
     // built from the timings of a previous, unrelated sentence.
     heardRef.current = heard
+    setSpokenRaw(spoken)
     // ── Was this meant for the studio at all? ───────────────────────────────
     //
     // Brae: "The 'say light first' thing needs to go. It isn't working for me."
@@ -2270,6 +2285,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         }}
       ><Settings2 size={11} /></button>
 
+      {caption && (
+        <VoiceCaption
+          saying={spokenRaw || heard}
+          reply={said}
+          problem={problem}
+          listening={listening}
+        />
+      )}
+
       {libraryOpen && (
         <VoiceLibrary
           onClose={() => setLibraryOpen(false)}
@@ -2342,6 +2366,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             setVoiceSensitivity(v)
           }}
           onLibrary={() => setLibraryOpen(true)}
+          caption={caption}
+          onCaption={on => { setCaption(on); writeVoiceCaption(on) }}
           onClose={() => setPanelOpen(false)}
           colors={{
             bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
