@@ -285,22 +285,13 @@ function Wave({ level, talking, listening, C }: {
     buf.push(Math.max(0, Math.min(1, level)))
     while (buf.length > BARS) buf.shift()
 
-    // The studio's turn: a travelling wave, plainly generated.
-    if (talking) {
-      phase.current += 0.35
-      g.strokeStyle = C.accent
-      g.lineWidth = 1.5
-      g.beginPath()
-      for (let x = 0; x <= w; x += 2) {
-        const t = x / w
-        const envelope = Math.sin(Math.PI * t)
-        const y = mid + Math.sin(t * 14 + phase.current) * envelope * (h * 0.36)
-        if (x === 0) g.moveTo(x, y)
-        else g.lineTo(x, y)
-      }
-      g.stroke()
-      return
-    }
+    // ⚠️ Handled by the animation loop below, which is the whole point: this
+    // effect only re-runs when level/talking/listening/C change, and while the
+    // studio is speaking NONE of them do. The travelling wave advanced its
+    // phase exactly once and then sat there — a single frozen frame, which is
+    // what Brae saw as "a barely visible black static wave". It was not dim so
+    // much as stopped.
+    if (talking) return
 
     // Your turn: the real levels, warm, mirrored around the centre line.
     const WARM = '#e8934a'
@@ -327,6 +318,89 @@ function Wave({ level, talking, listening, C }: {
       g.stroke()
     }
   }, [level, talking, listening, C])
+
+  /**
+   * The studio's own voice, drawn while it speaks.
+   *
+   * ⚠️ A real animation loop, not a redraw that happens to be triggered by
+   * something else changing. Nothing about the studio talking changes any React
+   * state — that is the point of it being a read-back — so there is nothing to
+   * re-render on and the drawing has to drive itself.
+   *
+   * Synthesised rather than analysed, deliberately and consistently: the studio
+   * speaks through an <audio> element for its own voice and through the
+   * browser's speechSynthesis when that is unavailable, and the second of those
+   * exposes no audio node at all. A meter that is real half the time and
+   * invented the other half is worse than one that is honestly a voice-shaped
+   * animation both times.
+   */
+  useEffect(() => {
+    const el = canvas.current
+    if (!talking || !el) return
+    let raf = 0
+    const draw = () => {
+      const w = el.clientWidth, h = el.clientHeight
+      const g = el.getContext('2d')
+      if (!g || !w || !h) { raf = requestAnimationFrame(draw); return }
+      const dpr = Math.min(2, window.devicePixelRatio || 1)
+      if (el.width !== w * dpr || el.height !== h * dpr) { el.width = w * dpr; el.height = h * dpr }
+      g.setTransform(dpr, 0, 0, dpr, 0, 0)
+      g.clearRect(0, 0, w, h)
+      const mid = h / 2
+      phase.current += 0.13
+
+      // Three bands at unrelated speeds, so it reads as speech rather than as a
+      // sine wave — a single frequency looks like a test tone, which is exactly
+      // what it would be.
+      const bands = [
+        { k: 11, a: 0.34, s: 1.00 },
+        { k: 19, a: 0.20, s: -1.7 },
+        { k: 5,  a: 0.24, s: 0.55 },
+      ]
+      // A slow swell so it breathes between phrases instead of running flat.
+      const breath = 0.72 + 0.28 * Math.sin(phase.current * 0.7)
+
+      const shape = (t: number) => {
+        // Tapered at both ends, so it sits in the card rather than colliding
+        // with the edges.
+        const envelope = Math.sin(Math.PI * t) ** 0.8
+        let v = 0
+        for (const b of bands) v += Math.sin(t * b.k + phase.current * b.s) * b.a
+        return v * envelope * breath
+      }
+
+      // Filled body first — a 1.5px stroke on a dark card is close to invisible,
+      // which is the other half of what was wrong.
+      g.beginPath()
+      g.moveTo(0, mid)
+      for (let x = 0; x <= w; x += 2) g.lineTo(x, mid + shape(x / w) * (h * 0.42))
+      for (let x = w; x >= 0; x -= 2) g.lineTo(x, mid - shape(x / w) * (h * 0.42))
+      g.closePath()
+      g.globalAlpha = 0.22
+      g.fillStyle = C.accent
+      g.fill()
+
+      g.globalAlpha = 1
+      g.strokeStyle = C.accent
+      g.lineWidth = 2
+      g.lineJoin = 'round'
+      // A soft glow, so it is legible on any card colour without needing to
+      // know which one it is.
+      g.shadowColor = C.accent
+      g.shadowBlur = 6
+      g.beginPath()
+      for (let x = 0; x <= w; x += 2) {
+        const y = mid + shape(x / w) * (h * 0.42)
+        if (x === 0) g.moveTo(x, y); else g.lineTo(x, y)
+      }
+      g.stroke()
+      g.shadowBlur = 0
+
+      raf = requestAnimationFrame(draw)
+    }
+    raf = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(raf)
+  }, [talking, C])
 
   return (
     <canvas

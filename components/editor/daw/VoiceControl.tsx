@@ -107,6 +107,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const router = useRouter()
   const [listening, setListening] = useState(false)
   const [busy, setBusy] = useState(false)
+  /** `busy` for the callbacks — a take that lands mid-command reads the ref,
+   *  not the value captured when its listener was built. */
+  const busyRef = useRef(false)
+  useEffect(() => { busyRef.current = busy }, [busy])
   const [heard, setHeard] = useState('')
   const [said, setSaid] = useState('')
   const [problem, setProblem] = useState('')
@@ -371,7 +375,18 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     kind: 'report' | 'question' | 'problem' = 'report',
   ) => {
     if (kind === 'problem') setProblem(text)
-    else setSaid(text)
+    else {
+      setSaid(text)
+      // ⚠️ Brae: "it sometimes says 'I didn't catch that' then does what I
+      // wanted, which means that it did catch it."
+      //
+      // It did. A failure and a success could sit on screen together, because
+      // answering only ever wrote to `said` and never cleared `problem` — so a
+      // stale "didn't catch that", usually from a take of room noise while the
+      // real command was still with the assistant, stayed put underneath the
+      // answer. Two states at once, and the wrong one read first.
+      setProblem('')
+    }
     // When the studio last spoke. Anything pointed at AFTER this is newer than
     // the conversation, which is what lets a click outrank a sentence.
     lastReplyAt.current = Date.now()
@@ -1005,7 +1020,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // that" — so the card said it had failed while the question it was
       // waiting on sat right there, still answerable. Nothing was wrong; it
       // just looked like everything was.
-      if (!askingRef.current) setProblem('I didn\'t catch that.')
+      // ⚠️ Nor while a command is still being worked on. With the microphone
+      // held open, the pause AFTER speaking is a take of its own — room noise,
+      // a breath — and it would arrive empty and report failure while the
+      // sentence before it was still with the assistant. The command then
+      // succeeded, on top of an error about nothing.
+      if (!askingRef.current && !busyRef.current) setProblem('I didn\'t catch that.')
       return
     }
 
@@ -1552,7 +1572,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             calls: [], asked: reply,
           })
           setAsking(reply)
-          setShowType(true)
+          // ⚠️ NO LONGER OPENS THE TYPING BOX. Brae: "'Type' needs to stop
+          // opening on its own."
+          //
+          // It opened every time the assistant asked anything back, which is
+          // often — and answering a spoken question by voice is the whole point
+          // of a voice control. The question is on screen and the microphone is
+          // still open; anybody who would rather type can press the button. The
+          // one place it still opens itself is a failure that explicitly says
+          // typing is the way forward, where not opening it would be telling
+          // somebody what to do and making them go and find it.
           return
         }
 
