@@ -163,6 +163,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // A sentence the studio could make nothing of, kept in case the next one is
   // the rest of it. See lib/voice/stitch.ts.
   const heldFragment = useRef<{ text: string; at: number } | null>(null)
+  /** The assistant refused for billing. See the branch that reads it. */
+  const outOfLumens = useRef(false)
 
   const projectRef = useRef(project)
   const selectedTrackIdRef = useRef(selectedTrackId)
@@ -1509,6 +1511,28 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
 
+    // ⚠️ SAY SO, AND STOP. Brae: "It should inform me and not work instead of
+    // just running off of the browser version."
+    //
+    // Once the assistant has refused for billing it will refuse every time, and
+    // the sentences that reach this line are exactly the ones the built-in
+    // commands could not read. Going quiet here left the simple commands still
+    // working and everything else doing nothing, which reads as the studio
+    // getting worse for no stated reason rather than as an account that needs
+    // topping up. Better to be told once per sentence than to be left guessing.
+    //
+    // Cleared by the next assistant turn that succeeds, so topping up or fixing
+    // the account recovers on its own with nothing to dismiss.
+    if (outOfLumens.current) {
+      setBusy(false)
+      respond(
+        `I'm out of ${LUMENS_NAME}, so I can't work that one out. `
+        + `The built-in commands still work — top up to get the rest back.`,
+        'problem',
+      )
+      return
+    }
+
     if (!confirmed && !aiAutoRef.current) {
       setBusy(false)
       setPendingAsk(text)
@@ -1605,6 +1629,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           // there. The local resolver still handles the common commands either
           // way, so this is a partial loss, not a dead feature.
           const signedOut = res.status === 401 || res.status === 404
+          // Remembered, so the NEXT sentence is answered honestly instead of
+          // quietly falling through to the built-in commands.
+          if (e.needCredits) outOfLumens.current = true
           setProblem(
             e.needCredits ? `Out of ${LUMENS_NAME}.`
               : signedOut ? 'Sign in to use the assistant. Simple commands still work without it.'
@@ -1612,6 +1639,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           markFailed(e.error || `http ${res.status}`)
           return
         }
+        // A turn got through, so whatever was wrong with the account is not
+        // wrong any more.
+        outOfLumens.current = false
         const data = await res.json() as {
           message?: string; actions?: (VoiceCall & { id?: string })[]
           credits?: number; balance?: number; stop?: string; raw?: unknown[]

@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server'
-import { getCredits, CREDITS_ENABLED, FREE_TRANSCRIBE_SECONDS } from '@/lib/credits'
+import { getCredits, ensureOwnerCredits, CREDITS_ENABLED, FREE_TRANSCRIBE_SECONDS } from '@/lib/credits'
+import { isOwnerAccount } from '@/lib/subscription'
 import { isAdmin } from '@/lib/admin-auth'
 
 /** The host and database name the server is actually connected to — never the
@@ -17,6 +18,10 @@ function dbHost(): string {
 export async function GET() {
   const { userId } = await auth()
   if (!userId) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  // ⚠️ Before reading, not after: the owner reading 0 in a database that has
+  // never seen their grant is the bug being fixed, and the fix has to happen
+  // where the number is fetched or the screen still says zero.
+  if (await isOwnerAccount(userId)) await ensureOwnerCredits(userId)
   const c = await getCredits(userId)
   return Response.json({
     balance: c.balance,

@@ -144,6 +144,31 @@ export async function getCredits(userId: string): Promise<CreditState> {
   }
 }
 
+/**
+ * The owner's own Lumens, in whatever database is answering.
+ *
+ * ⚠️ Brae: "It now says that I have 0 Lumens... Have I been using 0 Lumens this
+ * whole time?"
+ *
+ * The grant existed — 1,250,000 on braedancampbell@gmail.com — but a grant is a
+ * ROW, and a row belongs to one database. Read from any other one it is simply
+ * not there, and a missing row reads as an empty account: the grant succeeds,
+ * the read succeeds, and the two disagree with nothing to point at.
+ *
+ * Being the owner is a fact about who signed in, not a row, so it heals itself:
+ * the first read in a database that has never seen this account provisions it.
+ * claimGrant makes that exactly-once, so it cannot become a top-up on every
+ * page load.
+ */
+export async function ensureOwnerCredits(userId: string): Promise<void> {
+  const c = await getCredits(userId)
+  // Only when the balance was genuinely READ and is genuinely short. A failed
+  // read must never trigger a grant — that is how duplicates get written.
+  if (!c.ok || c.balance >= CREDIT_TIERS.pro.monthlyCredits) return
+  if (!(await claimGrant(`owner-provision:${userId}`))) return
+  await grantCredits(userId, CREDIT_TIERS.pro.monthlyCredits, 'owner provisioning — highest tier')
+}
+
 /** Add credits (a purchase/top-up or an admin grant). */
 export async function grantCredits(userId: string, amount: number, reason: string): Promise<void> {
   await ensure()
