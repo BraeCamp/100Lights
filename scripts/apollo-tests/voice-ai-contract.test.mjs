@@ -117,6 +117,7 @@ const CALLS = {
   strip_back: { keep: ['drums'] },
   chord_inversion: { target: 'pad clip', direction: 'up' },
   modulate: { semitones: 2 },
+  show_view: { view: 'devices', target: 'Bass' },
   undo: {},
   redo: {},
 }

@@ -62,6 +62,13 @@ export interface LightStudio {
   setSelectedClipIds?: DawContextValue['setSelectedClipIds']
   setSelectedClipId?: DawContextValue['setSelectedClipId']
   setSelectedTrackId?: DawContextValue['setSelectedTrackId']
+  // ── The workspace, not the song ──────────────────────────────────────────
+  // Brae: "Give Light control over changing visuals, like changing
+  // customization options, opening lanes and piano rolls and sequencers."
+  // The editor already publishes these; they were simply never named here, so
+  // nothing outside the editor could open anything.
+  setShowPads?: DawContextValue['setShowPads']
+  setApolloRack?: DawContextValue['setApolloRack']
 }
 
 export function useLight(): LightStudio {
@@ -95,6 +102,8 @@ export function useLight(): LightStudio {
       setExpandedPianoRollClipId: undefined,
       setSelectedClipIds: undefined,
       setSelectedClipId: undefined,
+      setShowPads: undefined,
+      setApolloRack: undefined,
       setSelectedTrackId: undefined,
     }
   }, [daw])

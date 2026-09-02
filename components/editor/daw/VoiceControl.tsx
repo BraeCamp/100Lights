@@ -102,12 +102,17 @@ export function readVoiceEnter(): boolean {
 function writeVoiceMode(m: VoiceMode) { try { localStorage.setItem(MODE_KEY, m) } catch { /* private mode */ } }
 function writeVoiceEnter(on: boolean) { try { localStorage.setItem(ENTER_KEY, on ? 'on' : 'off') } catch { /* private mode */ } }
 
+/** What it says when an answer is taking a moment. Rotated rather than random
+ *  so the same command twice does not feel like two different studios. */
+const WORKING = ['Working on it.', 'Give me a moment.', 'Of course — one moment.']
+
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
   const {
     inStudio,
     project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId,
     metronome, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
     setSelectedClipIds, setSelectedClipId, setSelectedTrackId,
+    setShowPads, setApolloRack,
   } = useLight()
   const router = useRouter()
   const [listening, setListening] = useState(false)
@@ -115,6 +120,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   /** `busy` for the callbacks — a take that lands mid-command reads the ref,
    *  not the value captured when its listener was built. */
   const busyRef = useRef(false)
+  /** Guards the "working on it" line against the answer that beat it. */
+  const ackToken = useRef(0)
   useEffect(() => { busyRef.current = busy }, [busy])
   const [heard, setHeard] = useState('')
   const [said, setSaid] = useState('')
@@ -710,6 +717,32 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // for the same reason: nothing about it belongs in the saved document.
     if (act.type === 'METRONOME') { setMetronome?.((act as { on?: boolean }).on !== false); return }
 
+    // ── THE WORKSPACE ─────────────────────────────────────────────────────
+    //
+    // Brae: "Give Light control over changing visuals, like changing
+    // customization options, opening lanes and piano rolls and sequencers."
+    //
+    // Studio state, like the transport and the click: none of it belongs in the
+    // saved document, so none of it is a reducer action. Opening an editor is
+    // also the one kind of command that cannot go wrong — nothing is changed,
+    // so nothing needs undoing.
+    if (act.type === 'VIEW_ACTION') {
+      const v = act as unknown as { view: string; clipId?: string; trackId?: string; open?: boolean }
+      const open = v.open !== false
+      if (v.view === 'pads') setShowPads?.(open)
+      else if (v.view === 'pianoroll') setExpandedPianoRollClipId?.(open ? (v.clipId ?? null) : null)
+      else if (v.view === 'sequencer') setExpandedStepSeqClipId?.(open ? (v.clipId ?? null) : null)
+      else if (v.view === 'devices') {
+        if (open && v.trackId) {
+          // Select it too: the rack follows the selection, so opening it on a
+          // track nobody has selected would show somebody else's devices.
+          setSelectedTrackId?.(v.trackId)
+          setApolloRack?.({ trackId: v.trackId, seed: null, follow: true })
+        } else setApolloRack?.(null)
+      }
+      return
+    }
+
     // ⚠️ THE PROJECT AS A DOCUMENT — opening, versioning, going back.
     //
     // Asynchronous, which is why it cannot be a reducer action and is not one:
@@ -864,7 +897,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
     dispatch(act as never)
-  }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId, runBalance, undo, redo])
+  }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
+      setShowPads, setApolloRack, setSelectedTrackId, runBalance, undo, redo])
 
   /**
    * Record a spoken take: count in, listen, and write down what was said.
@@ -1061,7 +1095,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // a breath — and it would arrive empty and report failure while the
       // sentence before it was still with the assistant. The command then
       // succeeded, on top of an error about nothing.
-      if (!askingRef.current && !busyRef.current) setProblem('I didn\'t catch that.')
+      //
+      // ⚠️ AND NOT IN THE SECONDS AFTER ONE LANDED. Brae: "it has a habit of
+      // saying 'I didn't catch that', then doing what I wanted. Is it deciding
+      // that it didn't catch it before it has finished processing?"
+      //
+      // It was, in the one window the two flags above do not cover. Speaking
+      // ends before `busy` begins — the take has to be transcribed first — so
+      // the pause right after a sentence arrives as its own empty take while
+      // the real one is still in the post. Both statements were then true at
+      // once and the failure was on screen first, being the one that had
+      // nothing to wait for.
+      //
+      // Four seconds of quiet after something was accepted belongs to that
+      // command, not to a new one that failed.
+      const settling = Date.now() - lastAcceptedAt.current < 4000
+      if (!askingRef.current && !busyRef.current && !settling) setProblem('I didn\'t catch that.')
       return
     }
 
@@ -1676,6 +1725,25 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const TURN_MS = 30_000
     const LOOP_MS = 75_000
     const loopStartedAt = Date.now()
+
+    // ── Say something while it thinks ───────────────────────────────────────
+    //
+    // Brae: "If it is processing, it can just say 'Processing' or 'Give me a
+    // moment to do that' or 'Of course'."
+    //
+    // ⚠️ ONLY IF IT IS ACTUALLY SLOW. Announcing every command would put a
+    // second sentence in front of every answer, including the ones that arrive
+    // before anybody could have wondered. A second and a bit is about where a
+    // pause stops reading as speed and starts reading as nothing happening.
+    //
+    // No timer to clear: the token makes a stale acknowledgement impossible,
+    // and `busy` going false is the honest test of whether there is still
+    // anything to wait for — so an answer that beat the clock silences it.
+    const ackAt = ++ackToken.current
+    window.setTimeout(() => {
+      if (ackToken.current === ackAt && busyRef.current) respond(WORKING[ackAt % WORKING.length])
+    }, 1200)
+
     traceStart(text)
     const msgs: { role: 'user' | 'assistant'; content: unknown }[] =
       [...history.current, { role: 'user' as const, content: text }]

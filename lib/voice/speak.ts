@@ -195,7 +195,16 @@ export interface SpeakOptions {
  *  talking unprompted the first time you use it is one people switch off and
  *  never switch back on. */
 export function speechEnabled(): boolean {
-  try { return localStorage.getItem(ENABLED_KEY) === 'on' } catch { return false }
+  // ⚠️ ON UNLESS TURNED OFF. Brae: "have the program read its responses out
+  // loud." It always could — respond() has called speak() from the beginning —
+  // but this asked for an opt-in that nothing ever set, so a voice interface
+  // answered every spoken command in silent text.
+  //
+  // The read-back is not decoration here: it is the only way to know what the
+  // studio thought you said without looking away from the song. shouldSpeak
+  // still holds it back where speaking would be wrong — into an open
+  // microphone, or over the top of playback for a routine confirmation.
+  try { return localStorage.getItem(ENABLED_KEY) !== 'off' } catch { return true }
 }
 
 export function setSpeechEnabled(on: boolean): void {

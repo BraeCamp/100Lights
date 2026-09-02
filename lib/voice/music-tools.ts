@@ -265,6 +265,24 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'show_view',
+    description:
+      'THE WORKSPACE — open or close a panel around the song: "bring up the devices for the pad", "show the effects rack on the bass", "show automation on the drums", "open the pads", "close the devices". Changes what is ON SCREEN and never changes the song, so it is safe whenever somebody asks to SEE something. ⚠️ For the piano roll, the step sequencer, or moving to another part of the app, use open_editor instead — this tool does not do those.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        view: {
+          type: 'string',
+          enum: ['devices', 'automation', 'pads'],
+          description: 'devices = the effect rack for a track. automation = a drawable lane under a track. pads = the playable pad card.',
+        },
+        target: { type: 'string', description: 'The track to open it on, by name. Devices and automation both need one.' },
+        open: { type: 'boolean', description: 'false to close it. Defaults to true.' },
+      },
+      required: ['view'],
+    },
+  },
+  {
     name: 'make_beat',
     description:
       'BEAT FROM VOICE — the person said a rhythm out loud using drum syllables: "boom ka boom boom ka", "make me a beat like doom ts doom ts", "boom boom ka". Call this whenever the message contains percussion syllables, even buried in a sentence — the syllables at the END are the beat and the words in front are just the request. Put the syllables you heard in `pattern`, in order, separated by spaces. Do NOT tidy them into real words: "ka" is not "car", and the exact syllables are what decide which drum each one is. The actual RHYTHM comes from when they were said, not from you.',

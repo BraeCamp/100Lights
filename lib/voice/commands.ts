@@ -123,7 +123,7 @@ export interface VoiceCommand {
   /** Which entry in MUSIC_TOOLS this produces. */
   tool: string
   /** Which group it appears under in the help panel. */
-  group: 'Transport' | 'Mixer' | 'Timing' | 'Arrangement' | 'Notes' | 'Project' | 'Questions'
+  group: 'Transport' | 'Mixer' | 'Timing' | 'Arrangement' | 'Notes' | 'Project' | 'Questions' | 'View'
   /** One line, in a person's terms, for the help panel. */
   what: string
   /**
@@ -3471,6 +3471,78 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
 
+  // ── The workspace ────────────────────────────────────────────────────────
+  //
+  // Brae: "Give Light control over changing visuals, like changing
+  // customization options, opening lanes and piano rolls and sequencers."
+  //
+  // Rules rather than assistant-only, because these are the commands most worth
+  // having instantly: "open the piano roll on the bass" is a request to SEE
+  // something, and a second of thinking time is the whole cost of the feature.
+  // Nothing here changes the song, so a rule being wrong costs a panel opening.
+  {
+    id: 'show_view.devices',
+    tool: 'show_view',
+    group: 'View',
+    what: "Open a track's effect rack",
+    say: ['open the devices on the pad', 'show the rack for the bass', 'close the devices'],
+    match(w, ctx) {
+      // ⚠️ "effects" alone belongs to the rules that ADD one — they sit above
+      // this and get first refusal, so reaching here means nobody asked for a
+      // change, only to look.
+      //
+      // ⚠️ AND "rack" NEEDS A VERB WITH IT. The matcher hears near-homophones on
+      // purpose, so a bare 'rack' also catches "lay the pad BACK a bit" — a
+      // groove command with no interest in devices. Requiring somebody to have
+      // asked to open or show it costs nothing and settles that.
+      if (!(w.has('devices') || ((w.has('rack') || w.has('effects')) && w.has('open', 'show', 'bring')))) return null
+      const open = !w.has('close', 'hide')
+      const hit = open ? nameOrSelected(w, ctx, ['open', 'show', 'devices', 'device', 'rack', 'effects', 'for', 'on']) : null
+      if (open && !hit) return null
+      return {
+        calls: [{ name: 'show_view', input: { view: 'devices', open, ...(hit ? { target: hit.name } : {}) } }],
+        confidence: hit ? nameConfidence(hit.score) : 0.9,
+        needsName: open,
+      }
+    },
+  },
+  {
+    id: 'show_view.automation',
+    tool: 'show_view',
+    group: 'View',
+    what: 'Show a drawable automation lane under a track',
+    say: ['show automation on the drums', 'open the automation lane for the pad'],
+    match(w, ctx) {
+      if (!(w.has('automation') && w.has('open', 'show', 'add'))) return null
+      const hit = nameOrSelected(w, ctx, ['open', 'show', 'add', 'automation', 'lane', 'for', 'on'])
+      if (!hit) return null
+      return {
+        calls: [{ name: 'show_view', input: { view: 'automation', target: hit.name } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'show_view.pads',
+    tool: 'show_view',
+    group: 'View',
+    what: 'Open or close the playable pads',
+    say: ['open the pads', 'show me the pads', 'close the pads'],
+    match(w) {
+      if (!w.has('pads')) return null
+      if (!w.has('open', 'show', 'close', 'hide', 'bring')) return null
+      // ⚠️ "open the devices on the PAD" is not a request for the pads. The
+      // singular and the plural are one word to a recogniser, so the panel
+      // somebody actually named wins.
+      if (w.has('devices', 'rack', 'effects', 'automation')) return null
+      return {
+        calls: [{ name: 'show_view', input: { view: 'pads', open: !w.has('close', 'hide') } }],
+        confidence: 0.92,
+      }
+    },
+  },
+
   // ── Transport ────────────────────────────────────────────────────────────
   //
   // Last, because these words turn up inside sentences that are about something
@@ -3910,7 +3982,7 @@ export interface HelpItem {
  */
 export function commandHelp(): { group: string; items: HelpItem[] }[] {
   const order: VoiceCommand['group'][] =
-    ['Transport', 'Mixer', 'Timing', 'Arrangement', 'Notes', 'Project', 'Questions']
+    ['Transport', 'Mixer', 'Timing', 'Arrangement', 'Notes', 'View', 'Project', 'Questions']
   return order
     .map(group => ({
       group,

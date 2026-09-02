@@ -16,6 +16,10 @@
 // and the thing that would surprise you.
 
 export const COMMAND_SUMMARIES: Record<string, string> = {
+  // ── The workspace ────────────────────────────────────────────────────────
+  'show_view.devices': 'Opens a track\'s effect rack and selects the track, so the rack is showing that track\'s devices and not the last one you looked at. Say "close the devices" to put it away.',
+  'show_view.automation': 'Puts a drawable volume lane under the track, ready to draw a shape into. Every device parameter can be automated as well — add those from the lane\'s own menu once one is open.',
+  'show_view.pads': 'Shows the playable pads for tapping parts in by hand or by voice. Nothing about the song changes either way.',
   // ── Transport ────────────────────────────────────────────────────────────
   'transport.play': 'Starts playback from wherever the playhead is. "Go" on its own works, and so does "play it".',
   'transport.stop': 'Stops playing. The playhead stays where it is, so playing again carries on from there rather than from the top.',

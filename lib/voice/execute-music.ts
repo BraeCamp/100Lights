@@ -2070,6 +2070,57 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── THE WORKSPACE ────────────────────────────────────────────────────
+    //
+    // Brae: "Give Light control over changing visuals, like changing
+    // customization options, opening lanes and piano rolls and sequencers."
+    //
+    // ⚠️ THE PIANO ROLL AND SEQUENCER ARE NOT HERE. open_editor has opened both
+    // since it was written, and a second tool answering the same sentence is
+    // two chances to pick the wrong one — the "too many rules" problem in
+    // miniature. This covers only what had no spoken route at all: the effect
+    // rack, an automation lane, and the pads.
+    //
+    // These change what is on screen and nothing about the song, which makes
+    // them the safest thing the assistant can do. Nothing here is undoable
+    // because nothing here is a change to the document.
+    case 'show_view': {
+      const view = str(i.view).toLowerCase().replace(/[^a-z]/g, '')
+      const open = i.open !== false
+      const want = (target || '').toLowerCase().trim()
+      const track = want ? resolveTrack(want, project) : null
+      // A clip by that name, then any clip on a track by that name — "open the
+      // piano roll on the bass" names a track and means its clip.
+
+      if (view === 'pads') {
+        return { actions: [{ type: 'VIEW_ACTION', view: 'pads', open }], say: open ? 'Pads open.' : 'Pads closed.' }
+      }
+      if (view === 'devices') {
+        if (!open) return { actions: [{ type: 'VIEW_ACTION', view: 'devices', open: false }], say: 'Devices closed.' }
+        if (!track) return fail(want ? `I can't find a track named "${target}".` : 'Say which track — "open the devices on the pad".')
+        return {
+          actions: [{ type: 'VIEW_ACTION', view: 'devices', trackId: track.id, open: true }],
+          say: `Devices open for "${track.name}".`,
+        }
+      }
+      if (view === 'automation') {
+        if (!track) return fail(want ? `I can't find a track named "${target}".` : 'Say which track — "show automation on the drums".')
+        const already = (project.automationLanes ?? []).some(l => l.trackId === track.id)
+        if (already) return { actions: [], say: `"${track.name}" already has its automation showing.` }
+        return {
+          actions: [{
+            type: 'ADD_AUTOMATION_LANE',
+            lane: {
+              id: newId(), trackId: track.id, parameter: 'volume', label: 'Volume',
+              min: 0, max: 1, defaultValue: track.volume ?? 0.8, points: [], expanded: true,
+            },
+          }],
+          say: `Volume automation open on "${track.name}".`,
+        }
+      }
+      return fail(`I don't know a view called "${str(i.view)}".`)
+    }
+
     // BEAT FROM VOICE - "make a beat like boom ka boom boom ka"
     case 'make_beat': {
       const pattern = str(i.pattern)
