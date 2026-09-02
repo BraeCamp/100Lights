@@ -148,6 +148,26 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
   const confidences: number[] = []
   let stopped = false
   let aborted = false
+  // ── The words that were on screen when it gave up ─────────────────────────
+  //
+  // ⚠️ Brae: "I asked Light to 'Change the reverb on pad to 100%' and it heard
+  // me but said 'I didn't catch that'."
+  //
+  // Both halves of that were true. The recogniser streams INTERIM results,
+  // which is what he watched appear, and promotes them to FINAL when it commits
+  // to them — and only finals were kept. When the session ends before that
+  // promotion (Chrome ends a continuous session on its own after a pause, and
+  // does not always finalise the last phrase first) the interim text was thrown
+  // away and the studio reported that nothing had been heard, while the words
+  // were still sitting on the screen.
+  //
+  // So the last interim is kept as the fallback. It is only ever used when
+  // NOTHING was finalised — the case that used to be a flat failure — and it is
+  // handed over at reduced confidence, because it genuinely is a guess the
+  // recogniser never stood behind. That is not a fudge: low confidence is what
+  // routes a sentence to the assistant instead of to a rule, which is exactly
+  // the right treatment for words nobody has confirmed.
+  let lastInterim = ''
 
   rec.onresult = (e: unknown) => {
     const ev = e as {
@@ -177,6 +197,7 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
         confidences.push(typeof c === 'number' && c > 0 ? c : 1)
       } else interim += text
     }
+    if (interim.trim()) lastInterim = interim.trim()
     opts.onPartial?.((finalText + interim).trim())
   }
 
@@ -216,11 +237,21 @@ export function listen(opts: ListenOptions): SpeechHandle | null {
   const deliver = () => {
     if (delivered || aborted) return
     delivered = true
-    const text = finalText.trim()
+    // Anything finalised wins. Failing that, the words that were on screen —
+    // see lastInterim above. Never both: a partial final plus a partial interim
+    // would risk saying a word twice, and half a sentence acted on is worse
+    // than one that asks again.
+    const settled = finalText.trim()
+    const text = settled || lastInterim
     if (text) {
-      const conf = confidences.length
-        ? confidences.reduce((a, b) => a + b, 0) / confidences.length
-        : 1
+      const conf = !settled
+        // Never confirmed by the recogniser, so it must not fire a rule on its
+        // own authority. 0.5 clears the bar for ordinary commands and not the
+        // higher one used where a NAME has to be right.
+        ? 0.5
+        : confidences.length
+          ? confidences.reduce((a, b) => a + b, 0) / confidences.length
+          : 1
       opts.onFinal(text, finalAlternatives, conf)
     }
     // Only say "I didn't catch that" when nothing was heard AND nothing else

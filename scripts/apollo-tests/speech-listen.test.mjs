@@ -44,6 +44,10 @@ class FakeRecognition {
   say(text) {
     this.onresult?.({ resultIndex: 0, results: [Object.assign([{ transcript: text }], { isFinal: true })] })
   }
+  /** Words on screen that the recogniser has not yet committed to. */
+  partial(text) {
+    this.onresult?.({ resultIndex: 0, results: [Object.assign([{ transcript: text }], { isFinal: false })] })
+  }
   fail(error) { this.onerror?.({ error }) }
 }
 globalThis.window = globalThis
@@ -166,6 +170,44 @@ const { listen } = await importTs('lib/voice/speech.ts')
   await tick(400)
   check('stopping with nothing said does say "I didn\'t catch that"',
     msgs.some(m => /didn't catch/i.test(m)), msgs.join(' | '))
+}
+
+// ── Heard, shown, and thrown away ───────────────────────────────────────────
+//
+// ⚠️ Brae: "I asked Light to 'Change the reverb on pad to 100%' and it heard me
+// but said 'I didn't catch that'." Both halves were true. Interim results are
+// what appears on screen; only FINAL ones were kept; and a session that ends
+// before the recogniser promotes the one to the other discarded the sentence
+// while its words were still visible.
+{
+  built.length = 0
+  let got = null, errors = 0
+  const h = listen({ onFinal: (t, _alts, conf) => { got = { t, conf } }, onError: () => errors++ })
+  const rec = built[0]
+
+  rec.partial('change the reverb on pad to 100%')
+  h.stop()
+  await tick(200)
+  check('words seen but never finalised are delivered, not discarded',
+    got?.t === 'change the reverb on pad to 100%', JSON.stringify(got))
+  check('and they do not report "I didn\'t catch that"', errors === 0, `${errors} error(s)`)
+  // Low confidence is not a detail — it is what sends an unconfirmed sentence to
+  // the assistant instead of letting a rule fire on words nobody stood behind.
+  check('delivered at reduced confidence', got?.conf === 0.5, String(got?.conf))
+}
+
+// ── A real final still wins ─────────────────────────────────────────────────
+{
+  built.length = 0
+  let got = null
+  const h = listen({ onFinal: (t, _alts, conf) => { got = { t, conf } }, onError: () => {} })
+  const rec = built[0]
+  rec.partial('mute the')
+  rec.say('mute the pad')
+  h.stop()
+  await tick(200)
+  check('a finalised sentence is used instead of the interim', got?.t === 'mute the pad', JSON.stringify(got))
+  check('and keeps its own confidence', got?.conf === 1, String(got?.conf))
 }
 
 console.log(failures
