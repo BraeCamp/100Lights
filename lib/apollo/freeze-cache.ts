@@ -447,10 +447,33 @@ function setProjectNeed(frames: number): void {
 // The cache itself is kept in full — it is correct, it is well tested, and it
 // is exactly what an explicit freeze and the offline/weak-device path want. It
 // is simply no longer something that happens to you on open.
-let prerender = false
+//
+// ── BACK ON, 2026-09-02, because both reasons above have been answered ──────
+//
+// ⚠️ "Live playback costs the main thread nothing" WAS TRUE AND WAS NOT THE
+// POINT. The main thread was never the constraint — the AUDIO thread is, and it
+// is one thread that must finish every 128-sample block before its deadline.
+// Measured, offline, best of three: one Apollo track playing chords costs 0.12
+// of real time, four cost 0.37, eight cost 0.72. On a machine that is busy the
+// same test measured 2.3 to 4.6. There is no headroom, which is why the same
+// song plays in Safari and stops after one chord in Brave, and why days of
+// leak, cache and churn fixes changed nothing: they reduced how much work there
+// is, and the problem is how little time there is to do it in.
+//
+// ⚠️ AND THE 25.7 SECONDS OF BLOCKED MAIN THREAD IS GONE. That was the real
+// objection, and it was correct: the bake ran through an OfflineAudioContext on
+// the main thread. It now runs in a worker — 0.117x real time with an 11ms
+// worst main-thread gap, against roughly eleven thousand inline. The thing that
+// made prerendering unbearable is no longer how it works.
+//
+// Ableton is still the model: it does not bake a set on open. Nor does this —
+// requestCombine is asked for by the SCHEDULER, for clips near the playhead, so
+// the work follows the listener instead of preceding them.
+let prerender = true
 
-/** Turn the automatic bake back on (an explicit freeze, or a device that has
- *  asked for it). Off is the default and the intended state. */
+/** Turn the automatic bake off (a machine where the worker is unavailable, or a
+ *  session where live synthesis is genuinely preferable). On is the default: see
+ *  the measurement above for why. */
 export function setPrerender(on: boolean): void { prerender = on }
 export function prerenderOn(): boolean { return prerender }
 

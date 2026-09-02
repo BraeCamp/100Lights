@@ -8,6 +8,7 @@ import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import { buildTableMips, factoryTableWithMips, userTableWithMips, copyBuilt } from '@/lib/apollo/tables'
 import { analyzeSpectralInWorker, SpectralAnalysis } from '@/lib/apollo/spectral'
 import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
+import { renderClip, canRenderInWorker } from '@/lib/apollo/render-worker-client'
 import { samplesUsedBy } from '@/lib/apollo/samples-used'
 
 export interface ApolloMeters {
@@ -65,6 +66,18 @@ export function collectFxRanges(units: FxUnit[], out: Record<string, [number, nu
     if (def) for (const p of def.params) out[`fx.${u.id}.${p.key}`] = [p.min, p.max]
     if (u.chains) for (const c of u.chains) collectFxRanges(c, out)
   }
+}
+
+/**
+ * A one-frame context, only ever used to ALLOCATE an AudioBuffer.
+ *
+ * createBuffer needs a context; it does not need a real one, and building a
+ * full-length OfflineAudioContext just to hold worker output would put back the
+ * allocation this is avoiding. Kept between calls because contexts are not free.
+ */
+let bufAllocCtx: OfflineAudioContext | null = null
+function allocCtx(): OfflineAudioContext {
+  return (bufAllocCtx ??= new OfflineAudioContext(2, 1, 48000))
 }
 
 export class ApolloEngine extends EventTarget {
@@ -602,6 +615,47 @@ export class ApolloEngine extends EventTarget {
     if (!items.length) return null
     const sr = this.ctx?.sampleRate || 48000
     const frames = Math.ceil(seconds * sr)
+
+    // ── Off the main thread, if a worker will have us ────────────────────────
+    //
+    // ⚠️ THE OfflineAudioContext BELOW RUNS ON THE MAIN THREAD, and that is why
+    // auto-freeze has been switched off since August: rendering a song's worth
+    // of clips stalled the interface for eleven seconds at a stretch. Every bit
+    // of pacing in freeze-cache.ts — the idle yields, the proportional gaps, the
+    // "leave time for the context to be reclaimed" — exists to soften that.
+    //
+    // The worker needs none of it. Measured: 0.117x real time with an 11ms worst
+    // main-thread gap, against ~11,000ms inline.
+    //
+    // Falls through to the old path when there is no worker (an offline render
+    // host, a browser that refuses one) rather than failing, because a slow
+    // freeze is still better than none.
+    if (canRenderInWorker()) {
+      try {
+        const rendered = await Promise.all(items.map(({ patch, notes }) =>
+          renderClip({
+            patch: patch as unknown,
+            // The worker takes note ON/OFF events; the caller thinks in notes
+            // with durations. One shape per boundary, converted at it.
+            events: notes.flatMap(n => [
+              { t: n.t, type: 'noteOn' as const, note: n.note, vel: n.vel },
+              { t: n.t + n.dur, type: 'noteOff' as const, note: n.note },
+            ]),
+            seconds,
+            sampleRate: sr,
+          })))
+        // Two channels per item, exactly as the OfflineAudioContext path lays
+        // them out, so everything downstream splits them the same way.
+        const out = allocCtx().createBuffer(items.length * 2, frames, sr)
+        rendered.forEach((r, idx) => {
+          out.getChannelData(idx * 2).set(r.left.subarray(0, frames))
+          out.getChannelData(idx * 2 + 1).set(r.right.subarray(0, frames))
+        })
+        return out
+      } catch {
+        // Fall through and render inline. Worth the stall over losing the render.
+      }
+    }
     const octx = new OfflineAudioContext(items.length * 2, frames, sr)
     await octx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const merger = octx.createChannelMerger(items.length * 2)
