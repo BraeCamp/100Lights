@@ -267,14 +267,14 @@ export const MUSIC_TOOLS = [
   {
     name: 'show_view',
     description:
-      'THE WORKSPACE — open or close a panel around the song: "bring up the devices for the pad", "show the effects rack on the bass", "show automation on the drums", "open the pads", "close the devices". Changes what is ON SCREEN and never changes the song, so it is safe whenever somebody asks to SEE something. ⚠️ For the piano roll, the step sequencer, or moving to another part of the app, use open_editor instead — this tool does not do those.',
+      'THE WORKSPACE — open or close a panel around the song: "bring up the devices for the pad", "show the effects rack on the bass", "show automation on the drums", "open the pads", "let\'s edit the UI colours", "close the devices". Changes what is ON SCREEN and never changes the song, so it is safe whenever somebody asks to SEE something. ⚠️ For the piano roll, the step sequencer, or moving to another part of the app, use open_editor instead — this tool does not do those.',
     input_schema: {
       type: 'object',
       properties: {
         view: {
           type: 'string',
-          enum: ['devices', 'automation', 'pads'],
-          description: 'devices = the effect rack for a track. automation = a drawable lane under a track. pads = the playable pad card.',
+          enum: ['devices', 'automation', 'pads', 'colours'],
+          description: 'devices = the effect rack for a track. automation = a drawable lane under a track. pads = the playable pad card. colours = the studio\'s own appearance — its colours and patterns, not the song\'s.',
         },
         target: { type: 'string', description: 'The track to open it on, by name. Devices and automation both need one.' },
         open: { type: 'boolean', description: 'false to close it. Defaults to true.' },
@@ -497,7 +497,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'select',
     description:
-      'SELECT — choose what "this" refers to, without touching the mouse. "select everything on the bass", "select the loop", "select all the clips", "select nothing". Useful before a command that acts on the selection, and the answer to "how do I tell it which one I mean".',
+      'SELECT / FOCUS — choose what "this" refers to, without touching the mouse. "select everything on the bass", "select the loop", "select all the clips", "select nothing" — and the way people usually start: "let\'s edit the bass track", "focus on the drums", "work on the pad". With `what: "track"` this focuses that track and says so, and every command afterwards that names nothing acts on it. Useful before a command that acts on the selection, and the answer to "how do I tell it which one I mean".',
     input_schema: {
       type: 'object',
       properties: {

@@ -871,6 +871,12 @@ export interface DawContextValue {
   setApolloRack: (v: { trackId: string; seed: unknown; follow?: boolean; detached?: boolean } | null) => void
   selectedEffectIds: Set<string>
   setSelectedEffectIds: React.Dispatch<React.SetStateAction<Set<string>>>
+  /** The studio's own colours and patterns. Local to the editor until Light
+   *  needed to open it — "let's edit the UI colours" is a navigation request
+   *  like any other, and it had no route because nothing outside AudioEditor
+   *  could see this. */
+  showAppearance?: boolean
+  setShowAppearance?: (v: boolean) => void
   // Pad/voice MIDI card
   showPads: boolean
   setShowPads: (v: boolean | ((prev: boolean) => boolean)) => void

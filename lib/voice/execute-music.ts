@@ -2095,6 +2095,14 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (view === 'pads') {
         return { actions: [{ type: 'VIEW_ACTION', view: 'pads', open }], say: open ? 'Pads open.' : 'Pads closed.' }
       }
+      if (view === 'colours' || view === 'colors' || view === 'appearance' || view === 'theme') {
+        return {
+          actions: [{ type: 'VIEW_ACTION', view: 'colours', open }],
+          say: open
+            ? 'Studio colours open — what would you like to change?'
+            : 'Studio colours closed.',
+        }
+      }
       if (view === 'devices') {
         if (!open) return { actions: [{ type: 'VIEW_ACTION', view: 'devices', open: false }], say: 'Devices closed.' }
         if (!track) return fail(want ? `I can't find a track named "${target}".` : 'Say which track — "open the devices on the pad".')
@@ -2888,7 +2896,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         const ids = clips.filter(c => c.trackId === track.id).map(c => c.id)
         return {
           actions: [{ type: 'SELECT', clipIds: ids, trackId: track.id }],
-          say: `Selected ${ids.length} clip${ids.length === 1 ? '' : 's'} on ${track.name}.`,
+          say: `Focusing on "${track.name}" — what would you like to do?`,
         }
       }
       if (what === 'loop') {

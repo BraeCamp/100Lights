@@ -69,6 +69,7 @@ export interface LightStudio {
   // nothing outside the editor could open anything.
   setShowPads?: DawContextValue['setShowPads']
   setApolloRack?: DawContextValue['setApolloRack']
+  setShowAppearance?: DawContextValue['setShowAppearance']
 }
 
 export function useLight(): LightStudio {
@@ -104,6 +105,7 @@ export function useLight(): LightStudio {
       setSelectedClipId: undefined,
       setShowPads: undefined,
       setApolloRack: undefined,
+      setShowAppearance: undefined,
       setSelectedTrackId: undefined,
     }
   }, [daw])

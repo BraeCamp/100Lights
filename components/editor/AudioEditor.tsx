@@ -2689,6 +2689,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     setPosition,
     metronome,
     setMetronome,
+    showAppearance,
+    setShowAppearance,
     showPads,
     setShowPads,
     expandedPianoRollClipId,

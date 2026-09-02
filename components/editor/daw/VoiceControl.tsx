@@ -112,7 +112,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId,
     metronome, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
     setSelectedClipIds, setSelectedClipId, setSelectedTrackId,
-    setShowPads, setApolloRack,
+    setShowPads, setApolloRack, setShowAppearance,
   } = useLight()
   const router = useRouter()
   const [listening, setListening] = useState(false)
@@ -730,6 +730,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const v = act as unknown as { view: string; clipId?: string; trackId?: string; open?: boolean }
       const open = v.open !== false
       if (v.view === 'pads') setShowPads?.(open)
+      else if (v.view === 'colours') setShowAppearance?.(open)
       else if (v.view === 'pianoroll') setExpandedPianoRollClipId?.(open ? (v.clipId ?? null) : null)
       else if (v.view === 'sequencer') setExpandedStepSeqClipId?.(open ? (v.clipId ?? null) : null)
       else if (v.view === 'devices') {
@@ -898,7 +899,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     }
     dispatch(act as never)
   }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
-      setShowPads, setApolloRack, setSelectedTrackId, runBalance, undo, redo])
+      setShowPads, setApolloRack, setShowAppearance, setSelectedTrackId, runBalance, undo, redo])
 
   /**
    * Record a spoken take: count in, listen, and write down what was said.

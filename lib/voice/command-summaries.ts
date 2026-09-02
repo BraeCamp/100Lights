@@ -17,6 +17,8 @@
 
 export const COMMAND_SUMMARIES: Record<string, string> = {
   // ── The workspace ────────────────────────────────────────────────────────
+  'select.focus_track': 'Focuses a track and says so, then every command that names nothing acts on it — "louder", "add reverb", "mute it". Deliberately NOT a mode: naming another track still wins, so there is nothing to get stuck inside and nothing to exit.',
+  'show_view.colours': 'Opens the studio\'s own colours and patterns — the look of the app, not anything in the song. Say "close the colours" to put it away.',
   'show_view.devices': 'Opens a track\'s effect rack and selects the track, so the rack is showing that track\'s devices and not the last one you looked at. Say "close the devices" to put it away.',
   'show_view.automation': 'Puts a drawable volume lane under the track, ready to draw a shape into. Every device parameter can be automated as well — add those from the lane\'s own menu once one is open.',
   'show_view.pads': 'Shows the playable pads for tapping parts in by hand or by voice. Nothing about the song changes either way.',

@@ -3481,6 +3481,53 @@ const COMMANDS: VoiceCommand[] = [
   // something, and a second of thinking time is the whole cost of the feature.
   // Nothing here changes the song, so a rule being wrong costs a panel opening.
   {
+    id: 'select.focus_track',
+    tool: 'select',
+    group: 'View',
+    what: 'Focus a track, so "this" means that one',
+    say: ["let's edit the bass track", 'focus on the drums', 'work on the pad'],
+    match(w, ctx) {
+      // ⚠️ NOT A MODE — see the summary. This is the selection the studio
+      // already has, set out loud, so everything afterwards that names nothing
+      // acts on it exactly as it always did.
+      // ⚠️ CONTENT WORDS ONLY. "work on the pad" arrives here as ['work','pad']
+      // — 'on', 'the' and "let's" are all FILLER and stripped before any rule
+      // sees the sentence, so hasPhrase('work','on') could never match and the
+      // phrasing silently did nothing. The track name is the real guard here;
+      // the verb only has to be recognisable.
+      if (!w.has('focus', 'work', 'edit')) return null
+      // These belong to open_editor and to the colours rule below.
+      if (w.has('notes', 'roll', 'piano', 'sequencer')) return null
+      if (w.has('colours', 'colors', 'appearance', 'theme')) return null
+      const hit = nameOrSelected(w, ctx, ['focus', 'let', 'lets', 'edit', 'work', 'on', 'track'])
+      if (!hit) return null
+      return {
+        calls: [{ name: 'select', input: { what: 'track', target: hit.name } }],
+        confidence: nameConfidence(hit.score),
+        needsName: true,
+      }
+    },
+  },
+  {
+    id: 'show_view.colours',
+    tool: 'show_view',
+    group: 'View',
+    what: "Open the studio's own colours and patterns",
+    say: ["let's edit the UI colours", 'change the studio colours', 'open the appearance panel'],
+    match(w) {
+      // ⚠️ The STUDIO's colours, not a track's. A bare "colour" is far more
+      // likely to be about a track, so the theme words have to be there.
+      const isTheme = w.has('appearance', 'theme')
+        || (w.has('colours', 'colors', 'colour', 'color') && w.has('ui', 'studio', 'interface', 'app', 'editor'))
+      if (!isTheme) return null
+      if (!w.has('edit', 'change', 'open', 'show', 'let', 'lets', 'customise', 'customize')) return null
+      return {
+        calls: [{ name: 'show_view', input: { view: 'colours', open: !w.has('close', 'hide') } }],
+        confidence: 0.92,
+      }
+    },
+  },
+  {
     id: 'show_view.devices',
     tool: 'show_view',
     group: 'View',
