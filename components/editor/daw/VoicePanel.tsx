@@ -34,6 +34,16 @@ import { WAKE_WORDS } from '@/lib/voice/attention'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
 
 export interface VoicePanelProps {
+  /**
+   * Which way this opens from its button.
+   *
+   * ⚠️ It was always 'down', which is right in the transport bar and wrong
+   * everywhere else: docked in the bottom-right corner, a 544px panel opening
+   * downwards is entirely off the screen. The caller measures.
+   */
+  placement?: 'down' | 'up'
+  /** Open/close animation class — see popClass() in lib/ui/popup.ts. */
+  animClass?: string
   listening: boolean
   continuous: boolean
   /** 0–1 input level, for the meter and the wave. */
@@ -540,6 +550,7 @@ function Segmented<T extends string>({ value, options, onChange, C, disabled }: 
 }
 
 export default function VoicePanel({
+  placement = 'down', animClass = '',
   listening, continuous, level, hud,
   talking = false, saying = '', reply = '', problem = '', question,
   onHud, onClose, onLibrary, caption, onCaption, colors: C,
@@ -668,12 +679,17 @@ export default function VoicePanel({
   return (
     <div
       data-voice-panel
+      className={pos ? undefined : animClass}
       style={{
         // Fixed once it has been moved, so it stays where it was put rather
-        // than following the button that opened it.
+        // than following the button that opened it. A panel the person has
+        // dragged somewhere is not animated or re-placed — they chose where it
+        // goes, and moving it out from under them would be the bug.
         ...(pos
           ? { position: 'fixed' as const, left: pos.x, top: pos.y }
-          : { position: 'absolute' as const, top: 'calc(100% + 8px)', right: 0 }),
+          : placement === 'up'
+            ? { position: 'absolute' as const, bottom: 'calc(100% + 8px)', right: 0 }
+            : { position: 'absolute' as const, top: 'calc(100% + 8px)', right: 0 }),
         zIndex: 80,
         width: 412, maxHeight: 544, display: 'flex', flexDirection: 'column',
         background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 8,

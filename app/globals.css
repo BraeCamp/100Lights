@@ -175,6 +175,44 @@ input[type="range"].cf-slider::-moz-range-thumb {
 .menu-pop     { animation: menuPop 0.12s ease-out; transform-origin: top; }
 .menu-pop-out { animation: menuPopOut 0.11s ease-in forwards; transform-origin: top; }
 
+/* ⚠️ The same motion for a panel that had to open UPWARD, which is what a
+   control docked in the bottom-right corner needs — see lib/ui/popup.ts. It
+   grows from its bottom edge and slides the other way, so the movement still
+   reads as coming OUT OF the button rather than drifting across it. */
+@keyframes menuPopUp {
+  from { opacity: 0; transform: translateY(4px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+@keyframes menuPopUpOut {
+  from { opacity: 1; transform: translateY(0)   scale(1); }
+  to   { opacity: 0; transform: translateY(4px) scale(0.97); }
+}
+.menu-pop-up     { animation: menuPopUp 0.12s ease-out; transform-origin: bottom; }
+.menu-pop-up-out { animation: menuPopUpOut 0.11s ease-in forwards; transform-origin: bottom; }
+
+/* Motion is decoration here: the panel must still open and close instantly for
+   anyone who has asked for less of it. Opacity alone keeps the appearance
+   readable without any movement. */
+@media (prefers-reduced-motion: reduce) {
+  .menu-pop, .menu-pop-up         { animation: none; }
+  .menu-pop-out, .menu-pop-up-out { animation: none; opacity: 0; }
+}
+
+/* Modal / dialog entrance. A dialog that simply APPEARS reads as a jump cut —
+   the eye cannot tell whether it arrived or was always there. A short rise with
+   the backdrop fading under it says where it came from, and 160ms is under the
+   threshold where waiting starts to be felt. Compositor-only. */
+@keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+.backdrop-in { animation: backdropIn 0.16s ease-out; }
+.modal-in    { animation: modalIn 0.16s cubic-bezier(.2,.8,.3,1); }
+@media (prefers-reduced-motion: reduce) {
+  .backdrop-in, .modal-in { animation: none; }
+}
+
 /* Clip settle — a quick brightness flash when a dragged/trimmed clip lands, so it
    reads as "dropped into place". Uses filter (not transform) so it never fights a
    clip's own centering transform. */

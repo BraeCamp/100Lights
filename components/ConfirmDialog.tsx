@@ -41,6 +41,7 @@ export function ConfirmDialog({
   return createPortal(
     <div
       onMouseDown={onCancel}
+      className="backdrop-in"
       style={{
         position: 'fixed', inset: 0, zIndex: 200, display: 'flex',
         alignItems: 'center', justifyContent: 'center', padding: 16,
@@ -51,6 +52,7 @@ export function ConfirmDialog({
         onMouseDown={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        className="modal-in"
         style={{
           width: 380, maxWidth: '100%', borderRadius: 14, overflow: 'hidden',
           background: 'var(--bg-card)', border: '1px solid var(--border)',

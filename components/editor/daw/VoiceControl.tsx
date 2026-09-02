@@ -47,6 +47,7 @@ import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn } from '@/lib/voice/attention'
 import { stitch, worthHolding } from '@/lib/voice/stitch'
+import { useDropDirection, useMountTransition, popClass } from '@/lib/ui/popup'
 import { interpretSequence } from '@/lib/voice/sequence'
 import { interpret } from '@/lib/voice/interpret'
 import {
@@ -166,6 +167,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   /** The assistant refused for billing. See the branch that reads it. */
   const outOfLumens = useRef(false)
 
+
   const projectRef = useRef(project)
   const selectedTrackIdRef = useRef(selectedTrackId)
   const selectedClipIdRef = useRef(selectedClipId)
@@ -205,6 +207,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const lastAcceptedAt = useRef(0)
 
   const [panelOpen, setPanelOpen] = useState(false)
+  // ⚠️ Which way these open is a fact about where the button IS, not a constant.
+  // Brae: "On most pages, the voice and type controls are on the bottom right of
+  // the screen so their menus go down and off of the viewport." In the transport
+  // bar there is a whole editor below; docked in the corner there is nothing.
+  const anchorRef = useRef<HTMLDivElement | null>(null)
+  const panelDir = useDropDirection(panelOpen, 544, anchorRef)
+  const typeDir = useDropDirection(showType, 220, anchorRef)
+  const panelAnim = useMountTransition(panelOpen)
+  const typeAnim = useMountTransition(showType)
 
   /**
    * A choice you are being asked to make, sized like one.
@@ -2595,7 +2606,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   }, [hasQuestion, problem, said])
 
   return (
-    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', ...style }}>
+    <div ref={anchorRef} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', ...style }}>
       <button
         {...press}
         data-voice-control
@@ -2693,8 +2704,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         />
       )}
 
-      {panelOpen && (
+      {panelAnim.mounted && (
         <VoicePanel
+          placement={panelDir}
+          animClass={popClass(panelDir, panelAnim.leaving)}
           listening={listening}
           continuous={continuousRef.current}
           level={level}
@@ -2766,10 +2779,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       )}
 
 
-      {showType && (
+      {typeAnim.mounted && (
         <div
+          className={popClass(typeDir, typeAnim.leaving)}
           style={{
-            position: 'absolute', top: asking ? 104 : 26, right: 0, zIndex: 60,
+            position: 'absolute', zIndex: 60,
+            // Anchored to whichever edge it grows from, so it never covers the
+            // button that opened it.
+            ...(typeDir === 'up'
+              ? { bottom: 'calc(100% + 8px)' }
+              : { top: asking ? 104 : 26 }),
+            right: 0,
             minWidth: 300, padding: 8, background: C.bgSurface,
             border: `1px solid ${C.border}`, borderRadius: 6,
             boxShadow: '0 10px 28px rgba(0,0,0,.5)',
