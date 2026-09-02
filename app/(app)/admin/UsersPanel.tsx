@@ -799,10 +799,10 @@ export default function UsersPanel() {
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
                     {PAID_PLANS.map(p => (
                       <button key={p} onClick={() => setGiftPlan(p)}
-                        style={{ fontSize: 11.5, fontWeight: 700, padding: '5px 12px', borderRadius: 7, textTransform: 'capitalize',
+                        style={{ fontSize: 11.5, fontWeight: 700, padding: '5px 12px', borderRadius: 7,
                           border: `1px solid ${giftPlan === p ? 'var(--accent)' : 'var(--border)'}`,
                           background: giftPlan === p ? 'rgba(139,92,246,0.18)' : 'transparent',
-                          color: giftPlan === p ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}>{p}</button>
+                          color: giftPlan === p ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}>{PLAN_LABEL[p]}</button>
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

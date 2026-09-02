@@ -16,11 +16,13 @@ const BLURB: Record<CreditTier, string> = {
   creator: 'Best value for regular AI use.',
   pro:     'For heavy, everyday AI workflows.',
 }
+// ⚠️ These name the tier ABOVE by its label, not by its key. "Everything in
+// Creator" named a key nobody sees — the card above it says Glow.
 const PERKS: Record<CreditTier, string[]> = {
   free:    ['Unlimited non-AI editing & tools', 'Local transcription (chords resolved free)'],
-  starter: ['Everything in Free', 'All Pro features unlocked'],
+  starter: ['Everything in Free', 'Every paid feature unlocked'],
   creator: ['Everything in Spark', 'Best Lumens-per-dollar'],
-  pro:     ['Everything in Creator', 'Highest monthly credit grant'],
+  pro:     ['Everything in Glow', 'Most Lumens each month'],
 }
 const fmt = (n: number) => n.toLocaleString('en-US')
 
@@ -49,6 +51,19 @@ export default function CreditsPricing({ currentTier }: { currentTier?: CreditTi
           {error}
         </div>
       )}
+
+      {/* ⚠️ THE ONE SENTENCE THAT SETTLES IT.
+          Every paid tier here sets the plan to 'pro' — the difference between
+          them is Lumens and nothing else. Without saying so, three cards with
+          three names and three prices read as three different feature sets, and
+          "All Pro features unlocked" appearing on only the cheapest one implied
+          the opposite of the truth. */}
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, maxWidth: 620, lineHeight: 1.55 }}>
+        Every paid plan unlocks the same features — what changes is how many{' '}
+        <strong style={{ color: 'var(--text-primary)', fontWeight: 700 }}>Lumens</strong> you get each
+        month. Lumens are spent only on AI; everything else in 100Lights is unlimited on every plan,
+        including Free.
+      </p>
 
       {/* Tiers */}
       <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))' }}>

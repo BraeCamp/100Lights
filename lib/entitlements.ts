@@ -36,6 +36,7 @@ export const PLAN_RANK: Record<Plan, number> = { free: 0, pro: 1, studio: 2, max
 
 export const PAID_PLANS: readonly Plan[] = ['pro', 'studio', 'max']
 
+
 /**
  * Is this a paying customer?
  *
