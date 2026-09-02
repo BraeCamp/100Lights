@@ -53,6 +53,12 @@ import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '../daw-effec
 import { nameChord, groupIntoChords } from '../chord-analysis'
 import { rngFor } from '../seeded-random'
 
+import {
+  defineMacro, findMacro, macroNames, toPoints, describeMacro, useMacro, type MacroShape,
+} from './macros'
+import { FX_FIELD_BY_KEY } from '@/lib/roll-fx'
+import type { RollFx } from '@/lib/daw-types'
+
 export interface VoiceCall { name: string; input: Record<string, unknown> }
 
 export interface VoicePlan {
@@ -2127,6 +2133,139 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         }
       }
       return fail(`I don't know a view called "${str(i.view)}".`)
+    }
+
+    // ── NAMED SHAPES ─────────────────────────────────────────────────────
+    //
+    // Brae: "at one point I want bass to have descending reverb, ascending low
+    // pass, and descending volume to keep steady volume over the clip, and
+    // later I ask to do the same thing over a longer clip so the descend and
+    // ascend are longer."
+    //
+    // ⚠️ THE SPAN IS AN ARGUMENT, WHICH IS WHY THE SAME MACRO COVERS BOTH. A
+    // macro is (fx, shape) and mentions no clip and no bar, so running it over
+    // four bars and over thirty-two is one command with a different argument —
+    // not a second macro, and not an edit afterwards. Length applied afterwards
+    // is exactly what would break the relationship between the three curves,
+    // which is the whole point of "descending volume to keep steady volume".
+    case 'define_macro': {
+      const raw = (i.fx ?? {}) as Record<string, unknown>
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Object.keys(raw).length) {
+        return fail('Say what should move — something like "descending reverb and an opening low-pass".')
+      }
+      // ⚠️ Only parameters that exist. An invented key would be stored, listed,
+      // and silently do nothing every time it ran — the exact shape of failure
+      // this file keeps being fixed for.
+      const fx: RollFx = {}
+      const unknown: string[] = []
+      for (const [k, v] of Object.entries(raw)) {
+        if (!FX_FIELD_BY_KEY[k]) { unknown.push(k); continue }
+        const n = Number(v)
+        if (!Number.isFinite(n)) { unknown.push(k); continue }
+        ;(fx as Record<string, number>)[k] = n
+      }
+      if (!Object.keys(fx).length) {
+        return fail(`I don't know how to move ${unknown.map(u => `"${u}"`).join(', ') || 'that'}.`)
+      }
+      const shape = str(i.shape).toLowerCase() as MacroShape
+      if (!['fall', 'rise', 'arc', 'dip', 'hold'].includes(shape)) {
+        return fail(`I don't know a shape called "${str(i.shape)}" — try fall, rise, arc, dip or hold.`)
+      }
+      // Applied here rather than emitted as an action, exactly like the spoken
+      // shorthand below: a macro is not part of the song, so there is nothing
+      // for the reducer to do with it and nothing to undo.
+      const m = defineMacro({ name: str(i.name), what: str(i.what), fx, shape })
+      const extra = unknown.length ? ` I left out ${unknown.map(u => `"${u}"`).join(', ')}.` : ''
+      return {
+        actions: [],
+        // ⚠️ SAYS THE NAME BACK, and that is not politeness. "Do the same thing"
+        // can never be answered for free — it points at the selection, so it is
+        // refused by the cache by design. A NAME can, forever. Handing the name
+        // over is what turns a paid pronoun into a free noun.
+        say: `Saved as "${m.label}" — ${m.what}.${extra} Say "${m.label} on the bass" to use it again.`,
+      }
+    }
+
+    case 'run_macro': {
+      const m = findMacro(str(i.name))
+      if (!m) {
+        const known = macroNames()
+        return fail(known.length
+          ? `I don't know a shape called "${str(i.name)}". I have ${known.map(n => `"${n}"`).join(', ')}.`
+          : 'I have not been taught any shapes yet — describe one and I will save it.')
+      }
+      const fromB = i.from != null ? positionToBeat(pos(i.from), maps) : null
+      const toB = i.to != null ? positionToBeat(pos(i.to), maps) : null
+
+      // ⚠️ A STRETCH THAT DID NOT PARSE IS A QUESTION, NOT A CLIP. Asking for
+      // bars and silently getting the shape on a clip instead is the worst
+      // outcome available here: the read-back would be perfectly true about
+      // something nobody asked for. Found by a test that passed the positions
+      // as plain strings, which is exactly what a model does sometimes.
+      if ((i.from != null || i.to != null) && (fromB == null || toB == null || toB <= fromB)) {
+        return fail('I could not work out that stretch — say it like "from bar 9 to bar 25".')
+      }
+
+      const want = (target || '').toLowerCase().trim()
+      const clips = allClips(project)
+      const track = want ? resolveTrack(want, project) : null
+      // ⚠️ AN EXACT CLIP NAME WINS; A LOOSE ONE ONLY IF IT IS NOT ALSO A TRACK.
+      // "Pad" is a track here and "Pad 1" is a clip on it, so a contains-match
+      // would quietly put the shape on the first clip of a track that has four
+      // — when naming the track should be asking about the track.
+      const namedClip = want
+        ? clips.find(c => (c.name ?? '').toLowerCase() === want)
+          ?? (track ? null : clips.find(c => (c.name ?? '').toLowerCase().includes(want)))
+        : null
+
+      // ── A stretch of bars: an effect bar over the region ────────────────
+      if (fromB != null && toB != null && toB > fromB) {
+        const onTrack = track ?? (namedClip ? (project.tracks ?? []).find(t => t.id === namedClip.trackId) : null)
+        if (!onTrack) return fail('Say which track the shape goes on — "the swell on the bass from bar 9 to 25".')
+        useMacro(m.name)
+        const durationBeats = toB - fromB
+        return {
+          actions: [{
+            type: 'ADD_CLIP_EFFECT',
+            effect: {
+              id: newId(), trackId: onTrack.id,
+              startBeat: fromB, durationBeats,
+              fx: m.fx,
+              // ⚠️ In BEATS here — an effect bar reads AutoPoint.t as beats from
+              // its own start, while clip motion reads the same field as a
+              // fraction. See toPoints.
+              graph: toPoints(m.shape, durationBeats),
+            },
+          }],
+          say: `"${m.label}" across ${describeBeat(fromB, maps)} to ${describeBeat(toB, maps)} on "${onTrack.name}" — ${m.what}.`,
+        }
+      }
+
+      // ── A clip: motion that stretches when the clip does ────────────────
+      const clip = namedClip
+        ?? (track ? clips.filter(c => c.trackId === track.id) : []).find((_, idx, arr) => arr.length === 1)
+      if (!clip) {
+        if (track) {
+          const n = clips.filter(c => c.trackId === track.id).length
+          return fail(n
+            ? `"${track.name}" has ${n} clips — say which one, or give me a stretch like "from bar 9 to 25".`
+            : `"${track.name}" has nothing on it to put a shape across.`)
+        }
+        return fail(want
+          ? `I can't find "${target}" to put "${m.label}" on.`
+          : `Say where — "${m.label} on the bass", or "${m.label} from bar 9 to 25".`)
+      }
+      useMacro(m.name)
+      return {
+        actions: [{
+          type: 'UPDATE_CLIP', clipId: clip.id,
+          // Normalised, so it stretches with the clip rather than ending early
+          // when the clip grows — which is what makes "the same over a longer
+          // clip" need no second command.
+          patch: { fxMotion: { fx: m.fx, graph: toPoints(m.shape) } } as never,
+        }],
+        say: `"${m.label}" across "${clip.name || track?.name || 'that clip'}" — ${m.what}.`,
+      }
     }
 
     // BEAT FROM VOICE - "make a beat like boom ka boom boom ka"

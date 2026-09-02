@@ -34,6 +34,7 @@ import { findByName, foldName, spokenNumber } from './resolve'
 import { beatWordsOf } from './beatbox'
 import { parseDefinitions } from './vocab'
 import { COMMAND_SUMMARIES } from './command-summaries'
+import { macroNames, macroKey } from './macros'
 
 /** Drum names a single-lane recording can be asked for. */
 const DRUM_WORDS = ['kick', 'snare', 'clap', 'crash', 'rim', 'hat', 'hihat', 'tom']
@@ -3468,6 +3469,45 @@ const COMMANDS: VoiceCommand[] = [
     match(w) {
       if (!w.has('redo')) return null
       return { calls: [{ name: 'redo', input: {} }], confidence: 0.93 }
+    },
+  },
+
+  // ── Named shapes ─────────────────────────────────────────────────────────
+  //
+  // ⚠️ A RULE, NOT AN ASSISTANT JOB, AND THAT IS THE WHOLE ECONOMICS OF MACROS.
+  // Deriving a shape costs a turn; running one by name has to cost nothing, or
+  // a macro is only ever as cheap as asking for it again from scratch. This is
+  // also why the studio says the name back when it saves one — "do the same
+  // thing" points at the selection and can never be cached, a name always can.
+  //
+  // Bar ranges are deliberately left to the assistant: "from bar 9 to 25" needs
+  // real position parsing, it is the rarer half, and a rule that guessed at it
+  // would be wrong in a way nobody could see.
+  {
+    id: 'run_macro',
+    tool: 'run_macro',
+    group: 'Arrangement',
+    what: 'Run a shape you have named',
+    say: ['steady swell on the pad', 'do the steady swell on the bass'],
+    match(w, ctx) {
+      const names = macroNames()
+      if (!names.length) return null
+      // Longest first, so "steady swell" wins over a macro merely called "swell".
+      const hit = names
+        .slice()
+        .sort((a, b) => b.length - a.length)
+        .find(n => {
+          const words = macroKey(n).split(' ').filter(Boolean)
+          return words.length > 0 && words.every(word => w.has(word))
+        })
+      if (!hit) return null
+      const stop = [...macroKey(hit).split(' '), 'run', 'do', 'put', 'across', 'over', 'apply', 'use']
+      const t = nameOrSelected(w, ctx, stop)
+      return {
+        calls: [{ name: 'run_macro', input: { name: hit, ...(t ? { target: t.name } : {}) } }],
+        confidence: t ? nameConfidence(t.score) : 0.88,
+        needsName: !!t,
+      }
     },
   },
 

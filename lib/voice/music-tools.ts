@@ -283,6 +283,43 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'define_macro',
+    description:
+      'NAME A SHAPE — save a move over time so it can be asked for again by name. Use this when somebody describes several parameters moving together across a clip or a stretch of bars: "give the bass descending reverb, an opening low-pass and falling volume", "make a filter sweep I can reuse". Give it a SHORT name they would plausibly say out loud, because saying the name later is how they get it back for free. `fx` is where each parameter ENDS UP at full strength; `shape` is how it travels there. Each parameter moves from its own neutral to its own target, so one shape can move things in OPPOSITE directions: on a "fall", reverbWet 1 fades out while filterHz 400 opens up, because 400Hz is dark and the neutral 18000 is open. Do NOT call this to make a one-off edit — only when the move is worth having again.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Two or three words, easy to say. "steady swell", "filter rise".' },
+        what: { type: 'string', description: 'One line, in plain words, for the list they will read.' },
+        fx: {
+          type: 'object',
+          description: 'Parameter → the value at FULL strength. reverbWet 0-1, filterHz Hz (low, e.g. 400, is dark), highpassHz Hz, gain 0-2 (1 is unchanged), drive 0-1, distortion 0-1, bitcrush 0-1, filterQ 0.1-12, detune cents, vibratoDepth 0-1.',
+        },
+        shape: {
+          type: 'string',
+          enum: ['fall', 'rise', 'arc', 'dip', 'hold'],
+          description: 'fall = starts full, ends neutral. rise = the reverse. arc = up then back. dip = away then back. hold = full throughout.',
+        },
+      },
+      required: ['fx', 'shape'],
+    },
+  },
+  {
+    name: 'run_macro',
+    description:
+      'USE A NAMED SHAPE — "steady swell on the bass", "put the filter rise across bars 9 to 25", "do the swell over the outro". The shape stretches to fit whatever it is given, so the SAME macro covers a four-bar clip and a thirty-two-bar section with no change. Give a clip or track in `target`, or a stretch in `from`/`to`. ⚠️ ALSO USE THIS AS A STARTING POINT: when a request is close to a macro that already exists, run it and then make the difference with ordinary edits — that is far more reliable than building a long move from nothing, and much less work. Say which macro you started from when you do.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Which macro. Roughly is fine — "the swell" finds "steady swell".' },
+        target: { ...TARGET, description: 'A clip, or a track whose clip it should go on.' },
+        from: { ...POSITION, description: 'Start of a stretch of bars, when it is not a clip.' },
+        to: { ...POSITION, description: 'End of that stretch.' },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'make_beat',
     description:
       'BEAT FROM VOICE — the person said a rhythm out loud using drum syllables: "boom ka boom boom ka", "make me a beat like doom ts doom ts", "boom boom ka". Call this whenever the message contains percussion syllables, even buried in a sentence — the syllables at the END are the beat and the words in front are just the request. Put the syllables you heard in `pattern`, in order, separated by spaces. Do NOT tidy them into real words: "ka" is not "car", and the exact syllables are what decide which drum each one is. The actual RHYTHM comes from when they were said, not from you.',
@@ -1222,6 +1259,8 @@ export function musicStateSummary(p: {
   }[]
   arrangementClips?: { trackId: string; name?: string; startBeat: number; durationBeats: number }[]
   selectedTrackId?: string | null
+  /** Names of the macros this studio knows — see the summary below. */
+  macros?: string[]
   selectedClipId?: string | null
   /**
    * Was this selected AFTER the assistant's last reply?
@@ -1293,8 +1332,20 @@ export function musicStateSummary(p: {
     ? (p.tracks ?? []).find(t => t.id === p.selectedTrackId)
     : undefined
 
+  // ⚠️ NAMED SHAPES, so the assistant can BUILD ON ONE instead of from nothing.
+  // Brae: "for some complex commands could we just use the command that did the
+  // closest thing, then do one edit afterwards so that we can use macros as
+  // starting points for very complex commands?"
+  //
+  // This is the whole mechanism for that, and it is four words per macro. A
+  // model that can see "steady swell" exists will reach for it and adjust,
+  // which is both cheaper than deriving a long move and more likely to be
+  // right — there is far less to invent.
+  const macros = p.macros?.length ? `Named shapes you can run or build on: ${p.macros.join(', ')}.` : ''
+
   return [
     `${p.tempo ?? 120} bpm, ${num}/${den}.`,
+    macros,
     changes.length ? `Changes: ${changes.join('; ')}.` : '',
     tracks.length ? `Tracks — ${tracks.join(' | ')}.` : 'No tracks yet.',
     // "this one" / "here" have to mean something, and the only thing that can

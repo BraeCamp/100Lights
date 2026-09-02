@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { commandHelp } from '@/lib/voice/interpret'
 import VoiceUsageLog from './VoiceUsageLog'
+import VoiceMacros from './VoiceMacros'
 import type { AssistantMode } from '@/lib/voice/speak'
 import { usePlan } from '@/hooks/usePlan'
 import { WAKE_WORDS } from '@/lib/voice/attention'
@@ -578,7 +579,7 @@ export default function VoicePanel({
   // command list is a reference you read once. With the assistant acting on
   // whatever it hears, a permanent tab listing the built-in phrasings also
   // rather misstates what the thing can do.
-  const [view, setView] = React.useState<'live' | 'settings' | 'usage'>(
+  const [view, setView] = React.useState<'live' | 'settings' | 'usage' | 'macros'>(
     initialTab === 'settings' ? 'settings' : 'live',
   )
   const [find, setFind] = useState('')
@@ -770,7 +771,9 @@ export default function VoicePanel({
         <button
           // ⚠️ Back from the log goes to Settings, which is where it was opened
           // from — landing on the live view loses your place for no reason.
-          onClick={() => setView(v => (v === 'live' ? 'settings' : v === 'usage' ? 'settings' : 'live'))}
+          // live ⇄ settings, and the two lists opened FROM settings go back to
+          // settings — landing on the live view would lose your place.
+          onClick={() => setView(v => (v === 'live' ? 'settings' : v === 'settings' ? 'live' : 'settings'))}
           aria-label={view === 'live' ? 'Settings' : 'Back'}
           title={view === 'live' ? 'Settings' : 'Back'}
           style={{
@@ -913,6 +916,7 @@ export default function VoicePanel({
         )}
 
         {view === 'usage' && <VoiceUsageLog C={C} />}
+        {view === 'macros' && <VoiceMacros C={C} />}
 
         {view === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -935,6 +939,26 @@ export default function VoicePanel({
               <span>Usage &amp; costs</span>
               <span style={{ color: C.textMuted, fontSize: 10 }}>
                 what each command cost, and what was free
+              </span>
+            </button>
+
+            {/* ── Named shapes ────────────────────────────────────────────
+                Brae: "can we have a live list of these macros someplace?"
+                Beside the costs on purpose: these two answer the same
+                question from opposite ends — one shows what you spent, the
+                other shows the names that stop you spending it again. */}
+            <button
+              onClick={() => setView('macros')}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 8, padding: '7px 9px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: 'transparent',
+                color: C.textPrimary, fontSize: 11, textAlign: 'left',
+              }}
+            >
+              <span>Named shapes</span>
+              <span style={{ color: C.textMuted, fontSize: 10 }}>
+                moves you can ask for again by name
               </span>
             </button>
 

@@ -117,6 +117,8 @@ const CALLS = {
   strip_back: { keep: ['drums'] },
   chord_inversion: { target: 'pad clip', direction: 'up' },
   modulate: { semitones: 2 },
+  define_macro: { name: 'test swell', fx: { reverbWet: 1 }, shape: 'fall' },
+  run_macro: { name: 'test swell', target: 'Bass' },
   show_view: { view: 'devices', target: 'Bass' },
   undo: {},
   redo: {},

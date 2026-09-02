@@ -40,6 +40,19 @@ const { COMMAND_SUMMARIES } = await importTs('lib/voice/command-summaries.ts')
 const { initPatch } = await importTs('lib/apollo/patch.ts')
 const APOLLO_PATCH = initPatch()
 const { interpret } = await importTs('lib/voice/interpret.ts')
+
+// ⚠️ A MACRO HAS TO EXIST FOR THE MACRO RULE TO MEAN ANYTHING. run_macro matches
+// against the names this studio actually knows — that is the point of it, and a
+// fixture with none would let the rule pass by never firing. Seeded here so its
+// examples are read the way a real sentence would be, against real competition:
+// "swell" is also a dynamics word, and this is where that collision shows up.
+const { defineMacro } = await importTs('lib/voice/macros.ts')
+defineMacro({
+  name: 'steady swell',
+  what: 'reverb fades, the low-pass opens and the level settles',
+  fx: { reverbWet: 1, filterHz: 400, gain: 1.4 },
+  shape: 'fall',
+})
 const { planVoiceCall } = await importTs('lib/voice/execute-music.ts')
 const { PRESET_VARIANTS } = await importTs('lib/preset-variants.ts')
 
@@ -250,7 +263,13 @@ check('every command that skips the executor says so',
 // is allowed, but it should be a decision somebody made, not a thing nobody
 // noticed.
 const covered = new Set(VOICE_COMMANDS.map(c => c.tool))
-const uncovered = MUSIC_TOOL_NAMES.filter(t => !covered.has(t))
+// ⚠️ DELIBERATELY ASSISTANT-ONLY — a decision, which is what this check asks
+// for. define_macro takes an arbitrary description of several parameters moving
+// together and turns it into targets and a shape; a built-in rule for that
+// would be a bad rule pretending to understand. RUNNING one is a rule, because
+// a name is exactly what rules are good at, and that is where the saving is.
+const ASSISTANT_ONLY = new Set(['define_macro'])
+const uncovered = MUSIC_TOOL_NAMES.filter(t => !covered.has(t) && !ASSISTANT_ONLY.has(t))
 console.log(`\ncoverage: ${covered.size}/${MUSIC_TOOL_NAMES.length} tools reachable by voice`)
 if (uncovered.length) console.log(`  not yet spoken: ${uncovered.join(', ')}`)
 check('every tool in the contract can be reached by voice', uncovered.length === 0,

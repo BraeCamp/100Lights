@@ -46,6 +46,7 @@ import {
 import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execute-music'
 import { recallCommand, rememberCommand, forgetKey, mergeShared, shareableTemplate } from '@/lib/voice/learned'
 import { recordCommand } from '@/lib/voice/voice-ledger'
+import { macroNames } from '@/lib/voice/macros'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
@@ -1574,7 +1575,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           matched: local.matched, understood: local.confidence,
           calls: local.calls, said_back: plan.say,
         })
-        recordCommand({ said: text, by: 'rules' })
+        recordCommand({ said: text, by: local.calls.some(c => c.name === 'run_macro') ? 'macro' : 'rules' })
         history.current = []
         setAsking('')
         // A reading of a REWRITTEN sentence says so. Acting silently on words
@@ -1659,7 +1660,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           matched: 'learned', understood: 1,
           calls: learned.calls, said_back: plan.say,
         })
-        recordCommand({ said: text, by: learned.from === 'shared' ? 'shared' : 'learned' })
+        recordCommand({
+          said: text,
+          by: learned.calls.some(c => c.name === 'run_macro') ? 'macro'
+            : learned.from === 'shared' ? 'shared' : 'learned',
+        })
         setAsking('')
         const after = (plan.actions as DawAction[]).reduce(dawReducer, before)
         lastAcceptedAt.current = Date.now()
@@ -1823,6 +1828,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             // checking its work against the project it started with.
             stateSummary: musicStateSummary({
               ...projectRef.current,
+              // ⚠️ Four words per macro, and it is what lets the assistant
+              // START FROM ONE instead of deriving a long move from nothing —
+              // cheaper, and much more likely to be right, because there is far
+              // less to invent.
+              macros: macroNames(),
               selectedTrackId: selectedTrackIdRef.current ?? lastSelection.current.trackId,
               selectedClipId: selectedClipIdRef.current ?? lastSelection.current.clipId,
               // Pointed at since the assistant last spoke, so it outranks

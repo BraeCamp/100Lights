@@ -16,6 +16,9 @@
 // and the thing that would surprise you.
 
 export const COMMAND_SUMMARIES: Record<string, string> = {
+  // ── Named shapes ─────────────────────────────────────────────────────────
+  'run_macro': 'Runs a shape you saved earlier — several parameters moving together across a clip or a stretch of bars. The shape stretches to whatever it is given, so the same one covers a four-bar clip and a thirty-two-bar section. Saying its NAME is free; "do the same thing again" is not, because that points at the selection rather than at the shape.',
+
   // ── The workspace ────────────────────────────────────────────────────────
   'select.focus_track': 'Focuses a track and says so, then every command that names nothing acts on it — "louder", "add reverb", "mute it". Deliberately NOT a mode: naming another track still wins, so there is nothing to get stuck inside and nothing to exit.',
   'show_view.colours': 'Opens the studio\'s own colours and patterns — the look of the app, not anything in the song. Say "close the colours" to put it away.',
