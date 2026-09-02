@@ -1839,8 +1839,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // Nothing more to send back: the model is done talking.
         if (data.stop !== 'tool_use') break
 
+        // ⚠️ ONLY AS A PAIR, AND ONLY WHEN THERE IS SOMETHING TO PAIR WITH.
+        // `data.raw ?? []` posted an EMPTY assistant message whenever the reply
+        // carried no raw blocks; the route drops empty messages, which left the
+        // tool_result below with no tool_use before it — the 400 that read as
+        // "an API error" and cost a whole session. If there is nothing to answer
+        // to, there is nothing to answer.
+        const raw = Array.isArray(data.raw) ? data.raw : []
+        if (!raw.length) break
         msgs.push(
-          { role: 'assistant', content: data.raw ?? [] },
+          { role: 'assistant', content: raw },
           { role: 'user', content: results },
         )
         if (turn === MAX_TURNS - 1 && badAt >= 0) setProblem(plans[badAt].problem || '')

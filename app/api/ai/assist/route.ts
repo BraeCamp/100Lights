@@ -35,6 +35,55 @@ export async function POST(req: Request) {
   if (!messages.length) return Response.json({ error: 'No message' }, { status: 400 })
   if (messages.length > 40) messages.splice(0, messages.length - 40)   // cap history the model sees
 
+  // ── Never send a tool_result with nothing to answer ───────────────────────
+  //
+  // ⚠️ THE EXACT 400 BRAE HIT:
+  //     messages.0.content.1: unexpected 'tool_use_id' found in 'tool_result'
+  //     blocks. Each 'tool_result' block must have a corresponding 'tool_use'
+  //     block in the previous message.
+  //
+  // A tool_result is only legal directly after the assistant turn that asked
+  // for it, and TWO things above can separate them:
+  //
+  //   the FILTER drops a message whose content array is empty, and the studio
+  //   posts `content: data.raw ?? []` — so a reply that carried no raw blocks
+  //   becomes an empty assistant message, is dropped, and leaves its result
+  //   behind with nothing before it. That is index 0 in the report, and it is
+  //   this one.
+  //
+  //   the CAP trims from the start, which can cut the assistant's tool_use
+  //   while keeping the user tool_result that followed it.
+  //
+  // Both end the same way: one malformed request, refused whole, and a studio
+  // that says "an API error" for a sentence the model never saw. So the
+  // conversation is repaired here — the last place it can be — rather than
+  // trusting every producer of it to stay in step.
+  const idsIn = (m: AssistMessage): Set<string> => {
+    const out = new Set<string>()
+    if (Array.isArray(m.content)) {
+      for (const b of m.content as { type?: string; id?: string }[]) {
+        if (b?.type === 'tool_use' && b.id) out.add(b.id)
+      }
+    }
+    return out
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role !== 'user' || !Array.isArray(m.content)) continue
+    const offered = i > 0 && messages[i - 1].role === 'assistant' ? idsIn(messages[i - 1]) : new Set<string>()
+    const kept = (m.content as { type?: string; tool_use_id?: string }[])
+      .filter(b => b?.type !== 'tool_result' || (b.tool_use_id ? offered.has(b.tool_use_id) : false))
+    if (kept.length === m.content.length) continue
+    // Everything in it was an orphaned result: the message has no reason to
+    // exist. Otherwise keep what was legitimately there.
+    if (kept.length === 0) messages.splice(i, 1)
+    else (messages[i] as { content: unknown }).content = kept
+  }
+  if (!messages.length) return Response.json({ error: 'No message' }, { status: 400 })
+  // A conversation cannot OPEN with a tool result either, whatever it answers.
+  while (messages.length && messages[0].role === 'assistant') messages.shift()
+  if (!messages.length) return Response.json({ error: 'No message' }, { status: 400 })
+
   // Gate on balance (usage-based: we bill the REAL token cost after the call, but require a floor to
   // start so an empty account can't run up work). No-op until CREDITS_ENABLED.
   if (CREDITS_ENABLED) {
