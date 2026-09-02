@@ -58,6 +58,7 @@ import {
   CALIBRATION_PHRASE, phraseAccuracy, verdictFor, type CalibrationResult,
 } from '@/lib/voice/calibrate'
 import VoicePanel from './VoicePanel'
+import VoiceHud from './VoiceHud'
 import VoiceLibrary from './VoiceLibrary'
 import VoiceCaption, { readVoiceCaption, writeVoiceCaption } from './VoiceCaption'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
@@ -2731,6 +2732,44 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           colors={{
             bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
             textMuted: C.textMuted, accent: C.accent,
+          }}
+        />
+      )}
+
+      {/* ⚠️ HUD MODE IS A DIFFERENT SURFACE, not the panel with things hidden.
+          Brae: "a full voice control UI that shows the program without any
+          buttons, just information and visuals... The only buttons will be to
+          return to normal hud, type commands, and exit voice control."
+
+          Every control stays in the panel; this shows state, the conversation,
+          what the assistant can SEE of the song, and the last few commands. It
+          renders only while HUD mode is on, so it costs nothing otherwise. */}
+      {hud && (
+        <VoiceHud
+          listening={listening}
+          continuous={continuousRef.current}
+          level={level}
+          talking={talking}
+          hearing={taking || heard}
+          said={said}
+          question={asking || pendingAsk2?.speak || ''}
+          problem={problem}
+          recent={recentContext(4).split('\n').filter(Boolean)}
+          facts={[
+            { label: 'Tempo', value: `${Math.round(project.tempo || 120)} BPM` },
+            { label: 'Tracks', value: String(project.tracks?.length ?? 0) },
+            ...(() => {
+              const t = project.tracks?.find(x => x.id === selectedTrackId)
+              return t ? [{ label: 'Selected', value: t.name }] : []
+            })(),
+            { label: 'Assistant', value: assistantMode() === 'rules' ? 'off' : aiAutoRef.current ? 'acting' : 'asks first' },
+          ]}
+          onNormalHud={() => { setHudState(false); setHud(false) }}
+          onType={() => setShowType(true)}
+          onExit={() => { setHudState(false); setHud(false); setListening(false); setPanelOpen(false) }}
+          colors={{
+            bg: C.bgSurface, surface: C.bgSurface, border: C.border,
+            text: C.textPrimary, muted: C.textMuted, accent: C.accent,
           }}
         />
       )}

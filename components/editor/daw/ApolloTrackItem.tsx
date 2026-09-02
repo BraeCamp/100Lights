@@ -153,15 +153,41 @@ export function useApolloTrackItem(trackId: string, getPatch?: () => unknown) {
   // first — init() is a no-op once ready, and whoever gets there first decides.
   useEffect(() => { void engine.init({ ctx: daw.ctx, destination: daw.masterGain, analyse: true }) }, [engine, daw])
 
-  // Follow Apollo's clock for the playhead. The worklet owns the beat; the UI
-  // only reads it off the meters message.
+  // ── One clock, so the two playheads agree ─────────────────────────────────
+  //
+  // Brae: "The playhead on device chain effects moves in a way that's not
+  // smooth and ahead of the playhead. When I pause, the playhead jumps to the
+  // effects playhead then it jumps back when I play again."
+  //
+  // ⚠️ THEY WERE READING DIFFERENT CLOCKS. This followed engine.meters.beat —
+  // Apollo's own transport, reported up from the worklet on a meters message —
+  // while the arrangement playhead follows the DAW's currentBeat, derived from
+  // the audio clock. Two clocks for one song disagree by however far apart they
+  // were last synchronised, which is the jump; and a value that only changes
+  // when a message ARRIVES steps rather than moves, however often the frame
+  // loop reads it, which is the lack of smoothness.
+  //
+  // ⚠️ THE DAW'S CLOCK IS THE ACCURATE ONE, and that answers "I don't know
+  // which is accurate": currentBeat is computed from ctx.currentTime every time
+  // it is read, so it is continuous and it is what you are HEARING. Apollo's
+  // meter is a periodic report about the same thing.
+  //
+  // When the item plays on its own — Beacon stopped, auditioning the hosted
+  // clip — Apollo IS the transport, so its meter is right and is still used.
   useEffect(() => {
     if (!playing) return
     let raf = 0
-    const tick = () => { setBeat(engine.meters.beat); raf = requestAnimationFrame(tick) }
+    const tick = () => {
+      // Absolute song beat, less where this clip starts, because the strip
+      // shows a position WITHIN the hosted pattern rather than in the song.
+      setBeat(daw.isPlaying && clip
+        ? Math.max(0, daw.currentBeat - clip.startBeat)
+        : engine.meters.beat)
+      raf = requestAnimationFrame(tick)
+    }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [playing, engine])
+  }, [playing, engine, daw, clip])
 
   const stop = useCallback(() => {
     setPlaying(false)
