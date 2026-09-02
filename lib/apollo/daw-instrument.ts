@@ -165,14 +165,47 @@ export function setApolloTrackParam(dest: AudioNode | undefined, path: string, v
   if (m?.isReady) m.engine.setParam(path, value)
 }
 
-export function apolloStopAll(ctx: BaseAudioContext): void {
+/**
+ * @param release Destroy the engines as well as silencing them.
+ *
+ * ⚠️ THE TWO CASES ARE NOT THE SAME, and treating them alike is what made
+ * playback expensive. A loop wraparound and a seek happen constantly — several
+ * times a minute around a short loop — and they only need the engines QUIET.
+ * An actual stop is the moment to give the CPU back.
+ *
+ * Releasing on every wraparound meant rebuilding every engine on the way round:
+ * constructing an AudioWorkletNode, re-sending the patch, re-transferring its
+ * samples, all on the main thread, at the exact moment the transport wants to
+ * schedule the next pass. Measured on a seven-track song: 301 engines built
+ * over 30 seconds of looping, against 2 once the two cases were told apart.
+ */
+export function apolloStopAll(ctx: BaseAudioContext, release = false): void {
   const set = byCtx.get(ctx)
   if (!set) return
   for (const m of set) {
     try {
       m.engine.clearScheduled()
       m.engine.panic()
-      // ⚠️ release(), not just node.disconnect().
+      // ⚠️ SILENCED, NOT DESTROYED.
+      //
+      // Brae: "it still slows and stops playing audio after a few seconds,
+      // usually only playing one chord or half of a chord before the audio cuts
+      // out... probably by taking some things out that cause the stalling."
+      //
+      // panic() and clearScheduled() already make an engine silent — that is
+      // what stopping needs. Releasing it as well meant the next play had to
+      // BUILD every engine again: constructing an AudioWorkletNode, sending the
+      // patch, and re-transferring its samples, all on the main thread, at
+      // exactly the moment the transport wants to schedule the first notes.
+      // A chord's worth of notes gets out while that is happening, and then
+      // nothing does — which is the report, precisely.
+      //
+      // Keeping them costs an idle processor per track. A silent Helios voice
+      // loop is close to free; rebuilding one is not.
+      //
+      // (An engine still ends properly when it should: release() on dispose,
+      // and an offline render's engines die with its context, which is a
+      // WeakMap key here.)
       //
       // The transport rebuilds these on the next play — including on every pass
       // around a LOOP, via _killAllSources — so a stop that only disconnects
@@ -187,9 +220,12 @@ export function apolloStopAll(ctx: BaseAudioContext): void {
       // forced GC. The JS heap was flat throughout, because an
       // AudioWorkletProcessor does not live in it — which is why this looked
       // like "it just gets slower" with nothing to point at.
-      m.engine.release()
+      if (release) m.engine.release()
     } catch { /* already gone */ }
   }
-  set.clear()
-  // byDest entries die with their (now unreferenced) dest nodes
+  // ⚠️ Kept unless they were actually destroyed. Clearing the set while the
+  // engines still exist is how they get lost track of; keeping it while they
+  // are gone would hand out dead ones. byDest keeps a live engine findable by
+  // its destination, so the next play reuses it instead of building another.
+  if (release) set.clear()
 }

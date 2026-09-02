@@ -1175,6 +1175,11 @@ export class DawEngine extends EventTarget {
     this._killAllSources()
     this._stopAllSessionSlots()
     this._clearClipFxChains()   // release the shared reverb/delay graphs (frees CPU while paused)
+    // ⚠️ HERE, and only here. _killAllSources above silenced them, which is all
+    // a loop wraparound or a seek needs; stopping is the moment to hand the CPU
+    // back, so this is where an idle Helios engine per clip stops existing.
+    apolloStopAll(this.ctx, true)
+    pluginStopAll(this.ctx, true)
     this._noteKeyVersion++; this._scheduledNoteKeys.clear(); this._liveScheduledClips.clear()
     this._unisonCache.clear()
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: false, beat: this._startBeat } }))
@@ -3342,9 +3347,20 @@ export class DawEngine extends EventTarget {
     return entry
   }
 
-  private _clearClipFxChains() {
+  /**
+   * @param includeBars Also drop the per-clip effect-bar chains.
+   *
+   * ⚠️ FALSE ON A LOOP WRAPAROUND. Those chains belong to worklet instruments,
+   * whose midiInput is no longer swapped — so unlike the roll-FX chains they do
+   * NOT dangle on a dead bus, and tearing them down only forced the engine bound
+   * to each one to be built again on the next pass. Two per cycle, every couple
+   * of seconds around a short loop, all of it main-thread work arriving exactly
+   * when the transport wants to schedule notes.
+   */
+  private _clearClipFxChains(includeBars = true) {
     for (const c of this._clipFxChains.values()) this._teardownFxNodes(c.nodes)
     this._clipFxChains.clear()
+    if (!includeBars) return
     for (const c of this._clipBarChains.values()) {
       for (const o of c.oscs) { try { o.stop(); o.disconnect() } catch { /* already stopped */ } }
       this._teardownFxNodes(c.nodes)
@@ -4159,7 +4175,21 @@ export class DawEngine extends EventTarget {
     // Cut off ringing MIDI voices (preset samples and synth instruments):
     // they connect through each track's midiInput bus, so fade the bus out
     // and swap in a fresh one for whatever plays next.
-    for (const nodes of this.trackNodes.values()) {
+    for (const [trackId, nodes] of this.trackNodes.entries()) {
+      // ⚠️ NOT FOR A WORKLET INSTRUMENT. Apollo and plugin engines are keyed by
+      // this exact node, so replacing it orphans them and the next play builds
+      // new ones — main-thread work landing precisely when the transport is
+      // trying to schedule the first notes.
+      //
+      // The swap exists to cut ringing SAMPLED and synth voices, which connect
+      // to this bus directly and have no other way to be silenced. A worklet
+      // engine has one: apolloStopAll/pluginStopAll panic it, which is both
+      // faster and more thorough than fading its output away.
+      if (this._isWorkletInstrument(this._tracks.find(t => t.id === trackId))) {
+        nodes.midiInput.gain.cancelScheduledValues(now)
+        nodes.midiInput.gain.setValueAtTime(1, now)
+        continue
+      }
       const old = nodes.midiInput
       old.gain.cancelScheduledValues(now)
       old.gain.setTargetAtTime(0, now, 0.003)
@@ -4174,7 +4204,12 @@ export class DawEngine extends EventTarget {
     // route every note scheduled after this point into the dead old bus (silent).
     // Tear them down so the next note rebuilds against the fresh midiInput. This
     // is the loop-wrap / seek counterpart to stop()'s _clearClipFxChains().
-    this._clearClipFxChains()
+    //
+    // ⚠️ The effect-bar chains are KEPT: their buses were not swapped above, so
+    // they are still wired to something live, and rebuilding them would rebuild
+    // an Apollo engine each. stop() still clears them, which is where releasing
+    // the CPU belongs.
+    this._clearClipFxChains(false)
   }
 
   clearStretchedCache(clipId?: string) {

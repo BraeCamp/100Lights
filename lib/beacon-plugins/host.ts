@@ -300,11 +300,21 @@ export async function preloadPluginInstrument(
 
 /** Transport stop: silence everything and drop the nodes, because the DAW
     swaps its per-track input buses and our connections are about to dangle. */
-export function pluginStopAll(ctx: BaseAudioContext): void {
+/**
+ * @param release Discard the plugin instances too, not just silence them.
+ *
+ * ⚠️ Same split as apolloStopAll, for the same reason: a loop wraparound and a
+ * seek happen constantly and only need the plugin QUIET, while discarding it
+ * forces the next pass to build the worklet and reload its wasm — main-thread
+ * work landing exactly when the transport wants to schedule notes. A stop is
+ * the moment to hand those resources back.
+ */
+export function pluginStopAll(ctx: BaseAudioContext, release = false): void {
   const set = byCtx.get(ctx)
   if (!set) return
   for (const m of [...set]) {
     try { m.node?.port.postMessage({ type: 'panic' } as HostMessage) } catch { /* gone */ }
+    if (!release) { m.queue = []; continue }
     try { m.node?.disconnect() } catch { /* gone */ }
     m.node = null
     m.ready = false

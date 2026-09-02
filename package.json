@@ -29,6 +29,7 @@
     "check:voice": "node scripts/check-voice-control.mjs",
     "check:worklet-leak": "node scripts/check-worklet-leak.mjs",
     "check:popup-fit": "node scripts/check-popup-fit.mjs",
+    "check:play-stall": "node scripts/check-play-stall.mjs",
     "probe:apollo-attach": "node scripts/apollo-attach-probe.mjs",
     "probe:apollo-growth": "node scripts/apollo-growth-probe.mjs",
     "probe:session-leak": "node scripts/session-leak-probe.mjs",
