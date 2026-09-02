@@ -1,4 +1,5 @@
 import { apolloEngineCount } from '@/lib/apollo/daw-instrument'
+import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
 /**
  * A playback diagnostic you can run in the browser where the problem happens.
  *
@@ -43,6 +44,8 @@ interface Diagnostic {
    * the main thread, so while it cannot run, nothing new is scheduled — what is
    * already queued plays, and then there is silence.
    */
+  /** The Apollo worklet build this page is running — see report(). */
+  engineVersion: string
   engines: { live: number; ready: number }
   mainThread: { longTasks: number; blockedMs: number; worstTaskMs: number }
   /**
@@ -245,6 +248,16 @@ export function installDawDiagnose(
       }
     }
     return {
+      /**
+       * Which build of the worklet is actually running.
+       *
+       * ⚠️ Brae: "Can you make sure that they are going through because it
+       * still cuts out after a chord." A fix that never reached the browser and
+       * a fix that did not work look exactly alike from the outside, and the
+       * service worker serves assets stale-while-revalidate — so this is the
+       * first thing to read before believing anything else in this report.
+       */
+      engineVersion: ENGINE_VERSION,
       engines: apolloEngineCount(e.ctx),
       mainThread: {
         longTasks: tasks.count,

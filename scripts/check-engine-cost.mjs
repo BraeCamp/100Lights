@@ -44,7 +44,10 @@ const bench = async (engines, notesPerEngine, seconds, patch) => page.evaluate(
   async ({ engines, notesPerEngine, seconds, patch }) => {
     const RATE = 48000
     const ctx = new OfflineAudioContext(2, RATE * seconds, RATE)
-    await ctx.audioWorklet.addModule('/apollo/engine.js')
+    // ⚠️ Cache-busted. The service worker answers .js stale-while-revalidate, so
+    // an unversioned request here would benchmark whichever engine happened to
+    // be cached — which is the very hazard this session just found in the app.
+    await ctx.audioWorklet.addModule('/apollo/engine.js?v=probe-' + Date.now())
     const master = ctx.createGain()
     master.gain.value = 0.3
     master.connect(ctx.destination)

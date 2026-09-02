@@ -8,6 +8,7 @@
 // engine is ready); apolloStopAll on transport stop panics + discards nodes
 // (the DAW swaps its per-track input bus on stop, orphaning our connection).
 
+import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
 import { ApolloEngine } from '@/lib/apollo/engine-client'
 import { restorePatchSamples } from '@/lib/apollo/sample-store'
 import type { ApolloPatch } from '@/lib/apollo/patch'
@@ -155,7 +156,21 @@ export async function preloadApolloInstrument(
 ): Promise<void> {
   if (!dest) {
     // no destination yet — at least warm the worklet module for this context
-    try { await ctx.audioWorklet.addModule('/apollo/engine.js') } catch { /* warmed elsewhere */ }
+    // ⚠️ THE VERSION, or this serves a STALE ENGINE — and it is the path the DAW
+    // takes. The service worker treats /apollo/engine.js as an ordinary asset
+    // and answers it stale-while-revalidate: the cached copy is handed over
+    // immediately and a fresh one is fetched for NEXT time. Unversioned, that
+    // means the worklet running in Beacon is always the previous deploy's.
+    //
+    // Worse, whichever URL registers the processor FIRST wins for the whole
+    // context — a later addModule of the other URL throws "already registered"
+    // and is swallowed. So this one call, on a path that only runs when a track
+    // has no destination yet, could pin every engine in the session to old code
+    // while engine-client.ts was correctly asking for the new one.
+    //
+    // With the version in the query string every release is a distinct cache
+    // key, so stale-while-revalidate can only ever serve the right build.
+    try { await ctx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION) } catch { /* warmed elsewhere */ }
     return
   }
   const m = ensure(ctx, dest, patch)
