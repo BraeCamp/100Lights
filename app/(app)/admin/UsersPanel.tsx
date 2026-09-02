@@ -783,9 +783,28 @@ export default function UsersPanel() {
                   )}
                 </div>
 
-                {/* Gift actions — visible + touch-friendly (no right-click needed) */}
+                {/* ⚠️ Gift actions — EVERY plan and every Lumen tier, right here.
+                    Brae: "I can gift pro when I click on a user, but I can't
+                    gift anything else."
+
+                    Quite right: this panel said GIFT PRO and sent `giftPlan`,
+                    whose only selector lived in the right-click menu — so from
+                    here it was whatever that menu was last set to, which is
+                    'pro' until somebody right-clicks. Three of the four plans
+                    were reachable only by a gesture that does not exist on a
+                    touchscreen, and the Lumen tiers were not here at all. */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', marginBottom: 6 }}>GIFT PRO</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', marginBottom: 6 }}>GIFT A PLAN</div>
+                  {/* Which plan the durations below will grant. */}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                    {PAID_PLANS.map(p => (
+                      <button key={p} onClick={() => setGiftPlan(p)}
+                        style={{ fontSize: 11.5, fontWeight: 700, padding: '5px 12px', borderRadius: 7, textTransform: 'capitalize',
+                          border: `1px solid ${giftPlan === p ? 'var(--accent)' : 'var(--border)'}`,
+                          background: giftPlan === p ? 'rgba(139,92,246,0.18)' : 'transparent',
+                          color: giftPlan === p ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}>{p}</button>
+                    ))}
+                  </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {([['7 days', 7], ['30 days', 30], ['90 days', 90], ['Indefinite', null]] as const).map(([lbl, d]) => (
                       <button key={lbl} onClick={() => applyGift(detailUser.userId, giftPlan, d)}
@@ -796,7 +815,23 @@ export default function UsersPanel() {
                         style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 11px', borderRadius: 7, border: '1px solid rgba(239,68,68,0.4)', background: 'transparent', color: '#ef4444', cursor: 'pointer' }}>Remove gift</button>
                     )}
                   </div>
-                  {!detailUser.hasRecord && <p style={{ fontSize: 10.5, color: '#f59e0b', margin: '6px 0 0' }}>No subscription record yet — gifting will 404 until they sign in once.</p>}
+
+                  {/* ⚠️ A separate axis, not a bigger version of the same one: a
+                      plan unlocks FEATURES, a tier is how many Lumens arrive
+                      each month. Somebody can hold either without the other. */}
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', margin: '12px 0 6px' }}>
+                    GIFT {LUMENS_NAME.toUpperCase()}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {(Object.keys(CREDIT_TIERS) as (keyof typeof CREDIT_TIERS)[])
+                      .filter(t => t !== 'free')
+                      .map(t => (
+                        <button key={t} onClick={() => applyTier(detailUser.userId, t)}
+                          style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 11px', borderRadius: 7, border: '1px solid rgba(251,191,36,0.4)', background: 'rgba(251,191,36,0.12)', color: '#fbbf24', cursor: 'pointer' }}>
+                          {CREDIT_TIERS[t].label} · {CREDIT_TIERS[t].monthlyCredits.toLocaleString()}
+                        </button>
+                      ))}
+                  </div>
                 </div>
 
                 </>)}
