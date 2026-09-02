@@ -161,9 +161,22 @@ export function audioLatencyHint(): LatencyChoice {
       if (raw === 'interactive' || raw === 'balanced' || raw === 'playback') return raw
     }
   } catch { /* private mode */ }
-  // ⚠️ 'balanced' rather than 'interactive': the default should be the one that
-  // plays a song reliably, not the one that shaves milliseconds off a keypress.
-  return 'balanced'
+  // ⚠️ BACK TO 'interactive', BECAUSE THE BIGGER BUFFER MADE IT WORSE.
+  //
+  // Brae, on 'balanced': "Now it just lags like crazy in brave and cuts out a
+  // bit later. It sounds very choppy."
+  //
+  // Which follows, and I should have predicted it. A larger buffer does not
+  // reduce the work — it BATCHES it. On a machine that is comfortably inside
+  // its budget that buys slack against jitter. On one that is over budget, it
+  // turns many tiny gaps into fewer, longer ones: the same shortfall, delivered
+  // in bigger pieces, which is what "very choppy" describes.
+  //
+  // So the buffer is not the lever. Apollo needs ~0.72 of the render deadline
+  // on eight tracks with the machine idle, and no buffer size fixes being over
+  // budget — only doing less work does. The knob stays, because it is the right
+  // thing to try on an unfamiliar machine and it costs nothing to keep.
+  return 'interactive'
 }
 
 export class DawEngine extends EventTarget {
@@ -1858,7 +1871,7 @@ export class DawEngine extends EventTarget {
         let engineFilter: { cut?: number; res?: number } | null = null
         if (this._rollFxActive(rfx)) {
           if (this._isWorkletInstrument(track)) {
-            engineFilter = this._engineNoteFilter(rfx)
+            engineFilter = this._engineNoteFilter(rfx, track)
           }
           if (engineFilter) {
             // Nothing to wire: the note keeps the track's own bus, so the whole
@@ -2621,7 +2634,7 @@ export class DawEngine extends EventTarget {
         // (drive, delay, an amplitude shape) does a chain get built, and then it
         // is the clip's shared one.
         const engineFilterB = this._isWorkletInstrument(track) && !clipEffectActive
-          ? this._engineNoteFilter(rfx) : null
+          ? this._engineNoteFilter(rfx, track) : null
         if (this._rollFxActive(rfx) && !engineFilterB) {
           // ⚠️ A worklet instrument shares ALWAYS. The three conditions below are
           // the reasons a note wants a chain of its OWN — its own FX, a filter
@@ -4174,10 +4187,27 @@ export class DawEngine extends EventTarget {
    * is real signal processing that has to happen outside, so this returns null
    * and the caller falls back to the clip's shared chain.
    */
-  private _engineNoteFilter(rfx: RollFx): { cut?: number; res?: number } | null {
+  private _engineNoteFilter(rfx: RollFx, track?: { id: string }): { cut?: number; res?: number } | null {
     const lp = rfx.filterHz
     // 17.5k and up is the "Off" end of the low-pass — see FX_FIELDS.
     if (lp == null || lp >= 17_500) return null
+
+    // ⚠️ ONLY WHEN THE ENGINE'S OWN FILTER IS ACTUALLY A LOW-PASS.
+    //
+    // Brae: "Safari's only problem is lowpass working right." Mine, and this is
+    // it. Sending the value to Helios means the note's low-pass stops being a
+    // filter of its own and becomes a CAP on the patch's filter 1 — correct
+    // only if that filter is a low-pass. On a high-pass, lowering its cutoff
+    // opens it and the note gets BRIGHTER; on a band-pass it moves the band.
+    // The one thing a low-pass must never do is make something brighter.
+    //
+    // A patch filtering any other way keeps a real filter in front of it, which
+    // is what it had before and is always right — it costs a chain per clip,
+    // and being correct is worth a chain per clip.
+    const inst = track ? this._resolveInstrument(track as never) : null
+    const f1 = (inst?.params as { filters?: { enabled?: boolean; type?: string }[] } | undefined)?.filters?.[0]
+    if (!f1?.enabled) return null
+    if (!/^(lp|ladder)/.test(String(f1.type ?? ''))) return null
     for (const [k, v] of Object.entries(rfx)) {
       if (k === 'filterHz' || k === 'filterQ') continue
       const field = FX_FIELD_BY_KEY[k]
