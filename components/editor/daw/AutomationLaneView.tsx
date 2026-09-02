@@ -7,6 +7,19 @@ import type { AutomationLane, AutomationPoint } from '@/lib/daw-types'
 
 interface AutomationLaneViewProps {
   lane: AutomationLane
+  /**
+   * The OTHER parameters automated on the same device.
+   *
+   * Brae: "There should be 1 lane for the effect, with different graphs on that
+   * automation lane. That way all effects can have dynamic movement along the
+   * timeline."
+   *
+   * They are drawn behind the active curve, dimmed and thin — context, not the
+   * thing being edited. Only the active lane takes the pointer, so a reverb's
+   * wet, decay and pre-delay share one row and one set of bars to read against,
+   * instead of stacking three rows deep and pushing the song off the screen.
+   */
+  siblings?: AutomationLane[]
   beatWidth: number       // pixels per beat
   viewStartBeat: number   // scrolled position in beats
   height: number          // lane height in px
@@ -14,6 +27,7 @@ interface AutomationLaneViewProps {
 
 export default function AutomationLaneView({
   lane,
+  siblings = [],
   beatWidth,
   viewStartBeat,
   height,
@@ -83,6 +97,25 @@ export default function AutomationLaneView({
       ctx.lineTo(w, defaultY)
       ctx.stroke()
       ctx.restore()
+
+      // ── The device's other parameters, behind ────────────────────────────
+      // Same shape, no handles, no hit-testing: they are there to be read
+      // against, so that a wet curve and a decay curve can be seen to move
+      // together without being edited at the same time.
+      for (const sib of siblings) {
+        if (!sib.points.length) continue
+        const pts = [...sib.points].sort((a, b) => a.beat - b.beat)
+        ctx.save()
+        ctx.strokeStyle = 'rgba(125,165,225,0.30)'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(0, h - pts[0].value * h)
+        ctx.lineTo((pts[0].beat - viewStartBeat) * beatWidth, h - pts[0].value * h)
+        for (const pt of pts) ctx.lineTo((pt.beat - viewStartBeat) * beatWidth, h - pt.value * h)
+        ctx.lineTo(w, h - pts[pts.length - 1].value * h)
+        ctx.stroke()
+        ctx.restore()
+      }
 
       // Sort points by beat for correct curve drawing
       const sorted = [...lane.points].sort((a, b) => a.beat - b.beat)

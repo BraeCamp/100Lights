@@ -528,7 +528,68 @@ function AddAutoButton({ track }: { track: DawTrack }) {
   )
 }
 
-function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack }) {
+/**
+ * The automation lanes of one track, as ROWS - one per device rather than one
+ * per parameter.
+ *
+ * Brae: "There should be 1 lane for the effect, with different graphs on that
+ * automation lane. That way all effects can have dynamic movement along the
+ * timeline."
+ *
+ * WARNING: THE GROUPING IS A VIEW, NOT A MODEL CHANGE. Each parameter keeps its
+ * own lane underneath: its own min/max (which are UNITS - a filter lane
+ * declared 0-1 sets the cutoff to a fraction of a Hertz), its own log curve
+ * where frequency needs one, and its own overridden flag, since touching the
+ * wet knob must not switch off the decay curve. Merging them into one record
+ * would have cost all three and bought nothing the eye cannot already do.
+ *
+ * The row order follows where each device's FIRST parameter was added, so
+ * adding a second one joins the row already on screen instead of appearing at
+ * the bottom.
+ */
+function lanesByDevice(lanes: AutomationLane[]): AutomationLane[][] {
+  const rows: AutomationLane[][] = []
+  const byEffect = new Map<string, AutomationLane[]>()
+  for (const l of lanes) {
+    const m = /^fx:([^:]+):/.exec(l.parameter)
+    if (!m) { rows.push([l]); continue }
+    const found = byEffect.get(m[1])
+    if (found) { found.push(l); continue }
+    const fresh = [l]
+    byEffect.set(m[1], fresh)
+    rows.push(fresh)
+  }
+  return rows
+}
+
+function DeviceLaneRow({ lanes, track, beatW, scrollLeft }: {
+  lanes: AutomationLane[]; track: DawTrack; beatW: number; scrollLeft: number
+}) {
+  const [activeId, setActiveId] = useState(lanes[0].id)
+  // Falls back when the chosen parameter's lane is deleted out from under it.
+  const active = lanes.find(l => l.id === activeId) ?? lanes[0]
+  return (
+    <div style={{ display: 'flex', height: AUTO_H, flexShrink: 0 }}>
+      <AutoLaneHeader lane={active} track={track} choices={lanes} onPick={setActiveId} />
+      <div style={{ flex: 1, height: AUTO_H, overflow: 'hidden', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+        <AutomationLaneView
+          lane={active}
+          siblings={lanes.filter(l => l.id !== active.id)}
+          beatWidth={beatW}
+          viewStartBeat={scrollLeft / beatW}
+          height={AUTO_H}
+        />
+      </div>
+    </div>
+  )
+}
+
+function AutoLaneHeader({ lane, track, choices, onPick }: {
+  lane: AutomationLane; track: DawTrack
+  /** Every parameter automated on this device, when the row holds more than one. */
+  choices?: AutomationLane[]
+  onPick?: (laneId: string) => void
+}) {
   const { dispatch } = useDaw()
 
   /**
@@ -550,9 +611,23 @@ function AutoLaneHeader({ lane, track }: { lane: AutomationLane; track: DawTrack
 
   return (
     <div style={{ width: HDR_W, height: AUTO_H, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px', background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', borderLeft: `3px solid ${track.color}55`, boxSizing: 'border-box' }}>
-      <div style={{ flex: 1, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {lane.label}
-      </div>
+      {choices && choices.length > 1 ? (
+        // Which graph this row is EDITING. The others stay drawn behind it, so
+        // the switch changes what the pointer touches, not what you can see.
+        <select
+          value={lane.id}
+          onChange={e => { e.stopPropagation(); onPick?.(e.target.value) }}
+          onMouseDown={e => e.stopPropagation()}
+          title="Which parameter of this device to edit - the rest stay drawn behind"
+          style={{ flex: 1, minWidth: 0, fontSize: 10, color: 'var(--text-secondary)', background: 'transparent', border: '1px solid var(--border)', borderRadius: 2, padding: '1px 2px', cursor: 'pointer' }}
+        >
+          {choices.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </select>
+      ) : (
+        <div style={{ flex: 1, fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {lane.label}
+        </div>
+      )}
       {effect && (
         <button
           onClick={e => { e.stopPropagation(); setPoppedDevice({ effectId: effect.id, trackId: track.id }) }}
@@ -2166,18 +2241,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       )}
 
       {/* Automation lane rows */}
-      {!collapsed && autoLanes.map(lane => (
-        <div key={lane.id} style={{ display: 'flex', height: AUTO_H, flexShrink: 0 }}>
-          <AutoLaneHeader lane={lane} track={track} />
-          <div style={{ flex: 1, height: AUTO_H, overflow: 'hidden', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <AutomationLaneView
-              lane={lane}
-              beatWidth={beatW}
-              viewStartBeat={scrollLeft / beatW}
-              height={AUTO_H}
-            />
-          </div>
-        </div>
+      {!collapsed && lanesByDevice(autoLanes).map(group => (
+        <DeviceLaneRow key={group[0].id} lanes={group} track={track} beatW={beatW} scrollLeft={scrollLeft} />
       ))}
 
       {/* Effects lane */}

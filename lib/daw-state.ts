@@ -535,6 +535,8 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     }
 
     case 'UPDATE_EFFECT': {
+      const was = project.tracks.find(t => t.id === action.trackId)
+        ?.effects.find(e => e.id === action.effectId)
       const tracks = project.tracks.map(t => {
         if (t.id !== action.trackId) return t
         const effects = t.effects.map(e =>
@@ -542,7 +544,41 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         )
         return { ...t, effects }
       })
-      return { ...project, tracks }
+
+      // ── Touching a control overrides its lane ────────────────────────────
+      //
+      // Brae: "When I set reverb on pad to 80% it shows in the device chain
+      // menu but not on the graph."
+      //
+      // ⚠️ AND THE GRAPH WAS STILL DRIVING THE SOUND. The Ableton semantics are
+      // written down on AutomationLane, honoured by the engine (an overridden
+      // lane keeps its curve and stops driving the parameter) and drawn by the
+      // lane view in grey — but NOTHING SET THE FLAG except the volume fader on
+      // the track head. Pan never did, and no effect parameter ever did.
+      //
+      // So a reverb with a wet lane ignored the number you set: the device
+      // chain said 80%, the curve went on playing, and what you heard was the
+      // curve. That is the same failure as a bypassed effect reporting its
+      // stored amount — a value shown that reaches no audio.
+      //
+      // Done in the reducer rather than at the control, because there are four
+      // ways to change an effect parameter (the chain, the popped-out card, the
+      // voice assistant, the learned cache) and only one of them was ever going
+      // to remember. This is the one place all four pass through.
+      const params = (action.patch as { params?: Record<string, unknown> }).params
+      const before = was?.params as Record<string, unknown> | undefined
+      if (!params || !project.automationLanes?.length) return { ...project, tracks }
+
+      const prefix = `fx:${action.effectId}:`
+      const automationLanes = project.automationLanes.map(l => {
+        if (l.overridden || !l.points.length) return l
+        if (l.trackId !== action.trackId || !l.parameter.startsWith(prefix)) return l
+        const key = l.parameter.slice(prefix.length)
+        // Only a parameter that actually MOVED. Re-saving an effect unchanged,
+        // or changing its decay, must not switch off the lane driving its wet.
+        return before && Object.is(before[key], params[key]) ? l : { ...l, overridden: true }
+      })
+      return { ...project, tracks, automationLanes }
     }
 
     case 'REORDER_EFFECTS': {
