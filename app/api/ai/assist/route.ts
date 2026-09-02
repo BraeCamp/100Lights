@@ -21,7 +21,8 @@ export async function POST(req: Request) {
   if (!userId) return Response.json({ error: 'Sign in to use the AI assistant.' }, { status: 401 })
   if (!process.env.ANTHROPIC_API_KEY) return Response.json({ error: 'The AI assistant is not configured (ANTHROPIC_API_KEY).' }, { status: 501 })
 
-  let body: { messages?: AssistMessage[]; module?: string; stateSummary?: string; recent?: string }
+  let body: { messages?: AssistMessage[]; module?: string; stateSummary?: string; recent?: string;
+              hint?: { matched?: string; confidence?: number; calls?: string[] } }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
   // ⚠️ Content is a string OR an array of blocks. The string-only filter this
   // replaces would have silently DROPPED every tool_use and tool_result turn —
@@ -88,6 +89,14 @@ export async function POST(req: Request) {
       // Capped here rather than trusted: this arrives from the browser, and a
       // caller that sent a novel would be paying for it on every utterance.
       recent: typeof body.recent === 'string' ? body.recent.slice(0, 2000) : undefined,
+      // Trimmed to the shape the prompt uses; this comes from the browser.
+      hint: body.hint && typeof body.hint === 'object'
+        ? {
+            matched: String(body.hint.matched ?? '').slice(0, 60),
+            confidence: Number(body.hint.confidence) || 0,
+            calls: (body.hint.calls ?? []).slice(0, 6).map(c => String(c).slice(0, 40)),
+          }
+        : undefined,
     })
   } catch (e) {
     return Response.json({ error: (e as Error).message || 'The assistant failed. No credits were charged.' }, { status: 502 })

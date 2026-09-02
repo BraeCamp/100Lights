@@ -1194,7 +1194,20 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // Typed or spoken: running two commands together is the same problem either
     // way, and somebody typing "solo the pad set the tempo to 132" means both.
     {
-      const segments = interpretSequence(text, ctx)
+      // ⚠️ NOT WHEN THE ASSISTANT IS GOING TO ANSWER. Brae: "the AI has so many
+      // rules that it follows that it doesn't actually know what to do... I
+      // think the rules make it have a harder time doing other things."
+      //
+      // This block SPLIT a sentence with the rules and then EXECUTED every
+      // piece with the rules, and returned — so in assistant mode a sentence
+      // the splitter recognised never reached the model at all. That is how
+      // "change the name of the item drums 1 to drums 2" became a time
+      // signature change: a rule matched a fragment of it and ran.
+      //
+      // The splitter is good at what it is for and stays in charge when the
+      // assistant is off. With it on, one model that can see the whole sentence
+      // beats several rules that can each see a piece of it.
+      const segments = aiAutoRef.current ? [] : interpretSequence(text, ctx)
       if (segments.length > 1) {
         lastAcceptedAt.current = Date.now()
         setBusy(false)
@@ -1485,7 +1498,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     }
 
     // ── Understood, but two ways ─────────────────────────────────────────────
-    if (local.calls.length && local.alternatives?.length) {
+    //
+    // ⚠️ ALSO NOT WHEN THE ASSISTANT IS ON. Being asked to choose between two
+    // rule readings is a reasonable thing to do when the rules are the only
+    // interpreter. When a model is about to read the same sentence — with the
+    // song, the selection and the last ten commands in front of it — stopping
+    // to ask which of two rule guesses was meant is worse than simply letting
+    // it answer.
+    if (!aiAutoRef.current && local.calls.length && local.alternatives?.length) {
       const readings = [
         { id: local.matched, calls: local.calls },
         ...local.alternatives,
@@ -1615,6 +1635,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             // without this every finished command left no trace and a
             // follow-up had nothing to refer back to.
             recent: recentContext(),
+            // ⚠️ WHAT THE RULES THOUGHT, AS A SUGGESTION — not as a decision.
+            //
+            // The hundred hand-written rules know a great deal about this app:
+            // which words name a track, what "brighter" does, how people phrase
+            // things here. Throwing that away when the assistant is on wastes
+            // it; letting it ACT was the problem. Handed over as a reading to
+            // consider, the model keeps the knowledge and keeps the judgement.
+            hint: local.calls.length
+              ? { matched: local.matched, confidence: local.confidence,
+                  calls: local.calls.map(c => c.name) }
+              : undefined,
             // Re-read every turn: after the first pass the song is not what it
             // was, and a summary from before the edits would have the assistant
             // checking its work against the project it started with.

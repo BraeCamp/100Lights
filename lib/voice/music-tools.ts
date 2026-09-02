@@ -1073,7 +1073,7 @@ export const MUSIC_TOOLS = [
   },
   {
     name: 'remove_midi_effect',
-    description: 'Take a MIDI effect off a track. "stop arpeggiating the pad".',
+    description: 'MIDI EFFECT (REMOVE) — take a MIDI effect off a track. "stop arpeggiating the pad".',
     input_schema: {
       type: 'object',
       properties: {
@@ -1267,8 +1267,48 @@ export function musicStateSummary(p: {
   ].filter(Boolean).join(' ')
 }
 
+/**
+ * A contents page for the toolbox.
+ *
+ * Brae: "We could also have better descriptions attached to the commands that
+ * it's wired into so that it can navigate with more ease."
+ *
+ * ⚠️ THE DESCRIPTIONS WERE NOT THE WEAK PART — the index was missing. Nearly
+ * every tool already opens with what it is for in capitals ("MIXER —",
+ * "TEMPO —", "ANY DIAL INSIDE APOLLO, BY NAME —"), which is excellent once you
+ * are reading the right one. With seventy-odd of them the harder problem is
+ * getting there: the prompt already records what happens when that fails —
+ * "a model that cannot find the right tool reaches for a neighbouring one far
+ * more readily than it refuses" — which is how asking about a pad changed the
+ * tempo.
+ *
+ * So this lists every tool under its own opening phrase, in one place, as
+ * something to scan by intent. GENERATED from the tools themselves: a
+ * hand-written index would be wrong within a week, and an index that disagrees
+ * with the toolbox is worse than none.
+ */
+function toolIndex(): string {
+  const groups = new Map<string, string[]>()
+  for (const t of MUSIC_TOOLS) {
+    const d = String(t.description ?? '')
+    // The opening phrase, up to the em dash: "MIXER", "ANY DIAL INSIDE APOLLO".
+    const head = /^([A-Z][A-Z0-9 /()]{2,60}?)\s+—/.exec(d)?.[1]?.trim() ?? 'OTHER'
+    const list = groups.get(head) ?? []
+    list.push(t.name)
+    groups.set(head, list)
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([head, names]) => `  ${head}: ${names.join(', ')}`)
+    .join('\n')
+}
+
 export const MUSIC_SYSTEM_HINT = [
   'The user is speaking commands out loud while making music, so the transcript may be casual and may include "Hey Light".',
+  // ⚠️ Scan this BEFORE reaching for a tool. Picking a neighbouring tool
+  // because the right one was not found is the single most damaging thing
+  // that happens here — it edits the wrong part of somebody's song.
+  `The tools, grouped by what they are for. Find the group first, then the tool:\n${toolIndex()}`,
   // Measured: "move everything over by one bar and have a 1 bar long crash at
   // the beginning, then restart" came back as ONE call — the move — silently
   // dropping two thirds of the sentence. A spoken sentence is often three

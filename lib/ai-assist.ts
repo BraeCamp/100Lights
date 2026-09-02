@@ -165,7 +165,8 @@ function staticSystemOther(moduleName: string): string {
  * full every single time. The song's state sits after the breakpoint because
  * it is different on every request by definition.
  */
-function systemBlocks(moduleName: string, stateSummary?: string, recent?: string) {
+function systemBlocks(moduleName: string, stateSummary?: string, recent?: string,
+                      hint?: { matched?: string; confidence?: number; calls?: string[] }) {
   const blocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl?: string } }> = [
     // ⚠️ ONE HOUR, not the default five minutes.
     //
@@ -202,6 +203,25 @@ function systemBlocks(moduleName: string, stateSummary?: string, recent?: string
       + `references like "that one", "again", "the same thing", and to remember `
       + `what you last asked about:\n${recent}` })
   }
+  // ⚠️ WHAT THE RULES THOUGHT — AS ADVICE, NEVER AS AN INSTRUCTION.
+  //
+  // Brae: "the AI has so many rules that it follows that it doesn't actually
+  // know what to do... let's stay away from rules and focus on giving it
+  // recommendations and context."
+  //
+  // The hundred hand-written rules know a great deal about this app — which
+  // words name a track, how people phrase things here — and until now that
+  // knowledge either ACTED (pre-empting the model, which is what made it run
+  // the wrong command) or was thrown away. Offered as a reading to consider, it
+  // is worth having and costs nothing to disagree with.
+  if (hint?.calls?.length) {
+    blocks.push({ type: 'text', text:
+      `The built-in rules read this sentence as ${hint.calls.join(', ')} `
+      + `(rule "${hint.matched}", confidence ${(hint.confidence ?? 0).toFixed(2)}). `
+      + `That is a SUGGESTION from a pattern matcher that cannot see the song, the `
+      + `selection or the conversation — you can. Use it if it agrees with what you `
+      + `read, ignore it if it does not.` })
+  }
   return blocks
 }
 
@@ -213,6 +233,8 @@ export async function runAssist(opts: {
   stateSummary?: string
   /** A few lines of what was asked recently — see recentContext(). */
   recent?: string
+  /** What the local rules made of this sentence, offered as advice. */
+  hint?: { matched?: string; confidence?: number; calls?: string[] }
   maxTokens?: number
 }): Promise<AssistResult> {
   const key = process.env.ANTHROPIC_API_KEY
@@ -232,7 +254,7 @@ export async function runAssist(opts: {
     body: JSON.stringify({
       model: MODEL,
       max_tokens: opts.maxTokens ?? 1200,
-      system: systemBlocks(opts.module ?? 'video', opts.stateSummary, opts.recent),
+      system: systemBlocks(opts.module ?? 'video', opts.stateSummary, opts.recent, opts.hint),
       tools: toolsFor(opts.module ?? 'video'),
       messages: opts.messages.map(m => ({ role: m.role, content: m.content })),
     }),
