@@ -27,6 +27,22 @@ import { voiceKey, normaliseSpoken, looksSpeakable } from '../lib/voice/voice-ca
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const DRY = process.argv.includes('--dry')
+const argOf = (flag, fallback) => {
+  const i = process.argv.indexOf(flag)
+  return i > 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback
+}
+/**
+ * A hard ceiling on what this run may spend, in ElevenLabs credits.
+ *
+ * ⚠️ ONE CREDIT IS ONE CHARACTER, so the budget is countable before a single
+ * request goes out — and it is, below, so nobody has to find out afterwards.
+ * The whole fixed set is about 3,800 characters, which is why a 10,000 budget
+ * comfortably covers a voice and leaves room for a second.
+ *
+ * Enforced BEFORE each request rather than after: a cap that stops once it has
+ * already overspent is not a cap.
+ */
+const BUDGET = Number(argOf('--credits', '10000'))
 const LIMIT = (() => {
   const i = process.argv.indexOf('--limit')
   return i > 0 ? Number(process.argv[i + 1]) : Infinity
@@ -42,7 +58,10 @@ const env = Object.fromEntries(
 for (const k of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET']) {
   if (!env[k]) { console.error(`missing ${k} in .env.local`); process.exit(1) }
 }
-const VOICE_ID = env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'
+// ⚠️ Recordings are stored per voice (see voiceKey), so re-running with a
+// different --voice ADDS a set rather than replacing one. That is what makes
+// "separate by voice" work in the admin page without any migration.
+const VOICE_ID = argOf('--voice', env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL')
 const MODEL = 'eleven_turbo_v2_5'
 
 // ── What the studio says that never varies ─────────────────────────────────
@@ -58,7 +77,12 @@ const { fixed } = JSON.parse(readFileSync(join(ROOT, 'lib/voice/phrases.json'), 
 const phrases = fixed.map(p => p.text).filter(looksSpeakable).sort().slice(0, LIMIT)
 const chars = phrases.reduce((n, p) => n + normaliseSpoken(p).length, 0)
 console.log(`${phrases.length} fixed phrases, ${chars.toLocaleString()} characters`)
-console.log(`voice ${VOICE_ID}, model ${MODEL}\n`)
+console.log(`voice ${VOICE_ID}, model ${MODEL}`)
+console.log(`budget ${BUDGET.toLocaleString()} credits — this set needs ${chars.toLocaleString()}`)
+if (chars > BUDGET) {
+  console.log(`⚠️  the full set does not fit; it will stop when the budget runs out`)
+}
+console.log()
 
 // ── Storage ────────────────────────────────────────────────────────────────
 const { S3Client, HeadObjectCommand, PutObjectCommand } = await import('@aws-sdk/client-s3')
@@ -76,7 +100,13 @@ let had = 0, made = 0, failed = 0, spentChars = 0
 for (const phrase of phrases) {
   const key = voiceKey(phrase, VOICE_ID)
   if (await exists(key)) { had++; console.log(`  have  ${phrase}`); continue }
-  if (DRY) { made++; spentChars += normaliseSpoken(phrase).length; console.log(`  would ${phrase}`); continue }
+  const cost = normaliseSpoken(phrase).length
+  // ⚠️ Checked BEFORE spending, not after. Stopping is the whole job of a cap.
+  if (spentChars + cost > BUDGET) {
+    console.log(`\nbudget reached (${spentChars.toLocaleString()} of ${BUDGET.toLocaleString()} credits) — stopping with ${phrases.length - had - made} phrases unrecorded`)
+    break
+  }
+  if (DRY) { made++; spentChars += cost; console.log(`  would ${phrase}`); continue }
   if (!env.ELEVENLABS_API_KEY) { console.error('no ELEVENLABS_API_KEY in .env.local'); process.exit(1) }
 
   const res = await fetch(

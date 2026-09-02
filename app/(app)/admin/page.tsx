@@ -35,6 +35,7 @@ import AppCorrectionsPanel from './AppCorrectionsPanel'
 import TestRecipesPanel from './TestRecipesPanel'
 import LoadReportsPanel from './LoadReportsPanel'
 import VoicePhrasesPanel from './VoicePhrasesPanel'
+import AiRecordingsPanel from './AiRecordingsPanel'
 import AdminTabs, { type AdminTab } from './AdminTabs'
 import { getFlags } from '@/lib/platform-flags'
 import { ensureSubscriptionsSchema } from '@/lib/subscription'
@@ -789,6 +790,19 @@ export default async function AdminPage() {
                 description="How songs actually load on real machines. A session is only written down when it has trouble — an error, a silent render, a clip set aside, or a load over 20 seconds — so an empty list means loading is going well. The 'interrupted by play' figures answer a specific question: how much does listening while it loads slow the loading down. Click a row for its event log."
               />
               <LoadReportsPanel />
+            </>
+          ),
+        },
+        {
+          id: 'ai-recordings',
+          label: 'AI Recordings',
+          content: (
+            <>
+              <PanelIntro
+                title="AI Recordings"
+                description="Every recording the studio has bought, grouped by the voice that said it, with playback. Voice Phrases answers which sentences are paid for; this is for hearing whether a voice is right before the rest of a budget goes on it. Recordings are keyed by voice in storage, so a new voice appears here as soon as it is rendered — nothing to register. Buy a voice's fixed phrases with: npm run voice:prerender -- --voice <id> --credits 10000"
+              />
+              <AiRecordingsPanel />
             </>
           ),
         },
