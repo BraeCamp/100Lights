@@ -19,6 +19,18 @@ interface Managed {
   isReady: boolean
   queue: SchedEvent[]
   lastParams: ApolloPatch | null
+  /**
+   * This engine has been released and must not be handed out again.
+   *
+   * ⚠️ THE REASON A SECOND PLAY WAS SILENT. byDest is keyed by the destination
+   * node, and the DAW used to swap that node on every stop — which quietly did
+   * this job, because a released engine's entry became unreachable along with
+   * the bus it was keyed by. Once the bus stopped being swapped (so engines
+   * could be REUSED across a loop wraparound) the entry survived the release,
+   * and ensure() went on returning it. Its node is null by then, so every note
+   * scheduled onto it was posted into nothing: no error, no warning, silence.
+   */
+  released?: boolean
 }
 
 const byDest = new WeakMap<AudioNode, Managed>()
@@ -58,7 +70,8 @@ function create(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Man
 
 function ensure(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Managed {
   let m = byDest.get(dest)
-  if (!m) m = create(ctx, dest, patch)
+  // A released engine is not a usable one — build a fresh engine on this bus.
+  if (!m || m.released) m = create(ctx, dest, patch)
   else if (m.isReady && m.lastParams !== patch) {
     // instrument edited (SET_INSTRUMENT replaces the params object)
     m.engine.sendPatch(patch)
@@ -116,6 +129,22 @@ export async function apolloDrain(ctx: BaseAudioContext): Promise<void> {
   const set = byCtx.get(ctx)
   if (!set) return
   await Promise.all([...set].filter(m => m.isReady).map(m => m.engine.flush()))
+}
+
+/**
+ * How many Apollo engines are alive in this context.
+ *
+ * ⚠️ The number that separates "the song is heavy" from "we are building a
+ * synth per clip". It cannot be read any other way from outside: an
+ * AudioWorkletProcessor does not live in the JS heap, so a memory profiler
+ * shows nothing however many of them are running.
+ */
+export function apolloEngineCount(ctx: BaseAudioContext): { live: number; ready: number } {
+  const set = byCtx.get(ctx)
+  if (!set) return { live: 0, ready: 0 }
+  let live = 0, ready = 0
+  for (const m of set) { if (!m.released) { live++; if (m.isReady) ready++ } }
+  return { live, ready }
 }
 
 /** Warm module + patch + samples ahead of playback / offline render. */
@@ -220,7 +249,13 @@ export function apolloStopAll(ctx: BaseAudioContext, release = false): void {
       // forced GC. The JS heap was flat throughout, because an
       // AudioWorkletProcessor does not live in it — which is why this looked
       // like "it just gets slower" with nothing to point at.
-      if (release) m.engine.release()
+      if (release) {
+        m.engine.release()
+        // Both, and both matter: isReady is what playApolloNote checks before
+        // scheduling, released is what ensure() checks before handing it back.
+        m.isReady = false
+        m.released = true
+      }
     } catch { /* already gone */ }
   }
   // ⚠️ Kept unless they were actually destroyed. Clearing the set while the
