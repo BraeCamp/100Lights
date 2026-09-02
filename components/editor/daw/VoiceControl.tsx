@@ -44,7 +44,7 @@ import {
   type Recording, type StopResult, type MicReport,
 } from '@/lib/voice/record'
 import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execute-music'
-import { recallCommand, rememberCommand, forgetKey } from '@/lib/voice/learned'
+import { recallCommand, rememberCommand, forgetKey, mergeShared, shareableTemplate } from '@/lib/voice/learned'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
@@ -106,6 +106,31 @@ function writeVoiceEnter(on: boolean) { try { localStorage.setItem(ENTER_KEY, on
  *  so the same command twice does not feel like two different studios. */
 const WORKING = ['Working on it.', 'Give me a moment.', 'Of course — one moment.']
 
+// ── The commands every other studio has been taught ────────────────────────
+//
+// Fetched once a day, and never in a way that can hold up a command: the pool
+// is an improvement on top of a studio that already works, so a slow or missing
+// answer here has to cost nothing at all. Module-level, so several Light mounts
+// in one session share the single fetch.
+const POOL_STAMP = 'light.learned.shared.at'
+let poolPulled = false
+function pullSharedCommands() {
+  if (poolPulled) return
+  poolPulled = true
+  try {
+    const at = Number(localStorage.getItem(POOL_STAMP) ?? 0)
+    if (Date.now() - at < 12 * 60 * 60 * 1000) return
+  } catch { /* private mode: pull anyway */ }
+  void fetch('/api/voice/learned')
+    .then(r => r.ok ? r.json() : null)
+    .then((data: { entries?: { template: string; calls: { name: string; input: Record<string, unknown> }[] }[] } | null) => {
+      if (!data?.entries?.length) return
+      mergeShared(data.entries)
+      try { localStorage.setItem(POOL_STAMP, String(Date.now())) } catch { /* nothing to keep it in */ }
+    })
+    .catch(() => { /* the studio works without it */ })
+}
+
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
   const {
     inStudio,
@@ -122,6 +147,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const busyRef = useRef(false)
   /** Guards the "working on it" line against the answer that beat it. */
   const ackToken = useRef(0)
+  useEffect(pullSharedCommands, [])
   useEffect(() => { busyRef.current = busy }, [busy])
   const [heard, setHeard] = useState('')
   const [said, setSaid] = useState('')
@@ -2032,10 +2058,30 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // pointing at "that" or "here", anything destructive, and any call
       // carrying a number nobody actually said.
       if (!lastProblem && allCalls.length) {
-        rememberCommand(text, allCalls, [
+        const names = [
           ...(project.tracks ?? []).map(t => t.name),
           ...(project.arrangementClips ?? []).map(c => c.name),
-        ].filter(Boolean) as string[])
+        ].filter(Boolean) as string[]
+        rememberCommand(text, allCalls, names)
+
+        // ── And offer it to everybody else ────────────────────────────────
+        //
+        // ⚠️ ONLY THE GENERALISED FORM, and only when every literal word left
+        // in it is one the studio already knows — see shareable(). The slots
+        // take out the names; that check takes out everything else, so what
+        // travels is a phrasing and a tool call and nothing a person said
+        // about their own song.
+        //
+        // Fire and forget, on purpose. Contributing is a gift, and a failed
+        // gift must never look like a failed command.
+        const gift = shareableTemplate(text, allCalls, names)
+        if (gift) {
+          void fetch('/api/voice/learned', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(gift),
+          }).catch(() => { /* nobody needs to know */ })
+        }
       }
       history.current = [
         ...history.current,

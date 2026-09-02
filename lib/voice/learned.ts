@@ -25,6 +25,7 @@
 // survives running out of Lumens. Anything taught once keeps working for free.
 
 import type { VoiceCall } from './execute-music'
+import { COMMAND_VOCABULARY } from './commands'
 
 export interface LearnedEntry {
   /** The normalised sentence — the key. Templates carry {0} / {n0} slots. */
@@ -249,7 +250,89 @@ function bind(entry: LearnedEntry, said: string): VoiceCall[] | null {
 let mem: LearnedEntry[] | null = null
 let hits = 0
 let templateHits = 0
+let sharedHits = 0
 let misses = 0
+
+// ── What every other studio has been taught ────────────────────────────────
+//
+// Brae: "The pooled cache and macro ideas don't seem to require much fund at
+// all. How much can we do right now?"
+//
+// A template carries no user content — every argument was replaced by a slot
+// before it was stored — so one person's paid lesson can answer everybody
+// else's sentence for nothing. This is that pool, fetched once and consulted
+// LAST, after this studio's own exact and template entries.
+//
+// ⚠️ LAST ON PURPOSE. What somebody taught THIS studio must always beat what a
+// stranger taught the pool: a person who has corrected the same sentence twice
+// has said something about how they work, and a shared entry outvoting them
+// would feel like the studio forgetting.
+const SHARED_KEY = 'light.learned.shared.v1'
+let shared: LearnedEntry[] | null = null
+
+function loadShared(): LearnedEntry[] {
+  if (shared) return shared
+  try {
+    const raw = localStorage.getItem(SHARED_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    shared = Array.isArray(parsed)
+      ? parsed.filter(e => e && typeof e.text === 'string' && Array.isArray(e.calls))
+        .map(e => ({ ...e, templated: true, used: e.used ?? 0, at: e.at ?? 0 }))
+      : []
+  } catch { shared = [] }
+  return shared
+}
+
+/** Install the pool. Kept out of the local store so the two never blur. */
+export function mergeShared(entries: { template: string; calls: VoiceCall[] }[]): number {
+  const clean = entries
+    .filter(e => e && typeof e.template === 'string' && Array.isArray(e.calls) && e.calls.length)
+    .map(e => ({ text: e.template, calls: copy(e.calls), templated: true, at: 0, used: 0 }))
+  shared = clean
+  try { localStorage.setItem(SHARED_KEY, JSON.stringify(clean)) } catch { /* nothing to keep it in */ }
+  return clean.length
+}
+
+/**
+ * Is this template safe to offer the pool?
+ *
+ * ⚠️ EVERY LITERAL WORD MUST BE ONE THE STUDIO ALREADY KNOWS. The slots take
+ * out the names, but the rest of a sentence is still something a person said,
+ * and a pooled entry is shown to strangers. Requiring the leftovers to come
+ * from the command vocabulary means nothing personal can travel even in
+ * principle — and it throws away junk templates as a side effect, which is the
+ * cheapest quality filter available.
+ */
+const CONNECTIVES = new Set([
+  'the', 'a', 'an', 'to', 'on', 'in', 'at', 'of', 'for', 'and', 'it', 'its', 'by',
+  'me', 'my', 'that', 'this', 'with', 'from', 'up', 'down', 'off', 'out', 'all',
+  'is', 'be', 'as', 'so', 'bit', 'little', 'lot', 'more', 'less', 'percent',
+])
+let vocab: Set<string> | null = null
+
+export function shareable(template: string, calls: VoiceCall[]): boolean {
+  if (!/\{n?\d+\}/.test(template)) return false
+  vocab ??= new Set(COMMAND_VOCABULARY.map(w => w.toLowerCase()))
+  const literals = template.replace(/\{n?\d+\}/g, ' ').split(/\s+/).filter(Boolean)
+  if (!literals.some(w => w.length > 1)) return false
+  if (!literals.every(w => vocab!.has(w) || CONNECTIVES.has(w))) return false
+  // The call names travel too, so they have to be plain.
+  return calls.every(c => /^[a-z_]{2,32}$/.test(c.name))
+}
+
+/** The generalised form of a lesson, for offering to the pool. */
+export function shareableTemplate(
+  text: string, calls: VoiceCall[], projectWords: readonly string[] = [],
+): { template: string; calls: VoiceCall[] } | null {
+  const key = normalise(text)
+  if (!key || !calls.length) return null
+  if (DEICTIC.test(key)) return null
+  if (calls.some(c => DESTRUCTIVE.test(c.name))) return null
+  if (!determinedBySentence(text, calls)) return null
+  const tpl = templateFrom(text, calls, projectWords)
+  if (!tpl || !shareable(tpl.text, tpl.calls)) return null
+  return { template: tpl.text, calls: tpl.calls }
+}
 
 function load(): LearnedEntry[] {
   if (mem) return mem
@@ -299,6 +382,15 @@ export function recallCommand(text: string): Recalled | null {
     return { calls, from: 'template', key: e.text }
   }
 
+  // Then what everybody else has been taught.
+  for (const e of loadShared()) {
+    const calls = bind(e, said)
+    if (!calls) continue
+    hits++
+    sharedHits++
+    return { calls, from: 'template', key: e.text }
+  }
+
   misses++
   return null
 }
@@ -345,12 +437,16 @@ function put(entry: LearnedEntry): void {
 }
 
 /** What the cache has saved, for the voice report. */
-export function learnedStats(): { entries: number; templates: number; hits: number; templateHits: number; misses: number } {
+export function learnedStats(): {
+  entries: number; templates: number; shared: number
+  hits: number; templateHits: number; sharedHits: number; misses: number
+} {
   const list = load()
   return {
     entries: list.length,
     templates: list.filter(e => e.templated).length,
-    hits, templateHits, misses,
+    shared: loadShared().length,
+    hits, templateHits, sharedHits, misses,
   }
 }
 
