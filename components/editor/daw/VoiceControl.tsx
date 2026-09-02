@@ -47,6 +47,10 @@ import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execu
 import { recallCommand, rememberCommand, forgetKey, mergeShared, shareableTemplate } from '@/lib/voice/learned'
 import { recordCommand } from '@/lib/voice/voice-ledger'
 import { macroNames } from '@/lib/voice/macros'
+import {
+  auditionActive, readBrowseCommand, startAudition, stopAudition, audition,
+  buildQueue, currentItem, onAudition, auditionState, type BrowseAction,
+} from '@/lib/voice/audition'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
@@ -714,6 +718,60 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
   /** Apply one planned action. Transport is the engine, everything else the
    *  reducer — shared so the local and assistant paths cannot drift apart. */
+  /**
+   * The short words said while browsing.
+   *
+   * ⚠️ FREE, ALWAYS. Hunting for a sample is dozens of one-word commands said
+   * quickly while listening — if any of them reached the assistant, finding a
+   * sound would be the most expensive thing anybody does in the studio.
+   *
+   * ⚠️ AND THEY ARE NOT SPOKEN BACK. The whole point is to hear the SOUND; a
+   * voice reading out every name over the top of it would make browsing worse
+   * than scrolling. The name is shown, not said.
+   */
+  const runBrowse = useCallback((b: BrowseAction) => {
+    const show = (item: { name: string; detail: string } | null) => {
+      setBusy(false)
+      if (item) setSaid(item.detail ? `${item.name} — ${item.detail}` : item.name)
+    }
+    if (b === 'stop') {
+      const it = currentItem()
+      stopAudition()
+      setBusy(false)
+      respond(it ? `Stopped browsing. The last one was "${it.name}".` : 'Stopped browsing.')
+      return
+    }
+    if (b === 'pick') {
+      const it = currentItem()
+      stopAudition()
+      setBusy(false)
+      // ⚠️ SAYS WHAT IT IS AND STOPS THERE. Putting it into the song would be a
+      // second decision nobody made out loud — which track, where, as what —
+      // and guessing at three of those to look helpful is how a browse ends up
+      // editing a song. Naming it is the honest half; the rest is a command.
+      respond(it ? `That one is "${it.name}"${it.detail ? ` in ${it.detail}` : ''}.` : 'Nothing was playing.')
+      return
+    }
+    if (b === 'pause') { audition.pause(); setBusy(false); return }
+    if (b === 'resume') { audition.resume(); setBusy(false); return }
+    if (b === 'faster' || b === 'slower') {
+      const r = audition.rate(b === 'faster' ? 1.25 : 0.8)
+      setBusy(false)
+      setSaid(`${r.toFixed(2)}×`)
+      return
+    }
+    show(b === 'next' ? audition.next()
+      : b === 'back' ? audition.back()
+      : b === 'restart' ? audition.restart()
+      : audition.again())
+  }, [respond])
+
+  // The panel follows what is playing, without anybody being talked at.
+  useEffect(() => onAudition(() => {
+    const it = currentItem()
+    if (it) setSaid(it.detail ? `${it.name} — ${it.detail}` : it.name)
+  }), [])
+
   const runAction = useCallback((a: unknown) => {
     const act = a as { type: string; action?: string; beat?: number }
     if (act.type === 'TRANSPORT') {
@@ -754,6 +812,43 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // saved document, so none of it is a reducer action. Opening an editor is
     // also the one kind of command that cannot go wrong — nothing is changed,
     // so nothing needs undoing.
+    // ── BROWSING ────────────────────────────────────────────────────────
+    //
+    // Async, so it lives here rather than in the planner — the same division
+    // the project commands use. Everything it can fail at says so: an empty
+    // shelf is a sentence, not silence.
+    if (act.type === 'BROWSE') {
+      const b = act as unknown as { tag?: string; category?: string; query?: string; asked?: string }
+      void (async () => {
+        try {
+          const { libraryGetAll } = await import('@/lib/sound-library')
+          // ⚠️ A stub entry has no audio until it is fulfilled — community
+          // links and catalog entries stream on first use. Browsing is exactly
+          // the case that meets those, so it must go through the same path the
+          // library's own preview does rather than reading audioBlob and
+          // finding nothing.
+          const { libraryFulfill } = await import('@/lib/default-samples')
+          const all = await libraryGetAll()
+          const items = buildQueue(all, { tag: b.tag, category: b.category, query: b.query })
+          if (!items.length) {
+            respond(`I could not find any sounds ${b.asked || 'like that'}.`, 'question')
+            return
+          }
+          startAudition(items, b.asked ?? '', async id => {
+            const e = await libraryFulfill(id)
+            return e?.audioBlob ?? null
+          })
+          respond(
+            `${items.length} sound${items.length === 1 ? '' : 's'} ${b.asked || ''}. `
+            + `Say next, back, again, faster, slower, this one, or done.`,
+          )
+        } catch {
+          respond('I could not reach your library just now.', 'problem')
+        }
+      })()
+      return
+    }
+
     if (act.type === 'VIEW_ACTION') {
       const v = act as unknown as { view: string; clipId?: string; trackId?: string; open?: boolean }
       const open = v.open !== false
@@ -1141,6 +1236,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const settling = Date.now() - lastAcceptedAt.current < 4000
       if (!askingRef.current && !busyRef.current && !settling) setProblem('I didn\'t catch that.')
       return
+    }
+
+    // ── Browsing takes the short words ──────────────────────────────────────
+    //
+    // Before the rules, and before any gate that costs money. Inside a browse
+    // "next" and "faster" are unambiguous; outside one they were never words
+    // this file knew. The mode is visible in the panel and one of its own words
+    // ends it, which is what makes taking them over safe.
+    if (auditionActive()) {
+      const b = readBrowseCommand(text)
+      if (b) { lastAcceptedAt.current = Date.now(); runBrowse(b); return }
     }
 
     // The context the reading is judged against: the project's real track names,

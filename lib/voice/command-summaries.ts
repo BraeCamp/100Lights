@@ -16,6 +16,8 @@
 // and the thing that would surprise you.
 
 export const COMMAND_SUMMARIES: Record<string, string> = {
+  'browse_sounds': 'Plays your sounds one after another so you can hear them instead of reading names. While it runs, short words steer it — next, back, again, restart, faster, slower, this one, done — and none of them reach the assistant, so hunting through a library costs nothing. Instruments are collapsed to one note each, so a cello does not take forty seconds.',
+
   // ── Named shapes ─────────────────────────────────────────────────────────
   'run_macro': 'Runs a shape you saved earlier — several parameters moving together across a clip or a stretch of bars. The shape stretches to whatever it is given, so the same one covers a four-bar clip and a thirty-two-bar section. Saying its NAME is free; "do the same thing again" is not, because that points at the selection rather than at the shape.',
 

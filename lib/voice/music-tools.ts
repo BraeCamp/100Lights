@@ -283,6 +283,19 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'browse_sounds',
+    description:
+      'PLAY THROUGH THE LIBRARY — "play me the sounds tagged dark", "let me hear the drum samples", "browse anything with vinyl in it", "play the pads". Starts an audition: sounds play one after another and the person steers with short words — next, back, again, faster, this one — none of which reach you. Use it whenever somebody wants to HEAR what they have rather than be told about it. Give whichever of tag, category or query fits what they said; a tag is a label on the sound, a query matches its name or folder.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tag: { type: 'string', description: 'A tag on the sound — "dark", "vinyl", "hard".' },
+        category: { type: 'string', description: 'drums, instrument, vocal, fx, loop — if they named one.' },
+        query: { type: 'string', description: 'Words to match in the name or folder.' },
+      },
+    },
+  },
+  {
     name: 'define_macro',
     description:
       'NAME A SHAPE — save a move over time so it can be asked for again by name. Use this when somebody describes several parameters moving together across a clip or a stretch of bars: "give the bass descending reverb, an opening low-pass and falling volume", "make a filter sweep I can reuse". Give it a SHORT name they would plausibly say out loud, because saying the name later is how they get it back for free. `fx` is where each parameter ENDS UP at full strength; `shape` is how it travels there. Each parameter moves from its own neutral to its own target, so one shape can move things in OPPOSITE directions: on a "fall", reverbWet 1 fades out while filterHz 400 opens up, because 400Hz is dark and the neutral 18000 is open. Do NOT call this to make a one-off edit — only when the move is worth having again.',

@@ -3472,6 +3472,37 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
 
+  // ── Browsing the shelf ───────────────────────────────────────────────────
+  //
+  // Only STARTING is a rule. The words said while browsing — next, back, again,
+  // faster — are read in the voice control itself and never registered here, on
+  // purpose: they already mean transport and tempo, and giving them a second
+  // meaning application-wide to serve a mode that is usually not running would
+  // make every one of those sentences ambiguous. See readBrowseCommand.
+  {
+    id: 'browse_sounds',
+    tool: 'browse_sounds',
+    group: 'Project',
+    what: 'Play through your sounds so you can hear them',
+    say: ['play me the sounds tagged dark', 'let me hear the drum samples'],
+    match(w) {
+      const asked = w.has('browse', 'audition')
+        || (w.has('play', 'hear') && w.has('sounds', 'samples', 'library'))
+      if (!asked) return null
+      // Whatever is left once the asking words are accounted for IS the search.
+      // has() marks what it matches, so consuming these here keeps them out of
+      // the query — "play me the sounds tagged dark" should look for "dark",
+      // not for "sounds tagged dark".
+      w.has('tagged', 'tag', 'some', 'all', 'anything', 'everything', 'my')
+      const q = w.unexplained().join(' ').trim()
+      if (!q) return null
+      return {
+        calls: [{ name: 'browse_sounds', input: { query: q } }],
+        confidence: 0.88,
+      }
+    },
+  },
+
   // ── Named shapes ─────────────────────────────────────────────────────────
   //
   // ⚠️ A RULE, NOT AN ASSISTANT JOB, AND THAT IS THE WHOLE ECONOMICS OF MACROS.

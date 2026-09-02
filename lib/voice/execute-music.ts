@@ -2135,6 +2135,35 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       return fail(`I don't know a view called "${str(i.view)}".`)
     }
 
+    // ── BROWSING THE SHELF ───────────────────────────────────────────────
+    //
+    // Brae: "Is there a way that I can have the program play existing recipes
+    // and samples under a tag?... this should help users find recipes and
+    // samples."
+    //
+    // The library lives behind async storage, so the planner cannot read it and
+    // does not try — it hands over an intent, exactly as the project commands
+    // do, and the studio does the fetching. What it CAN do is refuse to start a
+    // browse with nothing to browse for, which would otherwise play the entire
+    // library at somebody.
+    case 'browse_sounds': {
+      const tag = str(i.tag).trim()
+      const category = str(i.category).trim()
+      const query = str(i.query).trim()
+      if (!tag && !category && !query) {
+        return fail('Say what to play — "the sounds tagged dark", "the drum samples", "anything with vinyl in the name".')
+      }
+      const asked = [
+        tag && `tagged ${tag}`,
+        category && category,
+        query && `matching "${query}"`,
+      ].filter(Boolean).join(' ')
+      return {
+        actions: [{ type: 'BROWSE', tag, category, query, asked }],
+        say: `Finding sounds ${asked}…`,
+      }
+    }
+
     // ── NAMED SHAPES ─────────────────────────────────────────────────────
     //
     // Brae: "at one point I want bass to have descending reverb, ascending low
