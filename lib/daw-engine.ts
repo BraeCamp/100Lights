@@ -130,6 +130,42 @@ function interpolateAutomation(lane: AutomationLane, beat: number): number {
   return 0
 }
 
+/**
+ * How much buffer the audio thread gets, which is how much slack it has.
+ *
+ * ⚠️ THIS WAS 'interactive', AND THAT IS THE SAFARI-VERSUS-BRAVE DIFFERENCE.
+ * 'interactive' asks for the SMALLEST buffer the device can do — lowest latency,
+ * and therefore the least time to finish rendering each block before the
+ * deadline. Apollo measures at ~0.72 of that budget on eight tracks with the
+ * machine idle, so there is almost no slack left; Safari's CoreAudio path
+ * absorbs it and Chromium's does not, which is why the same song plays in one
+ * browser and stops after a chord in the other.
+ *
+ * A sequenced song does not need the smallest buffer. It needs to not stop.
+ * 'playback' asks for a large one and is what a player would use; the numeric
+ * middle ground keeps live MIDI and the metronome responsive while still giving
+ * several times the slack of 'interactive'.
+ *
+ * Overridable at runtime — localStorage '100l.latency' — so this can be
+ * measured, and so somebody on a struggling machine can trade latency for
+ * stability without waiting for a release.
+ */
+export type LatencyChoice = 'interactive' | 'balanced' | 'playback' | number
+
+export function audioLatencyHint(): LatencyChoice {
+  try {
+    const raw = localStorage.getItem('100l.latency')
+    if (raw) {
+      const n = Number(raw)
+      if (Number.isFinite(n) && n > 0 && n <= 1) return n
+      if (raw === 'interactive' || raw === 'balanced' || raw === 'playback') return raw
+    }
+  } catch { /* private mode */ }
+  // ⚠️ 'balanced' rather than 'interactive': the default should be the one that
+  // plays a song reliably, not the one that shaves milliseconds off a keypress.
+  return 'balanced'
+}
+
 export class DawEngine extends EventTarget {
   ctx: AudioContext
   masterGain: GainNode
@@ -339,7 +375,7 @@ export class DawEngine extends EventTarget {
     // An injected context (e.g. an OfflineAudioContext passed in loosely typed)
     // lets the whole graph build off-line for faster-than-real-time rendering.
     // Default is the normal real-time context — studio behaviour is unchanged.
-    this.ctx = opts?.ctx ?? new AudioContext({ latencyHint: 'interactive' })
+    this.ctx = opts?.ctx ?? new AudioContext({ latencyHint: audioLatencyHint() })
 
     // Safety compressor, not glue: -12dB/3:1 clamped the whole mix whenever a
     // sustained loud element (stacked drones, held chords) sat above threshold,

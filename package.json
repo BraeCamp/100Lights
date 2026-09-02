@@ -36,6 +36,7 @@
     "check:load-ceiling": "node scripts/check-load-ceiling.mjs",
     "check:engine-cost": "node scripts/check-engine-cost.mjs",
     "check:cache-purge": "node scripts/check-cache-purge.mjs",
+    "check:latency-hint": "node scripts/check-latency-hint.mjs",
     "check:persisted-growth": "node scripts/check-persisted-growth.mjs",
     "check:library-read": "node scripts/check-library-read-cost.mjs",
     "probe:apollo-attach": "node scripts/apollo-attach-probe.mjs",
