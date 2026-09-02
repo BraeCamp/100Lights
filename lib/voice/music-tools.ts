@@ -78,6 +78,33 @@ export const SPEAKABLE_EFFECTS: string[] = [
   ...APOLLO_ADD_OPTIONS.map(o => o.fx),
 ]
 
+/**
+ * Every device the studio can actually add, named the way it is labelled.
+ *
+ * ⚠️ Brae: "make sure that the AI has control over the device chain effect
+ * graphs that show up when I click FX on a trackhead."
+ *
+ * It mostly did — the graph in the chain is a RENDER of an effect's parameters
+ * (ResponseCurve draws the filter/EQ response from them), so controlling the
+ * dials controls the curve, and set_device_param already does that. What it
+ * could not do was NAME some of the devices: this list was hand-written and had
+ * drifted from the catalogue, missing `filter` — the very device that draws the
+ * curve — along with utility, unmask and the Apollo devices.
+ *
+ * A model that is not told a device exists does not ask for it; it reaches for
+ * the nearest one it was told about, which is the failure this codebase keeps
+ * finding. So the list is GENERATED from the same catalogue the Add menu uses
+ * and buildSpokenEffect resolves against. It cannot advertise something the
+ * executor cannot build, and it cannot omit something it can.
+ */
+function deviceList(): string {
+  const names = [
+    ...ADD_OPTIONS.map(o => o.label),
+    ...APOLLO_ADD_OPTIONS.map(o => `${o.label} (Apollo)`),
+  ]
+  return `The device, as they said it. Available: ${names.join(', ')}.`
+}
+
 export const MUSIC_TOOLS = [
   {
     name: 'duplicate_clip',
@@ -366,7 +393,7 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         target: TARGET,
-        device: { type: 'string', description: 'reverb, delay, compressor, limiter, gate, de-esser, eq, saturator, chorus, bitcrush, lfo, auto pan, transient shaper, multiband, dynamic eq.' },
+        device: { type: 'string', description: deviceList() },
         parameter: { type: 'string', description: 'The dial, as they said it: decay, size, time, feedback, threshold, ratio, attack, release, ceiling, frequency, rate, depth, mix.' },
         value: { type: 'number', description: 'In the parameter\'s own unit — dB, Hz, seconds, or a ratio. Use this OR percent.' },
         percent: { type: 'number', description: '0-100 across the parameter\'s range, when they said "halfway" or "all the way up".' },

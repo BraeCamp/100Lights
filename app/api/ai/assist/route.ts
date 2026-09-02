@@ -99,7 +99,19 @@ export async function POST(req: Request) {
         : undefined,
     })
   } catch (e) {
-    return Response.json({ error: (e as Error).message || 'The assistant failed. No credits were charged.' }, { status: 502 })
+    // ⚠️ LOGGED IN FULL, because "a brief API error" is not something anybody
+    // can act on. The message carries the upstream status and the first of its
+    // body — which is the difference between a bad key, a rate limit, a model
+    // this account cannot reach, and a malformed request. They look identical
+    // from the studio and have nothing in common as fixes.
+    const detail = (e as Error).message || 'unknown'
+    console.error('[assist] upstream failed for', userId, '—', detail)
+    return Response.json({
+      error: detail || 'The assistant failed. No credits were charged.',
+      // Surfaced separately so the studio can show something short AND keep the
+      // detail for a report, rather than truncating the only copy of it.
+      detail,
+    }, { status: 502 })
   }
 
   // Ledger (always) + usage-based charge (only when billing is live).

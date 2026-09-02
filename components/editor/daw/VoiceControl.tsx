@@ -1209,7 +1209,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // The splitter is good at what it is for and stays in charge when the
       // assistant is off. With it on, one model that can see the whole sentence
       // beats several rules that can each see a piece of it.
-      const segments = aiAutoRef.current ? [] : interpretSequence(text, ctx)
+      // ⚠️ WIDENED FROM aiAuto TO "the assistant is on at all".
+      //
+      // Brae: "It also says that it didn't catch it before it says there's an
+      // API error, so I think that it's trying to execute complex commands
+      // before the AI has even tried to process it."
+      //
+      // Exactly right, and the first gate was too narrow. aiAuto means the
+      // assistant acts WITHOUT ASKING; with it merely enabled, this block still
+      // split the sentence with the rules, ran the pieces, and reported "I
+      // didn't catch that" — all before the assistant had seen a word of it.
+      // Two verdicts on one sentence, the rules' one first.
+      //
+      // If a model is going to read this sentence, the rules do not get to
+      // answer for it. They advise (see the hint sent with the request); they
+      // do not pre-empt.
+      const segments = assistantMode() !== 'rules' ? [] : interpretSequence(text, ctx)
       if (segments.length > 1) {
         lastAcceptedAt.current = Date.now()
         setBusy(false)
@@ -1507,7 +1522,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // song, the selection and the last ten commands in front of it — stopping
     // to ask which of two rule guesses was meant is worse than simply letting
     // it answer.
-    if (!aiAutoRef.current && local.calls.length && local.alternatives?.length) {
+    if (assistantMode() === 'rules' && local.calls.length && local.alternatives?.length) {
       const readings = [
         { id: local.matched, calls: local.calls },
         ...local.alternatives,
@@ -1666,7 +1681,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           }),
         })
         if (!res.ok) {
-          const e = await res.json().catch(() => ({} as { error?: string; needCredits?: boolean }))
+          const e = await res.json().catch(() => ({} as { error?: string; needCredits?: boolean; detail?: string }))
           // 401 is the route's own answer; 404 is Clerk's middleware refusing an
           // unauthenticated request BEFORE the route runs, which it does with a
           // 404 rather than a 401. Both mean the same thing to a person, and
@@ -1678,6 +1693,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           // Remembered, so the NEXT sentence is answered honestly instead of
           // quietly falling through to the built-in commands.
           if (e.needCredits) outOfLumens.current = true
+          // ⚠️ THE REAL REASON, not a generic line. Brae: "It does keep saying
+          // that there's an API error." A message that says only that cannot be
+          // acted on by him or by me — the upstream status is the whole
+          // diagnosis, and it was being thrown away in favour of a tidier
+          // sentence. Logged in full as well, because the card is small.
+          if (!res.ok && e.detail) console.error('[voice] assistant failed:', e.detail)
           setProblem(
             e.needCredits ? `Out of ${LUMENS_NAME}.`
               : signedOut ? 'Sign in to use the assistant. Simple commands still work without it.'
