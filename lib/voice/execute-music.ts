@@ -2033,20 +2033,40 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // almost always a sign the request was about something else — a span, a
       // different track, a shape over time — and answering "reverb at 100%"
       // sends somebody away believing it was done.
-      const before = readAmount(params, kind)
       const wanted = Math.round(pct)
+
+      // ⚠️ A SWITCHED-OFF EFFECT STILL STORES ITS AMOUNT, and both engines gate
+      // on the switch rather than the number: buildReverb sets the wet gain to
+      // `params.enabled ? params.wet : 0`, and the Helios translation passes
+      // `enabled !== false` through as the unit's on flag. So a bypassed reverb
+      // sits there holding wet: 1 while the track is completely dry.
+      //
+      // Reading that stored 1 and answering "already at 100%" is the very
+      // failure the no-op guard below exists to prevent, one level down: it
+      // reports a number that reaches no audio. Brae heard no reverb and was
+      // told it was at 100%, and both statements were true of different things.
+      //
+      // Asking for an amount on an effect that is off means "I want to hear
+      // this", so turn it on. Which of the two happened has to be said out
+      // loud — from the outside, "it was already right" and "it was switched
+      // off" sound identical, and that gap is the whole bug.
+      const bypassed = params.enabled === false
+      const before = bypassed ? null : readAmount(params, kind)
       if (before !== null && before === wanted) {
         return fail(`${kind} on "${track.name}" is already at ${wanted}%, so nothing changed. `
           + `If you meant it to STAY there over part of the song, that is an automation — say the span, like "until bar 6".`)
       }
 
+      if (bypassed) params.enabled = true
       applyAmount(params, kind, pct)
       return {
         actions: [{
           type: 'UPDATE_EFFECT', trackId: track.id, effectId: existing.id,
           patch: { params: params as unknown as TrackEffect['params'] },
         }],
-        say: `${kind} on "${track.name}" at ${wanted}%.`,
+        say: bypassed
+          ? `${kind} on "${track.name}" was switched off — turned it on at ${wanted}%.`
+          : `${kind} on "${track.name}" at ${wanted}%.`,
       }
     }
 
