@@ -36,6 +36,7 @@
     "check:load-ceiling": "node scripts/check-load-ceiling.mjs",
     "check:engine-cost": "node scripts/check-engine-cost.mjs",
     "check:native-vs-worklet": "node scripts/check-native-vs-worklet.mjs",
+    "check:render-worker": "node scripts/check-render-worker.mjs",
     "check:cache-purge": "node scripts/check-cache-purge.mjs",
     "check:latency-hint": "node scripts/check-latency-hint.mjs",
     "check:persisted-growth": "node scripts/check-persisted-growth.mjs",
