@@ -42,7 +42,9 @@ export interface LearnedEntry {
 /** A hit, and enough about it for the caller to know what to forget. */
 export interface Recalled {
   calls: VoiceCall[]
-  from: 'exact' | 'template'
+  /** Where the answer came from — the ledger reports these separately, and only
+   *  an 'exact' entry is ever forgotten on a miss. */
+  from: 'exact' | 'template' | 'shared'
   key: string
 }
 
@@ -388,7 +390,7 @@ export function recallCommand(text: string): Recalled | null {
     if (!calls) continue
     hits++
     sharedHits++
-    return { calls, from: 'template', key: e.text }
+    return { calls, from: 'shared', key: e.text }
   }
 
   misses++

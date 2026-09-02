@@ -74,7 +74,7 @@ const SONG = ['Pad', 'Bass', 'Drums']
   mergeShared([{ template: 'mute the {0}', calls: [{ name: 'set_track', input: { target: '{0}', mute: true } }] }])
   const got = recallCommand('mute the drums')
   check('a sentence this studio never learned is answered by the pool',
-    got?.calls[0].input.target === 'drums', JSON.stringify(got))
+    got?.calls[0].input.target === 'drums' && got.from === 'shared', JSON.stringify(got))
 
   // ⚠️ What somebody taught THIS studio must always win: a person who corrected
   // the same sentence twice has said something about how they work, and a

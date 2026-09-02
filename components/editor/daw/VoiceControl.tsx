@@ -45,6 +45,7 @@ import {
 } from '@/lib/voice/record'
 import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execute-music'
 import { recallCommand, rememberCommand, forgetKey, mergeShared, shareableTemplate } from '@/lib/voice/learned'
+import { recordCommand } from '@/lib/voice/voice-ledger'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
@@ -1573,6 +1574,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           matched: local.matched, understood: local.confidence,
           calls: local.calls, said_back: plan.say,
         })
+        recordCommand({ said: text, by: 'rules' })
         history.current = []
         setAsking('')
         // A reading of a REWRITTEN sentence says so. Acting silently on words
@@ -1657,6 +1659,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           matched: 'learned', understood: 1,
           calls: learned.calls, said_back: plan.say,
         })
+        recordCommand({ said: text, by: learned.from === 'shared' ? 'shared' : 'learned' })
         setAsking('')
         const after = (plan.actions as DawAction[]).reduce(dawReducer, before)
         lastAcceptedAt.current = Date.now()
@@ -1779,6 +1782,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const allCalls: VoiceCall[] = []
     let lastProblem = ''
     let usedTurns = 0
+    // What the whole exchange consumed, added up across its turns.
+    const spend = { tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, credits: 0 }
 
     try {
       for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -1861,10 +1866,20 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         const data = await res.json() as {
           message?: string; actions?: (VoiceCall & { id?: string })[]
           credits?: number; balance?: number; stop?: string; raw?: unknown[]
+          usage?: { in?: number; out?: number; cacheRead?: number; cacheWrite?: number }
         }
         if (typeof data.credits === 'number') {
           setCredits({ spent: data.credits, left: data.balance ?? 0 })
         }
+        // ⚠️ ADDED UP ACROSS TURNS, not per turn. One sentence can take four
+        // round trips, and a log that showed them separately would make an
+        // ordinary command look like four commands — which is precisely the
+        // thing worth SEEING about a multi-turn answer.
+        spend.tokensIn += data.usage?.in ?? 0
+        spend.tokensOut += data.usage?.out ?? 0
+        spend.cacheRead += data.usage?.cacheRead ?? 0
+        spend.cacheWrite += data.usage?.cacheWrite ?? 0
+        spend.credits += data.credits ?? 0
         const calls = data.actions ?? []
         if (data.message?.trim()) spoke = data.message.trim()
 
@@ -2007,6 +2022,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         matched: local.matched, understood: local.confidence,
         calls: allCalls, said_back: lastSay || spoke,
       })
+      recordCommand({ said: text, by: 'assistant', turns: usedTurns, ...spend, problem: lastProblem || undefined })
 
       // Brae: "Then it executes with AI and sends the system a correction that
       // we can work from when I'm making patches."

@@ -28,6 +28,7 @@ import {
   Settings, BookOpen, ChevronLeft, Video,
 } from 'lucide-react'
 import { commandHelp } from '@/lib/voice/interpret'
+import VoiceUsageLog from './VoiceUsageLog'
 import type { AssistantMode } from '@/lib/voice/speak'
 import { usePlan } from '@/hooks/usePlan'
 import { WAKE_WORDS } from '@/lib/voice/attention'
@@ -577,7 +578,7 @@ export default function VoicePanel({
   // command list is a reference you read once. With the assistant acting on
   // whatever it hears, a permanent tab listing the built-in phrasings also
   // rather misstates what the thing can do.
-  const [view, setView] = React.useState<'live' | 'settings'>(
+  const [view, setView] = React.useState<'live' | 'settings' | 'usage'>(
     initialTab === 'settings' ? 'settings' : 'live',
   )
   const [find, setFind] = useState('')
@@ -767,7 +768,9 @@ export default function VoicePanel({
             of prominence for something used once a session. The setting itself
             is still in Settings, so nothing is lost. */}
         <button
-          onClick={() => setView(v => (v === 'live' ? 'settings' : 'live'))}
+          // ⚠️ Back from the log goes to Settings, which is where it was opened
+          // from — landing on the live view loses your place for no reason.
+          onClick={() => setView(v => (v === 'live' ? 'settings' : v === 'usage' ? 'settings' : 'live'))}
           aria-label={view === 'live' ? 'Settings' : 'Back'}
           title={view === 'live' ? 'Settings' : 'Back'}
           style={{
@@ -909,8 +912,31 @@ export default function VoicePanel({
           </div>
         )}
 
+        {view === 'usage' && <VoiceUsageLog C={C} />}
+
         {view === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* ── What it has cost ────────────────────────────────────────
+                Brae: "Give an option in voice control settings to see a log
+                with lumens and macros used, amounts of calls, costs per call".
+                A button rather than a section, because it is a read-out you
+                visit rather than a preference you set — and because most of
+                what it has to say is about the commands that cost nothing. */}
+            <button
+              onClick={() => setView('usage')}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 8, padding: '7px 9px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${C.border}`, background: 'transparent',
+                color: C.textPrimary, fontSize: 11, textAlign: 'left',
+              }}
+            >
+              <span>Usage &amp; costs</span>
+              <span style={{ color: C.textMuted, fontSize: 10 }}>
+                what each command cost, and what was free
+              </span>
+            </button>
 
             {/* ── The two that spend money ──────────────────────────────────
                 First, and grouped together, because they are the only settings

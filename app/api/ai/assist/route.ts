@@ -190,5 +190,16 @@ export async function POST(req: Request) {
     balance = spend.balance   // if the balance couldn't cover a big turn it drains to what's left; the floor bounds this
   }
 
-  return Response.json({ message: result.text, actions: result.actions, stop: result.stop, credits, balance })
+  // ⚠️ THE TOKENS, NOT JUST THE PRICE. Brae asked for a log with "amounts of
+  // calls, costs per call" — and a credit figure alone cannot be checked. With
+  // the counts, the studio can show what a command actually consumed and
+  // reconcile it against the invoice; without them it can only repeat a number
+  // it was handed.
+  return Response.json({
+    message: result.text, actions: result.actions, stop: result.stop, credits, balance,
+    usage: {
+      in: u.inputTokens, out: u.outputTokens,
+      cacheRead: u.cacheReadTokens, cacheWrite: u.cacheWriteTokens,
+    },
+  })
 }
