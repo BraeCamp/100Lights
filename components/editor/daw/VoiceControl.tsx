@@ -44,6 +44,7 @@ import {
   type Recording, type StopResult, type MicReport,
 } from '@/lib/voice/record'
 import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execute-music'
+import { recallCommand, rememberCommand, forgetLearned } from '@/lib/voice/learned'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
@@ -1558,6 +1559,44 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // is that the studio does not know this sentence — and where to change that
     // if they want to. Offering to spend anyway would make the setting
     // decorative.
+    // ── Already worked out once ─────────────────────────────────────────────
+    //
+    // The assistant answered this exact sentence before and the studio kept the
+    // CALL it produced, so this runs for nothing. Placed here deliberately: the
+    // rules still go first, and this sits in front of every gate that costs
+    // money — which means anything taught once keeps working with the assistant
+    // switched off, and keeps working when the Lumens run out.
+    //
+    // The names are resolved against the song as it is NOW, by the same planner
+    // the assistant's own calls go through. That is the whole reason the call is
+    // what gets stored: "mute the pad" finds today's pad.
+    const learned = recallCommand(text)
+    if (learned) {
+      const before = project
+      const plan = planVoiceCalls(learned, project, voiceCtx())
+      if (!plan.problem && !plan.ask && plan.actions.length) {
+        for (const a of plan.actions) runAction(a)
+        remember({
+          said: text, heard: heardConfidence, by: 'learned',
+          matched: 'learned', understood: 1,
+          calls: learned, said_back: plan.say,
+        })
+        setAsking('')
+        const after = (plan.actions as DawAction[]).reduce(dawReducer, before)
+        lastAcceptedAt.current = Date.now()
+        const notice = noticeFor(before, after)
+        respond(notice ? `${plan.say} ${notice}` : plan.say)
+        setBusy(false)
+        return
+      }
+      // ⚠️ The song has moved on and the remembered call no longer fits it —
+      // the track was renamed, the effect deleted. Forgetting it here is what
+      // stops a stale answer being given twice: the sentence goes to the
+      // assistant as though it had never been learned, and is learned again
+      // from the answer that works.
+      forgetLearned(text)
+    }
+
     if (assistRef.current === 'rules') {
       setBusy(false)
       respond(
@@ -1913,6 +1952,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // The recentContext() summary stays as well; the two answer different
       // questions. That is a compact record of what was DONE, this is the
       // conversation itself.
+      // ⚠️ ONLY A TURN THAT FINISHED CLEANLY. An answer the studio refused, or
+      // that ended on a problem, is not one to repeat for free forever — and
+      // rememberCommand refuses several more shapes on its own: anything
+      // pointing at "that" or "here", anything destructive, and any call
+      // carrying a number nobody actually said.
+      if (!lastProblem && allCalls.length) rememberCommand(text, allCalls)
       history.current = [
         ...history.current,
         { role: 'user' as const, content: text },

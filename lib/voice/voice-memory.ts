@@ -39,7 +39,7 @@ export interface VoiceExchange {
   /** The recogniser's own 0–1 rating of what it heard. */
   heard: number
   /** Which resolver produced the calls. */
-  by: 'local' | 'assistant'
+  by: 'local' | 'assistant' | 'learned'
   /** Why local fired, or why it declined. */
   matched: string
   /** Local's own 0–1 rating of its answer. 0 when it declined. */
