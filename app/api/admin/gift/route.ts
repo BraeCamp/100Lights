@@ -7,6 +7,23 @@ import { CREDIT_TIERS, type CreditTier } from '@/lib/credit-tiers'
 
 export const runtime = 'nodejs'
 
+/**
+ * What a gifted account has instead of a Stripe customer.
+ *
+ * ⚠️ stripe_customer_id is NOT NULL with no default, so an INSERT that leaves it
+ * out fails with 23502 — which reached the admin menu as a bare HTTP 500 and
+ * said nothing at all. The Stripe webhook never hit this because it always has a
+ * real customer id; a gift, by definition, does not.
+ *
+ * This exact string is already in the table on the accounts that were gifted
+ * before, so it is the existing convention rather than a new one.
+ *
+ * ⚠️ ON INSERT ONLY. The DO UPDATE branches deliberately leave the column alone:
+ * writing this over a REAL customer id would sever a paying subscriber from
+ * their Stripe record, and the gift would have quietly broken their billing.
+ */
+const NO_STRIPE = 'gift-no-stripe'
+
 export async function POST(req: Request) {
   if (!await isAdmin()) return new Response('Unauthorized', { status: 401 })
 
@@ -63,6 +80,7 @@ export async function POST(req: Request) {
   void (plan as Plan | null | undefined)
 
   let rows: Record<string, unknown>[]
+  try {
   if (plan === null || plan === undefined) {
     // Remove gift entirely
     rows = await sql`
@@ -83,8 +101,8 @@ export async function POST(req: Request) {
     // because signing in again does not create it either. The gift is the
     // moment we know what the row should say, so it writes one.
     rows = await sql`
-      INSERT INTO subscriptions (user_id, plan, status, gift_plan, gift_until, updated_at)
-      VALUES (${userId}, 'free', 'active', ${plan}, NULL, NOW())
+      INSERT INTO subscriptions (user_id, stripe_customer_id, plan, status, gift_plan, gift_until, updated_at)
+      VALUES (${userId}, ${NO_STRIPE}, 'free', 'active', ${plan}, NULL, NOW())
       ON CONFLICT (user_id) DO UPDATE
         SET gift_plan = ${plan}, gift_until = NULL, updated_at = NOW()
       RETURNING user_id
@@ -93,14 +111,23 @@ export async function POST(req: Request) {
     // Timed gift — extend from the later of NOW() and the current gift_until,
     // and create the row the same way if it is not there.
     rows = await sql`
-      INSERT INTO subscriptions (user_id, plan, status, gift_plan, gift_until, updated_at)
-      VALUES (${userId}, 'free', 'active', ${plan}, NOW() + (${days}::int * INTERVAL '1 day'), NOW())
+      INSERT INTO subscriptions (user_id, stripe_customer_id, plan, status, gift_plan, gift_until, updated_at)
+      VALUES (${userId}, ${NO_STRIPE}, 'free', 'active', ${plan}, NOW() + (${days}::int * INTERVAL '1 day'), NOW())
       ON CONFLICT (user_id) DO UPDATE
         SET gift_plan  = ${plan},
             gift_until = GREATEST(NOW(), COALESCE(subscriptions.gift_until, NOW())) + (${days}::int * INTERVAL '1 day'),
             updated_at = NOW()
       RETURNING user_id
     `
+  }
+
+  } catch (err) {
+    // ⚠️ SAY WHAT WENT WRONG. This threw before and Next answered with a bare
+    // 500, so the admin menu showed "HTTP 500" and there was nothing to act on —
+    // the database had given a perfectly clear reason and nobody could see it.
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[gift] failed for', userId, msg)
+    return Response.json({ error: `Could not write the gift: ${msg}` }, { status: 500 })
   }
 
   // Removing a gift from an account that has no row is already the state being
