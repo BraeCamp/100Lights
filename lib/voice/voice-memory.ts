@@ -208,12 +208,94 @@ export function clearVoiceMemory(): void {
   try { localStorage.removeItem(KEY) } catch { /* private mode */ }
 }
 
+/**
+ * Every command in this session, and what became of each — as text.
+ *
+ * ⚠️ Brae: "I put a bunch of commands in and they almost all failed. Can you
+ * figure out what the problems were for each of them and tell me what they
+ * were so that I can understand the errors?"
+ *
+ * The answer was already recorded and unreadable. __voiceMemory() has returned
+ * the raw exchanges all along, but twenty of those as JSON is not something
+ * anybody reads, and the server-side gaps table had exactly one row in it — so
+ * a session full of failures left nothing anyone could look at, which is why
+ * every round of this has been guesswork.
+ *
+ * Each line says what was SAID, what happened, and — the part that matters —
+ * WHICH KIND of failure it was, because the four kinds have completely
+ * different fixes:
+ *
+ *   not-heard      the transcript is wrong; nothing downstream could help
+ *   not-understood no tool was chosen; the request has no home yet
+ *   wrong-action   a tool ran and was undone; it chose badly
+ *   refused        it understood and declined, and said why
+ *   asked-back     it needed something more before acting
+ */
+export function voiceReport(n = 30): string {
+  load()
+  const rows = ring.slice(-n)
+  if (!rows.length) return 'No commands recorded yet.'
+
+  const kindOf = (e: VoiceExchange): string => {
+    if (e.failed) return 'refused'
+    if (e.undone) return 'wrong-action'
+    if (e.asked) return 'asked-back'
+    if (!e.calls.length) return e.heard < 0.6 ? 'not-heard' : 'not-understood'
+    // ⚠️ THE HARDEST KIND: it ran, reported success, and did the wrong thing.
+    // Nothing downstream can know that unless the user undoes it — which is why
+    // a session somebody describes as "almost all failed" can look clean here.
+    //
+    // One shape of it IS detectable, and it is the one Brae hit: an edit that
+    // also moved the transport. "Change reverb so it stays at 100% until the
+    // 6th bar" became set_effect plus a jump to bar 6, because the bar number
+    // read as a destination. Asking for an edit and getting a playhead move
+    // alongside it is nearly always that mistake.
+    const names = e.calls.map(c => c.name)
+    if (names.length > 1 && names.includes('transport')
+        && names.some(n => n !== 'transport')) return 'moved-playhead-too'
+    return 'ok'
+  }
+
+  const lines: string[] = []
+  const tally = new Map<string, number>()
+  for (const e of rows) {
+    const kind = kindOf(e)
+    tally.set(kind, (tally.get(kind) ?? 0) + 1)
+    const mark = kind === 'ok' ? '\u2713' : kind === 'moved-playhead-too' ? '?' : '\u2717'
+    const when = new Date(e.t).toISOString().slice(11, 19)
+    lines.push(`${mark} [${kind}] ${when}  "${e.said}"`)
+    const bits: string[] = [
+      `heard ${e.heard.toFixed(2)}`,
+      e.by,
+      e.matched ? `rule ${e.matched}` : 'no rule',
+      e.calls.length ? `called ${e.calls.map(c => c.name).join(', ')}` : 'called nothing',
+    ]
+    lines.push(`    ${bits.join(' \u00b7 ')}`)
+    const answer = e.failed || e.asked || e.said_back
+    if (answer) lines.push(`    said: "${String(answer).slice(0, 160)}"`)
+  }
+
+  const summary = [...tally.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${v} ${k}`)
+    .join(', ')
+  // ⚠️ Said plainly, because a clean-looking report is exactly what made this
+  // hard to chase: "ok" means it ran without complaining, NOT that it did what
+  // was meant. Pressing undo is what turns one into wrong-action.
+  return `${rows.length} commands: ${summary}\n`
+    + `("ok" means it ran without error, not that it did what you meant — `
+    + `undo marks one as wrong-action.)\n\n${lines.join('\n')}`
+}
+
 // Ungated, like the other diagnostics on this path: the whole value is being
 // able to look at what has accumulated during ordinary use, and a hook that
 // only exists on a developer's machine records nothing worth having.
 if (typeof window !== 'undefined') {
   ;(window as unknown as Record<string, unknown>).__voiceMemory = Object.assign(
     () => allExchanges(),
-    { all: allExchanges, queue: learningQueue, stats: voiceStats, clear: clearVoiceMemory },
+    { all: allExchanges, queue: learningQueue, stats: voiceStats, clear: clearVoiceMemory,
+      // The one to run when something went wrong: readable, and short
+      // enough to paste to somebody who can act on it.
+      report: (n?: number) => voiceReport(n) },
   )
 }
