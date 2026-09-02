@@ -18,8 +18,12 @@ import { useEffect } from 'react'
  *
  * So this is the switch that does not wait to be asked. Raise it and every
  * browser, on its next load, drops every Cache Storage entry and re-registers.
- * It runs ONCE per browser per value — the flag is written before the reload,
- * so a failure cannot turn it into a loop.
+ *
+ * ⚠️ IT RUNS ONLY WHERE IT CAN REMEMBER HAVING RUN. Writing the flag first was
+ * not enough — where storage throws, the write was swallowed and the purge
+ * reloaded anyway, so the next load did it again. The flag is read back, and no
+ * purge happens unless it stuck. A stale cache is a bad day; an app that never
+ * finishes loading is a broken product.
  */
 const PURGE_ID = '2026-09-02-stale-apollo-worklet'
 const PURGE_KEY = '100l.cache.purge'
@@ -47,9 +51,30 @@ export function ServiceWorkerRegistrar() {
       let done = ''
       try { done = localStorage.getItem(PURGE_KEY) ?? '' } catch { /* private mode */ }
       if (done !== PURGE_ID) {
-        // ⚠️ WRITTEN FIRST, so a browser that fails halfway through still only
-        // tries once. A reload loop is a far worse bug than a stale cache.
-        try { localStorage.setItem(PURGE_KEY, PURGE_ID) } catch { /* private mode */ }
+        // ⚠️ ONLY IF THE FLAG ACTUALLY STUCK — and it is READ BACK to find out.
+        //
+        // Writing it first was not enough. Where storage is unavailable —
+        // Brave with shields blocking it, a partitioned third-party context, a
+        // full quota, private mode — setItem THROWS, the catch swallowed it,
+        // and the purge reloaded anyway. The next load found no flag and did it
+        // again: an app that never finishes loading.
+        //
+        // Brae: "It still will load in safari and won't load in Brave." That
+        // was this, shipped by me an hour earlier. A stale cache is a bad day;
+        // a reload loop is a broken product, so when the flag cannot be proven
+        // to persist, the purge simply does not happen.
+        let recorded = false
+        try {
+          localStorage.setItem(PURGE_KEY, PURGE_ID)
+          recorded = localStorage.getItem(PURGE_KEY) === PURGE_ID
+        } catch { recorded = false }
+        if (!recorded) {
+          // No way to remember having done this, so never start. Register
+          // normally; the service worker's own version bump still clears the
+          // old caches, just on the browser's schedule rather than at once.
+          await navigator.serviceWorker.register('/sw.js').catch(() => {})
+          return
+        }
         try {
           // ⚠️ CACHES ONLY. IndexedDB holds the sound library and offline
           // projects — things that took real time to make and that the server
@@ -79,11 +104,18 @@ export function ServiceWorkerRegistrar() {
       reg.update().catch(() => {})
 
       // A new worker taking over mid-session means the page is running old code
-      // against new caches. One reload settles it; the guard stops the reload
-      // that the purge above already performed from happening twice.
+      // against new caches, and one reload settles it.
+      //
+      // ⚠️ ONLY WHEN ONE WAS ALREADY IN CHARGE. controllerchange also fires the
+      // FIRST time a worker claims an uncontrolled page, which is the ordinary
+      // first visit — reloading there is a reload for no reason, and on a
+      // browser that keeps re-installing it is another way to spin forever.
+      // An UPDATE is the case worth reloading for, and an update by definition
+      // replaces a controller that was already there.
+      const hadController = !!navigator.serviceWorker.controller
       let reloading = false
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (reloading) return
+        if (!hadController || reloading) return
         reloading = true
         location.reload()
       })

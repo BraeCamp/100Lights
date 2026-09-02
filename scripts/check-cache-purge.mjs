@@ -96,6 +96,34 @@ await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(5000)
 check('a later visit does not purge again', loads <= 1, `${loads} loads on the second visit`)
 
+// ── the case that actually broke Brave ────────────────────────────────────
+//
+// ⚠️ A BROWSER WHERE STORAGE THROWS. Brave with shields blocking site storage,
+// a partitioned context, a full quota. The purge cannot record itself there, so
+// it must not START — the first version of this reloaded anyway and the app
+// never finished loading. Simulated by making localStorage throw before any of
+// the app's own code runs.
+{
+  const ctx2 = await browser.newContext()
+  const p2 = await ctx2.newPage()
+  await p2.addInitScript(() => {
+    const boom = () => { throw new DOMException('The operation is insecure.', 'SecurityError') }
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() { return { getItem: boom, setItem: boom, removeItem: boom, key: boom, clear: boom, length: 0 } },
+    })
+  })
+  let loads2 = 0
+  p2.on('load', () => { loads2++ })
+  await p2.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
+  await p2.waitForTimeout(7000)
+  // ⚠️ ONE load. More than that is the reload loop, which is the whole point.
+  check('with storage blocked it does NOT loop', loads2 === 1, `${loads2} loads`)
+  const alive = await p2.evaluate(() => !!document.querySelector('body')?.children.length)
+  check('and the page still renders', alive)
+  await ctx2.close()
+}
+
 console.log(failed ? `\n${failed} failing` : '\nthe purge is safe: once, and it keeps your work')
 await browser.close()
 process.exit(failed ? 1 : 0)
