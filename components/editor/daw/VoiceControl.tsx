@@ -38,6 +38,7 @@ import { resolveLocally, resolveHeard, confidentEnough, runsLocally, needsNoProj
 import type { Heard } from '@/lib/voice/hypotheses'
 import { COMMAND_VOCABULARY, commandHelp } from '@/lib/voice/interpret'
 import { remember, markFailed, recentContext } from '@/lib/voice/voice-memory'
+import { traceStart, traceTurn, traceEnd } from '@/lib/voice/voice-trace'
 import {
   startRecording, preferredTranscriber, setPreferredTranscriber, micProblemMessage,
   type Recording, type StopResult, type MicReport,
@@ -1607,6 +1608,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const TURN_MS = 30_000
     const LOOP_MS = 75_000
     const loopStartedAt = Date.now()
+    traceStart(text)
     const msgs: { role: 'user' | 'assistant'; content: unknown }[] =
       [...history.current, { role: 'user' as const, content: text }]
     let lastSay = ''
@@ -1621,6 +1623,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         if (Date.now() - loopStartedAt > LOOP_MS) {
           setProblem('That took too long — stopping there. Try saying it again.')
           markFailed('loop budget exceeded')
+          traceEnd('', 'loop budget exceeded')
           return
         }
         const res = await fetch('/api/ai/assist', {
@@ -1680,6 +1683,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               : signedOut ? 'Sign in to use the assistant. Simple commands still work without it.'
                 : (e.error || `Couldn't reach the assistant (${res.status}).`))
           markFailed(e.error || `http ${res.status}`)
+          traceEnd('', e.error || `http ${res.status}`)
           return
         }
         // A turn got through, so whatever was wrong with the account is not
@@ -1747,6 +1751,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           lastAcceptedAt.current = Date.now()
           setPendingAsk2(asking.ask)
           respond(asking.ask.speak, 'question')
+          // Closed here too: an interaction that ends in a question is one of
+          // the most interesting kinds, and leaving the trace open would lose it.
+          traceEnd('', `asked: ${asking.ask.speak}`)
           return
         }
 
@@ -1761,6 +1768,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               ? (plans[i].problem || 'could not be done')
               : 'not run — another call in the same reply could not be done, so nothing was changed',
         }))
+
+        // ⚠️ RECORDED HERE because this is the only place that knows all three:
+        // what the model asked for (with its ARGUMENTS), what the studio
+        // answered, and what actually changed. A tool NAME on its own explains
+        // nothing — set_effect is right for "more reverb" and wrong for "keep
+        // reverb up until bar 6", and only the arguments tell them apart.
+        traceTurn(
+          usedTurns,
+          calls.map((c, i) => ({
+            name: c.name,
+            input: c.input,
+            result: String(results[i]?.content ?? ''),
+            ok: badAt < 0,
+          })),
+          badAt < 0 ? plans.flatMap(pl => pl.actions.map(a => String((a as { type?: string }).type ?? 'action'))) : [],
+        )
 
         if (badAt < 0) {
           for (const pl of plans) for (const a of pl.actions) runAction(a)
@@ -1840,6 +1863,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       setAsking('')
       if (spoke && lastSay) respond(spoke)
       setSaid(lastSay || spoke)
+      traceEnd(lastSay || spoke, lastProblem)
     } catch (err) {
       const timedOut = (err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError'
       // ⚠️ THE RULES ARE THE SAFETY NET, even though they no longer go first.
