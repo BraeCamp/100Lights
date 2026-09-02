@@ -44,7 +44,7 @@ import {
   type Recording, type StopResult, type MicReport,
 } from '@/lib/voice/record'
 import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execute-music'
-import { recallCommand, rememberCommand, forgetLearned } from '@/lib/voice/learned'
+import { recallCommand, rememberCommand, forgetKey } from '@/lib/voice/learned'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
@@ -1573,13 +1573,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const learned = recallCommand(text)
     if (learned) {
       const before = project
-      const plan = planVoiceCalls(learned, project, voiceCtx())
+      const plan = planVoiceCalls(learned.calls, project, voiceCtx())
       if (!plan.problem && !plan.ask && plan.actions.length) {
         for (const a of plan.actions) runAction(a)
         remember({
           said: text, heard: heardConfidence, by: 'learned',
           matched: 'learned', understood: 1,
-          calls: learned, said_back: plan.say,
+          calls: learned.calls, said_back: plan.say,
         })
         setAsking('')
         const after = (plan.actions as DawAction[]).reduce(dawReducer, before)
@@ -1594,7 +1594,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // stops a stale answer being given twice: the sentence goes to the
       // assistant as though it had never been learned, and is learned again
       // from the answer that works.
-      forgetLearned(text)
+      //
+      // Only the EXACT entry. A template that failed to plan is not wrong, it
+      // has been handed a name this song does not have — throwing away the
+      // whole family because one member missed would undo the generalisation
+      // the first time somebody named a track that does not exist.
+      if (learned.from === 'exact') forgetKey(learned.key)
     }
 
     if (assistRef.current === 'rules') {
@@ -1957,7 +1962,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // rememberCommand refuses several more shapes on its own: anything
       // pointing at "that" or "here", anything destructive, and any call
       // carrying a number nobody actually said.
-      if (!lastProblem && allCalls.length) rememberCommand(text, allCalls)
+      if (!lastProblem && allCalls.length) {
+        rememberCommand(text, allCalls, [
+          ...(project.tracks ?? []).map(t => t.name),
+          ...(project.arrangementClips ?? []).map(c => c.name),
+        ].filter(Boolean) as string[])
+      }
       history.current = [
         ...history.current,
         { role: 'user' as const, content: text },

@@ -146,7 +146,16 @@ function staticSystem(moduleName: string): string {
 const LOOP_HINT = [
   'You will be told what each tool call did. If a call fails, the reason comes back — fix it and try again rather than giving up or repeating it unchanged.',
   'You can look before you act: `describe` answers questions about the song, and its answer comes back to you, so use it when a request depends on something you were not told (which track is loudest, what is on a chain).',
-  'When the work is done, reply with one short sentence saying what actually changed — from the results you were given, not from what you intended.',
+  // ⚠️ THE STUDIO ALREADY SAYS THIS, AND SAYS IT BETTER. Every plan the
+  // executor runs comes back with `say` — "reverb on \"Pad\" at 100%" — built
+  // from what the reducer actually did, not from what anybody intended. Asking
+  // for a sentence on top bought a second, worse copy of it in OUTPUT tokens,
+  // which are five times the price of input.
+  //
+  // So: speak only when there is something the results cannot say for
+  // themselves — an answer to a question, or a reason it could not act.
+  'The studio reads the results back to the user itself, in its own words, so do NOT add a sentence describing what you changed — it would only be said twice.',
+  'Reply with text ONLY when you are answering a question, or when you could not act and need to say why. Otherwise call the tools and stop.',
 ].join(' ')
 
 function staticSystemOther(moduleName: string): string {
