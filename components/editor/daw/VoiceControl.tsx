@@ -46,7 +46,7 @@ import {
 import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execute-music'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
-import { WAKE_WORDS, shouldActOn } from '@/lib/voice/attention'
+import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
 import { stitch, worthHolding } from '@/lib/voice/stitch'
 import { useDropDirection, useMountTransition, popClass } from '@/lib/ui/popup'
 import { interpretSequence } from '@/lib/voice/sequence'
@@ -1179,6 +1179,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // Already handled above; named here so the rule reads completely.
       queueWord: !!control,
       assistantActs: assistRef.current === 'auto',
+      // ⚠️ Permission to act is not permission to spend. Everything the room
+      // says was reaching the model — "yeah", "one sec", somebody else's
+      // conversation — and each is a paid turn to discover nobody was talking
+      // to the studio. Track and clip names count as naming something, so
+      // "the pad" is a request and "mm" is not.
+      looksLikeRequest: worthTheModel(text, [
+        ...(project.tracks ?? []).map(t => t.name),
+        ...(project.arrangementClips ?? []).map(c => c.name).filter(Boolean),
+      ] as string[]),
     })) {
       setBusy(false)
       // ⚠️ Kept, not discarded. This is exactly where half a slowly-spoken
@@ -1884,11 +1893,31 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         }),
       }).catch(() => {})
 
-      // Done — the exchange is closed, so the next command starts clean rather
-      // than inheriting the last one's context. Only text is kept: replaying a
-      // tool_use turn into the NEXT sentence would need its results alongside
-      // it, and a conversation carrying one without the other is rejected.
-      history.current = []
+      // ── Keep the last few exchanges, as TEXT ────────────────────────────
+      //
+      // Brae: "it isn't remembering the last messages and using them to
+      // interpret present chat commands. It should remember a few."
+      //
+      // ⚠️ THIS USED TO CLEAR EVERYTHING, and the reason was real: replaying a
+      // tool_use turn needs its results alongside it, and a conversation
+      // carrying one without the other is rejected outright — the exact 400
+      // that cost a session. Clearing was the safe answer to that.
+      //
+      // The safe answer threw away the conversation. What goes back now is only
+      // what was SAID — the sentence and the reply, no tool blocks at all — so
+      // there is nothing that can be orphaned, and "do that to the bass as
+      // well" has a "that" to point at. Six messages is three exchanges: enough
+      // for a follow-up to make sense, short enough that a command from ten
+      // minutes ago cannot drag the current one somewhere strange.
+      //
+      // The recentContext() summary stays as well; the two answer different
+      // questions. That is a compact record of what was DONE, this is the
+      // conversation itself.
+      history.current = [
+        ...history.current,
+        { role: 'user' as const, content: text },
+        ...(lastSay || spoke ? [{ role: 'assistant' as const, content: lastSay || spoke }] : []),
+      ].slice(-6)
       setAsking('')
       if (spoke && lastSay) respond(spoke)
       setSaid(lastSay || spoke)

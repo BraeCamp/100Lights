@@ -259,6 +259,25 @@ export interface ActInput {
   /** Is the studio already mid-conversation — waiting on an answer it asked
    *  for? A reply to a question is addressed by construction. */
   answering: boolean
+  /**
+   * Does this sound like a request at all?
+   *
+   * ⚠️ Brae: "the expense of keeping the listening on is getting high. Is there
+   * a way to have the program listen and give audio control to AI once it can
+   * tell that a sentence has been said?"
+   *
+   * That is exactly the missing gate. With the assistant allowed to act, ANY
+   * sentence the room produced went to the model — "yeah", "one sec", half of
+   * somebody else's conversation — and each one is a paid turn to establish
+   * that nobody was talking to the studio. Transcription is free here (the
+   * browser's own recogniser), so the bill is entirely these.
+   *
+   * Deliberately generous, because a missed command is worse than a wasted
+   * turn: anything the rules can read, anything naming something in the
+   * project, and anything long enough to be a deliberate sentence all pass. It
+   * only stops the short, contentless utterances that make up room noise.
+   */
+  looksLikeRequest?: boolean
   /** Has the assistant been given permission to act on anything it hears? */
   assistantActs: boolean
 }
@@ -269,8 +288,40 @@ export function shouldActOn(input: ActInput): boolean {
   if (input.readable || input.queueWord) return true
   // Nothing here can read it. Handing it to the assistant would mean paying to
   // interpret whatever the room said, so that only happens where somebody has
-  // explicitly asked for the assistant to act on its own.
-  return input.assistantActs
+  // explicitly asked for the assistant to act on its own — AND where what was
+  // heard looks like it was addressed to a studio at all. Permission to act is
+  // not permission to spend on "mm, yeah".
+  return input.assistantActs && input.looksLikeRequest !== false
+}
+
+/**
+ * Is this worth a paid turn?
+ *
+ * ⚠️ ERRS TOWARDS YES. A command that is ignored is a broken feature; a turn
+ * spent on room noise is a fraction of a penny. So this only says no to what
+ * cannot plausibly be an instruction: a couple of words, naming nothing in the
+ * project, containing nothing that asks for anything.
+ *
+ * One-word transport words are deliberately NOT here — "stop", "play" and
+ * "restart" are read by the built-in rules long before this, run instantly and
+ * cost nothing, which is the arrangement Brae asked for.
+ */
+const ASKING = /\b(add|put|make|set|change|turn|move|copy|delete|remove|mute|solo|play|stop|start|restart|loop|undo|redo|open|close|show|give|bring|take|drop|raise|lower|louder|quieter|faster|slower|brighter|darker|longer|shorter|double|halve|split|join|rename|call|save|export|render|freeze|duplicate|reverse|swing|quantize|quantise|transpose|pan|fade|filter|reverb|delay|compress|sidechain|duck|automate|draw|write|record|arm|select|zoom|scroll|go|jump|seek|can you|could you|please|i want|i need|let's|lets)\b/i
+
+export function worthTheModel(text: string, projectWords: readonly string[] = []): boolean {
+  const t = String(text ?? '').trim()
+  if (!t) return false
+  const words = t.split(/\s+/).filter(Boolean)
+
+  // A deliberate sentence. Nobody says six words by accident near a microphone.
+  if (words.length >= 6) return true
+  // It asks for something.
+  if (ASKING.test(t)) return true
+  // It names something in this song — a track, a clip, a section.
+  const low = t.toLowerCase()
+  if (projectWords.some(w => w.length > 2 && low.includes(w.toLowerCase()))) return true
+  // Two words or fewer, naming nothing and asking nothing: room noise.
+  return words.length > 3
 }
 
 export function considerUtterance(input: AttentionInput): AttentionVerdict {
