@@ -82,6 +82,16 @@ function allocCtx(): OfflineAudioContext {
 
 export class ApolloEngine extends EventTarget {
   /** True once the worklet has died. It never comes back by itself. */
+  /**
+   * This engine is producing zeros and will not stop on its own.
+   *
+   * ⚠️ IT WAS SET AND NEVER READ BY THE DAW. A hard worklet crash ends the
+   * processor for good; the crash armour's soft case is worse, because it keeps
+   * the processor ALIVE and every block it renders is silence. Either way
+   * daw-instrument went on handing the same dead engine to every note, for ever
+   * — Brae: "the audio cut out and didn't come back even after loading
+   * finished." ensure() checks it now and builds a fresh engine instead.
+   */
   crashed = false
 
   /**
@@ -229,6 +239,10 @@ export class ApolloEngine extends EventTarget {
         if (!this.procErrors.first) this.procErrors.first = String(m.message).slice(0, 400)
         this.procErrors.last = String(m.message).slice(0, 400)
         this.procErrors.lastAt = Date.now()
+        // ⚠️ ONE is a hiccup the armour absorbed; a HANDFUL means it is throwing
+        // on every block, and every block it renders from here is zeros. Three
+        // is enough to be sure and few enough to catch it within a beat.
+        if (this.procErrors.count >= 3) this.crashed = true
         console.warn('[apollo] engine recovered from a processing error:', m.message)
         void import('@sentry/nextjs')
           .then(S => S.captureException(new Error(`Apollo engine process() threw (v${ENGINE_VERSION}, #${m.count}): ${String(m.message).slice(0, 400)}`)))

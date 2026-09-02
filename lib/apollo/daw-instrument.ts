@@ -71,8 +71,22 @@ function create(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Man
 
 function ensure(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Managed {
   let m = byDest.get(dest)
-  // A released engine is not a usable one — build a fresh engine on this bus.
-  if (!m || m.released) m = create(ctx, dest, patch)
+  // ⚠️ A released OR CRASHED engine is not a usable one.
+  //
+  // Crashed matters as much as released and was missing entirely: a processor
+  // that throws keeps its entry here, so every note afterwards was scheduled
+  // onto something rendering silence, and it never recovered until the page was
+  // reloaded. The transport's bus swap used to hide this by orphaning the entry
+  // on every stop; that swap is gone (it forced a rebuild per loop wraparound),
+  // so recovery has to be deliberate.
+  if (!m || m.released || m.engine.crashed) {
+    if (m?.engine.crashed) {
+      // Let the corpse go, or it renders zeros on the audio thread for ever.
+      try { m.engine.release() } catch { /* already gone */ }
+      m.released = true
+    }
+    m = create(ctx, dest, patch)
+  }
   else if (m.isReady && m.lastParams !== patch) {
     // instrument edited (SET_INSTRUMENT replaces the params object)
     m.engine.sendPatch(patch)
