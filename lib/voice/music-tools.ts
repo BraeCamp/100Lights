@@ -95,7 +95,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'automate_parameter',
     description:
-      'AUTOMATION — write a ramp on a parameter over a span of the song. This is what "an ascending low pass filter from 80% to 0% over the first 8 seconds", "fade the volume out over the last 2 bars", "open the filter across the intro" mean.',
+      'AUTOMATION — write a ramp on a parameter over a span of the song. This is what "an ascending low pass filter from 80% to 0% over the first 8 seconds", "fade the volume out over the last 2 bars", "open the filter across the intro" mean. A SPAN IS OFTEN GIVEN AS AN ENDPOINT RATHER THAN A LENGTH, and those are the same request: "until the 6th bar", "up to the chorus", "through bar 12", "stays at 100% until bar 6", "keep it open till the drop". The giveaway is a value that has to HOLD and then change — that is a shape over time, which is this tool, not a single setting. Note what it is doing NOW before writing one: "stays at 100% until bar 6" when it is already 100% is a request to EXTEND the existing ramp to bar 6, and setting the value to 100% again changes nothing and is not what was asked.',
     input_schema: {
       type: 'object',
       properties: {
@@ -212,7 +212,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'transport',
     description:
-      'TRANSPORT — play, stop, or return to the start. ALWAYS call this when the sentence ends with "then restart", "then play it", "and play it back", or similar: "restart" means go back to the beginning and play, and it is a real request like any other, not a closing remark. "go to bar 9" moves the playhead.',
+      'TRANSPORT — play, stop, or return to the start. ALWAYS call this when the sentence ends with "then restart", "then play it", "and play it back", or similar: "restart" means go back to the beginning and play, and it is a real request like any other, not a closing remark. "go to bar 9" moves the playhead — but ONLY when going there is the request itself. A bar mentioned inside a larger sentence is describing WHERE something should happen, not asking to move: "until the 6th bar", "add a crash at bar 5", "make it louder from bar 3" are not transport calls, and moving the playhead during one of them is an edit nobody asked for.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1316,6 +1316,14 @@ export const MUSIC_SYSTEM_HINT = [
   // worse than a refused one, so this says it twice and gives the example.
   'ONE SENTENCE OFTEN CONTAINS SEVERAL REQUESTS. Emit a tool call for EVERY request in it, in the order they were said, all in this one reply. "Move everything over by one bar and have a 1 bar long crash at the beginning, then restart" is THREE calls: move_clips, insert_clip, transport. Do not stop after the first.',
   'Use the names they used for tracks and clips; the app resolves them against the real project and will refuse rather than guess if a name is ambiguous.',
+  // Brae: "I told it 'change reverb so that it stays at 100% until the 6th
+  // bar'. It told me 'Reverb at 100%' without changing anything, and moved
+  // the playhead to the 6th bar." Three mistakes in one sentence: the span
+  // was not recognised, the bar number was read as a destination, and a call
+  // that changed nothing was reported as though it had.
+  'A TIME WORD TURNS A SETTING INTO A SHAPE. "Make the reverb 100%" is a setting; "keep the reverb at 100% UNTIL BAR 6" is a shape over time, and needs automation — the same request whether it is said as a length ("for 4 bars") or as an endpoint ("until bar 6", "up to the chorus"). Setting the value once satisfies neither.',
+  'DO NOT MOVE THE PLAYHEAD UNLESS MOVING IT IS THE REQUEST. A bar or time mentioned inside a larger sentence says WHERE the edit goes; it is not somewhere to go. Moving it is itself an unasked-for change, and it hides the fact that the real request was missed.',
+  'IF A CALL WOULD CHANGE NOTHING, SAY SO RATHER THAN REPORTING SUCCESS. Telling somebody "reverb at 100%" when it was already 100% reads as done, and they only find out later that nothing happened. If what they asked for looks like it is already true, say what you found and what you think they meant instead.',
   'Positions are bars and beats counting from 1 ("the beginning" is bar 1). Lengths can be bars, beats or seconds — pass whichever unit they said and let the app convert, because the song may change tempo or time signature part way through.',
   // Brae: "I just said 'Can you make a beat like boom ka boom ka' and it didn't
   // know what I was talking about." Drum syllables look like a transcription

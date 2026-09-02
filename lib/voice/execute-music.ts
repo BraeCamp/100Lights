@@ -330,6 +330,30 @@ const CLIP_FX_FIELDS: Record<string, { key: string; label: string; at: (unit: nu
  * think of as an amount, drive for saturation, cutoff for a filter — where
  * "more" sensibly means "more open" rather than "more filtered".
  */
+/**
+ * What an effect's amount currently IS, as a percentage — the mirror of
+ * applyAmount, or null where the amount is not a single readable number.
+ *
+ * ⚠️ SO THAT "DONE" MEANS SOMETHING. Brae asked for reverb to stay at 100% until
+ * bar 6; it was already at 100%, and the studio answered "Reverb at 100%" —
+ * which reads exactly like success. Nothing had changed, and the request (a
+ * shape over time) had been missed entirely. A report that cannot tell those
+ * apart hides the failure it is describing.
+ */
+function readAmount(params: Record<string, unknown>, kind: EffectType): number | null {
+  const pct = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) : null
+  switch (kind) {
+    case 'reverb': case 'delay': return pct(params.wet)
+    case 'chorus': return pct(params.mix)
+    case 'saturator': return pct(params.drive)
+    // Everything else maps its amount onto a curve (a frequency, a ratio) where
+    // the inverse is not exact. Returning null means "cannot tell", and the
+    // caller reports the edit normally rather than guessing at a no-op.
+    default: return null
+  }
+}
+
 function applyAmount(params: Record<string, unknown>, kind: EffectType, pct: number): void {
   const unit = Math.max(0, Math.min(1, pct / 100))
   switch (kind) {
@@ -2003,13 +2027,26 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
       if (pct == null) return fail(`"${track.name}" already has ${kind}. Say how much you want.`)
       const params = { ...(existing.params as unknown as Record<string, unknown>) }
+
+      // ⚠️ SAY WHEN NOTHING CHANGED, instead of reporting the value back as
+      // though it had been set. Asking for something that is already true is
+      // almost always a sign the request was about something else — a span, a
+      // different track, a shape over time — and answering "reverb at 100%"
+      // sends somebody away believing it was done.
+      const before = readAmount(params, kind)
+      const wanted = Math.round(pct)
+      if (before !== null && before === wanted) {
+        return fail(`${kind} on "${track.name}" is already at ${wanted}%, so nothing changed. `
+          + `If you meant it to STAY there over part of the song, that is an automation — say the span, like "until bar 6".`)
+      }
+
       applyAmount(params, kind, pct)
       return {
         actions: [{
           type: 'UPDATE_EFFECT', trackId: track.id, effectId: existing.id,
           patch: { params: params as unknown as TrackEffect['params'] },
         }],
-        say: `${kind} on "${track.name}" at ${Math.round(pct)}%.`,
+        say: `${kind} on "${track.name}" at ${wanted}%.`,
       }
     }
 
