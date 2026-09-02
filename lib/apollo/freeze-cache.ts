@@ -20,6 +20,7 @@
 // edit: the piano roll still holds notes, the track still holds its patch, and
 // changing either produces a new stamp, which misses, which re-renders.
 
+import { canRenderInWorker } from './render-worker-client'
 import type { MidiClip } from '@/lib/daw-types'
 import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import { layersFor, patchForLayer, layerLabel } from './render-layers'
@@ -783,6 +784,28 @@ function breathe(): Promise<void> {
 // render has not built up much of a debt to the interface, so it should not pay
 // a long one back.
 const gap = (lastRenderMs = 0) => {
+  // ⚠️ ALL OF THIS EXISTS BECAUSE RENDERING USED TO RUN ON THE MAIN THREAD, and
+  // it no longer does. Every number below is an apology for competing with the
+  // interface: rest in proportion to the work just done, rest longer while the
+  // user is dragging, leave time for an OfflineAudioContext to be reclaimed.
+  //
+  // The worker has none of those problems. It cannot block a drag, and it builds
+  // no contexts to exhaust. Meanwhile the pacing has a cost of its own that only
+  // became visible once the render was fast: up to 1.5 SECONDS of deliberate
+  // rest between clips while the transport runs, against renders that take about
+  // a tenth of real time. That is the renderer being told to fall behind a
+  // playhead it could easily outrun — and a clip the playhead reaches before its
+  // render lands is synthesised live, which is the expensive path this whole
+  // exercise exists to avoid.
+  //
+  // Brae: "it loads well and plays from the load well but it barely plays well
+  // live." Precisely that: rendered clips are cheap, un-rendered ones are not,
+  // and the pacing decided which was which.
+  if (canRenderInWorker()) {
+    // A breath, not a rest — enough to let the event loop deliver results and
+    // the UI paint a frame, and nothing more.
+    return new Promise<void>(r => setTimeout(r, transportPlaying ? 0 : 16))
+  }
   const ms = transportPlaying
     ? Math.min(1500, Math.max(180, lastRenderMs * 0.6))
     // Rest LONGER while the user is interacting than while they are not: the
@@ -1259,7 +1282,23 @@ async function bakeLayer(
     }
     // Rule 1, checked every pass: play may have been pressed while the last
     // render was running.
-    if (transportPlaying) {
+    //
+    // ⚠️ THIS STOPPED BAKING FOR AS LONG AS THE SONG PLAYED, and it was right
+    // to when rendering ran on the main thread — competing with the scheduler
+    // is how playback stutters. It is exactly wrong now that it does not.
+    //
+    // Two of Brae's reports are this one rule. "When I play the song it still
+    // loads, then when I pause it goes back to the load state where it was when
+    // I started playing" — the job parks on the next pass and resumes from
+    // there. And "it barely plays well live": pressing play halted the very
+    // work that makes playback cheap, so every clip the playhead reached had to
+    // be synthesised, which is the expensive path this exists to avoid. The
+    // longer you played, the further behind the renderer fell.
+    //
+    // With the worker there is nothing to protect. Rendering carries on while
+    // the song plays, so clips are ready BEFORE the playhead arrives, which is
+    // the entire point of rendering ahead.
+    if (transportPlaying && !canRenderInWorker()) {
       setProgress({ ...progress, active: false, phase: 'paused' })
       pausedAt = Date.now()
       logEvent('paused', { layer: label, detail: 'playing live — baking resumes on pause' })
@@ -1438,7 +1477,9 @@ async function bake(bpm: number, groups: TrackRenderGroup[], wanted: Want[], job
     logEvent('job-error', { detail: lastError.slice(0, 160) })
   } finally {
     inFlight.delete(jobKey)
-    if (parked || transportPlaying) { parked = true; pendingWhilePlaying = true }
+    // Same reasoning as Rule 1: only defer to playback when rendering would
+    // actually compete with it.
+    if (parked || (transportPlaying && !canRenderInWorker())) { parked = true; pendingWhilePlaying = true }
     logEvent('job-end', {
       done: wanted.length - owed, total: wanted.length,
       detail: parked ? 'waiting for the pause' : owed === 0 ? 'complete' : `${owed} still owed`,
