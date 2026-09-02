@@ -2507,12 +2507,31 @@ export class DawEngine extends EventTarget {
           }
           if (overlapping.length > 0) {
             clipEffectActive = true
-            // ⚠️ ONE CHAIN FOR THE WHOLE CLIP when the instrument is a worklet.
-            // See _clipBarChains: a fresh entry node per note is a fresh Apollo
-            // engine per note. Keyed by which bars are in play, so editing them
-            // builds a new chain rather than reusing a stale one.
+            // ⚠️ ONE CHAIN PER TRACK where the bars belong to the track.
+            //
+            // Measured: eight Apollo tracks of eight clips cost NO extra engines
+            // — one per track, reused — until one clip effect is added to each,
+            // at which point it is 32 engines and the transport drags. Size was
+            // never the problem; the per-clip chain was, because an Apollo
+            // engine is keyed by the node its notes are sent to.
+            //
+            // A track-level bar (a clip effect) is scheduled from its OWN start
+            // beat, not the note's — _buildEffectBar ignores startAt entirely,
+            // and _buildClipEffect uses it only to start an LFO, which is more
+            // correctly phase-locked to the effect than to whichever note
+            // happened to build the chain first. So one chain for the track is
+            // both cheaper and more faithful.
+            //
+            // Per-CLIP bars (FX motion, per-parameter graphs) genuinely differ
+            // clip by clip, so those keep a chain per clip. The key says which
+            // it is, and includes every bar in play so editing one builds a new
+            // chain rather than reusing a stale one.
+            const perClipBar = overlapping.some(e =>
+              e.id.startsWith('motion:') || e.id.startsWith('pg:'))
             const barKey = this._isWorkletInstrument(track)
-              ? `${clip.id}|${overlapping.map(e => e.id).join(',')}`
+              ? (perClipBar
+                  ? `clip:${clip.id}|${overlapping.map(e => e.id).join(',')}`
+                  : `track:${clip.trackId}|${overlapping.map(e => e.id).sort().join(',')}`)
               : null
             const shared = barKey ? this._clipBarChains.get(barKey) : undefined
             if (shared) {
@@ -2524,7 +2543,10 @@ export class DawEngine extends EventTarget {
             for (const eff of overlapping) {
               const effContextStart  = this._ctxTimeForBeat(Math.max(now, eff.startBeat), now, contextNow)
               const effSeekOffsetSec = Math.max(0, this._spanSeconds(eff.startBeat, now))
-              const r = eff.fx ? this._buildEffectBar(eff, last, startAt, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, last, startAt, effContextStart, effSeekOffsetSec)
+              // A chain shared by the whole track must not be anchored to the
+              // note that happened to build it — its own start is the anchor.
+              const anchor = barKey?.startsWith('track:') ? effContextStart : startAt
+              const r = eff.fx ? this._buildEffectBar(eff, last, anchor, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, last, anchor, effContextStart, effSeekOffsetSec)
               last = r.output
               fxCleanup.nodes.push(...r.extraNodes)
               fxCleanup.oscs.push(...r.extraOscs)
