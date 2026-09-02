@@ -198,6 +198,30 @@ input[type="range"].cf-slider::-moz-range-thumb {
   .menu-pop-out, .menu-pop-up-out { animation: none; opacity: 0; }
 }
 
+/* ── Nothing gets text-selected while you are dragging ──────────────────────
+   Brae: "when I drag anything it also does the drag to select feature."
+
+   ⚠️ THE BROWSER'S OWN SELECTION, not ours. A clip sets user-select:none on
+   ITSELF, which is why grabbing one looks fine — and then the pointer leaves it
+   and the browser happily starts selecting every lane, label and number it
+   travels over, drawing a highlight nobody asked for underneath the drag.
+
+   Set for the duration of a drag rather than permanently, because the studio
+   has real text in it — track names, fields, the console — and selecting that
+   is a thing people legitimately do. Inputs keep their own selection anyway, in
+   case a drag begins while a field is focused. */
+html.daw-dragging,
+html.daw-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+html.daw-dragging input,
+html.daw-dragging textarea,
+html.daw-dragging [contenteditable="true"] {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
 /* Modal / dialog entrance. A dialog that simply APPEARS reads as a jump cut —
    the eye cannot tell whether it arrived or was always there. A short rise with
    the backdrop fading under it says where it came from, and 160ms is under the

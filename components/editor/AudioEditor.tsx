@@ -61,6 +61,7 @@ import GuestPanel from './daw/GuestPanel'
 import { saveSnapshot, loadSnapshot, deleteSnapshot, getBranch } from '@/lib/offline-store'
 import { mergeProjects, applyResolutions, hasDiverged, type MergeConflict } from '@/lib/project-merge'
 import { getPresets, combinePresets } from '@/lib/midi-presets'
+import { installDragSelectionGuard } from '@/lib/ui/drag-selection-guard'
 
 // ── Re-exports for backward compat (ProjectEditor imports these) ──────────────
 
@@ -159,6 +160,11 @@ function UnsavedShareButton({ onShare }: { onShare: () => Promise<void> }) {
   // goes wrong from here — a render that comes back silent, a preset with no
   // samples, a worklet that throws — is written down and survives a reload.
   useEffect(() => { void import('@/lib/diag-journal').then(m => m.installDiag()) }, [])
+  // ⚠️ Installed once for the whole studio, not per draggable thing. The
+  // browser's own text selection is what appears under a drag, and it appears
+  // wherever the pointer travels — so the guard has to be on the page, not on
+  // the handle. See lib/ui/drag-selection-guard.ts.
+  useEffect(() => installDragSelectionGuard(), [])
 
   useEffect(() => {
     const find = () => {
