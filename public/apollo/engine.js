@@ -3398,7 +3398,11 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const end = currentTime + n / sampleRate
       while (this.absEvents.length && this.absEvents[0].t < end) {
         const ev = this.absEvents.shift()
-        if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false, ev.ch || 0)
+        // ⚠️ ev.nf, or the per-note filter silently does nothing in DAW mode.
+        // The direct 'noteOn' message path passes it; this is the path the DAW
+        // actually uses (everything is scheduled at absolute time), and it was
+        // dropping it — so the filter was accepted, sent, and ignored.
+        if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false, ev.ch || 0, ev.nf)
         else if (ev.type === 'noteOff') this.noteOff(ev.note, false)
       }
     }
