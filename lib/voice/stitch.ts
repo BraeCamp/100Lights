@@ -66,6 +66,38 @@ function words(s: string): number {
 }
 
 /**
+ * Does this trail off — half a sentence, with the rest still to come?
+ *
+ * Brae: "if a transcript is made after saying 'On Pad Intro...' then there's a
+ * 3 second wait, 'descend the volume from 100% to 60%'. That is a broken up
+ * sentence but the same idea."
+ *
+ * ⚠️ THIS IS WHAT LETS THE SILENCE TAIL BE SHORT. With the recorder waiting
+ * 1.2 seconds instead of 2.2, a thinking pause cuts a sentence in half more
+ * often — so the half has to be recognised as a half. The tell is that it has
+ * no verb: "on pad intro", "the drums", "and then at bar 9" are all places and
+ * things with nothing to do to them yet. A fragment like that is held quietly
+ * rather than sent anywhere, because the alternative is a PAID turn spent asking
+ * "what about the pad intro?" — a question the speaker was about to answer
+ * anyway.
+ *
+ * Narrow on purpose. "stop" has a verb and is finished. "the reverb is too much"
+ * has one too. Only a fragment with nothing to DO in it waits.
+ */
+const VERB = /\b(add|put|make|set|change|turn|move|copy|delete|remove|mute|unmute|solo|play|stop|start|restart|pause|loop|undo|redo|open|close|show|give|bring|take|drop|raise|lower|descend|ascend|fade|sweep|ramp|automate|double|halve|split|join|rename|call|save|export|render|freeze|duplicate|reverse|swing|quantize|quantise|transpose|pan|filter|compress|duck|draw|write|record|arm|select|focus|zoom|scroll|go|jump|seek|browse|hear|describe|is|are|was|has|have|do|does|can|could|would|should|want|need|keep|leave|let|try|use|apply|run|repeat|increase|decrease|boost|cut|brighten|darken|widen|narrow|shorten|lengthen|extend|hold|stay|stays|goes|comes|gets|sounds|louder|quieter|brighter|darker|faster|slower)\b/i
+const TRAILS_OFF = /\b(and|then|to|on|at|from|with|for|of|the|a|an|but|so|or|into|onto|over|under|between|until|till|by)$/i
+
+export function looksIncomplete(text: string): boolean {
+  const t = text.trim().replace(/[.…]+$/, '')
+  if (!t) return false
+  const n = words(t)
+  if (n > 12) return false                 // a paragraph is not a fragment
+  if (/[?!]$/.test(t)) return false        // a question or an exclamation is whole
+  if (TRAILS_OFF.test(t)) return true      // ended mid-phrase
+  return !VERB.test(t)                     // a thing or a place, with nothing to do to it
+}
+
+/**
  * Is this worth holding on to?
  *
  * Only text the studio could not read at all. Anything it understood has

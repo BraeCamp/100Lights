@@ -241,11 +241,18 @@ const SPEECH_OVER_MUSIC = 0.15   // the mix plus a person talking over it
     run1.speakingMs >= 1200, `${run1.speakingMs}ms of speech`)
 
   // The cutoff has to come back, or the take never ends and nothing is ever
-  // sent. Brae asked for two to four seconds; what matters here is that it is
-  // in that region rather than the fifth of a second a gate uses.
+  // sent. Brae first asked for two to four seconds; what matters here is that
+  // it is in the region of a SENTENCE pause rather than the fifth of a second a
+  // gate uses.
+  //
+  // ⚠️ THE FLOOR CAME DOWN FROM 1,500 ON 2026-09-03 — Brae: "Let's do the
+  // biggest lever." The tail is 1.2 s now, and the pause it used to absorb is
+  // handled by the stitcher instead: a half-sentence is held and joined to what
+  // follows (voice-stitch.test.mjs). The mid-sentence check above still holds —
+  // a thinking pause inside the sentence must not end the take.
   const quietFrom = (CALIBRATION_SAMPLES + 30 + 24 + 10) * 50
   check('and it comes back once the talking really stops',
-    run1.endedAt !== null && run1.endedAt - quietFrom >= 1500
+    run1.endedAt !== null && run1.endedAt - quietFrom >= 1000
     && run1.endedAt - quietFrom <= 4000,
     `ended ${run1.endedAt === null ? 'never' : run1.endedAt - quietFrom}ms after the last word`)
 

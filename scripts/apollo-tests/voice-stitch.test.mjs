@@ -96,13 +96,55 @@ const at = t => ({ text: 'add a descending low pass filter to', at: t })
 
   const voice = readFileSync('components/editor/daw/VoiceControl.tsx', 'utf8')
   check('the studio only joins when the new words read as nothing',
-    /if \(!readable\) \{\s*\n\s*const joined = stitch\(/.test(voice))
+    /if \(!readable\) \{\s*\n\s*const held = heldFragment\.current\s*\n\s*const joined = stitch\(/.test(voice))
   check('and only keeps the joined version if it reads as something',
     /if \(joined && interpret\(joined, ctx\)\.calls\.length > 0\)/.test(voice))
   check('an understood sentence clears the hold',
     /if \(readable\) heldFragment\.current = null/.test(voice))
   check('and the sentence dropped at the attention gate is kept',
     /if \(worthHolding\(text, false\)\) heldFragment\.current/.test(voice))
+}
+
+// ── ⚠️ the shorter tail, and the half-sentence it makes more common ────────
+//
+// Brae: "Let's do the biggest lever. You'll need to accommodate for speech
+// pauses, so if a transcript is made after saying 'On Pad Intro...' then
+// there's a 3 second wait, 'descend the volume from 100% to 60%'. That is a
+// broken up sentence but the same idea."
+{
+  const { looksIncomplete, stitch: join } = await importTs('lib/voice/stitch.ts')
+  const vad = readFileSync('lib/voice/vad.ts', 'utf8')
+  const voice = readFileSync('components/editor/daw/VoiceControl.tsx', 'utf8')
+  check('the silence tail is 1.2 s, down from 2.2', /SILENCE_MS = 1200/.test(vad))
+  check('and 1.5 s over playing music', /SILENCE_MS_PLAYING = 1500/.test(vad))
+
+  // The half that trails off has no verb in it — a place or a thing, with
+  // nothing to do to it yet.
+  check('"On Pad Intro" is recognised as half a sentence', looksIncomplete('On Pad Intro'))
+  check('so is a bare track name', looksIncomplete('the drums'))
+  check('and a phrase that ends mid-air', looksIncomplete('and then at bar 9 to'))
+  // Whole thoughts must NOT wait — "stop" is finished when it stops.
+  check('"stop" is not', !looksIncomplete('stop'))
+  check('"mute the drums" is not', !looksIncomplete('mute the drums'))
+  check('a complaint with a verb is not', !looksIncomplete('the reverb is too much'))
+  check('a question is not', !looksIncomplete('what is on the pad?'))
+  check('a paragraph is not a fragment', !looksIncomplete('a b c d e f g h i j k l m n o'))
+
+  // Brae's exact case: a 3-second pause, then the rest.
+  const t0 = 1_000_000
+  const joined = join({ text: 'On Pad Intro', at: t0 }, 'descend the volume from 100% to 60%', t0 + 3_000)
+  check('the two halves join across a three-second pause',
+    joined === 'On Pad Intro descend the volume from 100% to 60%', String(joined))
+
+  // And the studio takes that join even though no RULE can read an automation
+  // — the assistant can. Before this, the join only stood when the rules read
+  // the result, so the halves went their separate ways.
+  check('the studio keeps a join whose held half was unfinished, for the assistant',
+    /else if \(joined && held && looksIncomplete\(held\.text\)\)/.test(voice))
+  check('a fresh half-sentence is held quietly rather than sent anywhere',
+    /if \(!readable && !heldFragment\.current && looksIncomplete\(text\)\)/.test(voice))
+  check('and asked about only if nothing follows',
+    /what would you like to do with it\?/.test(voice))
 }
 
 console.log(failures ? `\n${failures} failing` : '\nslow speech survives')

@@ -55,7 +55,7 @@ import {
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
-import { stitch, worthHolding } from '@/lib/voice/stitch'
+import { stitch, worthHolding, looksIncomplete, STITCH_MS } from '@/lib/voice/stitch'
 import { useDropDirection, useMountTransition, popClass } from '@/lib/ui/popup'
 import { interpretSequence } from '@/lib/voice/sequence'
 import { interpret } from '@/lib/voice/interpret'
@@ -1450,15 +1450,58 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // failing to join one that was split.
     let readable = interpret(text, ctx).calls.length > 0
     if (!readable) {
-      const joined = stitch(heldFragment.current, text, Date.now())
+      const held = heldFragment.current
+      const joined = stitch(held, text, Date.now())
       if (joined && interpret(joined, ctx).calls.length > 0) {
         text = joined
         readable = true
         heldFragment.current = null
         setTaking('')
+      } else if (joined && held && looksIncomplete(held.text)) {
+        // ── The half that trailed off, and the half that finished it ────────
+        //
+        // Brae: "'On Pad Intro...' then there's a 3 second wait, 'descend the
+        // volume from 100% to 60%'. That is a broken up sentence but the same
+        // idea. Would the stitcher be able to take care of that?"
+        //
+        // ⚠️ IT COULD NOT, and this is why. The join above only stood when the
+        // built-in RULES could read the result — and an automation is the
+        // assistant's job, so the joined sentence read as nothing to the rules
+        // and the two halves went their separate ways: the first spent a turn
+        // being asked about, the second went to the model without its target.
+        //
+        // When the held half was itself unfinished (no verb — a place or a
+        // thing, with nothing to do to it yet) the join is not two sentences
+        // pushed together, it is one sentence put back. It goes onward whole,
+        // to whichever rung can read it.
+        text = joined
+        heldFragment.current = null
+        setTaking('')
       }
     }
     if (readable) heldFragment.current = null
+
+    // ── Half a sentence, held for its other half ─────────────────────────────
+    //
+    // ⚠️ THIS IS WHAT LETS THE SILENCE TAIL BE SHORT. With the recorder waiting
+    // 1.2 seconds rather than 2.2, a pause to think cuts a sentence in half far
+    // more often. A half with no verb in it is not a command and not a
+    // question; sending it to the assistant buys a turn spent asking "what
+    // about the pad intro?" — which the speaker was about to answer anyway.
+    // So it waits, quietly, for up to STITCH_MS. If nothing follows, THEN it is
+    // asked about, once, with the words repeated so a mishearing is visible.
+    if (!readable && !heldFragment.current && looksIncomplete(text)) {
+      const at = Date.now()
+      heldFragment.current = { text, at }
+      setBusy(false)
+      window.setTimeout(() => {
+        const still = heldFragment.current
+        if (!still || still.at !== at) return
+        heldFragment.current = null
+        respond(`I heard "${still.text}" — what would you like to do with it?`, 'question')
+      }, STITCH_MS)
+      return
+    }
 
     if (!shouldActOn({
       held: !!heard && continuousRef.current,

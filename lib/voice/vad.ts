@@ -335,8 +335,16 @@ export const PRESENCE_FRACTION = 0.15
  * Longer again over music, where the level falls back to a moving target rather
  * than to silence and the decision is noisier.
  */
-export const SILENCE_MS = 2200
-export const SILENCE_MS_PLAYING = 2600
+// ⚠️ 1,200, DOWN FROM 2,200 — Brae: "Let's do the biggest lever." This wait was
+// the single largest delay between a sentence ending and anything happening,
+// longer than the model turn itself. It was long for a reason ("when I talk
+// more slowly it thinks that I'm saying different sentences"), and shortening
+// it means a slow speaker's pause WILL cut a sentence in half more often. That
+// is now handled where the words are rather than by waiting: a fragment that
+// trails off ("on pad intro…") is held quietly and joined to what follows, for
+// up to six seconds, before anybody is asked anything. See lib/voice/stitch.
+export const SILENCE_MS = 1200
+export const SILENCE_MS_PLAYING = 1500
 
 /**
  * How long a burst has to be before it might be a SENTENCE.
