@@ -1038,13 +1038,36 @@ export function useDawPlayhead(): number {
  * The overlays the arrangement can show. Each one asks a single question of
  * every clip; the clips that answer "no" are drawn grey.
  */
-export type OverlayKind = 'none' | 'loading' | 'automation' | 'effects' | 'frozen'
-export const OVERLAYS: { kind: OverlayKind; label: string; what: string }[] = [
-  { kind: 'none',       label: 'Off',        what: 'No overlay.' },
-  { kind: 'loading',    label: 'Loading',    what: 'Parts of the song whose sound has not arrived yet are grey.' },
-  { kind: 'automation', label: 'Automation', what: 'Tracks with no automation lanes are grey — see at a glance what moves.' },
-  { kind: 'effects',    label: 'Effects',    what: 'Tracks with no effects are grey.' },
-  { kind: 'frozen',     label: 'Frozen',     what: 'Tracks that are not frozen are grey — what is still being synthesised live.' },
+export type OverlayKind =
+  | 'none'
+  | 'loading' | 'sync'
+  | 'sections' | 'tempo' | 'key'
+  | 'automation' | 'effects' | 'frozen' | 'loudness'
+  | 'collab' | 'unused'
+export type OverlayGroup = 'Ready' | 'Structure' | 'Sound' | 'People'
+/**
+ * Every overlay names ONE thing, and that thing is what goes grey. Brae:
+ * "'Loading' where the user can see unloaded parts of the song in gray." So
+ * the label is what the grey means: Not loaded, Not synced, Out of key, No
+ * effects… Everything else keeps its colour. Grouped by the kind of question.
+ */
+export const OVERLAYS: { kind: OverlayKind; group: OverlayGroup | null; label: string; what: string }[] = [
+  { kind: 'none',       group: null,        label: 'Off',           what: 'No overlay.' },
+  // Is it here yet?
+  { kind: 'loading',    group: 'Ready',     label: 'Not loaded',    what: 'Grey = clips whose sound has not arrived yet.' },
+  { kind: 'sync',       group: 'Ready',     label: 'Not synced',    what: 'Grey = audio that is not yet in the cloud.' },
+  // Where in the song?
+  { kind: 'sections',   group: 'Structure', label: 'Other sections', what: 'Grey = everything outside the section the playhead is in.' },
+  { kind: 'tempo',      group: 'Structure', label: 'Tempo changes', what: 'Grey = clips in a section at a different tempo from the opening.' },
+  { kind: 'key',        group: 'Structure', label: 'Out of key',    what: 'Grey = MIDI clips with notes outside the song\'s key.' },
+  // What is happening to the sound?
+  { kind: 'automation', group: 'Sound',     label: 'No automation', what: 'Grey = tracks with no automation lanes.' },
+  { kind: 'effects',    group: 'Sound',     label: 'No effects',    what: 'Grey = tracks with no effects.' },
+  { kind: 'frozen',     group: 'Sound',     label: 'Not frozen',    what: 'Grey = tracks still being synthesised live.' },
+  { kind: 'loudness',   group: 'Sound',     label: 'Quiet',         what: 'Grey = clips that peak well below the loudest one.' },
+  // Who and whether
+  { kind: 'collab',     group: 'People',    label: 'Not being edited', what: 'Grey = clips nobody else is holding; a collaborator\'s clips keep their colour.' },
+  { kind: 'unused',     group: 'People',    label: 'Silent',        what: 'Grey = clips that will never sound — on a muted track, or with no notes.' },
 ]
 
 export function useDaw(): DawContextValue {

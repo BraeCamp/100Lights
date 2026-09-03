@@ -23,7 +23,7 @@
 //  worse than mishearing is mishearing invisibly. Undo covers the rest.
 // ============================================================================
 
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Mic, Loader2, Settings2 } from 'lucide-react'
 import { reducer as dawReducer, makeMidiClip, makeAudioClip, extractPeaks, type DawAction } from '@/lib/daw-state'
 import { useLight } from '@/lib/voice/use-light'
@@ -315,6 +315,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
   /** What is open in the bar beside the voice card — see VoiceSide. */
   const [side, setSide] = useState<VoiceSide>('none')
+  /** The meter's last painted value and when — see onLevel. */
+  const levelPaintedAt = useRef(0)
+  const levelPainted = useRef(0)
+  /** One object for the card's colours, not a new literal per render — the
+   *  bar beside the card memoises on it. */
+  const panelColors = useMemo(() => ({
+    bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
+    textMuted: C.textMuted, accent: C.accent,
+  }), [C.bgSurface, C.border, C.textPrimary, C.textMuted, C.accent])
   /** The library of everything Light can do — its own window, not a view in
    *  the card. See VoiceLibrary.tsx for why. */
   /** Big on-screen captions of what was said — a recording aid, off by
@@ -2887,9 +2896,23 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // A live meter, because "is it even hearing me" is the first question
       // when this goes wrong and it should not need asking twice.
       onLevel: (l, bar) => {
-        setLevel(l); setThreshold(bar)
+        // ⚠️ NOT EVERY TICK. The meter reports every 50 ms, and each report
+        // used to set two states — re-rendering this whole control, the card,
+        // and whatever bar sat beside it (a 200-row transcript, the settings)
+        // twenty times a second, for the entire session. The cost grew with
+        // the transcript and the logs, the main thread got busier, and the
+        // recorder, the VAD and the transcription fetch all queued behind it:
+        // Brae: "Light was slower to transcribe what I was saying the longer
+        // it ran." Twelve visible updates a second is the same meter; the
+        // values in between move nothing anybody can see.
+        const now = Date.now()
+        if (now - levelPaintedAt.current >= 80 || Math.abs(l - levelPainted.current) > 0.25) {
+          levelPaintedAt.current = now
+          levelPainted.current = l
+          setLevel(l); setThreshold(bar)
+        }
         // Above the bar means somebody is talking; the reply's voice waits.
-        if (l > bar) userSpeakingUntil.current = Date.now() + 700
+        if (l > bar) userSpeakingUntil.current = now + 700
       },
       onSpeechStart: () => { setProblem(''); userSpeakingUntil.current = Date.now() + 700 },
       // It ends itself once talking stops, so the trailing room does not get
@@ -3745,10 +3768,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           caption={caption}
           onCaption={on => { setCaption(on); writeVoiceCaption(on) }}
           onClose={() => { if (listening) finish(); setPanelOpen(false); setSide('none') }}
-          colors={{
-            bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
-            textMuted: C.textMuted, accent: C.accent,
-          }}
+          colors={panelColors}
         />
       )}
 

@@ -33,6 +33,17 @@ import VoiceMacros from './VoiceMacros'
 import VoiceTranscript from './VoiceTranscript'
 import VoiceLibrary from './VoiceLibrary'
 
+// ⚠️ The bar beside the card must NOT re-render with the level meter. The
+// card re-renders on every meter update (twelve a second while listening);
+// without these the transcript, the cost log, the macro list and the command
+// library all re-rendered with it, and a long session got slower and slower —
+// Brae: "Light was slower to transcribe what I was saying the longer it ran."
+// Their props are stable objects, so memo() lets them sit still.
+const TranscriptMemo = React.memo(VoiceTranscript)
+const UsageLogMemo = React.memo(VoiceUsageLog)
+const MacrosMemo = React.memo(VoiceMacros)
+const LibraryMemo = React.memo(VoiceLibrary)
+
 /**
  * What is open in the bar BESIDE the voice card.
  *
@@ -701,6 +712,12 @@ export default function VoicePanel({
   // so a session that is open is simply listening.
   const state = !listening ? 'off' : !continuous ? 'listening' : 'attentive'
 
+  // Stable props for the memoised bar contents (see the memo() wrappers above).
+  const closeSide = useCallback(() => onSide('none'), [onSide])
+  const libColors = React.useMemo(() => ({
+    bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary, textMuted: C.textMuted, accent: C.accent,
+  }), [C.bgSurface, C.border, C.textPrimary, C.textMuted, C.accent])
+
   const card = {
     width: 412, maxHeight: 544, display: 'flex', flexDirection: 'column' as const,
     background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 8,
@@ -1024,15 +1041,11 @@ export default function VoicePanel({
           </button>
         </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: side === 'help' ? 0 : 10, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        {side === 'usage' && <VoiceUsageLog C={C} />}
-        {side === 'macros' && <VoiceMacros C={C} />}
-        {side === 'transcript' && <VoiceTranscript C={C} />}
+        {side === 'usage' && <UsageLogMemo C={C} />}
+        {side === 'macros' && <MacrosMemo C={C} />}
+        {side === 'transcript' && <TranscriptMemo C={C} />}
         {side === 'help' && (
-          <VoiceLibrary
-            embedded
-            onClose={() => onSide('none')}
-            colors={{ bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary, textMuted: C.textMuted, accent: C.accent }}
-          />
+          <LibraryMemo embedded onClose={closeSide} colors={libColors} />
         )}
 
         {side === 'settings' && (

@@ -67,7 +67,7 @@ const check = (label, pass, extra = '') => {
     /data-voice-side=\{side\}/.test(panel) && /order: -1/.test(panel) && /data-voice-panel style=\{card\}/.test(panel))
   check('the transcript, the command list and the settings are side buttons',
     /data-voice-side-button=\{b\.key\}/.test(panel) && /key: 'transcript'/.test(panel) && /key: 'help'/.test(panel) && /key: 'settings'/.test(panel))
-  check('the library opens embedded in the bar', /<VoiceLibrary\s+embedded/.test(panel))
+  check('the library opens embedded in the bar', /<(?:VoiceLibrary|LibraryMemo)\s+embedded/.test(panel))
   check('there is a minimize button', /data-voice-minimize/.test(panel))
   check('and the ✕ is labelled as turning voice off', /aria-label="Turn voice control off"/.test(panel))
   check('minimize only hides the card', /onMinimize=\{\(\) => setPanelOpen\(false\)\}/.test(control))
