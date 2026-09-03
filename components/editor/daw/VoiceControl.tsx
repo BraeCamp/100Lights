@@ -170,6 +170,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    */
   const saidRef = useRef<string[]>([])
   useEffect(pullSharedCommands, [])
+  // ⚠️ Warm the assistant's function while nobody is speaking yet. A serverless
+  // route that has sat idle is reloaded on its next request, and that reload
+  // used to land on the first command after a pause — most of them. A 204 GET
+  // now, and the function is resident by the time anybody has said a word.
+  useEffect(() => { void fetch('/api/ai/assist', { method: 'GET' }).catch(() => {}) }, [])
   useEffect(() => { busyRef.current = busy }, [busy])
   const [heard, setHeard] = useState('')
   const [said, setSaid] = useState('')

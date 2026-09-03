@@ -13,6 +13,21 @@ export const maxDuration = 90
 // The 100Lights AI assistant endpoint. Auth-gated; usage-billed against the credits system (a no-op
 // until CREDITS_ENABLED). Returns the assistant's reply + the actions for the client to run against the
 // module (window.__video / __daw …). Needs ANTHROPIC_API_KEY. See lib/ai-assist.
+/**
+ * A warm-up. Answers nothing, costs nothing, and exists so the FIRST command
+ * after a quiet spell does not pay a cold start on top of the model.
+ *
+ * Brae: "Is there a way to speed up how quickly we can turn a command into an
+ * action?" A serverless function that has not run for a while is unloaded and
+ * reloaded on the next request — a delay that lands on exactly the command a
+ * person says after thinking for a minute, which is most of them. The studio
+ * pings this when the voice control mounts, so the function is already resident
+ * by the time anybody speaks.
+ */
+export async function GET() {
+  return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } })
+}
+
 export async function POST(req: Request) {
   const { userId: clerkId } = await auth()
   // DEV_OPEN test user (dev builds only) — lets headless tools exercise the assistant. Inert in prod.

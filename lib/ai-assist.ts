@@ -249,6 +249,8 @@ export async function runAssist(opts: {
   /** What the local rules made of this sentence, offered as advice. */
   hint?: { matched?: string; confidence?: number; calls?: string[] }
   maxTokens?: number
+  /** How hard the model thinks before answering — see the request body. */
+  effort?: 'low' | 'medium' | 'high'
 }): Promise<AssistResult> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) throw new Error('ANTHROPIC_API_KEY is not set')
@@ -280,12 +282,16 @@ export async function runAssist(opts: {
       // normal call and stops the truncation on a long one. Thinking is left ON
       // — disabling it has its own failure modes (tool calls written into the
       // visible text, tags leaking) — and its DEPTH is set with effort instead.
-      // Choosing one tool from a well-described list is not a hard problem, and
-      // "medium" is the documented step-down where quality holds; every token
-      // it does not spend reasoning is an output token, the dearest kind.
+      // Choosing one tool from a well-described list is not a hard problem.
+      // Measured on five realistic sentences, same song, each at "medium" and
+      // "low": low chose the same tool with the same arguments every time, in
+      // 2.2 s against 3.3 s, on 131 output tokens against 173. Brae: "Is there
+      // a way to speed up how quickly we can turn a command into an action?"
+      // This is the largest single share of that time, and every token it does
+      // not spend reasoning is an output token, the dearest kind.
       max_tokens: opts.maxTokens ?? 8000,
       thinking: { type: 'adaptive' },
-      output_config: { effort: 'medium' },
+      output_config: { effort: opts.effort ?? 'low' },
       system: systemBlocks(opts.module ?? 'video', opts.stateSummary, opts.recent, opts.hint),
       tools: toolsFor(opts.module ?? 'video'),
       messages: opts.messages.map(m => ({ role: m.role, content: m.content })),
