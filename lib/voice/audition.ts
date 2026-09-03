@@ -19,14 +19,34 @@
 // refusing; an announced one is just a room you walked into.
 
 import type { LibraryEntry } from '@/lib/sound-library'
+import type { TrackInstrument } from '@/lib/daw-types'
 import { noteOf } from '@/lib/apollo/multisample-zones'
 
-export interface AuditionItem {
-  id: string
-  name: string
-  /** Where it came from, for the read-back — a folder, or a category. */
-  detail: string
-}
+/**
+ * Something you can hear.
+ *
+ * ⚠️ A SAMPLE IS AUDIO, A RECIPE IS NOTES. One is a blob to decode, the other a
+ * handful of pitches to play through an instrument — so they are one union
+ * rather than one shape with half its fields empty, and the player decides what
+ * to do by looking at `kind`. Everything ABOVE the player treats them
+ * identically: the same tags, the same queue, the same words steer both.
+ */
+export type AuditionItem =
+  | {
+    kind: 'sample'
+    id: string; name: string; detail: string; tags: string[]
+  }
+  | {
+    kind: 'recipe'
+    id: string; name: string; detail: string; tags: string[]
+    notes: { pitch: number; startBeat: number; durationBeats: number; velocity: number }[]
+    durationBeats: number
+    bpm: number
+    /** What the recipe itself asks to be played on. */
+    instrument: TrackInstrument
+    /** True when the recipe is happy to be played on whatever you choose. */
+    usePreset: boolean
+  }
 
 export interface AuditionState {
   items: AuditionItem[]
@@ -35,6 +55,17 @@ export interface AuditionState {
   rate: number
   /** What was asked for, so the panel can say "dark pads" rather than "23 sounds". */
   asked: string
+  /**
+   * What recipes are played on.
+   *
+   * ⚠️ A DRUM RECIPE IGNORES THIS. Brae: "The recipes should play based on the
+   * chosen preset, but default will be grand piano." A grand piano playing a
+   * hi-hat pattern is not a preference, it is a bug — so a recipe that says it
+   * is drums keeps its own kit, and `usePreset` is the recipe's own word for
+   * whether it minds.
+   */
+  preset: TrackInstrument | null
+  presetName: string
 }
 
 // ── Choosing what goes in the list ──────────────────────────────────────────
@@ -117,10 +148,83 @@ export function buildQueue(
   })
 
   return oneNotePerInstrument(matched).map(e => ({
+    kind: 'sample' as const,
     id: e.id,
     name: e.name,
     detail: e.folder || String(e.category ?? ''),
+    tags: e.tags ?? [],
   }))
+}
+
+/**
+ * The same filter, over recipes.
+ *
+ * Brae: "Recipes and samples should be navigated through tags."
+ *
+ * ⚠️ A RECIPE'S GENRE IS A TAG, whether or not anybody wrote it in the tag
+ * list. Recipes have carried a genre since before they had tags, and browsing
+ * "the jazz ones" has to work today rather than after somebody re-labels a
+ * hundred rows — so the genre is folded in and the explicit tags are added on
+ * top of it.
+ */
+export function recipeTags(r: { genre?: string; tags?: string[] }): string[] {
+  const out = new Set<string>()
+  for (const t of r.tags ?? []) if (t.trim()) out.add(t.trim())
+  if (r.genre?.trim()) out.add(r.genre.trim())
+  return [...out]
+}
+
+export function matchesWant(
+  item: { name: string; detail: string; tags: string[] },
+  want: { tag?: string; category?: string; query?: string },
+): boolean {
+  const tag = fold(want.tag ?? '')
+  const q = fold(want.query ?? '')
+  if (tag && !item.tags.some(t => fold(t).includes(tag))) return false
+  if (q && !fold(`${item.name} ${item.detail} ${item.tags.join(' ')}`).includes(q)) return false
+  return true
+}
+
+/**
+ * Build a playable instrument out of a sampled instrument in the library.
+ *
+ * Brae: "The recipes should play based on the chosen preset, but default will
+ * be grand piano. Users can choose another preset for it, including saved
+ * presets."
+ *
+ * ⚠️ A SAMPLED INSTRUMENT IS ALREADY A TRACK INSTRUMENT — a poly voice with one
+ * layer whose source is a sample. That is what makes this small: nothing has to
+ * teach the audition about the sampler, because the thing that plays notes
+ * already knows how to play a sampled layer.
+ *
+ * ⚠️ AND THE NOTE IT PICKS IS THE ONE NEAREST MIDDLE C, reusing the same rule
+ * that thins the shelf. It matters more here than there: `sampleRoot` is what
+ * every other pitch is stretched FROM, so choosing the bottom note of a piano
+ * would leave the top two octaves as a resampled smear.
+ */
+export function presetFromLibrary(
+  entries: LibraryEntry[], want: string,
+): { instrument: TrackInstrument; name: string } | null {
+  const w = fold(want)
+  if (!w) return null
+  const hits = entries.filter(e => fold(e.folder ?? '').includes(w) || fold(e.name).includes(w))
+  if (!hits.length) return null
+  const one = oneNotePerInstrument(hits)[0]
+  if (!one) return null
+  return {
+    name: one.folder || one.name,
+    instrument: {
+      type: 'poly',
+      params: {
+        waveform: 'sine', attack: 0.004, decay: 0.12, sustain: 0.85, release: 0.35, detune: 0,
+        oscillators: [{
+          source: 'sample', waveform: 'sine', octave: 0, detune: 0,
+          unison: 1, spread: 0, level: 1,
+          sampleId: one.id, sampleName: one.name, sampleRoot: noteOf(one) ?? 60,
+        }],
+      },
+    } as TrackInstrument,
+  }
 }
 
 // ── The player ──────────────────────────────────────────────────────────────
@@ -132,6 +236,7 @@ let ctx: AudioContext | null = null
 let source: AudioBufferSourceNode | null = null
 let fulfil: Fulfil | null = null
 let token = 0
+let recipeTimer: number | null = null
 const subs = new Set<() => void>()
 const decoded = new Map<string, AudioBuffer>()
 
@@ -148,6 +253,10 @@ export function currentItem(): AuditionItem | null {
 }
 
 function stopSource(): void {
+  // A recipe's notes are already scheduled in the audio clock, so stopping one
+  // means cancelling the timer that would advance past it. The notes themselves
+  // are short and land where they were put.
+  if (recipeTimer != null) { clearTimeout(recipeTimer); recipeTimer = null }
   if (!source) return
   try { source.onended = null; source.stop() } catch { /* already finished */ }
   source = null
@@ -177,6 +286,61 @@ async function bufferFor(id: string): Promise<AudioBuffer | null> {
   return buf
 }
 
+/**
+ * Fetch and decode the one AFTER this, quietly.
+ *
+ * ⚠️ Brae: "It will load the one that it's playing and the next in the list so
+ * that the navigation is instant."
+ *
+ * Which is the difference between browsing and waiting. A sample that has not
+ * been fetched costs a network round trip and a decode at the moment somebody
+ * says "next" — so by the time they say it, it is already here. Only one ahead:
+ * two is barely faster and a whole shelf is a download nobody asked for.
+ *
+ * Failures are swallowed whole. This is speculative work for something that
+ * might never be reached, and it must never be the reason a browse breaks.
+ */
+function preloadNext(): void {
+  if (!state) return
+  const nxt = state.items[state.index + 1]
+  if (!nxt || nxt.kind !== 'sample' || decoded.has(nxt.id)) return
+  void bufferFor(nxt.id).catch(() => { /* it will be fetched again when reached */ })
+}
+
+/**
+ * Play a recipe: a few pitches, through an instrument.
+ *
+ * ⚠️ THE RECIPE DECIDES WHETHER IT MINDS. `usePreset` is its own word for "any
+ * instrument will do" — a chord progression is happy on a piano or a pad, and a
+ * hi-hat pattern is not. So a drum recipe keeps the kit it was written for
+ * however the browse is set up, because a grand piano playing hats is not a
+ * preference anybody expressed.
+ */
+async function playRecipe(item: Extract<AuditionItem, { kind: 'recipe' }>, mine: number): Promise<void> {
+  const { playInstrumentNote } = await import('@/lib/daw-instruments')
+  if (mine !== token || !state) return
+  const ctxNow = audio()
+  const instrument = (item.usePreset && state.preset) ? state.preset : item.instrument
+  const secPerBeat = 60 / (item.bpm || 100) / state.rate
+  const t0 = ctxNow.currentTime + 0.06     // a breath, so the first note is not clipped
+  for (const n of item.notes) {
+    try {
+      playInstrumentNote(
+        ctxNow, ctxNow.destination, instrument, n.pitch, n.velocity,
+        t0 + n.startBeat * secPerBeat, Math.max(0.05, n.durationBeats * secPerBeat),
+      )
+    } catch { /* one note that will not sound is not a reason to stop */ }
+  }
+  // Notes are scheduled, not streamed, so the end is arithmetic rather than an
+  // event — and a timer is what stands in for `onended` here.
+  const total = (item.durationBeats || 4) * secPerBeat + 0.4
+  recipeTimer = window.setTimeout(() => {
+    if (mine !== token || !state || !state.playing) return
+    if (state.index < state.items.length - 1) { state.index++; changed(); void play() }
+    else { state.playing = false; changed() }
+  }, total * 1000)
+}
+
 async function play(): Promise<void> {
   const item = currentItem()
   if (!state || !item) return
@@ -184,6 +348,14 @@ async function play(): Promise<void> {
   stopSource()
   try {
     await audio().resume()
+    if (item.kind === 'recipe') {
+      state.playing = true
+      changed()
+      preloadNext()
+      await playRecipe(item, mine)
+      return
+    }
+    // Fetch the NEXT one while this one plays, not after it — see preloadNext.
     const buf = await bufferFor(item.id)
     if (!buf || mine !== token || !state) return
     const src = audio().createBufferSource()
@@ -201,6 +373,7 @@ async function play(): Promise<void> {
     source = src
     state.playing = true
     changed()
+    preloadNext()
   } catch {
     // A sound that will not decode is skipped rather than ending the browse.
     if (state && mine === token && state.index < state.items.length - 1) {
@@ -209,13 +382,30 @@ async function play(): Promise<void> {
   }
 }
 
-export function startAudition(items: AuditionItem[], asked: string, f: Fulfil): void {
+export function startAudition(
+  items: AuditionItem[], asked: string, f: Fulfil,
+  preset?: { instrument: TrackInstrument; name: string } | null,
+): void {
   fulfil = f
   token++
   stopSource()
-  state = { items, index: 0, playing: false, rate: 1, asked }
+  decoded.clear()
+  state = {
+    items, index: 0, playing: false, rate: 1, asked,
+    preset: preset?.instrument ?? null,
+    presetName: preset?.name ?? '',
+  }
   changed()
   void play()
+}
+
+/** Change what recipes play on, mid-browse. */
+export function setAuditionPreset(instrument: TrackInstrument | null, name: string): void {
+  if (!state) return
+  state.preset = instrument
+  state.presetName = name
+  changed()
+  if (currentItem()?.kind === 'recipe') void play()
 }
 
 export function stopAudition(): void {

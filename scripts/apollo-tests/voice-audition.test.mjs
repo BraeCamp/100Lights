@@ -24,7 +24,7 @@ const check = (label, pass, extra = '') => {
   console.log(`${pass ? 'PASS' : 'FAIL'} ${label}${extra ? '  ' + extra : ''}`)
 }
 
-const { oneNotePerInstrument, buildQueue, readBrowseCommand } =
+const { oneNotePerInstrument, buildQueue, readBrowseCommand, recipeTags, matchesWant, presetFromLibrary } =
   await importTs('lib/voice/audition.ts')
 
 const note = (folder, n, extra = {}) => ({
@@ -122,6 +122,58 @@ const hit = (folder, name, tags = []) => ({
     readBrowseCommand('mute the pad') === null
     && readBrowseCommand('add four bars of drums after the chorus') === null
     && readBrowseCommand('') === null)
+}
+
+// ── recipes browse by the same tags ────────────────────────────────────────
+//
+// Brae: "Recipes and samples should be navigated through tags. We can add more
+// tags to them."
+{
+  // ⚠️ A GENRE IS A TAG whether or not anybody repeated it in the list.
+  // Recipes carried a genre long before they had tags, so "play me the jazz
+  // ones" has to work today rather than after a hundred rows are re-labelled.
+  check('the genre counts as a tag on its own',
+    recipeTags({ genre: 'Jazz' }).includes('Jazz'))
+  check('and sits alongside the explicit ones',
+    recipeTags({ genre: 'Jazz', tags: ['warm', 'slow'] }).sort().join(',') === 'Jazz,slow,warm')
+  check('with no duplicate when they agree',
+    recipeTags({ genre: 'Jazz', tags: ['Jazz'] }).length === 1)
+
+  const item = { name: 'ii-V-I', detail: 'the turnaround', tags: ['Jazz', 'warm'] }
+  check('a recipe is found by its tag', matchesWant(item, { tag: 'jazz' }))
+  check('and by words in its name or tagline', matchesWant(item, { query: 'turnaround' }))
+  check('and is passed over when neither matches', !matchesWant(item, { tag: 'techno' }))
+}
+
+// ── what recipes play on ───────────────────────────────────────────────────
+//
+// Brae: "The recipes should play based on the chosen preset, but default will
+// be grand piano. Users can choose another preset for it, including saved
+// presets."
+{
+  const lib = [
+    ...['C2', 'C4', 'C6'].map(n => note('Grand Piano', n)),
+    ...['C3', 'C4'].map(n => note('Rhodes', n)),
+  ]
+  const piano = presetFromLibrary(lib, 'grand piano')
+  check('a sampled instrument becomes something that can play notes',
+    piano?.instrument.type === 'poly'
+    && piano.instrument.params.oscillators?.[0].source === 'sample',
+    JSON.stringify(piano?.instrument?.params?.oscillators?.[0]))
+  check('named after the instrument, not the one sample', piano?.name === 'Grand Piano', piano?.name)
+
+  // ⚠️ THE ROOT IS WHAT EVERY OTHER PITCH IS STRETCHED FROM. Picking the bottom
+  // note of a piano would leave the top two octaves a resampled smear, so the
+  // same nearest-middle-C rule that thins the shelf chooses it here too.
+  check('and rooted on the note nearest middle C',
+    piano?.instrument.params.oscillators?.[0].sampleRoot === 60,
+    String(piano?.instrument?.params?.oscillators?.[0]?.sampleRoot))
+
+  check('another preset can be chosen by name',
+    presetFromLibrary(lib, 'rhodes')?.name === 'Rhodes')
+  // Silence would be worse than a default: the studio says it could not find it.
+  check('and one that is not there is null, not a wrong guess',
+    presetFromLibrary(lib, 'harpsichord') === null)
 }
 
 console.log(failures ? `\n${failures} failing` : '\none note each, and the short words are free')

@@ -49,7 +49,8 @@ import { recordCommand } from '@/lib/voice/voice-ledger'
 import { macroNames } from '@/lib/voice/macros'
 import {
   auditionActive, readBrowseCommand, startAudition, stopAudition, audition,
-  buildQueue, currentItem, onAudition, auditionState, type BrowseAction,
+  buildQueue, currentItem, onAudition, auditionState, recipeTags, matchesWant,
+  presetFromLibrary, type BrowseAction, type AuditionItem,
 } from '@/lib/voice/audition'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
@@ -818,7 +819,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the project commands use. Everything it can fail at says so: an empty
     // shelf is a sentence, not silence.
     if (act.type === 'BROWSE') {
-      const b = act as unknown as { tag?: string; category?: string; query?: string; asked?: string }
+      const b = act as unknown as {
+        tag?: string; category?: string; query?: string; asked?: string
+        kind?: 'sounds' | 'recipes' | 'both'; preset?: string
+      }
       void (async () => {
         try {
           const { libraryGetAll } = await import('@/lib/sound-library')
@@ -829,18 +833,74 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           // finding nothing.
           const { libraryFulfill } = await import('@/lib/default-samples')
           const all = await libraryGetAll()
-          const items = buildQueue(all, { tag: b.tag, category: b.category, query: b.query })
+          const kind = b.kind ?? 'both'
+
+          const sounds: AuditionItem[] = kind === 'recipes'
+            ? []
+            : buildQueue(all, { tag: b.tag, category: b.category, query: b.query })
+
+          // ── Recipes, as notes to play ────────────────────────────────────
+          //
+          // Built here rather than in the planner because build() is the
+          // recipe's own function and the catalog is loaded lazily — and
+          // because the tempo they should play at is the SONG's, not a number
+          // chosen in a library module. A recipe heard at the speed you are
+          // working is a recipe you can judge.
+          let recipes: AuditionItem[] = []
+          if (kind !== 'sounds') {
+            const { getAllChordRecipes } = await import('@/lib/practice-recipes')
+            const bpm = projectRef.current?.tempo || 100
+            recipes = getAllChordRecipes().flatMap(r => {
+              let built
+              try { built = r.build() } catch { return [] }
+              const item: AuditionItem = {
+                kind: 'recipe', id: r.id, name: r.title,
+                detail: r.tagline || r.genre || 'recipe',
+                tags: recipeTags(r),
+                notes: built.notes.map(n => ({
+                  pitch: n.pitch, startBeat: n.startBeat,
+                  durationBeats: n.durationBeats, velocity: n.velocity,
+                })),
+                durationBeats: built.durationBeats,
+                bpm,
+                instrument: built.instrument,
+                // ⚠️ A drum recipe keeps its kit whatever the preset is. Its own
+                // flag says whether it minds, and hats on a grand piano is not
+                // a preference anybody expressed.
+                usePreset: built.usePreset && !built.isDrumClip,
+              }
+              return matchesWant(item, { tag: b.tag, query: b.query }) ? [item] : []
+            })
+          }
+
+          const items = [...recipes, ...sounds]
           if (!items.length) {
-            respond(`I could not find any sounds ${b.asked || 'like that'}.`, 'question')
+            respond(`I could not find anything ${b.asked || 'like that'}.`, 'question')
             return
           }
+
+          // Grand piano unless they named something else — and if the named one
+          // is not in the library, say so rather than quietly using a default
+          // they did not ask for.
+          const wanted = (b.preset || '').trim()
+          const preset = presetFromLibrary(all, wanted || 'grand piano')
+          const missed = wanted && !presetFromLibrary(all, wanted)
+
           startAudition(items, b.asked ?? '', async id => {
             const e = await libraryFulfill(id)
             return e?.audioBlob ?? null
-          })
+          }, preset)
+
+          const what = recipes.length && sounds.length
+            ? `${recipes.length} recipe${recipes.length === 1 ? '' : 's'} and ${sounds.length} sound${sounds.length === 1 ? '' : 's'}`
+            : recipes.length
+              ? `${recipes.length} recipe${recipes.length === 1 ? '' : 's'}`
+              : `${sounds.length} sound${sounds.length === 1 ? '' : 's'}`
           respond(
-            `${items.length} sound${items.length === 1 ? '' : 's'} ${b.asked || ''}. `
-            + `Say next, back, again, faster, slower, this one, or done.`,
+            `${what} ${b.asked || ''}`.trim() + '. '
+            + (recipes.length && preset ? `Recipes on ${preset.name}. ` : '')
+            + (missed ? `I could not find a "${wanted}" to play them on. ` : '')
+            + 'Say next, back, again, faster, slower, this one, or done.',
           )
         } catch {
           respond('I could not reach your library just now.', 'problem')
