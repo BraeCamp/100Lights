@@ -70,6 +70,7 @@ import VoicePanel, { type VoiceSide } from './VoicePanel'
 import VoiceHud from './VoiceHud'
 import VoiceCaption, { readVoiceCaption, writeVoiceCaption } from './VoiceCaption'
 import { recordExchange, describeAction } from '@/lib/voice/transcript'
+import { publishLevel, subscribeLevel } from '@/lib/voice/level-bus'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
@@ -261,7 +262,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [typed, setTyped] = useState('')
   const [showType, setShowType] = useState(false)
   /** 0–1 microphone loudness while recording, for the meter on the button. */
-  const [level, setLevel] = useState(0)
+  // (The microphone level is no longer React state — see lib/voice/level-bus.
+  // It changes twenty times a second and is only ever drawn, so the recorder
+  // publishes it and the meter, the wave and the HUD paint themselves.)
   /**
    * When a command was last accepted.
    *
@@ -315,15 +318,18 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
   /** What is open in the bar beside the voice card — see VoiceSide. */
   const [side, setSide] = useState<VoiceSide>('none')
-  /** The meter's last painted value and when — see onLevel. */
-  const levelPaintedAt = useRef(0)
-  const levelPainted = useRef(0)
   /** One object for the card's colours, not a new literal per render — the
    *  bar beside the card memoises on it. */
   const panelColors = useMemo(() => ({
     bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
     textMuted: C.textMuted, accent: C.accent,
   }), [C.bgSurface, C.border, C.textPrimary, C.textMuted, C.accent])
+  /** The small meter inside the voice button, painted from the level bus. */
+  const buttonMeter = useRef<HTMLSpanElement | null>(null)
+  useEffect(() => subscribeLevel(r => {
+    const el = buttonMeter.current
+    if (el) el.style.width = `${Math.round(Math.min(1, r.level) * 100)}%`
+  }), [])
   /** The library of everything Light can do — its own window, not a view in
    *  the card. See VoiceLibrary.tsx for why. */
   /** Big on-screen captions of what was said — a recording aid, off by
@@ -363,7 +369,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const offeredAt = useRef(0)
   const lastQueuedAt = useRef(0)
   /** The bar the level is being judged against, drawn on the meter. */
-  const [threshold, setThreshold] = useState(0)
   const [sensitivity, setSensitivityState] = useState(1)
   /** The last microphone check, and whether one is running. */
   const [calibration, setCalibration] = useState<CalibrationResult | null>(null)
@@ -2896,23 +2901,18 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // A live meter, because "is it even hearing me" is the first question
       // when this goes wrong and it should not need asking twice.
       onLevel: (l, bar) => {
-        // ⚠️ NOT EVERY TICK. The meter reports every 50 ms, and each report
+        // ⚠️ NOT REACT STATE. The meter reports every 50 ms, and each report
         // used to set two states — re-rendering this whole control, the card,
         // and whatever bar sat beside it (a 200-row transcript, the settings)
-        // twenty times a second, for the entire session. The cost grew with
-        // the transcript and the logs, the main thread got busier, and the
-        // recorder, the VAD and the transcription fetch all queued behind it:
-        // Brae: "Light was slower to transcribe what I was saying the longer
-        // it ran." Twelve visible updates a second is the same meter; the
-        // values in between move nothing anybody can see.
-        const now = Date.now()
-        if (now - levelPaintedAt.current >= 80 || Math.abs(l - levelPainted.current) > 0.25) {
-          levelPaintedAt.current = now
-          levelPainted.current = l
-          setLevel(l); setThreshold(bar)
-        }
+        // twenty times a second, for the entire session. Measured: 63% of the
+        // main thread with a long transcript open, and the recorder, the VAD
+        // and the transcription fetch queued behind it — Brae: "Light was
+        // slower to transcribe what I was saying the longer it ran." The level
+        // is published on a bus and the meter, the wave and the HUD paint
+        // themselves from it; nothing here re-renders.
+        publishLevel(l, bar)
         // Above the bar means somebody is talking; the reply's voice waits.
-        if (l > bar) userSpeakingUntil.current = now + 700
+        if (l > bar) userSpeakingUntil.current = Date.now() + 700
       },
       onSpeechStart: () => { setProblem(''); userSpeakingUntil.current = Date.now() + 700 },
       // It ends itself once talking stops, so the trailing room does not get
@@ -3112,7 +3112,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // the strictness that suits a held-open microphone would measure the
       // wrong thing.
       onLevel: level => {
-        setLevel(level)
+        publishLevel(level, 0)
         // Two seconds of room first, whatever is in it, then whatever is said.
         if (phase === 'room') { floor = (floor * samples + level) / (samples + 1); samples++ }
         else if (level > peak) peak = level
@@ -3131,7 +3131,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     await new Promise(r => setTimeout(r, 6000))
 
     const out = await rec.stop()
-    setLevel(0)
+    publishLevel(0, 0)
     setCalibrating(null)
 
     const heard = out.ok ? (out.result?.text ?? '') : ''
@@ -3157,7 +3157,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
   const finish = useCallback(() => {
     wanted.current = false
-    setLevel(0)
+    publishLevel(0, 0)
     if (recorder.current) {
       const rec = recorder.current
       recorder.current = null
@@ -3598,9 +3598,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               background: `${C.accent}33`, overflow: 'hidden', display: 'inline-block',
             }}
           >
-            <span style={{
+            <span ref={buttonMeter} style={{
               display: 'block', height: '100%', borderRadius: 2, background: C.accent,
-              width: `${Math.round(Math.min(1, level) * 100)}%`,
+              width: '0%',
               transition: 'width 80ms linear',
             }} />
           </span>
@@ -3665,7 +3665,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         <VoiceHud
           listening={listening}
           continuous={continuousRef.current}
-          level={level}
           talking={talking}
           hearing={taking || heard}
           said={said}
@@ -3697,7 +3696,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           animClass={popClass(panelDir, panelAnim.leaving)}
           listening={listening}
           continuous={continuousRef.current}
-          level={level}
           // The live view: what is being said now, what came back, and whether
           // the studio itself is talking (which the wave needs and no level can
           // report, since the microphone is deafened while it speaks).
@@ -3728,7 +3726,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           onStudio={on => { setStudio(on); setStudioVoice(on) }}
           onHud={on => { setHudState(on); setHud(on) }}
           mic={mic}
-          threshold={threshold}
           assistant={assist}
           onAssistant={m => {
             setAssistState(m)
