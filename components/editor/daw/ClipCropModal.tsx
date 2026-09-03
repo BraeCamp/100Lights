@@ -90,10 +90,9 @@ export default function ClipCropModal({ clip, onClose }: { clip: AudioClip; onCl
   const dur = bufRef.current?.duration ?? 0
   return createPortal(
     <div
-className="electron-nodrag"
-style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)' }}
+className="electron-nodrag backdrop-in" style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, width: 440, boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
+      <div className="modal-in" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, width: 440, boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
         <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>Crop: {clip.name}</div>
         {!ready
           ? <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-base)', borderRadius: 4, marginBottom: 10 }}>Loading…</div>

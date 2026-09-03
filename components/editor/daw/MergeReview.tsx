@@ -57,8 +57,8 @@ export default function MergeReview() {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 3200, background: 'rgba(0,0,0,0.62)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-      <div style={{ width: 460, maxWidth: 'calc(100vw - 32px)', maxHeight: '84vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 16px 50px rgba(0,0,0,0.65)', overflow: 'hidden' }}>
+    <div className="backdrop-in" style={{ position: 'fixed', inset: 0, zIndex: 3200, background: 'rgba(0,0,0,0.62)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div className="modal-in" style={{ width: 460, maxWidth: 'calc(100vw - 32px)', maxHeight: '84vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 16px 50px rgba(0,0,0,0.65)', overflow: 'hidden' }}>
         <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--text-primary)' }}>Resolve {mergeConflicts.length} conflict{mergeConflicts.length === 1 ? '' : 's'}</div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>

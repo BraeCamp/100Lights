@@ -3510,7 +3510,7 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'browse_sounds',
     group: 'Project',
     what: 'Play through your sounds or recipes so you can hear them',
-    say: ['show me the recipes', 'play me the sounds tagged dark', 'let me hear the drum samples', 'what recipes do you have'],
+    say: ['show me the recipes', 'play me the sounds tagged dark', 'let me hear the drum samples', 'what recipes do you have', 'show me drum beats', 'play me some trap beats'],
     match(w) {
       // ⚠️ Brae: "I asked to see recipes and it said that it can't do that for
       // me." It could — but this rule only listened for "browse" or for
@@ -3521,20 +3521,41 @@ const COMMANDS: VoiceCommand[] = [
       // names for the word "recipes", which found nothing and said so.
       //
       // The word "recipes" is the kind, never the query.
+      //
+      // ⚠️ Brae: "When I ask the voice control to show me drum beats it tells
+      // me a bunch of beats." The same hole, one shelf over: "beats" was no
+      // kind at all, so the sentence went to the assistant, which had nothing
+      // to play them with and READ THE LIST OUT instead. Beats are the drum
+      // patterns, and "drum"/"drums" beside them is the kind, not a search.
+      // ⚠️ PLURAL, AND EXACT. "give me a beat like doom ts doom ts" is a beat to
+      // MAKE (make_beat), not a shelf to browse — and has() bends "beat" to
+      // "beats" in one edit, so the singular must not be in the list at all.
+      // Browsing is always "beats", "grooves", "rhythms": a shelf, not a thing.
+      const beats = w.exact('beats', 'grooves', 'rhythms')
       const recipes = w.has('recipes', 'recipe', 'progressions', 'patterns')
       const sounds = w.has('sounds', 'samples', 'library', 'instruments')
-      const asked = w.has('browse', 'audition', 'show', 'see', 'hear', 'play', 'listen')
+      // "let's check out some different drum beats", "find me some beats",
+      // "give me a few grooves" — the sentences that actually got said.
+      const asked = w.has('browse', 'audition', 'show', 'see', 'hear', 'play', 'listen', 'check', 'find', 'give')
         || (w.has('what') && w.has('have', 'got'))
-      if (!asked || (!recipes && !sounds)) return null
+      if (!asked || (!recipes && !sounds && !beats)) return null
       // Whatever is left once the asking words are accounted for IS the search.
       // has() marks what it matches, so consuming these here keeps them out of
       // the query — "play me the sounds tagged dark" should look for "dark",
-      // not for "sounds tagged dark".
-      w.has('tagged', 'tag', 'some', 'all', 'anything', 'everything', 'my', 'through', 'want', 'have', 'got')
+      // not for "sounds tagged dark". "new", "different", "other", "more" say
+      // browse, not what for: "show me some new drum beats" is every beat.
+      // ⚠️ One word per call: has(a, b, c) marks the FIRST of them it finds and
+      // stops, so a single call over this list left "some different" in the
+      // query. Each word is asked for on its own.
+      for (const filler of ['tagged', 'tag', 'some', 'all', 'anything', 'everything', 'my', 'through', 'want', 'have', 'got',
+        'new', 'different', 'other', 'ones', 'more', 'few', 'out', 'couple']) w.has(filler)
+      // "drum beats", "drum patterns" — the drums are what beats are made of.
+      if (beats || recipes) for (const d of ['drum', 'drums', 'percussion']) w.has(d)
       const q = w.unexplained().join(' ').trim()
-      // Recipes may be asked for with no filter — there are dozens, not hours.
-      if (!q && !recipes) return null
-      const kind = recipes && !sounds ? 'recipes' : sounds && !recipes ? 'sounds' : 'both'
+      // Recipes and beats may be asked for with no filter — dozens, not hours.
+      if (!q && !recipes && !beats) return null
+      const kind = beats && !recipes && !sounds ? 'beats'
+        : recipes && !sounds ? 'recipes' : sounds && !recipes ? 'sounds' : 'both'
       return {
         calls: [{ name: 'browse_sounds', input: { kind, ...(q ? { query: q } : {}) } }],
         confidence: 0.88,
@@ -3652,6 +3673,11 @@ const COMMANDS: VoiceCommand[] = [
       // purpose, so a bare 'rack' also catches "lay the pad BACK a bit" — a
       // groove command with no interest in devices. Requiring somebody to have
       // asked to open or show it costs nothing and settles that.
+      // ⚠️ The record, 20:20: "Show me the automation lanes of Stab Effect" —
+      // the word "effect" made this the rack, and the automation the sentence
+      // was actually about went to show_view.automation never. The more
+      // specific noun wins: automation beside a track name is the lanes.
+      if (w.has('automation', 'automated', 'lanes', 'lane')) return null
       if (!(w.has('devices') || ((w.has('rack') || w.has('effects')) && w.has('open', 'show', 'bring')))) return null
       const open = !w.has('close', 'hide')
       const hit = open ? nameOrSelected(w, ctx, ['open', 'show', 'devices', 'device', 'rack', 'effects', 'for', 'on']) : null
@@ -3670,14 +3696,89 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Show a drawable automation lane under a track',
     say: ['show automation on the drums', 'open the automation lane for the pad'],
     match(w, ctx) {
-      if (!(w.has('automation') && w.has('open', 'show', 'add'))) return null
-      const hit = nameOrSelected(w, ctx, ['open', 'show', 'add', 'automation', 'lane', 'for', 'on'])
+      if (!(w.has('automation') && w.has('open', 'show', 'add', 'see', 'bring'))) return null
+      // "the automation lanes OF stab effect": the noun words around the name
+      // are not the name.
+      const hit = nameOrSelected(w, ctx, ['open', 'show', 'add', 'see', 'bring', 'automation', 'lane', 'lanes', 'graph', 'graphs', 'for', 'on', 'of', 'effect', 'effects'])
       if (!hit) return null
       return {
         calls: [{ name: 'show_view', input: { view: 'automation', target: hit.name } }],
         confidence: nameConfidence(hit.score),
         needsName: true,
       }
+    },
+  },
+  {
+    id: 'show_view.transcript',
+    tool: 'show_view',
+    group: 'View',
+    what: 'Open the transcript — what you said, what Light said, what it did',
+    say: ['show me the transcript', 'open the voice log', 'what did you do', 'what have you done so far'],
+    match(w) {
+      // "what did you do" — read on the raw words, since "did" and "you" are
+      // filler to the matcher and never reach has().
+      const didYou = /\bwhat (?:did|have) (?:you|light) (?:do|done|change|changed)\b/i.test(w.raw)
+      const asked = w.has('show', 'open', 'see', 'bring', 'read') || didYou
+      const noun = w.has('transcript', 'log', 'history', 'conversation') || didYou
+      if (!asked || !noun) return null
+      // "what did you do TO the pad" is a question about the pad, not the log.
+      if (w.has('track', 'clip', 'pad', 'bass', 'drums')) return null
+      return { calls: [{ name: 'show_view', input: { view: 'transcript', open: !w.has('close', 'hide') } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'show_view.help',
+    tool: 'show_view',
+    group: 'View',
+    what: 'Open the list of everything Light can do',
+    say: ['open the list of commands', 'what can I say', 'show me what you can do', 'open the help'],
+    match(w) {
+      // ⚠️ The record, 17:52: "Open the list of commands that I can" → a
+      // spoken summary of eight groups, when the request was to OPEN the list.
+      // "what you can do" / "what can I say" — the words that carry it are
+      // filler to the matcher, so they are read on the raw sentence.
+      const whatCan = /\bwhat (?:you|light) can do\b|\bwhat can (?:you|light|i) (?:do|say|ask)\b/i.test(w.raw)
+      const asked = w.has('open', 'show', 'see', 'bring', 'list', 'pull') || whatCan
+      const noun = w.has('commands', 'command', 'help', 'phrases', 'phrasings')
+        || (w.has('what') && w.has('say', 'ask', 'tell')) || whatCan
+      if (!asked || !noun) return null
+      return { calls: [{ name: 'show_view', input: { view: 'help', open: !w.has('close', 'hide') } }], confidence: 0.88 }
+    },
+  },
+  {
+    id: 'show_view.voice',
+    tool: 'show_view',
+    group: 'View',
+    what: "Open the voice card's own settings, costs or named shapes",
+    say: ['open the voice settings', 'show me the usage', 'show the macros', 'open the named shapes'],
+    match(w) {
+      if (!w.has('open', 'show', 'see', 'bring')) return null
+      const view = w.has('settings', 'setting', 'preferences') ? 'settings'
+        : w.has('usage', 'costs', 'cost', 'spend', 'spent', 'lumens') ? 'usage'
+        : w.has('macros', 'macro', 'shapes') ? 'macros' : null
+      if (!view) return null
+      // "show the settings on the reverb" is a device, and the device rules
+      // sit above this — reaching here with a track name means something else.
+      return { calls: [{ name: 'show_view', input: { view, open: !w.has('close', 'hide') } }], confidence: 0.85 }
+    },
+  },
+  {
+    id: 'describe.playhead',
+    tool: 'describe',
+    group: 'Questions',
+    what: 'Ask where the playhead is',
+    say: ['where is the playhead', 'where am I', 'what bar are we on', 'where are we in the song'],
+    match(w) {
+      // ⚠️ The record, 17:55: "Where is the playhead right now?" → "The loop
+      // is set from bar 1 to bar 71, but looping is off." The question was
+      // about the playhead and the answer was about the loop.
+      // "where am I" / "where are we": every word but "where" is filler to
+      // the matcher, so it is read on the raw sentence.
+      const whereAreWe = /\bwhere (?:am i|are we)\b/i.test(w.raw)
+      const where = w.has('where') || whereAreWe || (w.has('what') && w.has('bar', 'position'))
+      const what = w.has('playhead', 'cursor', 'position') || whereAreWe || w.has('bar')
+      if (!where || !what) return null
+      return { calls: [{ name: 'describe', input: { topic: 'position' } }], confidence: 0.9 }
     },
   },
   {
@@ -3740,6 +3841,12 @@ const COMMANDS: VoiceCommand[] = [
       // entirely: "add a marker at bar 9" moved the playhead and made no
       // marker. Naming a thing to PUT at that bar is not asking to go there.
       if (w.has('mark', 'marker', 'label')) return null
+      // ⚠️ The record, 16:40: "Start a low pass on bar 5. Keep it at" → moved
+      // the playhead to bar 5. A thing to START at a bar — a filter, a sweep, a
+      // fade, a reverb — is an automation that begins there, and the bar is
+      // where it begins, not where to go. Naming any parameter or shape beside
+      // the bar means this is not a locate.
+      if (w.has('pass', 'filter', 'sweep', 'fade', 'reverb', 'delay', 'volume', 'cutoff', 'automation', 'ramp', 'descend', 'ascend', 'lowpass', 'highpass')) return null
       const n = w.num()
       if (n == null || n <= 0) return null
       return {

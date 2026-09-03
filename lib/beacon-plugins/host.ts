@@ -122,6 +122,7 @@ function create(
           m.ready = true
           for (const q of m.queue) node.port.postMessage(q.message)
           m.queue = []
+          for (const f of readyListeners) f()
         } else if (msg.type === 'meter') {
           m.peak = msg.peak
         } else if (msg.type === 'error') {
@@ -296,6 +297,40 @@ export async function preloadPluginInstrument(
       'its notes will be missing from this render',
     )
   }
+}
+
+/**
+ * Wait for every plugin engine in this context that is still coming up — call
+ * between the offline scheduling pass and startRendering().
+ *
+ * ⚠️ The scheduler creates engines of its own: a clip with FX Motion plays
+ * into a chain of its own, an engine is keyed by destination, so ensure() runs
+ * on a node nobody preloaded and the clip's notes wait in a queue that nothing
+ * flushed before the render. Same gap Apollo had (apolloAwaitReady).
+ */
+const readyListeners = new Set<() => void>()
+/** Fires whenever any plugin engine comes up — for the studio's loading state. */
+export function onPluginReady(f: () => void): () => void {
+  readyListeners.add(f)
+  return () => { readyListeners.delete(f) }
+}
+/** Is the plugin on this destination ready? True when there is none yet. */
+export function pluginDestReady(dest: AudioNode | undefined): boolean {
+  if (!dest) return true
+  const m = byDest.get(dest)
+  return !m || m.ready || m.failed
+}
+
+export async function pluginAwaitReady(ctx: BaseAudioContext, timeoutMs = 8000): Promise<void> {
+  const set = byCtx.get(ctx)
+  if (!set) return
+  const start = Date.now()
+  const pending = () => [...set].filter(m => !m.ready && !m.failed)
+  while (pending().length && Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, 25))
+  }
+  const left = pending().length
+  if (left) console.warn(`[beacon-plugin] ${left} engine(s) created by the scheduler were not ready after ${timeoutMs}ms — their notes will be missing from this render`)
 }
 
 /** Transport stop: silence everything and drop the nodes, because the DAW

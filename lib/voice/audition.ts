@@ -22,6 +22,7 @@ import type { LibraryEntry } from '@/lib/sound-library'
 import type { TrackInstrument } from '@/lib/daw-types'
 import { noteOf } from '@/lib/apollo/multisample-zones'
 import { tagsOf } from '@/lib/sound-tags'
+import { patternToNotes, type DrumPattern } from '@/lib/drum-presets'
 
 /**
  * Something you can hear.
@@ -47,6 +48,24 @@ export type AuditionItem =
     instrument: TrackInstrument
     /** True when the recipe is happy to be played on whatever you choose. */
     usePreset: boolean
+  }
+  | {
+    /**
+     * A drum pattern, played on a kit. Brae: "it should instead activate the
+     * sounds of drum beats one after another. When showing I will be able to
+     * select one." Same shape as a recipe so the same player runs it; its own
+     * kind so a pick knows to land it on the DRUM track, in the sequencer.
+     */
+    kind: 'beat'
+    id: string; name: string; detail: string; tags: string[]
+    /** ONE pass of the pattern — the player repeats it; a pick places exactly this. */
+    notes: { pitch: number; startBeat: number; durationBeats: number; velocity: number }[]
+    durationBeats: number
+    bpm: number
+    /** The kit it plays on — the song's drum track's, or the default kit. */
+    instrument: TrackInstrument
+    usePreset: false
+    patternId: string
   }
 
 export interface AuditionState {
@@ -246,6 +265,45 @@ let recipeTimer: number | null = null
 const subs = new Set<() => void>()
 const decoded = new Map<string, AudioBuffer>()
 
+/** How many times a beat goes round before the next one. */
+export const BEAT_PASSES = 2
+
+/**
+ * Drum patterns as things to hear, one after another.
+ *
+ * Brae: "When I ask the voice control to show me drum beats it tells me a
+ * bunch of beats. It should not do this. It shouldn't tell me what commands to
+ * say either, but it should instead activate the sounds of drum beats one after
+ * another. When showing I will be able to select one."
+ *
+ * ⚠️ HEARD, NOT LISTED. A list of sixty names is exactly what a person browsing
+ * beats cannot use — the name "Boom Bap" tells nobody whether it fits their
+ * song. Each pattern becomes a playable item on the song's kit, at the song's
+ * tempo, so what is heard is what a pick would place. `want` filters on the
+ * name, the blurb and the tags, so "trap beats" is the trap ones.
+ */
+export function beatItems(
+  patterns: DrumPattern[],
+  kit: TrackInstrument,
+  bpm: number,
+  want: { tag?: string; query?: string } = {},
+): AuditionItem[] {
+  return patterns.flatMap(p => {
+    const words = `${p.name} ${p.desc}`.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+    const item: AuditionItem = {
+      kind: 'beat', id: `beat:${p.id}`, patternId: p.id,
+      name: p.name, detail: p.desc || 'beat',
+      tags: [...new Set(['beat', 'drums', ...words])],
+      notes: patternToNotes(p).map(n => ({ pitch: n.pitch, startBeat: n.startBeat, durationBeats: n.durationBeats, velocity: n.velocity })),
+      durationBeats: Math.max(1, p.bars || 1) * 4,
+      bpm: bpm || 100,
+      instrument: kit,
+      usePreset: false,
+    }
+    return matchesWant(item, want) ? [item] : []
+  })
+}
+
 export function onAudition(f: () => void): () => void {
   subs.add(f)
   return () => { subs.delete(f) }
@@ -322,24 +380,30 @@ function preloadNext(): void {
  * however the browse is set up, because a grand piano playing hats is not a
  * preference anybody expressed.
  */
-async function playRecipe(item: Extract<AuditionItem, { kind: 'recipe' }>, mine: number): Promise<void> {
+async function playRecipe(item: Extract<AuditionItem, { kind: 'recipe' | 'beat' }>, mine: number): Promise<void> {
   const { playInstrumentNote } = await import('@/lib/daw-instruments')
   if (mine !== token || !state) return
   const ctxNow = audio()
   const instrument = (item.usePreset && state.preset) ? state.preset : item.instrument
   const secPerBeat = 60 / (item.bpm || 100) / state.rate
   const t0 = ctxNow.currentTime + 0.06     // a breath, so the first note is not clipped
-  for (const n of item.notes) {
-    try {
-      playInstrumentNote(
-        ctxNow, ctxNow.destination, instrument, n.pitch, n.velocity,
-        t0 + n.startBeat * secPerBeat, Math.max(0.05, n.durationBeats * secPerBeat),
-      )
-    } catch { /* one note that will not sound is not a reason to stop */ }
+  // A one-bar beat is two seconds — not long enough to feel. It goes round
+  // twice, the way the library's own preview does; a recipe plays once.
+  const passes = item.kind === 'beat' ? BEAT_PASSES : 1
+  const span = item.durationBeats || 4
+  for (let pass = 0; pass < passes; pass++) {
+    for (const n of item.notes) {
+      try {
+        playInstrumentNote(
+          ctxNow, ctxNow.destination, instrument, n.pitch, n.velocity,
+          t0 + (pass * span + n.startBeat) * secPerBeat, Math.max(0.05, n.durationBeats * secPerBeat),
+        )
+      } catch { /* one note that will not sound is not a reason to stop */ }
+    }
   }
   // Notes are scheduled, not streamed, so the end is arithmetic rather than an
   // event — and a timer is what stands in for `onended` here.
-  const total = (item.durationBeats || 4) * secPerBeat + 0.4
+  const total = span * passes * secPerBeat + 0.4
   recipeTimer = window.setTimeout(() => {
     if (mine !== token || !state || !state.playing) return
     if (state.index < state.items.length - 1) { state.index++; changed(); void play() }
@@ -354,7 +418,7 @@ async function play(): Promise<void> {
   stopSource()
   try {
     await audio().resume()
-    if (item.kind === 'recipe') {
+    if (item.kind === 'recipe' || item.kind === 'beat') {
       state.playing = true
       changed()
       preloadNext()
@@ -503,6 +567,7 @@ export function readBrowseCommand(text: string): BrowseAction | null {
   if (/^(resume|carry on|keep going|continue|unpause)$/.test(t)) return 'resume'
   if (/^(faster|speed up|quicker|speed it up)$/.test(t)) return 'faster'
   if (/^(slower|slow down|slow it down)$/.test(t)) return 'slower'
-  if (/^(this one|that one|keep it|keep that|take that|use that)$/.test(t)) return 'pick'
+  // Choosing. Brae: "When showing I will be able to select one."
+  if (/^(this one|that one|keep it|keep that|take that|use that|use this|use it|use this one|use that one|pick this|pick that|pick this one|pick that one|select this|select that|select this one|select that one|select it|add it|add that|add this|add this one|add that one|load it|load this|load that|that s the one|this is the one|i like that|i like this one|i like that one|yes that one|yes this one|choose this|choose that)$/.test(t)) return 'pick'
   return null
 }

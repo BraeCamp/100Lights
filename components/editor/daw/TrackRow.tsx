@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import { useAppear } from '@/components/ui/Appear'
 import { nearestBarBeat, meterSegments } from '@/lib/tempo-map'
 import { spliceClipAt } from '@/lib/daw-splice'
 import Knob from './Knob'
@@ -787,6 +788,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   }, [createMenu])
   const [showSynth, setShowSynth] = useState(false)
   const frozen = track.frozen ?? false
+  const frozenA = useAppear(frozen, 'fade')
   const [takesExpanded,  setTakesExpanded]  = useState(false)
   const [takeLaneCtx,    setTakeLaneCtx]   = useState<{ x: number; y: number; lane: TakeLane; clip: AudioClip } | null>(null)
   const inputBtnRef        = useRef<HTMLButtonElement>(null)
@@ -2126,8 +2128,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             })()}
           </div>
           {/* Frozen overlay — blocks clip interactions */}
-          {frozen && (
-            <div style={{
+          {frozenA.mounted && (
+            <div className={frozenA.cls} style={{
               position: 'absolute', inset: 0,
               background: 'rgba(100,150,220,0.06)',
               backdropFilter: 'none',
@@ -2272,7 +2274,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 
       {/* Lane context menu (empty-lane right-click) */}
       {laneCtxMenu && (
-        <div id={`lcm-${track.id}`} ref={laneMenuRef} style={{ position: 'fixed', zIndex: 1000, left: laneCtxMenu.x, top: laneCtxMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 170, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+        <div id={`lcm-${track.id}`} ref={laneMenuRef} className="menu-pop" style={{ position: 'fixed', zIndex: 1000, left: laneCtxMenu.x, top: laneCtxMenu.y, background: 'var(--bg-card-hover)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 0', minWidth: 170, boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
           <button
             onClick={() => {
               const clip = makeMidiClip(track.id, 'MIDI Clip', laneCtxMenu.beat, 4, { isDrumClip: track.instrument.type === 'drum' })

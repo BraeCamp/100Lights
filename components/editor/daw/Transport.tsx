@@ -5,6 +5,7 @@ import { useRegisterCommands } from '@/lib/commands'
 import Knob from './Knob'
 import { type MonitorFx, type DawEngine } from '@/lib/daw-engine'
 import { useCallback, useEffect, useRef, useState, type ReactNode, type Dispatch } from 'react'
+import { useAppear } from '@/components/ui/Appear'
 import nextDynamic from 'next/dynamic'
 
 // Lazy at module scope: the menu pulls in the plugin registry, which scans for
@@ -120,11 +121,13 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   const [editingBpm, setEditingBpm] = useState(false)
   const [bpmDraft, setBpmDraft] = useState('')
   const [fxOpen, setFxOpen] = useState(false)
+  const fxA = useAppear(fxOpen, 'pop-up')
   const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [showTuner, setShowTuner] = useState(false)
   const [showRecorder, setShowRecorder] = useState(false)
   const [recorderMode, setRecorderMode] = useState<'screen' | 'history'>('screen')
   const [captureOpen, setCaptureOpen] = useState(false)
+  const captureA = useAppear(captureOpen, 'pop')
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // Open a .cfproj project file straight into the studio (mirrors the projects
@@ -175,10 +178,12 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   const [tsDraft, setTsDraft] = useState({ num: project.timeSignatureNum, den: project.timeSignatureDen })
   const [varispeed, setVarispeed] = useState(100)  // 25–200 percent
   const [micError, setMicError] = useState('')
+  const micA = useAppear(!!micError, 'fade')
   const [showMask, setShowMask] = useState(false)
   // Toolbar overflow (item 14) — the less-used full-tier controls (swing, speed,
   // masking) live in a "More" popover so the bar isn't a wall of sliders.
   const [moreOpen, setMoreOpen] = useState(false)
+  const moreA = useAppear(moreOpen, 'pop')
   const uiTier = useUITierOptional()
   const showMore = (uiTier?.tier ?? 'full') === 'full'
 
@@ -216,6 +221,11 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     try {
       const blob = await captureScreenshot(!isPro)
       if (blob) setShotBlob(blob)   // opens the lazy-loaded annotator
+    } catch (err) {
+      // A capture that fails used to fail into nothing — an unhandled
+      // rejection and a button that seemed dead.
+      console.error('[capture] screenshot failed:', err)
+      setMicError('Screenshot failed — try again')
     } finally {
       setShotBusy(false)
     }
@@ -223,6 +233,16 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
 
   // Keep isPlayingRef in sync for the RAF closure
   useEffect(() => { isPlayingRef.current = playing }, [playing])
+
+  // ⚠️ The R key comes through HERE, not straight to the engine. The studio's
+  // keydown used to call engine.startRecording() itself, skipping the arm and
+  // input guards, the count-in, and the error notice — so R with nothing armed
+  // did nothing at all, silently. The one recording flow is this component's.
+  useEffect(() => {
+    const on = () => { void handleRecord() }
+    window.addEventListener('100lights:record-toggle', on)
+    return () => window.removeEventListener('100lights:record-toggle', on)
+  })
 
   // RAF loop — music mode: render beats; podcast mode: render wall-clock time
   useEffect(() => {
@@ -328,7 +348,9 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     try {
       if (countInBars > 0) {
         setMicError(`Count-in — ${countInBars} bar${countInBars > 1 ? 's' : ''}…`)
-        await engine.countIn(countInBars * project.timeSignatureNum, project.tempo)
+        // The count-in clicks at the tempo of the section the take starts in,
+        // not the opening bpm — after a tempo change those differ.
+        await engine.countIn(countInBars * project.timeSignatureNum, tempoAt(engine.currentBeat, tempoSegments(project)))
         setMicError('')
       }
       const armedTracks = project.tracks.filter(t => t.type === 'audio' && t.armed && t.inputSource)
@@ -776,8 +798,8 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           <Circle size={11} fill={recording ? '#ff3b3b' : 'transparent'} color={recording ? '#ff3b3b' : 'currentColor'} />
         </button>
 
-        {micError && (
-          <span style={{ fontSize: 9, color: '#ff3b3b', maxWidth: 140, lineHeight: 1.2 }}>{micError}</span>
+        {micA.mounted && (
+          <span className={micA.cls} style={{ fontSize: 9, color: '#ff3b3b', maxWidth: 140, lineHeight: 1.2 }}>{micError}</span>
         )}
 
         <button
@@ -943,8 +965,8 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         <button onClick={() => setFxOpen(o => !o)} style={fxOpen ? active : base} title="Performance FX — hold a pad to sweep the master" data-help-id="perf-fx">
           <Zap size={15} />
         </button>
-        {fxOpen && (
-          <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, display: 'flex', gap: 5, padding: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, boxShadow: '0 6px 20px rgba(0,0,0,0.5)' }}>
+        {fxA.mounted && (
+          <div className={fxA.cls} style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, display: 'flex', gap: 5, padding: 6, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, boxShadow: '0 6px 20px rgba(0,0,0,0.5)' }}>
             <FxPad label="LPF" mode="lp" engine={engine} color="#8b5cf6" />
             <FxPad label="HPF" mode="hp" engine={engine} color="#3b82f6" />
             <FxPad label="DUCK" mode="duck" engine={engine} color="#f59e0b" />
@@ -1123,10 +1145,10 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
             title="More — swing, tape speed, masking"
             style={{ ...base, width: 'auto', padding: '0 9px', gap: 3, fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', background: moreOpen ? 'var(--accent-subtle)' : '#1e1e1e', border: moreOpen ? '1px solid var(--accent)' : '1px solid var(--border)', color: moreOpen ? 'var(--accent-light)' : 'var(--text-secondary)' }}
           >More<ChevronDown size={11} /></button>
-          {moreOpen && (
+          {moreA.mounted && (
             <>
               <div onClick={() => setMoreOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1400 }} />
-              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 1401, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 12, boxShadow: '0 14px 34px rgba(0,0,0,0.7)', display: 'flex', flexDirection: 'column', gap: 12, minWidth: 232 }}>
+              <div className={moreA.cls} style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 1401, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 12, boxShadow: '0 14px 34px rgba(0,0,0,0.7)', display: 'flex', flexDirection: 'column', gap: 12, minWidth: 232 }}>
                 {/* Swing */}
                 <div data-help-id="swing" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span
@@ -1271,8 +1293,9 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           <ChevronDown size={12} style={{ opacity: 0.7 }} />
         </button>
 
-        {captureOpen && (
+        {captureA.mounted && (
           <div
+            className={captureA.cls}
             role="menu"
             style={{
               position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 60,
@@ -1418,6 +1441,7 @@ function BpmSectionMenu({ project, dispatch, engine, monoDisplay, inputStyle }: 
   inputStyle: React.CSSProperties
 }) {
   const [open, setOpen] = useState(false)
+  const openA = useAppear(open, 'pop')
   const [playheadBeat, setPlayheadBeat] = useState(() => engine.currentBeat)
   // Sample the playhead only while the menu is open (keeps the highlight live
   // without forcing transport re-renders when it's closed).
@@ -1442,10 +1466,10 @@ function BpmSectionMenu({ project, dispatch, engine, monoDisplay, inputStyle }: 
       >
         {Math.round(activeBpm)}<ChevronDown size={11} />
       </button>
-      {open && (
+      {openA.mounted && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1400 }} />
-          <div style={{
+          <div className={openA.cls} style={{
             position: 'absolute', top: '100%', left: 0, marginTop: 6, zIndex: 1401,
             background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10,
             padding: 10, boxShadow: '0 14px 34px rgba(0,0,0,0.7)',

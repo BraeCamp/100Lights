@@ -1192,9 +1192,11 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const track = project.tracks.find(x => x.id === clip.trackId)
       if (!track) return fail('That clip is not on a track any more.')
 
-      const from = spokenFraction(i.from as string)
-      const to = spokenFraction(i.to as string)
-      if (from == null || to == null) return fail('Say what it should sweep from and to.')
+      let from = spokenFraction(i.from as string)
+      let to = spokenFraction(i.to as string)
+      // (A missing end is filled from the lane that already drives this
+      // parameter, once that lane is known — see below. Only when there is no
+      // such lane is a missing end a question.)
 
       // Unstated means the clip itself; stated-but-unreadable is a question.
       // See placeOf — a sweep drawn from bar 1 because "the chorus" did not
@@ -1294,11 +1296,20 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         label = spec.label
       } else {
         const kind = param === 'highpass' ? 'highpass' : 'lowpass'
-        const effectId = newId()
-        actions.push({
-          type: 'ADD_EFFECT', trackId: track.id,
-          effect: { id: effectId, type: 'filter', params: { enabled: true, type: kind, frequency: FILTER_HZ[kind].max, q: 1 } },
-        })
+        // ⚠️ THE FILTER THAT IS ALREADY THERE. This made a new filter effect on
+        // every sweep, so "change the low pass so it goes to 50% instead of
+        // 20" could never find the lane it was asked to change — the lane is
+        // keyed by the effect's id, and the id was always fresh. Two sweeps
+        // meant two low-passes in series, each with its own lane.
+        const have = (track.effects ?? []).find(e =>
+          e.type === 'filter' && (e.params as { type?: string } | undefined)?.type === kind)
+        const effectId = have?.id ?? newId()
+        if (!have) {
+          actions.push({
+            type: 'ADD_EFFECT', trackId: track.id,
+            effect: { id: effectId, type: 'filter', params: { enabled: true, type: kind, frequency: FILTER_HZ[kind].max, q: 1 } },
+          })
+        }
         parameter = `fx:${effectId}:frequency`
         label = kind === 'lowpass' ? 'Low-pass cutoff' : 'High-pass cutoff'
         hz = FILTER_HZ[kind]
@@ -1337,6 +1348,32 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // also what makes the command idempotent, which a shape drawn by voice
       // has to be — people ask for the same move twice while refining it.
       const had = (project.automationLanes ?? []).find(l => l.trackId === track.id && l.parameter === parameter)
+      // ── An edit to a sweep that is already there ─────────────────────
+      //
+      // The record, 05:24: "Change the low pass cutoff so that the low on the
+      // descend goes to 50% instead of 20" → "Say what it should sweep from
+      // and to." He said where it should END; where it starts was already
+      // drawn on the lane. A missing end is read off the existing lane at the
+      // span's edges, so changing one end of a sweep is one sentence.
+      if (had && (from == null || to == null)) {
+        const pts = [...had.points].sort((a, b) => a.beat - b.beat)
+        const valueAt = (beat: number): number | null => {
+          if (!pts.length) return null
+          if (beat <= pts[0].beat) return pts[0].value
+          if (beat >= pts[pts.length - 1].beat) return pts[pts.length - 1].value
+          for (let k = 0; k + 1 < pts.length; k++) {
+            const a = pts[k], b = pts[k + 1]
+            if (beat >= a.beat && beat <= b.beat) {
+              const t = b.beat === a.beat ? 0 : (beat - a.beat) / (b.beat - a.beat)
+              return a.value + (b.value - a.value) * t
+            }
+          }
+          return null
+        }
+        if (from == null) from = valueAt(startBeat)
+        if (to == null) to = valueAt(startBeat + lengthBeats)
+      }
+      if (from == null || to == null) return fail('Say what it should sweep from and to.')
       if (had) laneId = had.id
       else {
         actions.push({
@@ -1482,6 +1519,17 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (span.problem) return fail(span.problem)
       const lengthBeats = span.beats ?? durationToBeats({ bars: 1 }, atBeat, maps) ?? 4
       const existing = resolveTrack(sound, project)
+      // ⚠️ THIS PUTS ONE HIT DOWN — a crash, a kick, a snare. The record,
+      // 18:09: "use the 1st chord in pad intro and recreate that on the 1st
+      // bar, then loop that 4 times" → insert_clip(sound: "Pad") → a one-note
+      // clip at pitch 49 on the Pad track, read back as "Added a 1 bar Pad".
+      // A single percussive hit on a melodic track is never the chord that
+      // was asked for, and saying it was added is the worst kind of true.
+      const inst = existing?.instrument?.type
+      if (existing && inst && inst !== 'drum' && inst !== 'none') {
+        const kindOf = inst === 'plugin' ? 'plugin' : inst === 'sampler' ? 'sampler' : 'synth'
+        return fail(`"${existing.name}" is a ${kindOf} track, and this puts down a single drum hit. To reuse part of a clip, say "duplicate the ${existing.name} clip" or "copy the first bar of ${existing.name} to bar 1".`)
+      }
       const trackId = existing?.id ?? newId()
       const actions: unknown[] = []
       if (!existing) actions.push({ type: 'ADD_TRACK', id: trackId, name: sound.replace(/\b\w/g, c => c.toUpperCase()) })
@@ -1509,7 +1557,23 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const place = placeOf(i.at, maps, project)
       if (place.problem) return fail(place.problem)
       const at = place.beat
-      if (at == null) return { actions: [{ type: 'SET_TEMPO', tempo: bpm }], say: `Tempo set to ${bpm} bpm.` }
+      if (at == null) {
+        // ⚠️ With tempo markers, "set the tempo to 100" means the section the
+        // playhead is IN — the transport box does the same. The whole-song
+        // SET_TEMPO would retempo only the opening section (the reducer keeps
+        // the global number and the beat-0 marker in step) and read back
+        // "Tempo set to 100" while the bars being heard stayed at 90.
+        const markers = project.tempoMarkers ?? []
+        const here = heard?.atBeat ?? 0
+        const seg = [...markers].filter(m => m.beat <= here + 1e-3).sort((a, b) => b.beat - a.beat)[0]
+        if (seg && seg.beat > 0.01) {
+          return {
+            actions: [{ type: 'UPDATE_TEMPO_MARKER', markerId: seg.id, tempo: bpm }],
+            say: `Tempo set to ${bpm} bpm from ${describeBeat(seg.beat, maps)}.`,
+          }
+        }
+        return { actions: [{ type: 'SET_TEMPO', tempo: bpm }], say: `Tempo set to ${bpm} bpm.` }
+      }
       return {
         actions: [{ type: 'ADD_TEMPO_MARKER', marker: { id: newId(), beat: at, tempo: bpm } }],
         say: `Tempo changes to ${bpm} bpm at ${describeBeat(at, maps)}.`,
@@ -1974,11 +2038,18 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         }
 
         case 'position': {
-          // Where the loop is, since the playhead is not in the project — it
-          // lives in the engine, and a pure planner cannot see it. Saying so is
-          // better than guessing at it.
+          // ⚠️ The record, 17:55: "Where is the playhead right now?" → "The
+          // loop is set from bar 1 to bar 71, but looping is off." The
+          // playhead is not in the project, so this answered about the loop
+          // instead — a true sentence about the wrong thing. The studio DOES
+          // tell the planner where the playhead is (heard.atBeat); it just
+          // was not read here.
           const from = describeBeat(project.loopStart ?? 0, maps)
           const to = describeBeat(project.loopEnd ?? 0, maps)
+          const loop = project.loopEnabled ? ` Looping ${from} to ${to}.` : ''
+          if (heard?.atBeat != null && Number.isFinite(heard.atBeat)) {
+            return { actions: [], say: `The playhead is at ${describeBeat(heard.atBeat, maps)}.${loop}` }
+          }
           return {
             actions: [],
             say: project.loopEnabled
@@ -2471,6 +2542,23 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (view === 'pads') {
         return { actions: [{ type: 'VIEW_ACTION', view: 'pads', open }], say: open ? 'Pads open.' : 'Pads closed.' }
       }
+      // ── The voice card's own bars ────────────────────────────────────
+      //
+      // The record, 17:52: "Open the list of commands that I can" was answered
+      // with a spoken summary of eight groups. Asking to OPEN a list is a view
+      // request; the list opens beside the card, and the read-back is short
+      // because the thing itself is now on screen.
+      if (view === 'help' || view === 'commands' || view === 'library') {
+        return { actions: [{ type: 'VIEW_ACTION', view: 'help', open }], say: open ? 'Here is everything I can do.' : 'Closed the list.' }
+      }
+      if (view === 'transcript' || view === 'log' || view === 'history') {
+        return { actions: [{ type: 'VIEW_ACTION', view: 'transcript', open }], say: open ? 'Here is the transcript.' : 'Closed the transcript.' }
+      }
+      if (view === 'settings' || view === 'usage' || view === 'macros' || view === 'costs' || view === 'shapes') {
+        const which = view === 'costs' ? 'usage' : view === 'shapes' ? 'macros' : view
+        const label = which === 'settings' ? 'Voice settings' : which === 'usage' ? 'Usage and costs' : 'Named shapes'
+        return { actions: [{ type: 'VIEW_ACTION', view: which, open }], say: open ? `${label} open.` : `${label} closed.` }
+      }
       if (view === 'colours' || view === 'colors' || view === 'appearance' || view === 'theme') {
         return {
           actions: [{ type: 'VIEW_ACTION', view: 'colours', open }],
@@ -2521,18 +2609,19 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const category = str(i.category).trim()
       const query = str(i.query).trim()
       const kindSaid = str(i.kind).toLowerCase()
-      const kind = kindSaid === 'sounds' || kindSaid === 'recipes' ? kindSaid : 'both'
+      const kind = kindSaid === 'sounds' || kindSaid === 'recipes' || kindSaid === 'beats' ? kindSaid : 'both'
       // ⚠️ Brae: "I asked to see recipes and it said that it can't do that for
       // me." Asking for "the recipes" is a complete request on its own — there
       // are dozens, not thousands, so a browse with no filter is a reasonable
       // thing to want. Sounds are not: an unfiltered library is hours long.
+      // Beats are like recipes: a few dozen drum patterns, all worth hearing.
       //
       // (This branch was written once before and never landed: the patch that
       // carried it aborted on an earlier file, and the feature was reported as
       // shipped on the strength of the pieces that had. Hence the test that
       // now plans "show me the recipes" and requires an action.)
-      if (!tag && !category && !query && kind !== 'recipes') {
-        return fail('Say what to play — "the recipes", "the sounds tagged dark", "the drum samples", "anything with vinyl in the name".')
+      if (!tag && !category && !query && kind !== 'recipes' && kind !== 'beats') {
+        return fail('Say what to play — "the recipes", "the beats", "the sounds tagged dark", "the drum samples", "anything with vinyl in the name".')
       }
       const asked = [
         tag && `tagged ${tag}`,
@@ -2541,7 +2630,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       ].filter(Boolean).join(' ')
       return {
         actions: [{ type: 'BROWSE', tag, category, query, asked, kind, preset: str(i.preset).trim() }],
-        say: `Finding ${kind === 'recipes' ? 'recipes' : 'sounds'}${asked ? ` ${asked}` : ''}…`,
+        say: `Finding ${kind === 'recipes' ? 'recipes' : kind === 'beats' ? 'beats' : 'sounds'}${asked ? ` ${asked}` : ''}…`,
       }
     }
 

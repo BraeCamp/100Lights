@@ -33,9 +33,19 @@ export interface VoiceLibraryColors {
 export default function VoiceLibrary({
   onClose,
   colors: C,
+  embedded = false,
 }: {
   onClose: () => void
   colors: VoiceLibraryColors
+  /**
+   * Fill the container it is given instead of floating over the studio.
+   *
+   * Brae: "When this or any other of the buttons in the voice control window
+   * are selected, they will open in a bar next to voice control so that voice
+   * control stays on screen." The list is the same either way; only where it
+   * sits changes.
+   */
+  embedded?: boolean
 }) {
   const [find, setFind] = useState('')
   // Hover shows the summary; clicking PINS it, so it survives the pointer
@@ -71,18 +81,22 @@ export default function VoiceLibrary({
       role="dialog"
       aria-label="What Light can do"
       data-voice-library
-      style={{
-        position: 'fixed', top: '8vh', left: '50%', transform: 'translateX(-50%)',
-        width: 'min(860px, 94vw)', height: 'min(76vh, 720px)',
-        // ⚠️ Above the voice card, which is also 80. Equal z-index means the
-        // later element in the tree wins, and the card was rendering over the
-        // list you had just opened to read — the window appeared to be empty
-        // apart from its summary column.
-        zIndex: 90,
-        display: 'flex', flexDirection: 'column',
-        background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 12,
-        boxShadow: '0 24px 70px rgba(0,0,0,.6)', color: C.textPrimary,
-      }}
+      style={embedded
+        // In the bar beside the voice card: no chrome of its own, it fills
+        // what it is given.
+        ? { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, color: C.textPrimary }
+        : {
+          position: 'fixed', top: '8vh', left: '50%', transform: 'translateX(-50%)',
+          width: 'min(860px, 94vw)', height: 'min(76vh, 720px)',
+          // ⚠️ Above the voice card, which is also 80. Equal z-index means the
+          // later element in the tree wins, and the card was rendering over the
+          // list you had just opened to read — the window appeared to be empty
+          // apart from its summary column.
+          zIndex: 90,
+          display: 'flex', flexDirection: 'column',
+          background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 12,
+          boxShadow: '0 24px 70px rgba(0,0,0,.6)', color: C.textPrimary,
+        }}
       onClick={e => e.stopPropagation()}
     >
       {/* ── Title ─────────────────────────────────────────────────────── */}
@@ -121,7 +135,7 @@ export default function VoiceLibrary({
         ><X size={14} /></button>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+      <div style={{ flex: 1, display: 'flex', minHeight: 0, flexDirection: embedded ? 'column' : 'row' }}>
         {/* ── The list ────────────────────────────────────────────────── */}
         <div
           style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}
@@ -179,10 +193,14 @@ export default function VoiceLibrary({
         </div>
 
         {/* ── The summary ─────────────────────────────────────────────── */}
-        <div style={{
-          width: 300, flexShrink: 0, borderLeft: `1px solid ${C.border}`,
-          padding: 14, overflowY: 'auto', fontSize: 12.5, lineHeight: 1.55,
-        }}>
+        <div style={embedded
+          // Under the list rather than beside it: the bar is narrow, and two
+          // columns in 380px is two keyholes.
+          ? { flex: '0 0 auto', maxHeight: '38%', borderTop: `1px solid ${C.border}`, padding: 12, overflowY: 'auto', fontSize: 12, lineHeight: 1.5 }
+          : {
+            width: 300, flexShrink: 0, borderLeft: `1px solid ${C.border}`,
+            padding: 14, overflowY: 'auto', fontSize: 12.5, lineHeight: 1.55,
+          }}>
           {!shown && (
             <div style={{ color: C.textMuted }}>
               Hover anything to read what it does. Click to keep it here while you

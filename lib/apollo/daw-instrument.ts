@@ -64,9 +64,29 @@ function create(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Man
         engine.scheduleEvents(m.queue)
         m.queue = []
       }
+      for (const f of readyListeners) f()
     })
     .catch(() => { /* engine unavailable — notes drop silently */ })
   return m
+}
+
+// ── Readiness, for the studio to SHOW ────────────────────────────────────────
+//
+// Brae: "when a song is loading, unloaded clips have some way of showing that
+// they're not loaded. When the song is ready to be played it will say so."
+// An engine coming up is the last thing a synth track waits on, and nothing
+// outside this file could see it happen.
+const readyListeners = new Set<() => void>()
+export function onApolloReady(f: () => void): () => void {
+  readyListeners.add(f)
+  return () => { readyListeners.delete(f) }
+}
+/** Is the engine on this destination ready to sound? True when there is none
+ *  yet (nothing has asked for one, so nothing is waiting). */
+export function apolloDestReady(dest: AudioNode | undefined): boolean {
+  if (!dest) return true
+  const m = byDest.get(dest)
+  return !m || m.released || m.engine.crashed || m.isReady
 }
 
 function ensure(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Managed {
@@ -144,6 +164,32 @@ export async function apolloDrain(ctx: BaseAudioContext): Promise<void> {
   const set = byCtx.get(ctx)
   if (!set) return
   await Promise.all([...set].filter(m => m.isReady).map(m => m.engine.flush()))
+}
+
+/**
+ * Wait until every engine in this context that is still coming up has come
+ * up — call between scheduling and draining.
+ *
+ * ⚠️ THE SCHEDULER ITSELF CREATES ENGINES. preloadApolloInstrument warms one
+ * per TRACK destination, but a clip with FX Motion (or any effect bar under
+ * its notes) plays into a chain of its own, and an engine is keyed by its
+ * destination — so the offline scheduling pass calls ensure() on a node nobody
+ * preloaded, a fresh engine starts its async init, and the clip's notes go to
+ * its queue. apolloDrain() flushes only READY engines, so that queue was never
+ * delivered before startRendering(): every clip with FX Motion on an Apollo or
+ * translated-poly track rendered as silence, with no error. (Live playback
+ * hides it: the queue flushes when the engine comes up, a beat or so late.)
+ */
+export async function apolloAwaitReady(ctx: BaseAudioContext, timeoutMs = 8000): Promise<void> {
+  const set = byCtx.get(ctx)
+  if (!set) return
+  const start = Date.now()
+  const pending = () => [...set].filter(m => !m.released && !m.engine.crashed && !m.isReady)
+  while (pending().length && Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, 25))
+  }
+  const left = pending().length
+  if (left) console.warn(`[apollo] ${left} engine(s) created by the scheduler were not ready after ${timeoutMs}ms — their notes will be missing from this render`)
 }
 
 /**

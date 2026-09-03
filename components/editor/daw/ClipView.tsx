@@ -98,6 +98,18 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onPaste?(): void
 }) {
   const { engine, project, dispatch, selectedClipIds, setSoundPanel } = useDaw()
+  // ── Is this clip's sound here yet? ──────────────────────────────────────
+  // Brae: "when a song is loading, unloaded clips have some way of showing
+  // that they're not loaded." The engine says when a buffer decodes or a synth
+  // comes up ('load-change'); until then the clip draws dimmed and breathing,
+  // so a silent clip during load reads as "not yet" rather than "broken".
+  const [loaded, setLoaded] = useState(() => engine.clipReady(clip))
+  useEffect(() => {
+    const check = () => setLoaded(engine.clipReady(clip))
+    check()
+    engine.addEventListener('load-change', check)
+    return () => engine.removeEventListener('load-change', check)
+  }, [engine, clip])
   const clipDivRef = useRef<HTMLDivElement>(null)
   const menuRef    = useRef<HTMLDivElement>(null)
   const dragRef    = useRef<{ startX: number; startBeat: number } | null>(null)
@@ -652,6 +664,23 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           setCtxPos({ x: e.clientX, y: e.clientY, beat })
         }}
       >
+        {/* Not loaded yet: dimmed, breathing, and labelled once it is wide
+            enough to carry a word. Fades away the moment the sound arrives. */}
+        {!loaded && (
+          <div
+            className="clip-loading"
+            data-clip-loading
+            title="Loading this clip's sound…"
+            style={{
+              position: 'absolute', inset: 0, zIndex: 5, pointerEvents: 'none',
+              background: 'repeating-linear-gradient(135deg, rgba(0,0,0,.28) 0 6px, rgba(0,0,0,.12) 6px 12px)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 9, fontWeight: 700, letterSpacing: 0.4, color: 'rgba(255,255,255,.75)',
+            }}
+          >
+            {width > 54 ? 'LOADING' : ''}
+          </div>
+        )}
         {/* Collaborator holding this clip */}
         {collabHolder && (
           <div style={{

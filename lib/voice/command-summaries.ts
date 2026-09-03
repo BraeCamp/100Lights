@@ -27,6 +27,10 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   'show_view.devices': 'Opens a track\'s effect rack and selects the track, so the rack is showing that track\'s devices and not the last one you looked at. Say "close the devices" to put it away.',
   'show_view.automation': 'Puts a drawable volume lane under the track, ready to draw a shape into. Every device parameter can be automated as well — add those from the lane\'s own menu once one is open.',
   'show_view.pads': 'Shows the playable pads for tapping parts in by hand or by voice. Nothing about the song changes either way.',
+  'show_view.transcript': 'Opens the transcript in a bar beside the voice card: what you said, what Light answered, and — as its own list — what actually changed in the song. The card stays on screen.',
+  'show_view.help': 'Opens the full list of what Light understands on its own, beside the voice card, with the ways to say each one. Nothing is spoken; the list is the answer.',
+  'show_view.voice': 'Opens the voice card\'s own settings, its usage-and-costs log, or its named shapes, in a bar beside the card rather than in place of the live view.',
+  'describe.playhead': 'Answers with the bar and beat the transport is sitting on at this moment, and adds the loop range if looping happens to be switched on.',
   // ── Transport ────────────────────────────────────────────────────────────
   'transport.play': 'Starts playback from wherever the playhead is. "Go" on its own works, and so does "play it".',
   'transport.stop': 'Stops playing. The playhead stays where it is, so playing again carries on from there rather than from the top.',

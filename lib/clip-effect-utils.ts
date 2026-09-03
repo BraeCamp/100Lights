@@ -68,3 +68,10 @@ export function sampleAutomation(points: AutoPoint[], durationBeats: number, N: 
     return evalAtT(sorted, t)
   })
 }
+
+/** The shape's value at each given position — for sample instants that are
+ *  NOT evenly spaced in beats (see tempo-map.ts beatsAtEvenSeconds). */
+export function sampleAutomationAt(points: AutoPoint[], ts: number[]): number[] {
+  const sorted = [...points].sort((a, b) => a.t - b.t)
+  return ts.map(t => evalAtT(sorted, t))
+}

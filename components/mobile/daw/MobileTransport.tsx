@@ -141,7 +141,7 @@ export function MobileTransport() {
           timeline never moves the playhead by accident. */}
       <ScrubBar engine={engine} position={position} setPosition={setPosition} end={songEnd} sig={sig} />
       {fxOpen && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+        <div className="appear-grow" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
           <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)', flexShrink: 0 }}>HOLD FX</span>
           <FxPad label="LOW-PASS" mode="lp" engine={engine} color="#8b5cf6" />
           <FxPad label="HIGH-PASS" mode="hp" engine={engine} color="#3b82f6" />
@@ -173,8 +173,8 @@ export function MobileTransport() {
       </div>
 
       {settings && (
-        <div onClick={() => setSettings(false)} style={{ position: 'fixed', inset: 0, zIndex: 170, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxHeight: '80vh', overflowY: 'auto', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', borderRadius: '18px 18px 0 0', padding: '16px 16px calc(18px + env(safe-area-inset-bottom))' }}>
+        <div onClick={() => setSettings(false)} className="backdrop-in" style={{ position: 'fixed', inset: 0, zIndex: 170, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end' }}>
+          <div onClick={e => e.stopPropagation()} className="menu-pop-up" style={{ width: '100%', maxHeight: '80vh', overflowY: 'auto', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', borderRadius: '18px 18px 0 0', padding: '16px 16px calc(18px + env(safe-area-inset-bottom))' }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
               <strong style={{ fontSize: 14.5, flex: 1 }}>Song settings</strong>
               <button onClick={() => setSettings(false)} aria-label="Close" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }}>×</button>

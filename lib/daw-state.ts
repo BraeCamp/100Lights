@@ -265,7 +265,10 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       delete grid[action.trackId]
       const automationLanes = project.automationLanes.filter(l => l.trackId !== action.trackId)
       const clipEffects     = (project.clipEffects ?? []).filter(e => e.trackId !== action.trackId)
-      return { ...project, tracks: normalizeGroups(tracks), arrangementClips: clips, sessionGrid: grid, automationLanes, clipEffects }
+      // Take lanes belong to the track too; left behind they accumulate in the
+      // saved project with no track to show them under.
+      const takeLanes       = (project.takeLanes ?? []).filter(l => l.trackId !== action.trackId)
+      return { ...project, tracks: normalizeGroups(tracks), arrangementClips: clips, sessionGrid: grid, automationLanes, clipEffects, takeLanes }
     }
 
     case 'UPDATE_TRACK': {
@@ -285,6 +288,9 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         id:      newTrackId,
         name:    `${source.name} copy`,
         effects: source.effects.map(e => ({ ...e, id: nextId() })),
+        // MIDI effects get ids of their own too — copies sharing ids with the
+        // source made UPDATE_MIDI_EFFECT ambiguous between the two tracks.
+        ...(source.midiEffects ? { midiEffects: source.midiEffects.map(m => ({ ...m, id: nextId() })) } : {}),
       }
       const newClips = project.arrangementClips
         .filter(c => c.trackId === source.id)
@@ -292,6 +298,11 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const newLanes = project.automationLanes
         .filter(l => l.trackId === source.id)
         .map(l => ({ ...l, id: nextId(), trackId: newTrackId }))
+      // The effect bars drawn on the track's lane come along as well — a
+      // duplicate that lost them was not a duplicate.
+      const newBars = (project.clipEffects ?? [])
+        .filter(e => e.trackId === source.id)
+        .map(e => ({ ...e, id: nextId(), trackId: newTrackId }))
       const srcIdx = project.tracks.findIndex(t => t.id === source.id)
       const tracks = [
         ...project.tracks.slice(0, srcIdx + 1),
@@ -303,6 +314,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         ...project, tracks: normalizeGroups(tracks),
         arrangementClips: [...project.arrangementClips, ...newClips],
         automationLanes:  [...project.automationLanes,  ...newLanes],
+        clipEffects:      [...(project.clipEffects ?? []), ...newBars],
         sessionGrid: grid,
       }
     }
@@ -389,7 +401,10 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         markers.push({ id: crypto.randomUUID(), beat: 0, tempo: project.tempo })
       }
       const filtered = markers.filter(m => Math.abs(m.beat - action.marker.beat) > 0.01)
-      return { ...project, tempoMarkers: [...filtered, action.marker].sort((a, b) => a.beat - b.beat) }
+      // A marker AT beat 0 is the opening tempo; the global number must agree
+      // with it or the transport shows one bpm and the song plays another.
+      const tempo = action.marker.beat <= 0.01 ? Math.max(40, Math.min(300, action.marker.tempo)) : project.tempo
+      return { ...project, tempo, tempoMarkers: [...filtered, action.marker].sort((a, b) => a.beat - b.beat) }
     }
 
     case 'UPDATE_TEMPO_MARKER': {
@@ -404,14 +419,17 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       // (e.g. editing the opening BPM when tempo markers exist) stretches its audio
       // clips' beat-window past the sample: loop-enabled clips add an extra repeat,
       // non-looping ones trail silence. Warped clips + MIDI are untouched.
+      // The opening marker IS the global tempo; keep the number in step here, in
+      // the reducer, so every caller agrees — not just the transport box.
+      const globalTempo = marker.beat <= 0.01 ? tempo : project.tempo
       const ratio = tempo / marker.tempo
-      if (Math.abs(ratio - 1) < 1e-9) return { ...project, tempoMarkers }
+      if (Math.abs(ratio - 1) < 1e-9) return { ...project, tempo: globalTempo, tempoMarkers }
       const nextBeat = markers.reduce((n, m) => (m.beat > marker.beat + 1e-6 && m.beat < n ? m.beat : n), Infinity)
       const arrangementClips = project.arrangementClips.map(c =>
         c.kind === 'audio' && !c.warpEnabled && c.startBeat >= marker.beat - 1e-6 && c.startBeat < nextBeat - 1e-6
           ? { ...c, durationBeats: Math.max(0.125, c.durationBeats * ratio) }
           : c)
-      return { ...project, tempoMarkers, arrangementClips }
+      return { ...project, tempo: globalTempo, tempoMarkers, arrangementClips }
     }
 
     case 'REMOVE_TEMPO_MARKER':
@@ -459,20 +477,35 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'SET_TEMPO': {
       const tempo = Math.max(40, Math.min(300, action.tempo))
+      // ⚠️ WITH TEMPO MARKERS, THE GLOBAL NUMBER DRIVES NOTHING ON ITS OWN. The
+      // first marker pins beat 0, and from then on the tempo map plays the
+      // markers — so a SET_TEMPO that only changed `tempo` changed the transport
+      // read-out (and the engine's curve lengths, synced delays and Apollo's
+      // clock, which read the scalar) while every note kept its old grid.
+      // Brae: "It changes in the UI, but the sound is off by a bit which just
+      // ends up making it look normal but sound like a mess." The global tempo
+      // IS the opening section's tempo: retempo that marker with it.
+      const markers = project.tempoMarkers ?? []
+      const opening = markers.find(m => m.beat <= 0.01)
+      const prevTempo = opening ? opening.tempo : project.tempo
+      const tempoMarkers = opening ? markers.map(m => m === opening ? { ...m, tempo } : m) : project.tempoMarkers
       // Non-warped audio keeps its absolute length: its BEAT length rescales
       // with tempo. Without this, lowering the BPM stretches the beat-window
       // past the sample's audio and loop-enabled clips audibly start an extra
       // repeat (and non-looping ones trail silence). Warped clips stretch
       // with tempo by design; MIDI is beat-native — both untouched.
       // seconds = beats × 60/tempo, so keeping seconds fixed means
-      // beats scale by NEW/OLD (faster tempo → same audio spans more beats)
-      const ratio = tempo / project.tempo
+      // beats scale by NEW/OLD (faster tempo → same audio spans more beats).
+      // Only clips in the section that changed — everything before the next
+      // marker; with no markers that is the whole song, as before.
+      const nextBeat = markers.reduce((n, m) => (m.beat > 0.01 && m.beat < n ? m.beat : n), Infinity)
+      const ratio = tempo / prevTempo
       const arrangementClips = Math.abs(ratio - 1) < 1e-9 ? project.arrangementClips : project.arrangementClips.map(c =>
-        c.kind === 'audio' && !c.warpEnabled
+        c.kind === 'audio' && !c.warpEnabled && c.startBeat < nextBeat - 1e-6
           ? { ...c, durationBeats: Math.max(0.125, c.durationBeats * ratio) }
           : c
       )
-      return { ...project, tempo, arrangementClips }
+      return { ...project, tempo, tempoMarkers, arrangementClips }
     }
 
     case 'SET_TIME_SIG':

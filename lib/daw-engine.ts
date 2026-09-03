@@ -4,7 +4,7 @@ import { midiToNoteName } from './scale-constants'
 import { rngFor } from '@/lib/seeded-random'
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
 import { isAudioClip, isMidiClip, POLY_PRESETS } from './daw-types'
-import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
+import { tempoSegments, tempoAt, beatsAtEvenSeconds, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
 import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
 import { barParamValue, activeBarFields } from './effect-bar'
@@ -14,13 +14,13 @@ import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './ap
 import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
-import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain } from './apollo/daw-instrument'
-import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam } from './beacon-plugins/host'
+import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain, apolloAwaitReady, apolloDestReady, onApolloReady } from './apollo/daw-instrument'
+import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam, pluginAwaitReady, pluginDestReady, onPluginReady } from './beacon-plugins/host'
 import type { PluginInstrumentParams } from './beacon-plugins/types'
 import { combined, combinedStale, combinedStamp, requestCombine, prerenderOn, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
-import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
+import { CLIP_EFFECT_PARAM_META, sampleAutomation, sampleAutomationAt, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
 import { libraryGetByFolder } from './sound-library'
@@ -343,6 +343,9 @@ export class DawEngine extends EventTarget {
   /** Normalized tempo map (single [beat0, tempo] segment until markers are set).
    *  Source of truth for beat↔seconds during arrangement playback — see tempo-map.ts. */
   private _tempoSegs: TempoSegment[] = [{ beat: 0, bpm: 120 }]
+  /** The bpm of the section the playhead is IN — what tempo-synced delays,
+   *  Apollo's synced LFOs/arps and plugins are told. 0 = not yet sent. */
+  private _localTempo = 0
   /** Normalized meter map — drives the metronome downbeat accent under time-sig
    *  changes (single [beat0, 4/4] segment until meter markers are set). */
   private _meterSegs: MeterSegment[] = [{ beat: 0, num: 4, den: 4 }]
@@ -389,6 +392,10 @@ export class DawEngine extends EventTarget {
     // lets the whole graph build off-line for faster-than-real-time rendering.
     // Default is the normal real-time context — studio behaviour is unchanged.
     this.ctx = opts?.ctx ?? new AudioContext({ latencyHint: audioLatencyHint() })
+    // A synth engine coming up is a load event like a buffer decoding — the
+    // studio's loading state listens to both through 'load-change'.
+    onApolloReady(() => this._loadChanged())
+    onPluginReady(() => this._loadChanged())
 
     // Safety compressor, not glue: -12dB/3:1 clamped the whole mix whenever a
     // sustained loud element (stacked drones, held chords) sat above threshold,
@@ -438,13 +445,16 @@ export class DawEngine extends EventTarget {
     // 'interrupted', which every inline resume guard in this file misses.
     // Anything that is not 'running' wants resuming.
     if (typeof document !== 'undefined' && typeof this.ctx.addEventListener === 'function') {
-      const kick = () => {
+      // Kept on the instance so dispose() can take both listeners off again.
+      // Without that every disposed engine (a project switch, a StrictMode
+      // remount) stayed reachable from `document` for the life of the page.
+      this._kick = () => {
         if (document.visibilityState === 'visible' && this.ctx.state !== 'running' && this.ctx.state !== 'closed') {
           void (this.ctx as AudioContext).resume?.()
         }
       }
-      this.ctx.addEventListener('statechange', kick)
-      document.addEventListener('visibilitychange', kick)
+      this.ctx.addEventListener('statechange', this._kick)
+      document.addEventListener('visibilitychange', this._kick)
     }
 
     // Performance-FX insert: masterGain → perfFilter → perfGain → analyser.
@@ -667,17 +677,17 @@ export class DawEngine extends EventTarget {
     // (Re)build effects chain when effects array is provided — but only when
     // it actually changed. Rebuilding on every dispatch cuts delay/reverb
     // tails and churns the graph audibly (worst while dragging BPM, which
-    // fires updateProject per step). Tempo joins the signature only when a
-    // delay is tempo-synced, since that's the one tempo-dependent build.
+    // fires updateProject per step). Tempo is NOT part of the signature: a
+    // tempo-synced delay is retimed live by _syncLocalTempo → chain.setTempo,
+    // the same way it follows a tempo change mid-song.
     if (effects !== undefined) {
-      const tempoDependent = effects.some(e => e.type === 'delay' && (e.params as { syncToTempo?: boolean }).syncToTempo)
       const wantHelios = this.heliosFxPref.get(id) !== false
       // Helios chains stream continuous param edits into the running worklet
       // (no rebuild, no tail cut) — only STRUCTURE changes rebuild. The legacy
       // path keeps its historical rebuild-on-any-change behavior.
       const sig = wantHelios
-        ? JSON.stringify(effects.map(e => ({ i: e.id, t: e.type, en: (e.params as { enabled?: boolean }).enabled !== false }))) + (tempoDependent ? `@${this.tempo}` : '') + '#helios'
-        : JSON.stringify(effects) + (tempoDependent ? `@${this.tempo}` : '') + '#legacy'
+        ? JSON.stringify(effects.map(e => ({ i: e.id, t: e.type, en: (e.params as { enabled?: boolean }).enabled !== false }))) + '#helios'
+        : JSON.stringify(effects) + '#legacy'
       if (this._chainSigs.get(id) !== sig) {
         this._chainSigs.set(id, sig)
         this._rebuildEffectsChain(id, effects)
@@ -726,8 +736,8 @@ export class DawEngine extends EventTarget {
     // worklet); untranslatable chains and opted-out tracks use the legacy
     // per-node graph. Same {input,output,handles,dispose} shape either way.
     const wantHelios = this.heliosFxPref.get(trackId) !== false
-    const helios = wantHelios ? buildHeliosFxChain(this.ctx, effects, this.tempo) : null
-    const chain = helios ?? buildEffectsChain(this.ctx, effects, this.tempo)
+    const helios = wantHelios ? buildHeliosFxChain(this.ctx, effects, this._chainTempo()) : null
+    const chain = helios ?? buildEffectsChain(this.ctx, effects, this._chainTempo())
     nodes.effectsInput.connect(chain.input)
     chain.output.connect(nodes.effectsOutput)
     this.effectsChains.set(trackId, chain as ReturnType<typeof buildEffectsChain>)
@@ -854,7 +864,7 @@ export class DawEngine extends EventTarget {
       return
     }
 
-    const chain = buildHeliosFxChain(this.ctx, effects, this.tempo) ?? buildEffectsChain(this.ctx, effects, this.tempo)
+    const chain = buildHeliosFxChain(this.ctx, effects, this._chainTempo()) ?? buildEffectsChain(this.ctx, effects, this._chainTempo())
     bus.input.connect(chain.input)
     chain.output.connect(bus.effectsOutput)
     this.returnEffectsChains.set(returnId, chain as ReturnType<typeof buildEffectsChain>)
@@ -1070,11 +1080,47 @@ export class DawEngine extends EventTarget {
     // audio look undecodable.
     const inFlight = this._loadInFlight.get(clip.id)
     if (inFlight) return inFlight
-    const p = this._loadClipBufferInner(clip).finally(() => { this._loadInFlight.delete(clip.id) })
+    const p = this._loadClipBufferInner(clip)
+      .then(buf => { if (!buf) this._bufferFailed.add(clip.id); return buf })
+      .finally(() => { this._loadInFlight.delete(clip.id); this._loadChanged() })
     this._loadInFlight.set(clip.id, p)
     return p
   }
   private _loadInFlight = new Map<string, Promise<AudioBuffer | null>>()
+  /** Clips whose audio could not be fetched or decoded — not loading, gone. */
+  private _bufferFailed = new Set<string>()
+
+  // ── What is still loading ─────────────────────────────────────────────────
+  //
+  // Brae: "when a song is loading, unloaded clips have some way of showing that
+  // they're not loaded. When the song is ready to be played it will say so at
+  // the bottom of the screen so that users know when their project has loaded."
+  //
+  // ⚠️ A clip is "loaded" when the thing that will SOUND it is here: an audio
+  // clip's decoded buffer, a synth clip's worklet engine, a drum clip's kit.
+  // Nothing polls: the loaders say when they finish, and the studio listens
+  // for 'load-change'.
+  private _loadChanged(): void {
+    try { this.dispatchEvent(new CustomEvent('load-change')) } catch { /* not in a DOM */ }
+  }
+  /** Can this clip sound right now? */
+  clipReady(clip: DawClip): boolean {
+    if (isAudioClip(clip)) return this.bufferCache.has(clip.id) || this._bufferFailed.has(clip.id)
+    const track = this._tracks.find(t => t.id === clip.trackId)
+    if (!track) return true
+    const dest = this.trackNodes.get(track.id)?.midiInput
+    const inst = this._resolveInstrument(track)
+    if (inst?.type === 'apollo') return apolloDestReady(dest)
+    if (inst?.type === 'plugin') return pluginDestReady(dest)
+    return true
+  }
+  /** How much of the song can sound: total = clips that need something loaded. */
+  readiness(): { ready: number; total: number; waiting: string[] } {
+    const clips: DawClip[] = [...this._clips, ...this._midiClips]
+    const waiting: string[] = []
+    for (const c of clips) if (!this.clipReady(c)) waiting.push(c.id)
+    return { ready: clips.length - waiting.length, total: clips.length, waiting }
+  }
 
   private async _loadClipBufferInner(clip: AudioClip): Promise<AudioBuffer | null> {
     // Try the local URL first (blob: for fresh recordings, signed URL for
@@ -1177,6 +1223,36 @@ export class DawEngine extends EventTarget {
   private _ctxTimeForBeat(beat: number, now: number, contextNow: number): number {
     return contextNow + this._spanSeconds(now, beat)
   }
+  /** How many beats `sec` seconds is from `now`, through the map — the
+   *  scheduling window in a fast section is more beats, not fewer seconds. */
+  private _aheadBeats(now: number, sec: number): number {
+    return this._beatAtSongSeconds(this._songSeconds(now) + sec) - now
+  }
+  /** The tempo an effect chain is built at: the current section's, once known. */
+  private _chainTempo(): number { return this._localTempo || this.tempo }
+  /**
+   * Tell everything that keeps its OWN clock which section we are in.
+   *
+   * Brae: "When the BPM changes, some stuff doesn't change properly. It changes
+   * in the UI, but the sound is off by a bit which just ends up making it look
+   * normal but sound like a mess."
+   *
+   * ⚠️ Note and clip STARTS go through the tempo map, so the grid is right.
+   * But a tempo-synced delay, an Apollo patch's synced LFO/arp/sequencer and a
+   * plugin's host tempo were all told the project's one global bpm, once, on
+   * load — in a section at another tempo they kept echoing and pulsing at the
+   * wrong rate against a grid that looked fine. Called every scheduler tick;
+   * only speaks when the section's bpm actually changes.
+   */
+  private _syncLocalTempo(beat: number): void {
+    const bpm = tempoAt(beat, this._tempoSegs)
+    if (bpm === this._localTempo) return
+    this._localTempo = bpm
+    setApolloCtxTempo(this.ctx, bpm)
+    setPluginCtxTempo(this.ctx, bpm)
+    for (const chain of this.effectsChains.values()) (chain as { setTempo?: (bpm: number) => void }).setTempo?.(bpm)
+    for (const chain of this.returnEffectsChains.values()) (chain as { setTempo?: (bpm: number) => void }).setTempo?.(bpm)
+  }
 
   /**
    * Beat position for VISUAL playheads only — lagged by the output-path latency
@@ -1196,7 +1272,12 @@ export class DawEngine extends EventTarget {
   secondsToBeats(seconds: number): number { return seconds * (this.tempo / 60) }
 
   async play(fromBeat?: number) {
-    if (this.ctx.state === 'suspended') await this.ctx.resume()
+    // ⚠️ 'interrupted' as well as 'suspended'. WebKit reports a context that a
+    // phone call or Siri took over as 'interrupted', which this guard let
+    // through: Play moved the playhead with no sound until something else
+    // resumed the context. Anything short of running gets resumed.
+    const st = this.ctx.state as string
+    if (st !== 'running' && st !== 'closed') await this.ctx.resume()
     if (fromBeat !== undefined) this._startBeat = fromBeat
     // Small scheduling headroom: without it, clips sitting exactly at the play
     // position get startAt values already in the past by the time they're
@@ -1265,7 +1346,13 @@ export class DawEngine extends EventTarget {
     const newSegs = tempoSegments(project)
     const segsChanged = newSegs.length !== this._tempoSegs.length ||
       newSegs.some((s, i) => s.beat !== this._tempoSegs[i].beat || s.bpm !== this._tempoSegs[i].bpm)
-    if (segsChanged || project.tempo !== this.tempo) {
+    // ⚠️ The engine's one scalar tempo is the map's OPENING bpm, not
+    // project.tempo. Once a marker pins beat 0 the global number no longer
+    // drives the map, and the reducer keeps the two in step — but a project
+    // saved before it did can carry a tempo the music does not play at, and
+    // what is heard has to win over what the box says.
+    const openingBpm = newSegs[0].bpm
+    if (segsChanged || openingBpm !== this.tempo) {
       // Rebase the transport clock BEFORE swapping the tempo map: currentBeat maps
       // elapsed wall-clock seconds through the segments, so replacing them without
       // rebasing re-scales elapsed time and the playhead leaps (a backward leap
@@ -1273,7 +1360,7 @@ export class DawEngine extends EventTarget {
       // louder). Capturing beatNow under the OLD map and re-anchoring keeps the
       // playhead continuous across a tempo/marker edit.
       const beatNow = this.currentBeat
-      this.tempo = project.tempo
+      this.tempo = openingBpm
       this._tempoSegs = newSegs
       if (this.isPlaying) {
         this._startBeat = beatNow
@@ -1329,8 +1416,10 @@ export class DawEngine extends EventTarget {
     if (prerenderOn() && !('startRendering' in this.ctx)) this._requestCombineAll()
     // Pre-warm sample-oscillator buffers for poly instruments — same reason as
     // preset buffers: a lazily-loaded sample would miss its first note.
-    setApolloCtxTempo(this.ctx, project.tempo)
-    setPluginCtxTempo(this.ctx, project.tempo)
+    // The section's bpm, not the global one — and re-sent even when equal, since
+    // markers may have moved under a playhead that did not.
+    this._localTempo = 0
+    this._syncLocalTempo(this.currentBeat)
     // Uncombined synths load SEPARATELY, not up front: a project with several
     // Apollo tracks was building every one of them at load time, which is a
     // large fixed cost paid before a single note plays and a big part of why a
@@ -1831,6 +1920,12 @@ export class DawEngine extends EventTarget {
       const clipId = slot.clip.id
       const finish = () => {
         clearInterval(slot.intervalId)
+        // ⚠️ Only THIS slot. A quantized stop lands after a delay; relaunching
+        // the same track inside that delay put a new slot in the map, and the
+        // old stop then deleted the NEW one — its interval never cleared, the
+        // UI said idle while it played. A stop that arrives late for a slot
+        // that has already been replaced has nothing left to do.
+        if (this._sessionMidiSlots.get(trackId) !== slot) return
         this._sessionMidiSlots.delete(trackId)
         this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId, state: 'idle' } }))
       }
@@ -2094,7 +2189,7 @@ export class DawEngine extends EventTarget {
    *  seconds, so they're cached before the scheduler needs them. Only touches
    *  buffers that aren't already cached or loading, so it's cheap per tick. */
   private _prefetchUpcoming(now: number) {
-    const until = now + this.secondsToBeats(PREFETCH_LOOKAHEAD)
+    const until = now + this._aheadBeats(now, PREFETCH_LOOKAHEAD)
     for (const clip of this._midiClips) {
       if (!clip.presetId) continue
       // A clip is "coming up" if it starts within the window or is still playing.
@@ -2262,7 +2357,7 @@ export class DawEngine extends EventTarget {
     // Entering a clip mid-way (a seek, or the playhead already inside it) starts
     // the buffer at the matching offset rather than from the top.
     const fromBeat  = Math.max(now, clip.startBeat)
-    const offsetSec = this.beatsToSeconds(fromBeat - clip.startBeat)
+    const offsetSec = this._spanSeconds(clip.startBeat, fromBeat)
     if (offsetSec >= buf.duration) return true
 
     const src  = this.ctx.createBufferSource()
@@ -2366,7 +2461,10 @@ export class DawEngine extends EventTarget {
 
     const now          = offline ? this._renderNow! : this.currentBeat
     const contextNow   = offline ? this._renderCtxBase : this.ctx.currentTime
-    const aheadBeats   = offline ? this._renderLookahead : this.secondsToBeats(SCHEDULE_LOOKAHEAD)
+    const aheadBeats   = offline ? this._renderLookahead : this._aheadBeats(now, SCHEDULE_LOOKAHEAD)
+    // Crossing into a section at another bpm retimes synced delays, Apollo's
+    // synced modulation and plugin hosts to it — the grid already moved.
+    this._syncLocalTempo(now)
 
     // Warm sampled buffers well before their notes enter the schedule window, so
     // decodeAudioData finishes in time and the note isn't skipped (and then fired
@@ -2667,7 +2765,7 @@ export class DawEngine extends EventTarget {
             // Notes longer than the sample loop its sustain plateau so a bowed
             // chord or pad holds for the whole note, however long it is.
             const needSec = remaining + sustainSec
-            let offsetSec = this.beatsToSeconds(alreadyBeats)
+            let offsetSec = this._spanSeconds(noteAbsBeat, noteAbsBeat + alreadyBeats)
             const loop = (needSec > buf.duration - 0.05 || offsetSec >= buf.duration)
               ? this._getLoopMeta(bufKey, buf) : null
             if (!loop && offsetSec >= buf.duration) { this._scheduledNoteKeys.add(noteKey); continue }
@@ -2792,7 +2890,7 @@ export class DawEngine extends EventTarget {
           // Pass the FULL note length + how far in we are, so a poly voice that
           // uses a sample resumes at the right phase instead of restarting when
           // the playhead enters mid-note.
-          const noteOffsetSec = this.beatsToSeconds(alreadyBeats)
+          const noteOffsetSec = this._spanSeconds(noteAbsBeat, noteAbsBeat + alreadyBeats)
           const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec, engineFilterB ?? undefined)
           this._choke(track.id, h, startAt)
         }
@@ -3137,9 +3235,13 @@ export class DawEngine extends EventTarget {
     // Drawn volume automation across the clip (musical time), sliced from where
     // we already are so seeking mid-clip continues the shape.
     if (clip.volGraph && clip.volGraph.length >= 2) {
-      const total = this.beatsToSeconds(clip.durationBeats)
+      // clipDuration is the clip's seconds through the tempo map; the graph is
+      // normalized (0..1), so each even-in-seconds sample asks for the beat it
+      // lands on as a fraction of the clip.
+      const total = clipDuration
       const N = Math.max(8, Math.ceil(total * 60))
-      const full = sampleAutomation(clip.volGraph, 1, N)
+      const full = sampleAutomationAt(clip.volGraph,
+        beatsAtEvenSeconds(clip.startBeat, clip.durationBeats, this._tempoSegs, N).map(b => b / Math.max(1e-9, clip.durationBeats)))
       const sIdx = Math.min(N - 2, Math.max(0, Math.floor((alreadyPlayed / Math.max(1e-6, total)) * N)))
       const slice = full.slice(sIdx)
       const vg = this.ctx.createGain()
@@ -3182,7 +3284,7 @@ export class DawEngine extends EventTarget {
     // transient loses a random few dB (audible on one-shots at the playhead).
     const rampAt = Math.max(startAt, fadeGain.context.currentTime)
     if (clip.fadeIn > 0) {
-      const fs = this.beatsToSeconds(clip.fadeIn)
+      const fs = this._spanSeconds(clip.startBeat, clip.startBeat + clip.fadeIn)
       fadeGain.gain.setValueAtTime(0, rampAt)
       fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + Math.max(fs, ANTI_CLICK_S))
     } else {
@@ -3190,7 +3292,8 @@ export class DawEngine extends EventTarget {
       fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + ANTI_CLICK_S)
     }
     if (clip.fadeOut > 0 && effectiveDuration > 0) {
-      const fs        = this.beatsToSeconds(clip.fadeOut)
+      const clipEndB  = clip.startBeat + clip.durationBeats
+      const fs        = this._spanSeconds(clipEndB - clip.fadeOut, clipEndB)
       const fadeStart = Math.max(startAt, startAt + effectiveDuration - fs)
       fadeGain.gain.setValueAtTime(clip.gain, fadeStart)
       fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
@@ -3244,16 +3347,30 @@ export class DawEngine extends EventTarget {
     }
   }
 
+  /**
+   * A drawn shape as the evenly-timed curve Web Audio wants, from where we are.
+   *
+   * ⚠️ `startBeat` is what makes it right across a tempo change. The shape's
+   * seconds are its beats through the MAP, and its samples are laid out evenly
+   * in seconds, so each one is taken at the beat that instant reaches. Before
+   * this the bar's length in seconds came from the global bpm alone: in a
+   * section at another tempo the sweep ended early or ran long while the lane
+   * drew exactly where it should — "looks normal, sounds like a mess".
+   */
   private _slicedCurve(
     points: AutoPoint[],
     durationBeats: number,
     seekOffsetSec: number,
     mapper: (v: number) => number,
+    startBeat?: number,
   ): { curve: Float32Array; durSec: number } {
-    const fullSec   = this.beatsToSeconds(durationBeats)
+    const mapped    = startBeat !== undefined && Number.isFinite(startBeat)
+    const fullSec   = mapped ? this._spanSeconds(startBeat, startBeat + durationBeats) : this.beatsToSeconds(durationBeats)
     const remainSec = Math.max(0.001, fullSec - seekOffsetSec)
     const N         = Math.max(4, Math.ceil(fullSec * 60))
-    const all       = sampleAutomation(points, durationBeats, N)
+    const all       = mapped
+      ? sampleAutomationAt(points, beatsAtEvenSeconds(startBeat, durationBeats, this._tempoSegs, N))
+      : sampleAutomation(points, durationBeats, N)
     const idx       = seekOffsetSec > 0 ? Math.min(N - 2, Math.floor((seekOffsetSec / fullSec) * N)) : 0
     const slice     = all.slice(idx)
     const arr       = slice.length >= 2 ? slice : [all[N - 1], all[N - 1]]
@@ -3759,7 +3876,7 @@ export class DawEngine extends EventTarget {
 
     // A curve for `param.setValueCurveAtTime`, mapping the graph (0..1) → values.
     const sched = (param: AudioParam, map: (g: number) => number) => {
-      const { curve, durSec } = this._slicedCurve(graph, eff.durationBeats, effSeekOffsetSec, map)
+      const { curve, durSec } = this._slicedCurve(graph, eff.durationBeats, effSeekOffsetSec, map, eff.startBeat)
       // If this bar starts AFTER the note already began, pin the param at its
       // NEUTRAL value (graph = 0) from the note's start until the bar's region.
       // Otherwise the node's construction default (e.g. a lowpass biquad sits at
@@ -3972,7 +4089,7 @@ export class DawEngine extends EventTarget {
         const g = n(ctx.createGain())
         const meta = CLIP_EFFECT_PARAM_META.volume
         if (eff.automation?.points.length) {
-          const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta))
+          const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta), eff.startBeat)
           g.gain.setValueCurveAtTime(curve, effContextStart, durSec)
         } else {
           const env = params.shapeEnvelope
@@ -4002,7 +4119,7 @@ export class DawEngine extends EventTarget {
         f.Q.value = params.filterQ ?? 1
         if (eff.automation?.points.length) {
           const meta = CLIP_EFFECT_PARAM_META.filter
-          const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta))
+          const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta), eff.startBeat)
           f.frequency.setValueCurveAtTime(curve, effContextStart, durSec)
         } else {
           f.frequency.value = params.frequency ?? 1000
@@ -4018,7 +4135,7 @@ export class DawEngine extends EventTarget {
         lfo.type = 'sine'
         if (eff.automation?.points.length) {
           const meta = CLIP_EFFECT_PARAM_META.tremolo
-          const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta))
+          const { curve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => normToParam(v, meta), eff.startBeat)
           lfo.frequency.setValueCurveAtTime(curve, effContextStart, durSec)
         } else {
           lfo.frequency.value = params.tremoloRate ?? 4
@@ -4035,7 +4152,7 @@ export class DawEngine extends EventTarget {
         const conv = n(ctx.createConvolver()); conv.buffer = this._makeIR(params.reverbDecay ?? 2)
         const mix  = n(ctx.createGain()); mix.gain.value = 1
         if (eff.automation?.points.length) {
-          const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v)
+          const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v, eff.startBeat)
           const dryCurve = new Float32Array(wetCurve.map(v => 1 - v))
           wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, durSec)
           dry.gain.setValueCurveAtTime(dryCurve, effContextStart, durSec)
@@ -4054,7 +4171,7 @@ export class DawEngine extends EventTarget {
         const wetG  = n(ctx.createGain())
         const mix   = n(ctx.createGain()); mix.gain.value = 1
         if (eff.automation?.points.length) {
-          const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v)
+          const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v, eff.startBeat)
           const dryCurve = new Float32Array(wetCurve.map(v => 1 - v))
           wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, durSec)
           dry.gain.setValueCurveAtTime(dryCurve, effContextStart, durSec)
@@ -4076,7 +4193,7 @@ export class DawEngine extends EventTarget {
           const dry  = n(ctx.createGain())
           const wetG = n(ctx.createGain())
           const mix  = n(ctx.createGain()); mix.gain.value = 1
-          const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v)
+          const { curve: wetCurve, durSec } = this._slicedCurve(eff.automation.points, eff.durationBeats, effSeekOffsetSec, v => v, eff.startBeat)
           const dryCurve = new Float32Array(wetCurve.map(v => 1 - v))
           wetG.gain.setValueCurveAtTime(wetCurve, effContextStart, durSec)
           dry.gain.setValueCurveAtTime(dryCurve, effContextStart, durSec)
@@ -4107,6 +4224,7 @@ export class DawEngine extends EventTarget {
       const { curve, durSec } = this._slicedCurve(
         eff.automation.points, eff.durationBeats, effSeekOffsetSec,
         v => normToParam(v, meta) * 100 + clipDetuneOffset,
+        eff.startBeat,
       )
       source.detune.setValueCurveAtTime(curve, effContextStart, durSec)
       source.detune.setValueAtTime(clipDetuneOffset, effContextStart + durSec)
@@ -4125,7 +4243,7 @@ export class DawEngine extends EventTarget {
         source.detune.setValueAtTime(clipDetuneOffset, effContextStart + (env.length - skip) / sr)
       } else {
         source.detune.setValueAtTime(baseCents, effContextStart)
-        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + this.beatsToSeconds(eff.durationBeats) - effSeekOffsetSec)
+        source.detune.setValueAtTime(clipDetuneOffset, effContextStart + this._spanSeconds(eff.startBeat, eff.startBeat + eff.durationBeats) - effSeekOffsetSec)
       }
     }
   }
@@ -4379,7 +4497,7 @@ export class DawEngine extends EventTarget {
     if (!this.isPlaying) return
     const now         = this.ctx.currentTime
     const currentBeat = this.currentBeat
-    const ahead       = this.secondsToBeats(SCHEDULE_LOOKAHEAD)
+    const ahead       = this._aheadBeats(currentBeat, SCHEDULE_LOOKAHEAD)
     while (this._nextMetronomeBeat <= currentBeat + ahead) {
       const when       = this._ctxTimeForBeat(Math.max(currentBeat, this._nextMetronomeBeat), currentBeat, now)
       // Downbeat = a bar START in the meter map (honors mid-song time-sig changes);
@@ -4771,6 +4889,13 @@ export class DawEngine extends EventTarget {
     // arrive. startRendering() does not wait for the port, so without this a
     // render intermittently comes back missing notes — silently, and about one
     // time in eight. See ApolloEngine.flush().
+    // ⚠️ And engines the scheduling pass ITSELF created — a clip with FX Motion
+    // plays into a chain of its own, and an engine is keyed by destination, so
+    // such a clip's notes were queued on an engine still initialising, which
+    // apolloDrain (ready engines only) never flushed. Every FX-Motion clip on an
+    // Apollo or translated-poly track rendered silent. Wait for them first.
+    await apolloAwaitReady(this.ctx)
+    await pluginAwaitReady(this.ctx)
     await apolloDrain(this.ctx)
     const rendered = await octx.startRendering()
     const channels: Float32Array[] = []
@@ -4829,7 +4954,7 @@ export class DawEngine extends EventTarget {
     // — a bounce that cannot finish has to SAY so, because from the outside it
     // looks exactly like a slow one. (Found the hard way: a project with eight
     // synth tracks sat for 25 minutes on a 1:51 render before anyone knew.)
-    const expectedSec = this.beatsToSeconds(Math.max(0, end - start)) + tail
+    const expectedSec = Math.max(0, this._spanSeconds(start, end)) + tail
     const budgetMs    = Math.max(30_000, (expectedSec + 20) * 3000)
     const STALL_MS    = 15_000
     let renderError: Error | null = null
@@ -4968,9 +5093,17 @@ export class DawEngine extends EventTarget {
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
 
+  /** The resume-on-return listener, so dispose() can remove it. */
+  private _kick: (() => void) | null = null
+
   dispose() {
     this.stop()
     this.setMetronome(false)
+    if (this._kick) {
+      try { this.ctx.removeEventListener('statechange', this._kick) } catch { /* ok */ }
+      try { document.removeEventListener('visibilitychange', this._kick) } catch { /* ok */ }
+      this._kick = null
+    }
     void this.stopRecording()
     this.stopJamBuffer()
     // Let the decoded audio go with the engine. A disposed engine that still

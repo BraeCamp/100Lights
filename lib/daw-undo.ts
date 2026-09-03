@@ -26,6 +26,8 @@ const ALL: Touched = {
     'scenes', 'sessionGrid', 'masterVolume', 'automationLanes', 'clipEffects', 'returnTracks',
     'takeLanes', 'crossfaderValue', 'waveformZoom', 'swing', 'cueMarkers', 'tempoMarkers',
     'sections', 'comments', 'key', 'scale',
+    // Missing until 2026-09: an unknown action's undo left these as they were.
+    'presets', 'loopStart', 'loopEnd', 'loopEnabled', 'meterMarkers',
   ],
 }
 
@@ -111,6 +113,19 @@ export function touchedByAction(action: DawAction): Touched {
     case 'DUPLICATE_TRACK':
     case 'REORDER_TRACKS':
       return { whole: ['tracks', 'arrangementClips', 'sessionGrid', 'automationLanes', 'clipEffects', 'takeLanes'] }
+    // ⚠️ These fell through to ALL — so undoing "save preset" restored every
+    // other slice wholesale (stomping a collaborator's edits) and did not touch
+    // the presets, which ALL did not list. Each names only what it moved.
+    case 'MOVE_TRACK':
+    case 'GROUP_TRACKS':          return { whole: ['tracks'] }
+    case 'SET_TRACK_HELIOS_FX':
+    case 'SET_TRACK_HELIOS_SYNTH':
+    case 'SET_TRACK_EFFECTS':     return { whole: [], entities: { tracks: [action.trackId] } }
+    case 'ADD_PRESET':
+    case 'UPDATE_PRESET':
+    case 'REMOVE_PRESET':         return { whole: ['presets'] }
+    case 'SET_LANE_OVERRIDDEN':   return { whole: [], entities: { automationLanes: [action.laneId] } }
+    case 'REENABLE_ALL_AUTOMATION': return { whole: ['automationLanes'] }
     case 'ADD_RETURN_TRACK':
     case 'REMOVE_RETURN_TRACK':
       return { whole: ['returnTracks', 'tracks'] }

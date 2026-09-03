@@ -270,13 +270,17 @@ export function translateChain(effects: TrackEffect[], tempo: number): FxUnit[] 
   return out
 }
 
-function fxOnlyPatch(units: FxUnit[]): ApolloPatch {
+function fxOnlyPatch(units: FxUnit[], bpm: number): ApolloPatch {
   const p = initPatch()
   for (const o of p.oscs) o.enabled = false
   p.sub.enabled = false
   p.noise.enabled = false
   p.fxMain = units
   p.global.masterGain = 1
+  // ⚠️ The worklet takes its clock from the PATCH it is sent (patch.global.bpm),
+  // and initPatch says 120. Every synced delay in a track's Apollo FX chain was
+  // echoing at 120 whatever the song's tempo — and each re-send reset it.
+  if (bpm > 0) p.global.bpm = bpm
   return p
 }
 
@@ -284,6 +288,8 @@ export interface HeliosChain {
   input: AudioNode
   output: AudioNode
   handles: Map<string, { setParam(key: string, value: number | string | boolean): void; dispose(): void; keyInput?: AudioNode }>
+  /** The bpm of the section the playhead is in — synced delays follow it live. */
+  setTempo(bpm: number): void
   /** Live gain-reduction meters keyed by unit id (dB, negative = reducing). */
   meters(): Record<string, number[]>
   dispose(): void
@@ -336,13 +342,14 @@ export function buildHeliosMasterBus(ctx: BaseAudioContext): HeliosChain {
     setTimeout(resolve, 4000)
     void engine.init({ ctx, destination: output, fxInput: true }).then(() => {
       if (!alive) { resolve(); return }
-      engine.sendPatch(fxOnlyPatch(units))
+      engine.sendPatch(fxOnlyPatch(units, 0))
       engine.node?.port.postMessage({ type: 'fxMode', on: true })
       if (engine.node) input.connect(engine.node)
     }).catch(() => resolve())
   })
   return {
     input, output, ready, handles: new Map(),
+    setTempo(bpm) { if (bpm > 0) engine.setTransport({ bpm }) },
     meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
     onCrash(fn) { engine.addEventListener('processorError', () => fn()) },
     crash() { engine.crashed = true; engine.dispatchEvent(new CustomEvent('processorError')) },
@@ -397,13 +404,14 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
     return { ...e, params }
   })
   let alive = true
+  let bpmNow = tempo
   const ready = new Promise<void>(resolve => {
     const done = () => { engine.removeEventListener('fxModeAck', done); resolve() }
     engine.addEventListener('fxModeAck', done)
     setTimeout(resolve, 4000)   // never wedge a bounce on a dead worklet
     void engine.init({ ctx, destination: output, fxInput: true }).then(() => {
       if (!alive) { resolve(); return }
-      engine.sendPatch(fxOnlyPatch(units))
+      engine.sendPatch(fxOnlyPatch(units, bpmNow))
       engine.node?.port.postMessage({ type: 'fxMode', on: true })
       if (engine.node) input.connect(engine.node)
       if (engine.node && keyInput) keyInput.connect(engine.node, 0, 1)
@@ -413,7 +421,7 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
   const resend = () => {
     const u2 = translateChain(current, tempo)
     if (u2 && engine.node) {
-      engine.sendPatch(fxOnlyPatch(u2))
+      engine.sendPatch(fxOnlyPatch(u2, bpmNow))
       engine.node.port.postMessage({ type: 'fxMode', on: true })
     }
   }
@@ -459,6 +467,13 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
     output,
     handles,
     ready,
+    setTempo(bpm) {
+      if (!(bpm > 0) || bpm === bpmNow) return
+      bpmNow = bpm
+      // The worklet reads engine.bpm every block for synced times, so this is
+      // live — no re-send, no tail cut.
+      engine.setTransport({ bpm })
+    },
     meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
     onCrash(fn) { engine.addEventListener('processorError', () => fn()) },
     crash() { engine.crashed = true; engine.dispatchEvent(new CustomEvent('processorError')) },

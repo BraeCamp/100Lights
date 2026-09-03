@@ -95,6 +95,34 @@ export function spanSeconds(fromBeat: number, toBeat: number, segs: TempoSegment
   return beatToSeconds(toBeat, segs) - beatToSeconds(fromBeat, segs)
 }
 
+/**
+ * Where a curve's samples fall in BEATS when they are laid out evenly in
+ * SECONDS across [startBeat, startBeat + durationBeats].
+ *
+ * Brae: "When the BPM changes, some stuff doesn't change properly. It changes
+ * in the UI, but the sound is off by a bit."
+ *
+ * ⚠️ Web Audio takes automation as N values spread evenly in TIME
+ * (setValueCurveAtTime). A drawn shape is authored in BEATS. With one tempo the
+ * two grids coincide; across a tempo change they do not — a bar of the shape in
+ * a slower section lasts longer — and sampling the shape evenly in beats then
+ * playing it evenly in seconds is exactly a curve that finishes early or late
+ * while the lane under the track still draws right. So sample the shape at the
+ * beat each time-slot actually reaches. Single segment → i/(N-1) × duration.
+ */
+export function beatsAtEvenSeconds(startBeat: number, durationBeats: number, segs: TempoSegment[], n: number): number[] {
+  const N = Math.max(2, Math.floor(n))
+  if (segs.length <= 1 || !(durationBeats > 0)) {
+    return Array.from({ length: N }, (_, i) => (i / (N - 1)) * Math.max(0, durationBeats))
+  }
+  const s0    = beatToSeconds(startBeat, segs)
+  const total = beatToSeconds(startBeat + durationBeats, segs) - s0
+  return Array.from({ length: N }, (_, i) => {
+    const b = secondsToBeat(s0 + (i / (N - 1)) * total, segs) - startBeat
+    return Math.max(0, Math.min(durationBeats, b))
+  })
+}
+
 /** BPM in effect at `beat`. */
 export function tempoAt(beat: number, segs: TempoSegment[]): number {
   let cur = segs[0]

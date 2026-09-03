@@ -25,11 +25,28 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
   X, Mic, ListChecks, GripVertical, Sparkles, Lock, Volume2, Gauge, Keyboard, Waves,
-  Settings, BookOpen, ChevronLeft, Video,
+  Settings, BookOpen, ChevronLeft, Video, Minus, ScrollText,
 } from 'lucide-react'
 import { commandHelp } from '@/lib/voice/interpret'
 import VoiceUsageLog from './VoiceUsageLog'
 import VoiceMacros from './VoiceMacros'
+import VoiceTranscript from './VoiceTranscript'
+import VoiceLibrary from './VoiceLibrary'
+
+/**
+ * What is open in the bar BESIDE the voice card.
+ *
+ * Brae: "When this or any other of the buttons in the voice control window are
+ * selected, they will open in a bar next to voice control so that voice control
+ * stays on screen."
+ *
+ * ⚠️ NEVER INSTEAD OF THE CARD. Settings, the transcript, the costs, the named
+ * shapes and the list of what Light can do all used to replace the live view —
+ * so reading any of them meant losing sight of the one line that says what the
+ * studio is hearing right now. They open in a second card to the left; the
+ * live card stays where it is.
+ */
+export type VoiceSide = 'none' | 'settings' | 'usage' | 'macros' | 'transcript' | 'help'
 import type { AssistantMode } from '@/lib/voice/speak'
 import { usePlan } from '@/hooks/usePlan'
 import { WAKE_WORDS } from '@/lib/voice/attention'
@@ -86,7 +103,20 @@ export interface VoicePanelProps {
   question?: React.ReactNode
   hud: boolean
   onHud: (on: boolean) => void
+  /**
+   * The ✕: turn voice control OFF, exactly as pressing the voice button would.
+   *
+   * Brae: "The x button will turn off voice controls as if the voice control
+   * button was pressed to toggle off." A close that only hid the card left the
+   * microphone open behind it, which is the one thing a microphone must never
+   * quietly do.
+   */
   onClose: () => void
+  /** The –: put the card away and keep listening. */
+  onMinimize: () => void
+  /** What the bar beside the card is showing, and how to change it. */
+  side: VoiceSide
+  onSide: (s: VoiceSide) => void
   /**
    * The settings themselves.
    *
@@ -105,10 +135,6 @@ export interface VoicePanelProps {
   /** The studio's own recorded voice rather than the browser's. */
   studio: boolean
   onStudio: (on: boolean) => void
-  /** Which tab to open on. */
-  initialTab?: 'talk' | 'settings' | 'help'
-  /** Open the library window — everything Light can do. */
-  onLibrary: () => void
   /** Big on-screen captions of what was said, for screen recordings. */
   caption: boolean
   onCaption: (on: boolean) => void
@@ -555,9 +581,9 @@ export default function VoicePanel({
   placement = 'down', animClass = '',
   listening, continuous, level, hud,
   talking = false, saying = '', reply = '', problem = '', question,
-  onHud, onClose, onLibrary, caption, onCaption, colors: C,
+  onHud, onClose, onMinimize, side, onSide, caption, onCaption, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
-  initialTab = 'talk', mic, threshold = 0, sensitivity, onSensitivity,
+  mic, threshold = 0, sensitivity, onSensitivity,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
   calibration, calibrating, calibrationPhrase, onCalibrate, credits,
   assistant, onAssistant, ear, onEar,
@@ -579,9 +605,8 @@ export default function VoicePanel({
   // command list is a reference you read once. With the assistant acting on
   // whatever it hears, a permanent tab listing the built-in phrasings also
   // rather misstates what the thing can do.
-  const [view, setView] = React.useState<'live' | 'settings' | 'usage' | 'macros'>(
-    initialTab === 'settings' ? 'settings' : 'live',
-  )
+  // (The card used to switch between live / settings / usage / macros. It no
+  // longer switches at all — see VoiceSide: everything else opens beside it.)
   const [find, setFind] = useState('')
 
   // Built once per keystroke rather than per render, and matched on the
@@ -599,13 +624,6 @@ export default function VoicePanel({
       }))
       .filter(g => g.items.length)
   }, [find])
-  // The gear opens Settings, so the caller asking for it is honoured the same
-  // way — by moving the view rather than by selecting a tab that no longer
-  // exists.
-  React.useEffect(() => {
-    setView(initialTab === 'settings' ? 'settings' : 'live')
-  }, [initialTab])
-
   // ── Dragging ─────────────────────────────────────────────────────────────
   //
   // Pointer events on the window rather than on the card, and capture on the
@@ -651,7 +669,9 @@ export default function VoicePanel({
       return
     }
     lastPress.current = now
-    const card = (e.currentTarget as HTMLElement).parentElement
+    // The whole row moves — the card AND the bar beside it — so the offset is
+    // measured against the row, not the card the title bar happens to be in.
+    const card = (e.currentTarget as HTMLElement).closest('[data-voice-panel-root]') as HTMLElement | null
     if (!card) return
     const box = card.getBoundingClientRect()
     drag.current = { dx: e.clientX - box.left, dy: e.clientY - box.top }
@@ -678,9 +698,20 @@ export default function VoicePanel({
   // so a session that is open is simply listening.
   const state = !listening ? 'off' : !continuous ? 'listening' : 'attentive'
 
+  const card = {
+    width: 412, maxHeight: 544, display: 'flex', flexDirection: 'column' as const,
+    background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 8,
+    boxShadow: '0 18px 48px rgba(0,0,0,.55)', overflow: 'hidden',
+    fontSize: 11, color: C.textPrimary,
+  }
+  const SIDE_TITLE: Record<Exclude<VoiceSide, 'none'>, string> = {
+    settings: 'SETTINGS', usage: 'USAGE & COSTS', macros: 'NAMED SHAPES',
+    transcript: 'TRANSCRIPT', help: 'WHAT LIGHT CAN DO',
+  }
+
   return (
     <div
-      data-voice-panel
+      data-voice-panel-root
       className={pos ? undefined : animClass}
       style={{
         // Fixed once it has been moved, so it stays where it was put rather
@@ -693,13 +724,13 @@ export default function VoicePanel({
             ? { position: 'absolute' as const, bottom: 'calc(100% + 8px)', right: 0 }
             : { position: 'absolute' as const, top: 'calc(100% + 8px)', right: 0 }),
         zIndex: 80,
-        width: 412, maxHeight: 544, display: 'flex', flexDirection: 'column',
-        background: C.bgSurface, border: `1px solid ${C.border}`, borderRadius: 8,
-        boxShadow: '0 18px 48px rgba(0,0,0,.55)', overflow: 'hidden',
-        fontSize: 11, color: C.textPrimary,
+        // A row: the bar beside the card grows LEFT from the anchor, so the
+        // card itself never moves when something opens next to it.
+        display: 'flex', flexDirection: 'row', alignItems: 'stretch', gap: 8,
       }}
       onClick={e => e.stopPropagation()}
     >
+    <div data-voice-panel style={card}>
       {/* ── Title bar: what it is doing, always visible ──────────────────── */}
       <div
         onPointerDown={onDragStart}
@@ -751,42 +782,54 @@ export default function VoicePanel({
             pulls up another window for it." Nobody goes looking through
             settings to find out what a thing can do — the question arrives
             while you are already talking to it. */}
-        <button
-          onClick={onLibrary}
-          aria-label="What Light can do"
-          title="What Light can do"
-          style={{
-            display: 'flex', alignItems: 'center', height: 20, padding: '0 5px',
-            borderRadius: 4, cursor: 'pointer', border: 'none', background: 'transparent',
-            color: C.textMuted,
-          }}
-        >
-          <BookOpen size={13} />
-        </button>
+        {/* Each of these opens BESIDE the card, and pressing the one that is
+            open closes it. The live view underneath never changes. */}
+        {([
+          { key: 'transcript', icon: <ScrollText size={13} />, label: 'Transcript — what was said and done' },
+          { key: 'help', icon: <BookOpen size={13} />, label: 'What Light can do' },
+          { key: 'settings', icon: <Settings size={13} />, label: 'Settings' },
+        ] as { key: Exclude<VoiceSide, 'none'>; icon: React.ReactNode; label: string }[]).map(b => (
+          <button
+            key={b.key}
+            onClick={() => onSide(side === b.key ? 'none' : b.key)}
+            aria-label={b.label}
+            aria-pressed={side === b.key}
+            title={b.label}
+            data-voice-side-button={b.key}
+            style={{
+              display: 'flex', alignItems: 'center', height: 20, padding: '0 5px',
+              borderRadius: 4, cursor: 'pointer', border: 'none',
+              background: side === b.key ? `${C.accent}22` : 'transparent',
+              color: side === b.key ? C.accent : C.textMuted,
+            }}
+          >
+            {b.icon}
+          </button>
+        ))}
 
-        {/* Brae: "remove the hud button". Gone from here — it was a mode
-            switch sitting in the same row as the close button, which is a lot
-            of prominence for something used once a session. The setting itself
-            is still in Settings, so nothing is lost. */}
+        {/* Brae: "Add a minimize button to the voice control card and make that
+            make the button close the window. The x button will turn off voice
+            controls as if the voice control button was pressed to toggle off."
+            Two buttons, two different things: – puts the card away and keeps
+            listening; ✕ stops listening altogether. */}
         <button
-          // ⚠️ Back from the log goes to Settings, which is where it was opened
-          // from — landing on the live view loses your place for no reason.
-          // live ⇄ settings, and the two lists opened FROM settings go back to
-          // settings — landing on the live view would lose your place.
-          onClick={() => setView(v => (v === 'live' ? 'settings' : v === 'settings' ? 'live' : 'settings'))}
-          aria-label={view === 'live' ? 'Settings' : 'Back'}
-          title={view === 'live' ? 'Settings' : 'Back'}
+          onClick={onMinimize}
+          aria-label="Minimize — hide the card, keep listening"
+          title="Hide the card (voice stays on)"
+          data-voice-minimize
           style={{
-            display: 'flex', alignItems: 'center', height: 20, padding: '0 5px',
-            borderRadius: 4, cursor: 'pointer', border: 'none', background: 'transparent',
-            color: view === 'live' ? C.textMuted : C.accent,
+            display: 'flex', alignItems: 'center', height: 20, padding: '0 4px',
+            borderRadius: 4, cursor: 'pointer', border: 'none',
+            background: 'transparent', color: C.textMuted,
           }}
         >
-          <Settings size={13} />
+          <Minus size={13} />
         </button>
         <button
           onClick={onClose}
-          aria-label="Close voice panel"
+          aria-label="Turn voice control off"
+          title="Turn voice control off"
+          data-voice-off
           style={{
             display: 'flex', alignItems: 'center', height: 20, padding: '0 4px',
             borderRadius: 4, cursor: 'pointer', border: 'none',
@@ -806,13 +849,11 @@ export default function VoicePanel({
           is the wrong thing now that the card is the whole interface: a
           conversation is a live event, and a log of it competes with the one
           line that matters. */}
-      {view === 'live' && (
-        <div style={{ padding: '10px 12px 6px', borderBottom: `1px solid ${C.border}` }}>
-          <Wave level={level} talking={talking} listening={listening} C={C} />
-        </div>
-      )}
+      <div style={{ padding: '10px 12px 6px', borderBottom: `1px solid ${C.border}` }}>
+        <Wave level={level} talking={talking} listening={listening} C={C} />
+      </div>
 
-      {view === 'live' && queue.length > 0 && (
+      {queue.length > 0 && (
         <div style={{
           borderBottom: `1px solid ${C.border}`, padding: '8px 10px',
           background: `${C.accent}0e`,
@@ -869,41 +910,73 @@ export default function VoicePanel({
       )}
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
-        {view === 'live' && (
+        {(
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 96 }}>
-            {/* What you are saying, right now. One line, large enough to read
-                from where somebody actually sits — across a desk, mid-take,
-                while looking at the arrangement rather than at this. */}
-            <div style={{
-              fontSize: 15, lineHeight: 1.4, color: saying ? C.textPrimary : C.textMuted,
-              fontStyle: saying ? 'normal' : 'italic', minHeight: 42,
-            }}>
-              {saying || (talking
-                ? '…'
-                : listening
-                  ? 'Listening — say what you want.'
-                  : 'Hold the button, or switch to click-to-talk in Settings.')}
+            {/* ── You ────────────────────────────────────────────────────
+                Brae: "we will also separate the visuals for the user speaking
+                and light responding." Two rows, two voices: yours is labelled,
+                left-edged and plain; Light's is labelled, tinted in the accent
+                and marked with the spark. The wave above belongs to whoever is
+                making sound — it already knows which. */}
+            <div data-voice-you style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <span style={{
+                flex: '0 0 auto', marginTop: 3, width: 16, height: 16, borderRadius: 8,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                background: listening && !talking ? `${C.accent}33` : 'rgba(255,255,255,.06)',
+                color: listening && !talking ? C.accent : C.textMuted,
+                transition: 'background 200ms, color 200ms',
+              }}><Mic size={10} /></span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, color: C.textMuted, marginBottom: 2 }}>YOU</div>
+                {/* What you are saying, right now. One line, large enough to
+                    read from where somebody actually sits — across a desk,
+                    mid-take, while looking at the arrangement. */}
+                <div style={{
+                  fontSize: 15, lineHeight: 1.4, color: saying ? C.textPrimary : C.textMuted,
+                  fontStyle: saying ? 'normal' : 'italic', minHeight: 21,
+                  transition: 'color 160ms',
+                }}>
+                  {saying || (listening
+                    ? 'Listening — say what you want.'
+                    : 'Hold the button, or switch to click-to-talk in Settings.')}
+                </div>
+              </div>
             </div>
 
-            {/* And what it said back. Kept because a reply that vanishes leaves
+            {/* ── Light ──────────────────────────────────────────────────
+                What it said back. Kept because a reply that vanishes leaves
                 you unable to tell "it did the wrong thing" from "it did
                 nothing" — which is the question this whole card exists to
                 answer. */}
-            {(reply || problem) && (
-              <div
-                // The read-back's stable hook. It used to be on a bubble
-                // floating below the button; the bubble is gone and this is
-                // where the same text lives now, so the checks that read it
-                // still find the thing they were checking.
-                data-voice-readback
-                style={{
-                padding: '7px 9px', borderRadius: 6, lineHeight: 1.45,
-                borderLeft: `2px solid ${problem ? '#e0776b' : C.accent}`,
-                background: problem ? '#e0776b12' : `${C.accent}12`,
-                color: problem ? '#ffb4b4' : C.textPrimary,
-                }}
-              >
-                {problem || reply}
+            {(reply || problem || talking) && (
+              <div data-voice-light style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <span style={{
+                  flex: '0 0 auto', marginTop: 3, width: 16, height: 16, borderRadius: 8,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  background: problem ? '#e0776b33' : `${C.accent}33`,
+                  color: problem ? '#e0776b' : C.accent,
+                  animation: talking ? 'pulse 1.1s ease-in-out infinite' : undefined,
+                }}><Sparkles size={10} /></span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, color: problem ? '#e0776b' : C.accent, marginBottom: 2 }}>
+                    LIGHT{talking ? ' · speaking' : ''}
+                  </div>
+                  <div
+                    // The read-back's stable hook. It used to be on a bubble
+                    // floating below the button; the bubble is gone and this
+                    // is where the same text lives now, so the checks that
+                    // read it still find the thing they were checking.
+                    data-voice-readback
+                    style={{
+                      padding: '7px 9px', borderRadius: 6, lineHeight: 1.45,
+                      borderLeft: `2px solid ${problem ? '#e0776b' : C.accent}`,
+                      background: problem ? '#e0776b12' : `${C.accent}12`,
+                      color: problem ? '#ffb4b4' : C.textPrimary,
+                    }}
+                  >
+                    {problem || reply || '…'}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -915,10 +988,51 @@ export default function VoicePanel({
           </div>
         )}
 
-        {view === 'usage' && <VoiceUsageLog C={C} />}
-        {view === 'macros' && <VoiceMacros C={C} />}
+      </div>
+    </div>
 
-        {view === 'settings' && (
+    {/* ── The bar beside the card ──────────────────────────────────────────
+        Rendered after the card so the settings JSX below stays where it has
+        always been, and placed BEFORE it visually (order: -1) so it opens to
+        the left, away from the screen edge the card is anchored to. */}
+    {side !== 'none' && (
+      <div
+        data-voice-side={side}
+        className="menu-pop"
+        style={{ ...card, width: side === 'help' ? 420 : 380, order: -1 }}
+      >
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+          borderBottom: `1px solid ${C.border}`, background: 'rgba(255,255,255,.02)',
+        }}>
+          <span style={{ fontWeight: 800, letterSpacing: 0.3, fontSize: 10 }}>{SIDE_TITLE[side]}</span>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={() => onSide('none')}
+            aria-label="Close this bar"
+            title="Close"
+            style={{
+              display: 'flex', alignItems: 'center', height: 20, padding: '0 4px',
+              borderRadius: 4, cursor: 'pointer', border: 'none',
+              background: 'transparent', color: C.textMuted,
+            }}
+          >
+            <X size={13} />
+          </button>
+        </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: side === 'help' ? 0 : 10, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {side === 'usage' && <VoiceUsageLog C={C} />}
+        {side === 'macros' && <VoiceMacros C={C} />}
+        {side === 'transcript' && <VoiceTranscript C={C} />}
+        {side === 'help' && (
+          <VoiceLibrary
+            embedded
+            onClose={() => onSide('none')}
+            colors={{ bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary, textMuted: C.textMuted, accent: C.accent }}
+          />
+        )}
+
+        {side === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
             {/* ── What it has cost ────────────────────────────────────────
@@ -928,7 +1042,7 @@ export default function VoicePanel({
                 visit rather than a preference you set — and because most of
                 what it has to say is about the commands that cost nothing. */}
             <button
-              onClick={() => setView('usage')}
+              onClick={() => onSide('usage')}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 gap: 8, padding: '7px 9px', borderRadius: 6, cursor: 'pointer',
@@ -948,7 +1062,7 @@ export default function VoicePanel({
                 question from opposite ends — one shows what you spent, the
                 other shows the names that stop you spending it again. */}
             <button
-              onClick={() => setView('macros')}
+              onClick={() => onSide('macros')}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 gap: 8, padding: '7px 9px', borderRadius: 6, cursor: 'pointer',
@@ -1051,7 +1165,7 @@ export default function VoicePanel({
                   the assistant switched off it is the whole vocabulary and
                   worth reading; with the assistant acting it is trivia. */}
               <button
-                onClick={onLibrary}
+                onClick={() => onSide('help')}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   width: '100%', height: 26, borderRadius: 5, cursor: 'pointer',
@@ -1259,15 +1373,9 @@ export default function VoicePanel({
             </Group>
           </div>
         )}
-
-
-        {/* (The in-panel help list lived here. Seventy-seven things read
-            inside a card that sits in the transport is a keyhole, and you
-            read this WHILE talking to the studio — closing the thing you
-            are talking to in order to look up what to say is backwards. It
-            is its own window now: VoiceLibrary.tsx.) */}
       </div>
-
+      </div>
+    )}
     </div>
   )
 }

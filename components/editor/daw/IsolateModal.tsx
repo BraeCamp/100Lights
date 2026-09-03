@@ -221,8 +221,7 @@ export default function IsolateModal({
 
   return createPortal(
     <div
-className="electron-nodrag"
-style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
+className="electron-nodrag backdrop-in" style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
       onClick={e => { if (e.target === e.currentTarget) { try { sourceRef.current?.stop() } catch {} fadeRef.current?.disconnect(); onClose() } }}
     >
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, width: 460, boxShadow: '0 8px 40px rgba(0,0,0,0.7)' }}>
