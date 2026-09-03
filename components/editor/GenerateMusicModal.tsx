@@ -121,7 +121,7 @@ export default function GenerateMusicModal({ open, onClose }: { open: boolean; o
 
   return createPortal(
     <div
-      className="electron-nodrag"
+      className="electron-nodrag backdrop-in"
       style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
       onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }}
     >

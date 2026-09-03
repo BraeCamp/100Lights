@@ -64,9 +64,29 @@ function create(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Man
         engine.scheduleEvents(m.queue)
         m.queue = []
       }
+      for (const f of readyListeners) f()
     })
     .catch(() => { /* engine unavailable — notes drop silently */ })
   return m
+}
+
+// ── Readiness, for the studio to SHOW ────────────────────────────────────────
+//
+// Brae: "when a song is loading, unloaded clips have some way of showing that
+// they're not loaded. When the song is ready to be played it will say so."
+// An engine coming up is the last thing a synth track waits on, and nothing
+// outside this file could see it happen.
+const readyListeners = new Set<() => void>()
+export function onApolloReady(f: () => void): () => void {
+  readyListeners.add(f)
+  return () => { readyListeners.delete(f) }
+}
+/** Is the engine on this destination ready to sound? True when there is none
+ *  yet (nothing has asked for one, so nothing is waiting). */
+export function apolloDestReady(dest: AudioNode | undefined): boolean {
+  if (!dest) return true
+  const m = byDest.get(dest)
+  return !m || m.released || m.engine.crashed || m.isReady
 }
 
 function ensure(ctx: BaseAudioContext, dest: AudioNode, patch: ApolloPatch): Managed {

@@ -321,9 +321,13 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
         <input
           autoFocus value={nameDraft}
           onChange={e => setNameDraft(e.target.value)}
-          onBlur={() => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: nameDraft } }); setEditing(false) }}
+          // Escape CANCELS, as it does everywhere else; and an empty name is
+          // not a name — the voice control resolves tracks by name, and a
+          // track called "" can never be asked for.
+          onBlur={() => { const n = nameDraft.trim(); if (n && n !== track.name) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: n } }); setEditing(false) }}
           onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === 'Escape') { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: nameDraft } }); setEditing(false) }
+            if (e.key === 'Enter') { const n = nameDraft.trim(); if (n && n !== track.name) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: n } }); setEditing(false) }
+            else if (e.key === 'Escape') { setNameDraft(track.name); setEditing(false) }
             e.stopPropagation()
           }}
           style={{ width: '100%', fontSize: 10, background: 'var(--bg-base)', border: '1px solid var(--accent)', color: 'var(--text-primary)', borderRadius: 3, textAlign: 'center', padding: '1px 2px', outline: 'none' }}

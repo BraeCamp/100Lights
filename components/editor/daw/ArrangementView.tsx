@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useRef, useEffect, useMemo } from 'react'
+import { useAppear } from '@/components/ui/Appear'
 import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend, ChevronDown, Music, Grid3x3, X, Cloud, HardDrive, Folder, Check, MessageSquare, RectangleHorizontal, MoreHorizontal, Download } from 'lucide-react'
 import { onCenterOnBeat } from '@/lib/daw-view'
-import { useDaw, makeMidiClip, makeAudioClip } from '@/lib/daw-state'
+import { useDaw, makeMidiClip, makeAudioClip, useEnginePlaying } from '@/lib/daw-state'
 import { highlightHelpTargets } from './HelpButton'
 import { isMidiClip, isAudioClip, TRACK_COLORS, clipLockedBy } from '@/lib/daw-types'
 import type { ReturnTrack, AudioClip, DawClip, MidiClip } from '@/lib/daw-types'
@@ -443,6 +444,7 @@ export default function ArrangementView() {
   const [scrollLeft, setScrollLeft] = useState(MIN_SCROLL)
   const [snap, setSnap]             = useState<SnapMode>('1/16')
   const [snapMenu, setSnapMenu]     = useState(false)   // desktop snap dropdown
+  const loopA = useAppear(loopToolArmed, 'rise')
   const snapLabelOf = (m: SnapMode) => (m === 'off' ? 'Off' : m === 'beat' ? 'Beat' : m === 'bar' ? 'Bar' : m)
   // "Everything" tier only: split the timeline with full-height dividers at every
   // tempo change (and section boundary — where a time-signature change is marked).
@@ -474,13 +476,16 @@ export default function ArrangementView() {
   const [showExport, setShowExport] = useState(false)
   const [exportDefaultFormat, setExportDefaultFormat] = useState<'webm' | 'wav'>('webm')
   const [showExportDropdown, setShowExportDropdown] = useState(false)
+  const exportA = useAppear(showExportDropdown, 'pop')
   const exportDropdownRef = useRef<HTMLDivElement>(null)
   const [showSaveDropdown, setShowSaveDropdown] = useState(false)
+  const saveA = useAppear(showSaveDropdown, 'pop')
   const saveDropdownRef = useRef<HTMLDivElement>(null)
   const [saveDest, setSaveDest] = useState<'cloud' | 'local'>(() => {
     try { return typeof localStorage !== 'undefined' && localStorage.getItem('100lights-save-dest') === 'local' ? 'local' : 'cloud' } catch { return 'cloud' }
   })
   const [showEditorMenu, setShowEditorMenu] = useState(false)
+  const editorA = useAppear(showEditorMenu, 'pop')
   const editorDropdownRef = useRef<HTMLDivElement>(null)
   const [arrangeTransientDialog, setArrangeTransientDialog] = useState<{
     sensitivity: number; transients: number[]; buf: AudioBuffer; clip: AudioClip
@@ -568,6 +573,7 @@ export default function ArrangementView() {
     setSelectionRegion({ start: region.start, end: region.end + blocks * blockLen })
   }
   const [prHint, setPrHint] = useState<string | null>(null)  // transient note under the PIANO ROLL button
+  const prA = useAppear(!!prHint, 'drop')
 
   useEffect(() => {
     const ro = new ResizeObserver(entries => setViewWidth(entries[0].contentRect.width - hdrW))
@@ -575,15 +581,25 @@ export default function ArrangementView() {
     return () => ro.disconnect()
   }, [hdrW])
 
+  // ⚠️ Idle when stopped. This loop ran every frame for as long as the studio
+  // was open — playing or not, tab visible or not — for a playhead that was
+  // not moving. It paints once on any change and only loops while the
+  // transport runs (the project rule for every editor loop).
+  const transportPlaying = useEnginePlaying()
   useEffect(() => {
-    function frame() {
+    const paint = () => {
       const el = playheadRef.current
       if (el) el.style.left = `${engine.displayBeat * beatW - scrollLeft}px`
+    }
+    paint()
+    if (!transportPlaying) return
+    function frame() {
+      paint()
       rafRef.current = requestAnimationFrame(frame)
     }
     rafRef.current = requestAnimationFrame(frame)
     return () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current) }
-  }, [engine, beatW, scrollLeft])
+  }, [engine, beatW, scrollLeft, transportPlaying])
 
   const tsPopoverRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -1430,8 +1446,8 @@ export default function ArrangementView() {
       onMouseDownCapture={loopToolArmed ? onLoopToolMouseDown : undefined}
       style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-base)', backgroundImage: 'var(--workshop-pattern, none)', backgroundSize: 'var(--workshop-pattern-size, auto)', overflow: 'hidden', position: 'relative', cursor: loopToolArmed ? 'crosshair' : undefined }}
     >
-      {loopToolArmed && (
-        <div style={{
+      {loopA.mounted && (
+        <div className={`${loopA.cls} appear-centered`} style={{
           position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 30, pointerEvents: 'none',
           display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 999,
           background: 'rgba(16,20,30,0.95)', border: '1px solid rgb(var(--accent-rgb) / 0.5)',
@@ -1603,14 +1619,14 @@ export default function ArrangementView() {
               background: showEditorMenu ? 'var(--bg-card)' : active ? 'rgb(var(--accent-rgb) / 0.18)' : 'transparent',
               color: active ? 'var(--accent-light)' : 'var(--text-muted)', borderRadius: '0 3px 3px 0',
             }}><ChevronDown size={11} /></button>
-            {showEditorMenu && (
-              <div className="menu-pop" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 150, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+            {editorA.mounted && (
+              <div className={editorA.cls} style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 150, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
                 <button style={{ ...menuItem, display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => { setShowEditorMenu(false); createEditorClip('roll') }}><Music size={13} /> New Piano Roll</button>
                 <button style={{ ...menuItem, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => { setShowEditorMenu(false); createEditorClip('beat') }}><Grid3x3 size={13} /> New Beat</button>
               </div>
             )}
-            {prHint && (
-              <div style={{
+            {prA.mounted && (
+              <div className={prA.cls} style={{
                 position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 300,
                 whiteSpace: 'nowrap', fontSize: 10, padding: '4px 9px', borderRadius: 5,
                 background: 'var(--bg-card)', border: '1px solid rgba(250,204,21,0.45)', color: '#facc15',
@@ -1643,8 +1659,8 @@ export default function ArrangementView() {
               color: 'var(--text-muted)', borderRadius: '0 3px 3px 0',
             }}
           ><ChevronDown size={11} /></button>
-          {showExportDropdown && (
-            <div className="menu-pop" style={{
+          {exportA.mounted && (
+            <div className={exportA.cls} style={{
               position: 'absolute', top: '100%', right: 0, marginTop: 2,
               background: 'var(--bg-card)', border: '1px solid var(--border)',
               borderRadius: 4, zIndex: 1000, minWidth: 130, overflow: 'hidden',
@@ -1722,8 +1738,8 @@ export default function ArrangementView() {
                 color: 'var(--text-muted)', borderRadius: '0 3px 3px 0',
               }}
             ><ChevronDown size={11} /></button>
-            {showSaveDropdown && (
-              <div className="menu-pop" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 214, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+            {saveA.mounted && (
+              <div className={saveA.cls} style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, zIndex: 1000, minWidth: 214, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
                 <div style={{ padding: '7px 11px 4px', fontSize: 8.5, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Where to save</div>
                 <button onClick={() => { setSaveDest('cloud'); try { localStorage.setItem('100lights-save-dest', 'cloud') } catch { /* private mode */ } setShowSaveDropdown(false); void onSave?.() }}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 11px', textAlign: 'left', background: saveDest === 'cloud' ? 'rgb(var(--accent-rgb) / 0.12)' : 'transparent', border: 'none', color: saveDest === 'cloud' ? 'var(--accent-light)' : 'var(--text-secondary)', fontSize: 11.5, cursor: 'pointer' }}>

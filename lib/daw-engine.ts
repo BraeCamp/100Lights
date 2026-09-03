@@ -14,8 +14,8 @@ import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './ap
 import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
-import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain, apolloAwaitReady } from './apollo/daw-instrument'
-import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam, pluginAwaitReady } from './beacon-plugins/host'
+import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain, apolloAwaitReady, apolloDestReady, onApolloReady } from './apollo/daw-instrument'
+import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam, pluginAwaitReady, pluginDestReady, onPluginReady } from './beacon-plugins/host'
 import type { PluginInstrumentParams } from './beacon-plugins/types'
 import { combined, combinedStale, combinedStamp, requestCombine, prerenderOn, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
@@ -392,6 +392,10 @@ export class DawEngine extends EventTarget {
     // lets the whole graph build off-line for faster-than-real-time rendering.
     // Default is the normal real-time context — studio behaviour is unchanged.
     this.ctx = opts?.ctx ?? new AudioContext({ latencyHint: audioLatencyHint() })
+    // A synth engine coming up is a load event like a buffer decoding — the
+    // studio's loading state listens to both through 'load-change'.
+    onApolloReady(() => this._loadChanged())
+    onPluginReady(() => this._loadChanged())
 
     // Safety compressor, not glue: -12dB/3:1 clamped the whole mix whenever a
     // sustained loud element (stacked drones, held chords) sat above threshold,
@@ -441,13 +445,16 @@ export class DawEngine extends EventTarget {
     // 'interrupted', which every inline resume guard in this file misses.
     // Anything that is not 'running' wants resuming.
     if (typeof document !== 'undefined' && typeof this.ctx.addEventListener === 'function') {
-      const kick = () => {
+      // Kept on the instance so dispose() can take both listeners off again.
+      // Without that every disposed engine (a project switch, a StrictMode
+      // remount) stayed reachable from `document` for the life of the page.
+      this._kick = () => {
         if (document.visibilityState === 'visible' && this.ctx.state !== 'running' && this.ctx.state !== 'closed') {
           void (this.ctx as AudioContext).resume?.()
         }
       }
-      this.ctx.addEventListener('statechange', kick)
-      document.addEventListener('visibilitychange', kick)
+      this.ctx.addEventListener('statechange', this._kick)
+      document.addEventListener('visibilitychange', this._kick)
     }
 
     // Performance-FX insert: masterGain → perfFilter → perfGain → analyser.
@@ -1073,11 +1080,47 @@ export class DawEngine extends EventTarget {
     // audio look undecodable.
     const inFlight = this._loadInFlight.get(clip.id)
     if (inFlight) return inFlight
-    const p = this._loadClipBufferInner(clip).finally(() => { this._loadInFlight.delete(clip.id) })
+    const p = this._loadClipBufferInner(clip)
+      .then(buf => { if (!buf) this._bufferFailed.add(clip.id); return buf })
+      .finally(() => { this._loadInFlight.delete(clip.id); this._loadChanged() })
     this._loadInFlight.set(clip.id, p)
     return p
   }
   private _loadInFlight = new Map<string, Promise<AudioBuffer | null>>()
+  /** Clips whose audio could not be fetched or decoded — not loading, gone. */
+  private _bufferFailed = new Set<string>()
+
+  // ── What is still loading ─────────────────────────────────────────────────
+  //
+  // Brae: "when a song is loading, unloaded clips have some way of showing that
+  // they're not loaded. When the song is ready to be played it will say so at
+  // the bottom of the screen so that users know when their project has loaded."
+  //
+  // ⚠️ A clip is "loaded" when the thing that will SOUND it is here: an audio
+  // clip's decoded buffer, a synth clip's worklet engine, a drum clip's kit.
+  // Nothing polls: the loaders say when they finish, and the studio listens
+  // for 'load-change'.
+  private _loadChanged(): void {
+    try { this.dispatchEvent(new CustomEvent('load-change')) } catch { /* not in a DOM */ }
+  }
+  /** Can this clip sound right now? */
+  clipReady(clip: DawClip): boolean {
+    if (isAudioClip(clip)) return this.bufferCache.has(clip.id) || this._bufferFailed.has(clip.id)
+    const track = this._tracks.find(t => t.id === clip.trackId)
+    if (!track) return true
+    const dest = this.trackNodes.get(track.id)?.midiInput
+    const inst = this._resolveInstrument(track)
+    if (inst?.type === 'apollo') return apolloDestReady(dest)
+    if (inst?.type === 'plugin') return pluginDestReady(dest)
+    return true
+  }
+  /** How much of the song can sound: total = clips that need something loaded. */
+  readiness(): { ready: number; total: number; waiting: string[] } {
+    const clips: DawClip[] = [...this._clips, ...this._midiClips]
+    const waiting: string[] = []
+    for (const c of clips) if (!this.clipReady(c)) waiting.push(c.id)
+    return { ready: clips.length - waiting.length, total: clips.length, waiting }
+  }
 
   private async _loadClipBufferInner(clip: AudioClip): Promise<AudioBuffer | null> {
     // Try the local URL first (blob: for fresh recordings, signed URL for
@@ -1229,7 +1272,12 @@ export class DawEngine extends EventTarget {
   secondsToBeats(seconds: number): number { return seconds * (this.tempo / 60) }
 
   async play(fromBeat?: number) {
-    if (this.ctx.state === 'suspended') await this.ctx.resume()
+    // ⚠️ 'interrupted' as well as 'suspended'. WebKit reports a context that a
+    // phone call or Siri took over as 'interrupted', which this guard let
+    // through: Play moved the playhead with no sound until something else
+    // resumed the context. Anything short of running gets resumed.
+    const st = this.ctx.state as string
+    if (st !== 'running' && st !== 'closed') await this.ctx.resume()
     if (fromBeat !== undefined) this._startBeat = fromBeat
     // Small scheduling headroom: without it, clips sitting exactly at the play
     // position get startAt values already in the past by the time they're
@@ -1872,6 +1920,12 @@ export class DawEngine extends EventTarget {
       const clipId = slot.clip.id
       const finish = () => {
         clearInterval(slot.intervalId)
+        // ⚠️ Only THIS slot. A quantized stop lands after a delay; relaunching
+        // the same track inside that delay put a new slot in the map, and the
+        // old stop then deleted the NEW one — its interval never cleared, the
+        // UI said idle while it played. A stop that arrives late for a slot
+        // that has already been replaced has nothing left to do.
+        if (this._sessionMidiSlots.get(trackId) !== slot) return
         this._sessionMidiSlots.delete(trackId)
         this.dispatchEvent(new CustomEvent('session-state', { detail: { trackId, clipId, state: 'idle' } }))
       }
@@ -5039,9 +5093,17 @@ export class DawEngine extends EventTarget {
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
 
+  /** The resume-on-return listener, so dispose() can remove it. */
+  private _kick: (() => void) | null = null
+
   dispose() {
     this.stop()
     this.setMetronome(false)
+    if (this._kick) {
+      try { this.ctx.removeEventListener('statechange', this._kick) } catch { /* ok */ }
+      try { document.removeEventListener('visibilitychange', this._kick) } catch { /* ok */ }
+      this._kick = null
+    }
     void this.stopRecording()
     this.stopJamBuffer()
     // Let the decoded audio go with the engine. A disposed engine that still

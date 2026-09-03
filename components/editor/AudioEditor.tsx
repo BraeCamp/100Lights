@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { createPortal } from 'react-dom'
 import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch } from '@/lib/daw-undo'
+import Appear, { useSticky, useAppear } from '@/components/ui/Appear'
 import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
 import { spliceClipAt } from '@/lib/daw-splice'
 import { ADD_OPTIONS, makeDefaultParams as makeDefaultEffectParams } from '@/lib/daw-effect-catalog'
@@ -780,6 +781,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [dawDirty, setDawDirty] = useState(false)
   /** Progress text while baking synth tracks to audio; null when not freezing. */
   const [freezing, setFreezing] = useState<string | null>(null)
+  const freezingA = useAppear(!!freezing, 'drop')
+  const freezingS = useSticky(freezing)
   const dirtyReadyRef = useRef(false)   // skip the first post-load settle
   /**
    * Has anything actually changed since the last successful save?
@@ -1099,6 +1102,39 @@ export default function AudioEditor(props: AudioEditorProps) {
   // reads counters, and reading them every frame when nobody is looking is how
   // a diagnostic becomes the thing it is diagnosing.
   const [loadPanel, setLoadPanel] = useState(false)
+
+  // ── "Ready to play" ──────────────────────────────────────────────────────
+  //
+  // Brae: "When the song is ready to be played it will say so at the bottom of
+  // the screen so that users know when their project has loaded."
+  //
+  // ⚠️ THE ENGINE SAYS WHEN, NOT A TIMER. Every clip's sound arrives on its own
+  // schedule — a buffer decoding, a synth's worklet coming up — and the engine
+  // reports each ('load-change'). The pill appears the moment nothing is left
+  // waiting after something WAS waiting, and only then: a project that opens
+  // fully ready says nothing, and one that never finishes never lies.
+  const [readyPill, setReadyPill] = useState<null | { ready: number }>(null)
+  const wasWaiting = useRef(false)
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine) return
+    let hideTimer: ReturnType<typeof setTimeout> | null = null
+    const check = () => {
+      const r = engine.readiness()
+      const waiting = r.total > 0 && r.ready < r.total
+      if (waiting) { wasWaiting.current = true; return }
+      if (!wasWaiting.current) return
+      wasWaiting.current = false
+      setReadyPill({ ready: r.total })
+      if (hideTimer) clearTimeout(hideTimer)
+      hideTimer = setTimeout(() => setReadyPill(null), 3200)
+    }
+    engine.addEventListener('load-change', check)
+    // A project that arrives with everything still to load: note it, so the
+    // pill can fire when the last piece lands.
+    const first = setTimeout(check, 300)
+    return () => { engine.removeEventListener('load-change', check); clearTimeout(first); if (hideTimer) clearTimeout(hideTimer) }
+  }, [project.id])
   const [loadDetail, setLoadDetail] = useState<{
     ready: number; inFlight: number; queued: number; setAside: number; givenUp: number
     lastError: string | null; failed: [string, number][]
@@ -1199,6 +1235,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   // a machine that struggles is not asked twice.
   const [serverLoad, setServerLoad] = useState(false)
   const [serverOffer, setServerOffer] = useState<string | null>(null)
+  const serverOfferA = useAppear(!!serverOffer, 'rise')
   const offeredServer = useRef(false)
 
   const switchToServer = useCallback((on: boolean, why: string) => {
@@ -2267,6 +2304,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
   const [saveError,  setSaveError]  = useState('')
+  // The words a toast shows while it fades out are the words it was showing.
+  const lockNoticeS = useSticky(lockNotice)
+  const syncMsgS = useSticky(syncMsg)
+  const saveStatusS = useSticky(saveStatus === 'saved' || saveStatus === 'error' ? saveStatus : null)
   const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
   const expandedRollRef = useRef<string | null>(null)
   useEffect(() => { expandedRollRef.current = expandedPianoRollClipId }, [expandedPianoRollClipId])
@@ -2538,7 +2579,14 @@ export default function AudioEditor(props: AudioEditorProps) {
       if (
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
+        target.tagName === 'SELECT' ||
+        target.isContentEditable ||
+        // A focused slider or combo box owns its arrow keys and Space; the
+        // studio's shortcuts used to steal them (arrows seeking the playhead
+        // from inside a focused select). Plain buttons are left alone: Space
+        // is the transport everywhere else, and a toolbar button that was
+        // just clicked must not swallow it.
+        !!target.closest?.('[role="slider"], [role="combobox"], [role="textbox"], [role="listbox"]')
       ) return
 
       const engine = engineRef.current!
@@ -2558,11 +2606,9 @@ export default function AudioEditor(props: AudioEditorProps) {
 
       if (e.code === 'KeyR') {
         e.preventDefault()
-        if (engine.isRecording) {
-          void engine.stopRecording()
-        } else {
-          void engine.startRecording()
-        }
+        // Through the transport's own record flow (arm guards, count-in, the
+        // notice when the microphone refuses) — never straight to the engine.
+        window.dispatchEvent(new CustomEvent('100lights:record-toggle'))
         return
       }
 
@@ -3210,6 +3256,26 @@ export default function AudioEditor(props: AudioEditorProps) {
             deliberate Freeze below it. It only appears while there is real work
             outstanding, and it says which half of the work it is doing: getting
             to first sound, or filling in the rest behind you. */}
+        {/* The moment the last piece of the song lands. Bottom-centre, where
+            the loading strip lives, so the eye is already there. */}
+        <Appear show={!!readyPill && !(loadProgress.total > 0 && loadProgress.done < loadProgress.total)} kind="rise" exitMs={180}>
+          {cls => (
+            <div
+              className={`${cls} appear-centered`}
+              data-ui-el="ready-to-play"
+              role="status"
+              style={{
+                position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 941,
+                pointerEvents: 'none', padding: '5px 12px', borderRadius: 999,
+                background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--accent)',
+                color: 'var(--accent-light, var(--accent))', fontSize: 11, fontWeight: 700, letterSpacing: '0.03em',
+                boxShadow: '0 6px 24px rgba(0,0,0,.45)', whiteSpace: 'nowrap',
+              }}
+            >
+              ✓ Ready to play
+            </div>
+          )}
+        </Appear>
         {loadProgress.total > 0 && loadProgress.done < loadProgress.total && (
           <div
             data-ui-el="load-progress"
@@ -3294,8 +3360,8 @@ export default function AudioEditor(props: AudioEditorProps) {
             {/* The offer, when the machine is visibly struggling. It says WHAT
                 it noticed: "we think you should change something" without the
                 evidence is just an alarm. */}
-            {serverOffer && !serverLoad && (
-              <div style={{
+            {serverOfferA.mounted && !serverLoad && (
+              <div className={serverOfferA.cls} style={{
                 pointerEvents: 'auto', alignSelf: 'center', marginBottom: 4,
                 display: 'flex', alignItems: 'center', gap: 10,
                 background: 'var(--bg-elevated, #16181d)', border: '1px solid #a2591b',
@@ -3375,8 +3441,9 @@ export default function AudioEditor(props: AudioEditorProps) {
 
         {/* Freezing renders the whole song, which takes a while — say so, or it
             looks like the studio has hung. */}
-        {freezing && (
+        {freezingA.mounted && (
           <div
+            className={`${freezingA.cls} appear-centered`}
             data-ui-el="freeze-status"
             style={{
               position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 950,
@@ -3385,7 +3452,7 @@ export default function AudioEditor(props: AudioEditorProps) {
               color: 'var(--text-primary)', boxShadow: '0 8px 24px rgba(0,0,0,0.35)', pointerEvents: 'none',
             }}
           >
-            {freezing}
+            {freezingS}
           </div>
         )}
         {draggingAudioOver && !props.readOnly && (
@@ -3909,8 +3976,8 @@ export default function AudioEditor(props: AudioEditorProps) {
       )}
 
       {/* Session-recovery prompt */}
-      {restorePrompt && (
-        <div className="electron-nodrag" style={{
+      <Appear show={!!restorePrompt} kind="rise" exitMs={180}>{cls => restorePrompt && (
+        <div className={`electron-nodrag ${cls} appear-centered`} style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 120,
           display: 'flex', alignItems: 'center', gap: 12,
           padding: '12px 18px', borderRadius: 10,
@@ -3935,37 +4002,37 @@ export default function AudioEditor(props: AudioEditorProps) {
             border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', whiteSpace: 'nowrap',
           }}>Discard</button>
         </div>
-      )}
+      )}</Appear>
 
       {/* Collab lock notice */}
-      {lockNotice && (
-        <div role="status" style={{
+      <Appear show={!!lockNotice} kind="rise">{cls => (
+        <div role="status" className={`${cls} appear-centered`} style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1200,
           display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 999,
           background: 'var(--bg-card)', border: '1px solid rgba(245,158,11,0.5)', color: '#facc15',
           fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
-        }}>🔒 {lockNotice} is editing this clip — it’s locked while they’re in it.</div>
-      )}
+        }}>🔒 {lockNoticeS} is editing this clip — it’s locked while they’re in it.</div>
+      )}</Appear>
 
       {/* Suggestion sent */}
-      {suggestSent && (
-        <div role="status" style={{
+      <Appear show={!!suggestSent} kind="rise">{cls => (
+        <div role="status" className={`${cls} appear-centered`} style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1200,
           display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 999,
           background: 'var(--bg-card)', border: '1px solid #166534', color: '#4ade80',
           fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
         }}>✓ Suggestion sent — the owner can review and accept it.</div>
-      )}
+      )}</Appear>
 
       {/* Sync status toast */}
-      {syncMsg && (
-        <div role="status" style={{
+      <Appear show={!!syncMsg} kind="rise">{cls => (
+        <div role="status" className={`${cls} appear-centered`} style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1200,
           display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 999,
           background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)',
           fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
-        }}>↻ {syncMsg}</div>
-      )}
+        }}>↻ {syncMsgS}</div>
+      )}</Appear>
 
       {/* A device popped out of the chain, floating over the studio. Mounted
           here rather than inside DeviceChain because the device panel is a
@@ -3978,24 +4045,24 @@ export default function AudioEditor(props: AudioEditorProps) {
       <MergeReview />
 
       {/* Save toast */}
-      {(saveStatus === 'saved' || saveStatus === 'error') && (
-        <div style={{
+      <Appear show={saveStatus === 'saved' || saveStatus === 'error'} kind="rise">{cls => (
+        <div className={cls} style={{
           position: 'fixed', bottom: 24, right: 24, zIndex: 100,
           display: 'flex', flexDirection: 'column', gap: 2,
           padding: '10px 16px', borderRadius: 10,
-          background: saveStatus === 'saved' ? 'var(--bg-card)' : '#250f0f',
-          border: `1px solid ${saveStatus === 'saved' ? '#166534' : '#7f1d1d'}`,
-          color: saveStatus === 'saved' ? '#4ade80' : '#f87171',
+          background: saveStatusS === 'saved' ? 'var(--bg-card)' : '#250f0f',
+          border: `1px solid ${saveStatusS === 'saved' ? '#166534' : '#7f1d1d'}`,
+          color: saveStatusS === 'saved' ? '#4ade80' : '#f87171',
           fontSize: 13, fontWeight: 500,
           boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
           maxWidth: 320,
         }}>
-          {saveStatus === 'saved' ? '✓ Project saved' : '✗ Save failed'}
-          {saveStatus === 'error' && saveError && (
+          {saveStatusS === 'saved' ? '✓ Project saved' : '✗ Save failed'}
+          {saveStatusS === 'error' && saveError && (
             <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.8, wordBreak: 'break-word' }}>{saveError}</span>
           )}
         </div>
-      )}
+      )}</Appear>
       </DawPlayheadProvider>
     </DawContext.Provider>
   )

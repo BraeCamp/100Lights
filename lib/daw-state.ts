@@ -265,7 +265,10 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       delete grid[action.trackId]
       const automationLanes = project.automationLanes.filter(l => l.trackId !== action.trackId)
       const clipEffects     = (project.clipEffects ?? []).filter(e => e.trackId !== action.trackId)
-      return { ...project, tracks: normalizeGroups(tracks), arrangementClips: clips, sessionGrid: grid, automationLanes, clipEffects }
+      // Take lanes belong to the track too; left behind they accumulate in the
+      // saved project with no track to show them under.
+      const takeLanes       = (project.takeLanes ?? []).filter(l => l.trackId !== action.trackId)
+      return { ...project, tracks: normalizeGroups(tracks), arrangementClips: clips, sessionGrid: grid, automationLanes, clipEffects, takeLanes }
     }
 
     case 'UPDATE_TRACK': {
@@ -285,6 +288,9 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         id:      newTrackId,
         name:    `${source.name} copy`,
         effects: source.effects.map(e => ({ ...e, id: nextId() })),
+        // MIDI effects get ids of their own too — copies sharing ids with the
+        // source made UPDATE_MIDI_EFFECT ambiguous between the two tracks.
+        ...(source.midiEffects ? { midiEffects: source.midiEffects.map(m => ({ ...m, id: nextId() })) } : {}),
       }
       const newClips = project.arrangementClips
         .filter(c => c.trackId === source.id)
@@ -292,6 +298,11 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const newLanes = project.automationLanes
         .filter(l => l.trackId === source.id)
         .map(l => ({ ...l, id: nextId(), trackId: newTrackId }))
+      // The effect bars drawn on the track's lane come along as well — a
+      // duplicate that lost them was not a duplicate.
+      const newBars = (project.clipEffects ?? [])
+        .filter(e => e.trackId === source.id)
+        .map(e => ({ ...e, id: nextId(), trackId: newTrackId }))
       const srcIdx = project.tracks.findIndex(t => t.id === source.id)
       const tracks = [
         ...project.tracks.slice(0, srcIdx + 1),
@@ -303,6 +314,7 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         ...project, tracks: normalizeGroups(tracks),
         arrangementClips: [...project.arrangementClips, ...newClips],
         automationLanes:  [...project.automationLanes,  ...newLanes],
+        clipEffects:      [...(project.clipEffects ?? []), ...newBars],
         sessionGrid: grid,
       }
     }

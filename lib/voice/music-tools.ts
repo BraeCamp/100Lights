@@ -272,14 +272,14 @@ export const MUSIC_TOOLS = [
   {
     name: 'show_view',
     description:
-      'THE WORKSPACE — open or close a panel around the song: "bring up the devices for the pad", "show the effects rack on the bass", "show automation on the drums", "open the pads", "let\'s edit the UI colours", "close the devices". Changes what is ON SCREEN and never changes the song, so it is safe whenever somebody asks to SEE something. ⚠️ For the piano roll, the step sequencer, or moving to another part of the app, use open_editor instead — this tool does not do those.',
+      'THE WORKSPACE — open or close a panel around the song: "bring up the devices for the pad", "show the effects rack on the bass", "open the Stab effects", "show automation on the drums", "show me the automation lanes on the pad", "open the pads", "let\'s edit the UI colours", "close the devices", "open the list of commands", "show me the transcript", "open the voice settings". Changes what is ON SCREEN and never changes the song, so it is safe whenever somebody asks to SEE something. ⚠️ "Show me the automation" / "show me the effects" on a track is a request to OPEN them, not to be told about them in words — use this, not describe. ⚠️ For the piano roll, the step sequencer, or moving to another part of the app, use open_editor instead — this tool does not do those.',
     input_schema: {
       type: 'object',
       properties: {
         view: {
           type: 'string',
-          enum: ['devices', 'automation', 'pads', 'colours'],
-          description: 'devices = the effect rack for a track. automation = a drawable lane under a track. pads = the playable pad card. colours = the studio\'s own appearance — its colours and patterns, not the song\'s.',
+          enum: ['devices', 'automation', 'pads', 'colours', 'help', 'transcript', 'settings', 'usage', 'macros'],
+          description: 'devices = the effect rack for a track. automation = a drawable lane under a track. pads = the playable pad card. colours = the studio\'s own appearance — its colours and patterns, not the song\'s. help = the list of everything Light can do ("open the list of commands", "what can I say"). transcript = the log of what was said and done ("show me the transcript", "what did you do"). settings / usage / macros = the voice card\'s own settings, cost log and named shapes.',
         },
         target: { type: 'string', description: 'The track to open it on, by name. Devices and automation both need one.' },
         open: { type: 'boolean', description: 'false to close it. Defaults to true.' },

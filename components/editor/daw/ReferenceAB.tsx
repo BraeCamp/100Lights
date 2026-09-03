@@ -88,8 +88,8 @@ export default function ReferenceAB() {
       </button>
 
       {open && typeof document !== 'undefined' && createPortal(
-        <div onClick={close} style={{ position: 'fixed', inset: 0, zIndex: 9600, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 340, maxWidth: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
+        <div onClick={close} className="backdrop-in" style={{ position: 'fixed', inset: 0, zIndex: 9600, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="modal-in" style={{ width: 340, maxWidth: '100%', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               <Headphones size={15} color="#f59e0b" />
               <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>Reference A/B</span>

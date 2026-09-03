@@ -489,7 +489,7 @@ export default function SpectralEditorModal({ clip, onClose }: { clip: AudioClip
 
   return createPortal(
     <div
-      className="electron-nodrag"
+      className="electron-nodrag backdrop-in"
       style={{ position: 'fixed', inset: 0, zIndex: 2100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)' }}
       onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
     >

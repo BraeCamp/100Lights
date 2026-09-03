@@ -198,6 +198,41 @@ input[type="range"].cf-slider::-moz-range-thumb {
   .menu-pop-out, .menu-pop-up-out { animation: none; opacity: 0; }
 }
 
+/* ── Appearing and disappearing, everywhere ──────────────────────────────────
+   Brae: "Smooth transitions create trust and we need things appearing and
+   disappearing to have smooth transitions." One family of motions, used by
+   components/ui/Appear.tsx so the exit is the enter played backwards. All
+   compositor-only. */
+@keyframes appearFade    { from { opacity: 0; } to { opacity: 1; } }
+@keyframes appearFadeOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes appearRise    { from { opacity: 0; transform: translate(var(--appear-x, 0), 6px); } to { opacity: 1; transform: translate(var(--appear-x, 0), 0); } }
+@keyframes appearRiseOut { from { opacity: 1; transform: translate(var(--appear-x, 0), 0); } to { opacity: 0; transform: translate(var(--appear-x, 0), 6px); } }
+@keyframes appearDrop    { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes appearDropOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-4px); } }
+@keyframes appearGrow    { from { opacity: 0; transform: scaleY(0.96); } to { opacity: 1; transform: scaleY(1); } }
+@keyframes appearGrowOut { from { opacity: 1; transform: scaleY(1); } to { opacity: 0; transform: scaleY(0.96); } }
+.appear-fade     { animation: appearFade 0.14s ease-out; }
+.appear-fade-out { animation: appearFadeOut 0.13s ease-in forwards; }
+.appear-rise     { animation: appearRise 0.18s cubic-bezier(.2,.8,.2,1); }
+.appear-rise-out { animation: appearRiseOut 0.14s ease-in forwards; }
+.appear-drop     { animation: appearDrop 0.14s ease-out; }
+.appear-drop-out { animation: appearDropOut 0.12s ease-in forwards; }
+.appear-grow     { animation: appearGrow 0.16s ease-out; transform-origin: top; }
+.appear-grow-out { animation: appearGrowOut 0.13s ease-in forwards; transform-origin: top; }
+/* A toast centred with translateX(-50%) keeps that offset through the motion. */
+.appear-centered { --appear-x: -50%; }
+
+/* Something that is not here yet: the clip's outline is drawn but its sound is
+   still on its way. */
+@keyframes clipLoading { 0%, 100% { opacity: .35; } 50% { opacity: .75; } }
+.clip-loading { animation: clipLoading 1.4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .appear-fade, .appear-rise, .appear-drop, .appear-grow { animation: none; }
+  .appear-fade-out, .appear-rise-out, .appear-drop-out, .appear-grow-out { animation: none; opacity: 0; }
+  .clip-loading { animation: none; opacity: .5; }
+}
+
 /* ── Nothing gets text-selected while you are dragging ──────────────────────
    Brae: "when I drag anything it also does the drag to select feature."
 

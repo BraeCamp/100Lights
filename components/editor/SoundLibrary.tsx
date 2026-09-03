@@ -373,7 +373,7 @@ function EntryRow({
           <Tag size={10} />
         </button>
         {tagOpen && (
-          <div style={{
+          <div className="menu-pop" style={{
             position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 50,
             background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 7,
             padding: 8, width: 210, boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
@@ -414,7 +414,7 @@ function EntryRow({
           <Folder size={10} />
         </button>
         {folderOpen && (
-          <div style={{
+          <div className="menu-pop" style={{
             position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 50,
             background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 7,
             padding: '4px 0', minWidth: 130, boxShadow: '0 4px 16px rgba(0,0,0,0.4)',

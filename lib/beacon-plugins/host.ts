@@ -122,6 +122,7 @@ function create(
           m.ready = true
           for (const q of m.queue) node.port.postMessage(q.message)
           m.queue = []
+          for (const f of readyListeners) f()
         } else if (msg.type === 'meter') {
           m.peak = msg.peak
         } else if (msg.type === 'error') {
@@ -307,6 +308,19 @@ export async function preloadPluginInstrument(
  * on a node nobody preloaded and the clip's notes wait in a queue that nothing
  * flushed before the render. Same gap Apollo had (apolloAwaitReady).
  */
+const readyListeners = new Set<() => void>()
+/** Fires whenever any plugin engine comes up — for the studio's loading state. */
+export function onPluginReady(f: () => void): () => void {
+  readyListeners.add(f)
+  return () => { readyListeners.delete(f) }
+}
+/** Is the plugin on this destination ready? True when there is none yet. */
+export function pluginDestReady(dest: AudioNode | undefined): boolean {
+  if (!dest) return true
+  const m = byDest.get(dest)
+  return !m || m.ready || m.failed
+}
+
 export async function pluginAwaitReady(ctx: BaseAudioContext, timeoutMs = 8000): Promise<void> {
   const set = byCtx.get(ctx)
   if (!set) return

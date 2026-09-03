@@ -66,10 +66,10 @@ import { hudOn, setHud, applyHud } from '@/lib/voice/hud'
 import {
   CALIBRATION_PHRASE, phraseAccuracy, verdictFor, type CalibrationResult,
 } from '@/lib/voice/calibrate'
-import VoicePanel from './VoicePanel'
+import VoicePanel, { type VoiceSide } from './VoicePanel'
 import VoiceHud from './VoiceHud'
-import VoiceLibrary from './VoiceLibrary'
 import VoiceCaption, { readVoiceCaption, writeVoiceCaption } from './VoiceCaption'
+import { recordExchange, describeAction } from '@/lib/voice/transcript'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
@@ -313,10 +313,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // anchoring to the panel when open and the button when not. Questions live
   // inside the window now, so there is no corner left to choose.)
 
-  const [panelTab, setPanelTab] = useState<'talk' | 'settings' | 'help'>('talk')
+  /** What is open in the bar beside the voice card — see VoiceSide. */
+  const [side, setSide] = useState<VoiceSide>('none')
   /** The library of everything Light can do — its own window, not a view in
    *  the card. See VoiceLibrary.tsx for why. */
-  const [libraryOpen, setLibraryOpen] = useState(false)
   /** Big on-screen captions of what was said — a recording aid, off by
    *  default. See VoiceCaption.tsx for why it is not a feature. */
   const [caption, setCaption] = useState(false)
@@ -773,10 +773,28 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    *
    * Fire and forget, and unable to fail: the command has already run.
    */
+  /**
+   * What the current command has DONE so far, in words — one line per reducer
+   * action, filled by runAction and emptied when the next sentence arrives.
+   * The transcript shows it beside the reply.
+   */
+  const didRef = useRef<string[]>([])
+
   const postExchange = useCallback((e: {
     said: string; calls?: VoiceCall[]; say?: string; outcome: string; turns?: number
     path: 'rules' | 'learned' | 'shared' | 'macro' | 'assistant' | 'failed'
   }) => {
+    // The transcript, for the person: said / replied / did.
+    // Brae: "It would say what the user said, what Light responded with, and
+    // what Light did."
+    recordExchange({
+      said: e.said,
+      source: heardRef.current ? 'spoken' : 'typed',
+      reply: e.say ?? (e.path === 'failed' ? e.outcome : ''),
+      problem: e.path === 'failed' || /^refused/.test(e.outcome),
+      path: e.path,
+      did: didRef.current.splice(0),
+    })
     void fetch('/api/voice/gap', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -903,6 +921,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
 
   const runAction = useCallback((a: unknown) => {
     const act = a as { type: string; action?: string; beat?: number }
+    // Every action, in words, for the transcript — what CHANGED, beside what
+    // was claimed. Named by the project's own track and clip names.
+    {
+      const p = projectRef.current
+      didRef.current.push(describeAction(a, {
+        track: id => p?.tracks.find(t => t.id === id)?.name ?? 'the track',
+        clip: id => { const c = p?.arrangementClips.find(x => x.id === id); return c ? `"${c.name}"` : 'the clip' },
+        beatsPerBar: p?.timeSignatureNum || 4,
+      }))
+    }
     if (act.type === 'TRANSPORT') {
       // ── stop() is a PAUSE, and locate carries a beat ────────────────────
       //
@@ -1060,6 +1088,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     if (act.type === 'VIEW_ACTION') {
       const v = act as unknown as { view: string; clipId?: string; trackId?: string; open?: boolean }
       const open = v.open !== false
+      // The voice card's own bars — the list of commands, the transcript, the
+      // settings. Opening one opens the card too, or the bar has nothing to be
+      // beside.
+      if (v.view === 'help' || v.view === 'transcript' || v.view === 'settings' || v.view === 'usage' || v.view === 'macros') {
+        if (open) { setSide(v.view); setPanelOpen(true) }
+        else setSide('none')
+        return
+      }
       if (v.view === 'pads') setShowPads?.(open)
       else if (v.view === 'colours') setShowAppearance?.(open)
       else if (v.view === 'pianoroll') setExpandedPianoRollClipId?.(open ? (v.clipId ?? null) : null)
@@ -1457,7 +1493,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     saidRef.current = askingRef.current ? [...saidRef.current, text].slice(-4) : [text]
     if (auditionActive()) {
       const b = readBrowseCommand(text)
-      if (b) { lastAcceptedAt.current = Date.now(); runBrowse(b); return }
+      if (b) {
+        lastAcceptedAt.current = Date.now()
+        runBrowse(b)
+        // A browse word is an exchange too — the transcript should show
+        // "next" and "this one", or a browse reads as a silence.
+        recordExchange({
+          said: text, source: heardRef.current ? 'spoken' : 'typed', reply: '', problem: false, path: 'browse',
+          did: [b === 'pick' ? 'Chose the sound that was playing' : b === 'stop' ? 'Stopped browsing' : `Browse: ${b}`, ...didRef.current.splice(0)],
+        })
+        return
+      }
     }
 
     // The context the reading is judged against: the project's real track names,
@@ -2291,6 +2337,25 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           // there. The local resolver still handles the common commands either
           // way, so this is a partial loss, not a dead feature.
           const signedOut = res.status === 401 || res.status === 404
+          // ⚠️ THE BUILT-IN READ RUNS WHEN THE ASSISTANT CANNOT. Seen on the
+          // real path: "mute the pad", read by the rules at 0.93, was sent to
+          // the assistant to be confirmed — and with nobody signed in the
+          // answer was "Sign in to use the assistant. Simple commands still
+          // work without it." while the simple command sat undone. The
+          // assistant was only ever asked to CHECK a reading the studio already
+          // had; when it cannot, the reading stands.
+          if ((signedOut || e.needCredits) && local.calls.length && confidentEnough(local, heardConfidence) && !local.destructive) {
+            const plan = planVoiceCalls(local.calls, project, voiceCtx())
+            if (!plan.problem && !plan.ask) {
+              for (const a of plan.actions) runAction(a)
+              setBusy(false)
+              respond(plan.say)
+              lastRunRef.current = { text, calls: local.calls, at: Date.now() }
+              postExchange({ said: text, calls: local.calls, say: plan.say, path: 'rules', outcome: signedOut ? 'ran (assistant needs sign-in)' : `ran (out of ${LUMENS_NAME})` })
+              traceEnd(plan.say)
+              return
+            }
+          }
           // Remembered, so the NEXT sentence is answered honestly instead of
           // quietly falling through to the built-in commands.
           if (e.needCredits) outOfLumens.current = true
@@ -2647,6 +2712,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // microphone was open, which is the one thing a microphone indicator must
     // never get wrong.
     if (!continuousRef.current) setListening(false)
+    // A new sentence, a fresh account of what it did.
+    didRef.current = []
     // hearBetter repairs the project's own nouns — "base two" into "Bass 2" —
     // which is the single most valuable correction available, because a general
     // recogniser has never seen these names and mangles them constantly.
@@ -2764,7 +2831,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // Brae: "create a windowed panel that opens when voice control is
     // activated". Opened here rather than on the click, so it appears when the
     // microphone is genuinely live rather than while permission is pending.
-    setPanelTab('talk')
     setPanelOpen(true)
     // `engine` matters here now: whether the transport is running decides how
     // the microphone is opened, and a stale engine would decide it wrongly.
@@ -3441,9 +3507,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           e.stopPropagation()
           // Settings live in the panel now. Two places rendering the same
           // controls is how the two of them end up disagreeing about what the
-          // setting currently is.
-          setPanelTab('settings')
-          setPanelOpen(v => !(v && panelTab === 'settings'))
+          // setting currently is. They open in the bar beside the card.
+          if (panelOpen && side === 'settings') { setSide('none'); return }
+          setSide('settings')
+          setPanelOpen(true)
         }}
         data-voice-settings
         aria-label="Voice settings"
@@ -3461,16 +3528,6 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           reply={said}
           problem={problem}
           listening={listening}
-        />
-      )}
-
-      {libraryOpen && (
-        <VoiceLibrary
-          onClose={() => setLibraryOpen(false)}
-          colors={{
-            bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
-            textMuted: C.textMuted, accent: C.accent,
-          }}
         />
       )}
 
@@ -3532,7 +3589,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           problem={problem}
           question={question}
           hud={hud}
-          initialTab={panelTab}
+          side={side}
+          onSide={setSide}
+          // – hides the card and keeps listening; ✕ is the voice button pressed
+          // off. Brae: "The x button will turn off voice controls as if the
+          // voice control button was pressed to toggle off."
+          onMinimize={() => setPanelOpen(false)}
           mode={mode}
           onMode={m => { setMode(m); modeRef.current = m; writeVoiceMode(m) }}
           enterRuns={enterRuns}
@@ -3575,10 +3637,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             sensitivityRef.current = v
             setVoiceSensitivity(v)
           }}
-          onLibrary={() => setLibraryOpen(true)}
           caption={caption}
           onCaption={on => { setCaption(on); writeVoiceCaption(on) }}
-          onClose={() => setPanelOpen(false)}
+          onClose={() => { if (listening) finish(); setPanelOpen(false); setSide('none') }}
           colors={{
             bgSurface: C.bgSurface, border: C.border, textPrimary: C.textPrimary,
             textMuted: C.textMuted, accent: C.accent,

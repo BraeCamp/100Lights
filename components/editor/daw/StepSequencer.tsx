@@ -353,7 +353,7 @@ function StepSeqInner({ clip }: { clip: MidiClip }) {
       </div>
 
       {smartOpen && (
-        <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <div className="appear-grow" style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6, letterSpacing: '0.06em' }}>SMART DRUMS — drag: → busier · ↑ louder</div>
           <div onPointerDown={e => { try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ok */ } handleSmart(e) }} onPointerMove={e => { if (e.buttons) handleSmart(e) }}
             style={{ position: 'relative', width: '100%', maxWidth: 300, height: 150, borderRadius: 12, border: '1px solid var(--border)', background: 'linear-gradient(135deg, rgb(var(--accent-rgb) / 0.12), rgba(59,130,246,0.06))', touchAction: 'none', cursor: 'crosshair', margin: '0 auto' }}>
