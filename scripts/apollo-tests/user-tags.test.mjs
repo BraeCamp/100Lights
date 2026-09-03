@@ -80,5 +80,50 @@ const { tagsOf } = await importTs('lib/sound-tags.ts')
     /tagsOf\(e\)\.some/.test(aud) && !/\(e\.tags \?\? \[\]\)\.some/.test(aud))
 }
 
+// ── and they follow the account ────────────────────────────────────────────
+//
+// Brae: "Let's make own samples, saves, and tags live on the account."
+//
+// ⚠️ THE TWO THINGS THAT DID NOT SYNC HAVE NO AUDIO OF THEIR OWN, which is why
+// they needed a table of their own: user_sounds requires an r2_key, because it
+// is the register of audio this account uploaded. A personal tag on a catalog
+// sound and a community sound kept by reference both have nothing to upload.
+{
+  const route = readFileSync('app/api/library/prefs/route.ts', 'utf8')
+  check('there is a place for what a person did to a sound',
+    /CREATE TABLE IF NOT EXISTS user_sound_prefs/.test(route))
+  check('keyed per user and sound, so it upserts rather than duplicates',
+    /PRIMARY KEY \(user_id, sound_id\)/.test(route))
+
+  // ⚠️ A TAG EDIT MUST NOT ERASE THE ONLY RECORD OF A KEPT SOUND. Tagging sends
+  // no `saved`, so a plain overwrite would drop the reference that says the
+  // sound exists at all — and it would only show up on the next machine.
+  check('a tag edit cannot erase a kept sound\'s reference',
+    /COALESCE\(EXCLUDED\.saved, user_sound_prefs\.saved\)/.test(route))
+
+  check('reading is never an error, only an empty answer',
+    /return Response\.json\(\{ prefs: \[\] \}\)/.test(route))
+
+  const lib = readFileSync('lib/sound-library.ts', 'utf8')
+  check('the device pulls them alongside the library sync',
+    /await syncSoundPrefs\(\)/.test(lib))
+  check('and pushes what was tagged or kept before signing in',
+    /pushSoundPref\(e\.id/.test(lib))
+
+  // ⚠️ A local tag written offline must survive the first sync after signing
+  // in — otherwise the account "arriving" reads as the account taking things.
+  check('an empty remote tag list does not clobber a local one',
+    /if \(!same && p\.userTags\.length\)/.test(lib))
+
+  // A kept sound is rebuilt as a REFERENCE, with no audio, exactly as it was
+  // kept — so it streams on first use like it did on the other machine.
+  check('a kept sound is rebuilt from its reference, not downloaded',
+    /if \(!p\.saved\?\.communityRef\) continue/.test(lib))
+
+  const community = readFileSync('lib/community.ts', 'utf8')
+  check('keeping a community sound records it on the account',
+    (community.match(/pushSoundPref\(/g) ?? []).length === 2)
+}
+
 console.log(failures ? `\n${failures} failing` : "\neverybody's tags, and yours")
 assert.equal(failures, 0)

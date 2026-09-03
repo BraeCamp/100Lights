@@ -5,7 +5,7 @@ import Knob from './daw/Knob'
 import { createPortal } from 'react-dom'
 import { RotateCw, Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2, ArrowLeft, Tag } from 'lucide-react'
 import {
-  libraryGetAll, libraryAdd, libraryUpdate, libraryDelete, isProtectedSound,
+  libraryGetAll, libraryAdd, libraryUpdate, libraryDelete, isProtectedSound, pushSoundPref,
   initLibrary,
   getAudioDurationFromBlob,
   CATEGORY_LABELS, LIBRARY_CATEGORIES, CATEGORY_GROUPS,
@@ -1493,6 +1493,20 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   async function handleUserTags(id: string, userTags: string[]) {
     await libraryUpdate(id, { userTags })
     setEntries(prev => prev.map(e => e.id === id ? { ...e, userTags } : e))
+    // To the account too, so they are there on the next machine. Fire and
+    // forget: the local write has already happened, tagging has to feel
+    // instant, and it has to work signed out.
+    const e = entries.find(x => x.id === id)
+    void pushSoundPref(id, {
+      userTags,
+      saved: e?.communityRef
+        ? {
+          name: e.name, category: String(e.category), duration: e.duration,
+          folder: e.folder, parentFolder: e.parentFolder,
+          authorName: e.authorName, communityRef: e.communityRef,
+        }
+        : null,
+    })
   }
 
   function createFolder() {

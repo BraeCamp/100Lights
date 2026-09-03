@@ -428,7 +428,140 @@ export async function syncLibrary(): Promise<void> {
     for (const e of local) {
       if (!e.synced && isSyncable(e) && !remoteIds.has(e.id)) await pushSound(e)
     }
+
+    // ── And the half with no audio ────────────────────────────────────────
+    // Personal tags, and sounds kept by reference rather than copied. Last,
+    // because a kept sound's tags want the entry to exist first.
+    await syncSoundPrefs()
+
+    // Anything tagged or kept on THIS device before signing in belongs to the
+    // account now — otherwise the first sync would look like it took them away.
+    for (const e of local) {
+      if (e.userTags?.length) {
+        void pushSoundPref(e.id, {
+          userTags: e.userTags,
+          saved: e.communityRef
+            ? {
+              name: e.name, category: String(e.category), duration: e.duration,
+              folder: e.folder, parentFolder: e.parentFolder,
+              authorName: e.authorName, communityRef: e.communityRef,
+            }
+            : null,
+        })
+      } else if (e.communityRef) {
+        void pushSoundPref(e.id, {
+          userTags: [],
+          saved: {
+            name: e.name, category: String(e.category), duration: e.duration,
+            folder: e.folder, parentFolder: e.parentFolder,
+            authorName: e.authorName, communityRef: e.communityRef,
+          },
+        })
+      }
+    }
   } catch { /* offline — no problem, local library is untouched */ }
+}
+
+// ── The personal half of a library ──────────────────────────────────────────
+//
+// Brae: "Let's make own samples, saves, and tags live on the account."
+//
+// Own samples already did — pushSound uploads them and syncLibrary brings them
+// back. The two that did not are the ones with no audio of their own:
+//
+//   a personal tag on a CATALOG sound, whose audio belongs to everybody;
+//   a KEPT community sound, which is a reference that streams from the item's
+//   own URL and so was never uploaded anywhere.
+//
+// Both are what a PERSON did rather than what they own, so both travel as
+// preferences keyed to the sound, and the audio goes on living where it lives.
+
+interface SoundPref {
+  id: string
+  userTags: string[]
+  saved: {
+    name: string; category: string; duration?: number
+    folder?: string; parentFolder?: string
+    communityRef?: { itemId: string; sampleIndex?: number }
+    authorName?: string
+  } | null
+}
+
+/**
+ * Remember what this person did to a sound.
+ *
+ * ⚠️ FIRE AND FORGET, ALWAYS. Tagging a sound has to feel instant and has to
+ * work signed out; the account copy is an improvement on top of a library that
+ * already works, so a failure here must never surface as a failed edit. The
+ * local write has already happened by the time this is called.
+ */
+export async function pushSoundPref(
+  id: string, patch: { userTags?: string[]; saved?: SoundPref['saved'] },
+): Promise<void> {
+  if (typeof window === 'undefined' || !_userId) return
+  try {
+    await fetch('/api/library/prefs', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, userTags: patch.userTags ?? [], saved: patch.saved ?? null }),
+    })
+  } catch { /* it will be pushed again the next time the sound is touched */ }
+}
+
+export async function forgetSoundPref(id: string): Promise<void> {
+  if (typeof window === 'undefined' || !_userId) return
+  try { await fetch(`/api/library/prefs?id=${encodeURIComponent(id)}`, { method: 'DELETE' }) }
+  catch { /* it will be tidied on the next delete */ }
+}
+
+/**
+ * Bring this account's tags and kept sounds to this device.
+ *
+ * ⚠️ TAGS ARE APPLIED, KEPT SOUNDS ARE REBUILT. A tag lands on an entry that is
+ * already here; a kept sound may be missing entirely, and its stub has to be
+ * recreated from the reference — with no audio, exactly as it was kept, so it
+ * streams on first use like it did on the machine it came from.
+ *
+ * ⚠️ AND A LOCAL TAG IS NEVER CLOBBERED BY AN EMPTY REMOTE ONE. Somebody who
+ * tagged a sound offline and then signed in on the same device would otherwise
+ * watch their words vanish on the first sync.
+ */
+export async function syncSoundPrefs(): Promise<void> {
+  if (typeof window === 'undefined' || !_userId) return
+  try {
+    const res = await fetch('/api/library/prefs')
+    if (!res.ok) return
+    const { prefs } = await res.json() as { prefs: SoundPref[] }
+    if (!prefs?.length) return
+    const local = await libraryGetAll()
+    const byId = new Map(local.map(e => [e.id, e]))
+
+    for (const p of prefs) {
+      const here = byId.get(p.id)
+      if (here) {
+        const same = JSON.stringify(here.userTags ?? []) === JSON.stringify(p.userTags ?? [])
+        if (!same && p.userTags.length) {
+          try { await libraryUpdate(p.id, { userTags: p.userTags }) } catch { /* next sync */ }
+        }
+        continue
+      }
+      // Missing here, and kept elsewhere: rebuild the reference.
+      if (!p.saved?.communityRef) continue
+      try {
+        await libraryAdd({
+          id: p.id,
+          name: p.saved.name,
+          category: p.saved.category as LibraryCategory,
+          duration: p.saved.duration ?? 0,
+          addedAt: new Date().toISOString(),
+          folder: p.saved.folder,
+          parentFolder: p.saved.parentFolder,
+          authorName: p.saved.authorName,
+          communityRef: p.saved.communityRef,
+          userTags: p.userTags,
+        })
+      } catch { /* skip this one, keep going */ }
+    }
+  } catch { /* offline — the local library is untouched */ }
 }
 
 interface CatalogItem {

@@ -5,6 +5,7 @@
 
 import { libraryGetAll, libraryAdd, type LibraryEntry, type LibraryCategory } from './sound-library'
 import { libraryFulfill } from './default-samples'
+import { pushSoundPref } from './sound-library'
 import { getPresets, addPreset, type MidiPreset } from './midi-presets'
 import { importRecipe, type StoredRecipeSpec } from './practice-recipes'
 import { addKit, addPattern, type DrumKit, type DrumPattern } from './drum-presets'
@@ -510,6 +511,18 @@ export async function importItem(item: CommunityItem): Promise<string> {
         communityRef: { itemId: item.id, sampleIndex: i },
         authorName: item.authorName,
       })
+      // ⚠️ REMEMBERED ON THE ACCOUNT, not just here. Keeping a community sound
+      // copies a reference rather than audio — which is what makes it nearly
+      // free, and also why nothing was ever uploaded for it and it stayed on
+      // the machine it was kept on. This is the only record that it exists.
+      void pushSoundPref(`community:${item.id}:${i}`, {
+        userTags: [],
+        saved: {
+          name: s.name, category: String(s.category ?? 'other'), duration: s.duration ?? 1,
+          folder: item.name.slice(0, 40), parentFolder: 'Community',
+          authorName: item.authorName, communityRef: { itemId: item.id, sampleIndex: i },
+        },
+      })
     }
     void countDownload(item.id)
     return `${samples.length} sample${samples.length !== 1 ? 's' : ''} linked into your library under Community › ${item.name.slice(0, 40)}.`
@@ -551,6 +564,14 @@ export async function importItem(item: CommunityItem): Promise<string> {
     folder: 'Community', parentFolder: 'Community',
     communityRef: { itemId: item.id },
     authorName: item.authorName,
+  })
+  void pushSoundPref(`community:${item.id}`, {
+    userTags: [],
+    saved: {
+      name: item.name, category: String(meta.category ?? 'other'), duration: meta.duration ?? 1,
+      folder: 'Community', parentFolder: 'Community',
+      authorName: item.authorName, communityRef: { itemId: item.id },
+    },
   })
   void countDownload(item.id)
   return 'Linked into your sound library under Community.'
