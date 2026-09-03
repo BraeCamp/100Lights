@@ -23,13 +23,14 @@
 // answer at a glance.
 
 import { useEffect, useRef } from 'react'
+import { subscribeLevel, readLevel } from '@/lib/voice/level-bus'
 
 export interface VoiceHudProps {
   listening: boolean
   /** Held open, rather than one push-to-talk take. */
   continuous: boolean
-  /** 0–1 input level, for the meter. */
-  level: number
+  /** 0–1 input level. Optional now: the HUD reads the level bus itself. */
+  level?: number
   talking: boolean
   /** Live transcript of the take in progress. */
   hearing: string
@@ -64,8 +65,11 @@ export default function VoiceHud(props: VoiceHudProps) {
   const state = stateOf(props)
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const phase = useRef(0)
-  const levelRef = useRef(props.level)
-  levelRef.current = props.level
+  // Fed straight from the level bus, not from a prop: the HUD's own animation
+  // loop reads this ref every frame, so the level never has to pass through
+  // React at all.
+  const levelRef = useRef(props.level ?? readLevel().level)
+  useEffect(() => subscribeLevel(r => { levelRef.current = r.level }), [])
   const talkingRef = useRef(props.talking)
   talkingRef.current = props.talking
 

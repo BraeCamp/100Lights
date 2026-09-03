@@ -27,9 +27,18 @@ const check = (label, pass, extra = '') => {
 // ── The meter no longer re-renders everything twenty times a second ────────
 {
   const control = readFileSync('components/editor/daw/VoiceControl.tsx', 'utf8')
-  check('level updates are throttled to what the eye can see',
-    /now - levelPaintedAt\.current >= 80 \|\| Math\.abs\(l - levelPainted\.current\) > 0\.25/.test(control))
-  check('and the throttle does not delay the "you are talking" mark', /if \(l > bar\) userSpeakingUntil\.current = now \+ 700/.test(control))
+  // ⚠️ Measured before/after: 63% of the main thread with a 200-row transcript
+  // open (old), 12.6% with paints throttled, and the level off React state
+  // entirely leaves nothing per tick but a canvas and two style writes.
+  check('the level is published on a bus, not set as state', /publishLevel\(l, bar\)/.test(control) && !/setLevel\(/.test(control) && !/setThreshold\(/.test(control))
+  check('and the "you are talking" mark still uses every tick', /if \(l > bar\) userSpeakingUntil\.current = Date\.now\(\) \+ 700/.test(control))
+  const bus = readFileSync('lib/voice/level-bus.ts', 'utf8')
+  check('the bus is a reading and a set of painters', /export function publishLevel/.test(bus) && /export function subscribeLevel/.test(bus) && /export function readLevel/.test(bus))
+  const panelSrc = readFileSync('components/editor/daw/VoicePanel.tsx', 'utf8')
+  check('the meter paints itself from the bus', /function Meter\(\{ C \}/.test(panelSrc) && /f\.style\.width = /.test(panelSrc) && /return subscribeLevel\(paint\)/.test(panelSrc))
+  check('the wave repaints once per frame from the bus, and takes no level prop', /raf = requestAnimationFrame\(\(\) => \{ raf = 0; setTick\(n => n \+ 1\) \}\)/.test(panelSrc) && /<Wave talking=\{talking\}/.test(panelSrc))
+  const hud = readFileSync('components/editor/daw/VoiceHud.tsx', 'utf8')
+  check('the HUD reads the bus into the ref its loop already used', /subscribeLevel\(r => \{ levelRef\.current = r\.level \}\)/.test(hud))
   check('the card gets one stable colours object', /const panelColors = useMemo\(/.test(control) && /colors=\{panelColors\}/.test(control))
   const panel = readFileSync('components/editor/daw/VoicePanel.tsx', 'utf8')
   check('the bar beside the card is memoised', /const TranscriptMemo = React\.memo\(VoiceTranscript\)/.test(panel) && /<TranscriptMemo C=\{C\} \/>/.test(panel) && /<LibraryMemo embedded onClose=\{closeSide\} colors=\{libColors\} \/>/.test(panel))

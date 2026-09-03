@@ -32,6 +32,7 @@ import VoiceUsageLog from './VoiceUsageLog'
 import VoiceMacros from './VoiceMacros'
 import VoiceTranscript from './VoiceTranscript'
 import VoiceLibrary from './VoiceLibrary'
+import { subscribeLevel, readLevel } from '@/lib/voice/level-bus'
 
 // ⚠️ The bar beside the card must NOT re-render with the level meter. The
 // card re-renders on every meter update (twelve a second while listening);
@@ -76,8 +77,6 @@ export interface VoicePanelProps {
   animClass?: string
   listening: boolean
   continuous: boolean
-  /** 0–1 input level, for the meter and the wave. */
-  level: number
   /**
    * Is the studio speaking right now?
    *
@@ -158,8 +157,6 @@ export interface VoicePanelProps {
    * "it sounds like static" into a number that says whose problem it is.
    */
   mic?: { label: string; sampleRate: number | null; echoCancellation: boolean | null; degraded: boolean } | null
-  /** The bar the level is judged against, 0–1, drawn on the meter. */
-  threshold?: number
   sensitivity: number
   onSensitivity: (v: number) => void
   /** How long a pause counts as the end of a sentence (silence-tail multiplier). */
@@ -308,12 +305,60 @@ interface Palette { border: string; textPrimary: string; textMuted: string; acce
  * open with nothing happening costs nothing — the same rule the editor's other
  * canvases follow.
  */
-function Wave({ level, talking, listening, C }: {
-  level: number; talking: boolean; listening: boolean; C: Palette
+/**
+ * The title-bar meter, painted straight from the level bus.
+ *
+ * ⚠️ NO REACT STATE PER TICK. The level arrives twenty times a second; this
+ * writes two style properties on each one and re-renders nothing. The bar
+ * the level has to cross is drawn too: a meter without it answers "is it
+ * hearing something", and the question people actually have is whether what
+ * it hears is loud enough to count.
+ */
+function Meter({ C }: { C: Palette }) {
+  const fill = useRef<HTMLDivElement | null>(null)
+  const line = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const paint = ({ level, threshold }: { level: number; threshold: number }) => {
+      const f = fill.current, l = line.current
+      if (f) {
+        f.style.width = `${Math.round(Math.min(1, level) * 100)}%`
+        f.style.background = level > threshold ? C.accent : C.textMuted
+      }
+      if (l) {
+        const show = threshold > 0 && threshold < 1
+        l.style.display = show ? 'block' : 'none'
+        if (show) l.style.left = `${Math.round(threshold * 100)}%`
+      }
+    }
+    paint(readLevel())
+    return subscribeLevel(paint)
+  }, [C])
+  return (
+    <div data-voice-meter style={{ flex: 1, height: 5, background: '#222', borderRadius: 2, overflow: 'hidden', position: 'relative' }}>
+      <div ref={fill} style={{ width: '0%', height: '100%', background: C.textMuted, transition: 'width 80ms linear' }} />
+      <div ref={line} style={{ position: 'absolute', top: 0, bottom: 0, left: '0%', width: 2, background: '#e0776b', display: 'none' }} />
+    </div>
+  )
+}
+
+function Wave({ talking, listening, C }: {
+  talking: boolean; listening: boolean; C: Palette
 }) {
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const history = useRef<number[]>([])
   const phase = useRef(0)
+  // The wave repaints from the bus, coalesced to one paint per frame — the
+  // canvas is the only thing here that changes with the level, so it is the
+  // only thing that renders for it.
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    let raf = 0
+    const unsub = subscribeLevel(() => {
+      if (raf) return
+      raf = requestAnimationFrame(() => { raf = 0; setTick(n => n + 1) })
+    })
+    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
+  }, [])
 
   useEffect(() => {
     const el = canvas.current
@@ -334,7 +379,7 @@ function Wave({ level, talking, listening, C }: {
     const BARS = 64
     const mid = h / 2
     const buf = history.current
-    buf.push(Math.max(0, Math.min(1, level)))
+    buf.push(Math.max(0, Math.min(1, readLevel().level)))
     while (buf.length > BARS) buf.shift()
 
     // ⚠️ Handled by the animation loop below, which is the whole point: this
@@ -369,7 +414,7 @@ function Wave({ level, talking, listening, C }: {
       g.lineTo(w, mid)
       g.stroke()
     }
-  }, [level, talking, listening, C])
+  }, [tick, talking, listening, C])
 
   /**
    * The studio's own voice, drawn while it speaks.
@@ -593,11 +638,11 @@ function Segmented<T extends string>({ value, options, onChange, C, disabled }: 
 
 export default function VoicePanel({
   placement = 'down', animClass = '',
-  listening, continuous, level, hud,
+  listening, continuous, hud,
   talking = false, saying = '', reply = '', problem = '', question,
   onHud, onClose, onMinimize, side, onSide, caption, onCaption, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
-  mic, threshold = 0, sensitivity, onSensitivity, patience, onPatience,
+  mic, sensitivity, onSensitivity, patience, onPatience,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
   calibration, calibrating, calibrationPhrase, onCalibrate, credits,
   assistant, onAssistant, ear, onEar,
@@ -776,25 +821,7 @@ export default function VoicePanel({
         {/* The level meter earns its place: "is it even hearing me" is the
             first question when this goes wrong, and it should never need
             asking twice. */}
-        {listening && (
-          <div style={{ flex: 1, height: 5, background: '#222', borderRadius: 2, overflow: 'hidden', position: 'relative' }}>
-            <div style={{
-              width: `${Math.round(Math.min(1, level) * 100)}%`, height: '100%',
-              background: level > threshold ? C.accent : C.textMuted,
-              transition: 'width 80ms linear',
-            }} />
-            {/* The bar the level has to cross. A meter without it answers "is
-                it hearing something"; the question people actually have is
-                whether what it hears is loud enough to count. */}
-            {threshold > 0 && threshold < 1 && (
-              <div style={{
-                position: 'absolute', top: 0, bottom: 0,
-                left: `${Math.round(threshold * 100)}%`, width: 2,
-                background: '#e0776b',
-              }} />
-            )}
-          </div>
-        )}
+        {listening && <Meter C={C} />}
         {!listening && <div style={{ flex: 1 }} />}
 
         {/* ⚠️ In the title bar, not buried in Settings.
@@ -870,7 +897,7 @@ export default function VoicePanel({
           conversation is a live event, and a log of it competes with the one
           line that matters. */}
       <div style={{ padding: '10px 12px 6px', borderBottom: `1px solid ${C.border}` }}>
-        <Wave level={level} talking={talking} listening={listening} C={C} />
+        <Wave talking={talking} listening={listening} C={C} />
       </div>
 
       {queue.length > 0 && (
