@@ -120,6 +120,21 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'copy_notes',
+    description:
+      'COPY A PART OF A CLIP — "take the first chord in pad intro and put it at bar 1", "recreate the opening chord of the pad at the first bar and repeat it 4 times", "copy the first two bars of the bass to bar 17". Makes a NEW clip on the same track holding only that part; `times` copies land back to back. ⚠️ This is the tool for a PART of a clip. move_clips moves the whole clip, duplicate_clip repeats the whole clip after itself, and name_notes only reads the notes out — none of them is what "take the first chord and put it at bar 1" asks for.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The clip (or track) to copy from — "pad intro".' },
+        part: { type: 'string', description: '"first chord" (default), "first note", or a length like "1 bar", "2 bars", "8 beats" measured from the clip\'s start.' },
+        at: { ...POSITION, description: 'Where the copy goes. Omit for the source clip\'s own start.' },
+        times: { type: 'number', description: 'How many copies back to back — "repeat that 4 times" is 4. Defaults to 1.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
     name: 'automate_parameter',
     description:
       'AUTOMATION — write a ramp on a parameter over a span of the song. ⚠️ THIS IS WHAT A VALUE THAT CHANGES ALONG THE SONG IS: "reverb at 100% here and 20% further on", "make it 100% then 20% at a different spot" — two values at two places is a ramp, NOT two settings and NOT a reason to move the playhead. A bar named in a sentence like that is WHERE the change happens; going there is not part of the request. This is what "an ascending low pass filter from 80% to 0% over the first 8 seconds", "fade the volume out over the last 2 bars", "open the filter across the intro" mean. A SPAN IS OFTEN GIVEN AS AN ENDPOINT RATHER THAN A LENGTH, and those are the same request: "until the 6th bar", "up to the chorus", "through bar 12", "stays at 100% until bar 6", "keep it open till the drop". The giveaway is a value that has to HOLD and then change — that is a shape over time, which is this tool, not a single setting. Note what it is doing NOW before writing one: "stays at 100% until bar 6" when it is already 100% is a request to EXTEND the existing ramp to bar 6, and setting the value to 100% again changes nothing and is not what was asked.',
@@ -150,12 +165,13 @@ export const MUSIC_TOOLS = [
       properties: {
         target: { ...TARGET, description: 'A track or clip name; omit to move EVERYTHING.' },
         by: LENGTH,
+        to: { ...POSITION, description: 'A DESTINATION instead of a distance — "move everything back to the first bar", "start it at bar 9". The earliest clip lands here and the rest keep their spacing. Give `to` OR `by`, not both.' },
         except: {
           type: 'array', items: { type: 'string' },
           description: 'Tracks or clips to LEAVE WHERE THEY ARE — "move everything except the pad intro", "shift it all but the drums". Always fill this in when the sentence has an except/but/apart from; dropping it moves the one thing they asked you not to.',
         },
       },
-      required: ['by'],
+      required: [],
     },
   },
   {

@@ -155,7 +155,7 @@ const sentence = planVoiceCalls([
 check('a three-part sentence plans in order',
   types(sentence).join() === 'MOVE_CLIP,MOVE_CLIP,MOVE_CLIP,ADD_TRACK,ADD_CLIP,TRANSPORT',
   types(sentence).join())
-check('and reads back everything it did', /Moved/.test(sentence.say) && /crash/i.test(sentence.say) && /Restarted/.test(sentence.say),
+check('and reads back everything it did', /Moved/.test(sentence.say) && /crash/i.test(sentence.say) && /Restarting/.test(sentence.say),
   sentence.say)
 
 // All-or-nothing: half a command is worse than none.

@@ -145,6 +145,8 @@ export interface GapGroup {
   /** How the most recent attempt went, and how many of the grouped attempts
    *  were refused — a phrasing that fails half the time is the one to fix. */
   outcome: string
+  /** Which rung answered the most recent attempt — rules, learned, assistant, failed. */
+  path: string
   refused: number
   ids: string[]
 }
@@ -169,6 +171,7 @@ export async function listGaps(limit = 200): Promise<GapGroup[]> {
         (ARRAY_AGG(source ORDER BY ts DESC))[1] AS source,
         (ARRAY_AGG(status ORDER BY ts DESC))[1] AS status,
         (ARRAY_AGG(outcome ORDER BY ts DESC))[1] AS outcome,
+        (ARRAY_AGG(path ORDER BY ts DESC))[1] AS path,
         COUNT(*) FILTER (WHERE outcome LIKE 'refused%')::int AS refused,
         ARRAY_AGG(id)          AS ids
       FROM voice_command_gaps
@@ -184,6 +187,7 @@ export async function listGaps(limit = 200): Promise<GapGroup[]> {
       source: String(r.source ?? ''),
       status: String(r.status ?? 'new'),
       outcome: String(r.outcome ?? ''),
+      path: String(r.path ?? ''),
       refused: Number(r.refused ?? 0),
       ids: (r.ids ?? []) as string[],
     }))

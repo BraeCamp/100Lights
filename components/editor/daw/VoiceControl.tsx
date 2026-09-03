@@ -392,6 +392,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    * handed to a model that will not answer.
    */
   const assistantDownRef = useRef(false)
+  /** The last thing Light said out loud, so hearing it back is not a command. */
+  const lastSpokenRef = useRef('')
 
   /**
    * Whether the studio is currently taking commands, for the person looking at
@@ -513,6 +515,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // When the studio last spoke. Anything pointed at AFTER this is newer than
     // the conversation, which is what lets a click outrank a sentence.
     lastReplyAt.current = Date.now()
+    lastSpokenRef.current = text
     // isPlaying is a PROPERTY, not a method. Calling it threw, which left the
     // control stuck busy and silently blocked every command after the first —
     // a one-character mistake that looked like the whole feature had broken.
@@ -2780,6 +2783,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     if (!continuousRef.current) setListening(false)
     // A new sentence, a fresh account of what it did.
     didRef.current = []
+    // ── Its own voice, heard back ──────────────────────────────────────────
+    //
+    // The record, 22:03–22:05: "Restart." ×3, "Pause." ×5. The read-back was
+    // the command word, the room played it back into the microphone, and the
+    // rules ran it again. The read-backs no longer use command words, and this
+    // is the second guard: within a few seconds of Light speaking, a transcript
+    // that is what it just said (or a piece of it) is its own echo, not you.
+    {
+      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+      const heardN = norm(text), spokeN = norm(lastSpokenRef.current)
+      const recent = Date.now() - lastReplyAt.current < 8000
+      if (recent && heardN.length >= 4 && spokeN.length >= 4 && (spokeN.includes(heardN) || heardN.includes(spokeN))) {
+        console.info('[voice] ignored an echo of the read-back:', text)
+        return
+      }
+    }
     // hearBetter repairs the project's own nouns — "base two" into "Bass 2" —
     // which is the single most valuable correction available, because a general
     // recogniser has never seen these names and mangles them constantly.

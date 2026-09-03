@@ -27,6 +27,7 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   'show_view.devices': 'Opens a track\'s effect rack and selects the track, so the rack is showing that track\'s devices and not the last one you looked at. Say "close the devices" to put it away.',
   'show_view.automation': 'Puts a drawable volume lane under the track, ready to draw a shape into. Every device parameter can be automated as well — add those from the lane\'s own menu once one is open.',
   'show_view.pads': 'Shows the playable pads for tapping parts in by hand or by voice. Nothing about the song changes either way.',
+  'copy_notes': 'Makes a new clip on the same track holding only a part of another clip — the notes that start together at its beginning ("the first chord"), or everything inside its first bar or two — and puts it where you say, several times back to back if you ask. The source clip is untouched.',
   'show_view.transcript': 'Opens the transcript in a bar beside the voice card: what you said, what Light answered, and — as its own list — what actually changed in the song. The card stays on screen.',
   'show_view.help': 'Opens the full list of what Light understands on its own, beside the voice card, with the ways to say each one. Nothing is spoken; the list is the answer.',
   'show_view.voice': 'Opens the voice card\'s own settings, its usage-and-costs log, or its named shapes, in a bar beside the card rather than in place of the live view.',

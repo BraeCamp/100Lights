@@ -977,12 +977,66 @@ const COMMANDS: VoiceCommand[] = [
 
   // ── Arrangement ──────────────────────────────────────────────────────────
   {
+    id: 'copy_notes',
+    tool: 'copy_notes',
+    group: 'Arrangement',
+    what: 'Copy the first chord (or first bars) of a clip somewhere',
+    say: ['take the first chord of the pad and put it at bar 1', 'copy the first bar of the bass 2 to bar 9', 'recreate the opening chord of the chord stack at the first bar and repeat it 4 times'],
+    match(w, ctx) {
+      // A PART of a clip, named: the first chord / note / N bars. Without one
+      // of these words this is a whole-clip move or duplicate, which sit
+      // below and own those sentences.
+      // Read on the raw sentence: "first" and "take" are filler to the
+      // matcher, and they are the whole point here.
+      const raw = w.raw.toLowerCase()
+      const chord = /\b(?:first|opening|1st)\s+(?:chord|note)\b/.test(raw)
+      const bars = /\b(?:first|opening|1st)\s+(?:\d+\s+)?(?:bars?|beats?)\b/.test(raw)
+      if (!chord && !bars) return null
+      if (!/\b(?:take|copy|put|place|recreate|add|move|grab|repeat|duplicate)\b/.test(raw)) return null
+      // Mark what this reading explains, so the rest of it scores as read.
+      w.has('chord'); w.has('note'); w.has('bars'); w.has('bar'); w.has('beats')
+      w.has('take'); w.has('copy'); w.has('put'); w.has('place'); w.has('recreate'); w.has('repeat'); w.has('times')
+      const hit = clipOrSelected(w, ctx, ['take', 'copy', 'put', 'place', 'recreate', 'add', 'move', 'grab', 'first', 'opening',
+        'chord', 'note', 'bars', 'bar', 'beats', 'from', 'of', 'in', 'at', 'to', 'it', 'that', 'repeat', 'times', 'track', 'clip'], { dropNums: true })
+      const nums = argNumbers(w, hit?.name ?? '')
+      // "…at bar 1 … repeat it 4 times": the bar is the number beside "bar",
+      // the count the one beside "times". Read positionally when both appear.
+      const ORD: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 }
+      // "at the first bar" / "at bar 9" / "at the 9th bar" — but NOT the
+      // "first bar" that names the part being copied ("the first bar of…").
+      const barM = /\bbar\s+(\d+)\b|\b(\d+)(?:st|nd|rd|th)?\s+bar\b(?!\s+of)|\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+bar\b(?!\s+of)/.exec(raw)
+      const timesM = /\b(\d+)\s*(?:times|x)\b/.exec(raw)
+      const times = timesM ? Number(timesM[1]) : (w.has('twice') ? 2 : 1)
+      const at = barM ? Number(barM[1] ?? barM[2] ?? ORD[barM[3]]) : (nums.find(n => n !== times) ?? null)
+      const partM = /\bfirst\s+(\d+)\s+(bars?|beats?)\b|\bfirst\s+(bar|beat)\b/.exec(raw)
+      const part = chord ? 'first chord' : partM ? (partM[1] ? `${partM[1]} ${partM[2]}` : `1 ${partM[3]}`) : 'first chord'
+      // The clip is what follows "of / in / from": "the first chord OF THE PAD
+      // INTRO and put it…". clipOrSelected returns the track's name glued on
+      // ("Pad Pad intro") when a clip and its track share a word, and the
+      // planner then cannot find it.
+      const srcM = /\b(?:of|in|from)\s+(?:the\s+)?([a-z0-9' ]+?)(?=\s+(?:and|at|to|then|onto|into)\b|[,.]|$)/.exec(raw)
+      const target = srcM?.[1]?.trim() || hit?.name
+      if (!target) return null
+      return {
+        calls: [{ name: 'copy_notes', input: { target, part, ...(at != null ? { at: { bar: at } } : {}), ...(times > 1 ? { times } : {}) } }],
+        // The sentence shape is unmistakable — a part, a verb, a place — so it
+        // does not hang on how well the name scored.
+        confidence: 0.94,
+        needsName: false,
+      }
+    },
+  },
+  {
     id: 'duplicate_clip',
     tool: 'duplicate_clip',
     group: 'Arrangement',
     what: 'Repeat a clip back to back',
     say: ['loop the bass 3 more times', 'repeat the drums twice', 'duplicate the pad'],
     match(w, ctx) {
+      // A PART of a clip — "the first chord", "the first two bars" — is
+      // copy_notes, whatever verb comes with it; repeating the whole clip is
+      // this.
+      if (/\b(?:first|opening|1st)\s+(?:chord|note|(?:\d+\s+)?(?:bars?|beats?))\b/.test(w.raw.toLowerCase())) return null
       const asked = w.has('repeat', 'duplicate', 'again', 'copy')
         || (w.has('loop') && w.has('times', 'more'))
         || w.has('double')
@@ -3022,6 +3076,9 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Stop shaping the notes',
     say: ['stop arpeggiating the bass 2', 'remove the arpeggiator from the bass 2'],
     match(w, ctx) {
+      // "take the first chord of the pad intro…" is a copy of some notes, not
+      // the removal of a chord effect — see copy_notes.
+      if (/\b(?:first|opening|1st)\s+(?:chord|note)\b/.test(w.raw.toLowerCase())) return null
       const kind = w.has('arpeggiate', 'arpeggiating', 'arpeggiator', 'arp') ? 'arp'
         : w.has('chord', 'chords') ? 'chord'
           : w.has('scale') ? 'scale'
@@ -3866,7 +3923,10 @@ const COMMANDS: VoiceCommand[] = [
       // from "stop" — and this fires instantly, with nothing downstream to
       // catch it, so "the hat is too much" stopped the song. The plural and
       // past tense are listed because a recogniser produces them for "stop".
-      if (!w.exact('stop', 'stops', 'stopped', 'halt')) return null
+      // ⚠️ Not "stopped": that is the READ-BACK, and hearing it back ran the
+      // command again (the record: "Pause." ×5 in a minute). Nobody commands
+      // a studio in the past tense.
+      if (!w.exact('stop', 'stops', 'halt')) return null
       // The object of the command, read rather than left dangling.
       for (const word of THE_SONG) w.has(word)
       return { calls: [{ name: 'transport', input: { action: 'stop' } }], confidence: 0.95 }
@@ -3880,7 +3940,7 @@ const COMMANDS: VoiceCommand[] = [
     say: ['pause', 'hold on', 'pause it'],
     match(w) {
       // Exact: "pulse" is a synth word one edit from "pause".
-      if (!w.exact('pause', 'paused') && !w.said('hold on')) return null
+      if (!w.exact('pause') && !w.said('hold on')) return null
       // The object of the command, read rather than left dangling.
       for (const word of THE_SONG) w.has(word)
       return { calls: [{ name: 'transport', input: { action: 'pause' } }], confidence: 0.95 }

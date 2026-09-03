@@ -47,6 +47,7 @@ const PROJECT = {
 // asks for them, with a real track/clip name where a target is wanted.
 const CALLS = {
   duplicate_clip: { target: 'pad clip', count: 2 },
+  copy_notes: { target: 'pad clip', part: 'first chord', at: { bar: 1 }, times: 2 },
   automate_parameter: { target: 'pad', parameter: 'lowpass', from: 100, to: 20, length: { bars: 2 } },
   move_clips: { by: { bars: 1 } },
   insert_clip: { sound: 'crash', at: { bar: 2 } },
