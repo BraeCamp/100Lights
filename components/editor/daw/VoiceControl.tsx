@@ -55,7 +55,7 @@ import {
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
-import { stitch, worthHolding, looksIncomplete, STITCH_MS } from '@/lib/voice/stitch'
+import { stitch, worthHolding, looksIncomplete, continuesPrevious, notAlreadyRun, STITCH_MS, CONTINUE_MS } from '@/lib/voice/stitch'
 import { useDropDirection, useMountTransition, popClass } from '@/lib/ui/popup'
 import { interpretSequence } from '@/lib/voice/sequence'
 import { interpret } from '@/lib/voice/interpret'
@@ -169,6 +169,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    * So an answer to a question continues the exchange rather than replacing it.
    */
   const saidRef = useRef<string[]>([])
+  /**
+   * The last command that RAN — its words and its calls — so a take that picks
+   * up where it left off ("…and the hats") can be read as the whole sentence and
+   * only the unfinished part carried out. See continuesPrevious / notAlreadyRun.
+   */
+  const lastRunRef = useRef<{ text: string; calls: VoiceCall[]; at: number } | null>(null)
   useEffect(pullSharedCommands, [])
   // ⚠️ Warm the assistant's function while nobody is speaking yet. A serverless
   // route that has sat idle is reloaded on its next request, and that reload
@@ -1503,6 +1509,29 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
 
+    // ── "…and the hats": the rest of a command that already ran ─────────────
+    //
+    // Brae: "Is there a way that we can make that sentence work in the program?
+    // Those pauses are part of natural speech and if we can respect them then
+    // we will get further."
+    //
+    // The first half was whole — "mute the drums" — and ran, correctly, when
+    // the tail ended. What arrives now opens with a connective or has no verb
+    // of its own; it is not a new command, it is the same one continuing. So
+    // it is read as the WHOLE sentence, joined to the words that ran a moment
+    // ago, and only the part that has not happened yet is carried out: the
+    // calls that already ran are subtracted from whatever the joined sentence
+    // plans to. That is what keeps "move the drums two bars… and the hats" from
+    // moving the drums four.
+    let alreadyRan: VoiceCall[] = []
+    const lastRun = lastRunRef.current
+    if (!readable && lastRun && Date.now() - lastRun.at <= CONTINUE_MS && continuesPrevious(text)) {
+      text = `${lastRun.text} ${text}`
+      alreadyRan = lastRun.calls
+      saidRef.current = [text]
+      setTaking('')
+    }
+
     if (!shouldActOn({
       held: !!heard && continuousRef.current,
       collecting: collectingRef.current,
@@ -1765,7 +1794,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // resolveHeard when the utterance came from a microphone: it can weigh what
     // the recogniser was unsure of, which is the difference between recovering
     // a mishearing and reporting one.
-    const local = heard ? resolveHeard(heard, ctx) : resolveLocally(text, ctx)
+    const local0 = heard ? resolveHeard(heard, ctx) : resolveLocally(text, ctx)
+    // A continuation re-reads the whole sentence; the half that already ran is
+    // taken back out before anything runs again. See notAlreadyRun.
+    const local = alreadyRan.length ? { ...local0, calls: notAlreadyRun(local0.calls, alreadyRan) } : local0
 
     // ── Is there a studio to talk to? ──────────────────────────────────────
     //
@@ -1851,6 +1883,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           calls: local.calls, said_back: plan.say,
         })
         recordCommand({ said: text, by: local.calls.some(c => c.name === 'run_macro') ? 'macro' : 'rules' })
+        lastRunRef.current = { text, calls: [...alreadyRan, ...local.calls], at: Date.now() }
         postExchange({ said: text, calls: local.calls, say: plan.say, outcome: 'ran',
           path: local.calls.some(c => c.name === 'run_macro') ? 'macro' : 'rules' })
         history.current = []
@@ -1926,7 +1959,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // The names are resolved against the song as it is NOW, by the same planner
     // the assistant's own calls go through. That is the whole reason the call is
     // what gets stored: "mute the pad" finds today's pad.
-    const learned = recallCommand(text)
+    const learned0 = recallCommand(text)
+    const learned = learned0 && alreadyRan.length
+      ? { ...learned0, calls: notAlreadyRun(learned0.calls, alreadyRan) }
+      : learned0
     if (learned) {
       const before = project
       const plan = planVoiceCalls(learned.calls, project, voiceCtx())
@@ -1942,6 +1978,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           by: learned.calls.some(c => c.name === 'run_macro') ? 'macro'
             : learned.from === 'shared' ? 'shared' : 'learned',
         })
+        lastRunRef.current = { text, calls: [...alreadyRan, ...learned.calls], at: Date.now() }
         postExchange({
           said: text, calls: learned.calls, say: plan.say, outcome: 'ran',
           path: learned.calls.some(c => c.name === 'run_macro') ? 'macro'
@@ -2207,7 +2244,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         spend.cacheRead += data.usage?.cacheRead ?? 0
         spend.cacheWrite += data.usage?.cacheWrite ?? 0
         spend.credits += data.credits ?? 0
-        const calls = data.actions ?? []
+        // A continuation re-reads the whole sentence; what already ran a moment
+        // ago is taken back out before the assistant's plan is carried out.
+        const calls = notAlreadyRun(data.actions ?? [], alreadyRan)
         if (data.message?.trim()) spoke = data.message.trim()
 
         if (!calls.length) {
@@ -2375,6 +2414,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // Deliberately not awaited and deliberately unable to fail: the command
       // has already run, and a notebook being unavailable must never turn a
       // successful edit into a reported failure.
+      if (!lastProblem && allCalls.length) {
+        lastRunRef.current = { text, calls: [...alreadyRan, ...allCalls], at: Date.now() }
+      }
       postExchange({
         said: text, calls: allCalls, say: lastSay || spoke,
         outcome: lastProblem ? `refused: ${lastProblem}` : allCalls.length ? 'ran' : 'no tool call',

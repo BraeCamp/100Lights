@@ -87,6 +87,45 @@ function words(s: string): number {
 const VERB = /\b(add|put|make|set|change|turn|move|copy|delete|remove|mute|unmute|solo|play|stop|start|restart|pause|loop|undo|redo|open|close|show|give|bring|take|drop|raise|lower|descend|ascend|fade|sweep|ramp|automate|double|halve|split|join|rename|call|save|export|render|freeze|duplicate|reverse|swing|quantize|quantise|transpose|pan|filter|compress|duck|draw|write|record|arm|select|focus|zoom|scroll|go|jump|seek|browse|hear|describe|is|are|was|has|have|do|does|can|could|would|should|want|need|keep|leave|let|try|use|apply|run|repeat|increase|decrease|boost|cut|brighten|darken|widen|narrow|shorten|lengthen|extend|hold|stay|stays|goes|comes|gets|sounds|louder|quieter|brighter|darker|faster|slower)\b/i
 const TRAILS_OFF = /\b(and|then|to|on|at|from|with|for|of|the|a|an|but|so|or|into|onto|over|under|between|until|till|by)$/i
 
+/**
+ * Does this pick up where the LAST command left off?
+ *
+ * Brae: "Is there a way that we can make that sentence work in the program?
+ * Those pauses are part of natural speech and if we can respect them then we
+ * will get further."
+ *
+ * The sentence is "mute the drums… [pause] …and the hats". The first half is a
+ * whole command and has already run, correctly. The second half is not a
+ * command at all — it is the rest of the first one. A take that OPENS with a
+ * connective, or that has no verb of its own, arriving soon after a command
+ * ran, is that command continuing; it is read as the whole sentence, and only
+ * the part that has not happened yet is carried out (see notAlreadyRun).
+ */
+export const CONTINUE_MS = 5_000
+const OPENS_WITH_CONNECTIVE = /^(and|then|also|plus|but|or|as well as|along with|too)\b/i
+
+export function continuesPrevious(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  if (OPENS_WITH_CONNECTIVE.test(t)) return true
+  return looksIncomplete(t)
+}
+
+/**
+ * The calls that have NOT already been carried out.
+ *
+ * ⚠️ RE-READING THE WHOLE SENTENCE MUST NOT RE-RUN ITS FIRST HALF. "mute the
+ * drums and the hats" plans to two mutes; the drums were muted a moment ago on
+ * the first take. Running both again would be harmless for a mute and wrong for
+ * a move — "move the drums two bars and the hats" would move the drums four.
+ * Anything equal to a call that already ran is dropped, by value.
+ */
+export function notAlreadyRun<T extends { name: string; input: unknown }>(calls: T[], ran: readonly { name: string; input: unknown }[]): T[] {
+  if (!ran.length) return calls
+  const seen = new Set(ran.map(c => `${c.name}|${JSON.stringify(c.input ?? {})}`))
+  return calls.filter(c => !seen.has(`${c.name}|${JSON.stringify(c.input ?? {})}`))
+}
+
 export function looksIncomplete(text: string): boolean {
   const t = text.trim().replace(/[.…]+$/, '')
   if (!t) return false

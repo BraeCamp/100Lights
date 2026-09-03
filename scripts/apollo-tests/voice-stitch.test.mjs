@@ -147,5 +147,50 @@ const at = t => ({ text: 'add a descending low pass filter to', at: t })
     /what would you like to do with it\?/.test(voice))
 }
 
+// ── "…and the hats": the rest of a command that already ran ────────────────
+//
+// Brae: "Is there a way that we can make that sentence work in the program?
+// Those pauses are part of natural speech and if we can respect them then we
+// will get further."
+//
+// "mute the drums… [pause] …and the hats". The first half is whole and ran when
+// the tail ended. The second is not a new command — it is the same one
+// continuing. It is read as the whole sentence, and only the part that has not
+// happened yet is carried out.
+{
+  const { continuesPrevious, notAlreadyRun } = await importTs('lib/voice/stitch.ts')
+  const voice = readFileSync('components/editor/daw/VoiceControl.tsx', 'utf8')
+
+  check('a take opening with "and" continues the last command', continuesPrevious('and the hats'))
+  check('so does "then"', continuesPrevious('then the bass'))
+  check('and a bare thing with no verb', continuesPrevious('the hats'))
+  // A fresh command is a fresh command, however soon it follows.
+  check('"mute the hats" is not a continuation', !continuesPrevious('mute the hats'))
+  check('nor is "stop"', !continuesPrevious('stop'))
+
+  // ⚠️ THE HALF THAT RAN MUST NOT RUN AGAIN. Re-reading "move the drums two bars
+  // and the hats" plans to two moves; the drums moved a moment ago. Running
+  // both would move the drums four.
+  const ran = [{ name: 'set_track', input: { target: 'Drums', muted: true } }]
+  const planned = [
+    { name: 'set_track', input: { target: 'Drums', muted: true } },
+    { name: 'set_track', input: { target: 'Hats', muted: true } },
+  ]
+  const left = notAlreadyRun(planned, ran)
+  check('what already ran is subtracted from the re-read sentence',
+    left.length === 1 && left[0].input.target === 'Hats', JSON.stringify(left))
+  check('and nothing is subtracted when nothing ran', notAlreadyRun(planned, []).length === 2)
+  // Same name, different arguments, is a different call.
+  check('a call with different arguments is not mistaken for the one that ran',
+    notAlreadyRun([{ name: 'set_track', input: { target: 'Drums', muted: false } }], ran).length === 1)
+
+  check('the studio joins a continuation to the words that just ran',
+    /text = `\$\{lastRun\.text\} \$\{text\}`/.test(voice))
+  check('and subtracts what ran on every path — rules, cache, assistant',
+    (voice.match(/notAlreadyRun\(/g) ?? []).length >= 3)
+  check('remembering what ran wherever a command runs',
+    (voice.match(/lastRunRef\.current = \{ text, calls:/g) ?? []).length >= 3)
+}
+
 console.log(failures ? `\n${failures} failing` : '\nslow speech survives')
 assert.equal(failures, 0)
