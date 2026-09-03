@@ -21,6 +21,7 @@
 import type { LibraryEntry } from '@/lib/sound-library'
 import type { TrackInstrument } from '@/lib/daw-types'
 import { noteOf } from '@/lib/apollo/multisample-zones'
+import { tagsOf } from '@/lib/sound-tags'
 
 /**
  * Something you can hear.
@@ -137,11 +138,16 @@ export function buildQueue(
   const cat = fold(want.category ?? '')
   const q = fold(want.query ?? '')
 
+  // ⚠️ THE SHARED DERIVATION, not the raw field. tagsOf folds in this user's own
+  // tags, the ones the sound shipped with, and what it measurably sounds like —
+  // so browsing "dark" finds a sound somebody labelled dark, one the catalog
+  // labelled dark, AND one that simply is. Reading e.tags here would have made
+  // this the fourth place in the codebase that disagreed about what a tag is.
   const matched = entries.filter(e => {
-    if (tag && !(e.tags ?? []).some(t => fold(t).includes(tag))) return false
+    if (tag && !tagsOf(e).some(t => fold(t).includes(tag))) return false
     if (cat && fold(String(e.category ?? '')) !== cat) return false
     if (q) {
-      const hay = `${e.name} ${e.folder ?? ''} ${(e.tags ?? []).join(' ')}`
+      const hay = `${e.name} ${e.folder ?? ''} ${tagsOf(e).join(' ')}`
       if (!fold(hay).includes(q)) return false
     }
     return true
@@ -152,7 +158,7 @@ export function buildQueue(
     id: e.id,
     name: e.name,
     detail: e.folder || String(e.category ?? ''),
-    tags: e.tags ?? [],
+    tags: tagsOf(e),
   }))
 }
 

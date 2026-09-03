@@ -40,6 +40,9 @@ export interface LibraryEntry {
   folder?:      string        // sub-folder name
   parentFolder?: string       // parent group (e.g. "100lights Audio") — read-only, set at creation
   tags?:        string[]      // free-form tags for filtering (e.g. ['Dark', 'Hard'])
+  /** This user's own tags. Never leave this device's account, never overwritten
+   *  by a catalog refresh — see Taggable.userTags in lib/sound-tags. */
+  userTags?:    string[]
   key?:         string        // musical key (e.g. 'C', 'F#', 'Bb')
   bpm?:         number        // tempo of the sample
   /** true once this entry lives in the account's server library (see
@@ -472,7 +475,22 @@ export async function syncCatalog(): Promise<void> {
 
     for (const it of items) {
       const lid = `catalog_${it.id}`
-      if (localIds.has(lid)) continue
+      if (localIds.has(lid)) {
+        // ⚠️ AN ENTRY ALREADY HERE STILL NEEDS ITS UNIVERSAL TAGS REFRESHED.
+        //
+        // This used to `continue`, which meant an admin editing a catalog
+        // sound's tags changed them for nobody who already had it — that is to
+        // say, for nobody. The tags were editable and the edit went nowhere.
+        //
+        // Only the fields the catalog OWNS are touched. A person's own tags
+        // live in userTags precisely so this line cannot reach them.
+        const had = local.find(e => e.id === lid)
+        const same = JSON.stringify(had?.tags ?? []) === JSON.stringify(it.tags ?? [])
+        if (had && !same) {
+          try { await libraryUpdate(lid, { tags: it.tags ?? [] }) } catch { /* next sync */ }
+        }
+        continue
+      }
       try {
         // Metadata only — the audio streams on first use (libraryFulfill).
         //

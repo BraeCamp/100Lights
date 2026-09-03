@@ -112,6 +112,19 @@ export interface Taggable {
   group?: string | null
   /** What a person wrote. Always kept. */
   tags?: string[] | null
+  /**
+   * ⚠️ THIS USER'S OWN WORDS, WHICH NOBODY ELSE SEES.
+   *
+   * Brae: "These user specific tag edits are only for the user. Universal tags
+   * remain only changeable in the admin page."
+   *
+   * A catalog sound belongs to everybody, so its `tags` are the admin's and are
+   * refreshed from the catalog whenever it changes. That refresh is exactly why
+   * a second field is needed rather than letting people edit `tags` directly:
+   * anything written there would be overwritten the next time an admin touched
+   * that sound, silently and much later.
+   */
+  userTags?: string[] | null
   /** Measured character, 0..1 per trait — from lib/voice/preset-character.ts. */
   measured?: Partial<Record<'dark' | 'bright' | 'warm' | 'soft' | 'space' | 'grit', number>> | null
 }
@@ -157,7 +170,8 @@ export function tagsOf(item: Taggable): string[] {
     out.push(tag)
   }
 
-  // A person's own words, always.
+  // A person's own words, always — theirs first, then the ones it shipped with.
+  for (const t of item.userTags ?? []) add(t)
   for (const t of item.tags ?? []) add(t)
 
   // ⚠️ WHAT IT MEASURABLY IS BEATS WHAT ITS CATEGORY GENERALLY IS, and the
