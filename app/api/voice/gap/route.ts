@@ -20,7 +20,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json() as {
       said?: string; calls?: unknown; say?: string; source?: string; tracks?: unknown
-      outcome?: string; turns?: number
+      outcome?: string; turns?: number; path?: string
     }
     const said = String(body.said ?? '').trim()
     // Nothing to learn from an empty string, and a paragraph is somebody using
@@ -39,6 +39,10 @@ export async function POST(req: Request) {
       // Whether it worked, which is the label the queue was missing.
       outcome: String(body.outcome ?? '').slice(0, 200),
       turns: Math.max(1, Math.min(8, Number(body.turns) || 1)),
+      // Which rung answered — so the record holds the free answers and the
+      // failures, not only the assistant's completed exchanges.
+      path: ['rules', 'learned', 'shared', 'macro', 'assistant', 'failed'].includes(String(body.path))
+        ? String(body.path) : 'assistant',
       userId,
     })
   } catch { /* see above */ }

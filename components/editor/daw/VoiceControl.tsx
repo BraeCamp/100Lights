@@ -749,6 +749,39 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
    * voice reading out every name over the top of it would make browsing worse
    * than scrolling. The name is shown, not said.
    */
+  /**
+   * Every command and what became of it, to the server — whichever rung
+   * answered, and including the ones that failed.
+   *
+   * ⚠️ Brae: "They should all be in the record... all voice commands and
+   * responses have been read by previous iterations." They had not been.
+   * Only the assistant's COMPLETED exchanges were written, so the two truncated
+   * replies that ended his last session were nowhere, and neither was a single
+   * command the built-in rules answered. A record that keeps the successes and
+   * drops the failures says everything works.
+   *
+   * Fire and forget, and unable to fail: the command has already run.
+   */
+  const postExchange = useCallback((e: {
+    said: string; calls?: VoiceCall[]; say?: string; outcome: string; turns?: number
+    path: 'rules' | 'learned' | 'shared' | 'macro' | 'assistant' | 'failed'
+  }) => {
+    void fetch('/api/voice/gap', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        said: e.said,
+        calls: e.calls ?? [],
+        say: e.say ?? '',
+        source: heardRef.current ? 'spoken' : 'typed',
+        outcome: e.outcome,
+        turns: e.turns ?? 1,
+        path: e.path,
+        tracks: (projectRef.current?.tracks ?? []).map(t => t.name),
+      }),
+    }).catch(() => {})
+  }, [])
+
   const runBrowse = useCallback((b: BrowseAction) => {
     const show = (item: { name: string; detail: string } | null) => {
       setBusy(false)
@@ -1770,6 +1803,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           calls: local.calls, said_back: plan.say,
         })
         recordCommand({ said: text, by: local.calls.some(c => c.name === 'run_macro') ? 'macro' : 'rules' })
+        postExchange({ said: text, calls: local.calls, say: plan.say, outcome: 'ran',
+          path: local.calls.some(c => c.name === 'run_macro') ? 'macro' : 'rules' })
         history.current = []
         setAsking('')
         // A reading of a REWRITTEN sentence says so. Acting silently on words
@@ -1857,6 +1892,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         recordCommand({
           said: text,
           by: learned.calls.some(c => c.name === 'run_macro') ? 'macro'
+            : learned.from === 'shared' ? 'shared' : 'learned',
+        })
+        postExchange({
+          said: text, calls: learned.calls, say: plan.say, outcome: 'ran',
+          path: learned.calls.some(c => c.name === 'run_macro') ? 'macro'
             : learned.from === 'shared' ? 'shared' : 'learned',
         })
         setAsking('')
@@ -2018,6 +2058,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         if (Date.now() - loopStartedAt > LOOP_MS) {
           setProblem('That took too long — stopping there. Try saying it again.')
           markFailed('loop budget exceeded')
+          postExchange({ said: text, calls: allCalls, path: 'failed', outcome: 'loop budget exceeded', turns: usedTurns })
           traceEnd('', 'loop budget exceeded')
           return
         }
@@ -2094,6 +2135,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               : signedOut ? 'Sign in to use the assistant. Simple commands still work without it.'
                 : (e.error || `Couldn't reach the assistant (${res.status}).`))
           markFailed(e.error || `http ${res.status}`)
+          postExchange({ said: text, calls: allCalls, path: 'failed', outcome: e.error || `http ${res.status}`, turns: usedTurns })
           traceEnd('', e.error || `http ${res.status}`)
           return
         }
@@ -2285,19 +2327,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // Deliberately not awaited and deliberately unable to fail: the command
       // has already run, and a notebook being unavailable must never turn a
       // successful edit into a reported failure.
-      void fetch('/api/voice/gap', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          said: text,
-          calls: allCalls,
-          say: lastSay || spoke,
-          source: heard ? 'spoken' : 'typed',
-          outcome: lastProblem ? `refused: ${lastProblem}` : 'ran',
-          turns: usedTurns,
-          tracks: (projectRef.current.tracks ?? []).map(t => t.name),
-        }),
-      }).catch(() => {})
+      postExchange({
+        said: text, calls: allCalls, say: lastSay || spoke,
+        outcome: lastProblem ? `refused: ${lastProblem}` : allCalls.length ? 'ran' : 'no tool call',
+        turns: usedTurns, path: 'assistant',
+      })
 
       // ── Keep the last few exchanges, as TEXT ────────────────────────────
       //
@@ -2384,6 +2418,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           lastAcceptedAt.current = Date.now()
           respond(`${plan.say} (the assistant is unreachable, so I used what I understood myself.)`)
           markFailed(timedOut ? 'assistant timeout' : 'assistant unreachable')
+          postExchange({ said: text, calls: local.calls, say: plan.say, path: 'rules',
+            outcome: `assistant ${timedOut ? 'timed out' : 'unreachable'}; the rules answered instead` })
           setBusy(false)
           return
         }
@@ -2392,6 +2428,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         ? 'The assistant took too long. Say it again — it usually comes back.'
         : 'Couldn\'t reach the assistant.')
       markFailed(timedOut ? 'assistant timeout' : 'assistant unreachable')
+      postExchange({ said: text, path: 'failed', outcome: timedOut ? 'assistant timed out' : 'assistant unreachable' })
     } finally {
       setBusy(false)
     }

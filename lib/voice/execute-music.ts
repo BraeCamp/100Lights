@@ -1368,7 +1368,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
     // MOVE — "move everything over by one bar"
     case 'move_clips': {
-      const clips = target
+      const chosen = target
         ? (() => {
           const track = resolveTrack(target, project)
           if (track) return allClips(project).filter(c => c.trackId === track.id)
@@ -1376,8 +1376,34 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
           return one ? [one.clip] : []
         })()
         : allClips(project)
+
+      // ── EXCEPT ───────────────────────────────────────────────────────────
+      //
+      // The record, 20:36: "Move everything forward by 8 bars. So move it all
+      // right by 8 bars except for pad intro." → move_clips(by: 8 bars) →
+      // "Moved all 35 clips" — the one clip he asked to leave went with them.
+      // The tool had no way to say "except", so the model dropped it and did
+      // the nearest thing, confidently. Same shape as the reverb that became a
+      // low-pass: a request the tool cannot express becomes the wrong action,
+      // not a question.
+      //
+      // ⚠️ AN EXCEPTION THAT NAMES NOTHING IS A REFUSAL. If "pad intro" resolves
+      // to no track and no clip, moving everything anyway is precisely the
+      // outcome the sentence forbade.
+      const exceptions = Array.isArray(i.except) ? (i.except as unknown[]).map(x => String(x ?? '').trim()).filter(Boolean) : []
+      const spared = new Set<string>()
+      for (const name of exceptions) {
+        const track = resolveTrack(name, project)
+        if (track) { for (const c of allClips(project)) if (c.trackId === track.id) spared.add(c.id); continue }
+        const one = resolveClip(name, project)
+        if (one) { spared.add(one.clip.id); continue }
+        return fail(`I couldn't find "${name}" to leave in place — say the track or clip name as it appears.`)
+      }
+      const clips = chosen.filter(c => !spared.has(c.id))
       if (!clips.length) {
-        return fail(target ? `I couldn't find "${target}" to move.` : 'There is nothing in the arrangement to move.')
+        return fail(target ? `I couldn't find "${target}" to move.`
+          : exceptions.length ? 'Everything you named to leave alone is everything there is — nothing left to move.'
+            : 'There is nothing in the arrangement to move.')
       }
       const first = Math.min(...clips.map(c => c.startBeat))
       const span = spanOf(i.by, first, maps)
@@ -1434,7 +1460,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         // The automation is mentioned because its absence was the bug. "Moved
         // all 6 clips one bar later" was true and complete-sounding while the
         // filter sweeps stayed where they were.
-        say: `Moved ${target ? `${clips.length} clip${clips.length === 1 ? '' : 's'} on ${target}` : `all ${clips.length} clips`}${carried ? ' and their automation' : ''} ${spoken ? describeDuration(spoken, Math.abs(by)) : `${Math.abs(by)} beats`} ${by > 0 ? 'later' : 'earlier'}.`,
+        // Says what was LEFT as well as what moved: "except" is only believable
+        // if the read-back proves it was heard.
+        say: `Moved ${target ? `${clips.length} clip${clips.length === 1 ? '' : 's'} on ${target}` : `${spared.size ? clips.length : 'all ' + clips.length} clips`}${carried ? ' and their automation' : ''} ${spoken ? describeDuration(spoken, Math.abs(by)) : `${Math.abs(by)} beats`} ${by > 0 ? 'later' : 'earlier'}${spared.size ? `, leaving ${exceptions.join(' and ')} where ${spared.size === 1 ? 'it was' : 'they were'}` : ''}.`,
       }
     }
 

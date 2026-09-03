@@ -150,6 +150,10 @@ export const MUSIC_TOOLS = [
       properties: {
         target: { ...TARGET, description: 'A track or clip name; omit to move EVERYTHING.' },
         by: LENGTH,
+        except: {
+          type: 'array', items: { type: 'string' },
+          description: 'Tracks or clips to LEAVE WHERE THEY ARE — "move everything except the pad intro", "shift it all but the drums". Always fill this in when the sentence has an except/but/apart from; dropping it moves the one thing they asked you not to.',
+        },
       },
       required: ['by'],
     },

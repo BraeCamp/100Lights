@@ -40,6 +40,17 @@ export interface GapRow {
    *  in context months later. */
   tracks: unknown
   /**
+   * Which rung answered: rules | learned | shared | macro | assistant.
+   *
+   * ⚠️ Brae: "all voice commands and responses have been read by previous
+   * iterations." They had not: only the assistant's completed exchanges were
+   * written here, so the two truncated replies that failed his last session
+   * were nowhere, and neither was a single command the built-in rules
+   * answered. A record that holds the successes and drops the failures is a
+   * record that says everything works.
+   */
+  path?: string
+  /**
    * How it actually went: 'ran', or 'refused: <reason>'.
    *
    * ⚠️ The half that was missing. A row saying only what the assistant DECIDED
@@ -82,6 +93,9 @@ async function ensure() {
   // once this is more than a handful of rows.
   await sql`CREATE INDEX IF NOT EXISTS voice_gaps_said ON voice_command_gaps (lower(said))`
   await sql`CREATE INDEX IF NOT EXISTS voice_gaps_ts ON voice_command_gaps (ts DESC)`
+  // Added after the table existed — a separate statement, since CREATE TABLE
+  // IF NOT EXISTS does nothing to a table that is already there.
+  await sql`ALTER TABLE voice_command_gaps ADD COLUMN IF NOT EXISTS path TEXT NOT NULL DEFAULT 'assistant'`
   // CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
   // the columns added after the first deploy have to be added explicitly or
   // they exist only on a database that has never run this code.
@@ -106,12 +120,12 @@ export async function addGap(row: Omit<GapRow, 'id' | 'ts' | 'status' | 'note'>)
       SELECT COUNT(*)::int AS n FROM voice_command_gaps WHERE lower(said) = lower(${said})`
     if (n >= PER_PHRASE_CAP) return
     await sql`
-      INSERT INTO voice_command_gaps (id, ts, said, calls, say, source, tracks, user_id, outcome, turns)
+      INSERT INTO voice_command_gaps (id, ts, said, calls, say, source, tracks, user_id, outcome, turns, path)
       VALUES (
         ${crypto.randomUUID()}, ${Date.now()}, ${said},
         ${JSON.stringify(row.calls ?? [])}::jsonb, ${row.say ?? ''}, ${row.source ?? 'typed'},
         ${JSON.stringify(row.tracks ?? [])}::jsonb, ${row.userId ?? ''},
-        ${row.outcome ?? ''}, ${row.turns ?? 1}
+        ${row.outcome ?? ''}, ${row.turns ?? 1}, ${row.path ?? 'assistant'}
       )`
   } catch {
     // Fail-soft, deliberately and completely. This is a notebook. A command

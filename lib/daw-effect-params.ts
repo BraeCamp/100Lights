@@ -78,7 +78,13 @@ export interface AutomatableParam {
  * control by hand and hearing it close is not a bug; a curve that silently
  * parks the track is.
  */
-export const LOWPASS_HZ = { min: 60, max: 18_000 }
+// ⚠️ 200, NOT 60. The voice record shows sweeps landing at "60 Hz" — a 0%
+// low-pass that has removed everything anybody can hear, which is the bug that
+// once silenced a pad and was fixed by giving the sweep a 200 Hz floor. That
+// floor lived here and drifted back down. A saved lane keeps the min it was
+// made with, so nothing already drawn changes; new ones stop at dark instead
+// of at nothing.
+export const LOWPASS_HZ = { min: 200, max: 18_000 }
 export const HIGHPASS_HZ = { min: 20, max: 2_000 }
 
 const WET: AutomatableParam = { key: 'wet', label: 'Wet', min: 0, max: 1 }
