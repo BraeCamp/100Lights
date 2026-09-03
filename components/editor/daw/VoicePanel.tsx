@@ -151,6 +151,9 @@ export interface VoicePanelProps {
   threshold?: number
   sensitivity: number
   onSensitivity: (v: number) => void
+  /** How long a pause counts as the end of a sentence (silence-tail multiplier). */
+  patience: number
+  onPatience: (v: number) => void
   /**
    * Commands said but not yet carried out.
    *
@@ -583,7 +586,7 @@ export default function VoicePanel({
   talking = false, saying = '', reply = '', problem = '', question,
   onHud, onClose, onMinimize, side, onSide, caption, onCaption, colors: C,
   mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
-  mic, threshold = 0, sensitivity, onSensitivity,
+  mic, threshold = 0, sensitivity, onSensitivity, patience, onPatience,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
   calibration, calibrating, calibrationPhrase, onCalibrate, credits,
   assistant, onAssistant, ear, onEar,
@@ -1273,6 +1276,44 @@ export default function VoicePanel({
                       key={label}
                       title={why}
                       onClick={() => onSensitivity(v)}
+                      style={{
+                        flex: 1, height: 24, borderRadius: 5, cursor: 'pointer', fontSize: 10,
+                        fontWeight: active ? 800 : 600,
+                        border: `1px solid ${active ? C.accent : C.border}`,
+                        background: active ? `${C.accent}22` : 'transparent',
+                        color: active ? C.accent : C.textMuted,
+                        transition: 'background 120ms, color 120ms, border-color 120ms',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* ── How long it waits for you to finish ─────────────────
+                  Brae: "Voice control is getting ahead of itself… The user
+                  should be able to adjust the sensitivity of its hearing."
+                  Two dials, not one: the row above is how LOUD you must be;
+                  this is how long a pause has to last before the sentence is
+                  taken as finished. Thinking mid-sentence wants this up. */}
+              <div style={{ marginTop: 8, fontSize: 10, color: C.textMuted, lineHeight: 1.45 }}>
+                How long it waits after you go quiet before it acts
+              </div>
+              <div data-voice-patience style={{ display: 'flex', gap: 3 }}>
+                {([
+                  [0.7, 'Snappy', 'acts about a second after you stop — for short commands'],
+                  [1, 'Normal', 'the default, 1.2 seconds'],
+                  [1.5, 'Patient', 'lets you pause to think mid-sentence'],
+                  [2.2, 'Unhurried', 'for long, slowly spoken requests'],
+                ] as const).map(([v, label, why]) => {
+                  const active = Math.abs(patience - v) < 0.01
+                  return (
+                    <button
+                      key={label}
+                      title={why}
+                      onClick={() => onPatience(v)}
+                      aria-pressed={active}
                       style={{
                         flex: 1, height: 24, borderRadius: 5, cursor: 'pointer', fontSize: 10,
                         fontWeight: active ? 800 : 600,

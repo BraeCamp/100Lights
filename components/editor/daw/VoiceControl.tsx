@@ -74,7 +74,7 @@ import { LUMENS_NAME } from '@/lib/credit-tiers'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
   studioVoice, setStudioVoice,
-  voiceSensitivity, setVoiceSensitivity, aiActs,
+  voiceSensitivity, setVoiceSensitivity, voicePatience, setVoicePatience, aiActs,
   assistantMode, setAssistantMode, type AssistantMode,
 } from '@/lib/voice/speak'
 
@@ -141,7 +141,7 @@ function pullSharedCommands() {
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
   const {
     inStudio,
-    project, dispatch, engine, undo, redo, selectedTrackId, selectedClipId,
+    project, dispatch, engine, undo, redo, beginUndoGroup, endUndoGroup, selectedTrackId, selectedClipId,
     metronome, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
     setSelectedClipIds, setSelectedClipId, setSelectedTrackId,
     setShowPads, setApolloRack, setShowAppearance,
@@ -373,6 +373,25 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const [credits, setCredits] = useState<{ spent: number; left: number } | null>(null)
   // Read by the recorder's callbacks, which outlive the render that made them.
   const sensitivityRef = useRef(1)
+  /** How long a pause counts as "finished" — see voicePatience(). */
+  const patienceRef = useRef(voicePatience())
+  const [patience, setPatienceState] = useState(patienceRef.current)
+  /**
+   * Until when the PERSON is talking, as far as the microphone can tell — set
+   * forward by every level reading above the bar and every interim transcript.
+   * Brae: "we also need for it to wait to answer verbally if talking is still
+   * happening." Light reads the reply on screen at once and speaks it only
+   * once this has passed.
+   */
+  const userSpeakingUntil = useRef(0)
+  const deferToken = useRef(0)
+  /**
+   * True once the assistant has refused this session (signed out, out of
+   * Lumens). The sentence is then read the way the rules-only mode reads it —
+   * including a compound sentence split into its parts — instead of being
+   * handed to a model that will not answer.
+   */
+  const assistantDownRef = useRef(false)
 
   /**
    * Whether the studio is currently taking commands, for the person looking at
@@ -459,7 +478,25 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const respond = useCallback((
     text: string,
     kind: 'report' | 'question' | 'problem' = 'report',
+    retry = 0,
   ) => {
+    // ── Not over the top of you ─────────────────────────────────────────────
+    //
+    // Brae: "it starts talking over me at some point… we also need for it to
+    // wait to answer verbally if talking is still happening."
+    //
+    // ⚠️ THE WORDS GO ON SCREEN NOW; THE VOICE WAITS. A reply that arrives
+    // while you are still mid-sentence is read back the moment you stop —
+    // checked every 150 ms, for up to six seconds, after which it speaks
+    // anyway rather than never. A newer reply supersedes a waiting one.
+    deferToken.current += 1
+    if (Date.now() < userSpeakingUntil.current && retry < 40) {
+      if (kind === 'problem') setProblem(text)
+      else { setSaid(text); setProblem('') }
+      const mine = deferToken.current
+      window.setTimeout(() => { if (deferToken.current === mine) respond(text, kind, retry + 1) }, 150)
+      return
+    }
     if (kind === 'problem') setProblem(text)
     else {
       setSaid(text)
@@ -784,6 +821,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     said: string; calls?: VoiceCall[]; say?: string; outcome: string; turns?: number
     path: 'rules' | 'learned' | 'shared' | 'macro' | 'assistant' | 'failed'
   }) => {
+    // The request is over: whatever it dispatched is one undo step, and the
+    // next dispatch — a click, a drag — belongs to nothing.
+    endUndoGroup?.()
     // The transcript, for the person: said / replied / did.
     // Brae: "It would say what the user said, what Light responded with, and
     // what Light did."
@@ -1247,7 +1287,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const step = act.type === 'UNDO' ? undo : redo
       const did = step?.()
       if (!step) setProblem('Undo is not available here.')
-      else if (did === false) setProblem(act.type === 'UNDO' ? 'Nothing to undo.' : 'Nothing to redo.')
+      else if (!did) setProblem(act.type === 'UNDO' ? 'Nothing to undo.' : 'Nothing to redo.')
       else setSaid(act.type === 'UNDO' ? 'Undone.' : 'Redone.')
       return
     }
@@ -1418,6 +1458,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // built from the timings of a previous, unrelated sentence.
     heardRef.current = heard
     setSpokenRaw(spoken)
+    // ── One request, one undo ──────────────────────────────────────────────
+    // Brae: "If I ask it to do 4 things in one request, an undo request after
+    // that should undo the whole thing." Everything this sentence dispatches —
+    // four rule calls, a macro's dozen points, an assistant's turns — lands in
+    // one history group, closed when the exchange is recorded.
+    beginUndoGroup?.(spoken)
     // ── Was this meant for the studio at all? ───────────────────────────────
     //
     // Brae: "The 'say light first' thing needs to go. It isn't working for me."
@@ -1478,7 +1524,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // Four seconds of quiet after something was accepted belongs to that
       // command, not to a new one that failed.
       const settling = Date.now() - lastAcceptedAt.current < 4000
-      if (!askingRef.current && !busyRef.current && !settling) setProblem('I didn\'t catch that.')
+      // ⚠️ AND NOT WHILE ANYTHING IS STILL IN FLIGHT. Brae: "it needs to stop
+      // saying 'I didn't catch that' just because it's still loading /
+      // processing a response, command, or set of commands." A half-sentence
+      // being held for its other half, words still arriving on the microphone,
+      // a reply still being spoken — each is a reason an empty take is not a
+      // failure, only a pause.
+      const midway = !!heldFragment.current || Date.now() < userSpeakingUntil.current + 2500 || talking
+      if (!askingRef.current && !busyRef.current && !settling && !midway) setProblem('I didn\'t catch that.')
       return
     }
 
@@ -1741,7 +1794,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // If a model is going to read this sentence, the rules do not get to
       // answer for it. They advise (see the hint sent with the request); they
       // do not pre-empt.
-      const segments = assistantMode() !== 'rules' ? [] : interpretSequence(text, ctx)
+      const segments = assistantMode() !== 'rules' && !assistantDownRef.current ? [] : interpretSequence(text, ctx)
       if (segments.length > 1) {
         lastAcceptedAt.current = Date.now()
         setBusy(false)
@@ -1968,9 +2021,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // Reports what actually happened. Saying "Undone." over an empty stack
         // is the kind of small lie that teaches someone to stop trusting the
         // read-back, and the read-back is the whole safety story here.
-        if (did === false) setProblem(name === 'undo' ? 'Nothing to undo.' : 'Nothing to redo.')
+        if (!did) setProblem(name === 'undo' ? 'Nothing to undo.' : 'Nothing to redo.')
         else if (!step) setProblem('Undo is not available here.')
-        else setSaid(name === 'undo' ? 'Undone.' : 'Redone.')
+        // Says how much came back when a whole request did — "Undone — 4
+        // changes" is the difference between trusting the undo and checking it.
+        else setSaid(`${name === 'undo' ? 'Undone' : 'Redone'}${typeof did === 'number' && did > 1 ? ` — ${did} changes` : ''}.`)
         return
       }
     }
@@ -2356,6 +2411,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               return
             }
           }
+          // And a sentence the rules could not read WHOLE may still read in
+          // parts — "mute the pad and mute the drums" is two built-in commands.
+          // With the assistant refusing, the sentence is read again the way
+          // rules-only mode reads it, once.
+          if ((signedOut || e.needCredits) && !assistantDownRef.current) {
+            assistantDownRef.current = true
+            setBusy(false)
+            void run(spoken, heardConfidence, confirmed, heard)
+            return
+          }
           // Remembered, so the NEXT sentence is answered honestly instead of
           // quietly falling through to the built-in commands.
           if (e.needCredits) outOfLumens.current = true
@@ -2377,6 +2442,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // A turn got through, so whatever was wrong with the account is not
         // wrong any more.
         outOfLumens.current = false
+        assistantDownRef.current = false
         const data = await res.json() as {
           message?: string; actions?: (VoiceCall & { id?: string })[]
           credits?: number; balance?: number; stop?: string; raw?: unknown[]
@@ -2797,11 +2863,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // odd way to ask for one.
       continuous: continuousRef.current,
       sensitivity: sensitivityRef.current,
+      patience: patienceRef.current,
       onUtterance: r => handleTake(r),
       // A live meter, because "is it even hearing me" is the first question
       // when this goes wrong and it should not need asking twice.
-      onLevel: (l, bar) => { setLevel(l); setThreshold(bar) },
-      onSpeechStart: () => setProblem(''),
+      onLevel: (l, bar) => {
+        setLevel(l); setThreshold(bar)
+        // Above the bar means somebody is talking; the reply's voice waits.
+        if (l > bar) userSpeakingUntil.current = Date.now() + 700
+      },
+      onSpeechStart: () => { setProblem(''); userSpeakingUntil.current = Date.now() + 700 },
       // It ends itself once talking stops, so the trailing room does not get
       // recorded. finish() is what turns the take into a command.
       // Through a ref: finish() is defined below this callback, and the take
@@ -2865,7 +2936,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     }
 
     const h = listen({
-      onPartial: setHeard,
+      // An interim transcript means the words are still coming — hold the
+      // voice, and count it as speech for the "didn't catch that" gate.
+      onPartial: t => { setHeard(t); if (t) userSpeakingUntil.current = Date.now() + 900 },
       onFinal: heardSentence,
       onError: m => {
         setListening(false)
@@ -2930,7 +3003,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // A server fault is not the speaker's fault. "I didn't catch that" is
     // only correct when the recording genuinely held no words.
     if (!r.ok) { setProblem(r.error); markFailed(r.error); return }
-    if (!r.result || !r.result.text) { setProblem('I didn\'t catch that.'); return }
+    if (!r.result || !r.result.text) {
+      // An empty take while something is still being worked on, held, or
+      // spoken is the pause around a command, not a command that failed.
+      const midway = busyRef.current || !!heldFragment.current
+        || Date.now() - lastAcceptedAt.current < 4000 || Date.now() < userSpeakingUntil.current + 2500
+      if (!midway) setProblem('I didn\'t catch that.')
+      return
+    }
     const { text, alternatives, confidence, words } = r.result
     // Per-word confidence is the most useful thing in the response: it says
     // WHICH word the recogniser struggled with, so only that word needs
@@ -3631,6 +3711,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           onRunQueue={runQueue}
           onClearQueue={() => { setQueue([]); offeredAt.current = 0 }}
           onDropQueued={i => setQueue(q => q.filter((_, n) => n !== i))}
+          patience={patience}
+          onPatience={v => {
+            setPatienceState(v)
+            patienceRef.current = v
+            setVoicePatience(v)
+          }}
           sensitivity={sensitivity}
           onSensitivity={v => {
             setSensitivityState(v)

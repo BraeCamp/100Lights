@@ -135,6 +135,43 @@ export function touchedByAction(action: DawAction): Touched {
   }
 }
 
+// ── One request, one undo ────────────────────────────────────────────────────
+//
+// Brae: "it needs to be able to undo an entire request. If I ask it to do 4
+// things in one request, an undo request after that should undo the whole
+// thing. Perhaps we should have in the history a grouping mechanism."
+//
+// ⚠️ THE STACK STAYS ONE ENTRY PER ACTION. Grouping is a label on the
+// entries, not a different shape: every action still reverts through its own
+// touchedByAction, so a grouped undo is exactly N precise reverts in reverse
+// order — collaboration-safe in the same way a single one is. What changes is
+// how many the caller takes at once: all the entries at the top that share a
+// group id come off together. An ungrouped entry comes off alone.
+export interface UndoEntry<P> {
+  before: P
+  action: DawAction
+  /** Set on every entry made inside one request (a spoken command, a macro,
+   *  later a drag). Entries with the same id undo and redo together. */
+  group?: string
+  /** What the group was, in words — "make the reverb fall to 20% at bar 9". */
+  label?: string
+}
+
+/**
+ * Take the top entry off the stack — and, when it belongs to a group, every
+ * entry above the group's start. Returned newest first, which is the order
+ * they must be reverted in.
+ */
+export function takeUndoGroup<P>(stack: UndoEntry<P>[]): UndoEntry<P>[] {
+  const top = stack.pop()
+  if (!top) return []
+  const taken = [top]
+  if (top.group) {
+    while (stack.length && stack[stack.length - 1].group === top.group) taken.push(stack.pop()!)
+  }
+  return taken
+}
+
 /** Per-id merge: current array, with the touched ids restored to their
  *  `from` versions (replaced in place, re-added if missing, or removed if
  *  they didn't exist in `from`). Untouched entities pass through untouched. */

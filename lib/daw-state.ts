@@ -873,10 +873,19 @@ export interface DawContextValue {
   consolidateBuildHistory?: () => number
   // History. Both editors provide these now; they return whether there was
   // anything to undo, so a caller can report honestly instead of assuming.
-  undo?: () => boolean | void
-  redo?: () => boolean | void
+  // A number is how many entries came off — a grouped request undoes as one.
+  undo?: () => number | boolean | void
+  redo?: () => number | boolean | void
   canUndo?: boolean
   canRedo?: boolean
+  /**
+   * Group everything dispatched from now until endUndoGroup (or the next
+   * beginUndoGroup) into ONE undo step. Brae: "If I ask it to do 4 things in
+   * one request, an undo request after that should undo the whole thing."
+   * Returns the group id. Voice commands and macros use it; a drag could.
+   */
+  beginUndoGroup?: (label?: string) => string
+  endUndoGroup?: () => void
   // UI state (not in reducer — ephemeral)
   view: DawView
   setView: (v: DawView) => void

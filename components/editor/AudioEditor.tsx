@@ -4,7 +4,8 @@ import { useState, useEffect, useReducer, useRef, useCallback, useMemo } from 'r
 import Link from 'next/link'
 import { createPortal } from 'react-dom'
 import { useUser } from '@clerk/nextjs'
-import { computeRevertPatch } from '@/lib/daw-undo'
+import { computeRevertPatch, takeUndoGroup, type UndoEntry } from '@/lib/daw-undo'
+import { reducer as undoReducer } from '@/lib/daw-state'
 import Appear, { useSticky, useAppear } from '@/components/ui/Appear'
 import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
 import { spliceClipAt } from '@/lib/daw-splice'
@@ -710,8 +711,15 @@ export default function AudioEditor(props: AudioEditorProps) {
   // pre-action project (immutable, so this shares structure — cheap), letting us
   // keep a deep stack without deep-copying each snapshot.
   const UNDO_LIMIT = 200
-  const historyRef = useRef<Array<{ before: DawProject; action: DawAction }>>([])
-  const redoRef    = useRef<Array<{ before: DawProject; action: DawAction }>>([])
+  const historyRef = useRef<UndoEntry<DawProject>[]>([])
+  const redoRef    = useRef<UndoEntry<DawProject>[]>([])
+  /**
+   * The request every dispatch belongs to, while one is open — see
+   * beginUndoGroup in the context. A spoken "do these four things" opens one,
+   * dispatches four actions inside it, and closes it; ⌘Z or "undo" then takes
+   * all four back at once.
+   */
+  const undoGroupRef = useRef<{ id: string; label?: string } | null>(null)
   // Construction log for the History capture/replay mode (third capture method):
   // the literal forward action stream, folded from empty to re-play how the
   // project was built. Seeded from a loaded project's history so edits continue it.
@@ -1392,7 +1400,8 @@ export default function AudioEditor(props: AudioEditorProps) {
       action = { ...action, clip: { ...action.clip, createdAt: new Date().toISOString(), ...(userNameRef.current && !action.clip.createdBy ? { createdBy: userNameRef.current } : {}) } }
     }
     if (action.type !== 'LOAD_PROJECT') {
-      historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action }]
+      const g = undoGroupRef.current
+      historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action, ...(g ? { group: g.id, label: g.label } : {}) }]
       redoRef.current = []
       // Build history: skip view/transport-only actions, and coalesce a
       // continuous slider drag (rapid same-target updates) into one step —
@@ -2517,28 +2526,55 @@ export default function AudioEditor(props: AudioEditorProps) {
   // footprint (computed against CURRENT state, so a collaborator's concurrent
   // edits survive) and broadcast the patch so the room follows along instead of
   // self-healing the undo away.
-  const doUndo = useCallback((): boolean => {
-    const entry = historyRef.current.pop()
+  // Undo and redo take a whole GROUP when the top entry belongs to one — a
+  // spoken request of four actions comes back as one step. Each entry still
+  // reverts through its own precise patch, newest first, so a grouped undo is
+  // N collaboration-safe reverts rather than one wholesale restore. Returns
+  // how many came off (0 = nothing to do), so the voice can say "4 changes".
+  // ⚠️ EACH REVERT IS COMPUTED AGAINST THE ONE BEFORE IT, not against the
+  // project as React last rendered it. projectRef only moves on render, and
+  // all N reverts of a group happen in one tick — so computing each against
+  // projectRef.current made the second patch carry the first's target back to
+  // its un-reverted value (seen on the real path: "undo" after "mute the pad
+  // and mute the drums" un-muted the pad and left the drums muted). The
+  // running state is stepped through the reducer between patches instead.
+  const doUndo = useCallback((): number => {
+    const taken = takeUndoGroup(historyRef.current)
     // Reports whether it actually did anything. A caller that says "Undone."
     // when the stack was empty is lying, and voice is the caller most likely to
     // be believed without looking.
-    if (!entry) return false
-    redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
-    const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, projectRef.current, entry.action) }
-    rawDispatch(patchAction)
-    if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
-    return true
+    if (!taken.length) return 0
+    let cur = projectRef.current
+    for (const entry of taken) {
+      redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
+      const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
+      rawDispatch(patchAction)
+      if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+      cur = undoReducer(cur, patchAction)
+    }
+    return taken.length
   }, [rawDispatch])
 
-  const doRedo = useCallback((): boolean => {
-    const entry = redoRef.current.pop()
-    if (!entry) return false
-    historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
-    const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, projectRef.current, entry.action) }
-    rawDispatch(patchAction)
-    if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
-    return true
+  const doRedo = useCallback((): number => {
+    const taken = takeUndoGroup(redoRef.current)
+    if (!taken.length) return 0
+    let cur = projectRef.current
+    for (const entry of taken) {
+      historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
+      const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
+      rawDispatch(patchAction)
+      if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+      cur = undoReducer(cur, patchAction)
+    }
+    return taken.length
   }, [rawDispatch])
+
+  const beginUndoGroup = useCallback((label?: string): string => {
+    const id = crypto.randomUUID()
+    undoGroupRef.current = { id, label }
+    return id
+  }, [])
+  const endUndoGroup = useCallback(() => { undoGroupRef.current = null }, [])
 
   // ── What the desktop menu bar and the global shortcuts reach ─────────────
   //
@@ -2712,6 +2748,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     // "undo that" is what someone says when they confirmed too quickly.
     undo: doUndo,
     redo: doRedo,
+    beginUndoGroup,
+    endUndoGroup,
     view,
     setView,
     editTarget,

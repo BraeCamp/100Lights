@@ -51,8 +51,11 @@ export interface LightStudio {
   dispatch: DawContextValue['dispatch']
   /** Absent outside the studio — there is no audio engine on the dashboard. */
   engine: DawContextValue['engine'] | null
-  undo?: () => boolean | void
-  redo?: () => boolean | void
+  undo?: () => number | boolean | void
+  redo?: () => number | boolean | void
+  /** One undo step for everything dispatched until endUndoGroup — see daw-state. */
+  beginUndoGroup?: (label?: string) => string
+  endUndoGroup?: () => void
   selectedTrackId: string | null
   selectedClipId: string | null
   metronome: boolean

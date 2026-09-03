@@ -163,6 +163,30 @@ export function setVoiceSensitivity(v: number): void {
   try { localStorage.setItem(SENSITIVITY_KEY, String(v)) } catch { /* private mode */ }
 }
 
+/**
+ * How long the studio waits, once you go quiet, before deciding you have
+ * finished — as a multiplier on the silence tail (1 = the standing 1.2 s).
+ *
+ * Brae: "Voice control is getting ahead of itself, it should start processing
+ * when it has something to focus on but it starts talking over me at some
+ * point. The user should be able to adjust the sensitivity of its hearing."
+ *
+ * ⚠️ TWO DIFFERENT THINGS ARE CALLED "SENSITIVITY". voiceSensitivity is how
+ * loud a sound must be to count as you at all. This is how long a pause has
+ * to be before it counts as the end. Somebody who thinks mid-sentence needs
+ * the second turned up and the first left alone.
+ */
+const PATIENCE_KEY = 'beacon.voice.patience'
+export function voicePatience(): number {
+  try {
+    const v = Number(localStorage.getItem(PATIENCE_KEY))
+    return Number.isFinite(v) && v >= 0.5 && v <= 3 ? v : 1
+  } catch { return 1 }
+}
+export function setVoicePatience(v: number): void {
+  try { localStorage.setItem(PATIENCE_KEY, String(Math.max(0.5, Math.min(3, v)))) } catch { /* private mode */ }
+}
+
 export type SpeechKind =
   /** What just happened. Suppressed while the transport runs. */
   | 'report'
