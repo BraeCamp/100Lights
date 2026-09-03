@@ -1184,6 +1184,67 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── COPY A PART OF A CLIP ───────────────────────────────────────────
+    //
+    // The record, three tries in forty minutes: "Take the 1st chord in pad
+    // intro and place it at the 1st bar" → moved the WHOLE intro clip sixteen
+    // bars; "take the 1st chord that's in pad intro and recreate it on pad at
+    // the 1st bar" → read the note names out; "…and repeat that 4 times" → only
+    // the move ran. There was no tool for a PART of a clip, so the model did
+    // the nearest whole-clip thing each time, confidently.
+    //
+    // "The first chord" is every note that starts with the clip's first note;
+    // "the first N bars/beats" is a span. Either becomes a new clip on the same
+    // track at the place asked for, `times` copies back to back.
+    case 'copy_notes': {
+      const chosen = resolveClipOrAsk(target, project, maps, 'copy_notes', { part: i.part, at: i.at, times: i.times })
+      if (chosen.ask) return { actions: [], say: '', ask: chosen.ask }
+      const src = chosen.clip
+      if (!src) return fail(`I couldn't find "${target || 'that'}" — say the track or clip name.`)
+      if (!('notes' in src) || !(src as MidiClip).notes.length) return fail(`"${src.name}" has no notes to copy — it is ${'notes' in src ? 'empty' : 'an audio clip'}.`)
+      const notes = (src as MidiClip).notes
+      const partSaid = str(i.part).toLowerCase().trim()
+      let picked: (typeof notes)[number][]
+      let partLabel: string
+      let spanBeats: number
+      if (/chord|first note|opening note/.test(partSaid) || !partSaid) {
+        const firstOn = Math.min(...notes.map(n => n.startBeat))
+        picked = notes.filter(n => Math.abs(n.startBeat - firstOn) < 0.13)
+        const nextOn = Math.min(...notes.filter(n => n.startBeat > firstOn + 0.13).map(n => n.startBeat), Infinity)
+        const held = Math.max(...picked.map(n => n.durationBeats))
+        spanBeats = Math.max(0.25, Number.isFinite(nextOn) ? Math.min(held, nextOn - firstOn) : held)
+        picked = picked.map(n => ({ ...n, startBeat: 0, durationBeats: Math.min(n.durationBeats, spanBeats) }))
+        partLabel = picked.length > 1 ? `the first chord (${picked.length} notes)` : 'the first note'
+      } else {
+        const span = spanOf(i.part, src.startBeat, maps)
+        if (span.problem || span.beats == null) return fail(`Say which part — "the first chord", "the first bar", "the first two bars".`)
+        spanBeats = span.beats
+        picked = notes.filter(n => n.startBeat < spanBeats).map(n => ({ ...n, durationBeats: Math.min(n.durationBeats, spanBeats - n.startBeat) }))
+        partLabel = `the first ${span.said ? describeDuration(span.said, spanBeats) : `${spanBeats} beats`}`
+      }
+      if (!picked.length) return fail(`There is nothing in ${partLabel} of "${src.name}".`)
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const at = place.beat ?? src.startBeat
+      const times = Math.max(1, Math.min(64, spokenNumber(i.times as string) ?? 1))
+      const bar = project.timeSignatureNum || 4
+      const clipLen = Math.max(spanBeats, Math.min(bar, spanBeats))
+      const actions = Array.from({ length: times }, (_, n) => ({
+        type: 'ADD_CLIP',
+        clip: {
+          id: newId(), trackId: src.trackId, kind: 'midi', name: times > 1 ? `${src.name} · ${n + 1}` : `${src.name} · part`,
+          startBeat: at + clipLen * n, durationBeats: clipLen, loopEnabled: false,
+          isDrumClip: (src as MidiClip).isDrumClip ?? false,
+          ...((src as MidiClip).presetId ? { presetId: (src as MidiClip).presetId } : {}),
+          notes: picked.map(nt => ({ ...nt, id: newId() })),
+        } as unknown as MidiClip,
+      }))
+      return {
+        actions,
+        say: `Copied ${partLabel} of "${src.name}" to ${describeBeat(at, maps)}${times > 1 ? `, ${times} times back to back` : ''}.`,
+      }
+    }
+
     // AUTOMATION — "an ascending low pass filter from 80% to 0% over the first 8 seconds"
     case 'automate_parameter': {
       const found = resolveClip(target, project)
@@ -1234,6 +1295,54 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         return fail(str(i.parameter)
           ? `I don't know how to automate "${str(i.parameter)}". I can do volume, pan, reverb, delay, drive, chorus, or a low-pass or high-pass filter.`
           : 'Say which one to automate — volume, pan, reverb, delay, drive, chorus, or a low-pass or high-pass filter.')
+      }
+      // ── A LEVEL, NOT A SHAPE ──────────────────────────────────────────
+      //
+      // The record, 22:02–22:04: "Add a low pass cutoff to Stab so it stays at
+      // about 80%" → a flat lane 80→80 over the first clip; "Bring the low
+      // pass cutoff on Stab down to 50%" → another flat lane 50→50 over 32
+      // beats; "…of the entire Stab track" → a third, to bar 63. Nobody asked
+      // for a shape. One value with no span is a SETTING: the effect's own
+      // control is set, and if a lane already drives it the lane goes flat at
+      // that value so the two cannot disagree.
+      const gaveSpan = i.start != null || i.at != null || i.end != null || i.until != null || i.length != null
+      if (from != null && to != null && Math.abs(from - to) < 1e-9 && !gaveSpan) {
+        const level = to
+        const setActions: unknown[] = []
+        let what = ''
+        let shown = ''
+        if (param === 'volume') {
+          setActions.push({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: level } })
+          what = 'Volume'; shown = `${Math.round(level * 100)}%`
+        } else if (param === 'pan') {
+          setActions.push({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: level * 2 - 1 } })
+          what = 'Pan'; shown = `${Math.round(level * 100)}%`
+        } else if (FX_AUTOMATABLE[param]) {
+          const spec = FX_AUTOMATABLE[param]
+          const have = (track.effects ?? []).find(e => e.type === spec.type)
+          const fxId = have?.id ?? newId()
+          if (!have) setActions.push({ type: 'ADD_EFFECT', trackId: track.id, effect: { id: fxId, type: spec.type, params: { ...makeDefaultParams(spec.type), [spec.key]: level } } })
+          else setActions.push({ type: 'UPDATE_EFFECT', trackId: track.id, effectId: fxId, patch: { params: { ...(have.params as object), [spec.key]: level } } })
+          what = spec.label; shown = `${Math.round(level * 100)}%`
+        } else {
+          const kind = param === 'highpass' ? 'highpass' : 'lowpass'
+          const have = (track.effects ?? []).find(e => e.type === 'filter' && (e.params as { type?: string } | undefined)?.type === kind)
+          const hzv = FILTER_HZ[kind].fromNorm(level)
+          const fxId = have?.id ?? newId()
+          if (!have) setActions.push({ type: 'ADD_EFFECT', trackId: track.id, effect: { id: fxId, type: 'filter', params: { enabled: true, type: kind, frequency: hzv, q: 1 } } })
+          else setActions.push({ type: 'UPDATE_EFFECT', trackId: track.id, effectId: fxId, patch: { params: { ...(have.params as object), frequency: hzv } } })
+          what = kind === 'lowpass' ? 'Low-pass cutoff' : 'High-pass cutoff'; shown = fmtHz(hzv)
+        }
+        // A lane that already drives this goes flat at the new level, or it
+        // would keep pulling the control back to the old shape.
+        const key = param === 'volume' || param === 'pan' ? param
+          : FX_AUTOMATABLE[param] ? `:${FX_AUTOMATABLE[param].key}` : ':frequency'
+        const lanes = (project.automationLanes ?? []).filter(l => l.trackId === track.id && (l.parameter === key || (key.startsWith(':') && l.parameter.endsWith(key))))
+        for (const l of lanes) for (const pt of l.points ?? []) setActions.push({ type: 'UPDATE_AUTOMATION_POINT', laneId: l.id, pointId: pt.id, patch: { value: level } })
+        return {
+          actions: setActions,
+          say: `${what} on "${track.name}" set to ${shown}${lanes.length ? ' — its automation is flat at that now too' : ''}.`,
+        }
       }
       const actions: unknown[] = []
       let laneId = newId()
@@ -1443,14 +1552,30 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
             : 'There is nothing in the arrangement to move.')
       }
       const first = Math.min(...clips.map(c => c.startBeat))
-      const span = spanOf(i.by, first, maps)
-      if (span.problem) return fail(span.problem)
-      const by = span.beats
-      if (by == null) return fail('Say how far to move it.')
+      // ── "back to the first bar" is a DESTINATION, not a distance ─────────
+      //
+      // The record, 21:59: "Move everything back to the left, to the 1st bar"
+      // → move_clips(by: -4 bars), which happened to be right because the last
+      // move had been 4. A place to land is read as a place: the earliest of
+      // the clips goes there and the rest keep their spacing.
+      const dest = placeOf(i.to, maps, project)
+      if (dest.problem) return fail(dest.problem)
+      let by: number | null
+      let spoken: MusicDuration | undefined
+      if (dest.beat != null) {
+        by = dest.beat - first
+        spoken = undefined
+      } else {
+        const span = spanOf(i.by, first, maps)
+        if (span.problem) return fail(span.problem)
+        by = span.beats
+        spoken = span.said
+      }
+      if (by == null) return fail('Say how far to move it, or where it should start.')
+      if (Math.abs(by) < 1e-6) return { actions: [], say: `${target ? `"${target}"` : 'Everything'} already starts at ${describeBeat(first, maps)}.` }
       // Moving later is applied from the END so two clips never briefly share a
       // beat if this is ever applied optimistically.
       const ordered = [...clips].sort((a, b) => (by > 0 ? b.startBeat - a.startBeat : a.startBeat - b.startBeat))
-      const spoken = span.said
 
       // ── What is written on the timeline moves with it ────────────────────
       //
@@ -4345,7 +4470,17 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
       return {
         actions: [{ type: 'TRANSPORT', action }],
-        say: action === 'restart' ? 'Restarted from the top.' : `${action[0].toUpperCase()}${action.slice(1)}.`,
+        // ⚠️ NOT THE COMMAND WORD. The record, 22:03–22:05: "Restart." ×3,
+        // "Pause." ×5, "Play." ×3 in a minute — Light said "Pause." out loud,
+        // the microphone heard "Pause.", and the rules ran it again. Every
+        // read-back here is a form no transport rule matches: "Paused" is not
+        // "pause" to the exact matcher, "Playing" does not bend to "play", and
+        // "Restarting" is neither "restart" nor "from the top".
+        say: action === 'restart' ? 'Restarting.'
+          : action === 'play' ? 'Playing.'
+            : action === 'pause' ? 'Paused.'
+              : action === 'stop' ? 'Stopped.'
+                : `${action[0].toUpperCase()}${action.slice(1)}.`,
       }
     }
 

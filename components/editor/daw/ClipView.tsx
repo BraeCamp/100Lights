@@ -97,7 +97,7 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onCopy?(): void
   onPaste?(): void
 }) {
-  const { engine, project, dispatch, selectedClipIds, setSoundPanel } = useDaw()
+  const { engine, project, dispatch, selectedClipIds, setSoundPanel, overlay = 'none' } = useDaw()
   // ── Is this clip's sound here yet? ──────────────────────────────────────
   // Brae: "when a song is loading, unloaded clips have some way of showing
   // that they're not loaded." The engine says when a buffer decodes or a synth
@@ -646,12 +646,23 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   // this so they grow/shrink and stay centered as the track resizes.
   const contentH = Math.max(8, track.height - 8)
 
+  // ── Overlays: one question, answered in grey ─────────────────────────────
+  // Brae: "One overlay will be 'Loading' where the user can see unloaded
+  // parts of the song in gray." A clip that is not the answer to the current
+  // overlay's question is drawn grey and dim; the answer keeps its colour.
+  const greyed = overlay === 'loading' ? !loaded
+    : overlay === 'automation' ? !project.automationLanes.some(l => l.trackId === track.id)
+      : overlay === 'effects' ? !(track.effects?.length)
+        : overlay === 'frozen' ? !track.frozen
+          : false
+
   return (
     <>
       <div
         ref={clipDivRef}
         data-clip-id={clip.id}
-        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected || multiSelected ? '#fff' : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: undefined, boxShadow: collabHolder ? `0 0 0 2px ${collabHolder.color}${collabHolder.editing ? '' : '99'}` : undefined }}
+        data-overlay-grey={greyed || undefined}
+        style={{ position: 'absolute', left, width, top: 4, bottom: 4, background: greyed ? 'rgba(128,128,128,0.22)' : `${color}40`, border: `1px solid ${isCropping ? '#f59e0b' : selected || multiSelected ? '#fff' : greyed ? '#6b6b6b' : color}`, borderRadius: 3, overflow: 'hidden', cursor: isCropping ? 'default' : 'grab', userSelect: 'none', boxSizing: 'border-box', outline: undefined, boxShadow: collabHolder ? `0 0 0 2px ${collabHolder.color}${collabHolder.editing ? '' : '99'}` : undefined, filter: greyed ? 'grayscale(1)' : undefined, opacity: greyed ? 0.55 : undefined, transition: 'opacity 180ms, filter 180ms, background 180ms' }}
         onMouseDown={onMouseDownBody}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}

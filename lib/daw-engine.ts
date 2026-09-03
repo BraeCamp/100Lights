@@ -199,6 +199,8 @@ export class DawEngine extends EventTarget {
   private trackNodes = new Map<string, TrackNodes>()
   private returnBuses = new Map<string, ReturnBus>()
   private effectsChains = new Map<string, ReturnType<typeof buildEffectsChain>>()
+  /** Per track: a chain swap still waiting on its worklet is cancelled by the next rebuild. */
+  private _chainSwapToken = new Map<string, number>()
   private _chainSigs = new Map<string, string>()
   // Per-clip SHARED rollFx chain, built once and reused by every note in the
   // clip (keyed by clipId). Every note in a clip has the same reverb/delay/EQ/
@@ -715,33 +717,50 @@ export class DawEngine extends EventTarget {
     const nodes = this.trackNodes.get(trackId)
     if (!nodes) return
 
+    const token = (this._chainSwapToken.get(trackId) ?? 0) + 1
+    this._chainSwapToken.set(trackId, token)
+    const old = this.effectsChains.get(trackId)
+
     // Tear down old routing — ALWAYS disconnect effectsInput, not only when a
     // chain object exists: the zero-effects state wires effectsInput straight
     // to effectsOutput, and leaving that in place when the first effect is
     // added creates a dry bypass in parallel with the new chain (effects
     // audibly "do nothing").
-    try { nodes.effectsInput.disconnect() } catch { /* ok */ }
-    const old = this.effectsChains.get(trackId)
-    if (old) {
-      old.dispose()
-      this.effectsChains.delete(trackId)
-    }
-
     if (effects.length === 0) {
+      try { nodes.effectsInput.disconnect() } catch { /* ok */ }
+      old?.dispose()
+      this.effectsChains.delete(trackId)
       nodes.effectsInput.connect(nodes.effectsOutput)
       return
     }
 
+    // ⚠️ THE OLD CHAIN STAYS UP UNTIL THE NEW ONE CAN SOUND. Brae: "editing one
+    // track while the playback is playing makes the whole track go silent."
+    // This used to disconnect the track's input and dispose the old chain
+    // FIRST, then build the new one — and an Apollo chain is a worklet that
+    // takes its input only once its engine has initialised, which under a
+    // heavy load is seconds. Every add / remove / bypass of a device restructures
+    // the chain, so each was seconds of silence on that track exactly when the
+    // machine was busiest. The new chain is built BESIDE the old one, the track
+    // moves over the moment it is ready, and the old one goes then.
+    //
     // Helios first (Apollo's hardened engine renders the whole chain in one
     // worklet); untranslatable chains and opted-out tracks use the legacy
     // per-node graph. Same {input,output,handles,dispose} shape either way.
     const wantHelios = this.heliosFxPref.get(trackId) !== false
     const helios = wantHelios ? buildHeliosFxChain(this.ctx, effects, this._chainTempo()) : null
     const chain = helios ?? buildEffectsChain(this.ctx, effects, this._chainTempo())
-    nodes.effectsInput.connect(chain.input)
-    chain.output.connect(nodes.effectsOutput)
     this.effectsChains.set(trackId, chain as ReturnType<typeof buildEffectsChain>)
-    this._wireSidechains(trackId, effects)
+    const swap = () => {
+      if (this._chainSwapToken.get(trackId) !== token) { chain.dispose(); return }   // a newer rebuild won
+      try { nodes.effectsInput.disconnect() } catch { /* ok */ }
+      old?.dispose()
+      nodes.effectsInput.connect(chain.input)
+      chain.output.connect(nodes.effectsOutput)
+      this._wireSidechains(trackId, effects)
+    }
+    if (helios) void helios.ready.then(swap)
+    else swap()
     // A track's chain is one worklet too, and a dead one takes that track's
     // audio with it for good. The legacy per-node graph can render the same
     // effects, so the track drops to it rather than staying silent — for this
@@ -3528,7 +3547,16 @@ export class DawEngine extends EventTarget {
     const sig = this._clipFxSig(rfx) + (lfoShape ? '|lfo:' + lfoShape.length + ':' + (lfoShape[1]?.v ?? '') : '')
     const cached = this._clipFxChains.get(clipId)
     if (cached && cached.sig === sig) return cached
-    if (cached) this._teardownFxNodes(cached.nodes)
+    // ⚠️ THE OLD CHAIN LINGERS. Notes already sounding are wired INTO it; tearing
+    // it down the instant a sound setting changes cut every ringing note dead
+    // and the clip went silent until its next onset — "editing one track while
+    // playback is playing makes the whole track go silent". New notes take the
+    // new chain; the old one is torn down once anything still in it has had
+    // time to finish.
+    if (cached) {
+      const stale = cached.nodes
+      window.setTimeout(() => this._teardownFxNodes(stale), Math.max(1500, (cached.tailSec + 4) * 1000))
+    }
     const built = this._buildRollFxChain(rfx, dest, undefined, undefined, lfoShape)
     const entry = { input: built.input, nodes: built.nodes, tailSec: built.tailSec, sig }
     this._clipFxChains.set(clipId, entry)

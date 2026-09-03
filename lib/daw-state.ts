@@ -919,6 +919,14 @@ export interface DawContextValue {
    *  could see this. */
   showAppearance?: boolean
   setShowAppearance?: (v: boolean) => void
+  /**
+   * An overlay on the arrangement: one question about the song, answered in
+   * grey. Brae: "One overlay will be 'Loading' where the user can see
+   * unloaded parts of the song in gray." Clips that are not the answer are
+   * drawn grey; everything else is untouched.
+   */
+  overlay?: OverlayKind
+  setOverlay?: (v: OverlayKind) => void
   // Pad/voice MIDI card
   showPads: boolean
   setShowPads: (v: boolean | ((prev: boolean) => boolean)) => void
@@ -1025,6 +1033,19 @@ export function DawPlayheadProvider(
 export function useDawPlayhead(): number {
   return useContext(DawPlayheadContext)
 }
+
+/**
+ * The overlays the arrangement can show. Each one asks a single question of
+ * every clip; the clips that answer "no" are drawn grey.
+ */
+export type OverlayKind = 'none' | 'loading' | 'automation' | 'effects' | 'frozen'
+export const OVERLAYS: { kind: OverlayKind; label: string; what: string }[] = [
+  { kind: 'none',       label: 'Off',        what: 'No overlay.' },
+  { kind: 'loading',    label: 'Loading',    what: 'Parts of the song whose sound has not arrived yet are grey.' },
+  { kind: 'automation', label: 'Automation', what: 'Tracks with no automation lanes are grey — see at a glance what moves.' },
+  { kind: 'effects',    label: 'Effects',    what: 'Tracks with no effects are grey.' },
+  { kind: 'frozen',     label: 'Frozen',     what: 'Tracks that are not frozen are grey — what is still being synthesised live.' },
+]
 
 export function useDaw(): DawContextValue {
   const ctx = useContext(DawContext)

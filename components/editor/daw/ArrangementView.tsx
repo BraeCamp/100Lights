@@ -6,7 +6,7 @@ import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend, ChevronDown, Music, Grid3x3, X, Cloud, HardDrive, Folder, Check, MessageSquare, RectangleHorizontal, MoreHorizontal, Download } from 'lucide-react'
 import { onCenterOnBeat } from '@/lib/daw-view'
-import { useDaw, makeMidiClip, makeAudioClip, useEnginePlaying } from '@/lib/daw-state'
+import { useDaw, makeMidiClip, makeAudioClip, useEnginePlaying, OVERLAYS } from '@/lib/daw-state'
 import { highlightHelpTargets } from './HelpButton'
 import { isMidiClip, isAudioClip, TRACK_COLORS, clipLockedBy } from '@/lib/daw-types'
 import type { ReturnTrack, AudioClip, DawClip, MidiClip } from '@/lib/daw-types'
@@ -399,7 +399,7 @@ function ReturnTrackRow({ rt, idx, dispatch }: { rt: ReturnTrack; idx: number; d
 // ── Arrangement View ──────────────────────────────────────────────────────────
 
 export default function ArrangementView() {
-  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, onSaveLocal, isSaving, dawDirty, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
+  const { project, dispatch, engine, setPosition, selectedClipId, setSelectedClipId, selectedTrackId, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, soundPanel, setSoundPanel, onSave, onSaveLocal, isSaving, dawDirty, audioMode, podcastMeta, blinkIds, loopToolArmed, setLoopToolArmed, overlay = 'none', setOverlay, collabPeers, notifyLocked, isGuest, requireAccount, resumeExport, clearResumeExport } = useDaw()
   const isMobile = useIsMobile()
   // Meter map for bar-snapping: 'bar' snap honors time-signature changes. Falls
   // back to uniform (project.timeSignatureNum) when there are no meter markers.
@@ -445,6 +445,21 @@ export default function ArrangementView() {
   const [snap, setSnap]             = useState<SnapMode>('1/16')
   const [snapMenu, setSnapMenu]     = useState(false)   // desktop snap dropdown
   const loopA = useAppear(loopToolArmed, 'rise')
+  // ── Overlays ─────────────────────────────────────────────────────────────
+  // Brae: "create an overlay menu. One overlay will be 'Loading' where the
+  // user can see unloaded parts of the song in gray." The menu picks which
+  // question the arrangement answers in grey (ClipView does the greying);
+  // the Loading overlay also counts what is still on its way, live.
+  const [overlayMenu, setOverlayMenu] = useState(false)
+  const overlayA = useAppear(overlayMenu, 'pop')
+  const [stillLoading, setStillLoading] = useState(0)
+  useEffect(() => {
+    if (overlay !== 'loading') return
+    const read = () => setStillLoading(engine.readiness().waiting.length)
+    read()
+    engine.addEventListener('load-change', read)
+    return () => engine.removeEventListener('load-change', read)
+  }, [engine, overlay])
   const snapLabelOf = (m: SnapMode) => (m === 'off' ? 'Off' : m === 'beat' ? 'Beat' : m === 'bar' ? 'Bar' : m)
   // "Everything" tier only: split the timeline with full-height dividers at every
   // tempo change (and section boundary — where a time-signature change is marked).
@@ -1497,6 +1512,39 @@ export default function ArrangementView() {
           )}
         </div>
         <span style={{ fontSize: 8, color: 'var(--text-muted)', marginLeft: 2 }} title="Hold ⌥ Option while dragging to bypass snap">⌥=free</span>
+        <div style={{ width: 1, height: 16, background: 'var(--border)', marginLeft: 4 }} />
+        {/* ── Overlays ──────────────────────────────────────────────────────
+            One question about the song at a time, answered in grey. */}
+        <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>OVERLAY</span>
+        <div style={{ position: 'relative' }} data-help-id="overlay">
+          <button
+            onClick={() => setOverlayMenu(v => !v)}
+            title="Overlay — grey out the parts of the song that do not answer a question"
+            data-overlay-button
+            style={{ ...toolBtn, background: overlay !== 'none' ? 'var(--accent-subtle, var(--bg-card))' : 'var(--bg-card)', color: overlay !== 'none' ? 'var(--accent)' : 'var(--text-primary)', border: `1px solid ${overlay !== 'none' ? 'var(--accent)' : 'var(--border)'}`, fontSize: 9, padding: '2px 7px', display: 'flex', alignItems: 'center', gap: 4, minWidth: 40 }}
+          >
+            {OVERLAYS.find(o => o.kind === overlay)?.label ?? 'Off'}
+            {overlay === 'loading' && stillLoading > 0 && (
+              <span style={{ fontSize: 8, padding: '0 4px', borderRadius: 6, background: 'rgba(128,128,128,.35)', color: 'var(--text-primary)' }} title="clips whose sound has not arrived yet">{stillLoading}</span>
+            )}
+            <ChevronDown size={10} style={{ opacity: 0.7 }} />
+          </button>
+          {overlayA.mounted && (
+            <>
+              <div onClick={() => setOverlayMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+              <div className={overlayA.cls} data-overlay-menu style={{ position: 'absolute', top: '100%', left: 0, marginTop: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: 3, zIndex: 41, minWidth: 220, boxShadow: '0 4px 14px rgba(0,0,0,0.35)' }}>
+                {OVERLAYS.map(o => (
+                  <button key={o.kind} onClick={() => { setOverlay?.(o.kind); setOverlayMenu(false) }}
+                    title={o.what}
+                    style={{ ...toolBtn, display: 'block', width: '100%', height: 'auto', textAlign: 'left', whiteSpace: 'normal', background: overlay === o.kind ? 'var(--bg-surface)' : 'transparent', color: overlay === o.kind ? 'var(--text-primary)' : 'var(--text-muted)', border: 'none', fontSize: 10, padding: '5px 8px', lineHeight: 1.3 }}>
+                    <span style={{ fontWeight: 700 }}>{o.label}</span>
+                    <span style={{ display: 'block', fontSize: 9, opacity: 0.75, whiteSpace: 'normal' }}>{o.what}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <div style={{ width: 1, height: 16, background: 'var(--border)', marginLeft: 4 }} />
         {/* Waveform zoom control */}
         <span data-ui-el="wf-zoom" style={{ fontSize: 9, color: 'var(--text-muted)' }} title="Waveform vertical zoom">WF</span>

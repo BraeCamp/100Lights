@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { createPortal } from 'react-dom'
 import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch, takeUndoGroup, type UndoEntry } from '@/lib/daw-undo'
-import { reducer as undoReducer } from '@/lib/daw-state'
+import { reducer as undoReducer, type OverlayKind } from '@/lib/daw-state'
 import Appear, { useSticky, useAppear } from '@/components/ui/Appear'
 import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
 import { spliceClipAt } from '@/lib/daw-splice'
@@ -2233,6 +2233,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     writeWorkspace('audio', { leftTab, sidebarOpen, view })
   }, [leftTab, sidebarOpen, view])
   const [showAppearance, setShowAppearance] = useState(false)
+  const [overlay, setOverlay] = useState<OverlayKind>('none')
   const leftResize = useResizable({ key: 'left-panel', initial: 240, min: 180, max: 520, axis: 'x' })
   const bottomResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })
 
@@ -2775,6 +2776,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     setMetronome,
     showAppearance,
     setShowAppearance,
+    overlay,
+    setOverlay,
     showPads,
     setShowPads,
     expandedPianoRollClipId,
@@ -2803,7 +2806,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     engineForRender,
     project, dispatch, view, editTarget, selectedTrackId, selectedReturnId, selectedClipId, selectedClipIds,
     selectedEffectIds,
-    playing, recording, setPosition, metronome, showPads,
+    playing, recording, setPosition, metronome, showPads, overlay,
     expandedPianoRollClipId, expandedStepSeqClipId, loopToolArmed, onSave, isSaving, dawDirty, podcastMeta, blinkIds, triggerBlink,
     collabPeers, notifyLocked, pendingMerge, props.isGuest, resumeExport,
   ])
@@ -3251,7 +3254,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     project.arrangementClips, paletteClip, paletteAudioClip, paletteTrack, clipLabel, editable, project.timeSignatureNum, project.timeSignatureDen,
     selectedClipIds, metronome, showPads, sidebarOpen, isPodcast, dispatch, doUndo, doRedo,
     setPosition, setMetronome, setSelectedClipId, setSelectedClipIds, setExpandedPianoRollClipId,
-    setShowPads, setSidebarOpen, setShowAppearance,
+    setShowPads, setSidebarOpen, setShowAppearance, overlay, setOverlay,
   ])
 
   // ⚠️ Publish the studio so things OUTSIDE the editor can reach it.
