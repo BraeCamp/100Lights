@@ -3527,7 +3527,11 @@ const COMMANDS: VoiceCommand[] = [
       // kind at all, so the sentence went to the assistant, which had nothing
       // to play them with and READ THE LIST OUT instead. Beats are the drum
       // patterns, and "drum"/"drums" beside them is the kind, not a search.
-      const beats = w.has('beats', 'beat', 'grooves', 'groove', 'rhythms', 'rhythm')
+      // ⚠️ PLURAL, AND EXACT. "give me a beat like doom ts doom ts" is a beat to
+      // MAKE (make_beat), not a shelf to browse — and has() bends "beat" to
+      // "beats" in one edit, so the singular must not be in the list at all.
+      // Browsing is always "beats", "grooves", "rhythms": a shelf, not a thing.
+      const beats = w.exact('beats', 'grooves', 'rhythms')
       const recipes = w.has('recipes', 'recipe', 'progressions', 'patterns')
       const sounds = w.has('sounds', 'samples', 'library', 'instruments')
       // "let's check out some different drum beats", "find me some beats",

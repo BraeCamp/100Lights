@@ -58,6 +58,11 @@ const first = text => interpret(text, ctx).calls[0]
   check('"show me the recipes" is still the recipes', first('show me the recipes')?.input.kind === 'recipes')
   check('"let me hear the drum samples" is still the sounds', first('let me hear the drum samples')?.input.kind === 'sounds', JSON.stringify(first('let me hear the drum samples')))
   check('and a beat with nothing asked is not a browse', first('the beats')?.name !== 'browse_sounds')
+  // ⚠️ A beat to MAKE is not a shelf to browse. has() bends "beat" to "beats"
+  // in one edit, so the singular sent this to the browser and the spoken beat
+  // was never made — the suite's own example caught it.
+  const made = first('give me a beat like doom ts doom ts')
+  check('"give me a beat like doom ts doom ts" is a beat to make, not a browse', made?.name === 'make_beat', JSON.stringify(made))
 }
 
 // ── the planner starts a browse with no filter ─────────────────────────────

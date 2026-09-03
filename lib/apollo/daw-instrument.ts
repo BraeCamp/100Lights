@@ -147,6 +147,32 @@ export async function apolloDrain(ctx: BaseAudioContext): Promise<void> {
 }
 
 /**
+ * Wait until every engine in this context that is still coming up has come
+ * up — call between scheduling and draining.
+ *
+ * ⚠️ THE SCHEDULER ITSELF CREATES ENGINES. preloadApolloInstrument warms one
+ * per TRACK destination, but a clip with FX Motion (or any effect bar under
+ * its notes) plays into a chain of its own, and an engine is keyed by its
+ * destination — so the offline scheduling pass calls ensure() on a node nobody
+ * preloaded, a fresh engine starts its async init, and the clip's notes go to
+ * its queue. apolloDrain() flushes only READY engines, so that queue was never
+ * delivered before startRendering(): every clip with FX Motion on an Apollo or
+ * translated-poly track rendered as silence, with no error. (Live playback
+ * hides it: the queue flushes when the engine comes up, a beat or so late.)
+ */
+export async function apolloAwaitReady(ctx: BaseAudioContext, timeoutMs = 8000): Promise<void> {
+  const set = byCtx.get(ctx)
+  if (!set) return
+  const start = Date.now()
+  const pending = () => [...set].filter(m => !m.released && !m.engine.crashed && !m.isReady)
+  while (pending().length && Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, 25))
+  }
+  const left = pending().length
+  if (left) console.warn(`[apollo] ${left} engine(s) created by the scheduler were not ready after ${timeoutMs}ms — their notes will be missing from this render`)
+}
+
+/**
  * How many Apollo engines are alive in this context.
  *
  * ⚠️ The number that separates "the song is heavy" from "we are building a

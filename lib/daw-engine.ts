@@ -14,8 +14,8 @@ import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './ap
 import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
-import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain } from './apollo/daw-instrument'
-import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam } from './beacon-plugins/host'
+import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain, apolloAwaitReady } from './apollo/daw-instrument'
+import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam, pluginAwaitReady } from './beacon-plugins/host'
 import type { PluginInstrumentParams } from './beacon-plugins/types'
 import { combined, combinedStale, combinedStamp, requestCombine, prerenderOn, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
@@ -4835,6 +4835,13 @@ export class DawEngine extends EventTarget {
     // arrive. startRendering() does not wait for the port, so without this a
     // render intermittently comes back missing notes — silently, and about one
     // time in eight. See ApolloEngine.flush().
+    // ⚠️ And engines the scheduling pass ITSELF created — a clip with FX Motion
+    // plays into a chain of its own, and an engine is keyed by destination, so
+    // such a clip's notes were queued on an engine still initialising, which
+    // apolloDrain (ready engines only) never flushed. Every FX-Motion clip on an
+    // Apollo or translated-poly track rendered silent. Wait for them first.
+    await apolloAwaitReady(this.ctx)
+    await pluginAwaitReady(this.ctx)
     await apolloDrain(this.ctx)
     const rendered = await octx.startRendering()
     const channels: Float32Array[] = []

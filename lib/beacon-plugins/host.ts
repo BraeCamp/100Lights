@@ -298,6 +298,27 @@ export async function preloadPluginInstrument(
   }
 }
 
+/**
+ * Wait for every plugin engine in this context that is still coming up — call
+ * between the offline scheduling pass and startRendering().
+ *
+ * ⚠️ The scheduler creates engines of its own: a clip with FX Motion plays
+ * into a chain of its own, an engine is keyed by destination, so ensure() runs
+ * on a node nobody preloaded and the clip's notes wait in a queue that nothing
+ * flushed before the render. Same gap Apollo had (apolloAwaitReady).
+ */
+export async function pluginAwaitReady(ctx: BaseAudioContext, timeoutMs = 8000): Promise<void> {
+  const set = byCtx.get(ctx)
+  if (!set) return
+  const start = Date.now()
+  const pending = () => [...set].filter(m => !m.ready && !m.failed)
+  while (pending().length && Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, 25))
+  }
+  const left = pending().length
+  if (left) console.warn(`[beacon-plugin] ${left} engine(s) created by the scheduler were not ready after ${timeoutMs}ms — their notes will be missing from this render`)
+}
+
 /** Transport stop: silence everything and drop the nodes, because the DAW
     swaps its per-track input buses and our connections are about to dangle. */
 /**
