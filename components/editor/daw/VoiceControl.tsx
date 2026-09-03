@@ -154,8 +154,21 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const busyRef = useRef(false)
   /** Guards the "working on it" line against the answer that beat it. */
   const ackToken = useRef(0)
-  /** The sentence being acted on, for the planner — see voiceCtx.said. */
-  const lastSaidRef = useRef('')
+  /**
+   * The sentence being acted on — and its QUESTION, when there was one.
+   *
+   * ⚠️ Brae: "When I was speaking to it, it moved me to bar 100... It asked
+   * which track and I told it before it did this."
+   *
+   * That is why speaking failed where typing worked. A command spread over two
+   * turns puts the INTENT in the first sentence and the answer in the second,
+   * so by the time the model emitted the move, the sentence notAMove was
+   * judging was just "the pad" — no edit words in it, nothing to refuse. Typed
+   * in one go, the same request was caught.
+   *
+   * So an answer to a question continues the exchange rather than replacing it.
+   */
+  const saidRef = useRef<string[]>([])
   useEffect(pullSharedCommands, [])
   useEffect(() => { busyRef.current = busy }, [busy])
   const [heard, setHeard] = useState('')
@@ -629,7 +642,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // ⚠️ THE WHOLE SENTENCE, because one call cannot tell an edit from a move.
     // "go to bar 9" and "make the reverb 20% at bar 9" reach the planner as the
     // same locate, and only the words separate them. See notAMove.
-    said: lastSaidRef.current,
+    said: saidRef.current.join(' '),
     atBeat: engine?.currentBeat,
     // The library, so a preset can be chosen by CHARACTER inside the executor —
     // "one of the darker piano presets" is a question about what is installed
@@ -1310,7 +1323,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // "next" and "faster" are unambiguous; outside one they were never words
     // this file knew. The mode is visible in the panel and one of its own words
     // ends it, which is what makes taking them over safe.
-    lastSaidRef.current = text
+    // Answering a question is the same command still being given; anything
+    // else starts a new one.
+    saidRef.current = askingRef.current ? [...saidRef.current, text].slice(-4) : [text]
     if (auditionActive()) {
       const b = readBrowseCommand(text)
       if (b) { lastAcceptedAt.current = Date.now(); runBrowse(b); return }

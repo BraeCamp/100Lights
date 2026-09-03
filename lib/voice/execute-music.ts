@@ -1112,10 +1112,26 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         // hand-drawn lanes under a track use exactly that — so this is a
         // mapping, not a mechanism.
         const spec = FX_AUTOMATABLE[param]
-        const existing = (track.effects ?? []).find(e => e.type === spec.type)
-        // Reuse the effect that is already there. Adding a second reverb and
-        // automating the new one would leave the first sitting underneath,
-        // audible and unexplained.
+        // ⚠️ AN APOLLO REVERB IS STILL THE REVERB ON THIS TRACK. Brae: "it
+        // created the right thing but as a different reverb instead of changing
+        // the existing one."
+        //
+        // Every Apollo device is stored as type 'helios' and says what it
+        // really is in `params.unit.type` — this file already knows that, three
+        // hundred lines up, where set_effect matches them. Looking only at
+        // `e.type` here meant a track whose reverb came from Apollo looked like
+        // a track with no reverb, so a second one was added and automated while
+        // the first sat underneath, audible and unexplained.
+        const isThis = (e: { type: string; params?: unknown }) =>
+          e.type === spec.type
+          || (e.type === 'helios'
+            && (e.params as { unit?: { type?: string } })?.unit?.type === spec.type)
+        const existing = (track.effects ?? []).find(isThis)
+        // ⚠️ And an Apollo unit's amount is its MIX, not the plain effect's own
+        // parameter name. Automating `fx:<id>:wet` on a helios device would
+        // write to a parameter it does not have — a lane that draws and does
+        // nothing, which is the quietest failure available here.
+        const key = existing?.type === 'helios' ? 'mix' : spec.key
         let effectId = existing?.id
         if (!effectId) {
           effectId = newId()
@@ -1124,7 +1140,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
             effect: { id: effectId, type: spec.type, params: makeDefaultParams(spec.type) },
           })
         }
-        parameter = `fx:${effectId}:${spec.key}`
+        parameter = `fx:${effectId}:${key}`
         label = spec.label
       } else {
         const kind = param === 'highpass' ? 'highpass' : 'lowpass'

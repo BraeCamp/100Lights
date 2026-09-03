@@ -18,6 +18,7 @@
 // left a studio that does nothing instead of the wrong thing.
 
 import assert from 'node:assert'
+import { readFileSync } from 'node:fs'
 import { importTs } from '../lib/ts-import.mjs'
 
 let failures = 0
@@ -160,6 +161,70 @@ const PROJECT = {
   check('"VERB Wet" automates the reverb that is already there',
     byLabel.actions.find(a => a.type === 'ADD_AUTOMATION_LANE')?.lane.parameter === 'fx:e1:wet',
     byLabel.problem ?? '')
+}
+
+// ── ⚠️ the command that arrived in two halves ──────────────────────────────
+//
+// Brae: "When I was speaking to it, it moved me to bar 100, but when I typed the
+// same thing that it heard it created the right thing... It asked which track
+// and I told it before it did this."
+//
+// That is why speaking failed where typing worked. A command spread over two
+// turns puts the INTENT in the first sentence and the ANSWER in the second — so
+// the sentence being judged when the move was emitted was just "the pad", with
+// no edit words in it and nothing to refuse. Typed in one go, the same request
+// was caught. The exchange is the unit, not the utterance.
+{
+  check('the answer to a question, alone, looks innocent',
+    notAMove('the pad') === null)
+  // ...and joined to what it was answering, it does not.
+  check('but the exchange it belongs to is still an edit',
+    /rather than a request to move/i.test(
+      notAMove('change the reverb to 100 percent then 20 percent the pad') ?? ''))
+
+  const ui = readFileSync('components/editor/daw/VoiceControl.tsx', 'utf8')
+  check('so an answer continues the sentence rather than replacing it',
+    /askingRef\.current \? \[\.\.\.saidRef\.current, text\]/.test(ui))
+  check('and the planner is given the whole exchange',
+    /said: saidRef\.current\.join\(' '\)/.test(ui))
+}
+
+// ── ⚠️ an Apollo reverb is still the reverb on this track ──────────────────
+//
+// Brae: "it created the right thing but as a different reverb instead of
+// changing the existing one."
+{
+  // Every Apollo device is stored as type 'helios' and says what it really is
+  // in params.unit.type. Matching on e.type alone made a track whose reverb
+  // came from Apollo look like a track with none.
+  const apollo = {
+    ...PROJECT,
+    tracks: [{
+      ...PROJECT.tracks[0],
+      effects: [{ id: 'h1', type: 'helios', params: { unit: { type: 'reverb' }, mix: 0.3 } }],
+    }],
+  }
+  const plan = planVoiceCall({
+    name: 'automate_parameter',
+    input: { target: 'Pad 1', parameter: 'reverb', from: 100, to: 20 },
+  }, apollo)
+
+  check('no second reverb is added beside the Apollo one',
+    !plan.actions.some(a => a.type === 'ADD_EFFECT'),
+    JSON.stringify(plan.actions.filter(a => a.type === 'ADD_EFFECT')))
+  // ⚠️ An Apollo unit's amount is its MIX. Writing fx:<id>:wet would draw a
+  // lane onto a parameter it does not have — it would look right and do
+  // nothing, which is the quietest failure available here.
+  check('and it is automated by its mix, the parameter it actually has',
+    plan.actions.find(a => a.type === 'ADD_AUTOMATION_LANE')?.lane.parameter === 'fx:h1:mix',
+    plan.actions.find(a => a.type === 'ADD_AUTOMATION_LANE')?.lane.parameter)
+
+  // A plain reverb still uses its own name.
+  check('a plain reverb is still automated by its wet',
+    planVoiceCall({
+      name: 'automate_parameter',
+      input: { target: 'Pad 1', parameter: 'reverb', from: 100, to: 20 },
+    }, PROJECT).actions.find(a => a.type === 'ADD_AUTOMATION_LANE')?.lane.parameter === 'fx:e1:wet')
 }
 
 console.log(failures ? `\n${failures} failing` : '\na bar is where, not go there')
