@@ -131,6 +131,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <ProjectEditor
+        // ⚠️ KEYED ON THE PROJECT. Opening a project used to be a full page
+        // load, which reset everything for free. It is a client-side navigation
+        // now — so that Light and the rest of the layout survive the trip — and
+        // without this key React would REUSE the editor across two different
+        // projects, changing only a prop. The engine, the undo history and the
+        // open panels would all carry over from the last song.
+        key={isDemo ? 'demo' : id}
         projectId={isDemo ? undefined : id}
         projectName={isDemo ? 'The Creator Mindset — Demo' : '…'}
         modules={isDemo ? ['video', 'audio'] : undefined}

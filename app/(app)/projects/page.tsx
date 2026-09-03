@@ -1,7 +1,9 @@
 'use client'
 
+import { SaveOfflineItem } from '@/components/projects/SaveOfflineItem'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Film, PlusCircle, Clock, FolderOpen, Trash2, AlertCircle, RefreshCw, Star, Folder, FolderPlus, Cloud, HardDrive, FileX, X, Search, Pencil, Check, ExternalLink } from 'lucide-react'
 import { useUser } from '@clerk/nextjs'
 import { readProjectFile } from '@/lib/project-serializer'
@@ -71,14 +73,19 @@ const isApolloRow = (r: { modules?: string[] | null }) => r.modules?.length === 
 
 /** Open an Apollo session as a Beacon track: fetch the session's patch, stash
  *  the neutral seed, land in the studio. */
-async function openSessionInBeacon(id: string, name: string) {
+async function openSessionInBeacon(id: string, name: string, go: (href: string) => void) {
   try {
     const res = await fetch(`/api/projects/${id}`)
     if (!res.ok) return
     const d = await res.json() as { apollo?: { patch?: object } }
     if (!d?.apollo?.patch) return
     sessionStorage.setItem('100lights-apollo-seed', JSON.stringify({ patch: d.apollo.patch, name }))
-    window.location.assign('/create?modules=audio&audioMode=music')
+    // ⚠️ NOT window.location. A full page load throws away the JavaScript
+    // context and everything living in it — including Light, which is mounted
+    // in the app layout precisely so that it can outlive the page you started
+    // talking on. Brae: "the voice controls don't stay alive when changing
+    // projects." This is one of the two places that was killing it.
+    go('/create?modules=audio&audioMode=music')
   } catch { /* offline */ }
 }
 
@@ -90,6 +97,7 @@ function formatDate(ms: number) {
 // ── Unified list (cloud + local folder, in one place) ───────────────────────
 
 function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloadKey: number }) {
+  const router = useRouter()
   const [cloud, setCloud]       = useState<CloudSummary[]>([])
   const [cloudErr, setCloudErr] = useState(false)
   const [cloudLoading, setCloudLoading] = useState(isSignedIn)
@@ -248,7 +256,8 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
     try {
       const { project } = await readProjectFile(await f.handle.getFile())
       localStorage.setItem(`cf_pending_cfproj_${project.id}`, JSON.stringify(project))
-      window.location.href = `/projects/${project.id}`
+      // Client-side, for the same reason as openSessionInBeacon above.
+      router.push(`/projects/${project.id}`)
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Could not open this file. It may be corrupted or not a valid 100Lights project.')
     } finally {
@@ -542,10 +551,10 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
               {/* Hard navigation (plain <a>): a full load reliably hits the
                   canonical server route, avoiding client-router quirks with the
                   @-prefixed path. Opening a project reloads the editor anyway. */}
-              <a href={cloudHref(row)} draggable={false} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
+              <Link href={cloudHref(row)} draggable={false} className="w-14 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ background: 'var(--border)' }}>
                 {row.thumbnail ? <img src={row.thumbnail} draggable={false} className="w-full h-full object-cover" alt="" /> : <Film size={16} color="var(--text-secondary)" />}
-              </a>
-              <a href={cloudHref(row)} draggable={false} className="flex-1 min-w-0">
+              </Link>
+              <Link href={cloudHref(row)} draggable={false} className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{row.name}</span>
                   <SourceBadge source="cloud" />
@@ -553,11 +562,11 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
                 <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                   {row.clips} clip{row.clips !== 1 ? 's' : ''} · {row.media} media file{row.media !== 1 ? 's' : ''}
                 </div>
-              </a>
+              </Link>
               <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDate(row.ts)}</span>
               {isApolloRow(row) && (
                 <button
-                  onClick={(e) => { e.preventDefault(); void openSessionInBeacon(row.id, row.name) }}
+                  onClick={(e) => { e.preventDefault(); void openSessionInBeacon(row.id, row.name, href => router.push(href)) }}
                   title="Open this session as an Apollo track in the Beacon studio"
                   className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg text-xs font-semibold"
                   style={{ color: 'var(--accent-light)' }}
@@ -636,6 +645,11 @@ function UnifiedProjects({ isSignedIn, reloadKey }: { isSignedIn: boolean; reloa
               </button>
             </div>
           )}
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
+          {/* Renders this project's audio on the server and keeps it on this
+              device. Deliberately does NOT close the menu — it reports its own
+              progress in place, and a job you started should say how it went. */}
+          <SaveOfflineItem projectId={ctxMenu.id} style={{ padding: '8px 14px', fontSize: 14, gap: 10 }} />
           <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
           <button onClick={() => { const id = ctxMenu.id; setCtxMenu(null); requestDeleteCloud(id) }} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-left" style={{ color: '#ef4444' }}>
             <Trash2 size={14} /> Delete

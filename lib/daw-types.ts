@@ -261,7 +261,22 @@ export function defaultDelay(): DelayParams {
   return { enabled: true, wet: 0.25, time: 0.375, feedback: 0.4, syncToTempo: true, syncBeats: 0.5 }
 }
 export function defaultFilter(): FilterParams {
-  return { enabled: true, type: 'lowpass', frequency: 8000, q: 1 }
+  // ⚠️ 1200 Hz, not 8000. Brae: "When I add a lowpass filter, I should hear a
+  // lowpass filter and I don't hear any changes."
+  //
+  // He was right and it was not a bug in the filter — it was this number. A
+  // low-pass at 8 kHz sits above almost everything in a pad or a bass, and it
+  // was measured: at 8 kHz a chord keeps 98% of its energy above 2 kHz, at
+  // 2 kHz it keeps 70%, at 800 Hz a third. So the filter arrived doing nothing
+  // and the only way to find that out was to go looking for the knob.
+  //
+  // The app itself never believed in this default: every filter in
+  // demo-projects.ts overrides it (2600, 400, 380), which is the tell.
+  //
+  // 1200 Hz is a filter you hear the moment it lands — a clear darkening — and
+  // still leaves the body of the sound to work with. Adding an effect should
+  // do something; that is what adding it means.
+  return { enabled: true, type: 'lowpass', frequency: 1200, q: 1 }
 }
 export function defaultSaturator(): SaturatorParams {
   return { enabled: true, drive: 0.4, color: 0.3, output: 0 }
@@ -656,6 +671,17 @@ export interface AutomationLane {
    *  draws grayed) until the user re-enables it. Purely a playback state;
    *  the points are never destroyed. */
   overridden?: boolean
+  /**
+   * How a point's 0–1 position maps onto min..max. Absent = linear.
+   *
+   * ⚠️ Frequency needs 'log' and the reason is audible, not theoretical. A
+   * cutoff lane running linearly from 200 Hz to 18 kHz spends most of its
+   * height above 8 kHz, where a low-pass on a pad does almost nothing — so a
+   * drawn descent from the top only starts to be heard in the last tenth of
+   * its travel, and reads as "the filter isn't doing anything". Same reason
+   * the knob is log: an octave is a RATIO.
+   */
+  curve?: 'log'
 }
 
 // ── Tone EQ ───────────────────────────────────────────────────────────────────

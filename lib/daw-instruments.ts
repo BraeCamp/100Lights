@@ -321,6 +321,11 @@ export function playInstrumentNote(
   /** Seconds already elapsed into the note (>0 when the playhead enters mid-note).
    *  `duration` is the FULL note length; poly sample layers resume at this phase. */
   offset = 0,
+  /** A filter for THIS note, for instruments that can apply one internally.
+   *  Ignored by sampled and synth voices, which get theirs from a real chain —
+   *  they are their own source, so a chain per note costs a few filters rather
+   *  than a whole engine. See playApolloNote. */
+  noteFilter?: { cut?: number; res?: number },
 ) {
   if (instrument.type === 'none') return
 
@@ -400,7 +405,7 @@ export function playInstrumentNote(
   if (instrument.type === 'apollo') {
     // Apollo runs a persistent AudioWorklet engine per track destination and
     // schedules note on/off at absolute context time (offline-render safe).
-    playApolloNote(ctx, dest, instrument.params as ApolloInstrumentParams, pitch, velocity, when, duration)
+    playApolloNote(ctx, dest, instrument.params as ApolloInstrumentParams, pitch, velocity, when, duration, noteFilter)
     return
   }
 

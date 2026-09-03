@@ -1,4 +1,5 @@
 import { DawEngine } from '@/lib/daw-engine'
+import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import type { DawProject } from '@/lib/daw-types'
 import { initLibrary } from '@/lib/sound-library'
 import {
@@ -21,7 +22,10 @@ export interface RenderedMix {
   peaks: number[]   // 80-band max-abs, matching the timeline waveform format
 }
 
-const SR = 44100
+// ⚠️ Was a hardcoded 44100 while the engine used the device's rate and the
+// freeze cache used 48000 — three different answers to one question, in three
+// files. One constant now.
+const SR = RENDER_SAMPLE_RATE
 
 // cyrb53 — cheap stable hash for fingerprints.
 function hash(str: string): string {
@@ -60,6 +64,44 @@ function peaksFrom(ch0: Float32Array): number[] {
     for (let j = 0; j < step; j++) max = Math.max(max, Math.abs(ch0[i * step + j] ?? 0))
     return max
   })
+}
+
+/**
+ * How loud each of these tracks actually sounds, measured rather than guessed.
+ *
+ * Brae's audit called level matching "needs work — the offline analysis exists;
+ * the in-app path does not". This is that path: each track is rendered on its
+ * own through the real engine, with its own instrument and effects, and
+ * measured with K-weighting.
+ *
+ * ⚠️ `dryMaster` on every stem, so the master compressor is not applied to each
+ * track individually. Measuring through it would make a loud track measure
+ * quieter than it is — the compressor pulls it down — and the balance would
+ * then over-correct in exactly the wrong direction.
+ *
+ * Client-only (OfflineAudioContext). Import it lazily; it renders audio.
+ */
+export async function measureTrackLoudness(
+  project: DawProject,
+  trackIds: string[],
+  opts: { startBeat: number; endBeat: number },
+): Promise<Array<{ trackId: string; lufs: number; peak: number }>> {
+  const { loudnessLufs } = await import('@/lib/loudness')
+  const out: Array<{ trackId: string; lufs: number; peak: number }> = []
+  // In series, not in parallel. Offline contexts are a limited resource — the
+  // engine's own notes record that back-to-back ones start coming back silent —
+  // and a silent stem would read as "this track is inaudible, turn it up 18 dB".
+  for (const id of trackIds) {
+    try {
+      const { channels } = await renderChannels(project, opts, { soloTrackId: id, dryMaster: true })
+      const m = loudnessLufs(channels, SR)
+      out.push({ trackId: id, lufs: m.lufs, peak: m.peak })
+    } catch {
+      // A track that will not render is left out rather than reported as
+      // silent, because silent means "turn it up".
+    }
+  }
+  return out
 }
 
 // Render a project's channels through the offline engine. With `soloTrackId`, only

@@ -1,3 +1,5 @@
+import { apolloEngineCount } from '@/lib/apollo/daw-instrument'
+import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
 /**
  * A playback diagnostic you can run in the browser where the problem happens.
  *
@@ -31,10 +33,54 @@ interface Diagnostic {
   transport: { playing: boolean; fromBeat: number; toBeat: number; beatsPerSecond: number }
   /** Longest gap between animation frames — the main thread being blocked. */
   longestStallMs: number
+  /**
+   * How many Apollo engines are running, and how much the main thread was
+   * blocked while they were.
+   *
+   * ⚠️ THE TWO NUMBERS THAT TELL THE CAUSES APART, and neither was in here.
+   * One Helios engine per track is the design; one per clip is a fault, and it
+   * is invisible to every other measurement because a worklet processor is not
+   * in the JS heap. Blocked time is the other half: the note scheduler runs on
+   * the main thread, so while it cannot run, nothing new is scheduled — what is
+   * already queued plays, and then there is silence.
+   */
+  /** The Apollo worklet build this page is running — see report(). */
+  engineVersion: string
+  engines: { live: number; ready: number }
+  mainThread: { longTasks: number; blockedMs: number; worstTaskMs: number }
+  /**
+   * What is on disk for this origin.
+   *
+   * Brae: "It's also slower after time even after reloading the page." A reload
+   * gives a fresh JavaScript context and a fresh AudioContext, so anything that
+   * survives it is persisted — and only these numbers can show it.
+   */
+  storage: unknown
   /** Per track: did it ever sound, and how often was it above the noise floor? */
   tracks: Record<string, { everSounded: boolean; peak: number; soundedPct: number }>
   master: { everSounded: boolean; peak: number }
   combine: unknown
+  /**
+   * What loading the SAMPLES cost — fetch + decode, before a note can sound.
+   *
+   * Missing from every earlier report, and it is the one cost that scales with
+   * how many sampled instruments a song uses rather than with anything the
+   * loader measures. A multisample is one id per zone, so this can be hundreds
+   * of round trips on a song the combine stats describe as nearly idle.
+   */
+  samples: unknown
+  /**
+   * The flight recorder: everything that went wrong this session, and what the
+   * PREVIOUS session left behind.
+   *
+   * A report used to describe only the moment it was taken, so a failure that
+   * happened thirty seconds earlier — the render that came back silent, the
+   * preset that had no samples — was already gone. These ride along, which is
+   * what makes a pasted report enough to work from on its own.
+   */
+  journal: unknown
+  /** Exceptions the audio thread caught — silence with a cause. */
+  engineErrors: unknown
 }
 
 type Watch = {
@@ -145,6 +191,21 @@ export function installDawDiagnose(
       w.raf = requestAnimationFrame(tick)
     }
     watch.raf = requestAnimationFrame(tick)
+
+    // ⚠️ rAF gaps miss what happens while the tab is not painting; a long task
+    // is reported whatever the compositor is doing, which is what a stall
+    // during playback looks like.
+    try {
+      tasks = { count: 0, total: 0, worst: 0 }
+      taskObs = new PerformanceObserver(list => {
+        for (const e of list.getEntries()) {
+          tasks.count++; tasks.total += e.duration
+          if (e.duration > tasks.worst) tasks.worst = e.duration
+        }
+      })
+      taskObs.observe({ entryTypes: ['longtask'] })
+    } catch { /* not supported in this browser */ }
+
     return 'watching — press play, then run window.__dawDiagnose.report()'
   }
 
@@ -157,7 +218,14 @@ export function installDawDiagnose(
     if (watch.timer) clearInterval(watch.timer)
     if (watch.raf) cancelAnimationFrame(watch.raf)
     watch = null
+    try { taskObs?.disconnect() } catch { /* already gone */ }
+    taskObs = null
   }
+
+  let taskObs: PerformanceObserver | null = null
+  let tasks = { count: 0, total: 0, worst: 0 }
+  /** Read once per report — cheap, and only when somebody asks. */
+  let storageSnapshot: unknown = 'run window.__dawDiagnose.storage() for disk usage'
 
   const report = (): Diagnostic | string => {
     const e = getEngine()
@@ -180,6 +248,23 @@ export function installDawDiagnose(
       }
     }
     return {
+      /**
+       * Which build of the worklet is actually running.
+       *
+       * ⚠️ Brae: "Can you make sure that they are going through because it
+       * still cuts out after a chord." A fix that never reached the browser and
+       * a fix that did not work look exactly alike from the outside, and the
+       * service worker serves assets stale-while-revalidate — so this is the
+       * first thing to read before believing anything else in this report.
+       */
+      engineVersion: ENGINE_VERSION,
+      engines: apolloEngineCount(e.ctx),
+      mainThread: {
+        longTasks: tasks.count,
+        blockedMs: Math.round(tasks.total),
+        worstTaskMs: Math.round(tasks.worst),
+      },
+      storage: storageSnapshot,
       durationSec: +wallSec.toFixed(1),
       context: {
         state: e.ctx.state,
@@ -198,13 +283,98 @@ export function installDawDiagnose(
       tracks,
       master: { everSounded: w.master.peak > NOISE, peak: +w.master.peak.toFixed(4) },
       combine: (window as unknown as { __combineStats?: () => unknown }).__combineStats?.() ?? null,
+      samples: (window as unknown as { __sampleStats?: () => unknown }).__sampleStats?.() ?? null,
+      journal: (() => {
+        const d = (window as unknown as { __diag?: { trouble?: () => unknown[]; previous?: () => unknown[] } }).__diag
+        if (!d) return null
+        // Trouble only, and capped: a report gets pasted into a message, and a
+        // full log would bury the lines that matter.
+        return { thisSession: d.trouble?.().slice(-30) ?? [], lastSession: d.previous?.().slice(-10) ?? [] }
+      })(),
+      // The audio thread's own failures. A song that crackles and then goes
+      // quiet for good is process() throwing on every block: the armour keeps
+      // the processor alive, so nothing else in this report would show it.
+      engineErrors: (window as unknown as { __apolloEngineSingleton?: { procErrors?: unknown } })
+        .__apolloEngineSingleton?.procErrors ?? null,
     }
   }
 
   /** Is there something to copy — either a live capture or a kept one? */
   const hasReport = () => !!watch || !!lastReport
 
-  const api = Object.assign(start, { report, stop, hasReport })
+  /**
+   * What this browser is keeping on disk for the app.
+   *
+   * ⚠️ THE ONLY THING THAT CAN EXPLAIN SLOWNESS SURVIVING A RELOAD. A reload
+   * builds a new JavaScript context and a new AudioContext, so leaked worklets,
+   * leaked listeners and a bloated heap all die with it. Whatever is left is
+   * persisted, and this is how to see it without opening devtools.
+   *
+   * Async, and separate from report(), because it reads every store — fine when
+   * somebody asks, not something to do while measuring playback.
+   */
+  const storage = async () => {
+    const out: Record<string, unknown> = {}
+    try {
+      const e = await navigator.storage.estimate()
+      out.usedMB = +((e.usage ?? 0) / 1048576).toFixed(1)
+      out.quotaMB = +((e.quota ?? 0) / 1048576).toFixed(0)
+      const details = (e as { usageDetails?: Record<string, number> }).usageDetails
+      if (details) out.byStore = Object.fromEntries(
+        Object.entries(details).map(([k, v]) => [k, +(v / 1048576).toFixed(1)]))
+    } catch { out.usedMB = 'unavailable' }
+
+    try {
+      const dbs: Record<string, unknown> = {}
+      for (const d of await indexedDB.databases()) {
+        if (!d.name) continue
+        // ⚠️ Timed, because the time is the point: this read happens on a page
+        // load, on the main thread, before anything can be scheduled.
+        const t0 = performance.now()
+        const counts = await new Promise<Record<string, number>>(res => {
+          const req = indexedDB.open(d.name!)
+          req.onsuccess = () => {
+            const db = req.result
+            const names = [...db.objectStoreNames]
+            if (!names.length) { db.close(); return res({}) }
+            const tx = db.transaction(names, 'readonly')
+            const acc: Record<string, number> = {}
+            let left = names.length
+            const done = () => { if (--left === 0) { db.close(); res(acc) } }
+            for (const n of names) {
+              const c = tx.objectStore(n).count()
+              c.onsuccess = () => { acc[n] = c.result; done() }
+              c.onerror = done
+            }
+          }
+          req.onerror = () => res({})
+          setTimeout(() => res({}), 5000)
+        })
+        dbs[d.name] = { rows: counts, readMs: Math.round(performance.now() - t0) }
+      }
+      out.indexedDB = dbs
+    } catch { /* not supported */ }
+
+    try {
+      const c: Record<string, number> = {}
+      for (const n of await caches.keys()) c[n] = (await (await caches.open(n)).keys()).length
+      out.cacheStorage = c
+    } catch { /* not supported */ }
+
+    try {
+      let bytes = 0
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)!
+        bytes += k.length + (localStorage.getItem(k) || '').length
+      }
+      out.localStorageKB = +(bytes / 1024).toFixed(1)
+    } catch { /* private mode */ }
+
+    storageSnapshot = out
+    return out
+  }
+
+  const api = Object.assign(start, { report, stop, hasReport, storage })
   ;(window as unknown as { __dawDiagnose?: typeof api }).__dawDiagnose = api
   return () => {
     stop()

@@ -62,6 +62,29 @@ const MAX_Q = 20
 const safeQ = (v: number): number =>
   Number.isFinite(v) ? Math.min(MAX_Q, Math.max(0.0001, v)) : 1
 
+/**
+ * A cutoff that cannot silence the track.
+ *
+ * ⚠️ FAIL OPEN, NEVER CLOSED. A filter frequency arrives from several places —
+ * a spoken percentage, an automation lane, an old saved project — and every one
+ * of them has, at some point, handed this a number that was not Hertz. A
+ * fraction (0.2) or an undefined reads as a cutoff below anything audible, and
+ * the result is not a wrong sound but NO sound: the track disappears, nothing
+ * errors, and the only clue is silence.
+ *
+ * 20 Hz is the bottom of hearing, so anything under it is not a dark filter,
+ * it is a bug. Such a value OPENS the filter — it is not clamped to 20 Hz,
+ * which was the first attempt and rescued nothing, because a low-pass sitting
+ * at 20 Hz is just as silent as one at 0.2. A filter that fails open is
+ * audibly wrong and gets reported; one that fails closed is indistinguishable
+ * from a dead track.
+ *
+ * The musical bounds are the UI's job (LOWPASS_HZ / HIGHPASS_HZ). This is only
+ * the guard against a number that was never Hertz in the first place.
+ */
+const safeHz = (v: number): number =>
+  !Number.isFinite(v) || v < 20 ? 20_000 : Math.min(20_000, v)
+
 // ── Effect builders ───────────────────────────────────────────────────────────
 
 export function buildEq3(ctx: AudioContext, params: Eq3Params): EffectHandle {
@@ -365,7 +388,7 @@ export function buildDelay(ctx: AudioContext, params: DelayParams, tempo: number
 export function buildFilter(ctx: AudioContext, params: FilterParams): EffectHandle {
   const filter = ctx.createBiquadFilter()
   filter.type = params.enabled ? params.type : ('allpass' as BiquadFilterType)
-  filter.frequency.value = params.frequency
+  filter.frequency.value = safeHz(params.frequency)
   filter.Q.value = safeQ(params.q)
 
   return {
@@ -374,8 +397,21 @@ export function buildFilter(ctx: AudioContext, params: FilterParams): EffectHand
     setParam(key, value) {
       if (key === 'enabled')   { params = { ...params, enabled: value as boolean }; filter.type = params.enabled ? params.type : ('allpass' as BiquadFilterType) }
       if (key === 'type')      { params = { ...params, type: value as FilterParams['type'] }; if (params.enabled) filter.type = params.type }
-      if (key === 'frequency') { params = { ...params, frequency: value as number }; filter.frequency.value = value as number }
-      if (key === 'q')         filter.Q.value = safeQ(value as number)
+      if (key === 'frequency') {
+        params = { ...params, frequency: value as number }
+        // ⚠️ A GLIDE, NOT A JUMP. Automation calls this from the scheduler every
+        // 25 ms, and assigning .value directly makes the cutoff move in 25 ms
+        // steps — on a resonant filter that is zipper noise, and on a steep
+        // sweep it is audible as the sound lurching rather than gliding.
+        // Volume and pan have always been smoothed this way in the engine;
+        // effect parameters went through a plain assignment.
+        //
+        // 20 ms is shorter than the tick that drives it, so the curve is
+        // followed rather than lagged, and it is far too short to soften a
+        // deliberate knob turn.
+        filter.frequency.setTargetAtTime(safeHz(value as number), ctx.currentTime, 0.02)
+      }
+      if (key === 'q')         filter.Q.setTargetAtTime(safeQ(value as number), ctx.currentTime, 0.02)
     },
     dispose() { filter.disconnect() },
   }

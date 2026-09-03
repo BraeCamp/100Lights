@@ -1,8 +1,9 @@
 'use client'
 
 import { midiToNoteName } from './scale-constants'
+import { rngFor } from '@/lib/seeded-random'
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
-import { isAudioClip, isMidiClip } from './daw-types'
+import { isAudioClip, isMidiClip, POLY_PRESETS } from './daw-types'
 import { tempoSegments, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
 import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
@@ -10,20 +11,19 @@ import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
-import { translateInstrument } from './apollo/daw-synth'
+import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
 import { setApolloTrackParam, setApolloTrackMacro } from './apollo/daw-instrument'
 import { snapToScale, arpeggiate, SCALE_INTERVALS, type ArpStyle } from './music-scales'
-import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo } from './apollo/daw-instrument'
+import { preloadApolloInstrument, apolloStopAll, setApolloCtxTempo, apolloDrain } from './apollo/daw-instrument'
 import { preloadPluginInstrument, pluginStopAll, setPluginCtxTempo, setPluginParam } from './beacon-plugins/host'
 import type { PluginInstrumentParams } from './beacon-plugins/types'
-import { combined, combinedStale, combinedStamp, requestCombine, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
+import { combined, combinedStale, combinedStamp, requestCombine, prerenderOn, setPlayhead, setTransportPlaying } from './apollo/freeze-cache'
 import type { ApolloPatch } from './apollo/patch'
-import { fatPatch } from './apollo/patch-diff'
 import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from './daw-instruments'
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
-import { libraryGetAll } from './sound-library'
+import { libraryGetByFolder } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
 import type { MidiPreset } from './midi-presets'
 import { captureAudioInput } from './audio-capture'
@@ -108,6 +108,12 @@ const PREFETCH_LOOKAHEAD = 2.5   // seconds
 function interpolateAutomation(lane: AutomationLane, beat: number): number {
   const range = lane.max - lane.min
   if (lane.points.length === 0) {
+    if (lane.curve === 'log' && lane.min > 0 && lane.max > lane.min) {
+      // Inverse of the log mapping in the caller: a lane with no points must
+      // sit exactly on its own default, whichever way it is spaced.
+      const v = Math.min(lane.max, Math.max(lane.min, lane.defaultValue))
+      return Math.log(v / lane.min) / Math.log(lane.max / lane.min)
+    }
     return range === 0 ? 0 : (lane.defaultValue - lane.min) / range   // guard max===min → NaN into an AudioParam
   }
   const sorted = [...lane.points].sort((a, b) => a.beat - b.beat)
@@ -122,6 +128,55 @@ function interpolateAutomation(lane: AutomationLane, beat: number): number {
     }
   }
   return 0
+}
+
+/**
+ * How much buffer the audio thread gets, which is how much slack it has.
+ *
+ * ⚠️ THIS WAS 'interactive', AND THAT IS THE SAFARI-VERSUS-BRAVE DIFFERENCE.
+ * 'interactive' asks for the SMALLEST buffer the device can do — lowest latency,
+ * and therefore the least time to finish rendering each block before the
+ * deadline. Apollo measures at ~0.72 of that budget on eight tracks with the
+ * machine idle, so there is almost no slack left; Safari's CoreAudio path
+ * absorbs it and Chromium's does not, which is why the same song plays in one
+ * browser and stops after a chord in the other.
+ *
+ * A sequenced song does not need the smallest buffer. It needs to not stop.
+ * 'playback' asks for a large one and is what a player would use; the numeric
+ * middle ground keeps live MIDI and the metronome responsive while still giving
+ * several times the slack of 'interactive'.
+ *
+ * Overridable at runtime — localStorage '100l.latency' — so this can be
+ * measured, and so somebody on a struggling machine can trade latency for
+ * stability without waiting for a release.
+ */
+export type LatencyChoice = 'interactive' | 'balanced' | 'playback' | number
+
+export function audioLatencyHint(): LatencyChoice {
+  try {
+    const raw = localStorage.getItem('100l.latency')
+    if (raw) {
+      const n = Number(raw)
+      if (Number.isFinite(n) && n > 0 && n <= 1) return n
+      if (raw === 'interactive' || raw === 'balanced' || raw === 'playback') return raw
+    }
+  } catch { /* private mode */ }
+  // ⚠️ BACK TO 'interactive', BECAUSE THE BIGGER BUFFER MADE IT WORSE.
+  //
+  // Brae, on 'balanced': "Now it just lags like crazy in brave and cuts out a
+  // bit later. It sounds very choppy."
+  //
+  // Which follows, and I should have predicted it. A larger buffer does not
+  // reduce the work — it BATCHES it. On a machine that is comfortably inside
+  // its budget that buys slack against jitter. On one that is over budget, it
+  // turns many tiny gaps into fewer, longer ones: the same shortfall, delivered
+  // in bigger pieces, which is what "very choppy" describes.
+  //
+  // So the buffer is not the lever. Apollo needs ~0.72 of the render deadline
+  // on eight tracks with the machine idle, and no buffer size fixes being over
+  // budget — only doing less work does. The knob stays, because it is the right
+  // thing to try on an unfamiliar machine and it costs nothing to keep.
+  return 'interactive'
 }
 
 export class DawEngine extends EventTarget {
@@ -151,6 +206,21 @@ export class DawEngine extends EventTarget {
   // main cause of playback stutter in dense arrangements. Torn down on stop /
   // project change; rebuilt if the clip's sound signature changes.
   private _clipFxChains = new Map<string, { input: AudioNode; nodes: AudioNode[]; tailSec: number; sig: string }>()
+  /**
+   * Effect-bar chains built ONCE PER CLIP, for worklet instruments only.
+   *
+   * ⚠️ A per-note chain means a per-note ENGINE for Apollo and plugins, because
+   * they key one persistent worklet per destination node. And a per-note effect
+   * is not something a shared engine can express anyway: Apollo sums all its
+   * voices into one output, so the only way the old code could give each note
+   * its own chain was to give each note its own synth. Measured at 13 engines
+   * for four clips with one clip effect on ONE track, climbing for as long as
+   * the transport ran.
+   *
+   * So for those instruments the clip's bars are built once and every note of
+   * the clip plays through them. Torn down with the roll-FX chains.
+   */
+  private _clipBarChains = new Map<string, { input: AudioNode; nodes: AudioNode[]; oscs: OscillatorNode[] }>()
   // Per-clip cache of note occurrences + the unison-skip set. Both are position-
   // INDEPENDENT (clip-relative), yet were recomputed every 25ms scheduler tick —
   // and the unison guard is O(notes²), ~600k ops/tick for a 780-note clip. Cache
@@ -192,7 +262,76 @@ export class DawEngine extends EventTarget {
 
   // MIDI preset playback
   private _presets:         MidiPreset[] = []
-  private _presetBufCache = new Map<string, AudioBuffer | null>()   // key: `${presetId}:${pitch}`
+  // ── Decoded sampled-note cache ────────────────────────────────────────────
+  //
+  // key: `${presetId}:${pitch}` → the decoded sample for that note.
+  //
+  // Decoded audio is uncompressed float32 — roughly 100x the source file — so
+  // this is the biggest thing the engine holds. It used to be cleared NOWHERE:
+  // not on stop, not on project load, not in dispose(). Across a session it
+  // only ever grew, and once the heap was bloated the GC pressure made playback
+  // jittery no matter what was actually sounding, which is why going back to
+  // the start of a song did not make it smooth again.
+  //
+  // Now it is bounded by bytes and evicted least-recently-used, and dropped
+  // when a different project loads. The budget is deliberately generous: the
+  // working set is one project's distinct (preset, pitch) pairs, and evicting
+  // below that would thrash — every eviction costs a re-decode. The cap is a
+  // safety net for an unusually large project, not the everyday mechanism.
+  private _presetBufCache = new Map<string, AudioBuffer | null>()
+  private _presetBufBytes = 0
+  /** Which project the cache above is for; a different one starts fresh. */
+  private _presetBufProjectId: string | null = null
+
+  private static bufBytes(buf: AudioBuffer | null): number {
+    return buf ? buf.length * buf.numberOfChannels * 4 : 0
+  }
+
+  /** Device-aware ceiling for the decoded-sample cache. */
+  private static presetCacheBudget(): number {
+    if (typeof navigator === 'undefined') return 256 * 1024 * 1024
+    const nav = navigator as Navigator & { deviceMemory?: number }
+    const mobile = /Android|iPhone|iPad|iPod/i.test(nav.userAgent)
+    const gb = nav.deviceMemory ?? (mobile ? 2 : 8)
+    if (mobile || gb <= 2) return 48 * 1024 * 1024
+    if (gb <= 4) return 96 * 1024 * 1024
+    if (gb <= 8) return 192 * 1024 * 1024
+    return 384 * 1024 * 1024
+  }
+
+  /** Read through the cache, refreshing recency so eviction takes cold entries. */
+  private _presetBufGet(key: string): AudioBuffer | null | undefined {
+    if (!this._presetBufCache.has(key)) return undefined
+    const buf = this._presetBufCache.get(key)!
+    // Map iterates in insertion order, so re-inserting moves this to the newest
+    // end and the eviction loop below meets the genuinely cold entries first.
+    this._presetBufCache.delete(key)
+    this._presetBufCache.set(key, buf)
+    return buf
+  }
+
+  private _presetBufSet(key: string, buf: AudioBuffer | null): void {
+    const prev = this._presetBufCache.get(key)
+    if (prev !== undefined) this._presetBufBytes -= DawEngine.bufBytes(prev)
+    this._presetBufCache.delete(key)
+    this._presetBufCache.set(key, buf)
+    this._presetBufBytes += DawEngine.bufBytes(buf)
+    const budget = DawEngine.presetCacheBudget()
+    if (this._presetBufBytes <= budget) return
+    for (const k of this._presetBufCache.keys()) {
+      if (this._presetBufBytes <= budget || this._presetBufCache.size <= 1) break
+      if (k === key) continue   // never evict what we just asked for
+      this._presetBufBytes -= DawEngine.bufBytes(this._presetBufCache.get(k)!)
+      this._presetBufCache.delete(k)
+    }
+  }
+
+  private _clearPresetBufCache(): void {
+    this._presetBufCache.clear()
+    this._presetBufBytes = 0
+  }
+  /** Presets already reported as having no samples — warn once, not per note. */
+  private _warnedMissingPreset = new Set<string>()
   private _presetLoading  = new Map<string, Promise<void>>()   // key → in-flight load, so awaiters share the same decode
 
   setPresets(presets: MidiPreset[]) { this._presets = presets }
@@ -249,7 +388,7 @@ export class DawEngine extends EventTarget {
     // An injected context (e.g. an OfflineAudioContext passed in loosely typed)
     // lets the whole graph build off-line for faster-than-real-time rendering.
     // Default is the normal real-time context — studio behaviour is unchanged.
-    this.ctx = opts?.ctx ?? new AudioContext({ latencyHint: 'interactive' })
+    this.ctx = opts?.ctx ?? new AudioContext({ latencyHint: audioLatencyHint() })
 
     // Safety compressor, not glue: -12dB/3:1 clamped the whole mix whenever a
     // sustained loud element (stacked drones, held chords) sat above threshold,
@@ -275,6 +414,38 @@ export class DawEngine extends EventTarget {
     this._heliosMaster = buildHeliosMasterBus(this.ctx)
     this._heliosMaster.output.connect(this.masterBusOut)
     void this._heliosMaster.ready.then(() => this._applyMasterRoute())
+    // ⚠️ EVERY sound in the studio flows through this one worklet, so if it
+    // dies the whole mix is silent — permanently, because a dead
+    // AudioWorkletNode never produces another sample and nothing was watching
+    // for it. That is the "Beacon goes quiet and doesn't come back" report:
+    // the crash was reported to Sentry and the user was left in silence with a
+    // working legacy path sitting one boolean away.
+    this._heliosMaster.onCrash(() => {
+      this._heliosMasterOn = false
+      this._applyMasterRoute()
+      this.dispatchEvent(new CustomEvent('audio-recovered', {
+        detail: { what: 'master', how: 'the Apollo master bus stopped; the mix is back on the classic path' },
+      }))
+    })
+
+    // The browser suspends AudioContexts on its own — device switches,
+    // bluetooth renegotiating, the OS taking the output. Apollo has watched for
+    // this since somebody reported "the audio just cuts out"; Beacon never did,
+    // so a suspended context here stayed suspended until the user happened to
+    // press play again. Same watchdog, same reason.
+    //
+    // ⚠️ Not `=== 'suspended'`: WebKit reports an interrupted context as
+    // 'interrupted', which every inline resume guard in this file misses.
+    // Anything that is not 'running' wants resuming.
+    if (typeof document !== 'undefined' && typeof this.ctx.addEventListener === 'function') {
+      const kick = () => {
+        if (document.visibilityState === 'visible' && this.ctx.state !== 'running' && this.ctx.state !== 'closed') {
+          void (this.ctx as AudioContext).resume?.()
+        }
+      }
+      this.ctx.addEventListener('statechange', kick)
+      document.addEventListener('visibilitychange', kick)
+    }
 
     // Performance-FX insert: masterGain → perfFilter → perfGain → analyser.
     this.perfFilter = this.ctx.createBiquadFilter()
@@ -325,45 +496,93 @@ export class DawEngine extends EventTarget {
   // Legacy synths on Helios: poly/wavetable instruments translate to Apollo
   // patches and play through the per-track Apollo engine path. Cached by the
   // params OBJECT (SET_INSTRUMENT replaces it, invalidating naturally).
-  private _heliosSynthCache = new WeakMap<object, ApolloInstrumentParams | null>()
   /** Clips already playing LIVE in this pass. A combined render that lands
    *  mid-playback must not take over a clip whose notes are already scheduled
    *  and ringing — the buffer would play on top of them, the same music twice.
    *  Cleared whenever the transport restarts, so the next pass uses buffers. */
   private _liveScheduledClips = new Set<string>()
 
-  /** Slim patches expanded once per params object, then cached. */
-  private _fatPatchCache = new WeakMap<object, ApolloInstrumentParams>()
-  private _resolveInstrument(track: DawTrack): TrackInstrument {
-    const inst = track.instrument
-    if (inst?.type === 'apollo') {
-      // Expand HERE, at the point of use, not only on the project-load path.
-      // Patches are stored as a diff from Init to keep projects small, and
-      // hydrating in migrateProject alone was too fragile: a cloud project
-      // loads through ProjectEditor, which never calls it, so the engine got a
-      // patch with no oscillators — silent, and cheap enough that it did not
-      // even feel slow. Every consumer (playback, preload, combining) comes
-      // through this method, so doing it here covers all of them. A patch that
-      // is already complete round-trips unchanged.
-      const key = inst.params as object
-      let fat = this._fatPatchCache.get(key)
-      if (!fat) {
-        fat = fatPatch(inst.params) as unknown as ApolloInstrumentParams
-        this._fatPatchCache.set(key, fat)
-      }
-      return { type: 'apollo', params: fat }
+  // ── Per-edit scheduling plan ──────────────────────────────────────────────
+  //
+  // _tick() runs 40x a second over every clip in the project. The duplicate
+  // guards below it used to be recomputed on each of those passes: the audio
+  // one is O(clips^2) with string comparisons, and the MIDI one builds a
+  // template string per clip. None of it can change between edits — clips are
+  // only replaced through updateProject — so it is computed once per edit and
+  // read on the tick, the same trick _unisonCache already uses for the notes.
+  private _dupAudioClipIds = new Set<string>()
+  private _dupMidiClipIds  = new Set<string>()
+  private _midiFxCache     = new Map<string, MidiNote[]>()
+  private _tickPlanDirty   = true
+
+  private _rebuildTickPlan(): void {
+    this._tickPlanDirty = false
+    this._dupAudioClipIds.clear()
+    this._dupMidiClipIds.clear()
+
+    // Identical audio clips stacked at (or within ~10ms of) the same spot would
+    // play doubled — and a few-ms offset comb-filters, which reads as feedback.
+    // Only the first plays. 0.02 beats is ~10ms at 120bpm; any intentional
+    // doubling lives further apart than that.
+    const seen: Array<{ trackId: string; startBeat: number; durationBeats: number; sig: string }> = []
+    for (const clip of this._clips) {
+      const sig = `${clip.r2Key ?? clip.libraryId ?? clip.audioUrl ?? clip.name}`
+      const dup = seen.some(o =>
+        o.trackId === clip.trackId && o.sig === sig &&
+        Math.abs(o.startBeat - clip.startBeat) < 0.02 &&
+        Math.abs(o.durationBeats - clip.durationBeats) < 0.02)
+      if (dup) { this._dupAudioClipIds.add(clip.id); continue }
+      seen.push({ trackId: clip.trackId, startBeat: clip.startBeat, durationBeats: clip.durationBeats, sig })
     }
-    if (!inst || (inst.type !== 'poly' && inst.type !== 'wavetable' && inst.type !== 'fm')) return inst
-    // poly translates faithfully (same primitives) → Helios by default.
-    // wavetable + fm map approximately (tables / PM-vs-FM) → explicit opt-in.
-    if (inst.type === 'poly' ? track.heliosSynth === false : track.heliosSynth !== true) return inst
-    let patch = this._heliosSynthCache.get(inst.params as object)
-    if (patch === undefined) {
-      patch = translateInstrument(inst) as ApolloInstrumentParams | null
-      this._heliosSynthCache.set(inst.params as object, patch)
+
+    // Same exact-overlay guard for MIDI: an identical clip pasted onto itself
+    // would double every note.
+    const seenMidi = new Set<string>()
+    for (const clip of this._midiClips) {
+      const key = `${clip.trackId}|${clip.startBeat.toFixed(4)}|${clip.durationBeats.toFixed(4)}|${clip.presetId ?? ''}|${clip.notes.length}|${clip.name}`
+      if (seenMidi.has(key)) this._dupMidiClipIds.add(clip.id)
+      else seenMidi.add(key)
     }
-    return patch ? { type: 'apollo', params: patch } : inst
   }
+
+  /** MIDI-effect output for a clip, rebuilt only when the project changes. */
+  private _processedNotes(clip: MidiClip, track: DawTrack): MidiNote[] {
+    const hit = this._midiFxCache.get(clip.id)
+    if (hit) return hit
+    const out = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+    this._midiFxCache.set(clip.id, out)
+    return out
+  }
+
+  // How many live sources each clip has, so the tick can ask "already
+  // scheduled?" without scanning the whole scheduledSources array per clip.
+  private _scheduledClipCounts = new Map<string, number>()
+
+  private _countScheduled(clipId: string, delta: number): void {
+    const n = (this._scheduledClipCounts.get(clipId) ?? 0) + delta
+    if (n > 0) this._scheduledClipCounts.set(clipId, n)
+    else this._scheduledClipCounts.delete(clipId)
+  }
+
+  private _recountScheduled(): void {
+    this._scheduledClipCounts.clear()
+    for (const s of this.scheduledSources) this._countScheduled(s.clipId, 1)
+  }
+
+  /** Slim patches expanded once per params object, then cached.
+   *
+   *  The DECISION -- is this an Apollo track, and with what patch -- lives in
+   *  resolve-apollo.ts, because "Save for offline" has to make the same one from
+   *  a saved file with no engine running. A clip cache key is a hash of its
+   *  patch, so two answers that differ at all would have the offline save
+   *  rendering under keys playback never asks for: a full render that buys
+   *  nothing. The caches stay here; only the rule is shared. */
+  private _resolveCache = newApolloResolveCache()
+  private _resolveInstrument(track: DawTrack): TrackInstrument {
+    const patch = apolloPatchFor(track, this._resolveCache)
+    return patch ? { type: 'apollo', params: patch } : track.instrument
+  }
+
   setHeliosFxPref(trackId: string, on: boolean) {
     if (this.heliosFxPref.get(trackId) === on) return
     this.heliosFxPref.set(trackId, on)
@@ -507,12 +726,24 @@ export class DawEngine extends EventTarget {
     // worklet); untranslatable chains and opted-out tracks use the legacy
     // per-node graph. Same {input,output,handles,dispose} shape either way.
     const wantHelios = this.heliosFxPref.get(trackId) !== false
-    const chain = (wantHelios ? buildHeliosFxChain(this.ctx, effects, this.tempo) : null)
-      ?? buildEffectsChain(this.ctx, effects, this.tempo)
+    const helios = wantHelios ? buildHeliosFxChain(this.ctx, effects, this.tempo) : null
+    const chain = helios ?? buildEffectsChain(this.ctx, effects, this.tempo)
     nodes.effectsInput.connect(chain.input)
     chain.output.connect(nodes.effectsOutput)
     this.effectsChains.set(trackId, chain as ReturnType<typeof buildEffectsChain>)
     this._wireSidechains(trackId, effects)
+    // A track's chain is one worklet too, and a dead one takes that track's
+    // audio with it for good. The legacy per-node graph can render the same
+    // effects, so the track drops to it rather than staying silent — for this
+    // track only, since the rest of the mix is unaffected.
+    helios?.onCrash(() => {
+      if (this.heliosFxPref.get(trackId) === false) return   // already rebuilt
+      this.heliosFxPref.set(trackId, false)
+      this._rebuildEffectsChain(trackId, effects)
+      this.dispatchEvent(new CustomEvent('audio-recovered', {
+        detail: { what: 'track', trackId, how: 'an Apollo effect chain stopped; this track is back on the classic path' },
+      }))
+    })
   }
 
   private _wireSidechains(trackId: string, effects: DawTrack['effects']) {
@@ -993,6 +1224,11 @@ export class DawEngine extends EventTarget {
     this._killAllSources()
     this._stopAllSessionSlots()
     this._clearClipFxChains()   // release the shared reverb/delay graphs (frees CPU while paused)
+    // ⚠️ HERE, and only here. _killAllSources above silenced them, which is all
+    // a loop wraparound or a seek needs; stopping is the moment to hand the CPU
+    // back, so this is where an idle Helios engine per clip stops existing.
+    apolloStopAll(this.ctx, true)
+    pluginStopAll(this.ctx, true)
     this._noteKeyVersion++; this._scheduledNoteKeys.clear(); this._liveScheduledClips.clear()
     this._unisonCache.clear()
     this.dispatchEvent(new CustomEvent('transport', { detail: { playing: false, beat: this._startBeat } }))
@@ -1018,6 +1254,14 @@ export class DawEngine extends EventTarget {
 
   updateProject(project: DawProject) {
     if (this.ctx.state === 'closed') return
+    // A DIFFERENT project — not an edit to this one. Its decoded samples are
+    // dead weight from here on, so drop them rather than carrying every project
+    // opened this session. Edits keep the cache (clearing per keystroke would
+    // re-decode the whole instrument set on every tweak).
+    if (this._presetBufProjectId !== project.id) {
+      if (this._presetBufProjectId !== null) this._clearPresetBufCache()
+      this._presetBufProjectId = project.id
+    }
     const newSegs = tempoSegments(project)
     const segsChanged = newSegs.length !== this._tempoSegs.length ||
       newSegs.some((s, i) => s.beat !== this._tempoSegs[i].beat || s.bpm !== this._tempoSegs[i].bpm)
@@ -1047,6 +1291,10 @@ export class DawEngine extends EventTarget {
     // Notes may have changed — drop the cached occurrences/unison sets so they
     // rebuild from the new note data on the next tick. (Fires only on edits.)
     this._unisonCache.clear()
+    // Same for the tick plan: duplicate-overlay sets and MIDI-effect output are
+    // derived from the clips that just changed.
+    this._midiFxCache.clear()
+    this._tickPlanDirty = true
     // Pre-warm audio buffers too: clips resolving through slow paths (r2,
     // library fallback) were silent for the first pass after a reload and
     // "appeared" a few plays later once their buffer finally cached.
@@ -1062,7 +1310,7 @@ export class DawEngine extends EventTarget {
     for (const clip of [...this._midiClips, ...sessionMidi]) {
       if (!clip.presetId) continue
       for (const note of clip.notes) {
-        if (!this._presetBufCache.has(`${clip.presetId}:${note.pitch}`)) {
+        if (this._presetBufGet(`${clip.presetId}:${note.pitch}`) === undefined) {
           void this._loadPresetBuffer(clip.presetId, note.pitch)
         }
       }
@@ -1074,7 +1322,11 @@ export class DawEngine extends EventTarget {
     // could never finish: the song stayed on the live path and stayed
     // unplayable. Must come AFTER _tracks is assigned above. Skipped for offline
     // contexts, which render the real synth path and must stay reproducible.
-    if (!('startRendering' in this.ctx)) this._requestCombineAll()
+    // ⚠️ Only when prerendering is asked for, which it is not by default. This
+    // line is what made opening a song a 25-second load: every clip baked
+    // through an OfflineAudioContext before a note was played. Live playback
+    // runs in the worklet and needs none of it. See setPrerender().
+    if (prerenderOn() && !('startRendering' in this.ctx)) this._requestCombineAll()
     // Pre-warm sample-oscillator buffers for poly instruments — same reason as
     // preset buffers: a lazily-loaded sample would miss its first note.
     setApolloCtxTempo(this.ctx, project.tempo)
@@ -1085,9 +1337,58 @@ export class DawEngine extends EventTarget {
     // seven-track piece opened silent. Past a couple of tracks, let them be
     // created on demand instead (playApolloNote does it lazily) — combined
     // playback means most are never needed.
-    const apolloCount = project.tracks.filter(t => this._resolveInstrument(t)?.type === 'apollo').length
-    const warmApollo  = apolloCount <= 2
+    // ── Every Apollo track is warmed, however many there are ──────────────
+    //
+    // This used to warm at most two, on the theory that Apollo is too heavy to
+    // play live and "combined playback means most are never needed". Measured,
+    // that theory is wrong: eight live Apollo tracks with every oscillator on,
+    // unison 4, a filter and a reverb/delay/EQ chain hold the audio clock at
+    // 1.000 with nothing baked at all — at full speed and throttled.
+    //
+    // The cost of being wrong about it was severe, because it made BAKING a
+    // prerequisite for hearing a song rather than an optimisation. Every
+    // weakness of the render path — serialised offline contexts, main-thread
+    // contention, renders that come back silent — turned into "the audio does
+    // not work", on a song that would have played live perfectly well. Brae:
+    // "it used to play 6 tracks real time and now I need to wait on a big
+    // buffer."
+    //
+    // So: warm them all. Playing is the default again, and combining goes back
+    // to being an optimisation nobody has to wait for.
     for (const track of project.tracks) {
+      // ── The node has to exist before we can warm an instrument onto it ────
+      //
+      // This loop reads `trackNodes.get(track.id)?.midiInput`, and the loop
+      // that CREATES those nodes ("Pass 1", below) runs about forty lines
+      // later. So on a fresh LOAD_PROJECT every destination here was undefined,
+      // and preloadApolloInstrument takes an early return when it has no
+      // destination: it warms the worklet module and returns, never building an
+      // engine and never loading the patch's samples.
+      //
+      // Nothing reported it. The track still plays, because playApolloNote
+      // builds the engine lazily on its first note — but that means the engine
+      // is created, the patch sent, and every sample fetched and decoded DURING
+      // playback, one track at a time as each first note arrives. A sampled
+      // instrument is one id per zone, so that is dozens of serial round trips
+      // on the main thread while the transport runs. It is the best explanation
+      // yet for "it only played one instrument even though it was loading the
+      // other ones" and for audio that degrades as more parts come in.
+      //
+      // It also silently defeated warming every Apollo track instead of two:
+      // the extra tracks reached this line and warmed nothing at all.
+      //
+      // ensureTrack is idempotent (`if (!this.trackNodes.has(id))`), so calling
+      // it here costs nothing on the passes where the node already exists, and
+      // Pass 1 still does the routing and preferences it owns.
+      //
+      // The Helios preference goes FIRST, exactly as Pass 1 orders it, because
+      // ensureTrack reads it when it builds the effects chain. Setting it after
+      // would build the chain against the wrong preference and then invalidate
+      // it (setHeliosFxPref clears the chain signature), costing a wasted
+      // rebuild on every track that turns Helios off. Ordering it this way
+      // makes Pass 1 a genuine no-op instead of a correction.
+      this.setHeliosFxPref(track.id, track.heliosFx !== false)
+      this.ensureTrack(track.id, track.effects)
       if (track.instrument?.type === 'drum') void preloadDrumInstrument(this.ctx, track.instrument)
       if (track.instrument?.type === 'plugin') {
         // Warm the worklet module and any wasm before the transport rolls, or
@@ -1098,8 +1399,7 @@ export class DawEngine extends EventTarget {
           track.instrument.params as PluginInstrumentParams,
         )
       }
-      if (!warmApollo && this._resolveInstrument(track)?.type === 'apollo') { /* lazy */ }
-      else if (track.instrument?.type === 'apollo') {
+      if (track.instrument?.type === 'apollo') {
         void preloadApolloInstrument(this.ctx, this.trackNodes.get(track.id)?.midiInput, track.instrument.params as ApolloInstrumentParams)
       } else if (track.instrument && (track.instrument.type === 'poly' || track.instrument.type === 'wavetable')) {
         const resolved = this._resolveInstrument(track)
@@ -1252,6 +1552,7 @@ export class DawEngine extends EventTarget {
       } catch { /* ok */ }
     }
     this.scheduledSources = keep
+    this._recountScheduled()
   }
 
   /** Release every session takeover: arrangement content resumes scheduling on
@@ -1567,15 +1868,31 @@ export class DawEngine extends EventTarget {
         const noteDur     = this._spanSeconds(noteAbsBeat, noteAbsBeat + note.durationBeats)
         if (noteStartAt < this.ctx.currentTime - 0.1) continue  // already past
         let noteDest: AudioNode = nodes.midiInput
+        let engineFilter: { cut?: number; res?: number } | null = null
         if (this._rollFxActive(rfx)) {
-          const chain = this._buildRollFxChain(rfx, noteDest, noteStartAt, noteDur, clip.lfoShape)
-          noteDest = chain.input
-          const ttlMs = (noteStartAt - this.ctx.currentTime + noteDur + sustainSec + chain.tailSec + 1.5) * 1000
-          setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
+          if (this._isWorkletInstrument(track)) {
+            engineFilter = this._engineNoteFilter(rfx, track)
+          }
+          if (engineFilter) {
+            // Nothing to wire: the note keeps the track's own bus, so the whole
+            // track needs ONE engine however many notes carry a filter.
+          } else if (this._isWorkletInstrument(track)) {
+            // ⚠️ The SHARED per-clip chain, never a private one. See
+            // _isWorkletInstrument: a per-note destination here means a whole
+            // Helios polysynth per note. The clip's chain is one engine for the
+            // clip, and the filter still applies — what is lost is the envelope
+            // retriggering per note, which is the trade this caps the cost at.
+            noteDest = this._getClipFxChain(clip.id, rfx, nodes.midiInput, clip.lfoShape).input
+          } else {
+            const chain = this._buildRollFxChain(rfx, noteDest, noteStartAt, noteDur, clip.lfoShape)
+            noteDest = chain.input
+            const ttlMs = (noteStartAt - this.ctx.currentTime + noteDur + sustainSec + chain.tailSec + 1.5) * 1000
+            setTimeout(() => this._teardownFxNodes(chain.nodes), Math.max(0, ttlMs))
+          }
         }
         if (clip.presetId) {
           const bufKey = `${clip.presetId}:${note.pitch}`
-          const buf    = this._presetBufCache.get(bufKey)
+          const buf    = this._presetBufGet(bufKey)
           if (buf === undefined) void this._loadPresetBuffer(clip.presetId, note.pitch)
           if (buf) {
             const target = (note.velocity ?? 100) / 127
@@ -1607,9 +1924,43 @@ export class DawEngine extends EventTarget {
               src.stop(noteStartAt + noteDur + 0.01)
             }
             src.onended = () => { src.disconnect(); velGain.disconnect(); vibLfo?.disconnect() }
+          } else if (buf === null) {
+            // ── A preset with no sample must not be silence ──────────────────
+            //
+            // `null` is the SETTLED answer from _loadPresetBuffer: this preset
+            // has no audio for this note and will not get any this session —
+            // usually because the library holds no entries for its folder (a
+            // fresh browser, a signed-out visitor, a machine that has not
+            // synced). `undefined` means "still loading" and is deliberately
+            // NOT this branch; that note simply arrived before its buffer.
+            //
+            // Until now `null` fell off the end of the `if` and the note was
+            // dropped with nothing logged, so a whole instrument vanished and
+            // every other explanation looked more likely — Brae: "it's only
+            // rendering 2 of the four instruments". Measured on a song whose
+            // Stab used builtin-8 ("Metallic Pluck"): track peak exactly 0,
+            // with every note present, in range, and on time.
+            //
+            // A synth voice is wrong in timbre and right in every way that
+            // matters here — the part is audible, in time and at pitch — and
+            // the reason goes to the console instead of nowhere.
+            const resolved = this._resolveInstrument(track)
+            const fallback: TrackInstrument = resolved.type === 'none'
+              ? { type: 'poly', params: POLY_PRESETS['Cold Pad'] }
+              : resolved
+            if (!this._warnedMissingPreset.has(clip.presetId)) {
+              this._warnedMissingPreset.add(clip.presetId)
+              console.warn(`[daw] preset "${clip.presetId}" has no samples in this library — ` +
+                'playing its notes on a synth voice instead of dropping them')
+              void import('@/lib/diag-journal').then(m => m.diag('load',
+                `preset "${clip.presetId}" has no samples — falling back to a synth voice`,
+                { track: track.name, pitch: note.pitch })).catch(() => {})
+            }
+            playInstrumentNote(this.ctx, noteDest, fallback, note.pitch, note.velocity,
+              noteStartAt, noteDur + sustainSec)
           }
         } else {
-          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, noteStartAt, noteDur + sustainSec)
+          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, noteStartAt, noteDur + sustainSec, 0, engineFilter ?? undefined)
           this._choke(trackId, h, noteStartAt)
         }
       }
@@ -1700,11 +2051,14 @@ export class DawEngine extends EventTarget {
     const job = (async () => {
       try {
         const preset = this._presets.find(p => p.id === presetId)
-        if (!preset) { this._presetBufCache.set(key, null); return }
+        if (!preset) { this._presetBufSet(key, null); return }
 
-        const entries = await libraryGetAll()
+        // Folder-scoped, not the whole library: this runs once per (preset,
+        // pitch), and _prefetchUpcoming fires it for every upcoming note, so a
+        // full getAll() here meant dozens of concurrent 13k-record scans on the
+        // main thread while the transport was running.
+        const inFolder = await libraryGetByFolder(preset.folder)
         const noteName = midiToNoteName(pitch)
-        const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
         const exact    = inFolder.find(e => e.name === noteName)
         const entry    = exact ?? inFolder.reduce<typeof inFolder[0] | null>((best, e) => {
           if (!best) return e
@@ -1712,7 +2066,7 @@ export class DawEngine extends EventTarget {
           const bMidi  = best.renderSpec?.midiNote ?? 60
           return Math.abs(eMidi - pitch) < Math.abs(bMidi - pitch) ? e : best
         }, null)
-        if (!entry) { this._presetBufCache.set(key, null); return }
+        if (!entry) { this._presetBufSet(key, null); return }
 
         let buf: AudioBuffer | null = null
         if (exact) {
@@ -1725,9 +2079,9 @@ export class DawEngine extends EventTarget {
           // range was C3–C5, so a G5 lead note used to fold down to C5).
           buf = await renderPresetAtPitch(entry.renderSpec, pitch)
         }
-        this._presetBufCache.set(key, buf)
+        this._presetBufSet(key, buf)
       } catch {
-        this._presetBufCache.set(key, null)
+        this._presetBufSet(key, null)
       } finally {
         this._presetLoading.delete(key)
       }
@@ -1749,7 +2103,7 @@ export class DawEngine extends EventTarget {
       if (clip.startBeat > until || clip.startBeat + clip.durationBeats < now) continue
       for (const note of clip.notes) {
         const key = `${clip.presetId}:${note.pitch}`
-        if (!this._presetBufCache.has(key) && !this._presetLoading.has(key)) {
+        if (this._presetBufGet(key) === undefined && !this._presetLoading.has(key)) {
           void this._loadPresetBuffer(clip.presetId, note.pitch)
         }
       }
@@ -1781,7 +2135,30 @@ export class DawEngine extends EventTarget {
   }
 
   /** Every Apollo track with notes, as render groups. */
-  private _apolloGroups() {
+  /**
+   * The Apollo render groups — memoised, because this sits on the scheduler's
+   * hot path.
+   *
+   * _tryScheduleCombined asks for a combine for every clip that is not yet
+   * baked, on every scheduler pass, and passes this in as an ARGUMENT — so it
+   * was rebuilt even when the request was going to be dropped immediately.
+   * Rebuilding means walking every track and re-filtering every clip
+   * (O(tracks x clips)) and allocating a fresh array per group, dozens of times
+   * a second, right next to the code whose job is to be ready on time.
+   *
+   * The cache is keyed on IDENTITY, not contents: _midiClips and _tracks are
+   * each reassigned wholesale when the project changes, and the resolved patch
+   * objects are compared too — an edited patch must produce new groups or the
+   * next render bakes the old sound.
+   */
+  private _apolloGroupsCache: {
+    clips: MidiClip[]
+    tracks: DawTrack[]
+    patches: unknown[]
+    groups: ReturnType<DawEngine['_buildApolloGroups']>
+  } | null = null
+
+  private _buildApolloGroups() {
     return this._tracks
       .map(t => ({ trackId: t.id, inst: this._resolveInstrument(t) }))
       .filter(x => x.inst?.type === 'apollo')
@@ -1791,6 +2168,18 @@ export class DawEngine extends EventTarget {
         clips: this._midiClips.filter(c => c.trackId === x.trackId && c.notes.length > 0),
       }))
       .filter(g => g.clips.length > 0)
+  }
+
+  private _apolloGroups() {
+    const patches = this._tracks.map(t => this._resolveInstrument(t)?.params)
+    const c = this._apolloGroupsCache
+    if (c && c.clips === this._midiClips && c.tracks === this._tracks
+      && c.patches.length === patches.length && c.patches.every((p, i) => p === patches[i])) {
+      return c.groups
+    }
+    const groups = this._buildApolloGroups()
+    this._apolloGroupsCache = { clips: this._midiClips, tracks: this._tracks, patches, groups }
+    return groups
   }
 
   /** The Apollo render groups, for benchmarking the render strategy from a test. */
@@ -1846,18 +2235,18 @@ export class DawEngine extends EventTarget {
     // Ask for the up-to-date render whenever the exact one is missing — INCLUDING
     // when a stale one is about to cover for it. Falling back without asking
     // would mean the new sound never gets built at all, and the old one plays
-    // forever.
-    if (!exact) requestCombine(this.tempo, this._apolloGroups())
+    // forever. Asked ONCE: the miss path below used to ask a second time for the
+    // same clip in the same pass.
+    if (!exact && prerenderOn()) requestCombine(this.tempo, this._apolloGroups())
     const buf = exact ?? combinedStale(clip.id)
     if (!buf) {
       // Not ready (or the notes/patch just changed, so the stamp moved) — ask
       // for it and let this pass play live. The whole track goes in one request:
       // it renders in a single offline pass, which is what stopped most of the
       // renders coming back silent.
-      // Hand over EVERY Apollo track, not just this clip's: they render in one
-      // offline pass together, because a browser will not give us a fresh audio
-      // context per clip and the extras come back silent.
-      requestCombine(this.tempo, this._apolloGroups())
+      // (The request was already made above when `exact` was missing, and every
+      // path that reaches here has been through that. Asking twice for the same
+      // clip in the same pass only rebuilt the groups again.)
       // This clip is about to be scheduled note-by-note; remember that, so a
       // render finishing seconds from now does not start a second copy on top.
       if (clip.startBeat <= windowEnd && clip.startBeat + clip.durationBeats >= now) {
@@ -1915,7 +2304,38 @@ export class DawEngine extends EventTarget {
         extraOscs.push(...r.extraOscs)
       } catch { /* a bad bar must not silence the clip — carry on unprocessed */ }
     }
-    last.connect(nodes.midiInput)     // track FX, volume and pan apply after this
+    // ⚠️ AND THE CLIP'S SOUND SETTINGS. Brae: "I don't hear any changes when I
+    // change it in Sound Settings either... when I say before, I mean
+    // pre-Apollo."
+    //
+    // He was right, and this line is why. A combined clip skips the whole
+    // per-note loop (see _tryScheduleCombined at the top of the MIDI pass), and
+    // the per-note loop is the ONLY place clip.rollFx was ever applied — so
+    // every low-pass, reverb, drive and gain set in the Sound panel was
+    // silently discarded the moment a render landed. Measured before the fix:
+    // six unrelated fields, including a gain of 0.4 that should halve the
+    // level, all produced exactly 0.0 dB.
+    //
+    // ⚠️ THIS IS THE SAME BUG AS THE FX-LANE BARS DIRECTLY ABOVE, one layer up,
+    // and the comment there says so: "Clip effects were applied in exactly two
+    // places — per NOTE on the live MIDI path, and per CLIP for audio clips —
+    // and a combined buffer went through neither". Sound settings were the
+    // other thing living only on the per-note path. Anything that is applied
+    // per note has to be applied here too, or combining silently removes it.
+    //
+    // ⚠️ It is not only Apollo tracks. A `poly` track is translated to Helios by
+    // default (_resolveInstrument, heliosSynth !== false), so it resolves as
+    // apollo and takes this path as well — which is why this reads as a
+    // pre-Apollo regression on ordinary synth tracks.
+    const clipFx = this._resolveNoteFx(clip, { pitch: 60, velocity: 100 } as MidiNote)
+    if (this._rollFxActive(clipFx)) {
+      // Clip-wide, so the shared chain (one per clip, keyed on the settings) is
+      // right here — a combined clip is one buffer, not a voice per note.
+      const rf = this._getClipFxChain(clip.id, clipFx, nodes.midiInput, clip.lfoShape)
+      last.connect(rf.input)
+    } else {
+      last.connect(nodes.midiInput)   // track FX, volume and pan apply after this
+    }
     src.start(startAt, offsetSec)
     this._registerMidiVoice(src, gain)
     src.onended = () => {
@@ -1955,23 +2375,14 @@ export class DawEngine extends EventTarget {
     if (!offline) this._prefetchUpcoming(now)
 
     // ── Arrangement audio clips ──────────────────────────────────────────
-    // Overlay guard: identical clips stacked at (or within ~10ms of) the same
-    // spot would play doubled — and a few-ms offset comb-filters, which reads
-    // as feedback. Only the first plays. 0.02 beats ≈ 10ms at 120bpm; any
-    // intentional doubling lives further apart than that.
-    const seenOverlay: Array<{ trackId: string; startBeat: number; durationBeats: number; sig: string }> = []
+    // Duplicate-overlay guard and the live-source count are both per-edit, not
+    // per-tick — see _rebuildTickPlan.
+    if (this._tickPlanDirty) this._rebuildTickPlan()
 
     for (const clip of this._clips) {
       if (this._sessionTakeover.has(clip.trackId)) continue  // session owns the track
-      const sig = `${clip.r2Key ?? clip.libraryId ?? clip.audioUrl ?? clip.name}`
-      const dup = seenOverlay.some(o =>
-        o.trackId === clip.trackId && o.sig === sig &&
-        Math.abs(o.startBeat - clip.startBeat) < 0.02 &&
-        Math.abs(o.durationBeats - clip.durationBeats) < 0.02)
-      if (dup) continue
-      seenOverlay.push({ trackId: clip.trackId, startBeat: clip.startBeat, durationBeats: clip.durationBeats, sig })
-      const alreadyScheduled = this.scheduledSources.some(s => s.clipId === clip.id)
-      if (alreadyScheduled) continue
+      if (this._dupAudioClipIds.has(clip.id)) continue
+      if (this._scheduledClipCounts.has(clip.id)) continue
 
       const clipEnd = clip.startBeat + clip.durationBeats
       if (clipEnd < now) continue
@@ -1987,14 +2398,8 @@ export class DawEngine extends EventTarget {
     }
 
     // ── Arrangement MIDI clips ───────────────────────────────────────────
-    // Same exact-overlay guard for MIDI clips: an identical clip pasted onto
-    // itself would double every note.
-    const seenMidiOverlay = new Set<string>()
-
     for (const clip of this._midiClips) {
-      const midiOverlayKey = `${clip.trackId}|${clip.startBeat.toFixed(4)}|${clip.durationBeats.toFixed(4)}|${clip.presetId ?? ''}|${clip.notes.length}|${clip.name}`
-      if (seenMidiOverlay.has(midiOverlayKey)) continue
-      seenMidiOverlay.add(midiOverlayKey)
+      if (this._dupMidiClipIds.has(clip.id)) continue
       if (this._sessionTakeover.has(clip.trackId)) continue  // session owns the track
       const track = this._tracks.find(t => t.id === clip.trackId)
       if (!track || track.mute) continue
@@ -2013,7 +2418,7 @@ export class DawEngine extends EventTarget {
       const grooveLut = clip.groove && clip.groove.length >= 2 ? sampleAutomation(clip.groove, 1, 64) : null
       const volLut    = clip.volGraph && clip.volGraph.length >= 2 ? sampleAutomation(clip.volGraph, 1, 64) : null
       const barBeats  = this._beatsPerBar || 4
-      const processedNotes = this._applyMidiEffects(clip.notes, track.midiEffects ?? [])
+      const processedNotes = this._processedNotes(clip, track)
 
       // Looped clips repeat the note pattern every loopLengthBeats until the
       // clip end. Each occurrence is a (note, repetition) pair with its own
@@ -2151,25 +2556,67 @@ export class DawEngine extends EventTarget {
           }
           if (overlapping.length > 0) {
             clipEffectActive = true
+            // ⚠️ ONE CHAIN PER TRACK where the bars belong to the track.
+            //
+            // Measured: eight Apollo tracks of eight clips cost NO extra engines
+            // — one per track, reused — until one clip effect is added to each,
+            // at which point it is 32 engines and the transport drags. Size was
+            // never the problem; the per-clip chain was, because an Apollo
+            // engine is keyed by the node its notes are sent to.
+            //
+            // A track-level bar (a clip effect) is scheduled from its OWN start
+            // beat, not the note's — _buildEffectBar ignores startAt entirely,
+            // and _buildClipEffect uses it only to start an LFO, which is more
+            // correctly phase-locked to the effect than to whichever note
+            // happened to build the chain first. So one chain for the track is
+            // both cheaper and more faithful.
+            //
+            // Per-CLIP bars (FX motion, per-parameter graphs) genuinely differ
+            // clip by clip, so those keep a chain per clip. The key says which
+            // it is, and includes every bar in play so editing one builds a new
+            // chain rather than reusing a stale one.
+            const perClipBar = overlapping.some(e =>
+              e.id.startsWith('motion:') || e.id.startsWith('pg:'))
+            const barKey = this._isWorkletInstrument(track)
+              ? (perClipBar
+                  ? `clip:${clip.id}|${overlapping.map(e => e.id).join(',')}`
+                  : `track:${clip.trackId}|${overlapping.map(e => e.id).sort().join(',')}`)
+              : null
+            const shared = barKey ? this._clipBarChains.get(barKey) : undefined
+            if (shared) {
+              noteDest = shared.input
+            } else {
             const entry = this.ctx.createGain()
             fxCleanup.nodes.push(entry)
             let last: AudioNode = entry
             for (const eff of overlapping) {
               const effContextStart  = this._ctxTimeForBeat(Math.max(now, eff.startBeat), now, contextNow)
               const effSeekOffsetSec = Math.max(0, this._spanSeconds(eff.startBeat, now))
-              const r = eff.fx ? this._buildEffectBar(eff, last, startAt, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, last, startAt, effContextStart, effSeekOffsetSec)
+              // A chain shared by the whole track must not be anchored to the
+              // note that happened to build it — its own start is the anchor.
+              const anchor = barKey?.startsWith('track:') ? effContextStart : startAt
+              const r = eff.fx ? this._buildEffectBar(eff, last, anchor, effContextStart, effSeekOffsetSec) : this._buildClipEffect(eff, last, anchor, effContextStart, effSeekOffsetSec)
               last = r.output
               fxCleanup.nodes.push(...r.extraNodes)
               fxCleanup.oscs.push(...r.extraOscs)
             }
             last.connect(nodes.midiInput)
             noteDest = entry
+            if (barKey) {
+              // Shared for the clip: it outlives this note, so it is released
+              // with the other cached chains rather than on a per-note timer.
+              this._clipBarChains.set(barKey, {
+                input: entry, nodes: fxCleanup.nodes.slice(), oscs: fxCleanup.oscs.slice(),
+              })
+            } else {
             // Tear the chain down after the note (plus a tail for time-based FX)
             const ttlMs = (startAt - contextNow + remaining + sustainSec + 3) * 1000
             setTimeout(() => {
               for (const o of fxCleanup.oscs)  { try { o.stop(); o.disconnect() } catch { /* ok */ } }
               for (const nd of fxCleanup.nodes) { try { nd.disconnect() } catch { /* ok */ } }
             }, Math.max(0, ttlMs))
+            }   // per-note teardown (non-worklet instruments only)
+            }   // built a fresh chain rather than reusing the clip's
           }
         }
 
@@ -2180,8 +2627,23 @@ export class DawEngine extends EventTarget {
         // what made dense arrangements stutter. The per-note amplitude envelope
         // that chain used to hold moves onto the note's own gain (`sharedEnv`).
         let sharedEnv = false
-        if (this._rollFxActive(rfx)) {
-          const canShare = !note.fx && (rfx.filterEnv ?? 0) === 0 && !clipEffectActive
+        // ⚠️ Ask the ENGINE first. When a low-pass is all the note wants and the
+        // instrument can apply one per voice, no chain is built at all — so the
+        // note keeps the track's own bus and the whole track needs ONE engine,
+        // however many notes carry a filter. Only when the FX need real nodes
+        // (drive, delay, an amplitude shape) does a chain get built, and then it
+        // is the clip's shared one.
+        const engineFilterB = this._isWorkletInstrument(track) && !clipEffectActive
+          ? this._engineNoteFilter(rfx, track) : null
+        if (this._rollFxActive(rfx) && !engineFilterB) {
+          // ⚠️ A worklet instrument shares ALWAYS. The three conditions below are
+          // the reasons a note wants a chain of its OWN — its own FX, a filter
+          // envelope, an overlapping clip effect — and every one of them is a
+          // reason a per-note destination gets built. For Apollo and plugins
+          // that is a polysynth per note, so sharing is not an optimisation
+          // here, it is the difference between playable and not.
+          const canShare = this._isWorkletInstrument(track)
+            || (!note.fx && (rfx.filterEnv ?? 0) === 0 && !clipEffectActive)
           if (canShare) {
             noteDest = this._getClipFxChain(clip.id, rfx, nodes.midiInput, clip.lfoShape).input
             sharedEnv = true
@@ -2196,7 +2658,7 @@ export class DawEngine extends EventTarget {
         // Use clip-level preset if set, otherwise fall back to track instrument
         if (clip.presetId) {
           const bufKey = `${clip.presetId}:${note.pitch}`
-          const buf    = this._presetBufCache.get(bufKey)
+          const buf    = this._presetBufGet(bufKey)
           if (buf === undefined) {
             void this._loadPresetBuffer(clip.presetId, note.pitch)
             continue
@@ -2331,7 +2793,7 @@ export class DawEngine extends EventTarget {
           // uses a sample resumes at the right phase instead of restarting when
           // the playhead enters mid-note.
           const noteOffsetSec = this.beatsToSeconds(alreadyBeats)
-          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec)
+          const h = playInstrumentNote(this.ctx, noteDest, this._resolveInstrument(track), note.pitch, note.velocity, startAt, this._spanSeconds(noteAbsBeat, noteAbsBeat + maxDur) + sustainSec, noteOffsetSec, engineFilterB ?? undefined)
           this._choke(track.id, h, startAt)
         }
 
@@ -2349,7 +2811,12 @@ export class DawEngine extends EventTarget {
       // the user's manual value stands until they re-enable automation.
       if (lane.overridden) continue
       const norm  = interpolateAutomation(lane, now)
-      const value = lane.min + norm * (lane.max - lane.min)
+      // ⚠️ A point's value is a 0–1 POSITION, not the parameter's value — the
+      // lane editor stores exactly what the mouse drew ("value is 0..1") and
+      // min/max carry the units. Log lanes space that position by ratio.
+      const value = lane.curve === 'log' && lane.min > 0
+        ? lane.min * Math.pow(lane.max / lane.min, Math.min(1, Math.max(0, norm)))
+        : lane.min + norm * (lane.max - lane.min)
       this._applyAutomation(lane.trackId, lane.parameter, value)
     }
 
@@ -2424,10 +2891,18 @@ export class DawEngine extends EventTarget {
       if (fx.type === 'velocity') {
         const p = fx.params as VelocityMidiParams
         if (!p.enabled) continue
-        result = result.map(n => {
+        result = result.map((n, i) => {
           const range  = p.outMax - p.outMin
           const scaled = p.outMin + (n.velocity / 127) * range
-          const rand   = p.random > 0 ? (Math.random() * 2 - 1) * p.random : 0
+          // ⚠️ Was Math.random(). Humanize is meant to make the part sound
+          // played rather than typed — it is NOT meant to make the song a
+          // different performance on every render. Seeding from the note's own
+          // identity keeps the feature exactly as it sounds and makes it a
+          // property of the song: the same note is nudged the same way on every
+          // machine, every render, forever.
+          const rand = p.random > 0
+            ? (rngFor(`velocity:${fx.id}:${n.id ?? `${i}:${n.pitch}:${n.startBeat}`}`)() * 2 - 1) * p.random
+            : 0
           return { ...n, velocity: Math.max(0, Math.min(127, Math.round(scaled + rand))) }
         })
       } else if (fx.type === 'scale') {
@@ -2745,9 +3220,10 @@ export class DawEngine extends EventTarget {
 
     const entry: ScheduledSource = { source, gainNode: fadeGain, clipId: clip.id, basePlaybackRate }
     this.scheduledSources.push(entry)
+    this._countScheduled(clip.id, 1)
     source.onended = () => {
       const idx = this.scheduledSources.indexOf(entry)
-      if (idx !== -1) this.scheduledSources.splice(idx, 1)
+      if (idx !== -1) { this.scheduledSources.splice(idx, 1); this._countScheduled(clip.id, -1) }
       source.disconnect()
 
       const cleanupTail = () => {
@@ -2872,7 +3348,14 @@ export class DawEngine extends EventTarget {
       ir = this.ctx.createBuffer(2, len, sr)
       for (let ch = 0; ch < 2; ch++) {
         const d = ir.getChannelData(ch)
-        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6)
+        // ⚠️ Was Math.random(). A reverb IR is noise, so nobody can hear that
+        // it changed — but it changed on every render, which meant the same
+        // song never rendered to the same audio twice. Seeded from the decay
+        // and the channel: still noise, still decorrelated between left and
+        // right (that stereo width is the whole point of two channels), and
+        // now the same noise on every machine.
+        const rnd = rngFor(`reverb-ir:${key}:${ch}`)
+        for (let i = 0; i < len; i++) d[i] = (rnd() * 2 - 1) * Math.pow(1 - i / len, 2.6)
       }
       this._reverbIRs.set(key, ir)
     }
@@ -2935,9 +3418,25 @@ export class DawEngine extends EventTarget {
     return entry
   }
 
-  private _clearClipFxChains() {
+  /**
+   * @param includeBars Also drop the per-clip effect-bar chains.
+   *
+   * ⚠️ FALSE ON A LOOP WRAPAROUND. Those chains belong to worklet instruments,
+   * whose midiInput is no longer swapped — so unlike the roll-FX chains they do
+   * NOT dangle on a dead bus, and tearing them down only forced the engine bound
+   * to each one to be built again on the next pass. Two per cycle, every couple
+   * of seconds around a short loop, all of it main-thread work arriving exactly
+   * when the transport wants to schedule notes.
+   */
+  private _clearClipFxChains(includeBars = true) {
     for (const c of this._clipFxChains.values()) this._teardownFxNodes(c.nodes)
     this._clipFxChains.clear()
+    if (!includeBars) return
+    for (const c of this._clipBarChains.values()) {
+      for (const o of c.oscs) { try { o.stop(); o.disconnect() } catch { /* already stopped */ } }
+      this._teardownFxNodes(c.nodes)
+    }
+    this._clipBarChains.clear()
   }
 
   /** Source-side pitch shaping for a sampled note: fine detune, a pitch-envelope
@@ -3638,7 +4137,9 @@ export class DawEngine extends EventTarget {
     const buf = this.ctx.createBuffer(2, len, this.ctx.sampleRate)
     for (let ch = 0; ch < 2; ch++) {
       const d = buf.getChannelData(ch)
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2)
+      // Same fix as _getReverbIR — see the note there.
+      const rnd = rngFor(`make-ir:${key}:${ch}`)
+      for (let i = 0; i < len; i++) d[i] = (rnd() * 2 - 1) * Math.pow(1 - i / len, 2)
     }
     this._irCache.set(key, buf)
     return buf
@@ -3652,6 +4153,79 @@ export class DawEngine extends EventTarget {
       curve[i] = ((Math.PI + k) * x) / (Math.PI + k * Math.abs(x))
     }
     return curve
+  }
+
+  /**
+   * Does this track's instrument live in a persistent AudioWorklet engine?
+   *
+   * ⚠️ THE ONE QUESTION THAT DECIDES WHETHER AN FX CHAIN IS AFFORDABLE.
+   *
+   * Apollo and Beacon plugins each keep ONE engine per destination node, held
+   * in a WeakMap keyed by that node (daw-instrument.ts, beacon-plugins/host.ts).
+   * Sampled and synth voices are the opposite: every note is its own
+   * BufferSource, so giving each one a private FX chain costs a few filters.
+   *
+   * Give a worklet instrument a private chain per note and you have asked for
+   * one whole polysynth per note. Measured on ONE Apollo track with a single
+   * clip effect: 15 live Helios engines after 5s of playing, 45 after 20s, 68
+   * after 40s, each rendering every 128-sample quantum, and nothing reclaiming
+   * them until stop. That is the report - "it just gets slower and slower even
+   * with just one track, cutting the audio every time it slows."
+   *
+   * It was invisible because an AudioWorkletProcessor does not live in the JS
+   * heap: the heap stayed flat at 42.6MB throughout.
+   */
+  /**
+   * A per-note filter the ENGINE can apply itself, or null.
+   *
+   * ⚠️ The whole point of _isWorkletInstrument is that these instruments cannot
+   * afford a chain per note. A low-pass is the commonest thing a note asks for
+   * and the one thing Helios already has per voice, so when that is ALL the
+   * note wants, it needs no chain at all — the track drops to a single engine.
+   *
+   * Anything else in the roll FX (drive, delay, bitcrush, an amplitude shape)
+   * is real signal processing that has to happen outside, so this returns null
+   * and the caller falls back to the clip's shared chain.
+   */
+  private _engineNoteFilter(rfx: RollFx, track?: { id: string }): { cut?: number; res?: number } | null {
+    const lp = rfx.filterHz
+    // 17.5k and up is the "Off" end of the low-pass — see FX_FIELDS.
+    if (lp == null || lp >= 17_500) return null
+
+    // ⚠️ ONLY WHEN THE ENGINE'S OWN FILTER IS ACTUALLY A LOW-PASS.
+    //
+    // Brae: "Safari's only problem is lowpass working right." Mine, and this is
+    // it. Sending the value to Helios means the note's low-pass stops being a
+    // filter of its own and becomes a CAP on the patch's filter 1 — correct
+    // only if that filter is a low-pass. On a high-pass, lowering its cutoff
+    // opens it and the note gets BRIGHTER; on a band-pass it moves the band.
+    // The one thing a low-pass must never do is make something brighter.
+    //
+    // A patch filtering any other way keeps a real filter in front of it, which
+    // is what it had before and is always right — it costs a chain per clip,
+    // and being correct is worth a chain per clip.
+    const inst = track ? this._resolveInstrument(track as never) : null
+    const f1 = (inst?.params as { filters?: { enabled?: boolean; type?: string }[] } | undefined)?.filters?.[0]
+    if (!f1?.enabled) return null
+    if (!/^(lp|ladder)/.test(String(f1.type ?? ''))) return null
+    for (const [k, v] of Object.entries(rfx)) {
+      if (k === 'filterHz' || k === 'filterQ') continue
+      const field = FX_FIELD_BY_KEY[k]
+      // A field sitting at its neutral value is not switched on.
+      if (!field || v == null || v === field.neutral) continue
+      return null   // something here needs real nodes
+    }
+    // norm = log(hz/8) / log(2500) — the inverse of the engine's cutoffHz().
+    const cut = Math.log(Math.max(8, lp) / 8) / Math.log(2500)
+    const q = rfx.filterQ
+    return { cut, ...(q != null && q !== FX_FIELD_BY_KEY.filterQ?.neutral
+      ? { res: Math.min(1, Math.max(0, (q - 0.1) / 11.9)) } : {}) }
+  }
+
+  private _isWorkletInstrument(track: { id: string } | undefined): boolean {
+    if (!track) return false
+    const t = this._resolveInstrument(track as never)?.type
+    return t === 'apollo' || t === 'plugin'
   }
 
   private _killAllSources() {
@@ -3673,6 +4247,7 @@ export class DawEngine extends EventTarget {
       if (tailOscs)  for (const o of tailOscs)  { try { o.stop(stopAt); o.disconnect() } catch { /* ok */ } }
     }
     this.scheduledSources = []
+    this._scheduledClipCounts.clear()
 
     // Hard-stop every registered sampled MIDI voice (looped drones included) —
     // scheduled ramps are cancelled so nothing can resurrect them.
@@ -3688,7 +4263,21 @@ export class DawEngine extends EventTarget {
     // Cut off ringing MIDI voices (preset samples and synth instruments):
     // they connect through each track's midiInput bus, so fade the bus out
     // and swap in a fresh one for whatever plays next.
-    for (const nodes of this.trackNodes.values()) {
+    for (const [trackId, nodes] of this.trackNodes.entries()) {
+      // ⚠️ NOT FOR A WORKLET INSTRUMENT. Apollo and plugin engines are keyed by
+      // this exact node, so replacing it orphans them and the next play builds
+      // new ones — main-thread work landing precisely when the transport is
+      // trying to schedule the first notes.
+      //
+      // The swap exists to cut ringing SAMPLED and synth voices, which connect
+      // to this bus directly and have no other way to be silenced. A worklet
+      // engine has one: apolloStopAll/pluginStopAll panic it, which is both
+      // faster and more thorough than fading its output away.
+      if (this._isWorkletInstrument(this._tracks.find(t => t.id === trackId))) {
+        nodes.midiInput.gain.cancelScheduledValues(now)
+        nodes.midiInput.gain.setValueAtTime(1, now)
+        continue
+      }
       const old = nodes.midiInput
       old.gain.cancelScheduledValues(now)
       old.gain.setTargetAtTime(0, now, 0.003)
@@ -3703,7 +4292,12 @@ export class DawEngine extends EventTarget {
     // route every note scheduled after this point into the dead old bus (silent).
     // Tear them down so the next note rebuilds against the fresh midiInput. This
     // is the loop-wrap / seek counterpart to stop()'s _clearClipFxChains().
-    this._clearClipFxChains()
+    //
+    // ⚠️ The effect-bar chains are KEPT: their buses were not swapped above, so
+    // they are still wired to something live, and rebuilding them would rebuild
+    // an Apollo engine each. stop() still clears them, which is where releasing
+    // the CPU belongs.
+    this._clearClipFxChains(false)
   }
 
   clearStretchedCache(clipId?: string) {
@@ -4172,6 +4766,12 @@ export class DawEngine extends EventTarget {
       this._renderNow = null           // virtual clock OFF
       this.isPlaying  = false
     }
+    // ⚠️ Between scheduling and rendering, not before either. _preloadAll got
+    // every engine UP; this waits for the notes just posted to it to actually
+    // arrive. startRendering() does not wait for the port, so without this a
+    // render intermittently comes back missing notes — silently, and about one
+    // time in eight. See ApolloEngine.flush().
+    await apolloDrain(this.ctx)
     const rendered = await octx.startRendering()
     const channels: Float32Array[] = []
     for (let c = 0; c < rendered.numberOfChannels; c++) channels.push(rendered.getChannelData(c).slice())
@@ -4373,6 +4973,13 @@ export class DawEngine extends EventTarget {
     this.setMetronome(false)
     void this.stopRecording()
     this.stopJamBuffer()
+    // Let the decoded audio go with the engine. A disposed engine that still
+    // holds hundreds of MB of samples is the leak this cache used to be.
+    this._clearPresetBufCache()
+    this.bufferCache.clear()
+    this._loopMeta.clear()
+    this._lfoBufCache.clear()
+    this._irCache.clear()
     try { this._exclusiveChan?.close() } catch { /* ok */ }
     this.ctx.close()
   }

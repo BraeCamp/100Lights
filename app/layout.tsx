@@ -4,6 +4,8 @@ import { Geist, Geist_Mono } from "next/font/google"
 import { ClerkProvider } from "@clerk/nextjs"
 import { dark } from "@clerk/themes"
 import { PostHogProvider } from "@/components/PostHogProvider"
+import LightMount from "@/components/LightMount"
+import DesktopMenu from "@/components/DesktopMenu"
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar"
 import ReferralCapture from "@/components/ReferralCapture"
 import AnnouncementBanner from "@/components/AnnouncementBanner"
@@ -74,6 +76,42 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       }}
     >
       <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
+        <head>
+          {/*
+            ⚠️ THE CACHE RESET RUNS BEFORE THE APP DOES, and that placement is
+            the whole point.
+
+            Doing it from a React effect meant the bundle had already started
+            loading, so the reload aborted a dozen chunk requests mid-flight —
+            twelve net::ERR_ABORTED on a fast connection, and a half-loaded app
+            on a slow one. Brae: "It still will load in safari and won't load in
+            Brave." Here it decides before a single chunk is asked for.
+
+            Deliberately tiny, dependency-free and synchronous-looking: it must
+            not itself be a reason the page fails to start. Everything is
+            wrapped, because the failure mode of a reset that throws is an app
+            that never opens — which is worse than anything it was clearing.
+
+            Caches and the service worker only. IndexedDB — the sound library,
+            offline projects — is never touched.
+          */}
+          <script
+            id="cache-reset"
+            dangerouslySetInnerHTML={{ __html: `(function(){try{
+var K='100l.cache.purge',V='${'2026-09-02-stale-apollo-worklet'}';
+var done;try{done=localStorage.getItem(K)}catch(e){return}
+if(done===V)return;
+try{localStorage.setItem(K,V);if(localStorage.getItem(K)!==V)return}catch(e){return}
+var jobs=[];
+try{if(window.caches&&caches.keys)jobs.push(caches.keys().then(function(k){
+  return Promise.all(k.map(function(n){return caches.delete(n)}))}))}catch(e){}
+try{if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations)
+  jobs.push(navigator.serviceWorker.getRegistrations().then(function(r){
+    return Promise.all(r.map(function(x){return x.unregister()}))}))}catch(e){}
+Promise.all(jobs).catch(function(){}).then(function(){location.replace(location.href)});
+}catch(e){}})();` }}
+          />
+        </head>
         <body className="h-full">
           <a href="#main" className="skip-link">Skip to main content</a>
           {/* Site chrome + analytics — hidden on /embed so third-party iframes
@@ -93,6 +131,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <AnnouncementBanner />
             {/* ⌘K quick switcher — renders nothing until opened */}
             <CommandK />
+            {/* ⚠️ LIGHT LIVES AT THE ROOT, not in the app layout.
+                Brae: "it still dies when the page changes."
+
+                It was mounted in (app), which covers the studio, projects and
+                the dashboard — but community, apps, learn and store are all
+                OUTSIDE that group, and Light's own navigation offers three of
+                them as destinations. So obeying "go to the community" ended
+                Light: it walked itself off the edge of its own layout, and
+                every question it had open went with it.
+
+                Here it is a sibling of every page there is, so no navigation
+                can unmount it. LightMount decides where it should be seen; the
+                point of this position is only that it never stops existing.
+                Inside HideOnEmbed so an embedded iframe stays bare. */}
+            <LightMount />
+            <DesktopMenu />
           </HideOnEmbed>
         </body>
       </html>

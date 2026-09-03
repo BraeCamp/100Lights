@@ -77,3 +77,6 @@ lib/genre-centroids.json
 
 # clerk configuration (can include secrets)
 /.clerk/
+
+# Diagnostics journal — local error log written by app/api/diag
+.diag/

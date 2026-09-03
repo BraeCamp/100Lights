@@ -574,6 +574,10 @@ class Voice {
   }
   start(note, vel, patch, engine, legato, fromSeq) {
     this.note = note; this.vel = vel; this.gate = true; this.fromSeq = !!fromSeq
+    // Per-note filter from the host, set by noteOn straight after this. Cleared
+    // here so a voice reused from the pool cannot inherit the last note's.
+    this.noteCut = null
+    this.noteRes = null
     this.serial = ++VOICE_SERIAL
     const wasActive = this.active
     this.active = true
@@ -1435,6 +1439,74 @@ class FxState {
 }
 
 function processFxUnit(engine, unit, st, L, R, n) {
+  // A unit that could not be stabilised is SKIPPED, not run and cleaned up
+  // after. Returning here leaves L/R holding the input, so the effect becomes a
+  // no-op and the track keeps playing dry — which is the correct failure for an
+  // effect. It also costs nothing: no processing, no copy, no per-block scan.
+  if (st.__fxBypass) return
+  return guardFinite(engine, unit, st, L, R, n, processFxUnitInner)
+}
+
+// ── An effect must never be able to silence a track forever ─────────────────
+//
+// Several of these effects are feedback loops — a reverb tank, a delay, a
+// phaser, a flanger. Feed a non-finite value into one and it NEVER leaves: NaN
+// times anything is NaN, so the loop stays poisoned for the life of the node,
+// the track goes silent, and every downstream mix goes silent with it. There is
+// no error and nothing in the console; the meter simply reads zero.
+//
+// That is not hypothetical. Sweeping the reverb across its whole parameter
+// range found exactly one silencing value — decay 1.5 (and only on this path;
+// the plain WebAudio route was fine at every value):
+//
+//     decay  1.2  ok      1.5  MUTE      1.8  ok      2.0  ok
+//
+// A single value between two working neighbours is a resonance, not a range
+// problem: 1.5 maps to size exactly 0.25 and the tank's delay multiplier to
+// exactly 0.55, and at that alignment the figure-8 runs away. Chasing which
+// multiplier resonates would fix one value and leave the next one to be found
+// by a user, so the guard is here instead, where it covers every unit that has
+// state: if a block comes out non-finite, the unit is rebuilt from scratch and
+// the block is silenced. One bad block instead of a dead track.
+//
+// The cost is a sum over the block — a few hundred adds against a DSP pass that
+// is orders of magnitude larger — and it runs only on the FX path, never per
+// voice.
+function guardFinite(engine, unit, st, L, R, n, inner) {
+  const out = inner(engine, unit, st, L, R, n)
+  let acc = 0
+  for (let i = 0; i < n; i++) acc += L[i] + R[i]
+  if (Number.isFinite(acc)) { if (st.__fxBad) st.__fxBad = 0; return out }
+  // Poisoned. Rebuild this unit's state and let the next block be clean.
+  for (let i = 0; i < n; i++) { L[i] = 0; R[i] = 0 }
+  // FxState builds its state in the constructor, so re-running that on the
+  // existing object is the reset: every delay line, filter and accumulator is
+  // replaced with a fresh one, and the poisoned values are gone with them.
+  try {
+    FxState.call(st, unit.type, engine.sr, engine.bpm)
+  } catch (e) {
+    void e   // if it cannot be rebuilt the block is still silenced, which is the point
+  }
+  engine.fxNonFinite = (engine.fxNonFinite || 0) + 1
+  engine.fxNonFiniteLast = unit.type
+  // Rebuilding is enough when a stray value got in. It is NOT enough when the
+  // unit's own parameters are what blow it up: it re-poisons on the very next
+  // block, every block gets zeroed, and "recovering" forever is indistinguishable
+  // from being dead. Measured exactly that way — the reverb at decay 1.5 stayed
+  // silent with the rebuild in place. So after a few consecutive failures, stop
+  // trying and get out of the signal's way.
+  st.__fxBad = (st.__fxBad || 0) + 1
+  if (st.__fxBad >= 3) st.__fxBypass = true
+  // Say so once per unit, so this stops being invisible the way it has been.
+  if (!engine._warnedNonFinite) engine._warnedNonFinite = new Set()
+  if (!engine._warnedNonFinite.has(unit.id)) {
+    engine._warnedNonFinite.add(unit.id)
+    engine.port.postMessage({ type: 'procError', message: `fx ${unit.type} (${unit.id}) produced a non-finite block — state rebuilt`, count: engine.fxNonFinite })
+  }
+  return out
+}
+
+function processFxUnitInner(engine, unit, st, L, R, n) {
   const p = unit.params
   const sr = engine.sr
   const mixKey = `fx.${unit.id}.mix`
@@ -1642,8 +1714,33 @@ function processFxUnit(engine, unit, st, L, R, n) {
             : Math.max(Math.abs(L[i]), Math.abs(R[i]))
           const db = 20 * Math.log10(inLvl + 1e-9)
           const over = db - th
-          const targetGr = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
+          let targetGr = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
+          // ── A compressor must not be able to latch a track off ────────────
+          //
+          // envG is gain reduction in dB and it is a feedback accumulator: the
+          // next value is computed from the previous one. Feed it one Infinity
+          // — from a spike, a broken upstream unit, a detector that saw a
+          // non-finite sample — and targetGr is -Infinity, envG becomes
+          // -Infinity, and it STAYS there for good, because
+          // rel * -Infinity + anything is still -Infinity.
+          //
+          // dbToLin(-Infinity) is exactly 0, so the output is a perfectly valid
+          // block of silence. That is what makes this one nasty: the non-finite
+          // guard at processFxUnit checks for NaN and Inf in the OUTPUT and
+          // sees clean, finite zeros. It never fires, and the track is muted for
+          // the life of the node.
+          //
+          // Measured on Drift's Sub: with the compressor alone the render played
+          // the first clip and was digital silence for the remaining 96 seconds,
+          // while live playback of the same track was fine throughout.
+          //
+          // 90 dB is past any musical use — a compressor asking for more than
+          // that is broken, not working hard — so clamping there costs nothing
+          // real and leaves the envelope able to recover.
+          if (!Number.isFinite(targetGr)) targetGr = 0
           st.envG = targetGr < st.envG ? atk * st.envG + (1 - atk) * targetGr : rel * st.envG + (1 - rel) * targetGr
+          if (!Number.isFinite(st.envG)) st.envG = 0
+          else if (st.envG < -90) st.envG = -90
           const g = dbToLin(st.envG) * makeup
           L[i] = lerp(L[i], L[i] * g, mix); R[i] = lerp(R[i], R[i] * g, mix)
         }
@@ -1666,8 +1763,12 @@ function processFxUnit(engine, unit, st, L, R, n) {
             const bs = st.bands[b]
             const db = 20 * Math.log10(Math.max(Math.abs(bl), Math.abs(br)) + 1e-9)
             const over = db - th
-            const tg = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
+            let tg = over > 0 ? -over * (1 - 1 / ratio) : upTarget(db)
+            // Same accumulator, same latch — see the single-band branch above.
+            if (!Number.isFinite(tg)) tg = 0
             bs.envG = tg < bs.envG ? atk * bs.envG + (1 - atk) * tg : rel * bs.envG + (1 - rel) * tg
+            if (!Number.isFinite(bs.envG)) bs.envG = 0
+            else if (bs.envG < -90) bs.envG = -90
             const g = dbToLin(bs.envG)
             outL2 += bl * g; outR2 += br * g
           }
@@ -2326,7 +2427,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
         if (m.rowId) this.rowLuts.set(m.rowId, m.lut)
         else this.remapLuts.set(m.key, m.lut)
         break
-      case 'noteOn': this.noteOn(m.note, m.vel, false, m.ch || 0); break
+      case 'noteOn': this.noteOn(m.note, m.vel, false, m.ch || 0, m.nf); break
       case 'chanBend': this.chanBend[m.ch & 15] = m.semis; break
       case 'chanPressure': this.chanPressure[m.ch & 15] = m.value; break
       case 'noteOff': this.noteOff(m.note, false); break
@@ -2376,6 +2477,24 @@ class ApolloProcessor extends AudioWorkletProcessor {
         break
       case 'clearScheduled':
         if (this.absEvents) this.absEvents.length = 0
+        break
+      // ── Let this processor actually END ──────────────────────────────────
+      //
+      // ⚠️ process() returns true on EVERY path, and a worklet processor that
+      // keeps returning true is kept alive by the browser for ever — being
+      // disconnected does not end it, and neither does dropping every JS
+      // reference to its node. The DAW rebuilds an engine per Apollo track on
+      // every transport stop, which includes every pass around a loop, so the
+      // discarded ones simply accumulated: measured at 530 live apollo-engine
+      // processors after a few minutes of ordinary play/stop and looping on a
+      // seven-track song, all of them still rendering audio every quantum.
+      //
+      // The JS heap stayed flat the whole time, because a processor does not
+      // live in it. That is why this read as "everything just gets slower" with
+      // nothing to point at, and why it never recovered on going back to the
+      // start of the song.
+      case 'shutdown':
+        this.dead = true
         break
     }
   }
@@ -2510,7 +2629,20 @@ class ApolloProcessor extends AudioWorkletProcessor {
     return best
   }
 
-  noteOn(note, vel, fromSeq, ch) {
+  /**
+   * @param nf Optional per-note filter from the host: { cut, res }.
+   *
+   * ⚠️ THIS EXISTS SO THE DAW DOES NOT HAVE TO BUILD A SYNTH PER NOTE.
+   *
+   * Beacon gives a note its own filter by wiring an external chain in front of
+   * its destination. That works for a sampled voice, which IS its own source —
+   * but Apollo keys one persistent engine per destination, so a per-note
+   * destination meant a per-note engine, and the DSP load climbed for as long
+   * as the transport ran. Helios already has a filter per VOICE, which is the
+   * right place for a per-note filter to live, so the host sends the value
+   * instead of building hardware around the output.
+   */
+  noteOn(note, vel, fromSeq, ch, nf) {
     if (!this.patch) return
     ch = ch || 0
     this.hyperRetrigFlag = true
@@ -2531,6 +2663,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const legato = !!v && mode === 'legato'
       if (!v) v = this.allocVoice()
       v.start(note, vel, patch, this, legato, fromSeq)
+      if (nf) { v.noteCut = nf.cut != null ? nf.cut : null; v.noteRes = nf.res != null ? nf.res : null }
       v.ch = ch
       v.srcNote = srcNote
       this.monoVoice = v
@@ -2539,6 +2672,7 @@ class ApolloProcessor extends AudioWorkletProcessor {
     }
     const v = this.allocVoice()
     v.start(note, vel, patch, this, false, fromSeq)
+    if (nf) { v.noteCut = nf.cut != null ? nf.cut : null; v.noteRes = nf.res != null ? nf.res : null }
     v.ch = ch
     v.srcNote = srcNote
     this.port.postMessage({ type: 'voiceOn', note, fromSeq: !!fromSeq })
@@ -2933,8 +3067,17 @@ class ApolloProcessor extends AudioWorkletProcessor {
     const fcfg1 = patch.filters[0], fcfg2 = patch.filters[1]
     const cutSpread = vs.voiceSpreadCutoff * spreadIdx * 0.02
     if (fcfg1.enabled) {
-      const cut = clamp(this.vp(v, 'f1.cutoff', fcfg1.cutoff) + ktBase * fcfg1.keytrack + cutSpread, 0, 1)
-      const res = clamp(this.vp(v, 'f1.res', fcfg1.res), 0, 1)
+      // ⚠️ THE LOWER OF THE TWO, never a replacement and never a sum.
+      //
+      // The host's per-note value stands in for a low-pass wired in FRONT of
+      // the voice, and a low-pass in series can only ever darken — so taking
+      // the minimum models it without a second filter, and a patch already
+      // darker than the note asked for is left alone. An offset would have
+      // brightened notes whose patch sits below the requested cutoff, which is
+      // the one thing adding a low-pass must never do.
+      const patchCut = clamp(this.vp(v, 'f1.cutoff', fcfg1.cutoff) + ktBase * fcfg1.keytrack + cutSpread, 0, 1)
+      const cut = v.noteCut != null ? Math.min(patchCut, clamp(v.noteCut, 0, 1)) : patchCut
+      const res = clamp(v.noteRes != null ? v.noteRes : this.vp(v, 'f1.res', fcfg1.res), 0, 1)
       const drv = clamp(this.vp(v, 'f1.drive', fcfg1.drive), 0, 1)
       const fat = clamp(this.vp(v, 'f1.fat', fcfg1.fat), 0, 1)
       const fmix = clamp(this.vp(v, 'f1.mix', fcfg1.mix), 0, 1)
@@ -3195,6 +3338,10 @@ class ApolloProcessor extends AudioWorkletProcessor {
   }
 
   process(inputs, outputs) {
+    // Released by the host: returning false ends this processor permanently and
+    // lets the node and its DSP be reclaimed. Must come before anything else —
+    // the point is to stop doing work.
+    if (this.dead) return false
     // Crash armor: an uncaught exception in an AudioWorklet's process() kills
     // the processor PERMANENTLY (silent until reload). Any edge case — a stale
     // autosaved patch shape, a corrupt FX state — must degrade to one silent
@@ -3251,7 +3398,11 @@ class ApolloProcessor extends AudioWorkletProcessor {
       const end = currentTime + n / sampleRate
       while (this.absEvents.length && this.absEvents[0].t < end) {
         const ev = this.absEvents.shift()
-        if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false, ev.ch || 0)
+        // ⚠️ ev.nf, or the per-note filter silently does nothing in DAW mode.
+        // The direct 'noteOn' message path passes it; this is the path the DAW
+        // actually uses (everything is scheduled at absolute time), and it was
+        // dropping it — so the filter was accepted, sent, and ignored.
+        if (ev.type === 'noteOn') this.noteOn(ev.note, ev.vel != null ? ev.vel : 0.9, false, ev.ch || 0, ev.nf)
         else if (ev.type === 'noteOff') this.noteOff(ev.note, false)
       }
     }

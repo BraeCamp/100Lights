@@ -94,9 +94,12 @@ const walk = dir => {
     })
   }
 }
-walk(join(ROOT, 'lib'))
-walk(join(ROOT, 'app'))
-walk(join(ROOT, 'components'))
+// hooks/ was missing from this list, and that is where the offender was:
+// usePlan — the shared client-side plan gate that seven studio components read —
+// asked `b.plan === 'pro'`, so every Studio and Max subscriber was reported as
+// free by the one hook written to stop exactly that. A guard is only worth the
+// directories it walks.
+for (const dir of ['lib', 'app', 'components', 'hooks']) walk(join(ROOT, dir))
 check('nothing asks "is the plan exactly pro" any more', offenders.length === 0,
   offenders.slice(0, 4).join(', ') || 'clean')
 

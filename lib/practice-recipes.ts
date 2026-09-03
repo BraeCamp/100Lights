@@ -17,6 +17,18 @@ export interface PracticeRecipe {
   tier?: UITier
   /** Genre folder in the library (see RECIPE_GENRES for built-in assignments). */
   genre?: string
+  /**
+   * Free-form labels for browsing.
+   *
+   * Brae: "Recipes and samples should be navigated through tags. We can add
+   * more tags to them."
+   *
+   * ⚠️ The GENRE counts as one whether or not it is repeated here — see
+   * recipeTags() in lib/voice/audition. Recipes have carried a genre since
+   * before they had tags, and "play me the jazz ones" has to work today rather
+   * than after a hundred rows are re-labelled.
+   */
+  tags?: string[]
   /** Study notes shown after loading — the "annotation" on the project file. */
   annotation: string[]
   /** Builds the notes + instrument for a fresh clip at load time. */

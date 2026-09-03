@@ -8,6 +8,10 @@ import { initLibrary, libraryAdd, libraryGetById, LibraryEntry } from '@/lib/sou
 import { libraryFulfill } from '@/lib/default-samples'
 import { audioBufferToWav, blobToAudioBuffer } from '@/lib/wav-encoder'
 import type { ApolloPatch } from '@/lib/apollo/patch'
+// Pure, and needed by the SERVER render route — so it cannot live in a
+// 'use client' module. Re-exported here for the callers that already had it.
+import { referencedSampleIds } from './patch-samples'
+export { referencedSampleIds }
 import type { ApolloEngine } from '@/lib/apollo/engine-client'
 import type { SpectralAnalysis } from '@/lib/apollo/spectral'
 
@@ -69,38 +73,137 @@ async function decodeSpectralBlob(blob: Blob): Promise<SpectralAnalysis> {
   }
 }
 
-function referencedSampleIds(patch: ApolloPatch): string[] {
-  const ids = new Set<string>()
-  for (const o of patch.oscs) {
-    if (o.smp.sampleId) ids.add(o.smp.sampleId)
-    if (o.gran.sampleId) ids.add(o.gran.sampleId)
-    if (o.spec.sampleId) ids.add(o.spec.sampleId)
-    for (const z of o.ms.zones) ids.add(z.sampleId)
-  }
-  if (patch.noise.sampleId) ids.add(patch.noise.sampleId)
-  return [...ids]
+
+// ── One fetch, one decode, shared by every engine ───────────────────────────
+//
+// Beacon builds an ApolloEngine PER TRACK (daw-instrument.ts), and each one had
+// its own private `samples` Map with no way to know another had already done
+// the work. So a six-track song where four tracks use the same sampled piano
+// fetched and decoded that piano four times.
+//
+// That is small for a one-shot sample and enormous for a multisample: a
+// referenced instrument is one id PER ZONE, so a 40-zone violin on three tracks
+// is 120 fetch-and-decodes. Done SERIALLY, as this was, each one paying an
+// IndexedDB read plus — the first time — a network round trip for the catalog
+// audio, then a decode, then two Float32Array copies.
+//
+// This is the load nobody could see: it happens before a single note can be
+// scheduled, it is not a render so nothing in the loader counts it, and it
+// scales with how many sampled instruments a song uses rather than with
+// anything the progress bar knows about. The symptom is a song that "only plays
+// one instrument while it loads the others".
+//
+// So the decode is now global and deduplicated by id, and in flight only once
+// even when several engines ask at the same moment. Engines still keep their
+// own copy of the audio (the worklet needs its own buffer either way), but the
+// fetching and decoding — all of the cost — happens once.
+type Decoded =
+  | { kind: 'sample'; name: string; buffer: AudioBuffer }
+  | { kind: 'spectral'; analysis: SpectralAnalysis }
+
+const decodedCache = new Map<string, Decoded | null>()
+const decodingNow = new Map<string, Promise<Decoded | null>>()
+
+/** What the sample path has cost, so it stops being invisible in a report. */
+// `calls` and `notReady` separate the three ways this can do nothing, which
+// otherwise look identical from outside: never called at all, called before the
+// engine was up (so the patch's samples are silently never loaded), or called
+// with nothing left to fetch. Chasing that distinction by reasoning cost real
+// time; it is one counter each.
+const sampleStats = {
+  calls: 0, notReady: 0, referenced: 0,
+  asked: 0, decoded: 0, reused: 0, missing: 0, ms: 0, worstMs: 0, worstId: '',
+}
+export function sampleLoadStats(): typeof sampleStats & { cached: number } {
+  return { ...sampleStats, cached: decodedCache.size }
+}
+
+async function decodeOnce(id: string): Promise<Decoded | null> {
+  if (decodedCache.has(id)) { sampleStats.reused++; return decodedCache.get(id) ?? null }
+  const running = decodingNow.get(id)
+  if (running) { sampleStats.reused++; return running }
+
+  const p = (async (): Promise<Decoded | null> => {
+    const t0 = Date.now()
+    try {
+      const entry = await libraryFulfill(id)
+      if (!entry?.audioBlob) { sampleStats.missing++; return null }
+      const out: Decoded = entry.tags?.includes('apollo-image-spectral')
+        ? { kind: 'spectral', analysis: await decodeSpectralBlob(entry.audioBlob) }
+        : { kind: 'sample', name: sampleDisplayName(entry), buffer: await blobToAudioBuffer(entry.audioBlob) }
+      sampleStats.decoded++
+      return out
+    } catch {
+      // Missing or undecodable — leave silent, the UI shows the id.
+      sampleStats.missing++
+      return null
+    } finally {
+      const ms = Date.now() - t0
+      sampleStats.ms += ms
+      if (ms > sampleStats.worstMs) { sampleStats.worstMs = ms; sampleStats.worstId = id }
+      decodingNow.delete(id)
+    }
+  })()
+
+  decodingNow.set(id, p)
+  const got = await p
+  decodedCache.set(id, got)
+  return got
 }
 
 /** Load every sample the patch references that the engine doesn't have yet.
- *  Returns the ids that were restored (empty = nothing to do). */
-export async function restorePatchSamples(patch: ApolloPatch, engine: ApolloEngine): Promise<string[]> {
-  if (!engine.ready) return []
+ *  Returns the ids that were restored (empty = nothing to do).
+ *
+ *  In PARALLEL, bounded. These are independent and their cost is mostly
+ *  latency — an IndexedDB read and, on first use, a fetch — so serialising them
+ *  turned a 40-zone instrument into 40 consecutive round trips before the track
+ *  could make a sound. The width is small deliberately: the point is to overlap
+ *  the waiting, not to start forty decodes at once on a phone. */
+export async function restorePatchSamples(
+  patch: ApolloPatch,
+  engine: ApolloEngine,
+  // ── Why "ready" is optional ────────────────────────────────────────────────
+  //
+  // A LIVE engine must be up before its samples are sent, because loadSample
+  // posts them into the worklet and there is no worklet until init() runs.
+  //
+  // An OFFLINE render engine is the opposite case. daw-freeze builds a
+  // throwaway `new ApolloEngine()` and hands it straight to renderManyToBuffer,
+  // which creates its own OfflineAudioContext internally — so the engine is
+  // never init()ed and `ready` is never true. It reads `this.samples` when it
+  // builds each node, and nothing had ever put anything there: every render of
+  // a sampled instrument came back silent, and a silent render is discarded as
+  // a failure, so those clips never baked and played live forever.
+  //
+  // loadSample populates the map first and posts second, and post() is a no-op
+  // without a node, so filling an un-inited engine is safe and is exactly what
+  // the render path needs.
+  { requireReady = true }: { requireReady?: boolean } = {},
+): Promise<string[]> {
+  sampleStats.calls++
+  if (requireReady && !engine.ready) { sampleStats.notReady++; return [] }
+  const referenced = referencedSampleIds(patch)
+  sampleStats.referenced += referenced.length
+  const ids = referenced.filter(id => !engine.samples.has(id) && !engine.getSpectral(id))
+  if (!ids.length) return []
+  sampleStats.asked += ids.length
+
   const restored: string[] = []
-  for (const id of referencedSampleIds(patch)) {
-    if (engine.samples.has(id) || engine.getSpectral(id)) continue
-    try {
-      const entry = await libraryFulfill(id)
-      if (!entry?.audioBlob) continue
-      if (entry.tags?.includes('apollo-image-spectral')) {
-        const an = await decodeSpectralBlob(entry.audioBlob)
-        engine.loadSpectralData(id, an)
-      } else {
-        const buf = await blobToAudioBuffer(entry.audioBlob)
-        engine.loadSample(id, sampleDisplayName(entry), buf)
-      }
-      restored.push(id)
-    } catch { /* missing or undecodable — leave silent, UI shows the id */ }
-  }
+  const WIDTH = 6
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(WIDTH, ids.length) }, async () => {
+    for (;;) {
+      const id = ids[next++]
+      if (!id) return
+      const got = await decodeOnce(id)
+      if (!got) continue
+      try {
+        if (got.kind === 'spectral') engine.loadSpectralData(id, got.analysis)
+        else engine.loadSample(id, got.name, got.buffer)
+        restored.push(id)
+      } catch { /* engine went away mid-load */ }
+    }
+  }))
   return restored
 }
 
@@ -229,4 +332,11 @@ if (typeof window !== 'undefined'
   && (process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DAW_HOOKS === '1')) {
   ;(window as unknown as Record<string, unknown>).__apolloArmSample =
     (id: string, name: string) => selectApolloSample(id, name)
+}
+
+// UNGATED, like __dawDiagnose, and for the same reason: this is the number that
+// explains a slow load, and it is worthless if it only exists on machines that
+// are already known to be fine. It reads a counter and allocates nothing.
+if (typeof window !== 'undefined') {
+  ;(window as unknown as Record<string, unknown>).__sampleStats = sampleLoadStats
 }

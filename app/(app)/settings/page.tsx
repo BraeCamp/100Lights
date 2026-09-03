@@ -402,7 +402,7 @@ export default function SettingsPage() {
                   <Zap size={17} color="var(--accent-light)" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Manage AI credits</p>
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Manage Lumens</p>
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Spendable across every app · non-AI editing is always free</p>
                 </div>
               </div>

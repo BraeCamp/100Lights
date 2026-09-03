@@ -28,6 +28,10 @@ async function ensure(): Promise<void> {
       created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       integrated_at TIMESTAMPTZ
     )`
+  // Added after the table existed, so it is a separate statement rather than a
+  // column in the CREATE above — a database created before this has already
+  // skipped that one and would never see the new column.
+  await sql`ALTER TABLE daw_recipes ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb`
   ready = true
 }
 
@@ -40,6 +44,8 @@ export interface DawRecipe {
   tagline: string
   annotation: string[]
   genre?: string
+  /** Free-form labels for browsing — the genre counts as one on top of these. */
+  tags?: string[]
   spec: unknown            // ReturnType<PracticeRecipe['build']>
   source?: string
   createdAt?: string
@@ -60,6 +66,7 @@ function rowToRecipe(r: Record<string, unknown>): DawRecipe {
   return {
     id: String(r.id), status: r.status as RecipeStatus, title: String(r.title), tagline: String(r.tagline ?? ''),
     annotation: Array.isArray(r.annotation) ? r.annotation as string[] : [], genre: (r.genre as string) ?? undefined,
+    tags: Array.isArray(r.tags) ? r.tags as string[] : [],
     spec: r.spec, source: (r.source as string) ?? undefined,
     createdAt: r.created_at ? String(r.created_at) : undefined,
     integratedAt: r.integrated_at ? String(r.integrated_at) : null,

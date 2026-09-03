@@ -162,8 +162,27 @@ export default async function DownloadPage() {
         </a>
       </div>
 
-      <p style={{ fontSize: 12, color: '#4a4a5e', marginBottom: 64 }}>
+      <p style={{ fontSize: 12, color: '#4a4a5e', marginBottom: 12 }}>
         Version {version} · Free during early access
+      </p>
+
+      {/*
+        ⚠️ The one-time macOS prompt, said before it happens rather than after.
+
+        macOS marks everything downloaded from a browser, and asks once, on
+        first open, whether you meant to open it. It asks about EVERY app
+        downloaded this way — a signed and notarized one included, which this
+        is — so there is nothing to fix in the build and nothing gone wrong.
+        The only thing that removes it is installing from the App Store.
+
+        Unexplained, it reads as a warning about the app. Named up front, it
+        reads as what it is: macOS asking once. Updates after this never ask,
+        because they do not arrive through a browser.
+      */}
+      <p style={{ fontSize: 12, color: '#4a4a5e', marginBottom: 64, maxWidth: 440, lineHeight: 1.6 }}>
+        On a Mac, the first time you open it macOS will ask whether you're sure —
+        it asks that of everything downloaded from the web. Click <strong style={{ color: '#6a6a7e', fontWeight: 600 }}>Open</strong>.
+        It only asks once, and updates never ask.
       </p>
 
       {/* Use in browser */}

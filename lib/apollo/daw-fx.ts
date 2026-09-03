@@ -24,8 +24,17 @@ import { initPatch, SYNC_RATES, type ApolloPatch, type FxUnit, type FxType } fro
 import { ApolloEngine } from './engine-client'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
-/** Inverse of the engine's cutoffHz(norm) = 8 * 2500^norm (8 Hz .. 20 kHz). */
-const hzToNorm = (hz: number) => clamp(Math.log(clamp(hz, 8, 20000) / 8) / Math.log(2500), 0, 1)
+/**
+ * Inverse of the engine's cutoffHz(norm) = 8 * 2500^norm (8 Hz .. 20 kHz).
+ *
+ * ⚠️ The floor is 20 Hz, not 8, and a non-finite value opens the filter rather
+ * than closing it — same rule as safeHz in daw-effects, and for the same
+ * reason: the values reaching here have come from a spoken percentage, an
+ * automation lane and old saved projects, and a cutoff under 20 Hz is not a
+ * dark sound, it is a track that has vanished with nothing to show why.
+ */
+const hzToNorm = (hz: number) =>
+  clamp(Math.log(clamp(!Number.isFinite(hz) || hz < 20 ? 20000 : hz, 20, 20000) / 8) / Math.log(2500), 0, 1)
 /** Biquad Q → Apollo's 0..1 resonance (perceptual approximation). */
 const qToRes = (q: number) => clamp(Math.log2(clamp(q, 0.1, 20) + 1) / 4.4, 0, 0.95)
 
@@ -281,6 +290,22 @@ export interface HeliosChain {
   /** Resolves once the worklet has ACKED patch + fx mode — offline bounces
    * MUST await this before startRendering (port delivery races the render). */
   ready: Promise<void>
+  /**
+   * Called if the worklet dies. A dead node never produces another sample, so
+   * whatever is routed through this chain is silent until something re-routes
+   * it — the caller has to be able to hear about that, not just Sentry.
+   */
+  onCrash(fn: () => void): void
+  /**
+   * Declare this chain dead and run everyone's onCrash.
+   *
+   * A recovery path that has never once been taken is a recovery path that
+   * does not work, and `onprocessorerror` cannot be provoked to order. This is
+   * how the fallback gets exercised — and it is genuine API, not scaffolding:
+   * a host that decides the worklet is gone by some other means (no meters for
+   * seconds while the transport runs) needs to be able to say so.
+   */
+  crash(): void
 }
 
 /**
@@ -319,6 +344,8 @@ export function buildHeliosMasterBus(ctx: BaseAudioContext): HeliosChain {
   return {
     input, output, ready, handles: new Map(),
     meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
+    onCrash(fn) { engine.addEventListener('processorError', () => fn()) },
+    crash() { engine.crashed = true; engine.dispatchEvent(new CustomEvent('processorError')) },
     dispose() {
       alive = false
       try { input.disconnect() } catch { /* ok */ }
@@ -328,17 +355,47 @@ export function buildHeliosMasterBus(ctx: BaseAudioContext): HeliosChain {
   }
 }
 
+/**
+ * Why this chain cannot run on Helios, or null if it can.
+ *
+ * Exported because the device panel needs to SAY it. An Apollo device in a
+ * chain that falls back to the legacy path is not quietly less efficient — the
+ * legacy builder's `default: continue` skips a device type it does not know, so
+ * the Apollo device is dropped from the audio entirely and the user is left
+ * turning knobs on something they cannot hear. That is worth a sentence on the
+ * card, and the sentence has to be derived from the real rule rather than a
+ * second copy of it, which is why buildHeliosFxChain calls this too.
+ */
+export function heliosBlocker(effects: TrackEffect[], tempo: number): { effect?: TrackEffect; reason: string } | null {
+  for (const e of effects) {
+    if (!translateEffect(e, tempo)) return { effect: e, reason: 'has no Apollo equivalent yet' }
+  }
+  const sc = effects.filter(e => e.type === 'compressor' && (e.params as CompressorParams).sidechainTrackId)
+  if (sc.length > 1) return { effect: sc[1], reason: 'is a second sidechained compressor, and Apollo allows one per chain' }
+  return null
+}
+
 export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[], tempo: number): HeliosChain | null {
+  if (heliosBlocker(effects, tempo)) return null
   const units = translateChain(effects, tempo)
   if (!units) return null
-  // at most ONE sidechained compressor per chain (single key input)
   const scComps = effects.filter(e => e.type === 'compressor' && (e.params as CompressorParams).sidechainTrackId)
-  if (scComps.length > 1) return null
   const input = ctx.createGain()
   const output = ctx.createGain()
   const keyInput = scComps.length ? ctx.createGain() : null
   const engine = new ApolloEngine()
-  const current: TrackEffect[] = effects.map(e => ({ ...e, params: { ...(e.params as object) } as TrackEffect['params'] }))
+  // ⚠️ A SHALLOW copy of params leaves an Apollo device's `unit` object shared
+  // with the project's own state — and setParam writes into unit.params, so
+  // every automation frame would mutate React state in place, outside the
+  // reducer, and get saved into the project as if the user had set it there.
+  const current: TrackEffect[] = effects.map(e => {
+    const params = { ...(e.params as object) } as TrackEffect['params']
+    if (e.type === 'helios') {
+      const u = (e.params as HeliosFxParams).unit
+      if (u) (params as HeliosFxParams).unit = { ...u, params: { ...u.params } }
+    }
+    return { ...e, params }
+  })
   let alive = true
   const ready = new Promise<void>(resolve => {
     const done = () => { engine.removeEventListener('fxModeAck', done); resolve() }
@@ -365,7 +422,21 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
     handles.set(e.id, {
       keyInput: e.type === 'compressor' && (e.params as CompressorParams).sidechainTrackId && keyInput ? keyInput : undefined,
       setParam(key, value) {
-        ;(e.params as unknown as Record<string, unknown>)[key] = value
+        // ⚠️ An Apollo device keeps its values one level down, in
+        // params.unit.params — writing `params[key]` on one sets a field
+        // translateEffect never reads, so the automation lane runs, the
+        // points draw, and the sound does not move. Automating any Apollo
+        // device was silently inert until this branch existed.
+        if (e.type === 'helios') {
+          const unit = (e.params as HeliosFxParams).unit
+          if (unit) {
+            if (key === 'enabled') (e.params as HeliosFxParams).enabled = value as boolean
+            else if (key === 'mix') unit.mix = value as number
+            else (unit.params as Record<string, unknown>)[key] = value
+          }
+        } else {
+          ;(e.params as unknown as Record<string, unknown>)[key] = value
+        }
         if (typeof value === 'number') {
           // continuous: retranslate this effect and stream the diff as pv paths
           const units2 = translateEffect(e, tempo)
@@ -389,6 +460,8 @@ export function buildHeliosFxChain(ctx: BaseAudioContext, effects: TrackEffect[]
     handles,
     ready,
     meters() { return (engine.meters as { fxGr?: Record<string, number[]> } | undefined)?.fxGr ?? {} },
+    onCrash(fn) { engine.addEventListener('processorError', () => fn()) },
+    crash() { engine.crashed = true; engine.dispatchEvent(new CustomEvent('processorError')) },
     dispose() {
       alive = false
       try { input.disconnect() } catch { /* ok */ }

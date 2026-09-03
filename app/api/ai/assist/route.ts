@@ -1,7 +1,9 @@
 import { testUserId } from '@/lib/api-user'
 import { auth } from '@clerk/nextjs/server'
 import { CREDITS_ENABLED, CREDIT_COSTS, getCredits, spendCredits } from '@/lib/credits'
-import { aiCreditsForTokens } from '@/lib/credit-tiers'
+import { aiCreditsForTokens, LUMENS_NAME } from '@/lib/credit-tiers'
+import { getSubscription } from '@/lib/subscription'
+import { isPaid, type Plan } from '@/lib/entitlements'
 import { recordUsage } from '@/lib/api-usage'
 import { runAssist, AI_ASSIST_MODEL, type AssistMessage } from '@/lib/ai-assist'
 
@@ -11,6 +13,21 @@ export const maxDuration = 90
 // The 100Lights AI assistant endpoint. Auth-gated; usage-billed against the credits system (a no-op
 // until CREDITS_ENABLED). Returns the assistant's reply + the actions for the client to run against the
 // module (window.__video / __daw …). Needs ANTHROPIC_API_KEY. See lib/ai-assist.
+/**
+ * A warm-up. Answers nothing, costs nothing, and exists so the FIRST command
+ * after a quiet spell does not pay a cold start on top of the model.
+ *
+ * Brae: "Is there a way to speed up how quickly we can turn a command into an
+ * action?" A serverless function that has not run for a while is unloaded and
+ * reloaded on the next request — a delay that lands on exactly the command a
+ * person says after thinking for a minute, which is most of them. The studio
+ * pings this when the voice control mounts, so the function is already resident
+ * by the time anybody speaks.
+ */
+export async function GET() {
+  return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } })
+}
+
 export async function POST(req: Request) {
   const { userId: clerkId } = await auth()
   // DEV_OPEN test user (dev builds only) — lets headless tools exercise the assistant. Inert in prod.
@@ -19,35 +36,168 @@ export async function POST(req: Request) {
   if (!userId) return Response.json({ error: 'Sign in to use the AI assistant.' }, { status: 401 })
   if (!process.env.ANTHROPIC_API_KEY) return Response.json({ error: 'The AI assistant is not configured (ANTHROPIC_API_KEY).' }, { status: 501 })
 
-  let body: { messages?: AssistMessage[]; module?: string; stateSummary?: string }
+  let body: { messages?: AssistMessage[]; module?: string; stateSummary?: string; recent?: string;
+              hint?: { matched?: string; confidence?: number; calls?: string[] } }
   try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }) }
-  const messages = (body.messages ?? []).filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+  // ⚠️ Content is a string OR an array of blocks. The string-only filter this
+  // replaces would have silently DROPPED every tool_use and tool_result turn —
+  // and a conversation missing the assistant's tool_use but carrying its
+  // tool_result is rejected by the API, so the loop would have failed on its
+  // second turn with an error about an orphaned result.
+  const messages = (body.messages ?? []).filter(m =>
+    (m.role === 'user' || m.role === 'assistant') &&
+    (typeof m.content === 'string' ? !!m.content.trim() : Array.isArray(m.content) && m.content.length > 0))
   if (!messages.length) return Response.json({ error: 'No message' }, { status: 400 })
   if (messages.length > 40) messages.splice(0, messages.length - 40)   // cap history the model sees
+
+  // ── Never send a tool_result with nothing to answer ───────────────────────
+  //
+  // ⚠️ THE EXACT 400 BRAE HIT:
+  //     messages.0.content.1: unexpected 'tool_use_id' found in 'tool_result'
+  //     blocks. Each 'tool_result' block must have a corresponding 'tool_use'
+  //     block in the previous message.
+  //
+  // A tool_result is only legal directly after the assistant turn that asked
+  // for it, and TWO things above can separate them:
+  //
+  //   the FILTER drops a message whose content array is empty, and the studio
+  //   posts `content: data.raw ?? []` — so a reply that carried no raw blocks
+  //   becomes an empty assistant message, is dropped, and leaves its result
+  //   behind with nothing before it. That is index 0 in the report, and it is
+  //   this one.
+  //
+  //   the CAP trims from the start, which can cut the assistant's tool_use
+  //   while keeping the user tool_result that followed it.
+  //
+  // Both end the same way: one malformed request, refused whole, and a studio
+  // that says "an API error" for a sentence the model never saw. So the
+  // conversation is repaired here — the last place it can be — rather than
+  // trusting every producer of it to stay in step.
+  const idsIn = (m: AssistMessage): Set<string> => {
+    const out = new Set<string>()
+    if (Array.isArray(m.content)) {
+      for (const b of m.content as { type?: string; id?: string }[]) {
+        if (b?.type === 'tool_use' && b.id) out.add(b.id)
+      }
+    }
+    return out
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role !== 'user' || !Array.isArray(m.content)) continue
+    const offered = i > 0 && messages[i - 1].role === 'assistant' ? idsIn(messages[i - 1]) : new Set<string>()
+    const kept = (m.content as { type?: string; tool_use_id?: string }[])
+      .filter(b => b?.type !== 'tool_result' || (b.tool_use_id ? offered.has(b.tool_use_id) : false))
+    if (kept.length === m.content.length) continue
+    // Everything in it was an orphaned result: the message has no reason to
+    // exist. Otherwise keep what was legitimately there.
+    if (kept.length === 0) messages.splice(i, 1)
+    else (messages[i] as { content: unknown }).content = kept
+  }
+  if (!messages.length) return Response.json({ error: 'No message' }, { status: 400 })
+  // A conversation cannot OPEN with a tool result either, whatever it answers.
+  while (messages.length && messages[0].role === 'assistant') messages.shift()
+  if (!messages.length) return Response.json({ error: 'No message' }, { status: 400 })
 
   // Gate on balance (usage-based: we bill the REAL token cost after the call, but require a floor to
   // start so an empty account can't run up work). No-op until CREDITS_ENABLED.
   if (CREDITS_ENABLED) {
-    const { balance } = await getCredits(userId)
-    if (balance < CREDIT_COSTS.aiAssist) {
-      return Response.json({ error: 'Not enough credits for the AI assistant. Top up or upgrade to keep going.', needCredits: true, balance }, { status: 402 })
+    const { balance, ok } = await getCredits(userId)
+    // Only refuse on an answer we actually got. A failed read used to come back
+    // as `balance: 0` and was indistinguishable from an empty account, so a
+    // database blip told a paying customer they were out of credits and stopped
+    // them working — the worst of both, since it is both wrong and alarming.
+    //
+    // When the balance cannot be read the call goes ahead. The real cost is
+    // billed AFTER the call either way, so the exposure is one assistant turn
+    // on an account we could not check, against locking somebody out of a
+    // feature they have paid for because a query timed out.
+    if (ok && balance < CREDIT_COSTS.aiAssist) {
+      // ── A paying account reading zero is a fault, not a bill ────────────
+      //
+      // Brae, on Max with 1,250,000 Lumens in the table: "It still says that
+      // I'm out of AI credits."
+      //
+      // A subscriber's balance being zero is not the ordinary end of a
+      // spending account — it means the row is missing, or unreachable, or on
+      // an account other than the one signed in. Every one of those is our
+      // problem, and every one of them presents to the person as being told
+      // they have run out of something they just paid for.
+      //
+      // So the plan is checked before refusing. Somebody on a paid plan is let
+      // through: the turn is billed afterwards like any other, so the exposure
+      // is one assistant turn against locking a paying customer out of the
+      // feature they are paying for. Only a genuinely free account with a
+      // genuinely empty balance is refused, which is the case the gate was
+      // written for.
+      const sub = await getSubscription(userId).catch(() => null)
+      const paid = sub ? isPaid(sub.plan as Plan) : false
+      if (!paid) {
+        return Response.json({
+          error: `Out of ${LUMENS_NAME}. Top up or upgrade to keep going.`,
+          needCredits: true,
+          balance,
+        }, { status: 402 })
+      }
+      console.warn(
+        `[assist] ${userId} is on ${sub?.plan} but reads ${balance} ${LUMENS_NAME} — `
+        + 'letting the turn through; the credit row is missing or on another account.',
+      )
     }
   }
 
   let result
   try {
-    result = await runAssist({ messages, module: body.module, stateSummary: body.stateSummary })
+    result = await runAssist({
+      messages, module: body.module, stateSummary: body.stateSummary,
+      // Capped here rather than trusted: this arrives from the browser, and a
+      // caller that sent a novel would be paying for it on every utterance.
+      recent: typeof body.recent === 'string' ? body.recent.slice(0, 2000) : undefined,
+      // Trimmed to the shape the prompt uses; this comes from the browser.
+      hint: body.hint && typeof body.hint === 'object'
+        ? {
+            matched: String(body.hint.matched ?? '').slice(0, 60),
+            confidence: Number(body.hint.confidence) || 0,
+            calls: (body.hint.calls ?? []).slice(0, 6).map(c => String(c).slice(0, 40)),
+          }
+        : undefined,
+    })
   } catch (e) {
-    return Response.json({ error: (e as Error).message || 'The assistant failed. No credits were charged.' }, { status: 502 })
+    // ⚠️ LOGGED IN FULL, because "a brief API error" is not something anybody
+    // can act on. The message carries the upstream status and the first of its
+    // body — which is the difference between a bad key, a rate limit, a model
+    // this account cannot reach, and a malformed request. They look identical
+    // from the studio and have nothing in common as fixes.
+    const detail = (e as Error).message || 'unknown'
+    console.error('[assist] upstream failed for', userId, '—', detail)
+    return Response.json({
+      error: detail || 'The assistant failed. No credits were charged.',
+      // Surfaced separately so the studio can show something short AND keep the
+      // detail for a report, rather than truncating the only copy of it.
+      detail,
+    }, { status: 502 })
   }
 
   // Ledger (always) + usage-based charge (only when billing is live).
-  const credits = aiCreditsForTokens(result.usage.inputTokens, result.usage.outputTokens)
+  //
+  // ⚠️ Cached tokens are reported SEPARATELY and are not in input_tokens, so
+  // billing on input_tokens alone would charge nothing at all for a cache read
+  // and would miss the 25% premium a cache write costs. Both are real money, at
+  // their real rates: a read is a tenth of an input token, a write is a quarter
+  // more than one. Getting this wrong in our favour would be overcharging; the
+  // way it would have gone wrong here is undercharging, which is just as much a
+  // wrong number in the ledger.
+  const u = result.usage
+  const effectiveInput = u.inputTokens + u.cacheWriteTokens * 1.25 + u.cacheReadTokens * 0.1
+  const credits = aiCreditsForTokens(effectiveInput, u.outputTokens)
   recordUsage({
     userId, provider: 'anthropic', operation: 'ai-assist', unitType: 'tokens',
-    inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
-    units: result.usage.inputTokens + result.usage.outputTokens,
-    metadata: { model: AI_ASSIST_MODEL, credits, actions: result.actions.map(a => a.name) },
+    inputTokens: u.inputTokens, outputTokens: u.outputTokens,
+    units: u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheWriteTokens,
+    metadata: {
+      model: AI_ASSIST_MODEL, credits, actions: result.actions.map(a => a.name),
+      cacheRead: u.cacheReadTokens, cacheWrite: u.cacheWriteTokens,
+    },
   })
   let balance: number | undefined
   if (CREDITS_ENABLED) {
@@ -55,5 +205,24 @@ export async function POST(req: Request) {
     balance = spend.balance   // if the balance couldn't cover a big turn it drains to what's left; the floor bounds this
   }
 
-  return Response.json({ message: result.text, actions: result.actions, stop: result.stop, credits, balance })
+  // ⚠️ THE TOKENS, NOT JUST THE PRICE. Brae asked for a log with "amounts of
+  // calls, costs per call" — and a credit figure alone cannot be checked. With
+  // the counts, the studio can show what a command actually consumed and
+  // reconcile it against the invoice; without them it can only repeat a number
+  // it was handed.
+  return Response.json({
+    message: result.text, actions: result.actions, stop: result.stop, credits, balance,
+    usage: {
+      in: u.inputTokens, out: u.outputTokens,
+      cacheRead: u.cacheReadTokens, cacheWrite: u.cacheWriteTokens,
+    },
+    // ⚠️ THE ASSISTANT'S TURN, VERBATIM. runAssist has always returned it and
+    // this response never included it — so the studio's "reply with the
+    // results" loop had nothing to reply to and broke out after one turn,
+    // every time. A refused call could not be corrected and its reason was
+    // never spoken; the model was told results come back, and none ever did.
+    // The studio only sends this back when a call was refused (see
+    // VoiceControl), so returning it costs nothing on the ordinary path.
+    raw: result.raw,
+  })
 }

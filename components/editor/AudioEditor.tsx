@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useReducer, useRef, useCallback, useMemo } from 'react'
+import Link from 'next/link'
 import { createPortal } from 'react-dom'
 import { useUser } from '@clerk/nextjs'
 import { computeRevertPatch } from '@/lib/daw-undo'
@@ -23,7 +24,9 @@ import { readWorkspace, writeWorkspace } from '@/lib/editor-workspace'
 import { InspectorBridge } from './daw/InspectorBridge'
 import { DuplicateCleanup } from './daw/DuplicateCleanup'
 import MergeReview from './daw/MergeReview'
-import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X, Link2, Upload } from 'lucide-react'
+import PopOut from '@/components/PopOut'
+import { setActiveStudio } from '@/lib/voice/studio-registry'
+import { Library, Settings, FileText, Users, Palette, Code2, FolderOpen, PlusCircle, RotateCw, Pencil, Keyboard, X, Link2, Upload, ExternalLink, Minimize2 } from 'lucide-react'
 import { LogoMark } from '@/components/Logo'
 import { WorkshopThemeProvider } from './WorkshopThemeProvider'
 import { UITierProvider } from './UITierProvider'
@@ -49,6 +52,7 @@ import HelpButton from './daw/HelpButton'
 import { InspectButton } from './daw/InspectMode'
 import PracticeButton from './daw/PracticeButton'
 import { VUMeter } from './daw/TrackRow'
+import { DevicePopoutHost } from './daw/DeviceChain'
 import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
 import SendToProjectButton from './SendToProjectButton'
@@ -57,6 +61,7 @@ import GuestPanel from './daw/GuestPanel'
 import { saveSnapshot, loadSnapshot, deleteSnapshot, getBranch } from '@/lib/offline-store'
 import { mergeProjects, applyResolutions, hasDiverged, type MergeConflict } from '@/lib/project-merge'
 import { getPresets, combinePresets } from '@/lib/midi-presets'
+import { installDragSelectionGuard } from '@/lib/ui/drag-selection-guard'
 
 // ── Re-exports for backward compat (ProjectEditor imports these) ──────────────
 
@@ -151,6 +156,16 @@ type MicPermState = 'checking' | 'granted' | 'denied' | 'prompt' | 'unavailable'
 function UnsavedShareButton({ onShare }: { onShare: () => Promise<void> }) {
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   const [busy, setBusy] = useState(false)
+  // Start the flight recorder before anything else can fail. Everything that
+  // goes wrong from here — a render that comes back silent, a preset with no
+  // samples, a worklet that throws — is written down and survives a reload.
+  useEffect(() => { void import('@/lib/diag-journal').then(m => m.installDiag()) }, [])
+  // ⚠️ Installed once for the whole studio, not per draggable thing. The
+  // browser's own text selection is what appears under a drag, and it appears
+  // wherever the pointer travels — so the guard has to be on the page, not on
+  // the handle. See lib/ui/drag-selection-guard.ts.
+  useEffect(() => installDragSelectionGuard(), [])
+
   useEffect(() => {
     const find = () => {
       const el = document.getElementById('transport-collab-slot')
@@ -415,7 +430,7 @@ const DEFAULT_PODCAST_META: PodcastMeta = {
 // panel that opens it (and so it can be moved/resized over Beacon while you
 // keep working).
 const ApolloCardLazy = dynamic(() => import('@/components/apps/apollo/ApolloCard'), { ssr: false })
-function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow, onChange, onClose }: {
+function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow, onChange, onClose, detached, onToggleDetach }: {
   trackId: string
   seed: unknown
   trackName: string
@@ -423,6 +438,9 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
   onToggleFollow: () => void
   onChange: (next: { fxMain: unknown[] }) => void
   onClose: () => void
+  /** True while this rack is drawn in its own OS window. */
+  detached?: boolean
+  onToggleDetach?: () => void
 }) {
   // Opened from the transport there is no seed yet: build one from this
   // track's FX chain. Rebuilt when the window retargets to another track.
@@ -533,9 +551,31 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
         />
       }
       headerExtra={
-        // Following means "always show the selected track". Pinning holds the
-        // window on one track so picking sounds elsewhere in Beacon can't yank
-        // an edit-in-progress away.
+        <>
+        {/* ⚠️ Desktop only. A browser can open a popup, but it is blocked by
+            default and buried behind the window often enough that the button
+            would mostly appear to do nothing. The desktop app opens a real
+            panel window every time, which is the whole point of asking. */}
+        {onToggleDetach && typeof window !== 'undefined' && !!window.electronAPI && (
+          <button
+            onClick={onToggleDetach}
+            title={detached
+              ? 'Put it back in the main window'
+              : 'Open in its own window — move it anywhere, including another screen'}
+            style={{
+              width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              borderRadius: 7, cursor: 'pointer',
+              border: `1px solid ${detached ? 'var(--accent)' : 'var(--border)'}`,
+              background: detached ? 'rgb(var(--accent-rgb) / .22)' : 'var(--bg-elevated, #16181d)',
+              color: detached ? 'var(--accent-light)' : 'var(--text-muted)',
+            }}
+          >
+            {detached ? <Minimize2 size={13} /> : <ExternalLink size={13} />}
+          </button>
+        )}
+        {/* Following means "always show the selected track". Pinning holds the
+            window on one track so picking sounds elsewhere in Beacon can't yank
+            an edit-in-progress away. */}
         <button
           onClick={onToggleFollow}
           data-apollo-follow={following ? '1' : '0'}
@@ -548,6 +588,7 @@ function ApolloRackWindow({ trackId, seed, trackName, following, onToggleFollow,
             border: `1px solid ${following ? 'var(--accent, #4aa9ff)' : 'var(--border, #262c35)'}`,
           }}
         ><PinGlyph pinned={!following} />{following ? 'FOLLOWING' : 'PINNED'}</button>
+        </>
       }
       onChange={(next: unknown) => {
         onChange(next as { fxMain: unknown[] })
@@ -740,6 +781,24 @@ export default function AudioEditor(props: AudioEditorProps) {
   /** Progress text while baking synth tracks to audio; null when not freezing. */
   const [freezing, setFreezing] = useState<string | null>(null)
   const dirtyReadyRef = useRef(false)   // skip the first post-load settle
+  /**
+   * Has anything actually changed since the last successful save?
+   *
+   * Brae: "I don't want to save then leave and have an unsaved file from a
+   * previous edit telling me that I have unsaved changes."
+   *
+   * ⚠️ THE ACT OF LEAVING WAS CAUSING IT. Hiding the tab flushes a snapshot,
+   * and that flush wrote `synced: false` unconditionally — so saving and then
+   * closing the window marked the file unsynced ON THE WAY OUT, and the next
+   * open found an unsynced snapshot and offered to restore an edit that had
+   * already been saved. The debounced write could do the same thing, landing
+   * 1.5 seconds after a save that had just marked the snapshot clean.
+   *
+   * A snapshot still gets written either way — losing the recovery copy would
+   * be a far worse trade — but it is only marked UNSYNCED when there is
+   * genuinely something the server has not got.
+   */
+  const changedSinceSaveRef = useRef(false)
   // Offline sync (Phase C): a pending 3-way merge whose conflicts need resolving.
   const [pendingMerge, setPendingMerge] = useState<{ merged: DawProject; conflicts: MergeConflict[] } | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -830,10 +889,12 @@ export default function AudioEditor(props: AudioEditorProps) {
     // The first run after the restore resolves is the loaded project settling —
     // not a user edit — so don't light the dot for it.
     if (!dirtyReadyRef.current) dirtyReadyRef.current = true
-    else setDawDirty(true)
+    else { setDawDirty(true); changedSinceSaveRef.current = true }
     if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current)
     autosaveTimerRef.current = window.setTimeout(() => {
-      void saveSnapshot(snapshotKey, projectRef.current).catch(() => {})
+      // Unsynced only if the server really is behind. A snapshot written after
+      // a save, for a project nothing has touched since, is the SAVED state.
+      void saveSnapshot(snapshotKey, projectRef.current, { synced: !changedSinceSaveRef.current }).catch(() => {})
       setDawDirty(false)   // recoverable now
     }, 1500)
     return () => { if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current) }
@@ -844,7 +905,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     function flush() {
       if (!restoreResolvedRef.current) return
       if (document.visibilityState === 'hidden') {
-        void saveSnapshot(snapshotKey, projectRef.current).catch(() => {})
+        // ⚠️ This is the one that produced the phantom. Leaving is not editing.
+        void saveSnapshot(snapshotKey, projectRef.current, { synced: !changedSinceSaveRef.current }).catch(() => {})
       }
     }
     document.addEventListener('visibilitychange', flush)
@@ -930,7 +992,20 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [engineForRender, project.presets])
 
 
-  useEffect(() => { projectRef.current = project }, [project])
+  useEffect(() => {
+    projectRef.current = project
+    // Dev-only read-back of the live project (window.__dawProject).
+    //
+    // __dawDispatch could already drive the studio from outside; nothing could
+    // read the result, so a test could issue a command and then only check that
+    // it had not thrown. Verifying a voice command means asserting the TRACK IS
+    // MUTED, not that a plausible-looking action was dispatched — the two came
+    // apart badly once already, when every mixer command produced a well-formed
+    // action naming a track called "[object Object]".
+    if (DAW_HOOKS) {
+      (window as unknown as { __dawProject?: () => DawProject }).__dawProject = () => projectRef.current
+    }
+  }, [project])
 
   // Freeze heavy projects by default.
   //
@@ -992,8 +1067,14 @@ export default function AudioEditor(props: AudioEditorProps) {
   const AUTO_FREEZE_ON_LOAD = false
 
   // Loading progress, for the bar at the top of the studio.
-  const [loadProgress, setLoadProgress] = useState<{ done: number; total: number; active: boolean; phase: 'head' | 'fill' | 'idle' | 'paused' }>(
-    { done: 0, total: 0, active: false, phase: 'idle' })
+  const [loadProgress, setLoadProgress] = useState<{
+    done: number; total: number; active: boolean
+    phase: 'head' | 'fill' | 'idle' | 'paused'
+    /** "Adding filters (2 of 4)" — the fidelity rung being built. */
+    layer?: string; layerIndex?: number; layerCount?: number
+    /** Set when the loader has recorded a failure — shown so a stall is never silent. */
+    trouble?: string
+  }>({ done: 0, total: 0, active: false, phase: 'idle' })
   useEffect(() => {
     let stop: (() => void) | undefined
     let cancelled = false
@@ -1003,6 +1084,143 @@ export default function AudioEditor(props: AudioEditorProps) {
     })
     return () => { cancelled = true; stop?.() }
   }, [])
+
+  // ── The loading panel ────────────────────────────────────────────────────
+  //
+  // Brae: "clicking on the loading text above the loading bar opens upwards a
+  // list of what is loading and what's in queue, as well as errors... Keep the
+  // information of when the user hits play while it's loading and when loading
+  // resumes. This way we can see how playing can get in the way of loading."
+  //
+  // Everything it shows already existed — combineStats() has counts, the failed
+  // list, and a 200-event log that already records `paused` (with the reason:
+  // playing) and `resumed`. None of it had anywhere to be seen, so a stall was
+  // a pill that said "Loading" and nothing else. Polled only while open: this
+  // reads counters, and reading them every frame when nobody is looking is how
+  // a diagnostic becomes the thing it is diagnosing.
+  const [loadPanel, setLoadPanel] = useState(false)
+  const [loadDetail, setLoadDetail] = useState<{
+    ready: number; inFlight: number; queued: number; setAside: number; givenUp: number
+    lastError: string | null; failed: [string, number][]
+    log: { t: number; kind: string; layer?: string; detail?: string; ms?: number; done?: number; total?: number }[]
+  } | null>(null)
+  useEffect(() => {
+    if (!loadPanel) return
+    let alive = true
+    const read = () => {
+      void import('@/lib/apollo/freeze-cache').then(({ combineStats }) => {
+        if (!alive) return
+        const st = combineStats()
+        setLoadDetail({
+          ready: st.ready, inFlight: st.inFlight, queued: st.queued,
+          setAside: st.setAside, givenUp: st.givenUp,
+          lastError: st.lastError, failed: st.failed, log: st.log,
+        })
+      }).catch(() => {})
+    }
+    read()
+    const id = setInterval(read, 700)
+    return () => { alive = false; clearInterval(id) }
+  }, [loadPanel])
+
+  // ── Send the loading story once, when it settles ─────────────────────────
+  //
+  // Brae: "Errors should go to the program and save in the admin so that you
+  // can use it to make edits when we make a pass."
+  //
+  // One row per session, not one per event: the question a pass asks is "which
+  // songs load badly, and on what machine", not "list every window that
+  // retried". Sent when loading finishes or gives up, and on the way out of the
+  // page — a session that was abandoned half-loaded is the most interesting
+  // kind and would otherwise be the one never reported.
+  const loadReported = useRef(false)
+  const sendLoadReport = useCallback((outcome: string) => {
+    if (loadReported.current) return
+    loadReported.current = true
+    void import('@/lib/apollo/freeze-cache').then(({ combineStats, loadLog }) => {
+      const st = combineStats()
+      const log = loadLog()
+      if (!log.length) return
+      const kinds = (...k: string[]) => log.filter(e => k.includes(e.kind)).length
+      const paused = log.filter(e => e.kind === 'paused')
+      // Time parked for playback, read from the gap between each pause and the
+      // resume that followed it — the cost of listening while it loads.
+      let pausedMs = 0
+      for (const p of paused) {
+        const back = log.find(e => e.kind === 'resumed' && e.t > p.t)
+        pausedMs += (back?.t ?? log[log.length - 1].t) - p.t
+      }
+      const nav = navigator as Navigator & { deviceMemory?: number }
+      const body = {
+        projectId: projectRef.current.id ?? '',
+        projectName: projectRef.current.name ?? '',
+        wanted: st.progress.total, done: st.progress.done,
+        elapsedMs: log.length ? log[log.length - 1].t - log[0].t : 0,
+        errors: kinds('window-error', 'layer-error', 'job-error'),
+        silent: kinds('silent'),
+        setAside: st.setAside, givenUp: st.givenUp,
+        playInterruptions: paused.length,
+        pausedMs,
+        outcome,
+        device: `${nav.hardwareConcurrency ?? '?'}core ${nav.deviceMemory ?? '?'}GB ${navigator.platform ?? ''}`.slice(0, 200),
+        events: log.slice(-60),
+      }
+      // keepalive so a report survives the page going away, which is exactly
+      // when an abandoned half-load needs reporting.
+      void fetch('/api/load-report', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body), keepalive: true,
+      }).catch(() => {})
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    // Settled: everything asked for has arrived, or the loader stopped trying.
+    if (loadProgress.total > 0 && loadProgress.done >= loadProgress.total) sendLoadReport('ok')
+  }, [loadProgress.done, loadProgress.total, sendLoadReport])
+
+  useEffect(() => {
+    const bye = () => sendLoadReport('left')
+    window.addEventListener('pagehide', bye)
+    return () => window.removeEventListener('pagehide', bye)
+  }, [sendLoadReport])
+
+  // ── Server loading ───────────────────────────────────────────────────────
+  //
+  // Brae: "when the song is loading we should have a button next to the loading
+  // text called 'Switch to server loading' so that users can switch manually",
+  // and "have the AI detect when the computer is having trouble... we can
+  // switch it to server loading".
+  //
+  // The detector lives in the loader, where the evidence is. This watches it and
+  // OFFERS rather than switching by itself: changing how somebody's studio works
+  // without asking is the kind of help nobody wants, and the first thing they
+  // would do is wonder what else changed. Once they say yes it is remembered, so
+  // a machine that struggles is not asked twice.
+  const [serverLoad, setServerLoad] = useState(false)
+  const [serverOffer, setServerOffer] = useState<string | null>(null)
+  const offeredServer = useRef(false)
+
+  const switchToServer = useCallback((on: boolean, why: string) => {
+    setServerLoad(on)
+    setServerOffer(null)
+    void import('@/lib/apollo/freeze-cache').then(({ setServerLoading }) => setServerLoading(on, why)).catch(() => {})
+    try { localStorage.setItem('beacon.serverLoading', on ? 'on' : 'off') } catch { /* private mode */ }
+  }, [])
+
+  useEffect(() => {
+    try { if (localStorage.getItem('beacon.serverLoading') === 'on') switchToServer(true, 'remembered') } catch { /* ignore */ }
+  }, [switchToServer])
+
+  // ⚠️ The "this machine is struggling, shall I switch you to server loading?"
+  // offer used to live here. It watched a bake in progress and fired when the
+  // bake went badly — and there is no bake any more: playback is real time, so
+  // loadProgress never fills and the offer could only ever be a promise the
+  // studio could not keep.
+  //
+  // Brae: "it will be manual." Server rendering is now one deliberate action —
+  // saving a project for offline use — rather than something the app decides
+  // for you when it thinks you are having a bad time.
 
   const autoFroze = useRef(false)
   useEffect(() => {
@@ -1178,6 +1396,74 @@ export default function AudioEditor(props: AudioEditorProps) {
     () => engineRef.current as unknown as DiagnoseEngine,
     id => projectRef.current?.tracks.find(t => t.id === id)?.name,
   ), [])
+
+  // A frozen track must not keep playing at the old tempo.
+  //
+  // Brae: "when I changed bpm, one of the tracks stayed at an old bpm."
+  //
+  // Freezing renders a synth clip to audio for CPU, and that render is made AT
+  // A TEMPO. Change the tempo and every other track moves while the frozen one
+  // keeps its old timing — silently, because audio is supposed to keep its own
+  // speed, so nothing looks wrong. Freeze is a performance trick the user
+  // accepted, not a decision to nail that part to 120 bpm.
+  //
+  // ⚠️ The detector for this ALREADY EXISTED and nothing ever called it:
+  // isFreezeStale(), whose own comment says "a tempo change invalidates it",
+  // had zero callers in the repo. Same shape as a warning nobody wired up.
+  //
+  // Thawing rather than re-rendering: it is instant, exact, and reversible —
+  // the notes and patch ride along on the clip — where a re-render is a long
+  // async job that would block the studio at the worst moment. The track costs
+  // CPU again until it is re-frozen, and being in time is worth more than that.
+  const lastTempo = useRef(project.tempo)
+  useEffect(() => {
+    if (project.tempo === lastTempo.current) return
+    lastTempo.current = project.tempo
+    const stale = project.arrangementClips.filter(
+      c => c.kind === 'audio' && (c as { frozenFrom?: { bpm?: number } }).frozenFrom
+        && (c as { frozenFrom?: { bpm?: number } }).frozenFrom?.bpm !== project.tempo,
+    )
+    if (!stale.length) return
+    void (async () => {
+      const { thawClip } = await import('@/lib/apollo/daw-freeze')
+      const ids = new Set(stale.map(c => c.id))
+      const clips = projectRef.current.arrangementClips.map(c =>
+        ids.has(c.id) ? (thawClip(c as Parameters<typeof thawClip>[0]) ?? c) : c)
+      rawDispatch({ type: 'LOAD_PROJECT', project: migrateProject({ ...projectRef.current, arrangementClips: clips }) })
+      setSyncMsg(stale.length === 1
+        ? 'One frozen part was rendered at the old tempo — unfrozen so it follows the new one. Re-freeze when you are done.'
+        : `${stale.length} frozen parts were rendered at the old tempo — unfrozen so they follow the new one.`)
+      setTimeout(() => setSyncMsg(null), 7000)
+    })()
+  }, [project.tempo, project.arrangementClips])
+
+  // Audio that had to be rerouted to keep playing.
+  //
+  // A silent recovery beats silence, but it must not be INVISIBLE: something in
+  // the studio just stopped working, the sound may be subtly different, and the
+  // person listening is the only one who can say whether it still sounds right.
+  //
+  // ⚠️ Its own effect, deliberately. Written first inside the dev-hooks effect,
+  // which early-returns unless DAW_HOOKS — so the one notice that exists for
+  // real users in a real failure would have appeared for nobody but us.
+  useEffect(() => {
+    const eng = engineForRender
+    if (!eng?.addEventListener) return
+    // ⚠️ One timer, cleared before each notice. Two recoveries close together
+    // (a track chain going while the master bus is still being reported) left
+    // the FIRST notice's timeout running, and it blanked the second message a
+    // moment after it appeared — the more serious failure being the one you
+    // could not read.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const onRecovered = (e: Event) => {
+      const d = (e as CustomEvent<{ how?: string }>).detail
+      setSyncMsg(d?.how ? `Audio recovered — ${d.how}.` : 'Audio recovered.')
+      clearTimeout(timer)
+      timer = setTimeout(() => setSyncMsg(null), 6000)
+    }
+    eng.addEventListener('audio-recovered', onRecovered)
+    return () => { clearTimeout(timer); eng.removeEventListener('audio-recovered', onRecovered) }
+  }, [engineForRender])
 
   // Dev-only: expose dispatch + a project/history snapshot so a genuine build
   // session can be driven and recorded (the History capture mode then replays
@@ -1882,7 +2168,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [selectedClipId, project.arrangementClips, selectedTrackId])
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [soundPanel, setSoundPanel] = useState<{ x: number; y: number } | null>(null)
-  const [apolloRack, setApolloRack] = useState<{ trackId: string; seed: unknown; follow?: boolean } | null>(null)
+  const [apolloRack, setApolloRack] = useState<{ trackId: string; seed: unknown; follow?: boolean; detached?: boolean } | null>(null)
 
   // Dev console access to the multi-selection (window.__dawSelection)
   useEffect(() => {
@@ -2097,6 +2383,15 @@ export default function AudioEditor(props: AudioEditorProps) {
         const p = projectRef.current
         const { tracks, dawProject } = collectSnapshot()
         await onSaveRef.current(tracks, { audioMode: props.audioMode, podcastMeta, dawProject })
+        // ⚠️ CANCEL THE WRITE ALREADY IN FLIGHT. A snapshot scheduled a moment
+        // before the save lands a moment after it, and would put the unsynced
+        // marker straight back on a project that has just been saved.
+        if (autosaveTimerRef.current !== null) {
+          window.clearTimeout(autosaveTimerRef.current)
+          autosaveTimerRef.current = null
+        }
+        changedSinceSaveRef.current = false
+        setDawDirty(false)
         void saveSnapshot(props.projectId ?? `unsaved:${props.audioMode ?? 'music'}`, p, { synced: true }).catch(() => {})
         setSaveStatus('saved')
         setSaveError('')
@@ -2181,23 +2476,61 @@ export default function AudioEditor(props: AudioEditorProps) {
   // footprint (computed against CURRENT state, so a collaborator's concurrent
   // edits survive) and broadcast the patch so the room follows along instead of
   // self-healing the undo away.
-  const doUndo = useCallback(() => {
+  const doUndo = useCallback((): boolean => {
     const entry = historyRef.current.pop()
-    if (!entry) return
+    // Reports whether it actually did anything. A caller that says "Undone."
+    // when the stack was empty is lying, and voice is the caller most likely to
+    // be believed without looking.
+    if (!entry) return false
     redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
     const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, projectRef.current, entry.action) }
     rawDispatch(patchAction)
     if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+    return true
   }, [rawDispatch])
 
-  const doRedo = useCallback(() => {
+  const doRedo = useCallback((): boolean => {
     const entry = redoRef.current.pop()
-    if (!entry) return
+    if (!entry) return false
     historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: projectRef.current, action: entry.action }]
     const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, projectRef.current, entry.action) }
     rawDispatch(patchAction)
     if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+    return true
   }, [rawDispatch])
+
+  // ── What the desktop menu bar and the global shortcuts reach ─────────────
+  //
+  // The menu sends a command; DesktopMenu turns it into this event; the studio
+  // is the only thing that knows how to carry it out. Deliberately an event
+  // rather than a prop chain: the menu is outside the editor and above it, and
+  // threading a callback down from the layout would couple the two for no gain.
+  useEffect(() => {
+    const onMenu = (e: Event) => {
+      const command = (e as CustomEvent<{ command: string }>).detail?.command
+      if (command === 'undo') { doUndo(); return }
+      if (command === 'redo') { doRedo(); return }
+      if (command === 'transport-toggle') {
+        // ⚠️ The STUDIO's transport, not the browser's spacebar handling —
+        // this arrives when 100Lights is not even the focused app.
+        if (engineRef.current?.isPlaying) engineRef.current?.stop()
+        else void engineRef.current?.play()
+        return
+      }
+      if (command === 'save-version') {
+        const name = window.prompt('Name this version — "before the drop"')
+        if (!name?.trim() || !props.projectId) return
+        void fetch(`/api/projects/${props.projectId}/versions`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: name.trim() }),
+        })
+        return
+      }
+    }
+    window.addEventListener('100lights:menu', onMenu)
+    return () => window.removeEventListener('100lights:menu', onMenu)
+  }, [doUndo, doRedo, props.projectId])
+
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -2326,6 +2659,13 @@ export default function AudioEditor(props: AudioEditorProps) {
     // so replay works without a save+reopen round-trip.
     getBuildHistory: () => buildLogRef.current,
     consolidateBuildHistory,
+    // Undo and redo, which the context has always declared and only mobile ever
+    // filled in — "the desktop editor has its own undo" was true and meant that
+    // anything inside the studio wanting to undo had no way to reach it. Voice
+    // needs it more than most: every destructive command now confirms, and
+    // "undo that" is what someone says when they confirmed too quickly.
+    undo: doUndo,
+    redo: doRedo,
     view,
     setView,
     editTarget,
@@ -2349,6 +2689,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     setPosition,
     metronome,
     setMetronome,
+    showAppearance,
+    setShowAppearance,
     showPads,
     setShowPads,
     expandedPianoRollClipId,
@@ -2828,6 +3170,18 @@ export default function AudioEditor(props: AudioEditorProps) {
     setShowPads, setSidebarOpen, setShowAppearance,
   ])
 
+  // ⚠️ Publish the studio so things OUTSIDE the editor can reach it.
+  //
+  // Light lives in the app layout now — beside the page, not inside it — so it
+  // is not a descendant of the provider below and context cannot reach it. It
+  // asked, was told there was no studio, and refused every command in the
+  // studio it was sitting in. The registry is how anything outside this tree
+  // finds the editor while it is on screen.
+  useEffect(() => {
+    setActiveStudio(contextValue)
+    return () => setActiveStudio(null)
+  }, [contextValue])
+
   // ── Render ───────────────────────────────────────────────────────────────────
   const editorContent = (
     <DawContext.Provider value={contextValue}>
@@ -2860,8 +3214,17 @@ export default function AudioEditor(props: AudioEditorProps) {
           <div
             data-ui-el="load-progress"
             style={{
-              position: 'absolute', top: 0, left: 0, right: 0, zIndex: 940,
-              pointerEvents: 'none', display: 'flex', flexDirection: 'column', gap: 0,
+              // Along the BOTTOM, not the top. Brae asked for it there, and it
+              // is the better place for it: the top edge is where the transport
+              // and the toolbar live, so a strip that appears and disappears
+              // there nudges the eye to exactly the controls someone is
+              // reaching for. Loading is status, not a control.
+              //
+              // column-reverse keeps the reading order intact once flipped: the
+              // label sits above the hairline bar, and the bar hugs the very
+              // bottom edge of the window.
+              position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 940,
+              pointerEvents: 'none', display: 'flex', flexDirection: 'column-reverse', gap: 0,
             }}
           >
             <div style={{ height: 2, background: 'transparent' }}>
@@ -2872,26 +3235,141 @@ export default function AudioEditor(props: AudioEditorProps) {
                 transition: 'width 240ms linear, background 300ms',
               }} />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <div style={{
-                marginTop: 4, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 600,
-                background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
-                color: 'var(--text-muted)', letterSpacing: '0.02em',
-              }}>
-                {/* Say what is actually happening, and it has changed twice.
-                    First it claimed loading was paused while playing when it
-                    was not; then it said "ahead of the playhead" while
-                    rendering fourteen seconds of song, which Brae read as
-                    loading far ahead because that is what it was. Now playing
-                    really does stop the work — the song is synthesised live —
-                    so the honest thing to say is that it is playing. */}
-                {playing
-                  ? 'Playing live — the rest loads when you pause'
-                  : loadProgress.phase === 'head'
-                    ? 'Getting the sound ready…'
-                    : `Loading the rest of the song — ${loadProgress.done}/${loadProgress.total}`}
-              </div>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, pointerEvents: 'auto' }}>
+              <button
+                onClick={() => setLoadPanel(v => !v)}
+                title={loadPanel ? 'Hide what is loading' : 'Show what is loading, what is queued and anything that failed'}
+                style={{
+                  marginBottom: 4, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 600,
+                  background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
+                  color: loadPanel ? 'var(--text-primary)' : 'var(--text-muted)', letterSpacing: '0.02em',
+                  cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                <span style={{ fontSize: 8, opacity: .8 }}>{loadPanel ? '▾' : '▴'}</span>
+                {/* Say what is actually happening, and it has changed several
+                    times as the loader has. It claimed loading was paused while
+                    playing when it was not; then "ahead of the playhead" while
+                    rendering fourteen seconds of song; then that playing stops
+                    the work, which it no longer does.
+
+                    It now counts LAYERS, not clips. Brae: "We would need to
+                    change the loading bar to Layers instead of track items."
+                    He is right, and not only for wording: the song is rendered
+                    dry first and the effects are layered over it, so every clip
+                    is audible almost immediately and "17 of 23" was answering a
+                    question nobody had. What arrives is the SOUND. */}
+                {loadProgress.phase === 'paused'
+                  /* Baking is an OPTIMISATION now, and it stands aside while you
+                     listen: rendering runs on the main thread and competes with
+                     the note scheduler. The song plays live either way, so this
+                     has to read as a deliberate wait rather than as a stall —
+                     the previous wording left it showing a layer name that was
+                     not being worked on. */
+                  ? 'Playing live — loading continues when you pause'
+                  : loadProgress.trouble
+                    ? `${loadProgress.layer ?? 'Loading'} — ${loadProgress.trouble}`
+                    : loadProgress.layer
+                      ? loadProgress.layer
+                      : loadProgress.phase === 'head'
+                        ? 'Getting the sound ready…'
+                        : `Loading the song — ${loadProgress.done}/${loadProgress.total}`}
+              </button>
+
+              <button
+                onClick={() => switchToServer(!serverLoad, serverLoad ? 'switched back' : 'chosen by the user')}
+                title={serverLoad
+                  ? 'Render on this computer again'
+                  : 'Stop rendering on this computer and use renders from the server where they exist'}
+                style={{
+                  marginBottom: 4, padding: '3px 9px', borderRadius: 999, fontSize: 10, fontWeight: 600,
+                  background: serverLoad ? 'rgb(var(--accent-rgb) / .22)' : 'var(--bg-elevated, #16181d)',
+                  border: `1px solid ${serverLoad ? 'var(--accent)' : 'var(--border)'}`,
+                  color: serverLoad ? 'var(--accent-light)' : 'var(--text-muted)',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >{serverLoad ? 'Server loading — on' : 'Switch to server loading'}</button>
             </div>
+
+            {/* The offer, when the machine is visibly struggling. It says WHAT
+                it noticed: "we think you should change something" without the
+                evidence is just an alarm. */}
+            {serverOffer && !serverLoad && (
+              <div style={{
+                pointerEvents: 'auto', alignSelf: 'center', marginBottom: 4,
+                display: 'flex', alignItems: 'center', gap: 10,
+                background: 'var(--bg-elevated, #16181d)', border: '1px solid #a2591b',
+                borderRadius: 999, padding: '4px 6px 4px 12px', fontSize: 11, color: 'var(--text-secondary)',
+              }}>
+                <span>This computer is having trouble — {serverOffer}.</span>
+                <button
+                  onClick={() => switchToServer(true, `offered: ${serverOffer}`)}
+                  style={{ padding: '3px 9px', borderRadius: 999, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / .2)', color: 'var(--accent-light)', fontSize: 10.5, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >Use server loading</button>
+                <button
+                  onClick={() => setServerOffer(null)}
+                  style={{ padding: '3px 8px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 10.5, cursor: 'pointer' }}
+                >Keep going here</button>
+              </div>
+            )}
+
+            {/* Opens UPWARD, above the pill, because the bar lives on the
+                bottom edge — a panel that dropped down would go off-screen. */}
+            {loadPanel && (
+              <div
+                style={{
+                  pointerEvents: 'auto', alignSelf: 'center', marginBottom: 2,
+                  width: 'min(560px, calc(100vw - 24px))', maxHeight: '46vh', overflowY: 'auto',
+                  background: 'var(--bg-elevated, #16181d)', border: '1px solid var(--border)',
+                  borderRadius: 10, boxShadow: '0 -12px 40px rgba(0,0,0,.55)',
+                  padding: '10px 12px', fontSize: 11, color: 'var(--text-secondary)',
+                }}
+              >
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 8, fontVariantNumeric: 'tabular-nums' }}>
+                  <span><b style={{ color: 'var(--text-primary)' }}>{loadDetail?.inFlight ?? 0}</b> rendering</span>
+                  <span><b style={{ color: 'var(--text-primary)' }}>{loadDetail?.queued ?? 0}</b> queued</span>
+                  <span><b style={{ color: 'var(--text-primary)' }}>{loadDetail?.ready ?? 0}</b> ready</span>
+                  {!!loadDetail?.setAside && <span style={{ color: '#e0a458' }}><b>{loadDetail.setAside}</b> set aside</span>}
+                  {!!loadDetail?.givenUp && <span style={{ color: '#f08c8c' }}><b>{loadDetail.givenUp}</b> given up</span>}
+                </div>
+
+                {loadDetail?.lastError && (
+                  <div style={{ background: 'rgba(240,140,140,.12)', border: '1px solid rgba(240,140,140,.35)', borderRadius: 6, padding: '5px 8px', marginBottom: 8, color: '#f0b0b0' }}>
+                    {loadDetail.lastError}
+                  </div>
+                )}
+
+                {/* The history, newest first. `paused` rows are the ones Brae
+                    asked for by name: they record that PLAY interrupted the
+                    work, and `resumed` records it coming back — so the cost of
+                    listening while it loads is visible instead of theoretical. */}
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.08em', color: 'var(--text-muted)', margin: '2px 0 4px' }}>
+                  WHAT HAPPENED
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {(loadDetail?.log ?? []).slice(-40).reverse().map((e, i) => {
+                    const bad = ['silent', 'window-error', 'layer-error', 'job-error', 'stall', 'reset', 'gave-up'].includes(e.kind)
+                    const wait = e.kind === 'paused' || e.kind === 'resumed'
+                    return (
+                      <div key={i} style={{
+                        display: 'flex', gap: 8, alignItems: 'baseline',
+                        fontFamily: 'var(--font-mono, ui-monospace), monospace', fontSize: 10,
+                        color: bad ? '#f0a0a0' : wait ? '#e0c07a' : 'var(--text-muted)',
+                      }}>
+                        <span style={{ opacity: .6, minWidth: 46, textAlign: 'right' }}>{(e.t / 1000).toFixed(1)}s</span>
+                        <span style={{ minWidth: 88, fontWeight: 600 }}>{e.kind}</span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          {e.layer ? `${e.layer} — ` : ''}{e.detail ?? ''}
+                          {typeof e.done === 'number' && typeof e.total === 'number' ? ` (${e.done}/${e.total})` : ''}
+                          {typeof e.ms === 'number' ? ` ${e.ms}ms` : ''}
+                        </span>
+                      </div>
+                    )
+                  })}
+                  {!(loadDetail?.log ?? []).length && <span style={{ color: 'var(--text-muted)' }}>Nothing recorded yet.</span>}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -2996,8 +3474,10 @@ export default function AudioEditor(props: AudioEditorProps) {
 
         {/* Body */}
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-          {/* Left sidebar: file-cabinet rail + collapsible panel */}
-          <div style={{ display: 'flex', flexShrink: 0, borderRight: '1px solid var(--border)' }}>
+          {/* Left sidebar: file-cabinet rail + collapsible panel.
+              data-hud-hide puts it away in HUD mode, which leaves the song and
+              the sound visuals. See lib/voice/hud.ts. */}
+          <div data-hud-hide style={{ display: 'flex', flexShrink: 0, borderRight: '1px solid var(--border)' }}>
 
             {/* Rail — always visible */}
             <div style={{
@@ -3008,8 +3488,19 @@ export default function AudioEditor(props: AudioEditorProps) {
               borderRight: sidebarOpen ? '1px solid var(--border)' : 'none',
             }}>
               {/* Logo — takes the user straight home */}
-              <a
+              <Link
                 href="/dashboard"
+                onClick={e => {
+                  // ⚠️ Desktop: a project window going Home should close itself
+                  // and surface the launcher — behaviour that used to come from
+                  // Electron's will-navigate, which a client-side <Link> does
+                  // not trigger. The browser keeps the client navigation, which
+                  // is what keeps Light and the popped-out panels alive.
+                  const api = (window as unknown as { electronAPI?: { goHome?: () => Promise<boolean> } }).electronAPI
+                  if (!api?.goHome) return
+                  e.preventDefault()
+                  void api.goHome().then(handled => { if (!handled) window.location.assign('/dashboard') })
+                }}
                 title="Home"
                 data-help-id="home"
                 style={{
@@ -3018,10 +3509,10 @@ export default function AudioEditor(props: AudioEditorProps) {
                 }}
               >
                 <LogoMark size={22} />
-              </a>
+              </Link>
               {/* Return to the projects list. (The sidebar still opens from the
                   Sound Library / Code tab buttons just below.) */}
-              <a
+              <Link
                 href="/projects"
                 title="Return to projects"
                 data-help-id="return-to-projects"
@@ -3035,7 +3526,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)' }}
               >
                 <FolderOpen size={15} />
-              </a>
+              </Link>
               {/* Open a project file, or import media into a new video project.
                   Tinted (not muted) so it reads as an action in the icon rail. */}
               <button
@@ -3304,24 +3795,48 @@ export default function AudioEditor(props: AudioEditorProps) {
       {apolloRack?.follow && followTrackId && apolloRack.trackId !== followTrackId && (
         <ApolloFollow trackId={followTrackId} onRetarget={id => setApolloRack({ trackId: id, seed: null, follow: true })} />
       )}
-      {apolloRack && (
-        <ApolloRackWindow
-          trackId={apolloRack.trackId}
-          seed={apolloRack.seed}
-          trackName={project.tracks.find(t => t.id === apolloRack.trackId)?.name ?? 'Track'}
-          following={!!apolloRack.follow}
-          onToggleFollow={() => setApolloRack({ ...apolloRack, follow: !apolloRack.follow })}
-          onChange={next => {
-            const track = projectRef.current.tracks.find(t => t.id === apolloRack.trackId)
-            if (!track) return
-            void import('@/lib/apollo/daw-fx').then(({ applyRackEdit }) => {
-              const eff = applyRackEdit(track.effects, next.fxMain as never)
-              dispatch({ type: 'SET_TRACK_EFFECTS', trackId: apolloRack.trackId, effects: eff })
-            })
-          }}
-          onClose={() => setApolloRack(null)}
-        />
-      )}
+      {apolloRack && (() => {
+        const trackName = project.tracks.find(t => t.id === apolloRack.trackId)?.name ?? 'Track'
+        const rack = (
+          <ApolloRackWindow
+            trackId={apolloRack.trackId}
+            seed={apolloRack.seed}
+            trackName={trackName}
+            following={!!apolloRack.follow}
+            onToggleFollow={() => setApolloRack({ ...apolloRack, follow: !apolloRack.follow })}
+            detached={!!apolloRack.detached}
+            onToggleDetach={() => setApolloRack({ ...apolloRack, detached: !apolloRack.detached })}
+            onChange={next => {
+              const track = projectRef.current.tracks.find(t => t.id === apolloRack.trackId)
+              if (!track) return
+              void import('@/lib/apollo/daw-fx').then(({ applyRackEdit }) => {
+                const eff = applyRackEdit(track.effects, next.fxMain as never)
+                dispatch({ type: 'SET_TRACK_EFFECTS', trackId: apolloRack.trackId, effects: eff })
+              })
+            }}
+            onClose={() => setApolloRack(null)}
+          />
+        )
+        // ⚠️ The SAME element either way. Detaching moves where it is drawn and
+        // nothing else — the patch, the motion recording and the undo history
+        // all live above this and never learn that the panel moved. Rendering a
+        // different tree for the detached case is how a popped-out panel starts
+        // quietly disagreeing with the one it replaced.
+        return apolloRack.detached
+          ? (
+            <PopOut
+              title={`Apollo — ${trackName}`}
+              width={980}
+              height={660}
+              // Closing the OS window puts the rack back rather than closing it
+              // outright: the person shut a window, they did not abandon an edit.
+              onClose={() => setApolloRack(r => (r ? { ...r, detached: false } : r))}
+            >
+              {rack}
+            </PopOut>
+          )
+          : rack
+      })()}
               {view === 'arrangement' && <ArrangementView />}
               {view === 'mixer' && <Mixer />}
             </div>
@@ -3451,6 +3966,12 @@ export default function AudioEditor(props: AudioEditorProps) {
           fontSize: 12.5, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', whiteSpace: 'nowrap',
         }}>↻ {syncMsg}</div>
       )}
+
+      {/* A device popped out of the chain, floating over the studio. Mounted
+          here rather than inside DeviceChain because the device panel is a
+          popover: a card that unmounted with it could not be used for the one
+          thing it is for — watching a device while working on the track. */}
+      <DevicePopoutHost />
 
       {/* Offline-sync conflict review — the per-item "Yours vs Theirs" panel
           (self-gates on the context's mergeConflicts). */}

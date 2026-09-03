@@ -4,9 +4,12 @@
 // computes LFO/remap LUTs, and exposes note/transport/param APIs to the UI.
 
 import { ApolloPatch, FxUnit, LfoPoint, PARAMS, FX_DEFS } from '@/lib/apollo/patch'
+import { RENDER_SAMPLE_RATE } from '@/lib/render-rate'
 import { buildTableMips, factoryTableWithMips, userTableWithMips, copyBuilt } from '@/lib/apollo/tables'
 import { analyzeSpectralInWorker, SpectralAnalysis } from '@/lib/apollo/spectral'
 import { ENGINE_VERSION } from '@/lib/apollo/engine-version'
+import { renderClip, canRenderInWorker } from '@/lib/apollo/render-worker-client'
+import { samplesUsedBy } from '@/lib/apollo/samples-used'
 
 export interface ApolloMeters {
   peak: number
@@ -65,7 +68,43 @@ export function collectFxRanges(units: FxUnit[], out: Record<string, [number, nu
   }
 }
 
+/**
+ * A one-frame context, only ever used to ALLOCATE an AudioBuffer.
+ *
+ * createBuffer needs a context; it does not need a real one, and building a
+ * full-length OfflineAudioContext just to hold worker output would put back the
+ * allocation this is avoiding. Kept between calls because contexts are not free.
+ */
+let bufAllocCtx: OfflineAudioContext | null = null
+function allocCtx(): OfflineAudioContext {
+  return (bufAllocCtx ??= new OfflineAudioContext(2, 1, 48000))
+}
+
 export class ApolloEngine extends EventTarget {
+  /** True once the worklet has died. It never comes back by itself. */
+  /**
+   * This engine is producing zeros and will not stop on its own.
+   *
+   * ⚠️ IT WAS SET AND NEVER READ BY THE DAW. A hard worklet crash ends the
+   * processor for good; the crash armour's soft case is worse, because it keeps
+   * the processor ALIVE and every block it renders is silence. Either way
+   * daw-instrument went on handing the same dead engine to every note, for ever
+   * — Brae: "the audio cut out and didn't come back even after loading
+   * finished." ensure() checks it now and builds a fresh engine instead.
+   */
+  crashed = false
+
+  /**
+   * Exceptions the audio thread caught and recovered from.
+   *
+   * `count` is every one, not the five that get reported: the difference
+   * between "it threw once on a stale patch" and "it is throwing 128 times a
+   * second and the song is silent" is the whole diagnosis, and both look
+   * identical from a console that stops after five.
+   */
+  readonly procErrors: { count: number; first: string; last: string; lastAt: number } =
+    { count: 0, first: '', last: '', lastAt: 0 }
+
   ctx: AudioContext | null = null
   node: AudioWorkletNode | null = null
   analyser: AnalyserNode | null = null
@@ -80,6 +119,51 @@ export class ApolloEngine extends EventTarget {
   private pvTimer: ReturnType<typeof setTimeout> | null = null
   ready = false
 
+  private _flushId = 0
+  /** True only when init() created the AudioContext itself — see dispose(). */
+  private ownsCtx = false
+
+  /**
+   * Wait until everything already posted has actually REACHED the processor.
+   *
+   * ⚠️ This is the fix for notes going missing from a render. `startRendering()`
+   * does not wait for the port: the offline scheduler makes ONE pass, posts every
+   * note event, and renders immediately — so whatever is still in flight when the
+   * render starts is simply not played. It is intermittent by nature (measured at
+   * roughly one render in eight), and the way it fails is the worst kind: the
+   * render succeeds, reports no error, and is quietly missing notes. The symptom
+   * that found it was a four-note chord whose level never built, because only the
+   * first note ever sounded.
+   *
+   * Port messages are delivered IN ORDER, so a reply to a ping posted after the
+   * notes proves the notes arrived. renderMany() already did this for the combine
+   * path; the DAW's own offline render did not, which is why it was the one that
+   * drifted.
+   *
+   * The timeout is a safety net rather than the mechanism — an engine too old to
+   * answer, or a node that has died, falls back to the old behaviour instead of
+   * hanging the render forever.
+   */
+  flush(timeoutMs = 4000): Promise<void> {
+    const node = this.node
+    if (!node || this.crashed) return Promise.resolve()
+    const id = ++this._flushId
+    return new Promise<void>(resolve => {
+      const timer = setTimeout(() => { node.port.removeEventListener('message', onMsg); resolve() }, timeoutMs)
+      const onMsg = (e: MessageEvent) => {
+        const d = e.data as { type?: string; id?: number }
+        if (d?.type === 'ready' && d.id === id) {
+          clearTimeout(timer)
+          node.port.removeEventListener('message', onMsg)
+          resolve()
+        }
+      }
+      node.port.addEventListener('message', onMsg)
+      node.port.start()
+      try { node.port.postMessage({ type: 'ping', id }) } catch { clearTimeout(timer); resolve() }
+    })
+  }
+
   /**
    * Standalone init creates its own AudioContext + master/analyser chain.
    * DAW-instrument mode passes an existing context + destination: the node
@@ -90,16 +174,26 @@ export class ApolloEngine extends EventTarget {
     const external = !!opts?.ctx
     const ctx = (opts?.ctx as AudioContext) || new AudioContext({ latencyHint: 'interactive' })
     this.ctx = ctx
+    this.ownsCtx = !external
     await ctx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const node = new AudioWorkletNode(ctx, 'apollo-engine', {
       numberOfInputs: opts?.fxInput ? 2 : 0, numberOfOutputs: 1, outputChannelCount: [2],
     })
     // A worklet crash is otherwise SILENT (audio just stops) — surface it to
     // Sentry with the engine version so stale-cache pairings are diagnosable.
+    //
+    // ⚠️ Reporting is not recovering. A dead AudioWorkletNode never produces a
+    // sample again, so anything routed THROUGH it is gone until the page is
+    // reloaded — and in Beacon that is the whole mix, because the master glue
+    // bus is one of these. Telling Sentry and leaving the user in silence is
+    // the "it goes quiet and doesn't come back" report. The event lets the host
+    // put the audio back on a path that still works.
     node.onprocessorerror = () => {
+      this.crashed = true
       void import('@sentry/nextjs')
         .then(S => S.captureException(new Error(`Apollo engine processor crashed (v${ENGINE_VERSION})`)))
         .catch(() => {})
+      try { this.dispatchEvent(new CustomEvent('processorError')) } catch { /* no listeners */ }
     }
     this.node = node
     if (external) {
@@ -134,6 +228,21 @@ export class ApolloEngine extends EventTarget {
       } else if (m.type === 'procError') {
         // the engine caught an exception in process() and recovered (killed
         // voices, kept the processor alive) — surface it for diagnosis
+        //
+        // Kept on the engine as well as logged, because the console is not in
+        // a bug report. An exception that recurs on EVERY block is heard as a
+        // crackle and then silence that never comes back — the armour keeps the
+        // processor alive but every block it produces is zeros — and until this
+        // was recorded, a diagnose capture of exactly that said nothing at all
+        // about it.
+        this.procErrors.count++
+        if (!this.procErrors.first) this.procErrors.first = String(m.message).slice(0, 400)
+        this.procErrors.last = String(m.message).slice(0, 400)
+        this.procErrors.lastAt = Date.now()
+        // ⚠️ ONE is a hiccup the armour absorbed; a HANDFUL means it is throwing
+        // on every block, and every block it renders from here is zeros. Three
+        // is enough to be sure and few enough to catch it within a beat.
+        if (this.procErrors.count >= 3) this.crashed = true
         console.warn('[apollo] engine recovered from a processing error:', m.message)
         void import('@sentry/nextjs')
           .then(S => S.captureException(new Error(`Apollo engine process() threw (v${ENGINE_VERSION}, #${m.count}): ${String(m.message).slice(0, 400)}`)))
@@ -154,6 +263,22 @@ export class ApolloEngine extends EventTarget {
    * — the "audio just cuts out" report. Auto-resume whenever the tab is
    * visible and the context leaves 'running'. */
   private watchdogWired = false
+  /**
+   * Listener refs, so the watchdog can be UNWIRED.
+   *
+   * ⚠️ This is what made every engine immortal. `kick` closes over `this`, and
+   * it was added to two things that outlive any one engine — the DAW's shared
+   * AudioContext and `document` — and never removed. So `document` held a
+   * strong reference to every ApolloEngine ever built, each holding its
+   * AudioWorkletNode, whose processor keeps running on the audio thread.
+   *
+   * Measured on a 7-track song: 544 of 544 worklet nodes still reachable after
+   * a forced GC, after only a few minutes of ordinary play/stop and looping.
+   * It never showed up in the JS heap because an AudioWorkletProcessor does
+   * not live there.
+   */
+  private watchdogTargets: Array<{ target: EventTarget; type: string; fn: () => void }> = []
+
   wireResumeWatchdog(): void {
     if (this.watchdogWired || !this.ctx || typeof document === 'undefined') return
     this.watchdogWired = true
@@ -162,6 +287,59 @@ export class ApolloEngine extends EventTarget {
     }
     this.ctx.addEventListener('statechange', kick)
     document.addEventListener('visibilitychange', kick)
+    this.watchdogTargets = [
+      { target: this.ctx, type: 'statechange', fn: kick },
+      { target: document, type: 'visibilitychange', fn: kick },
+    ]
+  }
+
+  private unwireResumeWatchdog(): void {
+    for (const { target, type, fn } of this.watchdogTargets) {
+      try { target.removeEventListener(type, fn) } catch { /* target already gone */ }
+    }
+    this.watchdogTargets = []
+    this.watchdogWired = false
+  }
+
+  /**
+   * Let this engine go, WITHOUT touching the context it was hosted in.
+   *
+   * The DAW hands every Apollo track a destination on its own shared
+   * AudioContext and rebuilds the engines whenever the transport stops — which
+   * includes every pass around a loop. dispose() cannot be used for that: it
+   * closes the context, and in DAW-instrument mode the context is the whole
+   * studio's. So teardown that frees the engine and nothing else lives here,
+   * and apolloStopAll() calls it.
+   *
+   * Order matters. The port keeps the node alive while it has a listener, so
+   * the handler goes first and the port is closed after; disconnecting a node
+   * whose port is still open and listening does not free it.
+   */
+  release(): void {
+    this.unwireResumeWatchdog()
+    const node = this.node
+    if (node) {
+      // ⚠️ THE line that matters. engine.js returns true from process() on every
+      // path, and a processor that keeps returning true is kept alive by the
+      // browser for ever: disconnecting does not end it, and neither does
+      // dropping every reference to the node. Since the DAW rebuilds an engine
+      // per Apollo track on every stop — and every loop wraparound — the
+      // discarded ones accumulated and went on rendering. Measured at 530 live
+      // processors after a few minutes of play/stop and looping.
+      //
+      // Posted BEFORE the port is closed, or it never arrives.
+      try { node.port.postMessage({ type: 'shutdown' }) } catch { /* port already gone */ }
+      try { node.onprocessorerror = null } catch { /* ok */ }
+      try { node.port.onmessage = null } catch { /* ok */ }
+      try { node.port.close() } catch { /* already closed */ }
+      try { node.disconnect() } catch { /* already disconnected */ }
+    }
+    try { this.analyser?.disconnect() } catch { /* ok */ }
+    try { this.master?.disconnect() } catch { /* ok */ }
+    if (this.pvTimer) { clearTimeout(this.pvTimer); this.pvTimer = null }
+    this.node = null; this.analyser = null; this.master = null
+    this.ready = false
+    this.tablesSent.clear(); this.spectralSent.clear()
   }
 
   private post(msg: unknown, transfer?: Transferable[]): void {
@@ -351,10 +529,15 @@ export class ApolloEngine extends EventTarget {
   clearScheduled(): void { this.post({ type: 'clearScheduled' }) }
 
   dispose(): void {
-    this.node?.disconnect()
-    void this.ctx?.close()
-    this.ctx = null; this.node = null; this.ready = false
-    this.tablesSent.clear(); this.spectralSent.clear()
+    const ctx = this.ctx
+    this.release()
+    // ⚠️ Only close a context this engine MADE. In DAW-instrument mode the
+    // context belongs to the studio, and closing it would take the whole mix
+    // down — which is why the stop path could never call dispose() and had to
+    // half-tear-down by hand instead.
+    if (ctx && this.ownsCtx) void ctx.close()
+    this.ctx = null
+    this.ownsCtx = false
   }
 
   // Offline render: replay full state into an OfflineAudioContext instance of
@@ -364,7 +547,13 @@ export class ApolloEngine extends EventTarget {
     notes: { t: number; dur: number; note: number; vel: number }[],
     seconds: number,
   ): Promise<AudioBuffer> {
-    const sr = this.ctx?.sampleRate || 48000
+    // ⚠️ NOT `this.ctx.sampleRate`. Rendering at the device's rate is what made
+    // the same song sound different on a 44.1 kHz machine and a 48 kHz one —
+    // and freezeStamp never mentioned the rate, so the two shared a cache key.
+    // A render is a durable artifact: it gets cached, shared between users and
+    // served from the backend, so it cannot depend on whatever the listener's
+    // sound card happens to be running at.
+    const sr = RENDER_SAMPLE_RATE
     const octx = new OfflineAudioContext(2, Math.ceil(seconds * sr), sr)
     await octx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const node = new AudioWorkletNode(octx, 'apollo-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
@@ -383,8 +572,17 @@ export class ApolloEngine extends EventTarget {
       const built = user ? userTableWithMips(user.data, user.frames) : factoryTableWithMips(id)
       if (built) post({ type: 'table', id, ...copyBuilt(built) })
     }
-    // samples + spectral
-    for (const [id, smp] of this.samples) {
+    // samples + spectral — only the ones THIS patch plays.
+    //
+    // The sibling path (renderManyToBuffer) was fixed for this and this one was
+    // missed, which is the worse half: it copied every sample loaded in the
+    // engine into the render, so the cost scaled with the size of the user's
+    // library rather than with the clip being rendered. One multisampled piano
+    // is dozens of buffers, and none of them are audible in a render of a bass
+    // line.
+    for (const id of samplesUsedBy(patch)) {
+      const smp = this.samples.get(id)
+      if (!smp) continue
       post({ type: 'sample', id, sr: smp.sr, len: smp.len, l: new Float32Array(smp.l), r: smp.r ? new Float32Array(smp.r) : null })
       const an = this.spectralCache.get(id)
       if (an) post({ type: 'spectral', id, frames: an.frames, bins: an.bins, hop: an.hop, sr: an.sr, mags: new Float32Array(an.mags), phases: new Float32Array(an.phases), onsets: new Uint8Array(an.onsets) })
@@ -431,6 +629,47 @@ export class ApolloEngine extends EventTarget {
     if (!items.length) return null
     const sr = this.ctx?.sampleRate || 48000
     const frames = Math.ceil(seconds * sr)
+
+    // ── Off the main thread, if a worker will have us ────────────────────────
+    //
+    // ⚠️ THE OfflineAudioContext BELOW RUNS ON THE MAIN THREAD, and that is why
+    // auto-freeze has been switched off since August: rendering a song's worth
+    // of clips stalled the interface for eleven seconds at a stretch. Every bit
+    // of pacing in freeze-cache.ts — the idle yields, the proportional gaps, the
+    // "leave time for the context to be reclaimed" — exists to soften that.
+    //
+    // The worker needs none of it. Measured: 0.117x real time with an 11ms worst
+    // main-thread gap, against ~11,000ms inline.
+    //
+    // Falls through to the old path when there is no worker (an offline render
+    // host, a browser that refuses one) rather than failing, because a slow
+    // freeze is still better than none.
+    if (canRenderInWorker()) {
+      try {
+        const rendered = await Promise.all(items.map(({ patch, notes }) =>
+          renderClip({
+            patch: patch as unknown,
+            // The worker takes note ON/OFF events; the caller thinks in notes
+            // with durations. One shape per boundary, converted at it.
+            events: notes.flatMap(n => [
+              { t: n.t, type: 'noteOn' as const, note: n.note, vel: n.vel },
+              { t: n.t + n.dur, type: 'noteOff' as const, note: n.note },
+            ]),
+            seconds,
+            sampleRate: sr,
+          })))
+        // Two channels per item, exactly as the OfflineAudioContext path lays
+        // them out, so everything downstream splits them the same way.
+        const out = allocCtx().createBuffer(items.length * 2, frames, sr)
+        rendered.forEach((r, idx) => {
+          out.getChannelData(idx * 2).set(r.left.subarray(0, frames))
+          out.getChannelData(idx * 2 + 1).set(r.right.subarray(0, frames))
+        })
+        return out
+      } catch {
+        // Fall through and render inline. Worth the stall over losing the render.
+      }
+    }
     const octx = new OfflineAudioContext(items.length * 2, frames, sr)
     await octx.audioWorklet.addModule('/apollo/engine.js?v=' + ENGINE_VERSION)
     const merger = octx.createChannelMerger(items.length * 2)
@@ -459,7 +698,21 @@ export class ApolloEngine extends EventTarget {
         const built = user ? userTableWithMips(user.data, user.frames) : factoryTableWithMips(id)
         if (built) post({ type: 'table', id, ...copyBuilt(built) })
       }
-      for (const [id, smp] of this.samples) {
+      // ── Only the samples THIS patch plays ─────────────────────────────
+      //
+      // This used to send every sample the engine had loaded, to every node, on
+      // every render — and each is a full Float32Array copy of the audio. The
+      // cost scaled with the user's LIBRARY rather than with the song: harmless
+      // when a patch meant one drum hit, ruinous once multisampled instruments
+      // arrived, because one piano is 42 buffers and a two-clip render copied
+      // all of them twice.
+      //
+      // That is the shape of the report it came from — "two tracks without any
+      // effects takes a LONG time", "it loaded perfectly fine before we
+      // implemented Apollo" — because the work was never about those two tracks.
+      for (const id of samplesUsedBy(patch)) {
+        const smp = this.samples.get(id)
+        if (!smp) continue
         post({ type: 'sample', id, sr: smp.sr, len: smp.len, l: new Float32Array(smp.l), r: smp.r ? new Float32Array(smp.r) : null })
         const an = this.spectralCache.get(id)
         if (an) post({ type: 'spectral', id, frames: an.frames, bins: an.bins, hop: an.hop, sr: an.sr, mags: new Float32Array(an.mags), phases: new Float32Array(an.phases), onsets: new Uint8Array(an.onsets) })

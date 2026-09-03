@@ -857,7 +857,15 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
           />
         )}
 
-        {/* Clip label (an inline input while renaming from the context menu) */}
+        {/* Clip label — double-click it to rename, or use the context menu.
+            Brae: "We should probably also create a manual option for changing
+            item names." The rename existed, but only inside the right-click
+            menu, which is not where anybody looks first: renaming a thing by
+            double-clicking its name is the gesture every file manager and every
+            DAW has taught people. The label therefore takes pointer events for
+            the double-click ONLY — dragging, selecting and the box-select all
+            still start on the clip body underneath, which is why this stays
+            pointerEvents:'none' everywhere except the text itself. */}
         <div style={{ position: 'absolute', top: 2, left: 12, right: 12, fontSize: 9, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: renaming ? 'auto' : 'none', zIndex: 5 }}>
           {renaming ? (
             <input
@@ -873,7 +881,20 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
             />
           ) : (
             <>
-              {clip.name}
+              <span
+                title="Double-click to rename"
+                onDoubleClick={e => {
+                  // Stopped, or the clip's own double-click opens the editor
+                  // underneath the input that just appeared.
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setNameDraft(clip.name)
+                  setRenaming(true)
+                }}
+                onMouseDown={e => e.stopPropagation()}
+                onPointerDown={e => e.stopPropagation()}
+                style={{ pointerEvents: 'auto', cursor: 'text' }}
+              >{clip.name}</span>
               {isAudioClip(clip) && clip.loopEnabled && <span style={{ marginLeft: 4, opacity: 0.7 }}>↻</span>}
               {isAudioClip(clip) && clip.boomerang && <span style={{ marginLeft: 4, opacity: 0.7 }}>⇄</span>}
             </>

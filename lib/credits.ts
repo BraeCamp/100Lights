@@ -8,6 +8,7 @@
 // ⚠️ SET-THESE: the numbers below are safe defaults. Finalize the tier prices + credit rates,
 // create the matching Stripe products/prices, and map price IDs → tiers in TIER_BY_PRICE.
 import { sql } from '@/lib/db'
+import { creditAlertFor, type CreditAlert } from '@/lib/credit-alerts'
 
 // ── Tiers ────────────────────────────────────────────────────────────────────────────────────
 // The tier / cost / top-up numbers live in the isomorphic ./credit-tiers (client + server share the
@@ -56,6 +57,12 @@ async function ensure(): Promise<void> {
       free_cycle_start     TIMESTAMPTZ,
       updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`
+  // The highest usage threshold already reported this cycle (0, 50, 75, 90,
+  // 100). Kept in the row rather than in the client so the warning is not
+  // repeated on another device, and so it survives a reload — a person should
+  // hear "you have used half your credits" once, not on every command that
+  // keeps them above half.
+  await sql`ALTER TABLE user_credits ADD COLUMN IF NOT EXISTS alert_level INTEGER NOT NULL DEFAULT 0`
   await sql`
     CREATE TABLE IF NOT EXISTS credit_ledger (
       id         TEXT PRIMARY KEY,
@@ -95,16 +102,71 @@ async function record(userId: string, delta: number, reason: string): Promise<vo
   try { await sql`INSERT INTO credit_ledger (id, user_id, delta, reason) VALUES (${crypto.randomUUID()}, ${userId}, ${delta}, ${reason})` } catch { /* audit only */ }
 }
 
-export interface CreditState { balance: number; monthlyGrant: number; freeTranscribeUsed: number }
+export interface CreditState {
+  balance: number
+  monthlyGrant: number
+  freeTranscribeUsed: number
+  /**
+   * Did the balance actually get READ?
+   *
+   * Brae, with 650,000 credits in the table: "It says 'Out of AI credits' now.
+   * It should most definitely NOT be out of AI credits."
+   *
+   * Whether or not that was the cause in his case, it is a bug on its own: this
+   * function failed soft to zeros, so a connection blip, a cold start, a
+   * timeout — anything at all — came back as `balance: 0` and was
+   * indistinguishable from an account that has genuinely run out. Every caller
+   * then told a paying customer they were out of money, which is both wrong and
+   * the most alarming thing it could have said.
+   *
+   * Failing soft was right for the UI, which only wants a number to draw. It
+   * was wrong for the GATE, which needs to know the difference between "no
+   * credits" and "no answer".
+   */
+  ok: boolean
+}
 
-/** Current balance + free-allowance usage. Fails soft to zeros (so UI never crashes offline). */
+/** Current balance + free-allowance usage. Fails soft to zeros for display —
+ *  check `ok` before refusing anybody anything on the strength of it. */
 export async function getCredits(userId: string): Promise<CreditState> {
   try {
     await ensure()
     const r = await sql`SELECT balance, monthly_grant, free_transcribe_used FROM user_credits WHERE user_id = ${userId}`
-    if (!r.length) return { balance: 0, monthlyGrant: 0, freeTranscribeUsed: 0 }
-    return { balance: Number(r[0].balance), monthlyGrant: Number(r[0].monthly_grant), freeTranscribeUsed: Number(r[0].free_transcribe_used) }
-  } catch { return { balance: 0, monthlyGrant: 0, freeTranscribeUsed: 0 } }
+    if (!r.length) return { balance: 0, monthlyGrant: 0, freeTranscribeUsed: 0, ok: true }
+    return {
+      balance: Number(r[0].balance),
+      monthlyGrant: Number(r[0].monthly_grant),
+      freeTranscribeUsed: Number(r[0].free_transcribe_used),
+      ok: true,
+    }
+  } catch {
+    return { balance: 0, monthlyGrant: 0, freeTranscribeUsed: 0, ok: false }
+  }
+}
+
+/**
+ * The owner's own Lumens, in whatever database is answering.
+ *
+ * ⚠️ Brae: "It now says that I have 0 Lumens... Have I been using 0 Lumens this
+ * whole time?"
+ *
+ * The grant existed — 1,250,000 on braedancampbell@gmail.com — but a grant is a
+ * ROW, and a row belongs to one database. Read from any other one it is simply
+ * not there, and a missing row reads as an empty account: the grant succeeds,
+ * the read succeeds, and the two disagree with nothing to point at.
+ *
+ * Being the owner is a fact about who signed in, not a row, so it heals itself:
+ * the first read in a database that has never seen this account provisions it.
+ * claimGrant makes that exactly-once, so it cannot become a top-up on every
+ * page load.
+ */
+export async function ensureOwnerCredits(userId: string): Promise<void> {
+  const c = await getCredits(userId)
+  // Only when the balance was genuinely READ and is genuinely short. A failed
+  // read must never trigger a grant — that is how duplicates get written.
+  if (!c.ok || c.balance >= CREDIT_TIERS.pro.monthlyCredits) return
+  if (!(await claimGrant(`owner-provision:${userId}`))) return
+  await grantCredits(userId, CREDIT_TIERS.pro.monthlyCredits, 'owner provisioning — highest tier')
 }
 
 /** Add credits (a purchase/top-up or an admin grant). */
@@ -113,6 +175,10 @@ export async function grantCredits(userId: string, amount: number, reason: strin
   await sql`
     INSERT INTO user_credits (user_id, balance) VALUES (${userId}, ${amount})
     ON CONFLICT (user_id) DO UPDATE SET balance = user_credits.balance + ${amount}, updated_at = NOW()`
+  // More credits start the cycle's journey again, so the thresholds must be
+  // able to speak a second time. Without this a user who topped up after a
+  // "90% used" warning would never be warned again.
+  try { await sql`UPDATE user_credits SET alert_level = 0 WHERE user_id = ${userId}` } catch { /* courtesy only */ }
   await record(userId, amount, reason)
 }
 
@@ -127,7 +193,7 @@ export async function applyTierGrant(userId: string, tier: CreditTier): Promise<
 }
 
 /** Spend credits atomically. Returns { ok:false } (no deduction) when the balance is short. */
-export async function spendCredits(userId: string, amount: number, reason: string): Promise<{ ok: boolean; balance: number }> {
+export async function spendCredits(userId: string, amount: number, reason: string): Promise<{ ok: boolean; balance: number; alert?: CreditAlert | null }> {
   if (amount <= 0) { const c = await getCredits(userId); return { ok: true, balance: c.balance } }
   await ensure()
   const r = await sql`
@@ -135,7 +201,33 @@ export async function spendCredits(userId: string, amount: number, reason: strin
     WHERE user_id = ${userId} AND balance >= ${amount} RETURNING balance`
   if (!r.length) { const c = await getCredits(userId); return { ok: false, balance: c.balance } }
   await record(userId, -amount, reason)
-  return { ok: true, balance: Number(r[0].balance) }
+  const balance = Number(r[0].balance)
+  return { ok: true, balance, alert: await noteUsage(userId, balance) }
+}
+
+/**
+ * Did this spend cross a usage threshold worth telling someone about?
+ *
+ * Brae: "a notification when they hit 50%, 75%, 90%, and 100% of their allowed
+ * balance used." An allowance that disappears silently and then refuses a
+ * command mid-session is a bad surprise, and by then it is too late to do
+ * anything about it.
+ *
+ * Best-effort throughout: a failure here must never turn a successful spend
+ * into a failed one. The work was done and paid for; the warning is a courtesy.
+ */
+async function noteUsage(userId: string, balanceAfter: number): Promise<CreditAlert | null> {
+  try {
+    const rows = await sql`SELECT monthly_grant, alert_level FROM user_credits WHERE user_id = ${userId}`
+    const monthlyGrant = Number(rows[0]?.monthly_grant ?? 0)
+    const alreadyReported = Number(rows[0]?.alert_level ?? 0)
+    const alert = creditAlertFor({
+      balanceBefore: balanceAfter, balanceAfter, monthlyGrant, alreadyReported,
+    })
+    if (!alert) return null
+    await sql`UPDATE user_credits SET alert_level = ${alert.level} WHERE user_id = ${userId}`
+    return alert
+  } catch { return null }
 }
 
 /** Consume free-tier transcription seconds (rolling 30-day window); false when the 5 min is spent. */
@@ -164,7 +256,7 @@ export async function useFreeTranscribe(userId: string, seconds: number): Promis
  */
 export async function meterAI(
   userId: string, credits: number, reason: string, opts?: { freeSeconds?: number },
-): Promise<{ ok: boolean; balance: number; usedFree?: boolean }> {
+): Promise<{ ok: boolean; balance: number; usedFree?: boolean; alert?: CreditAlert | null }> {
   if (opts?.freeSeconds && opts.freeSeconds > 0) {
     // Not a React hook — `useFreeTranscribe` is a DB helper; the use* name just trips the linter's heuristic.
     // eslint-disable-next-line react-hooks/rules-of-hooks

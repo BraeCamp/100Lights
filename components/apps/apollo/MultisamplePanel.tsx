@@ -13,6 +13,7 @@ import { decodeFileAudio } from '@/lib/media-import'
 import { parseSfz, matchSfzFiles } from '@/lib/apollo/sfz'
 import { persistApolloSample } from '@/lib/apollo/sample-store'
 import type { MultisampleZone } from '@/lib/apollo/patch'
+import { noteOf, bestTakes, spanZones } from '@/lib/apollo/multisample-zones'
 
 const inputStyle: React.CSSProperties = {
   width: 44, background: 'var(--bg-surface)', color: 'var(--text-primary)',
@@ -52,28 +53,24 @@ export default function MultisamplePanel() {
   // ---- import a multisampled Sound Library instrument as key zones ----
   const [instFolders, setInstFolders] = useState<{ folder: string; count: number }[] | null>(null)
 
-  const midiFromName = (name: string): number | null => {
-    const m = name.match(/^([A-G]#?)(-?\d+)$/)
-    if (!m) return null
-    const semis = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'].indexOf(m[1])
-    if (semis < 0) return null
-    return (Number(m[2]) + 1) * 12 + semis
-  }
-
-  const entryNote = (e: LibraryEntry): number | null =>
-    e.renderSpec?.midiNote ?? midiFromName(e.name)
+  const entryNote = (e: LibraryEntry): number | null => noteOf(e)
 
   const openInstrumentList = async () => {
     setErr('')
     const all = await libraryGetAll()
-    const byFolder = new Map<string, number>()
+    // Count distinct PITCHES, not files. The Steinway is 351 samples of 88
+    // notes, and 88 is both the honest description of the instrument and the
+    // number of samples importing it will actually download.
+    const byFolder = new Map<string, Set<number>>()
     for (const e of all) {
-      if (!e.folder || entryNote(e) == null) continue
-      byFolder.set(e.folder, (byFolder.get(e.folder) || 0) + 1)
+      const note = entryNote(e)
+      if (!e.folder || note == null) continue
+      if (!byFolder.has(e.folder)) byFolder.set(e.folder, new Set())
+      byFolder.get(e.folder)!.add(note)
     }
     const folders = [...byFolder.entries()]
-      .filter(([, count]) => count >= 3)
-      .map(([folder, count]) => ({ folder, count }))
+      .map(([folder, notes]) => ({ folder, count: notes.size }))
+      .filter(({ count }) => count >= 3)
       .sort((a, b) => a.folder.localeCompare(b.folder))
     if (!folders.length) { setErr('No multisampled instruments in your library yet'); return }
     setInstFolders(folders)
@@ -85,14 +82,13 @@ export default function MultisamplePanel() {
     try {
       await ctx.start()
       const all = await libraryGetAll()
-      const entries = all
-        .map(e => ({ e, note: (e.folder === folder || e.parentFolder === folder) ? entryNote(e) : null }))
-        .filter((x): x is { e: LibraryEntry; note: number } => x.note != null)
-        .sort((a, b) => a.note - b.note)
+      const inFolder = all.filter(e => e.folder === folder || e.parentFolder === folder)
+      const entries = bestTakes(inFolder).map(({ item, note }) => ({ e: item, note }))
+      const spans = spanZones(entries.map(x => x.note))
       const zones: MultisampleZone[] = []
       let done = 0
       for (let k = 0; k < entries.length; k++) {
-        const { e, note } = entries[k]
+        const { e } = entries[k]
         setBusy(`Loading ${++done}/${entries.length}…`)
         if (!ctx.engine.samples.has(e.id)) {
           const full = await libraryFulfill(e.id)
@@ -100,16 +96,11 @@ export default function MultisamplePanel() {
           const buf = await blobToAudioBuffer(full.audioBlob)
           ctx.engine.loadSample(e.id, e.name, buf) // library id => restorable on reload
         }
-        // span each zone to the midpoints toward its neighbors so the whole
-        // keyboard is covered without gaps
-        const prev = k > 0 ? entries[k - 1].note : null
-        const next = k < entries.length - 1 ? entries[k + 1].note : null
         zones.push({
           sampleId: e.id,
-          loKey: prev == null ? 0 : Math.floor((prev + note) / 2) + 1,
-          hiKey: next == null ? 127 : Math.floor((note + next) / 2),
+          ...spans[k],
           loVel: 0, hiVel: 127,
-          rootKey: note, tune: 0, gain: 0,
+          tune: 0, gain: 0,
           loopMode: 'off', loopStart: 0, loopEnd: 1,
         })
       }

@@ -143,16 +143,26 @@ export const bass = () => patch('Bass', p => {
 export const pad = () => patch('Pad', p => {
   // THREE voices per note, not seven.
   //
-  // At unison 4 + 3 this pad cost 7 voices per note, and a pad plays chords: a
-  // four-note chord was 28 voices against Apollo's limit of 16, reaching 56 once
-  // consecutive bars overlapped through the 2.6s release. Past 16 the allocator
-  // steals ACTIVE voices — notes cut off mid-sustain — which is audible as
-  // stuttering and is what "it's freezing at the beginning" was, in a section
-  // where the pad plays with almost nothing else and nothing is combined yet.
+  // At unison 4 + 3 this pad cost 7 oscillator voices per note, and a pad plays
+  // chords. Reducing that was right; the reason first written here was not.
   //
-  // A released voice being stolen is fine; the allocator takes those first and
-  // they are already fading. Staying under 16 ACTIVE is the whole trick. Three
-  // voices per note puts a four-note chord at 12.
+  // ⚠️ CORRECTED 2026-08-31, verified against the allocator: global.poly counts
+  // NOTES, not unison voices. The engine holds a fixed pool of 32 Voice objects
+  // and takes exactly one per note-on, with unison rendered INSIDE a voice — a
+  // single note at unison 8 plays fine with poly set to 2, which is the test
+  // that settles it. So a four-note chord was never "28 against a limit of 16".
+  //
+  // What unison does cost is SUMMED LEVEL and CPU, and the first of those is
+  // the one you hear. Every voice sums at full level — there is no polyphony
+  // compensation — so the peak of a track scales linearly with what is held
+  // down, and the master limiter (instant attack, 0.98 ceiling, 120 ms release)
+  // then pulls the whole track down to fit. That is what dense chords ducking
+  // and crawling back actually is. scripts/song-headroom.mjs measures it.
+  //
+  // Voice stealing is real and separate: past poly the allocator calls kill()
+  // rather than release(), so a note stops dead mid-sustain. It takes more than
+  // sixteen notes sounding at once, which long releases make easier than it
+  // sounds. A released voice being stolen is fine — those go first.
   //
   // The width lost to fewer unison voices is bought back with STEREO SPREAD, not
   // with wider detune. That was the original compensation and it was the wrong

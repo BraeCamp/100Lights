@@ -42,7 +42,10 @@ export interface UsageEntry {
 
 // Rough public list prices for a $ estimate when the provider doesn't return a cost (per-unit USD).
 const RATE: Record<string, { in?: number; out?: number; per?: number; unit?: string }> = {
-  'anthropic:claude-sonnet-5': { in: 3 / 1e6, out: 15 / 1e6 },     // per token
+  // ⚠️ $2 / $10, not $3 / $15 — those are Sonnet 4.6's prices, and this table
+  // carried them for Sonnet 5 until checked against the model reference. A
+  // wrong rate here is a wrong number on every row of the admin Usage panel.
+  'anthropic:claude-sonnet-5': { in: 2 / 1e6, out: 10 / 1e6 },     // per token
   'anthropic:claude-opus-4-8': { in: 15 / 1e6, out: 75 / 1e6 },
   'deepgram': { per: 0.0043 / 60, unit: 'seconds' },               // nova ~$0.0043/min
 }

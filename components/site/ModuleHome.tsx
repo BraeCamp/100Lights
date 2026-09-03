@@ -1,9 +1,11 @@
 'use client'
+
 // The front door of a flagship module — Beacon (/beacon, audio), Prism
 // (/prism, video), Aperture (/aperture, image). One shared component; each
 // module page is a thin wrapper passing its editor key. Internal data keys
 // stay 'audio'/'video'/'image'; only the public identity is the light name.
 
+import { SaveOfflineItem } from '@/components/projects/SaveOfflineItem'
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -475,6 +477,7 @@ export default function ModuleHome({ moduleKey }: { moduleKey: ModuleKey }) {
           >
             <Pencil size={12} /> Rename
           </button>
+          <SaveOfflineItem projectId={ctxMenu.id} />
         </div>
       )}
     </div>

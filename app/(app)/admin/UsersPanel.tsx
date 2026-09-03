@@ -1,6 +1,7 @@
 'use client'
 
-import { isPaid, type Plan } from '@/lib/entitlements'
+import { isPaid, PAID_PLANS, PLAN_LABEL, type Plan } from '@/lib/entitlements'
+import { CREDIT_TIERS, LUMENS_NAME } from '@/lib/credit-tiers'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, X, ChevronRight, ExternalLink, AlertTriangle } from 'lucide-react'
 
@@ -279,6 +280,25 @@ export default function UsersPanel() {
   useEffect(() => { if (showCustom) customInputRef.current?.focus() }, [showCustom])
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
+
+  /** Which plan the gift buttons will grant. Pro by default — the commonest
+   *  gift, and what the menu did before it could offer anything else. */
+  const [giftPlan, setGiftPlan] = useState<Plan>('pro')
+
+  const applyTier = async (userId: string, tier: string) => {
+    setCtx(null)
+    try {
+      const res = await fetch('/api/admin/gift', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, tier }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
+      showToast(`${d.label} tier applied — ${Number(d.credits).toLocaleString()} a month`)
+      await load(q.trim(), page)
+      if (detailUser?.userId === userId) void openDetail(detailUser)
+    } catch (e) { showToast(e instanceof Error ? e.message : 'Action failed') }
+  }
 
   const applyGift = async (userId: string, plan: string | null, days: number | null) => {
     setCtx(null); setShowCustom(false); setCustomDays('')
@@ -763,12 +783,31 @@ export default function UsersPanel() {
                   )}
                 </div>
 
-                {/* Gift actions — visible + touch-friendly (no right-click needed) */}
+                {/* ⚠️ Gift actions — EVERY plan and every Lumen tier, right here.
+                    Brae: "I can gift pro when I click on a user, but I can't
+                    gift anything else."
+
+                    Quite right: this panel said GIFT PRO and sent `giftPlan`,
+                    whose only selector lived in the right-click menu — so from
+                    here it was whatever that menu was last set to, which is
+                    'pro' until somebody right-clicks. Three of the four plans
+                    were reachable only by a gesture that does not exist on a
+                    touchscreen, and the Lumen tiers were not here at all. */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', marginBottom: 6 }}>GIFT PRO</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', marginBottom: 6 }}>GIFT A PLAN</div>
+                  {/* Which plan the durations below will grant. */}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                    {PAID_PLANS.map(p => (
+                      <button key={p} onClick={() => setGiftPlan(p)}
+                        style={{ fontSize: 11.5, fontWeight: 700, padding: '5px 12px', borderRadius: 7,
+                          border: `1px solid ${giftPlan === p ? 'var(--accent)' : 'var(--border)'}`,
+                          background: giftPlan === p ? 'rgba(139,92,246,0.18)' : 'transparent',
+                          color: giftPlan === p ? 'var(--accent-light)' : 'var(--text-secondary)', cursor: 'pointer' }}>{PLAN_LABEL[p]}</button>
+                    ))}
+                  </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {([['7 days', 7], ['30 days', 30], ['90 days', 90], ['Indefinite', null]] as const).map(([lbl, d]) => (
-                      <button key={lbl} onClick={() => applyGift(detailUser.userId, 'pro', d)}
+                      <button key={lbl} onClick={() => applyGift(detailUser.userId, giftPlan, d)}
                         style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 11px', borderRadius: 7, border: '1px solid rgba(139,92,246,0.4)', background: 'rgba(139,92,246,0.12)', color: 'var(--accent-light)', cursor: 'pointer' }}>{lbl}</button>
                     ))}
                     {detailUser.giftPlan && (
@@ -776,7 +815,23 @@ export default function UsersPanel() {
                         style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 11px', borderRadius: 7, border: '1px solid rgba(239,68,68,0.4)', background: 'transparent', color: '#ef4444', cursor: 'pointer' }}>Remove gift</button>
                     )}
                   </div>
-                  {!detailUser.hasRecord && <p style={{ fontSize: 10.5, color: '#f59e0b', margin: '6px 0 0' }}>No subscription record yet — gifting will 404 until they sign in once.</p>}
+
+                  {/* ⚠️ A separate axis, not a bigger version of the same one: a
+                      plan unlocks FEATURES, a tier is how many Lumens arrive
+                      each month. Somebody can hold either without the other. */}
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em', margin: '12px 0 6px' }}>
+                    GIFT {LUMENS_NAME.toUpperCase()}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {(Object.keys(CREDIT_TIERS) as (keyof typeof CREDIT_TIERS)[])
+                      .filter(t => t !== 'free')
+                      .map(t => (
+                        <button key={t} onClick={() => applyTier(detailUser.userId, t)}
+                          style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 11px', borderRadius: 7, border: '1px solid rgba(251,191,36,0.4)', background: 'rgba(251,191,36,0.12)', color: '#fbbf24', cursor: 'pointer' }}>
+                          {CREDIT_TIERS[t].label} · {CREDIT_TIERS[t].monthlyCredits.toLocaleString()}
+                        </button>
+                      ))}
+                  </div>
                 </div>
 
                 </>)}
@@ -938,16 +993,62 @@ export default function UsersPanel() {
             <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: 0.3, marginBottom: 1 }}>Manage subscription</p>
             <p style={{ fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ctx.user.email || ctx.user.userId}</p>
           </div>
-          {([{ label: 'Gift Pro — 7 days', days: 7 }, { label: 'Gift Pro — 30 days', days: 30 }, { label: 'Gift Pro — 90 days', days: 90 }, { label: 'Gift Pro indefinitely', days: null }] as const).map(({ label, days }) => (
-            <MenuItem key={label} onClick={() => applyGift(ctx.user.userId, 'pro', days)}>{label}</MenuItem>
+          {/* ── Which plan, then for how long ─────────────────────────────
+              Brae: "We also need to change the Admin menu so that I can gift
+              any of the existing paid Tiers."
+
+              It offered Pro and only Pro, which quietly made three of the four
+              tiers ungiftable — the table has had Studio and Max for a while
+              and the only way onto one was a script. Built from PAID_PLANS
+              rather than a hand-written list, so a tier added there appears
+              here the same day. */}
+          <div style={{ padding: '6px 12px 2px', display: 'flex', gap: 4 }}>
+            {PAID_PLANS.map(p => (
+              <button
+                key={p}
+                onClick={() => setGiftPlan(p)}
+                style={{
+                  flex: 1, padding: '3px 0', borderRadius: 6, fontSize: 11, cursor: 'pointer',
+                  fontWeight: giftPlan === p ? 700 : 500,
+                  border: `1px solid ${giftPlan === p ? 'var(--accent)' : 'var(--border)'}`,
+                  background: giftPlan === p ? 'rgba(139,92,246,0.2)' : 'transparent',
+                  color: giftPlan === p ? 'var(--accent-light)' : 'var(--text-secondary)',
+                }}
+              >
+                {PLAN_LABEL[p]}
+              </button>
+            ))}
+          </div>
+          {([{ label: '7 days', days: 7 }, { label: '30 days', days: 30 }, { label: '90 days', days: 90 }, { label: 'Indefinitely', days: null }] as const).map(({ label, days }) => (
+            <MenuItem key={label} onClick={() => applyGift(ctx.user.userId, giftPlan, days)}>
+              Gift {PLAN_LABEL[giftPlan]} — {label}
+            </MenuItem>
           ))}
+
+          {/* ── And the other kind of subscription ─────────────────────────
+              A credit TIER is not a plan: the plan decides what is unlocked,
+              the tier decides how many Lumens arrive each month. Both are
+              called a subscription in conversation, so they sit together —
+              separated, and labelled, so nobody gifts one meaning the other. */}
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+          <div style={{ padding: '4px 12px 2px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: 0.3 }}>
+            Credit tier — monthly {LUMENS_NAME}
+          </div>
+          {(Object.keys(CREDIT_TIERS) as (keyof typeof CREDIT_TIERS)[])
+            .filter(t => t !== 'free')
+            .map(t => (
+              <MenuItem key={t} onClick={() => applyTier(ctx.user.userId, t)}>
+                Gift {CREDIT_TIERS[t].label} — {CREDIT_TIERS[t].monthlyCredits.toLocaleString()} a month
+              </MenuItem>
+            ))}
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
           {showCustom ? (
             <div style={{ padding: '8px 12px', display: 'flex', gap: 6, alignItems: 'center' }}>
               <input ref={customInputRef} type="number" min={1} placeholder="days" value={customDays}
                 onChange={e => setCustomDays(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { const d = parseInt(customDays); if (d > 0) applyGift(ctx.user.userId, 'pro', d) } }}
+                onKeyDown={e => { if (e.key === 'Enter') { const d = parseInt(customDays); if (d > 0) applyGift(ctx.user.userId, giftPlan, d) } }}
                 style={{ width: 72, padding: '4px 8px', borderRadius: 6, fontSize: 12, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)', outline: 'none' }} />
-              <button onClick={() => { const d = parseInt(customDays); if (d > 0) applyGift(ctx.user.userId, 'pro', d) }}
+              <button onClick={() => { const d = parseInt(customDays); if (d > 0) applyGift(ctx.user.userId, giftPlan, d) }}
                 style={{ padding: '4px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer', background: 'rgba(139,92,246,0.2)', color: 'var(--accent-light)', border: '1px solid rgba(139,92,246,0.3)', fontWeight: 500 }}>Apply</button>
             </div>
           ) : (

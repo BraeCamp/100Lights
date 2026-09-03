@@ -1,7 +1,8 @@
-import { app, BrowserWindow, shell, session, ipcMain, desktopCapturer } from 'electron'
+import { app, BrowserWindow, shell, session, ipcMain, desktopCapturer, globalShortcut } from 'electron'
 import path from 'path'
+import fs from 'fs'
 import log from 'electron-log'
-import { setupMenu } from './menu'
+import { setupMenu, watchWindowsForMenu } from './menu'
 import { setupUpdater } from './updater'
 import { setupIpc } from './ipc'
 import { disposeBridge } from './bridge'
@@ -88,6 +89,45 @@ const oauthPopupOptions = {
 
 // The detachable "Build history" controls open in their own small window so they
 // can be dragged to another monitor; they drive the studio window via postMessage.
+/**
+ * A panel asking to become its own OS window.
+ *
+ * Brae: "can we make it so that windows and menus opened through the desktop
+ * app can move outside of the window?"
+ *
+ * ⚠️ Matched on the window NAME rather than the URL, because these windows have
+ * no URL — they open blank and the app draws into them through a React portal,
+ * so there is one copy of the project and one audio engine no matter how many
+ * panels are floating. A URL-based rule would have nothing to match.
+ *
+ * ⚠️ AND IT HAS TO COME BEFORE isInternal, which navigates the MAIN window to
+ * whatever was opened. That is right for a link and catastrophic here: popping
+ * out the mixer would have replaced the studio with it.
+ */
+function isPopOut(frameName: string): boolean {
+  return frameName.startsWith('100lights-popout')
+}
+
+/**
+ * Deliberately plain. No menu bar, no fullscreen, resizable and always
+ * closable — this is a panel that happens to be a window, and it should behave
+ * like a plugin window in any DAW: move it anywhere, put it on the other
+ * screen, close it and the work is untouched.
+ */
+const popOutOptions = {
+  minWidth: 280,
+  minHeight: 200,
+  resizable: true,
+  fullscreenable: false,
+  backgroundColor: '#14121a',
+  autoHideMenuBar: true,
+  webPreferences: {
+    preload: path.join(__dirname, 'preload.js'),
+    nodeIntegration: false,
+    contextIsolation: true,
+  },
+}
+
 function isHistoryControl(url: string): boolean {
   try { return new URL(url).pathname.startsWith('/history-control') } catch { return false }
 }
@@ -206,7 +246,12 @@ function openModuleWindow(moduleKey: string): void {
     }
   })
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // Before anything else: a popped-out panel is not a link, and the
+    // isInternal branch below would load it over the top of the studio.
+    if (isPopOut(frameName)) {
+      return { action: 'allow', overrideBrowserWindowOptions: popOutOptions }
+    }
     if (isExternalPayment(url)) {
       shell.openExternal(url)
       return { action: 'deny' }
@@ -271,7 +316,10 @@ function openProjectWindow(url: string): void {
     if (isDev) win.webContents.openDevTools({ mode: 'detach' })
   })
 
-  win.webContents.setWindowOpenHandler(({ url: u }) => {
+  win.webContents.setWindowOpenHandler(({ url: u, frameName }) => {
+    // Same rule as the main window: a popped-out panel opens as its own window
+    // rather than replacing this one.
+    if (isPopOut(frameName)) return { action: 'allow', overrideBrowserWindowOptions: popOutOptions }
     if (isExternalPayment(u)) { shell.openExternal(u); return { action: 'deny' } }
     if (isOAuthProvider(u)) { return { action: 'allow', overrideBrowserWindowOptions: oauthPopupOptions } }
     if (isHistoryControl(u)) { return { action: 'allow', overrideBrowserWindowOptions: historyPopupOptions } }
@@ -469,6 +517,156 @@ function setupModuleIpc(): void {
   ipcMain.handle('window:isFullScreen', (event) => {
     return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
   })
+  /**
+   * "Home" from inside a project window.
+   *
+   * ⚠️ This used to be handled by will-navigate, which only fires for a FULL
+   * PAGE LOAD. The web app now goes home with the client router — so that the
+   * layout, Light and any popped-out panels survive the trip — and a
+   * History-API navigation fires no such event. The desktop behaviour
+   * (surface the launcher, close the orphaned project window) silently stopped
+   * happening the moment the anchor became a <Link>.
+   *
+   * So the renderer asks instead of being intercepted. Returns true when it
+   * handled it, and the web app does nothing further; false in the launcher
+   * itself, where going to the dashboard is an ordinary navigation.
+   */
+  ipcMain.handle('window:goHome', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win === launcherWindow) return false
+    launcherWindow?.show()
+    launcherWindow?.focus()
+    win.close()
+    return true
+  })
+}
+
+/**
+ * Keys that work when 100Lights is NOT the focused app.
+ *
+ * The one thing a desktop build can do that a browser tab genuinely cannot.
+ * You are reading about a chord voicing in another window; you want to hear the
+ * bar again without going and finding the studio first.
+ *
+ * ⚠️ TOGGLE, NOT PUSH-TO-TALK. Electron's globalShortcut fires on press and has
+ * no key-up event at all, so "hold to talk" cannot be built on it — only
+ * "press to start, press to stop". Naming it push-to-talk and having it behave
+ * like a latch is the kind of small lie people discover mid-sentence.
+ *
+ * ⚠️ And deliberately few. A global shortcut is taken from EVERY application on
+ * the machine — registering something ordinary would break it everywhere else,
+ * which is why these are all behind Cmd+Shift.
+ */
+/**
+ * A project file arriving from outside — double-clicked, or dropped on the dock.
+ *
+ * ⚠️ macOS delivers these through `open-file`, which can fire BEFORE the app is
+ * ready. Queuing is not optional: without it, opening 100Lights by
+ * double-clicking a project silently opens an empty studio instead, which looks
+ * like the file was corrupt.
+ */
+const pendingFiles: string[] = []
+function deliverFile(filePath: string): void {
+  const win = launcherWindow ?? BrowserWindow.getAllWindows()[0]
+  if (!win || win.webContents.isLoading()) { pendingFiles.push(filePath); return }
+  // ⚠️ The MAIN process reads it and sends the contents, rather than handing
+  // the renderer a path and a way to read paths. A general readFile exposed to
+  // the web layer is a much wider door than this needs: the only files that
+  // come through here are ones the operating system has explicitly handed us,
+  // because somebody double-clicked them.
+  let text: string
+  try {
+    const stat = fs.statSync(filePath)
+    // A project file is JSON; anything of this size is not one, and reading it
+    // would block the main process — which is the thread drawing every window.
+    if (stat.size > 64 * 1024 * 1024) {
+      log.warn('Refusing to open an implausibly large project file:', filePath, stat.size)
+      return
+    }
+    text = fs.readFileSync(filePath, 'utf8')
+  } catch (err) {
+    log.warn('Could not read the project file handed to us:', filePath, err)
+    return
+  }
+  win.webContents.send('menu:command', {
+    command: 'open-file',
+    arg: { name: path.basename(filePath), text },
+  })
+  if (win.isMinimized()) win.restore()
+  win.focus()
+}
+
+function setupFileOpening(): void {
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault()
+    deliverFile(filePath)
+  })
+  // Windows and Linux pass the path as an argument instead.
+  const fromArgv = process.argv.find(a => a.endsWith('.cfproj'))
+  if (fromArgv) pendingFiles.push(fromArgv)
+}
+
+/** Hand over anything that arrived before there was a window to hand it to. */
+function flushPendingFiles(): void {
+  const queued = pendingFiles.splice(0, pendingFiles.length)
+  for (const f of queued) deliverFile(f)
+}
+
+/** Module windows load /apps/* — outside the app layout, so nothing in them
+ *  is listening for a menu command. */
+function isModuleWindow(win: BrowserWindow | null): boolean {
+  if (!win) return false
+  for (const w of moduleWindows.values()) if (w === win) return true
+  return false
+}
+
+/** The last app-layout window to have focus — see the note in target(). */
+let lastAppWindow: BrowserWindow | null = null
+
+function setupGlobalShortcuts(): void {
+  // Whichever window the person was last actually working in, ignoring the
+  // module windows, which cannot answer.
+  app.on('browser-window-focus', (_e, win) => {
+    if (!isModuleWindow(win)) lastAppWindow = win
+  })
+
+  /**
+   * ⚠️ THE FOCUSED WINDOW IS NOT ALWAYS ONE THAT CAN ANSWER.
+   *
+   * These are global shortcuts — "play/stop from anywhere", "start Light from
+   * anywhere" — and anywhere includes a module window. Those load /apps/*,
+   * which is outside the app layout, so they mount neither the menu bridge nor
+   * Light: the command went to the focused window, found no listener, and did
+   * nothing. Pressing a shortcut advertised as working from anywhere and
+   * getting silence reads as a broken feature, not as a scoping rule.
+   *
+   * So it goes to the window that has the studio in it instead.
+   */
+  const target = () => {
+    const focused = BrowserWindow.getFocusedWindow()
+    if (focused && !isModuleWindow(focused)) return focused
+    if (lastAppWindow && !lastAppWindow.isDestroyed()) return lastAppWindow
+    return launcherWindow
+      ?? BrowserWindow.getAllWindows().find(w => !isModuleWindow(w) && !w.isDestroyed())
+      ?? null
+  }
+  const send = (command: string) => () => target()?.webContents.send('menu:command', { command })
+
+  const shortcuts: Array<[string, () => void]> = [
+    // Play/stop from anywhere.
+    ['CommandOrControl+Shift+Space', send('transport-toggle')],
+    // Start or stop Light listening from anywhere.
+    ['CommandOrControl+Shift+L', send('voice-toggle')],
+  ]
+  for (const [accel, fn] of shortcuts) {
+    // ⚠️ register() returns false when another app already owns the
+    // combination. Silently failing there would look like a broken feature, so
+    // it is logged — the person can change it, but only if they know.
+    if (!globalShortcut.register(accel, fn)) {
+      log.warn(`Global shortcut ${accel} is already taken by another app — not registered`)
+    }
+  }
+  app.on('will-quit', () => globalShortcut.unregisterAll())
 }
 
 // Single-instance enforcement — second launch focuses the launcher
@@ -483,12 +681,21 @@ if (!gotLock) {
     }
   })
 
+  // ⚠️ Registered OUTSIDE whenReady: macOS can deliver open-file before the app
+  // is ready, and a listener attached afterwards never hears it.
+  setupFileOpening()
+
   app.whenReady().then(async () => {
     setupIpc()
     setupModuleIpc()
     await createLauncherWindow()
     if (launcherWindow) {
       setupMenu(launcherWindow, isDev)
+      // The Window menu lists panels that come and go, so it cannot be built
+      // once at startup and left alone.
+      watchWindowsForMenu(launcherWindow, isDev)
+      setupGlobalShortcuts()
+      flushPendingFiles()
       setupUpdater(isDev)
     }
   })

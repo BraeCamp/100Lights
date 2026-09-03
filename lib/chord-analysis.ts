@@ -11,7 +11,10 @@ export interface Chord {
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 // Interval-set (from root, sorted) → chord-quality suffix. Longer matches win.
-const QUALITIES: Array<[number[], string]> = [
+// Exported so the SPOKEN side can invert it. "C minor 7" has to produce the
+// intervals this table would name back as "m7", or the studio names a chord
+// differently from the way it was asked for one.
+export const QUALITIES: Array<[number[], string]> = [
   [[0, 4, 7, 11], 'maj7'],
   [[0, 3, 7, 10], 'm7'],
   [[0, 4, 7, 10], '7'],

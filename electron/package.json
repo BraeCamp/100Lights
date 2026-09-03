@@ -1,6 +1,6 @@
 {
   "name": "100lights-desktop",
-  "version": "0.5.0",
+  "version": "0.5.3",
   "description": "100Lights \u2014 Professional Audio & Video Editing",
   "main": "dist/main.js",
   "author": {
@@ -75,7 +75,12 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "extendInfo": {
+        "NSDocumentsFolderUsageDescription": "100Lights opens and saves your projects here.",
+        "NSMicrophoneUsageDescription": "100Lights uses the microphone for voice control and for recording audio into your projects.",
+        "NSCameraUsageDescription": "100Lights uses the camera only if you record video into a project."
+      }
     },
     "dmg": {
       "title": "Install 100Lights",
@@ -128,7 +133,16 @@
         "releaseType": "draft"
       }
     ],
-    "afterSign": "scripts/notarize.js"
+    "afterSign": "scripts/notarize.js",
+    "fileAssociations": [
+      {
+        "ext": "cfproj",
+        "name": "100Lights Project",
+        "description": "A 100Lights project",
+        "role": "Editor",
+        "icon": "../build/icons/icon.icns"
+      }
+    ]
   },
   "allowScripts": {
     "electron@38.8.6": true

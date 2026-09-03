@@ -7,6 +7,7 @@ import type {
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
   ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
 } from './daw-types'
+import { repairAutomationPoints } from './automation-repair'
 import { fatPatch } from './apollo/patch-diff'
 import { restoreNoteIds } from './note-ids'
 import type { MidiPreset } from './midi-presets'
@@ -534,6 +535,8 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     }
 
     case 'UPDATE_EFFECT': {
+      const was = project.tracks.find(t => t.id === action.trackId)
+        ?.effects.find(e => e.id === action.effectId)
       const tracks = project.tracks.map(t => {
         if (t.id !== action.trackId) return t
         const effects = t.effects.map(e =>
@@ -541,7 +544,41 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
         )
         return { ...t, effects }
       })
-      return { ...project, tracks }
+
+      // ── Touching a control overrides its lane ────────────────────────────
+      //
+      // Brae: "When I set reverb on pad to 80% it shows in the device chain
+      // menu but not on the graph."
+      //
+      // ⚠️ AND THE GRAPH WAS STILL DRIVING THE SOUND. The Ableton semantics are
+      // written down on AutomationLane, honoured by the engine (an overridden
+      // lane keeps its curve and stops driving the parameter) and drawn by the
+      // lane view in grey — but NOTHING SET THE FLAG except the volume fader on
+      // the track head. Pan never did, and no effect parameter ever did.
+      //
+      // So a reverb with a wet lane ignored the number you set: the device
+      // chain said 80%, the curve went on playing, and what you heard was the
+      // curve. That is the same failure as a bypassed effect reporting its
+      // stored amount — a value shown that reaches no audio.
+      //
+      // Done in the reducer rather than at the control, because there are four
+      // ways to change an effect parameter (the chain, the popped-out card, the
+      // voice assistant, the learned cache) and only one of them was ever going
+      // to remember. This is the one place all four pass through.
+      const params = (action.patch as { params?: Record<string, unknown> }).params
+      const before = was?.params as Record<string, unknown> | undefined
+      if (!params || !project.automationLanes?.length) return { ...project, tracks }
+
+      const prefix = `fx:${action.effectId}:`
+      const automationLanes = project.automationLanes.map(l => {
+        if (l.overridden || !l.points.length) return l
+        if (l.trackId !== action.trackId || !l.parameter.startsWith(prefix)) return l
+        const key = l.parameter.slice(prefix.length)
+        // Only a parameter that actually MOVED. Re-saving an effect unchanged,
+        // or changing its decay, must not switch off the lane driving its wet.
+        return before && Object.is(before[key], params[key]) ? l : { ...l, overridden: true }
+      })
+      return { ...project, tracks, automationLanes }
     }
 
     case 'REORDER_EFFECTS': {
@@ -801,9 +838,10 @@ export interface DawContextValue {
   /** Collapse repeated same-control tweaks in the build log to their net value
    *  (the History panel's "Consolidate" button). Returns the new step count. */
   consolidateBuildHistory?: () => number
-  // Optional history (mobile provides these; the desktop editor has its own undo)
-  undo?: () => void
-  redo?: () => void
+  // History. Both editors provide these now; they return whether there was
+  // anything to undo, so a caller can report honestly instead of assuming.
+  undo?: () => boolean | void
+  redo?: () => boolean | void
   canUndo?: boolean
   canRedo?: boolean
   // UI state (not in reducer — ephemeral)
@@ -829,10 +867,16 @@ export interface DawContextValue {
   /** `seed: null` means "build it from the track on open". `follow` retargets
    *  the window as the track selection changes, which is what makes it usable
    *  as a left-open panel rather than a per-track dialog. */
-  apolloRack: { trackId: string; seed: unknown; follow?: boolean } | null
-  setApolloRack: (v: { trackId: string; seed: unknown; follow?: boolean } | null) => void
+  apolloRack: { trackId: string; seed: unknown; follow?: boolean; detached?: boolean } | null
+  setApolloRack: (v: { trackId: string; seed: unknown; follow?: boolean; detached?: boolean } | null) => void
   selectedEffectIds: Set<string>
   setSelectedEffectIds: React.Dispatch<React.SetStateAction<Set<string>>>
+  /** The studio's own colours and patterns. Local to the editor until Light
+   *  needed to open it — "let's edit the UI colours" is a navigation request
+   *  like any other, and it had no route because nothing outside AudioEditor
+   *  could see this. */
+  showAppearance?: boolean
+  setShowAppearance?: (v: boolean) => void
   // Pad/voice MIDI card
   showPads: boolean
   setShowPads: (v: boolean | ((prev: boolean) => boolean)) => void
@@ -944,6 +988,23 @@ export function useDaw(): DawContextValue {
   const ctx = useContext(DawContext)
   if (!ctx) throw new Error('useDaw must be used inside DawProvider')
   return ctx
+}
+
+/**
+ * The studio if there is one, and null if there is not.
+ *
+ * ⚠️ For things that live OUTSIDE the editor but still want it when it is
+ * there. The voice control is the reason this exists: it used to be rendered
+ * inside the transport bar, so it only existed while a project was open, and
+ * navigating anywhere at all destroyed it mid-conversation — the history, a
+ * pending question, whatever had been selected.
+ *
+ * Throwing is right for a component that cannot work without the studio.
+ * Returning null is right for one that can do LESS without it, and this is the
+ * hook for the second kind.
+ */
+export function useOptionalDaw(): DawContextValue | null {
+  return useContext(DawContext)
 }
 
 // ── Helper hooks ─────────────────────────────────────────────────────────
@@ -1091,7 +1152,7 @@ export function migrateProject(raw: Partial<DawProject>): DawProject {
     arrangementClips: withIds.arrangementClips,
     sessionGrid:      withIds.sessionGrid,
     clipEffects:     (raw.clipEffects ?? []).map(legacyToBar),
-    automationLanes: raw.automationLanes ?? [],
+    automationLanes: repairAutomationPoints(raw.automationLanes ?? []),
     returnTracks:    raw.returnTracks    ?? [],
     takeLanes:       raw.takeLanes       ?? [],
     crossfaderValue: raw.crossfaderValue ?? 0.5,

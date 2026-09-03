@@ -10,7 +10,21 @@
  *    are never touched
  */
 
-const VERSION = 'v3'
+// ⚠️ BUMP THIS WHENEVER A CACHED ASSET MUST BE ABANDONED, not just when this
+// file's logic changes.
+//
+// Brae: "It works on safari, but not Brave." Exactly what a stale cache looks
+// like — Safari had never registered this worker, Brave had, and its v3 caches
+// were still answering /apollo/engine.js with a months-old worklet. The engine
+// url carries its version now, so new builds cannot be served stale; the OLD
+// entry still sat in the v3 asset cache, and a browser only fetches a new
+// service worker when this file's bytes change.
+//
+// Changing the version does that, and activate() deletes every cache not in
+// KEEP — so the stale worklet is dropped on the next visit, for everybody, with
+// nobody having to clear anything by hand. IndexedDB is untouched: sound
+// libraries and offline projects are not caches and are never cleared here.
+const VERSION = 'v4'
 const STATIC_CACHE = `100l-static-${VERSION}`
 const PAGE_CACHE = `100l-pages-${VERSION}`
 const ASSET_CACHE = `100l-assets-${VERSION}`

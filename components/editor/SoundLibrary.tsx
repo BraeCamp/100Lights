@@ -3,13 +3,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Knob from './daw/Knob'
 import { createPortal } from 'react-dom'
-import { RotateCw, Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2, ArrowLeft } from 'lucide-react'
+import { RotateCw, Library, Wand2, Mic, Upload, Play, Square, Trash2, Pencil, Check, X, RotateCcw, FolderPlus, ChevronRight, ChevronDown, Folder, FolderOpen, SlidersHorizontal, Globe2, ArrowLeft, Tag } from 'lucide-react'
 import {
-  libraryGetAll, libraryAdd, libraryUpdate, libraryDelete, isProtectedSound,
+  libraryGetAll, libraryAdd, libraryUpdate, libraryDelete, isProtectedSound, pushSoundPref,
   initLibrary,
   getAudioDurationFromBlob,
   CATEGORY_LABELS, LIBRARY_CATEGORIES, CATEGORY_GROUPS,
-  TYPE_TAGS, CHARACTER_TAGS, CATEGORY_TO_TYPE_TAG, CATEGORY_CHAR_TAGS,
+  TYPE_TAGS, CHARACTER_TAGS, tagsOf,
   type LibraryEntry, type LibraryCategory,
 } from '@/lib/sound-library'
 import { detectMediaKind } from '@/lib/media-import'
@@ -64,7 +64,7 @@ function colorFor(cat: string) { return CAT_COLORS[cat] ?? '#94a3b8' }
 
 // ── Entry row ─────────────────────────────────────────────────────────────────
 function EntryRow({
-  entry, folders, onDelete, onRename, onCategoryChange, onFolderChange, onFulfilled, onPick,
+  entry, folders, onDelete, onRename, onCategoryChange, onFolderChange, onUserTags, onFulfilled, onPick,
   selected, onSelect,
 }: {
   entry: LibraryEntry
@@ -73,6 +73,8 @@ function EntryRow({
   onRename: (id: string, name: string) => void
   onCategoryChange: (id: string, cat: LibraryCategory) => void
   onFolderChange: (id: string, folder: string | undefined) => void
+  /** This user's own tags — see LibraryEntry.userTags. Never the catalog's. */
+  onUserTags: (id: string, tags: string[]) => void
   onFulfilled?: (e: LibraryEntry) => void
   onPick?: (e: LibraryEntry) => void
   selected?: boolean
@@ -82,6 +84,8 @@ function EntryRow({
   const [draft, setDraft]             = useState(entry.name)
   const [playing, setPlaying]         = useState(false)
   const [folderOpen, setFolderOpen]   = useState(false)
+  const [tagOpen, setTagOpen]         = useState(false)
+  const [tagDraft, setTagDraft]       = useState((entry.userTags ?? []).join(', '))
   const [fulfilling, setFulfilling]   = useState(false)
   const [sharing,    setSharing]      = useState(false)
   // A sound that can't be rendered or decoded used to fail completely silently:
@@ -89,6 +93,7 @@ function EntryRow({
   // play did nothing and said nothing. Show it instead.
   const [loadErr,    setLoadErr]      = useState('')
   const folderRef = useRef<HTMLDivElement>(null)
+  const tagRef    = useRef<HTMLDivElement>(null)
 
   // Waveform / scrub refs
   const waveRef      = useRef<HTMLCanvasElement | null>(null)
@@ -350,6 +355,54 @@ function EntryRow({
       <span style={{ fontSize: 9, color: 'var(--text-muted)', flexShrink: 0 }}>
         {entry.duration.toFixed(1)}s
       </span>
+
+      {/* ── Your own tags ──────────────────────────────────────────────────
+          Brae: "create a UI so that users can add and edit samples and their
+          tags for their own libraries and saved samples."
+
+          ⚠️ WRITES userTags, NEVER tags. A catalog sound's `tags` belong to
+          everybody and are refreshed from the catalog whenever an admin edits
+          them — anything written there would be overwritten later, silently.
+          These sit alongside and are only ever this person's. */}
+      <div ref={tagRef} style={{ position: 'relative', flexShrink: 0 }}>
+        <button
+          onClick={() => { setTagDraft((entry.userTags ?? []).join(', ')); setTagOpen(v => !v) }}
+          title={entry.userTags?.length ? `Your tags: ${entry.userTags.join(', ')}` : 'Add your own tags'}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', opacity: entry.userTags?.length ? 1 : 0.45, color: entry.userTags?.length ? 'rgba(52,211,153,0.9)' : 'var(--text-muted)' }}
+        >
+          <Tag size={10} />
+        </button>
+        {tagOpen && (
+          <div style={{
+            position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 50,
+            background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 7,
+            padding: 8, width: 210, boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+          }}>
+            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 5, lineHeight: 1.4 }}>
+              Your tags — only you see these. Separate with commas.
+            </div>
+            <input
+              autoFocus
+              value={tagDraft}
+              onChange={e => setTagDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  onUserTags(entry.id, tagDraft.split(',').map(t => t.trim()).filter(Boolean))
+                  setTagOpen(false)
+                }
+                if (e.key === 'Escape') setTagOpen(false)
+              }}
+              placeholder="warm, my picks, verse 2"
+              style={{ width: '100%', fontSize: 11, padding: '3px 5px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-input, rgba(0,0,0,0.25))', color: 'var(--text-primary)' }}
+            />
+            {!!entry.tags?.length && (
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
+                Also tagged {entry.tags.join(', ')} — that one is shared, and not yours to change here.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Folder picker */}
       <div ref={folderRef} style={{ position: 'relative', flexShrink: 0 }}>
@@ -1170,19 +1223,21 @@ function RecipeDetailCard({ recipe, spec, anchor, playing, onAudition, onClose }
 
 // ── Tag helpers ───────────────────────────────────────────────────────────────
 
+// ⚠️ Both of these now read the SHARED derivation in lib/sound-tags.ts rather
+// than repeating it. There were three implementations of "what tags does this
+// have" — this file's two, and the one the voice control needed — and they
+// already disagreed in small ways. A filter chip that finds a sound the voice
+// control does not is the kind of difference nobody reports as a bug; they just
+// conclude the search is unreliable.
 function getTypeTag(entry: LibraryEntry): string {
-  // Explicit type tags in the tags array take priority over category inference
-  const tagsSet = new Set(entry.tags ?? [])
-  for (const t of TYPE_TAGS) {
-    if (tagsSet.has(t)) return t
-  }
-  return CATEGORY_TO_TYPE_TAG[entry.category] ?? 'Other'
+  const all = tagsOf(entry)
+  // An explicit tag first, then whatever the category says — the shared
+  // function already puts them in that order.
+  return all.find(t => (TYPE_TAGS as readonly string[]).includes(t)) ?? 'Other'
 }
 
 function getCharTags(entry: LibraryEntry): string[] {
-  const catTags = CATEGORY_CHAR_TAGS[entry.category] ?? []
-  const entryTags = (entry.tags ?? []).filter(t => CHARACTER_TAGS.includes(t as typeof CHARACTER_TAGS[number]))
-  return [...new Set([...catTags, ...entryTags])]
+  return tagsOf(entry).filter(t => (CHARACTER_TAGS as readonly string[]).includes(t))
 }
 
 // ── Main SoundLibrary panel ───────────────────────────────────────────────────
@@ -1430,6 +1485,30 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     setEntries(prev => prev.map(e => e.id === id ? { ...e, folder } : e))
   }
 
+  /**
+   * ⚠️ userTags, not tags — for a catalog sound the second belongs to everybody
+   * and is refreshed from the catalog on every sync, so an edit written there
+   * would disappear the next time an admin touched that sound.
+   */
+  async function handleUserTags(id: string, userTags: string[]) {
+    await libraryUpdate(id, { userTags })
+    setEntries(prev => prev.map(e => e.id === id ? { ...e, userTags } : e))
+    // To the account too, so they are there on the next machine. Fire and
+    // forget: the local write has already happened, tagging has to feel
+    // instant, and it has to work signed out.
+    const e = entries.find(x => x.id === id)
+    void pushSoundPref(id, {
+      userTags,
+      saved: e?.communityRef
+        ? {
+          name: e.name, category: String(e.category), duration: e.duration,
+          folder: e.folder, parentFolder: e.parentFolder,
+          authorName: e.authorName, communityRef: e.communityRef,
+        }
+        : null,
+    })
+  }
+
   function createFolder() {
     const name = newFolderDraft.trim()
     if (!name || folders.includes(name)) { setAddingFolder(false); setNewFolderDraft(''); return }
@@ -1664,6 +1743,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       onRename={handleRename}
       onCategoryChange={handleCategoryChange}
       onFolderChange={handleFolderChange}
+      onUserTags={handleUserTags}
       onFulfilled={fulfilled => setEntries(prev => prev.map(e => e.id === fulfilled.id ? fulfilled : e))}
       onPick={onPick}
       selected={selectedId === entry.id}

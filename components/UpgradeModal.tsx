@@ -53,12 +53,12 @@ export function UpgradeModalProvider({ children }: { children: React.ReactNode }
       {children}
       {open && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          className="backdrop-in fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
           onClick={() => setOpen(false)}
         >
           <div
-            className="relative w-full max-w-md rounded-2xl p-8"
+            className="modal-in relative w-full max-w-md rounded-2xl p-8"
             style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}
             onClick={e => e.stopPropagation()}
           >

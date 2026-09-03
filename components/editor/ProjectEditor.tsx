@@ -309,6 +309,20 @@ export default function ProjectEditor(props: ProjectEditorProps) {
 }
 
 function ProjectEditorInner({ projectId, projectName, modules: moduleProp, allowImport, audioMode: audioModeProp, starterId, fixtureId, demoProjectId, templateId }: ProjectEditorProps) {
+  // ⚠️ Hand the rendered audio back when the editor goes away.
+  //
+  // Opening a project used to be a full page load, which threw away every
+  // module-level cache for free. It is a client-side navigation now, so the
+  // combined-render cache would otherwise carry one song's audio into the next
+  // — held in memory, evicted against the new song's budget, for renders that
+  // can never be used again. The renders are keyed by content so nothing WRONG
+  // could play; it is memory, and a cache that thrashes for no reason.
+  //
+  // Memory only. The DISK cache is what makes the next open fast and is keyed
+  // the same way, so it stays.
+  useEffect(() => () => {
+    void import('@/lib/apollo/freeze-cache').then(m => m.clearCombined()).catch(() => {})
+  }, [])
   const isNewProject = !projectId
   const router = useRouter()
   const [activeModules, setActiveModules] = useState<ModuleKey[] | null>(

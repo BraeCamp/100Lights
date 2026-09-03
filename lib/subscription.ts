@@ -1,3 +1,5 @@
+import { currentUser } from '@clerk/nextjs/server'
+import { isAdminAddress } from '@/lib/admin-email'
 import { sql } from '@/lib/db'
 import { ensureSchema } from '@/lib/schema-version'
 import { PLANS } from '@/lib/stripe'
@@ -39,6 +41,37 @@ export interface Subscription {
   codeUntil: Date | null
 }
 
+/**
+ * Is this the owner's own account, asking about itself?
+ *
+ * ⚠️ Brae: "It now says that I have 0 Lumens and that I don't have the highest
+ * tier. I should have that off the bat."
+ *
+ * Quite right, and the reason it was not true is worth keeping: the owner's
+ * plan lived in a database ROW, granted by hand. A row is per-database, so it
+ * is correct in whichever one it was written to and absent everywhere else —
+ * and it is silently absent, because a missing row is indistinguishable from a
+ * free account. Preview deployments, a restored branch, a new database: each
+ * one starts the owner back at nothing.
+ *
+ * The owner's entitlement is not data, it is a fact about who is signed in. So
+ * it is decided in code, where it is true in every environment at once.
+ *
+ * ⚠️ Compared against the SIGNED-IN user, never the argument alone. This is
+ * also called for other people (the admin panel lists them), and an override
+ * keyed only on the id being asked about would hand everyone the owner's plan.
+ */
+export async function isOwnerAccount(userId: string): Promise<boolean> {
+  try {
+    const u = await currentUser()
+    return !!u && u.id === userId
+      && isAdminAddress(u.emailAddresses?.[0]?.emailAddress)
+  } catch {
+    // No request context (a webhook, a script) — there is no signed-in owner.
+    return false
+  }
+}
+
 export async function getSubscription(userId: string): Promise<Subscription> {
   // Run the code-grant lookup concurrently so it adds no latency; it is
   // fault-tolerant (returns null if its table isn't provisioned yet).
@@ -52,8 +85,11 @@ export async function getSubscription(userId: string): Promise<Subscription> {
     getCodeGrantUntil(userId),
   ])
   if (rows.length === 0) {
-    // No Stripe/subscription row yet — a redeemed code can still grant Pro.
-    return { plan: codeUntil ? 'pro' : 'free', status: 'active', stripeCustomerId: null,
+    // No Stripe/subscription row yet — a redeemed code can still grant Pro, and
+    // the owner is on the top plan whether or not this database has heard of
+    // them. THIS is the branch that was reporting the owner as free.
+    const owner = await isOwnerAccount(userId)
+    return { plan: owner ? 'max' : codeUntil ? 'pro' : 'free', status: 'active', stripeCustomerId: null,
              stripeSubId: null, currentPeriodEnd: null, giftPlan: null, giftUntil: null, codeUntil }
   }
   const r = rows[0]
@@ -62,7 +98,9 @@ export async function getSubscription(userId: string): Promise<Subscription> {
   const hasActiveGift = giftPlan && (giftUntil === null || giftUntil > new Date())
   // Precedence: an active admin gift, then an active redeemed code, then Stripe.
   // Gift and code both grant 'pro'; getCodeGrantUntil already filters to future.
-  const plan: Plan = hasActiveGift ? giftPlan! : (codeUntil ? 'pro' : (r.plan as Plan))
+  let plan: Plan = hasActiveGift ? giftPlan! : (codeUntil ? 'pro' : (r.plan as Plan))
+  // The owner outranks every row, including a stale or missing one.
+  if (await isOwnerAccount(userId)) plan = 'max'
   return {
     plan,
     status: r.status as string,
