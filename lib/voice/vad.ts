@@ -52,6 +52,13 @@ export interface VadOptions {
    * set it by watching their own voice cross it and the room not.
    */
   sensitivity?: number
+  /**
+   * A multiplier on the silence tail — how long a pause has to last before
+   * the sentence is taken as finished. 1 = the standing 1.2 s. Somebody who
+   * thinks mid-sentence sets this up; the trigger bar above is left alone.
+   * See voicePatience() in speak.ts.
+   */
+  patience?: number
 }
 
 export interface VadState {
@@ -564,9 +571,12 @@ export function vadStep(
   // stopped. One word is finished when it stops; a sentence gets room to pause.
   const burst = state.spokeSince ? state.lastLoudAt - state.spokeSince : 0
   const short = state.heard && burst < SHORT_UTTERANCE_MS
+  // The tail stretches with patience — a thinking pause is not the end of a
+  // sentence for everybody. The one-word case stays quick: "stop" is over.
+  const patience = opts.patience && opts.patience > 0 ? Math.max(0.5, Math.min(3, opts.patience)) : 1
   const gap = short
     ? (opts.playing ? SILENCE_MS_SHORT_PLAYING : SILENCE_MS_SHORT)
-    : (opts.playing ? SILENCE_MS_PLAYING : SILENCE_MS)
+    : (opts.playing ? SILENCE_MS_PLAYING : SILENCE_MS) * patience
   const ended = state.heard && now - state.lastLoudAt > gap
   // A dip only ends the rise once it has lasted longer than the gaps inside
   // speech. Anything shorter is a word boundary, and the rise continues through

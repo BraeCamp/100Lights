@@ -175,6 +175,8 @@ export interface RecordOptions {
    * microphone, not of the software.
    */
   sensitivity?: number
+  /** Silence-tail multiplier — how long a pause counts as the end. */
+  patience?: number
   /** Fires once when speech is first detected. */
   onSpeechStart?: () => void
   /** Fires when speech has stopped long enough that the take ends itself. */
@@ -488,7 +490,7 @@ export async function startRecording(opts: RecordOptions | string[] = {}): Promi
       // While the studio is talking, the room is not evidence of anything.
       if (muted) return
       const step = vadStep(vad, rms, now, {
-        playing: o.playing, continuous: o.continuous, sensitivity: o.sensitivity,
+        playing: o.playing, continuous: o.continuous, sensitivity: o.sensitivity, patience: o.patience,
       })
       vad = step.state
       // Reported on the same scale as the level, so the meter can draw one
