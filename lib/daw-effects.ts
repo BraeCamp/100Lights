@@ -10,6 +10,9 @@ export interface EffectHandle {
   output: AudioNode
   keyInput?: AudioNode  // present on sidechain compressor — connect source track's tap here
   setParam(key: string, value: number | string | boolean): void
+  /** The song's bpm where the playhead is — only a tempo-synced effect cares.
+   *  Called live as the playhead crosses a tempo change, so it must not rebuild. */
+  setTempo?(bpm: number): void
   dispose(): void
 }
 
@@ -358,8 +361,12 @@ export function buildDelay(ctx: AudioContext, params: DelayParams, tempo: number
   const input    = ctx.createGain()
   const output   = ctx.createGain()
 
-  const delayTime = params.syncToTempo ? (params.syncBeats * 60 / tempo) : params.time
-  delay.delayTime.value = delayTime
+  // Kept as live state so a tempo change can retime a synced delay without
+  // rebuilding the node (which would cut the tail).
+  let p = { ...params }
+  let bpm = tempo
+  const timeFor = () => (p.syncToTempo ? (p.syncBeats * 60 / bpm) : p.time)
+  delay.delayTime.value = timeFor()
   feedback.gain.value   = safeFeedback(params.feedback)
   dryGain.gain.value    = 1
   wetGain.gain.value    = params.enabled ? params.wet : 0
@@ -376,10 +383,18 @@ export function buildDelay(ctx: AudioContext, params: DelayParams, tempo: number
     input,
     output,
     setParam(key, value) {
-      if (key === 'enabled')   wetGain.gain.value    = (value as boolean) ? params.wet : 0
-      if (key === 'wet')       wetGain.gain.value    = params.enabled ? value as number : 0
+      if (key === 'enabled')   { p = { ...p, enabled: value as boolean }; wetGain.gain.value = p.enabled ? p.wet : 0 }
+      if (key === 'wet')       { p = { ...p, wet: value as number }; wetGain.gain.value = p.enabled ? p.wet : 0 }
       if (key === 'feedback')  feedback.gain.value   = safeFeedback(value as number)
-      if (key === 'time')      delay.delayTime.value = value as number
+      if (key === 'time')      { p = { ...p, time: value as number }; delay.delayTime.value = timeFor() }
+      if (key === 'syncBeats') { p = { ...p, syncBeats: value as number }; delay.delayTime.value = timeFor() }
+      if (key === 'syncToTempo') { p = { ...p, syncToTempo: value as boolean }; delay.delayTime.value = timeFor() }
+    },
+    setTempo(next) {
+      if (!(next > 0) || next === bpm) return
+      bpm = next
+      // A glide, not a jump: stepping delayTime mid-echo is a click.
+      if (p.syncToTempo) delay.delayTime.setTargetAtTime(timeFor(), ctx.currentTime, 0.02)
     },
     dispose() { delay.disconnect(); feedback.disconnect(); dryGain.disconnect(); wetGain.disconnect(); input.disconnect(); output.disconnect() },
   }
@@ -890,6 +905,8 @@ export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tem
   input: AudioNode
   output: AudioNode
   handles: Map<string, EffectHandle>
+  /** Retime every tempo-synced effect to the section the playhead is in. */
+  setTempo(bpm: number): void
   dispose(): void
 } {
   const input  = ctx.createGain()
@@ -932,6 +949,7 @@ export function buildEffectsChain(ctx: AudioContext, effects: TrackEffect[], tem
     input,
     output,
     handles,
+    setTempo(bpm) { for (const h of handles.values()) h.setTempo?.(bpm) },
     dispose() {
       for (const h of handles.values()) h.dispose()
       input.disconnect()

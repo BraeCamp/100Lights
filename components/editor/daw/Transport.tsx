@@ -328,7 +328,9 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     try {
       if (countInBars > 0) {
         setMicError(`Count-in — ${countInBars} bar${countInBars > 1 ? 's' : ''}…`)
-        await engine.countIn(countInBars * project.timeSignatureNum, project.tempo)
+        // The count-in clicks at the tempo of the section the take starts in,
+        // not the opening bpm — after a tempo change those differ.
+        await engine.countIn(countInBars * project.timeSignatureNum, tempoAt(engine.currentBeat, tempoSegments(project)))
         setMicError('')
       }
       const armedTracks = project.tracks.filter(t => t.type === 'audio' && t.armed && t.inputSource)

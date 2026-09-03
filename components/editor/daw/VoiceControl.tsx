@@ -25,7 +25,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Mic, Loader2, Settings2 } from 'lucide-react'
-import { reducer as dawReducer, type DawAction } from '@/lib/daw-state'
+import { reducer as dawReducer, makeMidiClip, makeAudioClip, extractPeaks, type DawAction } from '@/lib/daw-state'
 import { useLight } from '@/lib/voice/use-light'
 import { useRouter } from 'next/navigation'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
@@ -49,7 +49,7 @@ import { recordCommand } from '@/lib/voice/voice-ledger'
 import { macroNames } from '@/lib/voice/macros'
 import {
   auditionActive, readBrowseCommand, startAudition, stopAudition, audition,
-  buildQueue, currentItem, onAudition, auditionState, recipeTags, matchesWant,
+  buildQueue, beatItems, currentItem, onAudition, auditionState, recipeTags, matchesWant,
   presetFromLibrary, type BrowseAction, type AuditionItem,
 } from '@/lib/voice/audition'
 import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice/ask'
@@ -807,13 +807,76 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     }
     if (b === 'pick') {
       const it = currentItem()
+      const st = auditionState()
       stopAudition()
       setBusy(false)
-      // ⚠️ SAYS WHAT IT IS AND STOPS THERE. Putting it into the song would be a
-      // second decision nobody made out loud — which track, where, as what —
-      // and guessing at three of those to look helpful is how a browse ends up
-      // editing a song. Naming it is the honest half; the rest is a command.
-      respond(it ? `That one is "${it.name}"${it.detail ? ` in ${it.detail}` : ''}.` : 'Nothing was playing.')
+      if (!it) { respond('Nothing was playing.'); return }
+      // ⚠️ A PICK PLACES IT. Brae: "When showing I will be able to select one."
+      // This used to name the item and stop, on the grounds that the track and
+      // the bar were decisions nobody had made out loud. But a browse is HOW
+      // you choose, and choosing that leaves nothing in the song is a browse
+      // that has to be followed by a second command to say the same thing.
+      // The decisions are made the way the library's own drag-and-drop makes
+      // them: a beat lands on the drum track (or a new one, with the kit it was
+      // heard on), a recipe on a new track with the instrument it was heard on,
+      // a sound on a new track — all at the bar the playhead is in — and the
+      // read-back says exactly where.
+      const p = projectRef.current
+      const bar = p?.timeSignatureNum || 4
+      const at = Math.max(0, Math.floor((engine?.currentBeat ?? 0) / bar) * bar)
+      const barNo = Math.floor(at / bar) + 1
+      if (it.kind === 'beat') {
+        const drums = (p?.tracks ?? []).find(t => t.instrument?.type === 'drum')
+        const trackId = drums?.id ?? crypto.randomUUID()
+        if (!drums) {
+          dispatch({ type: 'ADD_TRACK', id: trackId, name: 'Drums' } as DawAction)
+          dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: structuredClone(it.instrument) } as DawAction)
+        }
+        const clip = makeMidiClip(trackId, it.name, at, Math.max(bar, it.durationBeats), { isDrumClip: true })
+        clip.notes = it.notes.map(n => ({ ...n, id: crypto.randomUUID() }))
+        dispatch({ type: 'ADD_CLIP', clip } as DawAction)
+        setSelectedClipId?.(clip.id)
+        setExpandedStepSeqClipId?.(clip.id)
+        respond(`Added "${it.name}" on ${drums ? drums.name : 'a new Drums track'} at bar ${barNo}.`)
+        return
+      }
+      if (it.kind === 'recipe') {
+        const onPreset = it.usePreset && st?.preset
+        const instrument = onPreset ? st.preset! : it.instrument
+        const trackId = crypto.randomUUID()
+        dispatch({ type: 'ADD_TRACK', id: trackId, name: it.name } as DawAction)
+        dispatch({ type: 'SET_INSTRUMENT', trackId, instrument: structuredClone(instrument) } as DawAction)
+        const clip = makeMidiClip(trackId, it.name, at, Math.max(bar, it.durationBeats), { isDrumClip: false })
+        clip.notes = it.notes.map(n => ({ ...n, id: crypto.randomUUID() }))
+        dispatch({ type: 'ADD_CLIP', clip } as DawAction)
+        setSelectedClipId?.(clip.id)
+        setExpandedPianoRollClipId?.(clip.id)
+        respond(`Added "${it.name}" on a new track${onPreset && st?.presetName ? ` playing ${st.presetName}` : ''} at bar ${barNo}.`)
+        return
+      }
+      // A sound: an audio clip, the way a drop from the library makes one.
+      void (async () => {
+        try {
+          const { libraryFulfill } = await import('@/lib/default-samples')
+          const e = await libraryFulfill(it.id)
+          if (!e?.audioBlob) { respond(`I could not load "${it.name}" to place it.`, 'problem'); return }
+          const trackId = crypto.randomUUID()
+          dispatch({ type: 'ADD_TRACK', id: trackId, name: it.name } as DawAction)
+          const url = URL.createObjectURL(e.audioBlob)
+          const clip = makeAudioClip(trackId, it.name, at, 8, { audioUrl: url, libraryId: e.id })
+          dispatch({ type: 'ADD_CLIP', clip } as DawAction)
+          const buf = await engine?.loadClipBuffer(clip)
+          if (buf && engine) {
+            dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: {
+              waveformPeaks: extractPeaks(buf), durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration,
+            } } as DawAction)
+          }
+          setSelectedClipId?.(clip.id)
+          respond(`Added "${it.name}" on a new track at bar ${barNo}.`)
+        } catch {
+          respond(`I could not place "${it.name}".`, 'problem')
+        }
+      })()
       return
     }
     if (b === 'pause') { audition.pause(); setBusy(false); return }
@@ -828,12 +891,14 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       : b === 'back' ? audition.back()
       : b === 'restart' ? audition.restart()
       : audition.again())
-  }, [respond])
+  }, [respond, dispatch, engine, setSelectedClipId, setExpandedStepSeqClipId, setExpandedPianoRollClipId])
 
-  // The panel follows what is playing, without anybody being talked at.
+  // The panel follows what is playing, without anybody being talked at. The
+  // steering words live HERE, on the panel, and are no longer spoken — Brae:
+  // "It shouldn't tell me what commands to say either."
   useEffect(() => onAudition(() => {
     const it = currentItem()
-    if (it) setSaid(it.detail ? `${it.name} — ${it.detail}` : it.name)
+    if (it) setSaid(`${it.detail ? `${it.name} — ${it.detail}` : it.name}   ·   next · back · again · this one · done`)
   }), [])
 
   const runAction = useCallback((a: unknown) => {
@@ -884,7 +949,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     if (act.type === 'BROWSE') {
       const b = act as unknown as {
         tag?: string; category?: string; query?: string; asked?: string
-        kind?: 'sounds' | 'recipes' | 'both'; preset?: string
+        kind?: 'sounds' | 'recipes' | 'beats' | 'both'; preset?: string
       }
       void (async () => {
         try {
@@ -898,9 +963,24 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           const all = await libraryGetAll()
           const kind = b.kind ?? 'both'
 
-          const sounds: AuditionItem[] = kind === 'recipes'
+          const sounds: AuditionItem[] = kind === 'recipes' || kind === 'beats'
             ? []
             : buildQueue(all, { tag: b.tag, category: b.category, query: b.query })
+
+          // ── Beats: the drum patterns, on the song's kit ──────────────────
+          //
+          // Brae: "it should instead activate the sounds of drum beats one after
+          // another. When showing I will be able to select one."
+          //
+          // Played on the kit the song's drum track already uses, so what is
+          // heard is what a pick will place; the default kit if there is none.
+          let beats: AuditionItem[] = []
+          if (kind === 'beats') {
+            const { getPatterns, DEFAULT_KIT } = await import('@/lib/drum-presets')
+            const drums = (projectRef.current?.tracks ?? []).find(t => t.instrument?.type === 'drum')
+            const kit = drums?.instrument ?? DEFAULT_KIT.instrument
+            beats = beatItems(getPatterns(), kit, projectRef.current?.tempo || 100, { tag: b.tag, query: b.query })
+          }
 
           // ── Recipes, as notes to play ────────────────────────────────────
           //
@@ -910,7 +990,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           // chosen in a library module. A recipe heard at the speed you are
           // working is a recipe you can judge.
           let recipes: AuditionItem[] = []
-          if (kind !== 'sounds') {
+          if (kind === 'recipes' || kind === 'both') {
             const { getAllChordRecipes } = await import('@/lib/practice-recipes')
             const bpm = projectRef.current?.tempo || 100
             recipes = getAllChordRecipes().flatMap(r => {
@@ -936,7 +1016,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             })
           }
 
-          const items = [...recipes, ...sounds]
+          const items = [...beats, ...recipes, ...sounds]
           if (!items.length) {
             respond(`I could not find anything ${b.asked || 'like that'}.`, 'question')
             return
@@ -954,16 +1034,21 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             return e?.audioBlob ?? null
           }, preset)
 
-          const what = recipes.length && sounds.length
-            ? `${recipes.length} recipe${recipes.length === 1 ? '' : 's'} and ${sounds.length} sound${sounds.length === 1 ? '' : 's'}`
-            : recipes.length
-              ? `${recipes.length} recipe${recipes.length === 1 ? '' : 's'}`
-              : `${sounds.length} sound${sounds.length === 1 ? '' : 's'}`
+          // ⚠️ SAY HOW MANY, THEN PLAY. Brae: "It shouldn't tell me what
+          // commands to say either." The words that steer a browse are read
+          // on the panel, where they cost nothing; spoken, they were a sentence
+          // of instructions between the person and the first sound every time.
+          const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+          const parts = [
+            beats.length && plural(beats.length, 'beat'),
+            recipes.length && plural(recipes.length, 'recipe'),
+            sounds.length && plural(sounds.length, 'sound'),
+          ].filter(Boolean) as string[]
+          const what = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]
           respond(
             `${what} ${b.asked || ''}`.trim() + '. '
             + (recipes.length && preset ? `Recipes on ${preset.name}. ` : '')
-            + (missed ? `I could not find a "${wanted}" to play them on. ` : '')
-            + 'Say next, back, again, faster, slower, this one, or done.',
+            + (missed ? `I could not find a "${wanted}" to play them on. ` : ''),
           )
         } catch {
           respond('I could not reach your library just now.', 'problem')

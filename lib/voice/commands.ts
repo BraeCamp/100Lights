@@ -3510,7 +3510,7 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'browse_sounds',
     group: 'Project',
     what: 'Play through your sounds or recipes so you can hear them',
-    say: ['show me the recipes', 'play me the sounds tagged dark', 'let me hear the drum samples', 'what recipes do you have'],
+    say: ['show me the recipes', 'play me the sounds tagged dark', 'let me hear the drum samples', 'what recipes do you have', 'show me drum beats', 'play me some trap beats'],
     match(w) {
       // ⚠️ Brae: "I asked to see recipes and it said that it can't do that for
       // me." It could — but this rule only listened for "browse" or for
@@ -3521,20 +3521,37 @@ const COMMANDS: VoiceCommand[] = [
       // names for the word "recipes", which found nothing and said so.
       //
       // The word "recipes" is the kind, never the query.
+      //
+      // ⚠️ Brae: "When I ask the voice control to show me drum beats it tells
+      // me a bunch of beats." The same hole, one shelf over: "beats" was no
+      // kind at all, so the sentence went to the assistant, which had nothing
+      // to play them with and READ THE LIST OUT instead. Beats are the drum
+      // patterns, and "drum"/"drums" beside them is the kind, not a search.
+      const beats = w.has('beats', 'beat', 'grooves', 'groove', 'rhythms', 'rhythm')
       const recipes = w.has('recipes', 'recipe', 'progressions', 'patterns')
       const sounds = w.has('sounds', 'samples', 'library', 'instruments')
-      const asked = w.has('browse', 'audition', 'show', 'see', 'hear', 'play', 'listen')
+      // "let's check out some different drum beats", "find me some beats",
+      // "give me a few grooves" — the sentences that actually got said.
+      const asked = w.has('browse', 'audition', 'show', 'see', 'hear', 'play', 'listen', 'check', 'find', 'give')
         || (w.has('what') && w.has('have', 'got'))
-      if (!asked || (!recipes && !sounds)) return null
+      if (!asked || (!recipes && !sounds && !beats)) return null
       // Whatever is left once the asking words are accounted for IS the search.
       // has() marks what it matches, so consuming these here keeps them out of
       // the query — "play me the sounds tagged dark" should look for "dark",
-      // not for "sounds tagged dark".
-      w.has('tagged', 'tag', 'some', 'all', 'anything', 'everything', 'my', 'through', 'want', 'have', 'got')
+      // not for "sounds tagged dark". "new", "different", "other", "more" say
+      // browse, not what for: "show me some new drum beats" is every beat.
+      // ⚠️ One word per call: has(a, b, c) marks the FIRST of them it finds and
+      // stops, so a single call over this list left "some different" in the
+      // query. Each word is asked for on its own.
+      for (const filler of ['tagged', 'tag', 'some', 'all', 'anything', 'everything', 'my', 'through', 'want', 'have', 'got',
+        'new', 'different', 'other', 'ones', 'more', 'few', 'out', 'couple']) w.has(filler)
+      // "drum beats", "drum patterns" — the drums are what beats are made of.
+      if (beats || recipes) for (const d of ['drum', 'drums', 'percussion']) w.has(d)
       const q = w.unexplained().join(' ').trim()
-      // Recipes may be asked for with no filter — there are dozens, not hours.
-      if (!q && !recipes) return null
-      const kind = recipes && !sounds ? 'recipes' : sounds && !recipes ? 'sounds' : 'both'
+      // Recipes and beats may be asked for with no filter — dozens, not hours.
+      if (!q && !recipes && !beats) return null
+      const kind = beats && !recipes && !sounds ? 'beats'
+        : recipes && !sounds ? 'recipes' : sounds && !recipes ? 'sounds' : 'both'
       return {
         calls: [{ name: 'browse_sounds', input: { kind, ...(q ? { query: q } : {}) } }],
         confidence: 0.88,

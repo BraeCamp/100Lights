@@ -290,7 +290,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'browse_sounds',
     description:
-      'PLAY THROUGH THE LIBRARY — "show me the recipes", "what recipes do you have", "let me see the samples", "play me the sounds tagged dark", "let me hear the drum samples", "browse anything with vinyl in it", "play the pads". Starts an audition: sounds play one after another and the person steers with short words — next, back, again, faster, this one — none of which reach you. Use it whenever somebody wants to HEAR what they have rather than be told about it. Both SAMPLES and RECIPES (short chord and pattern ideas) can be browsed, together or apart — "show me the recipes" needs no filter at all. Recipes play on a grand piano unless a preset is named; a drum recipe always keeps its own kit. Give whichever of tag, category or query fits what they said; a tag is a label on the sound, a query matches its name or folder.',
+      'PLAY THROUGH THE LIBRARY — "show me the recipes", "what recipes do you have", "let me see the samples", "play me the sounds tagged dark", "let me hear the drum samples", "browse anything with vinyl in it", "play the pads", "show me drum beats", "play me some trap beats". Starts an audition: things play one after another and the person steers with short words — next, back, again, faster, this one — none of which reach you. Use it whenever somebody wants to HEAR what they have rather than be told about it — NEVER answer a request to see or hear beats, recipes or sounds by listing their names in words; that is exactly what this tool replaces. SAMPLES, RECIPES (short chord and pattern ideas) and BEATS (the drum patterns, played on the song\'s kit) can all be browsed — "show me the recipes" and "show me the beats" need no filter at all. Recipes play on a grand piano unless a preset is named; a drum recipe always keeps its own kit. Give whichever of tag, category or query fits what they said; a tag is a label on the sound, a query matches its name or folder.',
     input_schema: {
       type: 'object',
       properties: {
@@ -299,8 +299,8 @@ export const MUSIC_TOOLS = [
         query: { type: 'string', description: 'Words to match in the name or folder.' },
         kind: {
           type: 'string',
-          enum: ['sounds', 'recipes', 'both'],
-          description: 'What to play through. Defaults to both. "recipes" for chord and pattern ideas, "sounds" for samples.',
+          enum: ['sounds', 'recipes', 'beats', 'both'],
+          description: 'What to play through. Defaults to both sounds and recipes. "recipes" for chord and pattern ideas, "sounds" for samples, "beats" for drum patterns ("show me drum beats", "some grooves").',
         },
         preset: { type: 'string', description: 'What recipes should play on, by name — "rhodes", "grand piano", a saved preset. Defaults to a grand piano.' },
       },

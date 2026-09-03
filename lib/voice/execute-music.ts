@@ -1509,7 +1509,23 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const place = placeOf(i.at, maps, project)
       if (place.problem) return fail(place.problem)
       const at = place.beat
-      if (at == null) return { actions: [{ type: 'SET_TEMPO', tempo: bpm }], say: `Tempo set to ${bpm} bpm.` }
+      if (at == null) {
+        // ⚠️ With tempo markers, "set the tempo to 100" means the section the
+        // playhead is IN — the transport box does the same. The whole-song
+        // SET_TEMPO would retempo only the opening section (the reducer keeps
+        // the global number and the beat-0 marker in step) and read back
+        // "Tempo set to 100" while the bars being heard stayed at 90.
+        const markers = project.tempoMarkers ?? []
+        const here = heard?.atBeat ?? 0
+        const seg = [...markers].filter(m => m.beat <= here + 1e-3).sort((a, b) => b.beat - a.beat)[0]
+        if (seg && seg.beat > 0.01) {
+          return {
+            actions: [{ type: 'UPDATE_TEMPO_MARKER', markerId: seg.id, tempo: bpm }],
+            say: `Tempo set to ${bpm} bpm from ${describeBeat(seg.beat, maps)}.`,
+          }
+        }
+        return { actions: [{ type: 'SET_TEMPO', tempo: bpm }], say: `Tempo set to ${bpm} bpm.` }
+      }
       return {
         actions: [{ type: 'ADD_TEMPO_MARKER', marker: { id: newId(), beat: at, tempo: bpm } }],
         say: `Tempo changes to ${bpm} bpm at ${describeBeat(at, maps)}.`,
@@ -2521,18 +2537,19 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const category = str(i.category).trim()
       const query = str(i.query).trim()
       const kindSaid = str(i.kind).toLowerCase()
-      const kind = kindSaid === 'sounds' || kindSaid === 'recipes' ? kindSaid : 'both'
+      const kind = kindSaid === 'sounds' || kindSaid === 'recipes' || kindSaid === 'beats' ? kindSaid : 'both'
       // ⚠️ Brae: "I asked to see recipes and it said that it can't do that for
       // me." Asking for "the recipes" is a complete request on its own — there
       // are dozens, not thousands, so a browse with no filter is a reasonable
       // thing to want. Sounds are not: an unfiltered library is hours long.
+      // Beats are like recipes: a few dozen drum patterns, all worth hearing.
       //
       // (This branch was written once before and never landed: the patch that
       // carried it aborted on an earlier file, and the feature was reported as
       // shipped on the strength of the pieces that had. Hence the test that
       // now plans "show me the recipes" and requires an action.)
-      if (!tag && !category && !query && kind !== 'recipes') {
-        return fail('Say what to play — "the recipes", "the sounds tagged dark", "the drum samples", "anything with vinyl in the name".')
+      if (!tag && !category && !query && kind !== 'recipes' && kind !== 'beats') {
+        return fail('Say what to play — "the recipes", "the beats", "the sounds tagged dark", "the drum samples", "anything with vinyl in the name".')
       }
       const asked = [
         tag && `tagged ${tag}`,
@@ -2541,7 +2558,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       ].filter(Boolean).join(' ')
       return {
         actions: [{ type: 'BROWSE', tag, category, query, asked, kind, preset: str(i.preset).trim() }],
-        say: `Finding ${kind === 'recipes' ? 'recipes' : 'sounds'}${asked ? ` ${asked}` : ''}…`,
+        say: `Finding ${kind === 'recipes' ? 'recipes' : kind === 'beats' ? 'beats' : 'sounds'}${asked ? ` ${asked}` : ''}…`,
       }
     }
 
