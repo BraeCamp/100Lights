@@ -266,7 +266,26 @@ export async function runAssist(opts: {
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: opts.maxTokens ?? 1200,
+      // ⚠️ THINKING COUNTS AGAINST max_tokens, AND SONNET 5 THINKS BY DEFAULT.
+      //
+      // Read from the usage ledger, in order, for the two days before this:
+      // single tool calls costing 800–1,200 output tokens, and a run of rows at
+      // exactly 1,200 with NO tool call — the cap. The model was reasoning for
+      // ~1,000 tokens and the tool call it then tried to write was cut off, so
+      // the studio received nothing and said "I can't do that". Brae, on the
+      // other side of that: "some of the issues that it said were solved were
+      // not solved." Several were this.
+      //
+      // The cap only costs what is used, so raising it changes nothing on a
+      // normal call and stops the truncation on a long one. Thinking is left ON
+      // — disabling it has its own failure modes (tool calls written into the
+      // visible text, tags leaking) — and its DEPTH is set with effort instead.
+      // Choosing one tool from a well-described list is not a hard problem, and
+      // "medium" is the documented step-down where quality holds; every token
+      // it does not spend reasoning is an output token, the dearest kind.
+      max_tokens: opts.maxTokens ?? 8000,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'medium' },
       system: systemBlocks(opts.module ?? 'video', opts.stateSummary, opts.recent, opts.hint),
       tools: toolsFor(opts.module ?? 'video'),
       messages: opts.messages.map(m => ({ role: m.role, content: m.content })),

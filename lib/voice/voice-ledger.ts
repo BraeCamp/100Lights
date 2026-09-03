@@ -36,8 +36,12 @@ export interface LedgerEntry {
 // the assist route for how a cache read and a cache write are weighed against
 // an ordinary input token. Two tables that drift apart would produce a read-out
 // that quietly disagrees with the invoice, which is worse than no read-out.
-const IN_PER_TOKEN = 3 / 1e6
-const OUT_PER_TOKEN = 15 / 1e6
+// ⚠️ Sonnet 5 is $2 / $10 per million. This carried $3 / $15 — Sonnet 4.6's
+// prices — until checked against the model reference, and the server's own
+// estimate table had the same error. Both corrected together, so the panel and
+// the admin Usage view keep agreeing.
+const IN_PER_TOKEN = 2 / 1e6
+const OUT_PER_TOKEN = 10 / 1e6
 const READ_WEIGHT = 0.1
 const WRITE_WEIGHT = 1.25
 

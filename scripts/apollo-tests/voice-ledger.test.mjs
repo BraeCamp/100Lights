@@ -34,7 +34,8 @@ const { costOf, recordCommand, ledgerSummary, clearLedger, ledger } =
 
   // The same shape the panel will be given for a real turn.
   const usd = costOf({ tokensIn: 300, tokensOut: 250, cacheRead: 13900, cacheWrite: 0 })
-  const expected = (300 + 13900 * 0.1) * (3 / 1e6) + 250 * (15 / 1e6)
+  // ⚠️ Sonnet 5's real rates — $2 / $10 — not the $3 / $15 this once assumed.
+  const expected = (300 + 13900 * 0.1) * (2 / 1e6) + 250 * (10 / 1e6)
   check('a warm-cache turn is priced the same way', Math.abs(usd - expected) < 1e-12,
     `$${usd.toFixed(6)}`)
   // ⚠️ A cache WRITE is the expensive turn, and it must not read as cheap.
