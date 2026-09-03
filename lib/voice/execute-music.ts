@@ -59,6 +59,57 @@ import {
 import { FX_FIELD_BY_KEY } from '@/lib/roll-fx'
 import type { RollFx } from '@/lib/daw-types'
 
+/**
+ * Effect amounts that can be drawn over time, by the name people say.
+ *
+ * ⚠️ EVERY ONE OF THESE IS 0–1, which is why they need no unit conversion the
+ * way a filter cutoff does: "100% to 20%" maps straight onto the lane. Anything
+ * added here that is NOT 0–1 needs its range carrying, or a percentage will be
+ * written into a lane that reads Hertz — the bug that once silenced a pad.
+ */
+/**
+ * Was that sentence a request to MOVE, or an edit that happened to name a bar?
+ *
+ * Brae: "it just moved my playhead again... I think that when I bring up bars
+ * it thinks I'm moving the playhead."
+ *
+ * ⚠️ THE TOOL DESCRIPTION HAS WARNED ABOUT THIS FOR MONTHS AND IT KEPT
+ * HAPPENING. A warning in a prompt is advice; this is a rule, and it is here
+ * rather than in the prompt for that reason alone.
+ *
+ * The test is what ELSE the sentence contains. "Go to bar 9" is a move and
+ * nothing else. "Make the reverb 100% then 20% at bar 9" is an edit that
+ * mentions a bar — and of everything in it, moving the playhead is the one
+ * thing nobody asked for.
+ *
+ * ⚠️ AND IT REFUSES OUT LOUD. A silent drop would leave the studio doing
+ * nothing, which is only marginally better than doing the wrong thing. Saying
+ * why hands the model a result it can act on, so it can answer properly in the
+ * same command — which is what the turn loop is for.
+ *
+ * Returns the reason, or null when the move is genuinely what was asked.
+ */
+const EDITS = /\b(make|set|change|turn|put|add|raise|lower|drop|bring|fade|sweep|automate|ramp|louder|quieter|brighter|darker|wetter|drier|mute|solo|delete|remove|duplicate|copy|move|stretch|shorten|lengthen|reverb|delay|filter|volume|pan|gain|drive|chorus|eq|compress)\b/i
+const MOVES = /\b(go|goto|jump|move the playhead|take me|skip|scrub|locate|start from|play from|back to|rewind|position)\b/i
+
+export function notAMove(said?: string): string | null {
+  const t = String(said ?? '').trim()
+  if (!t) return null                       // nothing to judge; trust the call
+  if (MOVES.test(t)) return null             // it does ask to go somewhere
+  if (!EDITS.test(t)) return null            // no edit in it either; harmless
+  return 'That sounded like a change to the song rather than a request to move the playhead — '
+    + 'the bar is WHERE it should happen. Make the edit at that position instead, '
+    + 'and use automate_parameter when a value has to be one thing in one place and something else later.'
+}
+
+const FX_AUTOMATABLE: Record<string, { type: 'reverb' | 'delay' | 'saturator' | 'chorus'; key: string; label: string }> = {
+  reverb: { type: 'reverb', key: 'wet', label: 'Reverb' },
+  delay: { type: 'delay', key: 'wet', label: 'Delay' },
+  drive: { type: 'saturator', key: 'drive', label: 'Drive' },
+  saturation: { type: 'saturator', key: 'drive', label: 'Drive' },
+  chorus: { type: 'chorus', key: 'mix', label: 'Chorus' },
+}
+
 export interface VoiceCall { name: string; input: Record<string, unknown> }
 
 export interface VoicePlan {
@@ -653,6 +704,15 @@ function resolveTrack(spoken: string, p: DawProject): DawTrack | null {
  *  each syllable landed. The tool call says which syllables; this says when. */
 export interface VoiceContext {
   words?: { word: string; confidence?: number; s?: number; e?: number }[]
+  /**
+   * What was actually said, as one string.
+   *
+   * ⚠️ Needed because a single call cannot tell an edit from a move. The model
+   * hands over `transport locate, bar 9` for both "go to bar 9" and "make the
+   * reverb 20% at bar 9", and only the sentence distinguishes them. See
+   * notAMove.
+   */
+  said?: string
   /** Where the playhead is, in beats. Not in the project - the project is a
    *  document and this is a moment - so anything that answers "what is playing
    *  RIGHT NOW" has to be told. */
@@ -992,6 +1052,38 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         // The track's own parameter — no effect needed.
         parameter = param
         label = param === 'volume' ? 'Volume' : 'Pan'
+      } else if (FX_AUTOMATABLE[param]) {
+        // ── AN EFFECT'S OWN AMOUNT, OVER TIME ────────────────────────────
+        //
+        // Brae: "I told the AI to make reverb on pad 100% then 20% at a
+        // different spot and it just moved my playhead again... I think that
+        // when I bring up bars it thinks I'm moving the playhead."
+        //
+        // ⚠️ THE PLAYHEAD WAS THE SYMPTOM. This tool could automate a filter,
+        // the volume and the pan, and NOTHING ELSE — so "reverb 100% here and
+        // 20% there" had no way to be said at all. Faced with a request it
+        // could not express, the model reached for the one part of the sentence
+        // it COULD act on: a bar number. Refusing the move would have left him
+        // with a studio that did nothing instead of the wrong thing.
+        //
+        // The lane type has always taken `fx:{effectId}:{paramKey}` — the
+        // hand-drawn lanes under a track use exactly that — so this is a
+        // mapping, not a mechanism.
+        const spec = FX_AUTOMATABLE[param]
+        const existing = (track.effects ?? []).find(e => e.type === spec.type)
+        // Reuse the effect that is already there. Adding a second reverb and
+        // automating the new one would leave the first sitting underneath,
+        // audible and unexplained.
+        let effectId = existing?.id
+        if (!effectId) {
+          effectId = newId()
+          actions.push({
+            type: 'ADD_EFFECT', trackId: track.id,
+            effect: { id: effectId, type: spec.type, params: makeDefaultParams(spec.type) },
+          })
+        }
+        parameter = `fx:${effectId}:${spec.key}`
+        label = spec.label
       } else {
         const kind = param === 'highpass' ? 'highpass' : 'lowpass'
         const effectId = newId()
@@ -3823,6 +3915,19 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     case 'redo':
       return { actions: [{ type: call.name === 'undo' ? 'UNDO' : 'REDO' }], say: '' }
 
+    // ⚠️ A BAR MENTIONED INSIDE AN EDIT IS NOT A PLACE TO GO.
+    //
+    // Brae: "it just moved my playhead again... I think that when I bring up
+    // bars it thinks I'm moving the playhead." He is right, and the tool
+    // description has warned against it for months without helping — a warning
+    // in a prompt is advice, and this is a rule.
+    //
+    // The test is what ELSE the sentence contains. "Go to bar 9" is a move and
+    // nothing else; "make the reverb 100% then 20% at bar 9" is an edit that
+    // mentions a bar, and moving the playhead is the one thing in it nobody
+    // asked for. Refusing OUT LOUD rather than silently is what makes it
+    // recoverable: the model is told why, and gets to answer properly in the
+    // same command instead of being quietly ignored.
     case 'transport': {
       const action = str(i.action || 'play').toLowerCase()
       if (!['play', 'stop', 'pause', 'restart', 'toggle', 'locate'].includes(action)) {
@@ -3831,6 +3936,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (action === 'locate') {
         const at = positionToBeat(pos(i.at), maps)
         if (at == null) return fail('Say where to move the playhead.')
+        // ⚠️ Refused when the sentence was about something else — see above.
+        const why = notAMove(heard?.said)
+        if (why) return fail(why)
         return { actions: [{ type: 'TRANSPORT', action: 'locate', beat: at }], say: `Moved to ${describeBeat(at, maps)}.` }
       }
       return {

@@ -154,6 +154,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const busyRef = useRef(false)
   /** Guards the "working on it" line against the answer that beat it. */
   const ackToken = useRef(0)
+  /** The sentence being acted on, for the planner — see voiceCtx.said. */
+  const lastSaidRef = useRef('')
   useEffect(pullSharedCommands, [])
   useEffect(() => { busyRef.current = busy }, [busy])
   const [heard, setHeard] = useState('')
@@ -624,6 +626,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const heardRef = useRef<Heard | undefined>(undefined)
   const voiceCtx = useCallback(() => ({
     words: heardRef.current?.words,
+    // ⚠️ THE WHOLE SENTENCE, because one call cannot tell an edit from a move.
+    // "go to bar 9" and "make the reverb 20% at bar 9" reach the planner as the
+    // same locate, and only the words separate them. See notAMove.
+    said: lastSaidRef.current,
     atBeat: engine?.currentBeat,
     // The library, so a preset can be chosen by CHARACTER inside the executor —
     // "one of the darker piano presets" is a question about what is installed
@@ -1304,6 +1310,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // "next" and "faster" are unambiguous; outside one they were never words
     // this file knew. The mode is visible in the panel and one of its own words
     // ends it, which is what makes taking them over safe.
+    lastSaidRef.current = text
     if (auditionActive()) {
       const b = readBrowseCommand(text)
       if (b) { lastAcceptedAt.current = Date.now(); runBrowse(b); return }

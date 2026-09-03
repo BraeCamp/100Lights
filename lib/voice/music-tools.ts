@@ -122,15 +122,15 @@ export const MUSIC_TOOLS = [
   {
     name: 'automate_parameter',
     description:
-      'AUTOMATION — write a ramp on a parameter over a span of the song. This is what "an ascending low pass filter from 80% to 0% over the first 8 seconds", "fade the volume out over the last 2 bars", "open the filter across the intro" mean. A SPAN IS OFTEN GIVEN AS AN ENDPOINT RATHER THAN A LENGTH, and those are the same request: "until the 6th bar", "up to the chorus", "through bar 12", "stays at 100% until bar 6", "keep it open till the drop". The giveaway is a value that has to HOLD and then change — that is a shape over time, which is this tool, not a single setting. Note what it is doing NOW before writing one: "stays at 100% until bar 6" when it is already 100% is a request to EXTEND the existing ramp to bar 6, and setting the value to 100% again changes nothing and is not what was asked.',
+      'AUTOMATION — write a ramp on a parameter over a span of the song. ⚠️ THIS IS WHAT A VALUE THAT CHANGES ALONG THE SONG IS: "reverb at 100% here and 20% further on", "make it 100% then 20% at a different spot" — two values at two places is a ramp, NOT two settings and NOT a reason to move the playhead. A bar named in a sentence like that is WHERE the change happens; going there is not part of the request. This is what "an ascending low pass filter from 80% to 0% over the first 8 seconds", "fade the volume out over the last 2 bars", "open the filter across the intro" mean. A SPAN IS OFTEN GIVEN AS AN ENDPOINT RATHER THAN A LENGTH, and those are the same request: "until the 6th bar", "up to the chorus", "through bar 12", "stays at 100% until bar 6", "keep it open till the drop". The giveaway is a value that has to HOLD and then change — that is a shape over time, which is this tool, not a single setting. Note what it is doing NOW before writing one: "stays at 100% until bar 6" when it is already 100% is a request to EXTEND the existing ramp to bar 6, and setting the value to 100% again changes nothing and is not what was asked.',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
         parameter: {
           type: 'string',
-          enum: ['lowpass', 'highpass', 'volume', 'pan'],
-          description: 'lowpass/highpass add a filter and automate its cutoff; volume and pan automate the track itself.',
+          enum: ['lowpass', 'highpass', 'volume', 'pan', 'reverb', 'delay', 'drive', 'chorus'],
+          description: 'lowpass/highpass add a filter and automate its cutoff; volume and pan automate the track itself; reverb, delay, drive and chorus automate that effect\'s amount, reusing the one already on the track if there is one.',
         },
         from: { type: 'number', description: 'Starting value as a percentage, 0-100.' },
         to: { type: 'number', description: 'Ending value as a percentage, 0-100.' },
