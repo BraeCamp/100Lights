@@ -57,7 +57,7 @@ import {
   defineMacro, findMacro, macroNames, toPoints, describeMacro, useMacro, type MacroShape,
 } from './macros'
 import { FX_FIELD_BY_KEY } from '@/lib/roll-fx'
-import type { RollFx } from '@/lib/daw-types'
+import type { RollFx, AutomationLane } from '@/lib/daw-types'
 
 /**
  * Effect amounts that can be drawn over time, by the name people say.
@@ -1234,7 +1234,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
           : 'Say which one to automate — volume, pan, reverb, delay, drive, chorus, or a low-pass or high-pass filter.')
       }
       const actions: unknown[] = []
-      const laneId = newId()
+      let laneId = newId()
       let parameter: string
       let label: string
       /** Set for the filter sweeps, whose values are Hertz rather than 0–1. */
@@ -1325,17 +1325,32 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // it is spaced logarithmically so a descent is heard across its whole
       // travel rather than only in the last tenth — Brae: "The descending part
       // is as important as the filter."
-      actions.push({
-        type: 'ADD_AUTOMATION_LANE',
-        lane: {
-          id: laneId, trackId: track.id, parameter, label,
-          min: hz ? hz.min : 0,
-          max: hz ? hz.max : 1,
-          curve: hz ? 'log' : undefined,
-          defaultValue: hz ? hz.fromNorm(from) : from,
-          points: [], expanded: true,
-        },
-      })
+      // ── ONE LANE PER PARAMETER, HOWEVER MANY TIMES IT IS ASKED ABOUT ─────
+      //
+      // Brae: "Instead of changing the reverb it created two new reverbs within
+      // the same automation lane."
+      //
+      // ⚠️ "100% here and 20% there" arrives as TWO calls, and each one built its
+      // own lane — and, not seeing the other's, its own reverb to hang it on.
+      // A lane that already drives this parameter on this track is THE lane for
+      // it: the new points join it, and nothing is added beside it. That is
+      // also what makes the command idempotent, which a shape drawn by voice
+      // has to be — people ask for the same move twice while refining it.
+      const had = (project.automationLanes ?? []).find(l => l.trackId === track.id && l.parameter === parameter)
+      if (had) laneId = had.id
+      else {
+        actions.push({
+          type: 'ADD_AUTOMATION_LANE',
+          lane: {
+            id: laneId, trackId: track.id, parameter, label,
+            min: hz ? hz.min : 0,
+            max: hz ? hz.max : 1,
+            curve: hz ? 'log' : undefined,
+            defaultValue: hz ? hz.fromNorm(from) : from,
+            points: [], expanded: true,
+          },
+        })
+      }
       actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat, value: from } })
       actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat + lengthBeats, value: to } })
 
@@ -2477,8 +2492,19 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const tag = str(i.tag).trim()
       const category = str(i.category).trim()
       const query = str(i.query).trim()
-      if (!tag && !category && !query) {
-        return fail('Say what to play — "the sounds tagged dark", "the drum samples", "anything with vinyl in the name".')
+      const kindSaid = str(i.kind).toLowerCase()
+      const kind = kindSaid === 'sounds' || kindSaid === 'recipes' ? kindSaid : 'both'
+      // ⚠️ Brae: "I asked to see recipes and it said that it can't do that for
+      // me." Asking for "the recipes" is a complete request on its own — there
+      // are dozens, not thousands, so a browse with no filter is a reasonable
+      // thing to want. Sounds are not: an unfiltered library is hours long.
+      //
+      // (This branch was written once before and never landed: the patch that
+      // carried it aborted on an earlier file, and the feature was reported as
+      // shipped on the strength of the pieces that had. Hence the test that
+      // now plans "show me the recipes" and requires an action.)
+      if (!tag && !category && !query && kind !== 'recipes') {
+        return fail('Say what to play — "the recipes", "the sounds tagged dark", "the drum samples", "anything with vinyl in the name".')
       }
       const asked = [
         tag && `tagged ${tag}`,
@@ -2486,8 +2512,8 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         query && `matching "${query}"`,
       ].filter(Boolean).join(' ')
       return {
-        actions: [{ type: 'BROWSE', tag, category, query, asked }],
-        say: `Finding sounds ${asked}…`,
+        actions: [{ type: 'BROWSE', tag, category, query, asked, kind, preset: str(i.preset).trim() }],
+        say: `Finding ${kind === 'recipes' ? 'recipes' : 'sounds'}${asked ? ` ${asked}` : ''}…`,
       }
     }
 
@@ -4241,9 +4267,24 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 function withCreated(project: DawProject, actions: unknown[]): DawProject {
   let tracks = project.tracks
   let clips = project.arrangementClips ?? []
+  let lanes = project.automationLanes ?? []
   for (const raw of actions) {
-    const a = raw as { type?: string; id?: string; name?: string; kind?: string; clip?: DawClip }
-    if (a.type === 'ADD_TRACK' && a.id) {
+    const a = raw as {
+      type?: string; id?: string; name?: string; kind?: string; clip?: DawClip
+      trackId?: string; effect?: TrackEffect; lane?: AutomationLane
+    }
+    // ⚠️ EFFECTS AND LANES TOO, not only tracks and clips. Brae: "it created two
+    // new reverbs." Two automate_parameter calls in one batch — "100% here" and
+    // "20% there" — each looked for a reverb on the track, and the second could
+    // not see the one the first had just added, so it added its own. Anything a
+    // later call in the same batch might look FOR has to be visible here.
+    if (a.type === 'ADD_EFFECT' && a.trackId && a.effect) {
+      tracks = tracks.map(t => t.id !== a.trackId || t.effects.some(e => e.id === a.effect!.id)
+        ? t
+        : { ...t, effects: [...t.effects, a.effect!] })
+    } else if (a.type === 'ADD_AUTOMATION_LANE' && a.lane) {
+      if (!lanes.some(l => l.id === a.lane!.id)) lanes = [...lanes, a.lane]
+    } else if (a.type === 'ADD_TRACK' && a.id) {
       if (tracks.some(t => t.id === a.id)) continue
       tracks = [...tracks, {
         id: a.id,
@@ -4258,9 +4299,9 @@ function withCreated(project: DawProject, actions: unknown[]): DawProject {
       if (!clips.some(c => c.id === a.clip!.id)) clips = [...clips, a.clip]
     }
   }
-  return tracks === project.tracks && clips === (project.arrangementClips ?? [])
+  return tracks === project.tracks && clips === (project.arrangementClips ?? []) && lanes === (project.automationLanes ?? [])
     ? project
-    : { ...project, tracks, arrangementClips: clips }
+    : { ...project, tracks, arrangementClips: clips, automationLanes: lanes }
 }
 
 /**

@@ -3509,21 +3509,34 @@ const COMMANDS: VoiceCommand[] = [
     id: 'browse_sounds',
     tool: 'browse_sounds',
     group: 'Project',
-    what: 'Play through your sounds so you can hear them',
-    say: ['play me the sounds tagged dark', 'let me hear the drum samples'],
+    what: 'Play through your sounds or recipes so you can hear them',
+    say: ['show me the recipes', 'play me the sounds tagged dark', 'let me hear the drum samples', 'what recipes do you have'],
     match(w) {
-      const asked = w.has('browse', 'audition')
-        || (w.has('play', 'hear') && w.has('sounds', 'samples', 'library'))
-      if (!asked) return null
+      // ⚠️ Brae: "I asked to see recipes and it said that it can't do that for
+      // me." It could — but this rule only listened for "browse" or for
+      // play/hear WITH sounds/samples/library, so "show me the recipes", "let
+      // me see the recipes" and "what recipes do you have" resolved to nothing
+      // and went to the assistant, which had no phrasing like that to match
+      // either. And "browse the recipes" DID match — as a search of sample
+      // names for the word "recipes", which found nothing and said so.
+      //
+      // The word "recipes" is the kind, never the query.
+      const recipes = w.has('recipes', 'recipe', 'progressions', 'patterns')
+      const sounds = w.has('sounds', 'samples', 'library', 'instruments')
+      const asked = w.has('browse', 'audition', 'show', 'see', 'hear', 'play', 'listen')
+        || (w.has('what') && w.has('have', 'got'))
+      if (!asked || (!recipes && !sounds)) return null
       // Whatever is left once the asking words are accounted for IS the search.
       // has() marks what it matches, so consuming these here keeps them out of
       // the query — "play me the sounds tagged dark" should look for "dark",
       // not for "sounds tagged dark".
-      w.has('tagged', 'tag', 'some', 'all', 'anything', 'everything', 'my')
+      w.has('tagged', 'tag', 'some', 'all', 'anything', 'everything', 'my', 'through', 'want', 'have', 'got')
       const q = w.unexplained().join(' ').trim()
-      if (!q) return null
+      // Recipes may be asked for with no filter — there are dozens, not hours.
+      if (!q && !recipes) return null
+      const kind = recipes && !sounds ? 'recipes' : sounds && !recipes ? 'sounds' : 'both'
       return {
-        calls: [{ name: 'browse_sounds', input: { query: q } }],
+        calls: [{ name: 'browse_sounds', input: { kind, ...(q ? { query: q } : {}) } }],
         confidence: 0.88,
       }
     },

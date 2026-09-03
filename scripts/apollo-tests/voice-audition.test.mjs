@@ -26,6 +26,7 @@ const check = (label, pass, extra = '') => {
 
 const { oneNotePerInstrument, buildQueue, readBrowseCommand, recipeTags, matchesWant, presetFromLibrary } =
   await importTs('lib/voice/audition.ts')
+const { planVoiceCall } = await importTs('lib/voice/execute-music.ts')
 
 const note = (folder, n, extra = {}) => ({
   id: `${folder}-${n}`, name: `${folder} ${n}`, folder,
@@ -174,6 +175,33 @@ const hit = (folder, name, tags = []) => ({
   // Silence would be worse than a default: the studio says it could not find it.
   check('and one that is not there is null, not a wrong guess',
     presetFromLibrary(lib, 'harpsichord') === null)
+}
+
+// ── ⚠️ the planner must actually start a recipe browse ─────────────────────
+//
+// Brae: "I asked to see recipes and it said that it can't do that for me. I
+// thought that we set it up so that it can show the user recipes and samples by
+// tag using voice commands?"
+//
+// It had been set up — in the queue, the player and the preset — and NOT in
+// the tool or the planner: the patch carrying those two aborted on an earlier
+// file, and the feature was reported as shipped on the strength of the pieces
+// that had landed. So "show me the recipes" reached a planner that still
+// demanded a tag and refused. This is the check that would have caught it.
+{
+  const song = { id: 'p', name: 'T', tempo: 120, timeSignatureNum: 4, timeSignatureDen: 4, tracks: [], arrangementClips: [] }
+  const recipes = planVoiceCall({ name: 'browse_sounds', input: { kind: 'recipes' } }, song)
+  const act = recipes.actions.find(a => a.type === 'BROWSE')
+  check('"the recipes", with no filter, starts a browse', !!act && !recipes.problem, recipes.problem ?? '')
+  check('in recipe mode', act?.kind === 'recipes', act?.kind)
+
+  const jazz = planVoiceCall({ name: 'browse_sounds', input: { kind: 'recipes', query: 'jazz', preset: 'rhodes' } }, song)
+  const jact = jazz.actions.find(a => a.type === 'BROWSE')
+  check('a filter and a preset are passed through', jact?.query === 'jazz' && jact?.preset === 'rhodes', JSON.stringify(jact))
+
+  // Sounds are hours long; an unfiltered sound browse is still a question.
+  const bare = planVoiceCall({ name: 'browse_sounds', input: {} }, song)
+  check('an unfiltered SOUND browse still asks what to play', !!bare.problem && !bare.actions.length, bare.problem ?? 'no problem')
 }
 
 console.log(failures ? `\n${failures} failing` : '\none note each, and the short words are free')

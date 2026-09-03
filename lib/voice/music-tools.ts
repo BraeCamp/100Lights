@@ -286,13 +286,19 @@ export const MUSIC_TOOLS = [
   {
     name: 'browse_sounds',
     description:
-      'PLAY THROUGH THE LIBRARY — "play me the sounds tagged dark", "let me hear the drum samples", "browse anything with vinyl in it", "play the pads". Starts an audition: sounds play one after another and the person steers with short words — next, back, again, faster, this one — none of which reach you. Use it whenever somebody wants to HEAR what they have rather than be told about it. Give whichever of tag, category or query fits what they said; a tag is a label on the sound, a query matches its name or folder.',
+      'PLAY THROUGH THE LIBRARY — "show me the recipes", "what recipes do you have", "let me see the samples", "play me the sounds tagged dark", "let me hear the drum samples", "browse anything with vinyl in it", "play the pads". Starts an audition: sounds play one after another and the person steers with short words — next, back, again, faster, this one — none of which reach you. Use it whenever somebody wants to HEAR what they have rather than be told about it. Both SAMPLES and RECIPES (short chord and pattern ideas) can be browsed, together or apart — "show me the recipes" needs no filter at all. Recipes play on a grand piano unless a preset is named; a drum recipe always keeps its own kit. Give whichever of tag, category or query fits what they said; a tag is a label on the sound, a query matches its name or folder.',
     input_schema: {
       type: 'object',
       properties: {
         tag: { type: 'string', description: 'A tag on the sound — "dark", "vinyl", "hard".' },
         category: { type: 'string', description: 'drums, instrument, vocal, fx, loop — if they named one.' },
         query: { type: 'string', description: 'Words to match in the name or folder.' },
+        kind: {
+          type: 'string',
+          enum: ['sounds', 'recipes', 'both'],
+          description: 'What to play through. Defaults to both. "recipes" for chord and pattern ideas, "sounds" for samples.',
+        },
+        preset: { type: 'string', description: 'What recipes should play on, by name — "rhodes", "grand piano", a saved preset. Defaults to a grand piano.' },
       },
     },
   },
