@@ -14,6 +14,8 @@ import { RollSoundPanel } from './RollSettings'
 import { clampToViewport } from './menu-clamp'
 import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
 import Waveform from './Waveform'
+import { tempoSegments, tempoAt } from '@/lib/tempo-map'
+import { SCALE_INTERVALS, type ScaleType } from '@/lib/scale-constants'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -650,11 +652,54 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   // Brae: "One overlay will be 'Loading' where the user can see unloaded
   // parts of the song in gray." A clip that is not the answer to the current
   // overlay's question is drawn grey and dim; the answer keeps its colour.
-  const greyed = overlay === 'loading' ? !loaded
-    : overlay === 'automation' ? !project.automationLanes.some(l => l.trackId === track.id)
-      : overlay === 'effects' ? !(track.effects?.length)
-        : overlay === 'frozen' ? !track.frozen
-          : false
+  // The section overlay follows the playhead: sampled while it is on.
+  const [overlayBeat, setOverlayBeat] = useState(0)
+  useEffect(() => {
+    if (overlay !== 'sections') return
+    const read = () => setOverlayBeat(engine.currentBeat)
+    read()
+    engine.addEventListener('transport', read)
+    const id = window.setInterval(read, 700)
+    return () => { engine.removeEventListener('transport', read); window.clearInterval(id) }
+  }, [engine, overlay])
+  const greyed = (() => {
+    switch (overlay) {
+      case 'loading': return !loaded
+      case 'sync': return isAudioClip(clip) && !clip.r2Key
+      case 'sections': {
+        const secs = [...(project.sections ?? [])].sort((a, b) => a.beat - b.beat)
+        if (!secs.length) return false
+        let cur = secs[0]
+        for (const s of secs) { if (s.beat <= overlayBeat + 1e-6) cur = s; else break }
+        const next = secs.find(s => s.beat > cur.beat)?.beat ?? Infinity
+        const end = clip.startBeat + clip.durationBeats
+        return !(clip.startBeat < next && end > cur.beat)
+      }
+      case 'tempo': {
+        const segs = tempoSegments(project)
+        return tempoAt(clip.startBeat, segs) === segs[0].bpm
+      }
+      case 'key': {
+        if (!isMidiClip(clip) || !clip.notes.length) return false
+        const steps = SCALE_INTERVALS[(project.scale as ScaleType)] ?? SCALE_INTERVALS.chromatic
+        const allowed = new Set(steps.map(s => ((s + (project.key ?? 0)) % 12 + 12) % 12))
+        return !clip.notes.some(n => !allowed.has(((n.pitch % 12) + 12) % 12))
+      }
+      case 'automation': return !project.automationLanes.some(l => l.trackId === track.id)
+      case 'effects': return !(track.effects?.length)
+      case 'frozen': return !track.frozen
+      case 'loudness': {
+        const peakOf = (c: DawClip): number => isAudioClip(c)
+          ? (c.waveformPeaks?.length ? Math.max(...c.waveformPeaks) * (c.gain ?? 1) : 0)
+          : (isMidiClip(c) && c.notes.length ? Math.max(...c.notes.map(n => n.velocity)) / 127 : 0)
+        const loudest = Math.max(0.001, ...project.arrangementClips.map(peakOf))
+        return peakOf(clip) < loudest * 0.5
+      }
+      case 'collab': return !collabHolder
+      case 'unused': return !!track.mute || (isMidiClip(clip) && clip.notes.length === 0)
+      default: return false
+    }
+  })()
 
   return (
     <>

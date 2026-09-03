@@ -23,14 +23,22 @@ const PATH_LABEL: Record<TranscriptEntry['path'], string> = {
 }
 const when = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
+/** How many exchanges are drawn at once. Older ones are a click away — a
+ *  200-row list re-rendering behind a live meter was part of what made a long
+ *  session slow. */
+const WINDOW = 60
+
 export default function VoiceTranscript({ C }: { C: Record<string, string> }) {
   const [, bump] = useState(0)
   useEffect(() => onTranscript(() => bump(n => n + 1)), [])
-  const rows = transcript()
+  const all = transcript()
+  const [showAll, setShowAll] = useState(false)
+  const hidden = showAll ? 0 : Math.max(0, all.length - WINDOW)
+  const rows = hidden ? all.slice(hidden) : all
   const end = useRef<HTMLDivElement | null>(null)
   // Newest at the bottom, and kept in view as it grows — a conversation is
   // read downwards.
-  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }) }, [rows.length])
+  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }) }, [all.length])
 
   const muted = C.textMuted ?? '#8b8b8b'
   const accent = C.accent ?? '#7ab5f7'
@@ -40,9 +48,9 @@ export default function VoiceTranscript({ C }: { C: Record<string, string> }) {
     <div data-voice-transcript style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.6, color: muted }}>TRANSCRIPT</div>
-        <div style={{ fontSize: 10, color: muted }}>{rows.length ? `${rows.length} exchange${rows.length === 1 ? '' : 's'}` : ''}</div>
+        <div style={{ fontSize: 10, color: muted }}>{all.length ? `${all.length} exchange${all.length === 1 ? '' : 's'}` : ''}</div>
         <div style={{ flex: 1 }} />
-        {rows.length > 0 && (
+        {all.length > 0 && (
           <button
             onClick={clearTranscript}
             style={{ border: `1px solid ${border}`, background: 'transparent', color: muted, borderRadius: 4, fontSize: 10, padding: '2px 7px', cursor: 'pointer' }}
@@ -52,12 +60,20 @@ export default function VoiceTranscript({ C }: { C: Record<string, string> }) {
         )}
       </div>
 
-      {rows.length === 0 && (
+      {all.length === 0 && (
         <div style={{ fontSize: 11.5, color: muted, lineHeight: 1.5 }}>
           Nothing yet. Everything you say, what Light answers, and what it changes in the song will be listed here.
         </div>
       )}
 
+      {hidden > 0 && (
+        <button
+          onClick={() => setShowAll(true)}
+          style={{ alignSelf: 'center', border: `1px solid ${border}`, background: 'transparent', color: muted, borderRadius: 4, fontSize: 10, padding: '3px 9px', cursor: 'pointer' }}
+        >
+          Show {hidden} earlier
+        </button>
+      )}
       {rows.map((r, i) => (
         <div key={`${r.at}-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 8, borderBottom: `1px solid ${border}` }}>
           {/* You */}

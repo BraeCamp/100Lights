@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useMemo } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useAppear } from '@/components/ui/Appear'
 import Knob from './Knob'
 import { createPortal } from 'react-dom'
@@ -1532,14 +1532,21 @@ export default function ArrangementView() {
           {overlayA.mounted && (
             <>
               <div onClick={() => setOverlayMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
-              <div className={overlayA.cls} data-overlay-menu style={{ position: 'absolute', top: '100%', left: 0, marginTop: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: 3, zIndex: 41, minWidth: 220, boxShadow: '0 4px 14px rgba(0,0,0,0.35)' }}>
-                {OVERLAYS.map(o => (
-                  <button key={o.kind} onClick={() => { setOverlay?.(o.kind); setOverlayMenu(false) }}
-                    title={o.what}
-                    style={{ ...toolBtn, display: 'block', width: '100%', height: 'auto', textAlign: 'left', whiteSpace: 'normal', background: overlay === o.kind ? 'var(--bg-surface)' : 'transparent', color: overlay === o.kind ? 'var(--text-primary)' : 'var(--text-muted)', border: 'none', fontSize: 10, padding: '5px 8px', lineHeight: 1.3 }}>
-                    <span style={{ fontWeight: 700 }}>{o.label}</span>
-                    <span style={{ display: 'block', fontSize: 9, opacity: 0.75, whiteSpace: 'normal' }}>{o.what}</span>
-                  </button>
+              <div className={overlayA.cls} data-overlay-menu style={{ position: 'absolute', top: '100%', left: 0, marginTop: 3, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, padding: 3, zIndex: 41, minWidth: 240, maxHeight: '70vh', overflowY: 'auto', boxShadow: '0 4px 14px rgba(0,0,0,0.35)' }}>
+                {/* Grouped by the kind of question; the label is what grey MEANS. */}
+                {OVERLAYS.map((o, i) => (
+                  <React.Fragment key={o.kind}>
+                    {o.group && OVERLAYS[i - 1]?.group !== o.group && (
+                      <div style={{ padding: '6px 8px 2px', fontSize: 8, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{o.group}</div>
+                    )}
+                    <button onClick={() => { setOverlay?.(o.kind); setOverlayMenu(false) }}
+                      title={o.what}
+                      data-overlay-kind={o.kind}
+                      style={{ ...toolBtn, display: 'block', width: '100%', height: 'auto', textAlign: 'left', whiteSpace: 'normal', background: overlay === o.kind ? 'var(--bg-surface)' : 'transparent', color: overlay === o.kind ? 'var(--text-primary)' : 'var(--text-muted)', border: 'none', fontSize: 10, padding: '5px 8px', lineHeight: 1.3 }}>
+                      <span style={{ fontWeight: 700 }}>{o.label}</span>
+                      <span style={{ display: 'block', fontSize: 9, opacity: 0.75, whiteSpace: 'normal' }}>{o.what}</span>
+                    </button>
+                  </React.Fragment>
                 ))}
               </div>
             </>
