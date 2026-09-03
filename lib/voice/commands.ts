@@ -768,13 +768,31 @@ const COMMANDS: VoiceCommand[] = [
       // parser has misread. Saying so costs nothing; guessing costs a mix.
       if (up === down) return null
       const hit = nameOrSelected(w, ctx, [...UP, ...DOWN, 'turn', 'bring', 'make', 'bit', 'touch', 'little',
-          'slightly', 'hair', 'lot', 'way', 'much', 'loads', 'track', 'volume'])
+          'slightly', 'hair', 'lot', 'way', 'much', 'loads', 'track', 'volume',
+          'db', 'dbs', 'decibel', 'decibels', 'percent', 'points', 'by'])
       if (!hit) return null
       // Relative needs somewhere to start from. Without the current level this
       // would be a guess dressed up as an instruction.
       const now = volumeOf(hit.name, ctx)
       if (now == null) return null
-      const next = Math.max(0, Math.min(100, now + (up ? nudgeSize(w) : -nudgeSize(w))))
+      // ⚠️ AN AMOUNT THAT WAS SAID IS THE AMOUNT. "Bring the bass down 3 dB"
+      // was nudged by the default 15 points with the "3 dB" left unexplained —
+      // a true read-back of the wrong move, in the one unit mixers actually
+      // speak. Decibels move the fader on its own scale; "by 10 percent" moves
+      // it by points. A bare number is neither, and is not guessed at: the
+      // sentence goes on to the assistant, which can ask.
+      const amount = argNumbers(w, hit.name)[0]
+      let next: number
+      if (amount != null && w.has('db', 'dbs', 'decibel', 'decibels')) {
+        const gain = Math.pow(10, (up ? amount : -amount) / 20)
+        next = Math.max(0, Math.min(100, Math.round(now * gain)))
+      } else if (amount != null && w.has('percent', 'points')) {
+        next = Math.max(0, Math.min(100, now + (up ? amount : -amount)))
+      } else if (amount != null) {
+        return null
+      } else {
+        next = Math.max(0, Math.min(100, now + (up ? nudgeSize(w) : -nudgeSize(w))))
+      }
       return {
         calls: [{ name: 'set_track', input: { target: hit.name, volume: next } }],
         confidence: nameConfidence(hit.score),
@@ -3452,10 +3470,17 @@ const COMMANDS: VoiceCommand[] = [
     say: ['undo that', 'undo', 'take that back'],
     handledBy: 'ui',
     match(w) {
-      if (!w.has('undo', 'revert')) {
+      // ⚠️ EXACT, because this runs without the model in every mode. has()
+      // bent "reverb" into "revert", so "the reverb is too much", "turn on the
+      // reverb", "less reverb" — any reverb sentence no other rule read —
+      // silently undid the last edit. See Words.exact.
+      if (!w.exact('undo', 'revert')) {
+        // "take that back" — but "take the reverb back a bit" names a thing
+        // to take back, which is a nudge on that thing, not an undo.
         if (!(w.has('take') && w.has('back'))) return null
+        if (!w.only(new Set(['take', 'back', 'last', 'change', 'edit', 'one', 'again']))) return null
       }
-      if (w.has('redo')) return null
+      if (w.exact('redo')) return null
       return { calls: [{ name: 'undo', input: {} }], confidence: 0.93 }
     },
   },
@@ -3467,7 +3492,8 @@ const COMMANDS: VoiceCommand[] = [
     say: ['redo that', 'redo'],
     handledBy: 'ui',
     match(w) {
-      if (!w.has('redo')) return null
+      // Exact for the same reason as undo: "red" and "reds" were a redo.
+      if (!w.exact('redo')) return null
       return { calls: [{ name: 'redo', input: {} }], confidence: 0.93 }
     },
   },
@@ -3673,11 +3699,17 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Go back to the beginning and play',
     say: ['restart', 'start over', 'from the top', 'take it from the beginning'],
     match(w) {
-      const asked = w.has('restart', 'beginning')
+      // "beginning" on its own is not a request to restart — "i like the
+      // beginning" was one, because the word alone satisfied this. It needs a
+      // going-back word with it; "restart" needs nothing. Exact, like the
+      // other instant commands (see Words.exact).
+      const asked = w.exact('restart', 'restarted')
         || w.hasPhrase('start', 'over')
-        || w.hasPhrase('from', 'top')
-        || (w.has('top') && w.has('take', 'go', 'start'))
+        || w.said('from the top', 'from the beginning', 'to the beginning', 'to the top', 'back to the start')
+        || (w.exact('beginning', 'top') && w.has('take', 'go', 'start', 'back', 'again', 'play'))
       if (!asked) return null
+      // Read the rest of the phrase so the reading explains it.
+      w.exact('beginning', 'top')
       for (const word of THE_SONG) w.has(word)
       return { calls: [{ name: 'transport', input: { action: 'restart' } }], confidence: 0.93 }
     },
@@ -3710,7 +3742,11 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Stop playback',
     say: ['stop', 'halt', 'stop playing'],
     match(w) {
-      if (!w.has('stop', 'halt')) return null
+      // ⚠️ EXACT. "hat" and "half" are one edit from "halt", "top" and "step"
+      // from "stop" — and this fires instantly, with nothing downstream to
+      // catch it, so "the hat is too much" stopped the song. The plural and
+      // past tense are listed because a recogniser produces them for "stop".
+      if (!w.exact('stop', 'stops', 'stopped', 'halt')) return null
       // The object of the command, read rather than left dangling.
       for (const word of THE_SONG) w.has(word)
       return { calls: [{ name: 'transport', input: { action: 'stop' } }], confidence: 0.95 }
@@ -3723,7 +3759,8 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Pause where you are',
     say: ['pause', 'hold on', 'pause it'],
     match(w) {
-      if (!w.has('pause') && !w.said('hold on')) return null
+      // Exact: "pulse" is a synth word one edit from "pause".
+      if (!w.exact('pause', 'paused') && !w.said('hold on')) return null
       // The object of the command, read rather than left dangling.
       for (const word of THE_SONG) w.has(word)
       return { calls: [{ name: 'transport', input: { action: 'pause' } }], confidence: 0.95 }

@@ -136,6 +136,7 @@ export const MUSIC_TOOLS = [
         to: { type: 'number', description: 'Ending value as a percentage, 0-100.' },
         start: { ...POSITION, description: 'Where the ramp begins. Omit for the start of the target clip.' },
         length: LENGTH,
+        end: { ...POSITION, description: 'Where the ramp ends, when they said an endpoint ("until bar 6", "up to the chorus"). Use this OR length.' },
       },
       required: ['target', 'parameter', 'from', 'to'],
     },
@@ -1259,6 +1260,9 @@ export function musicStateSummary(p: {
   timeSignatureDen?: number
   tempoMarkers?: { beat: number; tempo: number }[]
   meterMarkers?: { beat: number; num: number; den: number }[]
+  /** The named places — "Chorus", "Drop". Every position argument is a bar,
+   *  and without these "at the chorus" has no bar to become. */
+  cueMarkers?: { beat: number; name?: string }[]
   tracks?: {
     id: string
     name?: string
@@ -1338,6 +1342,15 @@ export function musicStateSummary(p: {
     ...(p.tempoMarkers ?? []).map(m => `tempo ${m.tempo} at bar ${bar(m.beat)}`),
     ...(p.meterMarkers ?? []).map(m => `${m.num}/${m.den} at bar ${bar(m.beat)}`),
   ]
+  // ⚠️ The sections were the one thing a person names that the model could
+  // not see. "Put a crash at the chorus" needs a bar, the summary listed
+  // tempo and meter changes but not the markers, and the planner's positions
+  // are bars — so the model either asked where the chorus was or guessed.
+  // About five tokens a marker, after the cache breakpoint.
+  const sections = [...(p.cueMarkers ?? [])]
+    .filter(m => m.name)
+    .sort((a, b) => a.beat - b.beat)
+    .map(m => `${m.name} at bar ${bar(m.beat)}`)
   const selClip = p.selectedClipId
     ? (p.arrangementClips ?? []).find(c => (c as { id?: string }).id === p.selectedClipId)
     : undefined
@@ -1360,6 +1373,7 @@ export function musicStateSummary(p: {
     `${p.tempo ?? 120} bpm, ${num}/${den}.`,
     macros,
     changes.length ? `Changes: ${changes.join('; ')}.` : '',
+    sections.length ? `Sections: ${sections.join(', ')}.` : '',
     tracks.length ? `Tracks — ${tracks.join(' | ')}.` : 'No tracks yet.',
     // "this one" / "here" have to mean something, and the only thing that can
     // give them meaning is what the user is actually pointing at.

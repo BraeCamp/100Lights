@@ -258,6 +258,31 @@ export class Words {
     return false
   }
 
+  /**
+   * Is one of these words in the sentence EXACTLY — no edit slack at all?
+   *
+   * ⚠️ For the commands that run without anybody checking. "undo", "redo",
+   * "stop" and "pause" are on the instant list (local-resolve.ts): they fire
+   * from the rules alone, in every assistant mode, because a round trip is the
+   * wrong price for stopping a song. That makes them the one place a bent word
+   * is not caught by anything downstream — and has() bends freely: "reverb" is
+   * one edit from "revert", so "the reverb is too much" UNDID the last edit;
+   * "hat" and "half" are one edit from "halt" and stopped the transport; "red"
+   * was a redo. Nothing else in the sentence gets a vote, because nothing else
+   * reads it.
+   *
+   * A mishearing of these words still has a path back: interpretHeard
+   * considers the recogniser's alternatives at the SENTENCE level, with a
+   * context check — which is the correction Brae asked for, and the one this
+   * bypassed.
+   */
+  exact(...targets: string[]): boolean {
+    for (let i = 0; i < this.all.length; i++) {
+      if (targets.includes(this.all[i])) { this.mark(i, 0); return true }
+    }
+    return false
+  }
+
   /** Does the sentence contain these two words next to each other, in order? */
   hasPhrase(...phrase: string[]): boolean {
     if (!phrase.length) return false

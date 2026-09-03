@@ -43,7 +43,7 @@ import {
   startRecording, preferredTranscriber, setPreferredTranscriber, micProblemMessage,
   type Recording, type StopResult, type MicReport,
 } from '@/lib/voice/record'
-import { planVoiceCalls, planVoiceCall, type VoiceCall } from '@/lib/voice/execute-music'
+import { planVoiceCalls, planVoiceCallsEach, type VoiceCall } from '@/lib/voice/execute-music'
 import { recallCommand, rememberCommand, forgetKey, mergeShared, shareableTemplate } from '@/lib/voice/learned'
 import { recordCommand } from '@/lib/voice/voice-ledger'
 import { macroNames } from '@/lib/voice/macros'
@@ -1593,7 +1593,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // cannot walk away from mid-question is worse than one that never asks:
         // if the words are a command in their own right, the question is
         // abandoned and the command runs. Only genuine mumbling gets re-asked.
-        const asCommand = resolveLocally(text, { tracks: project.tracks ?? [], tempo: project.tempo })
+        // The SAME context the command path reads — clips, library, selection.
+        // A reduced one could not read "duplicate Pad 1" as a command, so a
+        // change of subject that named a clip was re-asked the old question.
+        const asCommand = heard ? resolveHeard(heard, ctx) : resolveLocally(text, ctx)
         const givingUp = /^(cancel|never ?mind|forget it|nothing|stop)\b/i.test(text.trim())
         if (givingUp) {
           setPendingAsk2(null)
@@ -1634,7 +1637,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       if (yes === null) {
         // Neither yes nor no. An offer is the easiest thing in the world to
         // ignore by just carrying on, so carrying on is allowed.
-        const asCommand = resolveLocally(text, { tracks: project.tracks ?? [], tempo: project.tempo })
+        // The SAME context the command path reads — clips, library, selection.
+        // A reduced one could not read "duplicate Pad 1" as a command, so a
+        // change of subject that named a clip was re-asked the old question.
+        const asCommand = heard ? resolveHeard(heard, ctx) : resolveLocally(text, ctx)
         if (confidentEnough(asCommand, heardConfidence)) {
           setPendingOffer(null)
           // Falls through and runs.
@@ -1926,13 +1932,35 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // second turn there was nowhere to continue, so everything had to be got
     // right blind, first time.
     //
-    // Now the results go back. Three things follow that could not happen
-    // before: it can read the song before acting on it (`describe` answers
-    // back), it can recover from a refusal instead of dying on it, and it can
-    // report what actually changed rather than what it meant to change.
+    // ⚠️ AND IT STAYED ONE SHOT FOR A LONG TIME WITHOUT ANYBODY NOTICING. The
+    // loop below replied to the model with its results — but only when the
+    // route sent back the model's own turn (`raw`), and the route never did.
+    // So every exchange broke out after the first turn: a refused call was
+    // reported to nobody (the "I couldn't find that" sentence only ever went
+    // into the ledger), the model could not fix anything, and the prompt was
+    // promising results that never arrived. Turns 2+ have never been paid for
+    // in this studio, which is worth knowing when reading the cost model.
     //
-    // ⚠️ Bounded, because a loop that spends money on every pass is a loop that
-    // must be able to stop. Four turns is enough for read → act → check.
+    // WHAT GOES BACK NOW, AND WHEN. A second turn is a second bill — the whole
+    // cached prefix again plus the conversation so far — so it is only bought
+    // when it can change the outcome:
+    //
+    //   a call was REFUSED: the reason goes back and the model gets to fix it
+    //   (name the right track, use the field the refusal named). This is the
+    //   whole point of refusing out loud, and it costs about what asking the
+    //   person to say it again would — except they do not have to.
+    //
+    //   everything RAN: stop. The studio's own read-back is the report, the
+    //   prompt tells the model not to repeat it, and a "done" turn would spend
+    //   a whole prefix to say nothing. The song summary already carries what a
+    //   `describe` would have told it, so there is no read-then-act to fund.
+    //
+    //   the model ANSWERED IN WORDS: that is a question or an explanation for
+    //   the person, and the exchange waits for them.
+    //
+    // ⚠️ Bounded twice over: by turns, and by the model repeating itself — the
+    // same refusal twice means it is not going to find the answer, and the
+    // person should hear the refusal rather than pay for a third try.
     const MAX_TURNS = 4
     // ⚠️ A TURN CAN HANG, AND FOUR OF THEM HANG FOUR TIMES AS LONG.
     //
@@ -1973,7 +2001,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     let lastSay = ''
     let spoke = ''
     const allCalls: VoiceCall[] = []
+    /** The calls of the turn that RAN — the lesson, if there is one. */
+    let ranCalls: VoiceCall[] = []
+    /** The last turn's refusal. Cleared by a turn that ran, so a fixed
+     *  mistake is not filed as a failure. */
     let lastProblem = ''
+    /** The refusal before that, to notice the model repeating itself. */
+    let priorProblem = ''
     let usedTurns = 0
     // What the whole exchange consumed, added up across its turns.
     const spend = { tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, credits: 0 }
@@ -1999,7 +2033,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             // tool_use turn cannot be replayed without its results — so
             // without this every finished command left no trace and a
             // follow-up had nothing to refer back to.
-            recent: recentContext(),
+            // ⚠️ SIX, NOT TEN. Every line here is uncached input on every
+            // turn — about 45 tokens each — and the last three exchanges
+            // already travel in `messages` as text. Six is enough for "the
+            // same on the bass" and "put it back where it was"; ten was
+            // paying for commands from a quarter of an hour ago.
+            recent: recentContext(6),
             // ⚠️ WHAT THE RULES THOUGHT, AS A SUGGESTION — not as a decision.
             //
             // The hundred hand-written rules know a great deal about this app:
@@ -2099,6 +2138,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             matched: local.matched, understood: local.confidence,
             calls: [], asked: reply,
           })
+          // A question still cost its turns — and, since a refusal now goes
+          // back to the model, sometimes two. Filed here because this branch
+          // returns before the ledger line after the loop.
+          recordCommand({ said: text, by: 'assistant', turns: usedTurns, ...spend, problem: lastProblem || undefined })
+          traceEnd('', `asked: ${reply}`)
           setAsking(reply)
           // ⚠️ NO LONGER OPENS THE TYPING BOX. Brae: "'Type' needs to stop
           // opening on its own."
@@ -2122,7 +2166,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         // goes back to the model, which can now name the right track and try
         // again instead of the user being told "no" and starting over.
         const proj = projectRef.current
-        const plans = calls.map(c => planVoiceCall(c, proj, voiceCtx()))
+        // Each call sees what the calls before it made — see planVoiceCallsEach.
+        const plans = planVoiceCallsEach(calls, proj, voiceCtx())
         // The executor found more than one thing the words could mean and
         // declined to pick. That is a question for the PERSON, not for the
         // model — it is their song, and the ambiguity is about which of their
@@ -2167,37 +2212,34 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           badAt < 0 ? plans.flatMap(pl => pl.actions.map(a => String((a as { type?: string }).type ?? 'action'))) : [],
         )
 
-        if (badAt < 0) {
-          for (const pl of plans) for (const a of pl.actions) runAction(a)
-          lastSay = plans.map(pl => pl.say).filter(Boolean).join(' ')
-          setSaid(lastSay)
-          // ⚠️ WAIT for the edit to land before the next turn reads the song.
-          //
-          // A single animation frame is not enough and the failure is silent:
-          // the ref still holds the pre-edit project, so the assistant is handed
-          // a summary in which its own change never happened and is invited to
-          // conclude the edit failed. Measured — the summary on the third turn
-          // was byte-identical to the first.
-          //
-          // The reducer returns a new object whenever it changes anything, so
-          // identity is the signal. Capped, because some calls (transport, a
-          // no-op set) legitimately change nothing and there is nothing to wait
-          // for.
-          const beforeEdit = projectRef.current
-          for (let i = 0; i < 16 && projectRef.current === beforeEdit; i++) {
-            await new Promise(r => setTimeout(r, 16))
-          }
-        }
-
         // ⚠️ One utterance, one record. The obvious place to write these is
         // here, where the calls are — but a loop passes through here several
         // times, so a single sentence would be filed as three or four separate
-        // commands and the corpus would count read-then-act turns as if they
-        // were repeated attempts. They are written once, after the loop.
+        // commands and the corpus would count retries as if they were
+        // repeated attempts. They are written once, after the loop.
         allCalls.push(...calls)
-        if (badAt >= 0) lastProblem = plans[badAt].problem || 'refused'
 
-        // Nothing more to send back: the model is done talking.
+        if (badAt < 0) {
+          for (const pl of plans) for (const a of pl.actions) runAction(a)
+          lastSay = plans.map(pl => pl.say).filter(Boolean).join(' ')
+          ranCalls = calls.map(c => ({ name: c.name, input: c.input }))
+          lastProblem = ''
+          setSaid(lastSay)
+          // Everything ran and the studio has the sentence for it. A further
+          // turn could only repeat that sentence in the model's words, which
+          // the prompt tells it not to do — so it is not bought. See the
+          // header above.
+          break
+        }
+
+        // A refusal. Back to the model with the reason, unless it has already
+        // been told this and came back with the same thing: then it is not
+        // going to find the answer, and the person should hear the refusal
+        // rather than pay for another try.
+        priorProblem = lastProblem
+        lastProblem = plans[badAt].problem || 'refused'
+        if (lastProblem === priorProblem) break
+        if (turn === MAX_TURNS - 1) break
         if (data.stop !== 'tool_use') break
 
         // ⚠️ ONLY AS A PAIR, AND ONLY WHEN THERE IS SOMETHING TO PAIR WITH.
@@ -2212,7 +2254,18 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           { role: 'assistant', content: raw },
           { role: 'user', content: results },
         )
-        if (turn === MAX_TURNS - 1 && badAt >= 0) setProblem(plans[badAt].problem || '')
+      }
+
+      // ── The refusal is SAID, not just filed ──────────────────────────────
+      //
+      // The old loop only ever put a refusal on screen on its fourth turn, and
+      // never reached a fourth turn — so a batch the studio would not run
+      // ended in silence after "working on it". Nothing edited, nothing said:
+      // the one outcome this file promises never happens. If the model added
+      // a sentence of its own it is spoken too, because it usually says what
+      // it was trying to do.
+      if (lastProblem && !lastSay) {
+        respond(spoke ? `${lastProblem} ${spoke}` : lastProblem, 'problem')
       }
 
       remember({
@@ -2271,12 +2324,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // rememberCommand refuses several more shapes on its own: anything
       // pointing at "that" or "here", anything destructive, and any call
       // carrying a number nobody actually said.
-      if (!lastProblem && allCalls.length) {
+      // ⚠️ AND ONLY A FIRST-TURN ANSWER. A call the model got right after
+      // being told why its first try was refused was informed by the refusal
+      // as much as by the sentence — "I couldn't find X; I have Pad, Bass,
+      // Drums" — and a lesson keyed on the sentence alone would replay that
+      // choice into a song where it no longer holds.
+      if (!lastProblem && ranCalls.length && usedTurns === 1) {
         const names = [
           ...(project.tracks ?? []).map(t => t.name),
           ...(project.arrangementClips ?? []).map(c => c.name),
         ].filter(Boolean) as string[]
-        rememberCommand(text, allCalls, names)
+        rememberCommand(text, ranCalls, names)
 
         // ── And offer it to everybody else ────────────────────────────────
         //
@@ -2288,7 +2346,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         //
         // Fire and forget, on purpose. Contributing is a gift, and a failed
         // gift must never look like a failed command.
-        const gift = shareableTemplate(text, allCalls, names)
+        const gift = shareableTemplate(text, ranCalls, names)
         if (gift) {
           void fetch('/api/voice/learned', {
             method: 'POST',
@@ -2304,7 +2362,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       ].slice(-6)
       setAsking('')
       if (spoke && lastSay) respond(spoke)
-      setSaid(lastSay || spoke)
+      // A refusal was spoken above, with the model's own words folded in —
+      // putting them in the answer line as well would show them twice.
+      setSaid(lastSay || (lastProblem ? '' : spoke))
       traceEnd(lastSay || spoke, lastProblem)
     } catch (err) {
       const timedOut = (err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError'

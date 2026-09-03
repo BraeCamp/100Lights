@@ -122,7 +122,7 @@ const attention = await importTs('lib/voice/attention.ts')
   const voice = readFileSync('components/editor/daw/VoiceControl.tsx', 'utf8')
   const route = readFileSync('app/api/ai/assist/route.ts', 'utf8')
 
-  check('the studio sends it', /recent: recentContext\(\)/.test(voice))
+  check('the studio sends it', /recent: recentContext\(\d*\)/.test(voice))
   check('the route passes it on, capped', /body\.recent.*slice\(0, 2000\)/s.test(route))
   check('and it becomes a system block', /if \(recent\)/.test(assist))
 

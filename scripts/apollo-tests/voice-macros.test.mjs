@@ -110,7 +110,15 @@ const plan = (name, input) => planVoiceCall({ name, input }, PROJECT)
   // ⚠️ Found by this test passing bar positions as plain strings — which is
   // what a model does sometimes. It used to fall through and put the shape on a
   // CLIP, and say so truthfully, having done something nobody asked for.
-  const unparsed = plan('run_macro', { name: 'steady swell', target: 'Bass', from: 'bar 9', to: 'bar 25' })
+  // Since placeOf (execute-music.ts) a string that SAYS a bar is read as that
+  // bar — "bar 9" to "bar 25" is the stretch that was asked for, and refusing
+  // a position the person plainly gave would be the other kind of wrong.
+  const worded = plan('run_macro', { name: 'steady swell', target: 'Bass', from: 'bar 9', to: 'bar 25' })
+  const bar = worded.actions.find(a => a.type === 'ADD_CLIP_EFFECT')?.effect
+  check('a stretch said in words is read as that stretch',
+    !worded.problem && bar?.startBeat === 32 && bar?.durationBeats === 64,
+    worded.problem ?? JSON.stringify(worded.actions))
+  const unparsed = plan('run_macro', { name: 'steady swell', target: 'Bass', from: 'somewhere', to: 'later on' })
   check('a stretch that did not parse is a question, not a quiet clip edit',
     /could not work out that stretch/i.test(unparsed.problem ?? '') && !unparsed.actions.length,
     unparsed.problem ?? JSON.stringify(unparsed.actions))

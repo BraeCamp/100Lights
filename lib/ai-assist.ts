@@ -138,14 +138,18 @@ function staticSystem(moduleName: string): string {
 }
 
 /**
- * What changes now that results come back.
+ * What comes back, and what does not.
  *
- * Worth stating plainly, because the previous prompt was written for a model
- * that got exactly one turn and had to guess at everything it could not see.
+ * ⚠️ HONEST ABOUT THE LOOP. The previous text promised that every result would
+ * come back and that `describe` could be used to look before acting. Neither
+ * was true — the studio only replies to the model when a call was REFUSED
+ * (see VoiceControl: a second turn is a second bill, and a turn that ran has
+ * nothing to add) — and a model told to look first would spend its one turn
+ * looking, and never act. What it is told now is exactly what happens.
  */
 const LOOP_HINT = [
-  'You will be told what each tool call did. If a call fails, the reason comes back — fix it and try again rather than giving up or repeating it unchanged.',
-  'You can look before you act: `describe` answers questions about the song, and its answer comes back to you, so use it when a request depends on something you were not told (which track is loudest, what is on a chain).',
+  'If a call cannot be done, NOTHING in that reply runs and the reason comes back to you. Fix what it names and send the whole reply again — every call, not just the one that failed. Never repeat a refused call unchanged.',
+  'When every call runs the exchange ends there — you will not see the results — so put everything the sentence asks for in one reply, deciding from the "Current song" line: it already gives the tempo, sections, each track\'s level, pan, effects and clips, and the selection. `describe` answers the user\'s questions about the song or library; its answer is read to them directly, so call it and stop.',
   // ⚠️ THE STUDIO ALREADY SAYS THIS, AND SAYS IT BETTER. Every plan the
   // executor runs comes back with `say` — "reverb on \"Pad\" at 100%" — built
   // from what the reducer actually did, not from what anybody intended. Asking

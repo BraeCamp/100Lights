@@ -201,5 +201,13 @@ export async function POST(req: Request) {
       in: u.inputTokens, out: u.outputTokens,
       cacheRead: u.cacheReadTokens, cacheWrite: u.cacheWriteTokens,
     },
+    // ⚠️ THE ASSISTANT'S TURN, VERBATIM. runAssist has always returned it and
+    // this response never included it — so the studio's "reply with the
+    // results" loop had nothing to reply to and broke out after one turn,
+    // every time. A refused call could not be corrected and its reason was
+    // never spoken; the model was told results come back, and none ever did.
+    // The studio only sends this back when a call was refused (see
+    // VoiceControl), so returning it costs nothing on the ordinary path.
+    raw: result.raw,
   })
 }

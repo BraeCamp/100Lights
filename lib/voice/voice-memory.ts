@@ -138,11 +138,19 @@ export function allExchanges(): VoiceExchange[] { load(); return ring.slice() }
  * Old exchanges are worse than none: a command from this morning is not context
  * for this sentence, it is a red herring. Hence the window.
  */
+/** Commands that carry nothing a later sentence could refer back to. "Stop"
+ *  is not a "that", and every line here is paid for on every turn. */
+const NO_REFERENT = new Set(['transport', 'metronome'])
+
 export function recentContext(n = 10, withinMs = 10 * 60_000): string {
   load()
   const cutoff = Date.now() - withinMs
   const lines = ring
     .filter(e => e.t >= cutoff && !e.undone)   // an undone edit is a wrong example
+    // ⚠️ Sent UNCACHED on every assistant turn, at full price. A session's
+    // "play", "stop", "stop", "play" lines were a fifth of a turn's input and
+    // could never resolve "that one" or "the same again".
+    .filter(e => !(e.calls.length && e.calls.every(c => NO_REFERENT.has(c.name))))
     .slice(-n)
     .map(e => {
       const said = e.said.length > 90 ? e.said.slice(0, 88) + '…' : e.said

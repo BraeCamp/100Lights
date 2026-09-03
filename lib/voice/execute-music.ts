@@ -295,8 +295,142 @@ function makeAudible(patch: ApolloPatch, param: SpokenParam): string | null {
 }
 
 
-const pos = (v: unknown): MusicPosition | null => (v && typeof v === 'object' ? v as MusicPosition : null)
-const len = (v: unknown): MusicDuration | null => (v && typeof v === 'object' ? v as MusicDuration : null)
+
+// ── "Not said" and "said but unreadable" are different answers ──────────────
+//
+// Brae: "It didn't change the reverb ... but instead created a lowpass cutoff
+// that did the shape that I wanted." The same fault, one argument over: every
+// place that read a position wrote `positionToBeat(pos(i.at), maps) ?? 0` (or
+// `?? clip.startBeat`), so a position the model DID send but in a shape the
+// app could not read — `{ marker: 'chorus' }`, `"bar 9"`, `"the chorus"` —
+// quietly became the start of the song. "Added a crash at bar 1" was then a
+// true sentence about the wrong thing, which is the worst kind of read-back:
+// it looks like it did what was asked, and the person only finds out when
+// they play it. The run_macro case already caught this ("a stretch that did
+// not parse is a question, not a clip"); this makes every position and length
+// go through the same door.
+//
+// Three outcomes, and the caller has to handle all three:
+//   nothing was said        → beat: null, no problem — the command's own rule
+//                             for "unstated" applies (a clip's own start, the
+//                             whole song, a global tempo)
+//   something readable      → the beat
+//   something unreadable    → a problem, in words that say what WOULD read
+//
+// A name is readable too: "the chorus" IS a place in the song when a marker
+// says where it is. That is resolution, not a default — it either finds the
+// marker that was named or refuses out loud.
+interface Placed { beat: number | null; problem?: string }
+
+/** Anything that is a number, including a model's "9". */
+const finite = (v: unknown): number | null => {
+  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+}
+
+/** A cue marker by name — "chorus", "the drop", "Chorus 2". */
+function markerNamed(name: string, project: DawProject): { beat: number; name: string } | null {
+  const want = foldName(name.replace(/^(the|at|to|from|until|till)\s+/i, ''))
+  if (!want) return null
+  const markers = project.cueMarkers ?? []
+  const exact = markers.find(m => foldName(m.name ?? '') === want)
+  if (exact) return { beat: exact.beat, name: exact.name ?? '' }
+  const loose = markers.filter(m => foldName(m.name ?? '').includes(want))
+  return loose.length === 1 ? { beat: loose[0].beat, name: loose[0].name ?? '' } : null
+}
+
+/** "bar 9", "bar 9 beat 3", "32 seconds", "the beginning" — the forms a model
+ *  writes when it puts a position in a string instead of an object. */
+function positionFromWords(text: string): MusicPosition | null {
+  const t = text.toLowerCase().trim()
+  if (/^(the\s+)?(beginning|start|top)$/.test(t)) return { bar: 1 }
+  const bar = /^(?:at\s+)?(?:bar|measure)\s*(\d+(?:\.\d+)?)(?:\s*(?:,|beat)\s*(\d+(?:\.\d+)?))?$/.exec(t)
+  if (bar) return { bar: Number(bar[1]), beat: bar[2] != null ? Number(bar[2]) : null }
+  const sec = /^(?:at\s+)?(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)$/.exec(t)
+  if (sec) return { seconds: Number(sec[1]) }
+  return null
+}
+
+function placeOf(v: unknown, maps: MusicMaps, project: DawProject, what = 'that'): Placed {
+  if (v == null || v === '') return { beat: null }
+  const cannot = (said: string): Placed => ({
+    beat: null,
+    problem: `I couldn't work out where "${said}" is — say a bar number like "bar 9", a time like "32 seconds", or the name of a section marker.`,
+  })
+  if (typeof v === 'string' || typeof v === 'number') {
+    const said = String(v).trim()
+    if (!said) return { beat: null }
+    // A bare number is not a place: bar 9, beat 9 and 9 seconds are three
+    // different places, and picking one would be exactly the guess this exists
+    // to refuse.
+    if (finite(said) != null) return cannot(said)
+    const marker = markerNamed(said, project)
+    if (marker) return { beat: marker.beat }
+    const parsed = positionFromWords(said)
+    if (parsed) { const b = positionToBeat(parsed, maps); return b == null ? cannot(said) : { beat: b } }
+    return cannot(said)
+  }
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    const coerced: MusicPosition = {
+      bar: finite(o.bar), beat: finite(o.beat), seconds: finite(o.seconds), beats: finite(o.beats),
+    }
+    const b = positionToBeat(coerced, maps)
+    if (b != null) return { beat: b }
+    // { marker: 'chorus' }, { section: 'drop' }, { name: 'Verse 2' }: a place
+    // by name, in a field the schema never advertised. Read rather than
+    // refused, because it names something real.
+    const named = [o.marker, o.section, o.name, o.at, o.bar, o.position].find(x => typeof x === 'string' && x.trim())
+    if (typeof named === 'string') {
+      const marker = markerNamed(named, project)
+      if (marker) return { beat: marker.beat }
+      const parsed = positionFromWords(named)
+      if (parsed) { const b2 = positionToBeat(parsed, maps); if (b2 != null) return { beat: b2 } }
+      return cannot(named)
+    }
+    return cannot(JSON.stringify(v).slice(0, 40))
+  }
+  return cannot(what)
+}
+
+/** A length, with the same three outcomes. Null with no problem means nothing
+ *  was said, and the command's own rule for an unstated length applies. */
+interface Spanned {
+  beats: number | null
+  /** The duration as understood, in the unit it was said in — for the read-back. */
+  said?: MusicDuration
+  problem?: string
+}
+
+function spanOf(v: unknown, atBeat: number, maps: MusicMaps): Spanned {
+  if (v == null || v === '') return { beats: null }
+  const cannot = (said: string): Spanned => ({
+    beats: null,
+    problem: `I couldn't read the length "${said}" — say it like "2 bars", "4 beats" or "8 seconds".`,
+  })
+  if (typeof v === 'string' || typeof v === 'number') {
+    const said = String(v).trim()
+    if (!said) return { beats: null }
+    if (finite(said) != null) return cannot(said)
+    const m = /^(?:for\s+|over\s+)?(\d+(?:\.\d+)?|a|an|one|two|three|four|six|eight)\s*(bars?|measures?|beats?|s|secs?|seconds?)$/i.exec(said)
+    if (!m) return cannot(said)
+    const n = spokenNumber(m[1])
+    if (n == null) return cannot(said)
+    const unit = m[2].toLowerCase()
+    const d: MusicDuration = unit.startsWith('bar') || unit.startsWith('measure') ? { bars: n }
+      : unit.startsWith('beat') ? { beats: n } : { seconds: n }
+    const b = durationToBeats(d, atBeat, maps)
+    return b == null ? cannot(said) : { beats: b, said: d }
+  }
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    const d: MusicDuration = { bars: finite(o.bars), beats: finite(o.beats), seconds: finite(o.seconds) }
+    const b = durationToBeats(d, atBeat, maps)
+    if (b != null) return { beats: b, said: d }
+    return cannot(JSON.stringify(v).slice(0, 40))
+  }
+  return cannot(String(v))
+}
 
 const allClips = (p: DawProject): DawClip[] => p.arrangementClips ?? []
 
@@ -1062,9 +1196,25 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const to = spokenFraction(i.to as string)
       if (from == null || to == null) return fail('Say what it should sweep from and to.')
 
-      const startBeat = positionToBeat(pos(i.start), maps) ?? clip.startBeat
-      const lengthBeats = durationToBeats(len(i.length), startBeat, maps) ?? clip.durationBeats
-      if (lengthBeats <= 0) return fail('That sweep has no length.')
+      // Unstated means the clip itself; stated-but-unreadable is a question.
+      // See placeOf — a sweep drawn from bar 1 because "the chorus" did not
+      // parse would be perfectly shaped and in the wrong place.
+      const start = placeOf(i.start ?? i.at, maps, project)
+      if (start.problem) return fail(start.problem)
+      const startBeat = start.beat ?? clip.startBeat
+      // "until bar 6" is an endpoint, and the tool used to have no field for
+      // one — the model had to turn it into a length by arithmetic it could
+      // get wrong. Given as a place, it is read as a place.
+      const end = placeOf(i.end ?? i.until, maps, project)
+      if (end.problem) return fail(end.problem)
+      const span = end.beat != null ? { beats: end.beat - startBeat } : spanOf(i.length, startBeat, maps)
+      if (span.problem) return fail(span.problem)
+      const lengthBeats = span.beats ?? clip.durationBeats
+      if (lengthBeats <= 0) {
+        return fail(end.beat != null
+          ? `${describeBeat(end.beat, maps)} is not after ${describeBeat(startBeat, maps)}, so there is nothing to sweep across.`
+          : 'That sweep has no length.')
+      }
 
       // ⚠️ NO DEFAULT, AND NO SILENT FALLBACK. Brae: "It didn't change the
       // reverb, named 'VERB Wet' but instead created a lowpass cutoff that did
@@ -1189,7 +1339,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat, value: from } })
       actions.push({ type: 'ADD_AUTOMATION_POINT', laneId, point: { id: newId(), beat: startBeat + lengthBeats, value: to } })
 
-      const spoken = len(i.length)
+      const spoken = span.said
       return {
         actions,
         // Read back in the unit the thing is actually in. "From 100% to 20%"
@@ -1197,7 +1347,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         // at 1.9 kHz or at a fifth of a Hertz — so the read-back could not have
         // caught the bug it was describing. "Down to 570 Hz" can be wrong out
         // loud.
-        say: `${label} from ${hz ? `${fmtHz(hz.fromNorm(from))} to ${fmtHz(hz.fromNorm(to))}` : `${Math.round(from * 100)}% to ${Math.round(to * 100)}%`} over ${spoken ? describeDuration(spoken, lengthBeats) : `${+lengthBeats.toFixed(2)} beats`}, starting ${describeBeat(startBeat, maps)}, on ${found.how}.`,
+        say: `${label} from ${hz ? `${fmtHz(hz.fromNorm(from))} to ${fmtHz(hz.fromNorm(to))}` : `${Math.round(from * 100)}% to ${Math.round(to * 100)}%`} ${end.beat != null ? `until ${describeBeat(end.beat, maps)}` : `over ${spoken ? describeDuration(spoken, lengthBeats) : `${+lengthBeats.toFixed(2)} beats`}`}, starting ${describeBeat(startBeat, maps)}, on ${found.how}.`,
       }
     }
 
@@ -1215,12 +1365,14 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         return fail(target ? `I couldn't find "${target}" to move.` : 'There is nothing in the arrangement to move.')
       }
       const first = Math.min(...clips.map(c => c.startBeat))
-      const by = durationToBeats(len(i.by), first, maps)
+      const span = spanOf(i.by, first, maps)
+      if (span.problem) return fail(span.problem)
+      const by = span.beats
       if (by == null) return fail('Say how far to move it.')
       // Moving later is applied from the END so two clips never briefly share a
       // beat if this is ever applied optimistically.
       const ordered = [...clips].sort((a, b) => (by > 0 ? b.startBeat - a.startBeat : a.startBeat - b.startBeat))
-      const spoken = len(i.by)
+      const spoken = span.said
 
       // ── What is written on the timeline moves with it ────────────────────
       //
@@ -1273,10 +1425,19 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
     // INSERT — "a 1 bar long crash at the beginning"
     case 'insert_clip': {
-      const sound = str(i.sound || 'crash')
-      const atBeat = positionToBeat(pos(i.at), maps) ?? 0
-      const lengthBeats = durationToBeats(len(i.length), atBeat, maps)
-        ?? durationToBeats({ bars: 1 }, atBeat, maps) ?? 4
+      // ⚠️ No default sound and no default place. This read `i.sound ||
+      // 'crash'` and `?? 0`, so a call with a sound the model left blank, or a
+      // position it wrote as "the chorus", put a crash at bar 1 and said so —
+      // true, and not what anybody asked for.
+      const sound = str(i.sound).trim()
+      if (!sound) return fail('Say what to put in — a crash, a kick, a snare, a hat.')
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      if (place.beat == null) return fail(`Say where to put the ${sound} — a bar number, or "the beginning".`)
+      const atBeat = place.beat
+      const span = spanOf(i.length, atBeat, maps)
+      if (span.problem) return fail(span.problem)
+      const lengthBeats = span.beats ?? durationToBeats({ bars: 1 }, atBeat, maps) ?? 4
       const existing = resolveTrack(sound, project)
       const trackId = existing?.id ?? newId()
       const actions: unknown[] = []
@@ -1289,7 +1450,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
           notes: [{ id: newId(), pitch: 49, startBeat: 0, durationBeats: Math.min(1, lengthBeats), velocity: 110 }],
         } as unknown as MidiClip,
       })
-      const spoken = len(i.length)
+      const spoken = span.said
       return {
         actions,
         say: `Added a ${spoken ? describeDuration(spoken, lengthBeats) : `${lengthBeats}-beat`} ${sound} at ${describeBeat(atBeat, maps)}${existing ? ` on ${existing.name}` : ' on a new track'}.`,
@@ -1299,7 +1460,12 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     case 'set_tempo': {
       const bpm = spokenNumber(i.bpm as string)
       if (bpm == null || bpm < 20 || bpm > 300) return fail('Say a tempo between 20 and 300.')
-      const at = positionToBeat(pos(i.at), maps)
+      // ⚠️ A place that did not parse used to fall through to the WHOLE-SONG
+      // tempo: "128 from the chorus" became 128 everywhere, read back as
+      // "Tempo set to 128 bpm" — true, and the wrong thing.
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const at = place.beat
       if (at == null) return { actions: [{ type: 'SET_TEMPO', tempo: bpm }], say: `Tempo set to ${bpm} bpm.` }
       return {
         actions: [{ type: 'ADD_TEMPO_MARKER', marker: { id: newId(), beat: at, tempo: bpm } }],
@@ -1311,7 +1477,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const num = spokenNumber(i.numerator as string)
       const den = spokenNumber(i.denominator as string)
       if (num == null || den == null || num < 1 || den < 1) return fail('Say a time signature, like 3/4.')
-      const at = positionToBeat(pos(i.at), maps)
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const at = place.beat
       if (at == null) {
         return { actions: [{ type: 'SET_TIME_SIG', num, den }], say: `Time signature set to ${num}/${den}.` }
       }
@@ -1325,12 +1493,15 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (i.start == null && i.end == null && i.length == null && i.enabled != null) {
         return { actions: [{ type: 'SET_LOOP_ENABLED', enabled: !!i.enabled }], say: `Loop ${i.enabled ? 'on' : 'off'}.` }
       }
-      const start = positionToBeat(pos(i.start), maps)
+      const from = placeOf(i.start, maps, project)
+      if (from.problem) return fail(from.problem)
+      const start = from.beat
       if (start == null) return fail('Say where the loop should start.')
-      const end = positionToBeat(pos(i.end), maps)
-        ?? (durationToBeats(len(i.length), start, maps) != null
-          ? start + (durationToBeats(len(i.length), start, maps) as number)
-          : null)
+      const till = placeOf(i.end, maps, project)
+      if (till.problem) return fail(till.problem)
+      const span = spanOf(i.length, start, maps)
+      if (span.problem) return fail(span.problem)
+      const end = till.beat ?? (span.beats != null ? start + span.beats : null)
       if (end == null || end <= start) return fail('Say where the loop should end.')
       return {
         actions: [
@@ -1916,8 +2087,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const found = resolveClip(target, project)
       if (!found) return fail(`I couldn't find "${target || 'that'}" to split.`)
       const clip = found.clip
-      const at = pos(i.at)
-      const beat = at ? positionToBeat(at, maps) : null
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const beat = place.beat
       if (beat == null) return fail('Say where to split it.')
       const offset = beat - clip.startBeat
       if (offset <= 0 || offset >= clip.durationBeats) {
@@ -1952,11 +2124,13 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const found = resolveClip(target, project)
       if (!found) return fail(`I couldn't find "${target || 'that'}".`)
       const clip = found.clip
-      const beats = durationToBeats(len(i.length), clip.startBeat, maps)
+      const span = spanOf(i.length, clip.startBeat, maps)
+      if (span.problem) return fail(span.problem)
+      const beats = span.beats
       if (beats == null || beats <= 0) return fail('Say how long it should be.')
       return {
         actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { durationBeats: beats } }],
-        say: `${found.how} is now ${describeDuration(len(i.length)!, beats)} long.`,
+        say: `${found.how} is now ${describeDuration(span.said!, beats)} long.`,
       }
     }
 
@@ -2062,9 +2236,12 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
       const pct = spokenNumber(i.amount as string)
       const amount = pct == null ? 1 : Math.max(0, Math.min(1, pct / 100))
-      const at = pos(i.at)
-      const startBeat = at ? positionToBeat(at, maps) ?? 0 : 0
-      const beats = durationToBeats(len(i.length), startBeat, maps)
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const startBeat = place.beat ?? 0
+      const span = spanOf(i.length, startBeat, maps)
+      if (span.problem) return fail(span.problem)
+      const beats = span.beats
         // A bar with no stated length covers the track's clips, which is what
         // "over the chorus" means when the chorus is what is on the track.
         ?? (() => {
@@ -2095,7 +2272,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         // reported "0 bars" no matter how long the bar actually was. The
         // ACTION was right and the read-back was wrong, which is the worse
         // way round: it teaches somebody to distrust a correct answer.
-        say: `${spec.label} bar on "${track.name}" from ${describeBeat(startBeat, maps)}, ${describeDuration(len(i.length) ?? { beats }, beats)}.`,
+        say: `${spec.label} bar on "${track.name}" from ${describeBeat(startBeat, maps)}, ${describeDuration(span.said ?? { beats }, beats)}.`,
       }
     }
 
@@ -2138,9 +2315,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (!name) return fail('Say what to call the marker.')
       // No position means the start, not "wherever" — a marker that lands
       // somewhere unstated is worse than one the speaker has to place.
-      const at = pos(i.at)
-      const beat = at ? positionToBeat(at, maps) : 0
-      if (beat == null) return fail('I could not work out where to put that marker.')
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const beat = place.beat ?? 0
       return {
         actions: [{ type: 'ADD_CUE_MARKER', marker: { id: newId(), beat, name } }],
         say: `Marked ${describeBeat(beat, maps)} as "${name}".`,
@@ -2373,8 +2550,8 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
           ? `I don't know a shape called "${str(i.name)}". I have ${known.map(n => `"${n}"`).join(', ')}.`
           : 'I have not been taught any shapes yet — describe one and I will save it.')
       }
-      const fromB = i.from != null ? positionToBeat(pos(i.from), maps) : null
-      const toB = i.to != null ? positionToBeat(pos(i.to), maps) : null
+      const fromB = placeOf(i.from, maps, project).beat
+      const toB = placeOf(i.to, maps, project).beat
 
       // ⚠️ A STRETCH THAT DID NOT PARSE IS A QUESTION, NOT A CLIP. Asking for
       // bars and silently getting the shape on a clip instead is the worst
@@ -2466,7 +2643,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         return fail('I did not catch any drum sounds in that - try "boom ka boom boom ka".')
       }
 
-      const at = positionToBeat(pos(i.at), maps) ?? 0
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const at = place.beat ?? 0
       const wanted = str(i.track)
       // The track they named, an existing drum track, or a new one.
       const existing = wanted
@@ -2592,9 +2771,13 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // ⚠️ Placed relative to the CLIP, not the song: a note "on beat three"
       // means the third beat of the part being edited, and a position measured
       // from the song's start would land it somewhere nobody asked for.
-      const at = positionToBeat(i.at as MusicPosition | undefined, maps)
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const at = place.beat
       const startBeat = Math.max(0, (at ?? clip.startBeat) - clip.startBeat)
-      const length = durationToBeats(i.length as MusicDuration | undefined, clip.startBeat + startBeat, maps)
+      const span = spanOf(i.length, clip.startBeat + startBeat, maps)
+      if (span.problem) return fail(span.problem)
+      const length = span.beats
       // Sits in the same octave as the rest of the part unless an octave was
       // said — a bare "C" in a bass part means a low C.
       const octaveless = !/\d/.test(str(i.note))
@@ -2685,7 +2868,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // ── the notes ──────────────────────────────────────────────────────
       const bars = Math.max(1, Math.min(32, Math.round(spokenNumber(i.bars as string) ?? 8)))
       const beatsPerBar = project.timeSignatureNum || 4
-      const startBeat = positionToBeat(i.at as MusicPosition | undefined, maps) ?? 0
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const startBeat = place.beat ?? 0
 
       // ⚠️ project.key is a NUMBER, 0-11 with C=0 — not a note name. Reading it
       // as a name gave C for every key in the project.
@@ -3172,8 +3357,12 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
     // ── RITARDANDO / ACCELERANDO ────────────────────────────────────────
     case 'tempo_ramp': {
-      const from = positionToBeat(pos(i.at ?? i.from), maps) ?? 0
-      const toBeat = positionToBeat(pos(i.to), maps)
+      const fromPlace = placeOf(i.at ?? i.from, maps, project)
+      if (fromPlace.problem) return fail(fromPlace.problem)
+      const from = fromPlace.beat ?? 0
+      const toPlace = placeOf(i.to, maps, project)
+      if (toPlace.problem) return fail(toPlace.problem)
+      const toBeat = toPlace.beat
       const now = project.tempo || 120
       const asked = spokenNumber(i.bpm as string)
       const dir = str(i.direction).toLowerCase()
@@ -3318,7 +3507,10 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
       if (semis == null || semis === 0) return fail('Say how far to modulate, or which key to move to.')
 
-      const at = positionToBeat(pos(i.at), maps)
+      // "From the chorus" that did not parse used to modulate EVERYTHING.
+      const place = placeOf(i.at, maps, project)
+      if (place.problem) return fail(place.problem)
+      const at = place.beat
       const clips = allClips(project).filter(
         (c): c is MidiClip => (c as MidiClip).kind === 'midi' && !!(c as MidiClip).notes?.length,
       ).filter(c => at == null || c.startBeat >= at)
@@ -3420,7 +3612,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (first.startBeat > second.startBeat) { const t = first; first = second; second = t }
 
       const overlap = (first.startBeat + first.durationBeats) - second.startBeat
-      const asked = durationToBeats(len(i.length), second.startBeat, maps)
+      const askedSpan = spanOf(i.length, second.startBeat, maps)
+      if (askedSpan.problem) return fail(askedSpan.problem)
+      const asked = askedSpan.beats
       // The overlap they already have, or the length they asked for, or half a
       // bar — in that order, because an existing overlap is a decision somebody
       // already made and this should honour it rather than overrule it.
@@ -3820,7 +4014,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         }
       }
       if (action === 'move') {
-        const dest = positionToBeat(pos(i.at), maps)
+        const place = placeOf(i.at, maps, project)
+        if (place.problem) return fail(place.problem)
+        const dest = place.beat
         if (dest == null) return fail(`Say where to move ${label} to.`)
         const inside = (project.arrangementClips ?? []).filter(c => c.startBeat >= from && c.startBeat < to)
         if (!inside.length) return fail(`There is nothing in ${label} to move.`)
@@ -3987,12 +4183,17 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     // recoverable: the model is told why, and gets to answer properly in the
     // same command instead of being quietly ignored.
     case 'transport': {
-      const action = str(i.action || 'play').toLowerCase()
+      // No default: a transport call with nothing in it is a call that lost
+      // its argument, not a request to play.
+      const action = str(i.action).toLowerCase().trim()
+      if (!action) return fail('Say what to do — play, stop, pause, or restart.')
       if (!['play', 'stop', 'pause', 'restart', 'toggle', 'locate'].includes(action)) {
         return fail(`I don't know how to "${action}".`)
       }
       if (action === 'locate') {
-        const at = positionToBeat(pos(i.at), maps)
+        const place = placeOf(i.at, maps, project)
+        if (place.problem) return fail(place.problem)
+        const at = place.beat
         if (at == null) return fail('Say where to move the playhead.')
         // ⚠️ Refused when the sentence was about something else — see above.
         const why = notAMove(heard?.said)
@@ -4060,6 +4261,29 @@ function withCreated(project: DawProject, actions: unknown[]): DawProject {
   return tracks === project.tracks && clips === (project.arrangementClips ?? [])
     ? project
     : { ...project, tracks, arrangementClips: clips }
+}
+
+/**
+ * One plan per call, each planned against what the calls before it created.
+ *
+ * ⚠️ For the assistant loop, which needs a verdict PER CALL (one tool_result
+ * each) and so could not use planVoiceCalls — and instead planned every call
+ * against the original project. The local path had already been fixed to
+ * thread withCreated; the assistant path had not, so "add a track called Lead
+ * and put a clip on it" refused its second half with "I couldn't find Lead"
+ * when the model batched it the way the prompt tells it to. Same rule now on
+ * both paths: a later call sees what an earlier one made.
+ *
+ * Planning continues past a problem so every call gets its own verdict; the
+ * caller decides that a batch with any problem runs nothing.
+ */
+export function planVoiceCallsEach(calls: VoiceCall[], project: DawProject, heard?: VoiceContext): VoicePlan[] {
+  const made: unknown[] = []
+  return calls.map(c => {
+    const plan = planVoiceCall(c, withCreated(project, made), heard)
+    made.push(...plan.actions)
+    return plan
+  })
 }
 
 export function planVoiceCalls(calls: VoiceCall[], project: DawProject, heard?: VoiceContext): VoicePlan {
