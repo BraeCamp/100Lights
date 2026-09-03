@@ -102,11 +102,37 @@ export function notAMove(said?: string): string | null {
     + 'and use automate_parameter when a value has to be one thing in one place and something else later.'
 }
 
+/**
+ * What did they mean by that parameter name?
+ *
+ * ⚠️ PEOPLE AND MODELS BOTH NAME THESE LOOSELY, and every loose name used to
+ * land on a low-pass filter. The lane a person is looking at is labelled "VERB
+ * Wet"; the tool calls it "reverb"; somebody speaking says "the wet". Those are
+ * one parameter, and none of them is a filter.
+ *
+ * Returns a canonical name, or null — and null is a QUESTION, never a guess.
+ */
+export function automatableName(said: string): string | null {
+  const t = String(said ?? '').toLowerCase().replace(/[^a-z]/g, '')
+  if (!t) return null
+  if (/^(volume|level|gain|loudness|vol)$/.test(t)) return 'volume'
+  if (/^(pan|panning|balance)$/.test(t)) return 'pan'
+  // "verb", "reverbwet", "wet" — the last is unambiguous here because delay's
+  // amount is always said as "delay".
+  if (t.includes('verb') || t === 'wet' || t === 'space') return 'reverb'
+  if (t.includes('delay') || t.includes('echo')) return 'delay'
+  if (t.includes('chorus')) return 'chorus'
+  if (t.includes('drive') || t.includes('saturat') || t.includes('dist')) return 'drive'
+  if (t.includes('highpass') || t.includes('hipass') || t === 'hpf') return 'highpass'
+  if (t.includes('lowpass') || t.includes('lopass') || t === 'lpf'
+    || t.includes('cutoff') || t === 'filter' || t === 'brightness') return 'lowpass'
+  return null
+}
+
 const FX_AUTOMATABLE: Record<string, { type: 'reverb' | 'delay' | 'saturator' | 'chorus'; key: string; label: string }> = {
   reverb: { type: 'reverb', key: 'wet', label: 'Reverb' },
   delay: { type: 'delay', key: 'wet', label: 'Delay' },
   drive: { type: 'saturator', key: 'drive', label: 'Drive' },
-  saturation: { type: 'saturator', key: 'drive', label: 'Drive' },
   chorus: { type: 'chorus', key: 'mix', label: 'Chorus' },
 }
 
@@ -1040,7 +1066,23 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const lengthBeats = durationToBeats(len(i.length), startBeat, maps) ?? clip.durationBeats
       if (lengthBeats <= 0) return fail('That sweep has no length.')
 
-      const param = str(i.parameter || 'lowpass')
+      // ⚠️ NO DEFAULT, AND NO SILENT FALLBACK. Brae: "It didn't change the
+      // reverb, named 'VERB Wet' but instead created a lowpass cutoff that did
+      // the shape that I wanted."
+      //
+      // This read `str(i.parameter || 'lowpass')`, and the branch below turned
+      // anything it did not recognise into a low-pass too — so a parameter
+      // named in words the enum did not list ("reverb wet", "VERB Wet", "wet")
+      // came out as a filter, drawn perfectly, on the wrong thing. The shape
+      // was right, which is what made it convincing.
+      //
+      // A parameter nobody can name is a question, not a filter.
+      const param = automatableName(str(i.parameter))
+      if (!param) {
+        return fail(str(i.parameter)
+          ? `I don't know how to automate "${str(i.parameter)}". I can do volume, pan, reverb, delay, drive, chorus, or a low-pass or high-pass filter.`
+          : 'Say which one to automate — volume, pan, reverb, delay, drive, chorus, or a low-pass or high-pass filter.')
+      }
       const actions: unknown[] = []
       const laneId = newId()
       let parameter: string

@@ -26,7 +26,7 @@ const check = (label, pass, extra = '') => {
   console.log(`${pass ? 'PASS' : 'FAIL'} ${label}${extra ? '  ' + extra : ''}`)
 }
 
-const { planVoiceCall, notAMove } = await importTs('lib/voice/execute-music.ts')
+const { planVoiceCall, notAMove, automatableName } = await importTs('lib/voice/execute-music.ts')
 
 const PROJECT = {
   id: 'p', name: 'T', tempo: 120, timeSignatureNum: 4, timeSignatureDen: 4, masterVolume: 0.8,
@@ -108,6 +108,58 @@ const PROJECT = {
   }, bare)
   check('a track with no reverb gets one to automate',
     added.actions.some(a => a.type === 'ADD_EFFECT'), added.problem ?? '')
+}
+
+// ── ⚠️ and the wrong parameter, drawn perfectly ────────────────────────────
+//
+// Brae, after the first fix: "It didn't change the reverb, named 'VERB Wet' but
+// instead created a lowpass cutoff that did the shape that I wanted. This was
+// close but not quite it."
+//
+// The shape was right, which is what made it convincing. The parameter read
+// `str(i.parameter || 'lowpass')`, and the branch that handled filters caught
+// everything it did not recognise — so any name the enum did not list came out
+// as a low-pass, confidently, on the wrong thing.
+{
+  check('the lane\'s own label is understood', automatableName('VERB Wet') === 'reverb')
+  check('and the words people say for it',
+    ['reverb', 'reverb wet', 'verb', 'wet'].every(x => automatableName(x) === 'reverb'),
+    ['reverb', 'reverb wet', 'verb', 'wet'].map(x => `${x}=${automatableName(x)}`).join(' '))
+  check('delay is not reverb', automatableName('delay wet') === 'delay')
+  check('drive answers to saturation and distortion',
+    ['drive', 'saturation', 'distortion'].every(x => automatableName(x) === 'drive'))
+  check('a filter is still a filter',
+    automatableName('lowpass') === 'lowpass' && automatableName('cutoff') === 'lowpass'
+    && automatableName('high pass') === 'highpass')
+  check('volume answers to level and gain',
+    ['volume', 'level', 'gain'].every(x => automatableName(x) === 'volume'))
+
+  // ⚠️ THE WHOLE POINT: an unknown name is a question, never a filter.
+  check('a name nobody knows is null, not a low-pass',
+    automatableName('wobbliness') === null && automatableName('') === null)
+
+  const lost = planVoiceCall({
+    name: 'automate_parameter',
+    input: { target: 'Pad 1', parameter: 'wobbliness', from: 100, to: 20 },
+  }, PROJECT)
+  check('and the planner asks instead of drawing one',
+    !lost.actions.length && /don't know how to automate/i.test(lost.problem ?? ''), lost.problem)
+  check('listing what it can do', /reverb/.test(lost.problem ?? ''))
+
+  const unsaid = planVoiceCall({
+    name: 'automate_parameter', input: { target: 'Pad 1', from: 100, to: 20 },
+  }, PROJECT)
+  check('a missing parameter is asked about, not defaulted to a filter',
+    !unsaid.actions.length && /which one/i.test(unsaid.problem ?? ''), unsaid.problem)
+
+  // And the label the lane actually shows reaches the reverb.
+  const byLabel = planVoiceCall({
+    name: 'automate_parameter',
+    input: { target: 'Pad 1', parameter: 'VERB Wet', from: 100, to: 20 },
+  }, PROJECT)
+  check('"VERB Wet" automates the reverb that is already there',
+    byLabel.actions.find(a => a.type === 'ADD_AUTOMATION_LANE')?.lane.parameter === 'fx:e1:wet',
+    byLabel.problem ?? '')
 }
 
 console.log(failures ? `\n${failures} failing` : '\na bar is where, not go there')
