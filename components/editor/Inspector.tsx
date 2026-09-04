@@ -104,7 +104,7 @@ function downloadText(content: string, filename: string, mime = 'text/plain') {
   URL.revokeObjectURL(a.href)
 }
 
-const SPEAKER_COLORS = ['var(--accent-light)', '#34d399', '#fb923c', '#f472b6', '#38bdf8', '#a78bfa']
+const SPEAKER_COLORS = ['var(--accent-light)', '#34d399', '#fb923c', '#f472b6', '#38bdf8', 'var(--accent-light)']
 
 function getSpeakerColor(speaker: string): string {
   let hash = 0
@@ -1088,7 +1088,7 @@ export default function Inspector({
                       onChange={v => patchClip({ titlePulseBpm: v || undefined })} />
                     {/* Gradient text fill */}
                     <div className="flex items-center gap-2">
-                      <button onClick={() => patchClip({ titleGradient: selectedItem.titleGradient ? undefined : { from: selectedItem.titleColor ?? '#ffffff', to: '#a78bfa' } })}
+                      <button onClick={() => patchClip({ titleGradient: selectedItem.titleGradient ? undefined : { from: selectedItem.titleColor ?? '#ffffff', to: 'var(--accent-light)' } })}
                         className="px-2.5 py-1 rounded text-xs shrink-0"
                         style={{ background: selectedItem.titleGradient ? 'var(--accent)' : 'var(--bg-card)', color: selectedItem.titleGradient ? '#0e0d12' : 'var(--text-secondary)', border: `1px solid ${selectedItem.titleGradient ? 'var(--accent)' : 'var(--border)'}`, fontWeight: 600 }}>Gradient</button>
                       {selectedItem.titleGradient && (
@@ -1127,7 +1127,7 @@ export default function Inspector({
                       {[
                         { label: 'Uppercase', on: !!selectedItem.titleUppercase, toggle: () => patchClip({ titleUppercase: !selectedItem.titleUppercase }) },
                         { label: 'Shadow', on: selectedItem.titleShadow ?? true, toggle: () => patchClip({ titleShadow: !(selectedItem.titleShadow ?? true) }) },
-                        { label: 'Glow', on: !!selectedItem.titleGlow, toggle: () => patchClip({ titleGlow: selectedItem.titleGlow ? undefined : (selectedItem.titleColor ?? '#a78bfa') }) },
+                        { label: 'Glow', on: !!selectedItem.titleGlow, toggle: () => patchClip({ titleGlow: selectedItem.titleGlow ? undefined : (selectedItem.titleColor ?? 'var(--accent-light)') }) },
                         { label: 'Outline', on: !!selectedItem.titleOutline, toggle: () => patchClip({ titleOutline: selectedItem.titleOutline ? 0 : 3 }) },
                       ].map(fx => (
                         <button key={fx.label} onClick={fx.toggle} className="px-2.5 py-1 rounded text-xs"
@@ -1162,7 +1162,7 @@ export default function Inspector({
                     {!selectedItem.mvMatchTheme && (
                       <div>
                         <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Color</p>
-                        <input type="color" value={selectedItem.mvAccent ?? '#a78bfa'} onChange={e => patchClip({ mvAccent: e.target.value })}
+                        <input type="color" value={selectedItem.mvAccent ?? 'var(--accent-light)'} onChange={e => patchClip({ mvAccent: e.target.value })}
                           className="w-full h-7 rounded cursor-pointer" style={{ border: '1px solid var(--border)' }} />
                       </div>
                     )}

@@ -73,7 +73,7 @@ function TooltipCard({ card, onDismiss }: { card: Card; onDismiss: () => void })
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: card.text ? 8 : 0 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(167,139,250,1)', flex: 1, lineHeight: 1.4 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'rgb(var(--accent-rgb) / 1)', flex: 1, lineHeight: 1.4 }}>
           {card.title ?? '💡 How this works'}
         </span>
         {card.pinned && (
@@ -209,7 +209,7 @@ export function TooltipModeProvider({ children }: { children: React.ReactNode })
           position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)',
           zIndex: 9998, background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)',
           borderRadius: 20, padding: '5px 14px', fontSize: 10, fontWeight: 600,
-          color: 'rgba(167,139,250,0.9)', letterSpacing: '0.06em', pointerEvents: 'none',
+          color: 'rgb(var(--accent-rgb) / 0.9)', letterSpacing: '0.06em', pointerEvents: 'none',
           backdropFilter: 'blur(8px)',
           animation: 'tip-in 0.2s ease forwards',
         }}>
@@ -233,7 +233,7 @@ export function TooltipModeToggle() {
         fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 5,
         background: active ? 'rgba(139,92,246,0.25)' : 'var(--bg-card)',
         border: `1px solid ${active ? 'rgba(139,92,246,0.6)' : 'var(--border)'}`,
-        color: active ? 'rgba(167,139,250,1)' : 'var(--text-muted)',
+        color: active ? 'rgb(var(--accent-rgb) / 1)' : 'var(--text-muted)',
         cursor: 'pointer',
         animation: active ? 'tip-pulse 2s ease infinite' : 'none',
       }}

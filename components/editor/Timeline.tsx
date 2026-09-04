@@ -893,14 +893,14 @@ export default function Timeline({
                   style={{ height: track.height, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '2px 0' }}
                   onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, getAreaMenu(track.id)) }}
                 >
-                  <span style={{ color: track.type === 'drawfocus' ? '#a78bfa' : (track.muted ? '#444' : 'var(--text-muted)'), fontSize: 9, fontWeight: 700 }}>{track.type === 'drawfocus' ? `⊙ ${track.label}` : track.label}</span>
+                  <span style={{ color: track.type === 'drawfocus' ? 'var(--accent-light)' : (track.muted ? '#444' : 'var(--text-muted)'), fontSize: 9, fontWeight: 700 }}>{track.type === 'drawfocus' ? `⊙ ${track.label}` : track.label}</span>
                   <div style={{ display: 'flex', gap: 2 }}>
                     <button
                       onClick={(e) => { e.stopPropagation(); onTrackMuteToggle?.(track.id) }}
                       style={{
                         fontSize: 7, padding: '1px 3px', borderRadius: 2, cursor: 'pointer', lineHeight: 1.3, fontWeight: 700,
                         background: track.muted ? '#f97316' : 'rgba(255,255,255,0.05)',
-                        color: track.muted ? '#fff' : '#555',
+                        color: track.muted ? '#fff' : 'var(--text-muted)',
                         border: `1px solid ${track.muted ? '#f97316' : '#2a2a2a'}`,
                       }}
                       title="Mute track"
@@ -910,7 +910,7 @@ export default function Timeline({
                       style={{
                         fontSize: 7, padding: '1px 3px', borderRadius: 2, cursor: 'pointer', lineHeight: 1.3, fontWeight: 700,
                         background: track.solo ? '#8b5cf6' : 'rgba(255,255,255,0.05)',
-                        color: track.solo ? '#fff' : '#555',
+                        color: track.solo ? '#fff' : 'var(--text-muted)',
                         border: `1px solid ${track.solo ? '#8b5cf6' : '#2a2a2a'}`,
                       }}
                       title="Solo track"
@@ -959,7 +959,7 @@ export default function Timeline({
                       background: dropIndicator?.trackId === track.id
                         ? 'rgb(var(--accent-rgb) / 0.07)'
                         : track.type === 'drawfocus'
-                        ? 'rgba(167,139,250,0.04)'
+                        ? 'rgb(var(--accent-rgb) / 0.04)'
                         : 'rgba(255,255,255,0.018)',
                       cursor: bladeCursor && !track.locked ? 'crosshair' : 'default',
                       transition: 'background 0.1s',
@@ -1066,10 +1066,10 @@ export default function Timeline({
                               position: 'absolute', left, width,
                               top: '50%', transform: 'translateY(-50%)',
                               height: 12, borderRadius: 6,
-                              background: selected ? '#a78bfa' : 'rgba(167,139,250,0.5)',
+                              background: selected ? 'var(--accent-light)' : 'rgb(var(--accent-rgb) / 0.5)',
                               cursor: bladeCursor ? 'crosshair' : (dragging ? 'grabbing' : 'grab'),
                               opacity: dragging ? 0.65 : 1,
-                              boxShadow: selected ? '0 0 0 1.5px #c4b5fd, 0 0 10px rgba(167,139,250,0.3)' : 'none',
+                              boxShadow: selected ? '0 0 0 1.5px #c4b5fd, 0 0 10px rgb(var(--accent-rgb) / 0.3)' : 'none',
                               userSelect: 'none', overflow: 'visible',
                               transition: dragging ? 'none' : 'box-shadow 0.1s',
                             }}
@@ -1283,8 +1283,8 @@ export default function Timeline({
                         width: Math.max(4, Math.abs(creatingFocus.x1 - creatingFocus.x0)),
                         top: '50%', transform: 'translateY(-50%)',
                         height: 12, borderRadius: 6,
-                        background: 'rgba(167,139,250,0.2)',
-                        border: '1px dashed rgba(167,139,250,0.7)',
+                        background: 'rgb(var(--accent-rgb) / 0.2)',
+                        border: '1px dashed rgb(var(--accent-rgb) / 0.7)',
                         pointerEvents: 'none',
                       }} />
                     )}

@@ -459,7 +459,7 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 7 }}>
               <button onClick={() => { setAutoPlay(false); goToStep(scrubStep - 1) }} title="Previous edit" style={ctrlBtn}><SkipBack size={13} /></button>
-              <button onClick={togglePlay} title={autoPlay ? 'Pause' : 'Play'} style={{ ...ctrlBtn, flex: 1, background: 'var(--accent, #7c3aed)', color: '#fff', border: 'none' }}>{autoPlay ? <Pause size={14} /> : <Play size={14} />}</button>
+              <button onClick={togglePlay} title={autoPlay ? 'Pause' : 'Play'} style={{ ...ctrlBtn, flex: 1, background: 'var(--accent, #7c3aed)', color: 'var(--accent-contrast)', border: 'none' }}>{autoPlay ? <Pause size={14} /> : <Play size={14} />}</button>
               <button onClick={() => { setAutoPlay(false); goToStep(scrubStep + 1) }} title="Next edit" style={ctrlBtn}><SkipForward size={13} /></button>
               <select value={speed} onChange={e => setSpeed(Number(e.target.value))} title="Speed" style={{ ...ctrlBtn, width: 'auto', padding: '0 4px', cursor: 'pointer' }}>
                 {SPEEDS.map(s => <option key={s} value={s}>{s}×</option>)}
@@ -502,7 +502,7 @@ export default function ScreenRecorderPanel({ onClose, initialMode = 'screen' }:
           <video src={previewUrl} controls playsInline style={{ width: '100%', borderRadius: 8, border: '1px solid var(--border)', display: 'block', marginBottom: 8, background: '#000' }} />
           <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: '0 0 9px' }}>{formatDuration(result.durationMs)} · {formatSize(result.sizeBytes)}</p>
           <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-            <button onClick={download} style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: 'none', background: '#7c3aed', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Save video</button>
+            <button onClick={download} style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Save video</button>
             <button onClick={reset} style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}>Again</button>
           </div>
           {share === 'shared' ? (

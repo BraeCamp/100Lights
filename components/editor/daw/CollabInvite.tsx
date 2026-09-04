@@ -167,9 +167,9 @@ export function CollabInvite({ projectId }: { projectId: string }) {
                     <button key={opt.key} onClick={() => void patch({ visibility: opt.key })} style={{
                       flex: 1, textAlign: 'left', padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
                       background: active ? 'rgba(124,58,237,0.14)' : 'transparent',
-                      border: active ? '1px solid rgba(167,139,250,0.55)' : '1px solid #2e2e2e',
+                      border: active ? '1px solid rgb(var(--accent-rgb) / 0.55)' : '1px solid #2e2e2e',
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: active ? '#a78bfa' : '#bbb' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: active ? 'var(--accent-light)' : 'var(--text-secondary)' }}>
                         <Icon size={11} /> {opt.label}
                       </div>
                       <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>{opt.desc}</div>
@@ -215,7 +215,7 @@ export function CollabInvite({ projectId }: { projectId: string }) {
                     <button
                       onClick={() => { if (emailDraft.trim()) { void patch({ addEmail: emailDraft }); setEmailDraft('') } }}
                       aria-label="Add person"
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'rgba(124,58,237,0.15)', color: '#a78bfa', cursor: 'pointer' }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'rgba(124,58,237,0.15)', color: 'var(--accent-light)', cursor: 'pointer' }}
                     ><Plus size={13} /></button>
                   </div>
                 </div>

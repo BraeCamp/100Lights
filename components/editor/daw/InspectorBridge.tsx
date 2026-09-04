@@ -109,7 +109,7 @@ export function InspectorBridge() {
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         width: 26, height: 26, borderRadius: 6, cursor: 'pointer',
         background: open ? 'rgba(124,58,237,0.15)' : 'transparent',
-        border: '1px solid var(--border)', color: open ? '#a78bfa' : 'var(--text-muted)',
+        border: '1px solid var(--border)', color: open ? 'var(--accent-light)' : 'var(--text-muted)',
       }}
     >
       <MonitorSmartphone size={13} />

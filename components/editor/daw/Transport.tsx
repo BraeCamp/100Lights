@@ -435,7 +435,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
             padding: '9px 0', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700,
             border: monitorOn ? '1px solid rgba(34,197,94,0.6)' : '1px solid #2e2e2e',
             background: monitorOn ? 'rgba(34,197,94,0.14)' : '#1e1e1e',
-            color: monitorOn ? '#4ade80' : '#aaa',
+            color: monitorOn ? '#4ade80' : 'var(--text-secondary)',
           }}
         >
           <Headphones size={14} /> Monitor {monitorOn ? 'ON — you should hear yourself' : 'off'}
@@ -506,7 +506,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                 fontSize: 10, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', fontWeight: 700,
                 border: countInBars === b ? '1px solid rgba(220,38,38,0.6)' : '1px solid #2e2e2e',
                 background: countInBars === b ? 'rgba(220,38,38,0.14)' : '#1e1e1e',
-                color: countInBars === b ? '#f87171' : '#888',
+                color: countInBars === b ? '#f87171' : 'var(--text-muted)',
               }}
             >{b === 0 ? 'Off' : `${b} bar${b > 1 ? 's' : ''}`}</button>
           ))}

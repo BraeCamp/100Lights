@@ -105,7 +105,7 @@ export default function NewPresetModal(props: {
         <div style={{ position: 'sticky', bottom: 0, background: 'var(--bg-surface)', display: 'flex', gap: 8, padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
           <button onClick={onCreate} disabled={loading || !name.trim()} style={{
             flex: 1, padding: '9px 0', fontSize: 13, fontWeight: 700, borderRadius: 8, border: 'none',
-            background: 'var(--accent)', color: '#fff', cursor: loading || !name.trim() ? 'default' : 'pointer', opacity: loading || !name.trim() ? 0.55 : 1,
+            background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: loading || !name.trim() ? 'default' : 'pointer', opacity: loading || !name.trim() ? 0.55 : 1,
           }}>{loading ? 'Creating…' : share ? 'Create & share' : 'Create preset'}</button>
           <button onClick={onCancel} style={{ padding: '9px 16px', fontSize: 13, borderRadius: 8, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
         </div>

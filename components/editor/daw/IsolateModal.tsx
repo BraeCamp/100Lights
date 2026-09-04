@@ -316,7 +316,7 @@ className="electron-nodrag backdrop-in" style={{ position: 'fixed', inset: 0, zI
             Cancel
           </button>
           <button onClick={handleSelect} disabled={status !== 'ready'}
-            style={{ fontSize: 11, padding: '6px 16px', borderRadius: 5, border: 'none', background: status === 'ready' ? 'var(--accent)' : 'var(--border)', color: '#fff', cursor: status === 'ready' ? 'pointer' : 'default', fontWeight: 600 }}>
+            style={{ fontSize: 11, padding: '6px 16px', borderRadius: 5, border: 'none', background: status === 'ready' ? 'var(--accent)' : 'var(--border)', color: status === 'ready' ? 'var(--accent-contrast)' : 'var(--text-muted)', cursor: status === 'ready' ? 'pointer' : 'default', fontWeight: 600 }}>
             Select → Place Clip ({windowBeats < 0.1 ? windowBeats.toFixed(4) : windowBeats.toFixed(3)} b)
           </button>
         </div>

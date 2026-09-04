@@ -245,7 +245,7 @@ export function CollabOthersBridge({ onOthers }: {
       return {
         connectionId: o.connectionId,
         name: p?.name || 'Collaborator',
-        color: p?.color || '#a78bfa',
+        color: p?.color || 'var(--accent-light)',
         selectedTrackId: p?.selectedTrackId ?? null,
         selectedClipId: p?.selectedClipId ?? null,
         editingClipId: p?.editingClipId ?? null,

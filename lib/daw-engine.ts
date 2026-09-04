@@ -2198,8 +2198,12 @@ export class DawEngine extends EventTarget {
           // A seeded synth sound is a RECIPE (renderSpec), not a recording:
           // render it at the pitch asked for rather than repitching one note
           // of it, which is what the folder presets have always done.
+          // A seeded PERCUSSION sound (kind 'drum') has no pitch in its recipe;
+          // renderPresetAtPitch would hand back null and the track would play
+          // silent. It is rendered once below and repitched like a recording —
+          // a woodblock across the keys is a tuned woodblock, which is the point.
           const entry = await libraryGetById(preset.sampleId)
-          if (entry?.renderSpec && this.ctx) {
+          if (entry?.renderSpec && entry.renderSpec.kind !== 'drum' && this.ctx) {
             this._presetBufSet(key, await renderPresetAtPitch(entry.renderSpec, pitch))
             return
           }

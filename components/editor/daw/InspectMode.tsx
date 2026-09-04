@@ -20,7 +20,7 @@ interface Card {
   lines: string[]
 }
 
-const KIND_COLORS = { tool: '#60a5fa', clip: '#a78bfa', track: '#f59e0b', sound: '#34d399' }
+const KIND_COLORS = { tool: '#60a5fa', clip: 'var(--accent-light)', track: '#f59e0b', sound: '#34d399' }
 
 function prettify(id: string): string {
   return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())

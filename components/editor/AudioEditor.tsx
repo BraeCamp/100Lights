@@ -3870,11 +3870,11 @@ export default function AudioEditor(props: AudioEditorProps) {
                 <span style={{
                   display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, fontWeight: 700,
                   padding: '3px 8px 3px 12px', borderRadius: 999, whiteSpace: 'nowrap',
-                  background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.5)', color: '#a78bfa',
+                  background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.5)', color: 'var(--accent-light)',
                 }}>
                   ✎ Suggesting — edits are local until the owner accepts
                   <button onClick={() => void submitSuggestion()} disabled={submittingSuggestion}
-                    style={{ fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: 'none', background: '#7c3aed', color: '#fff', opacity: submittingSuggestion ? 0.6 : 1 }}>
+                    style={{ fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 999, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', opacity: submittingSuggestion ? 0.6 : 1 }}>
                     {submittingSuggestion ? 'Sending…' : 'Submit'}
                   </button>
                   <button onClick={discardSuggest} disabled={submittingSuggestion}
@@ -3975,7 +3975,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                     }
                     if (selectedReturnId) {
                       const rt = project.returnTracks.find(r => r.id === selectedReturnId)
-                      return rt ? <span style={{ fontSize: 10, color: '#a78bfa', marginLeft: 8, borderLeft: `2px solid ${rt.color}`, paddingLeft: 6 }}>{rt.name} — FX</span> : null
+                      return rt ? <span style={{ fontSize: 10, color: 'var(--accent-light)', marginLeft: 8, borderLeft: `2px solid ${rt.color}`, paddingLeft: 6 }}>{rt.name} — FX</span> : null
                     }
                     return null
                   })()}
@@ -3989,7 +3989,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                         onClick={() => setShowPads(v => !v)}
                         title="Open pad / keyboard input"
                         data-help-id="pads"
-                        style={{ marginLeft: 8, background: showPads ? 'var(--accent)' : 'transparent', border: showPads ? '1px solid var(--accent)' : '1px solid var(--border)', borderRadius: 4, color: showPads ? '#fff' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 8px' }}
+                        style={{ marginLeft: 8, background: showPads ? 'var(--accent)' : 'transparent', border: showPads ? '1px solid var(--accent)' : '1px solid var(--border)', borderRadius: 4, color: showPads ? 'var(--accent-contrast)' : 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: '2px 8px' }}
                       ><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Keyboard size={12} /> Pads</span></button>
                     ) : null
                   })()}

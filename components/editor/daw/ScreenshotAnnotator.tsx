@@ -201,7 +201,7 @@ export default function ScreenshotAnnotator({ blob, defaultName, onClose }: {
           style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '4px 9px', borderRadius: 6, cursor: shapes.length ? 'pointer' : 'default', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)', opacity: shapes.length ? 1 : 0.5 }}><Undo2 size={12} /> Undo</button>
         <span style={{ flex: 1 }} />
         <button onClick={() => void copy()} style={{ fontSize: 11, fontWeight: 600, padding: '5px 11px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>Copy</button>
-        <button onClick={() => void save()} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 6, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff' }}>{saved ? <>Saved <Check size={12} /></> : 'Save PNG'}</button>
+        <button onClick={() => void save()} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 6, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)' }}>{saved ? <>Saved <Check size={12} /></> : 'Save PNG'}</button>
         <button onClick={onClose} aria-label="Close" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '2px 6px', borderRadius: 6, cursor: 'pointer', border: 'none', background: 'transparent', color: 'var(--text-muted)' }}><X size={15} /></button>
       </div>
 

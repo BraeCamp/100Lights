@@ -75,7 +75,7 @@ export default function SuggestionsReview({ projectId, currentDaw }: { projectId
         style={{
           position: 'fixed', bottom: 22, right: 22, zIndex: 1100, display: 'flex', alignItems: 'center', gap: 7,
           padding: '9px 15px', borderRadius: 999, cursor: 'pointer', border: 'none',
-          background: '#7c3aed', color: '#fff', fontSize: 12.5, fontWeight: 700, boxShadow: '0 8px 26px rgba(124,58,237,0.5)',
+          background: 'var(--accent)', color: 'var(--accent-contrast)', fontSize: 12.5, fontWeight: 700, boxShadow: '0 8px 26px rgba(124,58,237,0.5)',
         }}>
         <Pencil size={13} /> {items.length} suggestion{items.length === 1 ? '' : 's'}
       </button>

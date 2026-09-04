@@ -53,7 +53,7 @@ export function NoteFxSettings({ clip, dispatch, selectedNoteIds }: {
           padding: '2px 7px', borderRadius: 4, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap',
           border: anySet && !disabled ? `1px solid var(--accent-light)` : '1px solid #333',
           background: anySet && !disabled ? 'rgba(124,58,237,0.12)' : '#222',
-          color: disabled ? '#555' : anySet ? ACCENT : '#aaa', flexShrink: 0, opacity: disabled ? 0.55 : 1,
+          color: disabled ? 'var(--text-muted)' : anySet ? ACCENT : 'var(--text-secondary)', flexShrink: 0, opacity: disabled ? 0.55 : 1,
         }}
       >
         <SlidersHorizontal size={10} /> Note FX{ids.length ? ` (${ids.length})` : ''}{anySet ? ' •' : ''}

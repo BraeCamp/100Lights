@@ -1000,7 +1000,7 @@ export default function VideoEditor({
   // getComputedStyle/style read on every playhead tick.
   const themeAccent = useMemo(() => (
     (typeof window !== 'undefined'
-      && getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()) || '#a78bfa'
+      && getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()) || 'var(--accent-light)'
   ), [])
 
   // Music-visual overlays active at the playhead — rendered OVER the video (not
@@ -2260,7 +2260,7 @@ export default function VideoEditor({
       setTracks(prev => [...prev, { id: trackId, label: 'Subject', type: 'media', height: TRACK_HEIGHT }])  // top of stack → above the source
       setTimelineItems(prev => [...prev, {
         id: crypto.randomUUID(), label: 'Subject', contentType: 'image', trackId, url: r.dataUrl,
-        startTime: clip.startTime, inPoint: 0, outPoint: dur, captions: [], color: clip.color ?? '#a78bfa',
+        startTime: clip.startTime, inPoint: 0, outPoint: dur, captions: [], color: clip.color ?? 'var(--accent-light)',
         // Inherit the source's framing so the cutout overlays exactly on top of the subject.
         fitMode: clip.fitMode, cropZoom: clip.cropZoom, cropX: clip.cropX, cropY: clip.cropY, crop: clip.crop, flipH: clip.flipH, flipV: clip.flipV,
       }])
@@ -3653,7 +3653,7 @@ export default function VideoEditor({
       inPoint: 0,
       outPoint: duration,
       label: `Focus ${n}`,
-      color: '#a78bfa',
+      color: 'var(--accent-light)',
       captions: [],
       enabled: true,
       focusX: 0.5,

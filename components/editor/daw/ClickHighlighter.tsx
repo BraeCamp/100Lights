@@ -63,7 +63,7 @@ function draw(ctx: CanvasRenderingContext2D, p: Ping, t: number, style: ClickSty
   }
 }
 
-export default function ClickHighlighter({ style = 'ripple', color = '#a78bfa' }: { style?: ClickStyle; color?: string }) {
+export default function ClickHighlighter({ style = 'ripple', color = 'var(--accent-light)' }: { style?: ClickStyle; color?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const pings = useRef<Ping[]>([])
 

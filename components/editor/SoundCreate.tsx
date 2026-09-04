@@ -120,7 +120,7 @@ export function SaveRecipeButton({ clip }: { clip: MidiClip }) {
           padding: '2px 7px', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
           border: pos ? '1px solid rgba(52,211,153,0.5)' : '1px solid #333',
           background: pos ? 'rgba(52,211,153,0.12)' : '#222',
-          color: pos ? '#34d399' : '#aaa', flexShrink: 0,
+          color: pos ? '#34d399' : 'var(--text-secondary)', flexShrink: 0,
         }}
       >
         <BookmarkPlus size={10} /> Recipe
@@ -456,7 +456,7 @@ export function SynthDesigner({ onUse, applyLabel = 'Use this sound \u2192' }: {
           <Dices size={13} /> Surprise me
         </button>
         <button onClick={() => void applySound()} disabled={busy}
-          style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: busy ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+          style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: busy ? 'rgb(var(--accent-rgb) / 0.3)' : 'var(--accent)', color: busy ? 'var(--text-primary)' : 'var(--accent-contrast)', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
           {busy ? 'Rendering…' : applyLabel}
         </button>
       </div>
@@ -811,7 +811,7 @@ export function MotionFxPanel({ fxs, onChange }: { fxs: MotionFx[]; onChange: (f
 
 const SHARE_KIND_INFO: Record<'sample' | 'recipe', { label: string; color: string; blurb: string }> = {
   sample: { label: 'Sample', color: '#60a5fa', blurb: 'the audio itself — others stream it and can link it into their library' },
-  recipe: { label: 'Recipe', color: '#a78bfa', blurb: 'the note pattern — others drop it on a track and edit every note' },
+  recipe: { label: 'Recipe', color: 'var(--accent-light)', blurb: 'the note pattern — others drop it on a track and edit every note' },
 }
 
 export function ShareCommunityDialog({ kind, defaultName, onShare, onClose }: {
@@ -886,7 +886,7 @@ export function ShareCommunityDialog({ kind, defaultName, onShare, onClose }: {
                 Cancel
               </button>
               <button onClick={() => void share()} disabled={busy || !name.trim()}
-                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 0', borderRadius: 8, border: 'none', background: busy ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 0', borderRadius: 8, border: 'none', background: busy ? 'rgb(var(--accent-rgb) / 0.3)' : 'var(--accent)', color: busy ? 'var(--text-primary)' : 'var(--accent-contrast)', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
                 <Globe2 size={12} /> {busy ? 'Sharing…' : 'Share'}
               </button>
             </div>
