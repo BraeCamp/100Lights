@@ -7,6 +7,19 @@ import { Settings, Crop, Crosshair, ArrowLeftRight, AudioLines, Piano, Grid3x3 }
 import type { DawTrack, DawClip, AudioClip, MidiClip } from '@/lib/daw-types'
 import { isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { useDaw } from '@/lib/daw-state'
+import { clipOrdinals, type ClipOrdinal } from '@/lib/clip-address'
+
+// Each clip's number among the clips that share its name on its track ("Pad
+// intro #2"), computed once per arrangement rather than once per clip: the
+// arrangement array is replaced whenever a clip changes, so it is the key.
+const ORDINALS = new WeakMap<object, Map<string, ClipOrdinal>>()
+function ordinalsFor(project: { arrangementClips?: DawClip[] }): Map<string, ClipOrdinal> {
+  const key = project.arrangementClips
+  if (!key) return new Map()
+  let m = ORDINALS.get(key)
+  if (!m) { m = clipOrdinals({ arrangementClips: key }); ORDINALS.set(key, m) }
+  return m
+}
 import { shareRecipe } from '@/lib/community'
 import { ShareCommunityDialog, saveUserRecipe } from '../SoundCreate'
 import { encodeWav } from '@/lib/wav-codec'
@@ -980,6 +993,19 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
                 onPointerDown={e => e.stopPropagation()}
                 style={{ pointerEvents: 'auto', cursor: 'text' }}
               >{clip.name}</span>
+              {(() => {
+                // The clip's number among the clips that share its name on
+                // this track, so "pad intro #2" can be said out loud. Only
+                // shown when the name is shared: a lone clip is just its name.
+                const o = ordinalsFor(project).get(clip.id)
+                return o && o.of > 1 ? (
+                  <span
+                    data-clip-ordinal={o.n}
+                    title={`${o.n} of ${o.of} clips named "${clip.name}" on this track — say "${clip.name} #${o.n}" or "the ${['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'][o.n - 1] ?? `${o.n}th`} ${clip.name}"`}
+                    style={{ marginLeft: 4, opacity: 0.6, fontSize: 9, fontVariantNumeric: 'tabular-nums', pointerEvents: 'auto' }}
+                  >#{o.n}</span>
+                ) : null
+              })()}
               {isAudioClip(clip) && clip.loopEnabled && <span style={{ marginLeft: 4, opacity: 0.7 }}>↻</span>}
               {isAudioClip(clip) && clip.boomerang && <span style={{ marginLeft: 4, opacity: 0.7 }}>⇄</span>}
             </>

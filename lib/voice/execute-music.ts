@@ -48,6 +48,7 @@ import {
   type MusicMaps, type MusicPosition, type MusicDuration,
 } from './position'
 import { beatToSeconds } from '../tempo-map'
+import { addressClips, parseClipAddress, clipLabel, colourOf, type ClipAddress } from '../clip-address'
 import { LOWPASS_HZ, HIGHPASS_HZ, automatableParams, shortNameOf, type AutomatableParam } from '../daw-effect-params'
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '../daw-effect-catalog'
 import { nameChord, groupIntoChords } from '../chord-analysis'
@@ -90,7 +91,10 @@ import type { RollFx, AutomationLane } from '@/lib/daw-types'
  * Returns the reason, or null when the move is genuinely what was asked.
  */
 const EDITS = /\b(make|set|change|turn|put|add|raise|lower|drop|bring|fade|sweep|automate|ramp|louder|quieter|brighter|darker|wetter|drier|mute|solo|delete|remove|duplicate|copy|move|stretch|shorten|lengthen|reverb|delay|filter|volume|pan|gain|drive|chorus|eq|compress)\b/i
-const MOVES = /\b(go|goto|jump|move the playhead|take me|skip|scrub|locate|start from|play from|back to|rewind|position)\b/i
+// "Move to bar 1" is a move: the record, 22:15, refused it as an edit because
+// "move" is also an edit word. A move TO a bar, with nothing else in the
+// sentence, is what going somewhere sounds like.
+const MOVES = /\b(go|goto|jump|move the playhead|move (?:up |back |forward )?to (?:the )?(?:bar|measure|beginning|start|end|top)|take me|skip|scrub|locate|start from|play from|back to|rewind|position)\b/i
 
 export function notAMove(said?: string): string | null {
   const t = String(said ?? '').trim()
@@ -840,6 +844,63 @@ function trackNameOf(clip: DawClip, p: DawProject): string | undefined {
   return (p.tracks ?? []).find(t => t.id === clip.trackId)?.name
 }
 
+/**
+ * The set of clips a call names, or null when it names exactly one thing the
+ * ordinary resolver should handle (with its ambiguity question).
+ *
+ * A set is meant when the call says `all`, gives a `which`, a place, or a
+ * length filter — or when the spoken target itself carries "all" / an ordinal
+ * ("all the pad intro parts", "pad intro part 3", "the third pad clip").
+ */
+function clipAddressOf(i: Record<string, unknown>, target: string, maps: MusicMaps, project: DawProject): ClipAddress | null {
+  const parsed = parseClipAddress(target)
+  const whichIn = i.which
+  const which: ClipAddress['which'] | undefined =
+    i.all === true ? 'all'
+      : whichIn === 'all' || whichIn === 'first' || whichIn === 'last' ? whichIn
+        : typeof whichIn === 'number' ? whichIn
+          : typeof whichIn === 'string' && /^\d+$/.test(whichIn) ? Number(whichIn)
+            : Array.isArray(whichIn) ? (whichIn as unknown[]).map(Number).filter(n => Number.isFinite(n))
+              : parsed.which
+  const at = i.at != null ? placeOf(i.at, maps, project) : null
+  const shorter = i.shorterThan != null ? spanOf(i.shorterThan, 0, maps) : null
+  const longer = i.longerThan != null ? spanOf(i.longerThan, 0, maps) : null
+  const after = i.after != null ? placeOf(i.after, maps, project) : null
+  const before = i.before != null ? placeOf(i.before, maps, project) : null
+  const filtered = at?.beat != null || shorter?.beats != null || longer?.beats != null || after?.beat != null || before?.beat != null
+  // ⚠️ "Bass 2" is a track, not the second Bass: a trailing number is only an
+  // ordinal when the name without it exists on its own.
+  const trailingIsName = typeof parsed.which === 'number' && !addressClips(project, { name: parsed.name }).length
+  if (which === undefined || (trailingIsName && !filtered && i.all !== true)) {
+    if (!filtered) return null
+  }
+  return {
+    name: trailingIsName ? target : parsed.name,
+    track: typeof i.track === 'string' ? i.track : undefined,
+    which: trailingIsName ? undefined : which,
+    at: at?.beat ?? undefined,
+    shorterThan: shorter?.beats ?? undefined,
+    longerThan: longer?.beats ?? undefined,
+    after: after?.beat ?? undefined,
+    before: before?.beat ?? undefined,
+  }
+}
+
+function describeAddress(a: ClipAddress, maps: MusicMaps): string {
+  const parts: string[] = []
+  if (a.name) parts.push(`named "${a.name}"`)
+  if (a.track) parts.push(`on ${a.track}`)
+  if (a.which === 'first') parts.push('(the first)')
+  else if (a.which === 'last') parts.push('(the last)')
+  else if (typeof a.which === 'number') parts.push(`(number ${a.which})`)
+  if (a.at != null) parts.push(`at ${describeBeat(a.at, maps)}`)
+  if (a.after != null) parts.push(`from ${describeBeat(a.after, maps)}`)
+  if (a.before != null) parts.push(`before ${describeBeat(a.before, maps)}`)
+  if (a.shorterThan != null) parts.push(`shorter than ${+a.shorterThan.toFixed(2)} beats`)
+  if (a.longerThan != null) parts.push(`longer than ${+a.longerThan.toFixed(2)} beats`)
+  return parts.join(' ') || 'like that'
+}
+
 function resolveClip(spoken: string, p: DawProject): { clip: DawClip; how: string } | null {
   // An id, handed back when a question is answered: the choice was made against
   // a specific clip and must not be re-resolved by name, or answering the
@@ -1228,7 +1289,11 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const at = place.beat ?? src.startBeat
       const times = Math.max(1, Math.min(64, spokenNumber(i.times as string) ?? 1))
       const bar = project.timeSignatureNum || 4
-      const clipLen = Math.max(spanBeats, Math.min(bar, spanBeats))
+      // ⚠️ WHOLE BARS. The record, 23:39: "Pad intro part isn't 1 full bar
+      // long. It's slightly shorter." The chord's notes were a hair under four
+      // beats, so the clip was too, and repeating it drifted off the grid. A
+      // part is rounded up to the bar it sits in.
+      const clipLen = Math.max(bar, Math.ceil(spanBeats / bar - 1e-6) * bar)
       const actions = Array.from({ length: times }, (_, n) => ({
         type: 'ADD_CLIP',
         clip: {
@@ -1514,14 +1579,19 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
     // MOVE — "move everything over by one bar"
     case 'move_clips': {
-      const chosen = target
-        ? (() => {
-          const track = resolveTrack(target, project)
-          if (track) return allClips(project).filter(c => c.trackId === track.id)
-          const one = resolveClip(target, project)
-          return one ? [one.clip] : []
-        })()
-        : allClips(project)
+      // A set — "all the pad intro parts", "the pad clips after bar 9" — moves
+      // together; a track name means everything on it; a plain clip name, one.
+      const moveAddr = clipAddressOf(i, target, maps, project)
+      const chosen = moveAddr
+        ? addressClips(project, moveAddr)
+        : target
+          ? (() => {
+            const track = resolveTrack(target, project)
+            if (track) return allClips(project).filter(c => c.trackId === track.id)
+            const one = resolveClip(target, project)
+            return one ? [one.clip] : []
+          })()
+          : allClips(project)
 
       // ── EXCEPT ───────────────────────────────────────────────────────────
       //
@@ -2212,12 +2282,29 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     case 'remove_clip': {
+      // ── Many at once ───────────────────────────────────────────────────
+      //
+      // The record, 23:43: "Delete all pad intro part" → one clip, five times
+      // over, one command each. "All", a number, a place or a length names a
+      // SET, and the set is deleted together — as one undo step.
+      const addr = clipAddressOf(i, target, maps, project)
+      if (addr) {
+        const set = addressClips(project, addr)
+        if (!set.length) return fail(`I couldn't find any clips ${describeAddress(addr, maps)}.`)
+        const tracks = [...new Set(set.map(c => project.tracks.find(t => t.id === c.trackId)?.name).filter(Boolean))]
+        return {
+          actions: set.map(c => ({ type: 'REMOVE_CLIP', clipId: c.id })),
+          say: set.length === 1
+            ? `Deleted ${clipLabel(project, set[0])} at ${describeBeat(set[0].startBeat, maps)}.`
+            : `Deleted ${set.length} clips ${describeAddress(addr, maps)} on ${tracks.join(' and ')}.`,
+        }
+      }
       const found = resolveClip(target, project)
       if (!found) return fail(`I couldn't find "${target || 'that'}" to delete.`)
       const track = project.tracks.find(t => t.id === found.clip.trackId)
       return {
         actions: [{ type: 'REMOVE_CLIP', clipId: found.clip.id }],
-        say: `Deleted the clip at ${describeBeat(found.clip.startBeat, maps)}${track ? ` on "${track.name}"` : ''}.`,
+        say: `Deleted ${clipLabel(project, found.clip)} at ${describeBeat(found.clip.startBeat, maps)}${track ? ` on "${track.name}"` : ''}.`,
       }
     }
 
@@ -3665,6 +3752,23 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const what = str(i.what).toLowerCase() || 'all'
       const clips = allClips(project)
       if (what === 'none') return { actions: [{ type: 'SELECT', clipIds: [] }], say: 'Nothing selected.' }
+      // ── Clips by address: one, several, or all with a name ────────────
+      //
+      // Brae: "give the voice control control over the multiselect function…
+      // so that one can be selected or many with the same name can be
+      // selected by name or by place on the track."
+      if (what === 'clips' || what === 'clip') {
+        const addr = clipAddressOf(i, target, maps, project) ?? { name: parseClipAddress(target).name, which: 'all' as const, track: typeof i.track === 'string' ? i.track : undefined }
+        const set = addressClips(project, addr)
+        if (!set.length) return fail(`I couldn't find any clips ${describeAddress(addr, maps)}.`)
+        const labels = set.slice(0, 4).map(c => clipLabel(project, c))
+        return {
+          actions: [{ type: 'SELECT', clipIds: set.map(c => c.id), ...(set.length === 1 ? { trackId: set[0].trackId } : {}) }],
+          say: set.length === 1
+            ? `Selected ${labels[0]} at ${describeBeat(set[0].startBeat, maps)}.`
+            : `Selected ${set.length} clips: ${labels.join(', ')}${set.length > 4 ? ', …' : ''}.`,
+        }
+      }
       if (what === 'track') {
         const track = resolveTrack(target, project)
         if (!track) return fail(`I couldn't find "${target || 'that track'}".`)
@@ -3691,6 +3795,80 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     // ── STRIP BACK ──────────────────────────────────────────────────────
+    // ── COLOUR ──────────────────────────────────────────────────────────
+    // "colour the pad clips blue", "make the drums track red". A clip name
+    // colours the clips it addresses (all of them, if several); a track name
+    // with no such clip colours the track.
+    case 'set_colour': {
+      const col = colourOf(str(i.colour) || str(i.color) || str(i.said))
+      if (!col) return fail('Say a colour — red, orange, yellow, green, teal, blue, purple, pink, grey.')
+      const wantTrack = str(i.of).toLowerCase() === 'track'
+      const track = resolveTrack(target, project)
+      const addr = clipAddressOf(i, target, maps, project) ?? { name: parseClipAddress(target).name, which: 'all' as const }
+      const set = wantTrack ? [] : addressClips(project, addr)
+      if (set.length && (!track || str(i.of).toLowerCase() === 'clip' || set.some(c => foldName(c.name ?? '') === foldName(parseClipAddress(target).name)))) {
+        return {
+          actions: set.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: { color: col.hex } })),
+          say: set.length === 1 ? `${clipLabel(project, set[0])} is ${col.name} now.` : `${set.length} clips are ${col.name} now.`,
+        }
+      }
+      if (track) return { actions: [{ type: 'UPDATE_TRACK', trackId: track.id, patch: { color: col.hex } }], say: `"${track.name}" is ${col.name} now.` }
+      return fail(`I couldn't find "${target || 'that'}" to colour.`)
+    }
+
+    // ── AN AUDIO CLIP'S OWN SHAPE ───────────────────────────────────────
+    // Fades, gain, reverse, loop — the things in the clip's own settings that
+    // had no way to be said.
+    case 'set_clip_audio': {
+      const addr = clipAddressOf(i, target, maps, project)
+      const set = addr ? addressClips(project, addr) : (() => { const f = resolveClip(target, project); return f ? [f.clip] : [] })()
+      if (!set.length) return fail(`I couldn't find "${target || 'that'}".`)
+      const patch: Record<string, unknown> = {}
+      const said: string[] = []
+      if (i.fadeIn != null) { const s = spanOf(i.fadeIn, set[0].startBeat, maps); if (s.problem || s.beats == null) return fail('Say how long the fade in should be — "over one bar".'); patch.fadeIn = s.beats; said.push(`fade in over ${s.said ? describeDuration(s.said, s.beats) : `${s.beats} beats`}`) }
+      if (i.fadeOut != null) { const s = spanOf(i.fadeOut, set[0].startBeat, maps); if (s.problem || s.beats == null) return fail('Say how long the fade out should be — "over two beats".'); patch.fadeOut = s.beats; said.push(`fade out over ${s.said ? describeDuration(s.said, s.beats) : `${s.beats} beats`}`) }
+      if (i.gain != null) { const g = spokenFraction(i.gain as string); if (g == null) return fail('Say the clip level as a percentage.'); patch.gain = Math.max(0, Math.min(2, g)); said.push(`level ${Math.round(g * 100)}%`) }
+      if (typeof i.reverse === 'boolean') { patch.reverse = i.reverse; said.push(i.reverse ? 'reversed' : 'playing forwards') }
+      if (typeof i.loop === 'boolean') { patch.loopEnabled = i.loop; said.push(i.loop ? 'looping' : 'not looping') }
+      if (!said.length) return fail('Say what to change — a fade in, a fade out, the level, reverse, or loop.')
+      const audioOnly = 'fadeIn' in patch || 'fadeOut' in patch || 'gain' in patch || 'reverse' in patch
+      const targets = audioOnly ? set.filter(c => c.kind === 'audio') : set
+      if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level and reverse are for audio clips. Its notes have a Sound panel instead.`)
+      return {
+        actions: targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch })),
+        say: `${targets.length === 1 ? clipLabel(project, targets[0]) : `${targets.length} clips`}: ${said.join(', ')}.`,
+      }
+    }
+
+    // ── TRACK ORDER ─────────────────────────────────────────────────────
+    // "move the drums to the top", "put the pad below the bass".
+    case 'move_track': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const order = (project.tracks ?? []).filter(t => !t.groupId || t.kind === 'group')
+      const idx = order.findIndex(t => t.id === track.id)
+      const to = str(i.to).toLowerCase()
+      let beforeId: string | null | undefined
+      let where = ''
+      if (i.before != null || i.after != null) {
+        const other = resolveTrack(str(i.before ?? i.after), project)
+        if (!other) return fail(`I couldn't find a track called "${str(i.before ?? i.after)}".`)
+        if (other.id === track.id) return { actions: [], say: `"${track.name}" is already there.` }
+        const oi = order.findIndex(t => t.id === other.id)
+        if (i.before != null) { beforeId = other.id; where = `above "${other.name}"` }
+        else { beforeId = order[oi + 1]?.id ?? null; where = `below "${other.name}"` }
+      } else if (to === 'top' || to === 'first') { beforeId = order[0]?.id ?? null; where = 'at the top' }
+      else if (to === 'bottom' || to === 'last' || to === 'end') { beforeId = null; where = 'at the bottom' }
+      else if (to === 'up') { if (idx <= 0) return { actions: [], say: `"${track.name}" is already at the top.` }; beforeId = order[idx - 1].id; where = 'up one' }
+      else if (to === 'down') { if (idx < 0 || idx >= order.length - 1) return { actions: [], say: `"${track.name}" is already at the bottom.` }; beforeId = order[idx + 2]?.id ?? null; where = 'down one' }
+      else return fail('Say where — "to the top", "to the bottom", "up", "down", "above the bass".')
+      if (beforeId === track.id) return { actions: [], say: `"${track.name}" is already ${where}.` }
+      return {
+        actions: [{ type: 'MOVE_TRACK', trackId: track.id, beforeId: beforeId ?? null }],
+        say: `Moved "${track.name}" ${where}.`,
+      }
+    }
+
     case 'strip_back': {
       const tracks = (project.tracks ?? []).filter(t => t.kind !== 'group')
       if (i.restore === true) {

@@ -1599,7 +1599,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // together, which is the most specific thing anybody can say and was the
       // one form the rules could not see.
       clips: (project.arrangementClips ?? []).map(c => ({
-        id: c.id, name: c.name, trackId: c.trackId,
+        // The kind, so "reverse the lead" (MIDI) and "reverse the vocal
+        // take" (audio) are told apart before anything is planned.
+        id: c.id, name: c.name, trackId: c.trackId, kind: c.kind,
       })),
       // The sound library, so "make the bass a violin" can find the violin. It
       // is not part of the song — it lives on this machine — which is why the

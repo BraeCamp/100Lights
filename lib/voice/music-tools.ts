@@ -53,7 +53,18 @@ const LENGTH = {
 
 const TARGET = {
   type: 'string',
-  description: 'A track or clip name, as spoken.',
+  description: 'A track or clip name, as spoken. Same-named clips on a track are numbered by start order and shown as "#2", "#3" in the arrangement — say "pad intro part 3", "the third pad intro part" or "pad intro part #3" for one of them, "all the pad intro parts" for every one.',
+} as const
+/** The set-addressing fields shared by every tool that can act on several clips. */
+const ADDRESS = {
+  all: { type: 'boolean', description: 'True to act on EVERY clip the name matches — "all the pad intro parts", "delete all of them".' },
+  which: { type: 'string', description: 'Which of the same-named clips: a number (by start order, 1 = earliest), "first", "last", or "all".' },
+  track: { type: 'string', description: 'Narrow to this track when the clip name alone is not enough.' },
+  at: { ...POSITION, description: 'Only clips sounding at this place — "the pad clip at bar 9".' },
+  after: { ...POSITION, description: 'Only clips starting at or after this place.' },
+  before: { ...POSITION, description: 'Only clips starting before this place.' },
+  shorterThan: { ...LENGTH, description: 'Only clips shorter than this — "the ones that are not a full bar long".' },
+  longerThan: { ...LENGTH, description: 'Only clips longer than this.' },
 } as const
 
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS } from '../daw-effect-catalog'
@@ -574,14 +585,63 @@ export const MUSIC_TOOLS = [
   {
     name: 'select',
     description:
-      'SELECT / FOCUS — choose what "this" refers to, without touching the mouse. "select everything on the bass", "select the loop", "select all the clips", "select nothing" — and the way people usually start: "let\'s edit the bass track", "focus on the drums", "work on the pad". With `what: "track"` this focuses that track and says so, and every command afterwards that names nothing acts on it. Useful before a command that acts on the selection, and the answer to "how do I tell it which one I mean".',
+      'SELECT / FOCUS — choose what "this" refers to, without touching the mouse. "select everything on the bass", "select the loop", "select all the clips", "select nothing" — and the way people usually start: "let\'s edit the bass track", "focus on the drums", "work on the pad". With `what: "track"` this focuses that track and says so, and every command afterwards that names nothing acts on it. With `what: "clips"` it selects ONE OR MANY clips by address: "select all the pad intro parts", "select the third pad clip", "select pad intro part 2", "select the pad clips after bar 9", "select the clips shorter than a bar" — the multi-select, by voice. Useful before a command that acts on the selection, and the answer to "how do I tell it which one I mean".',
     input_schema: {
       type: 'object',
       properties: {
-        what: { type: 'string', enum: ['all', 'none', 'track', 'loop'] },
-        target: { ...TARGET, description: 'For "track" — which one.' },
+        what: { type: 'string', enum: ['all', 'none', 'track', 'loop', 'clips'] },
+        target: { ...TARGET, description: 'For "track" — which one. For "clips" — the clip name (or track) to address.' },
+        ...ADDRESS,
       },
       required: ['what'],
+    },
+  },
+  {
+    name: 'set_colour',
+    description:
+      'COLOUR — "colour the pad clips blue", "make the drums track red", "paint pad intro part 2 green". A clip name colours the clips it addresses (all of them if several); a track name colours the track. Colour is the arrangement\'s own labelling and never changes the sound.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        colour: { type: 'string', description: 'red, orange, amber, yellow, lime, green, teal, cyan, blue, indigo, purple, violet, pink, magenta, rose, brown, grey, white, black — or a #hex.' },
+        of: { type: 'string', enum: ['clip', 'track'], description: 'Say which when the name could be either.' },
+        ...ADDRESS,
+      },
+      required: ['target', 'colour'],
+    },
+  },
+  {
+    name: 'set_clip_audio',
+    description:
+      'AN AUDIO CLIP\'S OWN SETTINGS — "fade in the vocal over a bar", "fade out the last drums clip over two beats", "turn the guitar clip down to 60%", "reverse the crash", "loop the drum clip", "stop looping it". Fades, level, reverse and loop are per clip; the track\'s volume is set_track, and a MIDI clip\'s sound is set_sound.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        fadeIn: { ...LENGTH, description: 'Fade the clip in over this length from its start.' },
+        fadeOut: { ...LENGTH, description: 'Fade the clip out over this length before its end.' },
+        gain: { type: 'string', description: 'The clip\'s own level as a percentage, "60%" — 100% is unity, up to 200%.' },
+        reverse: { type: 'boolean', description: 'Play the audio backwards (true) or forwards (false).' },
+        loop: { type: 'boolean', description: 'Repeat the clip\'s content across its length.' },
+        ...ADDRESS,
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'move_track',
+    description:
+      'TRACK ORDER — "move the drums to the top", "put the pad below the bass", "move the vocal up one", "send the FX track to the bottom". Changes only where the track sits in the list.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The track to move.' },
+        to: { type: 'string', enum: ['top', 'bottom', 'up', 'down'], description: 'Where, when no other track is named.' },
+        before: { type: 'string', description: 'Put it directly ABOVE this track.' },
+        after: { type: 'string', description: 'Put it directly BELOW this track.' },
+      },
+      required: ['target'],
     },
   },
   {
@@ -1050,10 +1110,10 @@ export const MUSIC_TOOLS = [
   {
     name: 'remove_clip',
     description:
-      'DELETE A CLIP — remove one clip from the arrangement. "delete the second pad clip", "get rid of that clip", "take the crash out of bar 9". ⚠️ Destructive and confirmed before it runs. This removes the clip; remove_track removes the whole track it sits on.',
+      'DELETE CLIPS — remove one clip, or a whole set, from the arrangement. "delete the second pad clip", "get rid of that clip", "take the crash out of bar 9", "delete all the pad intro parts", "delete the pad clips that are shorter than a bar", "remove every clip on the drums after bar 17". ⚠️ Destructive and confirmed before it runs. One call deletes the whole set — never one call per clip. This removes clips; remove_track removes the whole track they sit on.',
     input_schema: {
       type: 'object',
-      properties: { target: TARGET },
+      properties: { target: TARGET, ...ADDRESS },
       required: ['target'],
     },
   },

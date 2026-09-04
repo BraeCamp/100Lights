@@ -35,6 +35,8 @@ const PROJECT = {
   arrangementClips: [
     { id: 'cp', trackId: 'tp', kind: 'midi', name: 'Pad clip', startBeat: 0, durationBeats: 8, notes, fadeIn: 0, fadeOut: 0 },
     { id: 'cd', trackId: 'td', kind: 'midi', name: 'Drums clip', startBeat: 8, durationBeats: 8, notes: [...notes], fadeIn: 0, fadeOut: 0 },
+    // An audio clip, for the clip's own settings — the two above are MIDI.
+    { id: 'ca', trackId: 'tp', kind: 'audio', name: 'Pad take', startBeat: 16, durationBeats: 8, sampleId: 's1', duration: 4, offset: 0, gain: 1, fadeIn: 0, fadeOut: 0 },
   ],
   cueMarkers: [{ id: 'm1', beat: 8, name: 'Chorus' }, { id: 'm2', beat: 24, name: 'Drop' }],
   // A return track and a loop, so the send and selection probes have something
@@ -115,6 +117,9 @@ const CALLS = {
   nudge: { target: 'pad clip', direction: 'later', milliseconds: 20 },
   tempo_ramp: { to: { bar: 5 }, bpm: 100 },
   select: { what: 'all' },
+  set_colour: { target: 'pad clip', colour: 'blue' },
+  set_clip_audio: { target: 'pad take', fadeOut: { bars: 1 } },
+  move_track: { target: 'drums', to: 'top' },
   strip_back: { keep: ['drums'] },
   chord_inversion: { target: 'pad clip', direction: 'up' },
   modulate: { semitones: 2 },
