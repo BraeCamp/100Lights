@@ -65,6 +65,19 @@ const ADDRESS = {
   before: { ...POSITION, description: 'Only clips starting before this place.' },
   shorterThan: { ...LENGTH, description: 'Only clips shorter than this — "the ones that are not a full bar long".' },
   longerThan: { ...LENGTH, description: 'Only clips longer than this.' },
+  section: { type: 'string', description: 'Only clips inside this named section — "in the chorus" is from the Chorus marker to the next marker.' },
+  selected: { type: 'boolean', description: 'True to act on the clips selected in the studio — "these", "them", "the selected clips".' },
+} as const
+
+const NOTE_ADDRESS = {
+  notes: { type: 'string', description: 'Which notes INSIDE the clip, as said: "the first chord", "the third chord", "the last chord", "the first two chords", "the chord at bar 3", "the chord about a second in", "the second note", "the highest note", "the notes above C5", "the notes below C3", "every C". A chord is a moment when two or more notes start together, and a clip holds several. Omit for every note in the clip.' },
+} as const
+
+const TRACK_ADDRESS = {
+  all: { type: 'boolean', description: 'True for every track — "all the tracks", "every track".' },
+  only: { type: 'array', items: { type: 'string', enum: ['muted', 'unmuted', 'soloed', 'unsoloed', 'drums', 'audio', 'midi', 'synth', 'apollo', 'sampler', 'plugin', 'empty', 'group'] }, description: 'Only tracks that are all of these — "every muted track" is ["muted"], "all the drum tracks" is ["drums"].' },
+  withEffect: { type: 'string', description: 'Only tracks carrying this effect — "the tracks with reverb".' },
+  except: { type: 'array', items: { type: 'string' }, description: 'Leave these out — "every track except the drums".' },
 } as const
 
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS } from '../daw-effect-catalog'
@@ -138,7 +151,8 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         target: { ...TARGET, description: 'The clip (or track) to copy from — "pad intro".' },
-        part: { type: 'string', description: '"first chord" (default), "first note", or a length like "1 bar", "2 bars", "8 beats" measured from the clip\'s start.' },
+        part: { type: 'string', description: '"first chord" (default), "third chord", "last chord", "first note", or a length like "1 bar", "2 bars", "8 beats" measured from the clip\'s start.' },
+        ...NOTE_ADDRESS,
         at: { ...POSITION, description: 'Where the copy goes. Omit for the source clip\'s own start.' },
         times: { type: 'number', description: 'How many copies back to back — "repeat that 4 times" is 4. Defaults to 1.' },
       },
@@ -242,7 +256,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'set_track',
     description:
-      'MIXER — mute, solo, set volume or pan on one track. "mute the hats", "bring the bass up", "pan the guitar left".',
+      'MIXER — mute, solo, set volume or pan on one track — or on a SET of tracks: "mute all the drum tracks", "unmute every muted track", "turn down the tracks with reverb", "solo the audio tracks", "mute everything except the drums" (all + except), "mute these" with clips selected.',
     input_schema: {
       type: 'object',
       properties: {
@@ -251,6 +265,9 @@ export const MUSIC_TOOLS = [
         solo: { type: 'boolean' },
         volume: { type: 'number', description: 'Percentage, 0-100.' },
         pan: { type: 'number', description: '-100 (hard left) to 100 (hard right).' },
+        volumeBy: { type: 'number', description: 'Move the volume by this many points instead of setting it (negative is down) — for a SET of tracks, "turn the drum tracks down a bit" is -15, since each starts from its own level.' },
+        volumeDb: { type: 'number', description: 'Move the volume by this many decibels instead of setting it (negative is down).' },
+        ...TRACK_ADDRESS,
       },
       required: ['target'],
     },
@@ -258,12 +275,14 @@ export const MUSIC_TOOLS = [
   {
     name: 'transpose',
     description:
-      'TRANSPOSE — move the notes of a clip up or down in semitones. "take the bass up an octave" is 12, "down a fifth" is -7.',
+      'TRANSPOSE — move the notes of a clip up or down in semitones. "take the bass up an octave" is 12, "down a fifth" is -7. Part of a clip with `notes`: "transpose the third chord of the pad up an octave", "take the notes above C5 down an octave". Several clips by address: "all the pad parts", "them".',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
         semitones: { type: 'number', description: 'Positive is up. An octave is 12.' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
       },
       required: ['target', 'semitones'],
     },
@@ -607,6 +626,7 @@ export const MUSIC_TOOLS = [
         colour: { type: 'string', description: 'red, orange, amber, yellow, lime, green, teal, cyan, blue, indigo, purple, violet, pink, magenta, rose, brown, grey, white, black — or a #hex.' },
         of: { type: 'string', enum: ['clip', 'track'], description: 'Say which when the name could be either.' },
         ...ADDRESS,
+        ...TRACK_ADDRESS,
       },
       required: ['target', 'colour'],
     },
@@ -953,6 +973,7 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         target: { ...TARGET, description: 'A track or clip to name the notes of. Omit for whatever is at the playhead.' },
+        ...NOTE_ADDRESS,
       },
     },
   },
@@ -1004,7 +1025,7 @@ export const MUSIC_TOOLS = [
       'DELETE A TRACK — remove a track and everything on it. "delete the guitar track", "get rid of the pad", "remove that track". ⚠️ Destructive and confirmed out loud before it runs. If they only want it quiet, that is set_track with muted — reach for this only when they said delete or remove.',
     input_schema: {
       type: 'object',
-      properties: { target: TARGET },
+      properties: { target: TARGET, ...TRACK_ADDRESS },
       required: ['target'],
     },
   },
@@ -1153,7 +1174,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'edit_note',
     description:
-      'ONE NOTE — put a single note in, or take one out. "put a C on beat three", "add an E flat at bar 5 beat 2", "delete the last note", "take out the highest note". ⚠️ For changing notes in BULK — transposing, quantising, lengthening, making them softer — use those commands instead; this is the one for a single note, which everything else could do except add or remove one.',
+      'ONE NOTE — put a single note in, or take one out. "put a C on beat three", "add an E flat at bar 5 beat 2", "delete the last note", "take out the highest note". Several at once by address in `notes`: "delete the third note", "remove the notes above C5", "take out every C", "delete the last chord". ⚠️ For changing notes in BULK — transposing, quantising, lengthening, making them softer — use those commands instead; this is the one for a single note, which everything else could do except add or remove one.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1163,6 +1184,7 @@ export const MUSIC_TOOLS = [
         at: POSITION,
         length: LENGTH,
         which: { type: 'string', enum: ['last', 'first', 'highest', 'lowest'], description: 'For remove, when they did not say a pitch.' },
+        ...NOTE_ADDRESS,
       },
       required: ['action'],
     },
@@ -1170,13 +1192,15 @@ export const MUSIC_TOOLS = [
   {
     name: 'set_velocity',
     description:
-      'VELOCITY — how hard the notes are played. "make the drums softer", "set the bass velocity to 100", "play it harder".',
+      'VELOCITY — how hard the notes are played. "make the drums softer", "set the bass velocity to 100", "play it harder". Part of a clip with `notes`: "make the last chord of the pad softer", "play the highest note harder".',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
         velocity: { type: 'number', description: 'Absolute, 1-127.' },
         scale: { type: 'number', description: 'Or a percentage change: 80 makes everything 80% as hard.' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
       },
       required: ['target'],
     },

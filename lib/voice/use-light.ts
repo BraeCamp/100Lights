@@ -58,6 +58,8 @@ export interface LightStudio {
   endUndoGroup?: () => void
   selectedTrackId: string | null
   selectedClipId: string | null
+  /** Every selected clip — so "delete them" and "colour these" can mean a set. */
+  selectedClipIds?: Set<string>
   metronome: boolean
   setMetronome?: (on: boolean) => void
   setExpandedStepSeqClipId?: (id: string | null) => void

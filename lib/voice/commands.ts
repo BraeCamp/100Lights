@@ -44,25 +44,59 @@ import { Words, near } from './words'
 import { matchApolloParam, matchFilterType, moduleHint } from '../apollo/spoken-params'
 import { characterWordsIn } from './preset-character'
 import { parseClipAddress, colourOf } from '../clip-address'
+import { parseNoteAddress } from '../note-address'
+import { parseTrackAddress } from '../track-address'
+
+const SECTION_WORDS = ['chorus', 'verse', 'bridge', 'intro', 'outro', 'drop', 'breakdown', 'hook', 'refrain', 'solo', 'build', 'pre-chorus', 'prechorus', 'interlude', 'coda', 'ending']
+/** Section names a sentence can use as places: the song's own markers, plus the usual words. */
+function sectionNames(ctx: InterpretContext): string[] {
+  const names = new Set<string>(SECTION_WORDS)
+  for (const m of ctx.markers ?? []) { const n = String(m.name ?? '').toLowerCase().trim(); if (n) names.add(n) }
+  return [...names].sort((a, b) => b.length - a.length)
+}
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 // A SET of clips named out loud — "all the pad intro parts", "the third pad
 // clip", "pad intro part 2", "the pad clips after bar 9", "the clips shorter
-// than a bar", "the ones that are not a full bar long". Returns the address
-// fields a select / remove_clip / set_colour call carries, or null when the
-// words name one thing (the rule's own path) or nothing at all.
+// than a bar", "the ones that are not a full bar long", "the clips between
+// bar 9 and 17", "everything on the pad after the chorus", "them". Returns
+// the address fields a select / remove_clip / set_colour call carries, or
+// null when the words name one thing (the rule's own path) or nothing at all.
 function clipSetIn(body: string, ctx: InterpretContext): Record<string, unknown> | null {
   let s = body.toLowerCase().replace(/[.,!?]+$/, '').replace(/\s+/g, ' ').trim()
   const out: Record<string, unknown> = {}
   let filtered = false
+  // ── The selection, pointed at ──────────────────────────────────────────
+  // "delete them", "colour these blue": the ids of what is selected.
+  const sel = ctx.selectedClipIds?.length ? ctx.selectedClipIds : ctx.selectedClipId ? [ctx.selectedClipId] : []
+  if (sel.length && /^(?:(?:all\s+(?:of\s+)?)?(?:the\s+)?(?:selection|selected(?:\s+(?:clips?|items?|parts?|ones?))?|these(?:\s+(?:clips?|items?|parts?|ones?))?|those(?:\s+(?:clips?|items?|parts?|ones?))?|them|it|this))$/.test(s)) {
+    return { target: sel.length > 1 ? `#sel:${sel.join(',')}` : `#${sel[0]}` }
+  }
   const count = (n: string): number => n === 'a' || n === 'an' || n === 'one' ? 1 : n === 'half a' ? 0.5 : (spokenNumber(n) ?? Number(n))
   const length = (n: string, unit: string): Record<string, number> => /beat/.test(unit) ? { beats: count(n) } : { bars: count(n) }
   const keep = (l: Record<string, number>): boolean => Number.isFinite(Object.values(l)[0])
+  // ── Ranges: "between bar 9 and 17", "from bar 9 to bar 17" ────────────
+  s = s.replace(/\b(?:between|from)\s+(?:bars?|measures?)\s*(\d{1,3})\s+(?:and|to|through|until|till)\s+(?:bars?|measures?)?\s*(\d{1,3})\b/, (_, a, b) => { out.after = { bar: Number(a) }; out.before = { bar: Number(b) }; filtered = true; return ' ' })
+  // ── Sections, by marker name: "after the chorus", "in the drop" ───────
+  const secRe = `(${sectionNames(ctx).map(escapeRe).join('|')})`
+  s = s.replace(new RegExp(`\\b(?:after|from|past|following|since)\\s+(?:the\\s+)?${secRe}\\b`), (_, n) => { out.after = { marker: n }; filtered = true; return ' ' })
+  s = s.replace(new RegExp(`\\b(?:before|until|up to|prior to|till)\\s+(?:the\\s+)?${secRe}\\b`), (_, n) => { out.before = { marker: n }; filtered = true; return ' ' })
+  s = s.replace(new RegExp(`\\b(?:in|inside|within|during|throughout)\\s+(?:the\\s+)?${secRe}\\b`), (_, n) => { out.section = n; filtered = true; return ' ' })
   s = s.replace(/\b(?:after|from|past|beyond|following)\s+(?:bar|measure)\s+(\d{1,3})\b/, (_, n) => { out.after = { bar: Number(n) }; filtered = true; return ' ' })
   s = s.replace(/\b(?:before|until|up to|prior to)\s+(?:bar|measure)\s+(\d{1,3})\b/, (_, n) => { out.before = { bar: Number(n) }; filtered = true; return ' ' })
   s = s.replace(/\b(?:at|on|in|around)\s+(?:bar|measure)\s+(\d{1,3})\b/, (_, n) => { out.at = { bar: Number(n) }; filtered = true; return ' ' })
   s = s.replace(/\b(?:shorter|less|smaller)\s+than\s+(a|an|one|half a|\d+(?:\.\d+)?|[a-z]+)\s+(?:full\s+)?(bars?|beats?|measures?)\b(?:\s+long)?/, (_, n, u) => { const l = length(n, u); if (keep(l)) { out.shorterThan = l; filtered = true }; return ' ' })
   s = s.replace(/\b(?:longer|more|bigger)\s+than\s+(a|an|one|half a|\d+(?:\.\d+)?|[a-z]+)\s+(?:full\s+)?(bars?|beats?|measures?)\b(?:\s+long)?/, (_, n, u) => { const l = length(n, u); if (keep(l)) { out.longerThan = l; filtered = true }; return ' ' })
   s = s.replace(/\b(?:that\s+(?:are|aren't|are not|is|isn't|is not)|not|aren't|isn't)\s+(?:a\s+)?(?:full|whole)\s+(bar|beat)(?:\s+long)?\b/, (_, u) => { out.shorterThan = length('a', u); filtered = true; return ' ' })
+  // "everything" is all the clips, however the rest narrows it.
+  s = s.replace(/\b(?:everything|all of it|all of them|the lot)\b/, 'all the clips').replace(/\s+/g, ' ').trim()
+  // ── A track: "on the pad", "in the drums track" ────────────────────────
+  const trackM = /\b(?:on|in|from)\s+(?:the\s+)?([a-z0-9][a-z0-9' ]*?)(?:\s+track)?\s*$/.exec(s)
+  if (trackM) {
+    const want = foldName(trackM[1])
+    const isTrack = !!want && (ctx.tracks ?? []).some(t => { const n = foldName(t.name ?? ''); return n === want || n.startsWith(want) || n.includes(want) })
+    if (isTrack) { out.track = trackM[1].trim(); filtered = true; s = s.slice(0, trackM.index).trim() }
+  }
   s = s.replace(/\b(?:that|which|ones?|the)\s*$/, '').replace(/\s+/g, ' ').trim()
   const parsed = parseClipAddress(s)
   let which: number | 'first' | 'last' | 'all' | undefined = parsed.which
@@ -81,6 +115,29 @@ function clipSetIn(body: string, ctx: InterpretContext): Record<string, unknown>
   if (which === 'all' && !name && !filtered) return null
   if (name) out.target = name
   if (which !== undefined) out.which = which
+  return out
+}
+
+// A SET of tracks named out loud — "all the drum tracks", "every muted
+// track", "the tracks with reverb", "everything except the drums". Null when
+// the words name one track, which is every mixer command's own path.
+// `strip` takes the rule's own words out first, so "turn all the drum tracks
+// down a bit" is read as "all the drum tracks".
+function trackSetIn(raw: string, ctx: InterpretContext, strip: RegExp): Record<string, unknown> | null {
+  const s = raw.toLowerCase().replace(/[.,!?]+$/, '')
+    .replace(strip, ' ')
+    .replace(/\b(?:please|light|hey|okay|ok|for me|would you|could you|can you)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim()
+  if (!/\btracks\b|\b(?:every|each|all)\b|\bexcept\b|\b(?:with|that have)\b/.test(s)) return null
+  const addr = parseTrackAddress(s)
+  if (!addr) return null
+  // Pointed at: "mute these" with several clips selected means their tracks.
+  const out: Record<string, unknown> = { target: addr.name ?? s }
+  if (addr.all) out.all = true
+  if (addr.only?.length) out.only = addr.only
+  if (addr.withEffect) out.withEffect = addr.withEffect
+  if (addr.except?.length) out.except = addr.except
+  void ctx
   return out
 }
 
@@ -131,6 +188,10 @@ export interface InterpretContext {
    * made it unambiguous.
    */
   clips?: { id: string; name?: string; trackId: string; kind?: 'audio' | 'midi' }[]
+  /** Every selected clip — so "delete them" and "colour these" can mean a set. */
+  selectedClipIds?: string[]
+  /** The song's markers, so "after the chorus" reads as a place. */
+  markers?: { name: string; beat: number }[]
   /**
    * The sound library, as far as this machine has one.
    *
@@ -332,14 +393,17 @@ function clipOrSelected(
 ): { name: string; score: number } | null {
   const named = nameFrom(w, ctx, remove, opts)
   if (named) return named
-  if (!ctx.selectedClipId) return null
+  // Several clips selected — "delete them", "colour these" — is the set,
+  // carried as ids so the planner never re-resolves it by name.
+  const many = ctx.selectedClipIds?.length ? ctx.selectedClipIds : ctx.selectedClipId ? [ctx.selectedClipId] : []
+  if (!many.length) return null
   const leftover = w.all.filter(x =>
     !remove.includes(x)
     && !DEICTIC.includes(x)
     && !(opts.dropNums && spokenNumber(x) != null))
   if (leftover.length) return null
   // The id form, which the executor resolves directly rather than by name.
-  return { name: `#${ctx.selectedClipId}`, score: 0.85 }
+  return { name: many.length > 1 ? `#sel:${many.join(',')}` : `#${many[0]}`, score: 0.85 }
 }
 
 function nameOrSelected(
@@ -350,7 +414,10 @@ function nameOrSelected(
 ): { name: string; score: number } | null {
   const named = nameFrom(w, ctx, remove, opts)
   if (named) return named
-  if (!ctx.selectedTrackName) return null
+  // Several clips selected and pointed at — "mute these" — means THEIR
+  // tracks, carried as the selection so the planner finds them by id.
+  const manyClips = (ctx.selectedClipIds?.length ?? 0) > 1 ? ctx.selectedClipIds! : null
+  if (!ctx.selectedTrackName && !manyClips) return null
 
   // Only when nothing else could have been the object. Leftover words that are
   // neither command words nor pointers mean the speaker named something this
@@ -361,7 +428,10 @@ function nameOrSelected(
     && !DEICTIC.includes(x)
     && !(opts.dropNums && spokenNumber(x) != null))
   if (leftover.length) return null
-  return { name: ctx.selectedTrackName, score: 0.8 }
+  if (manyClips && (/\b(?:them|these|those|selected|selection)\b/i.test(w.raw) || !ctx.selectedTrackName)) {
+    return { name: `#sel:${manyClips.join(',')}`, score: 0.85 }
+  }
+  return { name: ctx.selectedTrackName!, score: 0.8 }
 }
 
 /**
@@ -441,6 +511,25 @@ function nameFrom(
     .filter(x => protect.has(x) || !isUnitWord(x))
     .join(' ')
     .trim()
+  // ── A clip named on its own — "delete the beat clip" ─────────────────────
+  //
+  // ⚠️ Clips were only ever found THROUGH their track ("bass body 1"): a clip
+  // whose name did not start with its track's name could not be said at all
+  // ("delete the beat clip" → nothing), and one that did came back glued
+  // ("Organ Organ chords") at a score under the gate, so a signed-out delete
+  // was refused. The whole leftover naming one clip exactly is as specific as
+  // it gets; a track named exactly the same still wins, as it always did.
+  const exactClip = (phrase: string): string | null => {
+    const want = foldName(phrase)
+    if (!want) return null
+    if ((ctx.tracks ?? []).some(t => foldName(t.name ?? '') === want)) return null
+    return (ctx.clips ?? []).find(c => foldName(c.name ?? '') === want)?.name ?? null
+  }
+  const namedClip = exactClip(withNumbers) ?? exactClip(rest)
+  if (namedClip) {
+    for (const word of w.all) w.markWord(word, 0)
+    return { name: namedClip, score: 1 }
+  }
   const compound = compoundTarget(withNumbers, ctx) ?? compoundTarget(rest, ctx)
   if (compound) {
     for (const word of w.all) w.markWord(word, 0)
@@ -684,11 +773,17 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'set_track',
     group: 'Mixer',
     what: 'Mute or unmute a track',
-    say: ['mute the drums', 'unmute the bass', 'mute bass 2'],
+    say: ['mute the drums', 'unmute the bass', 'mute bass 2', 'mute all the drum tracks', 'unmute every muted track'],
     match(w, ctx) {
       const on = w.has('mute', 'silence')
       const off = w.has('unmute') || (on && w.has('un'))
       if (!on && !off) return null
+      // "mute all the drum tracks", "unmute every muted track" — a set.
+      const set = trackSetIn(w.raw, ctx, /\b(?:mute|unmute|silence)\b/)
+      if (set && (set.only || set.withEffect || (set.except && !on) || (set.target !== undefined && !set.all && !set.except))) {
+        for (const word of w.all) w.markWord(word, 0)
+        return { calls: [{ name: 'set_track', input: { ...set, muted: !off } }], confidence: 0.9, needsName: true }
+      }
       const hit = nameOrSelected(w, ctx, ['mute', 'unmute', 'silence', 'track'])
       // A mixer verb with no findable track is exactly the ambiguity worth
       // asking about, so decline rather than guess which track was meant.
@@ -705,11 +800,16 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'set_track',
     group: 'Mixer',
     what: 'Solo a track, or drop the solo',
-    say: ['solo the vocals', 'unsolo the guitar', 'solo bass 2'],
+    say: ['solo the vocals', 'unsolo the guitar', 'solo bass 2', 'solo the audio tracks'],
     match(w, ctx) {
       const on = w.has('solo')
       const off = w.has('unsolo')
       if (!on && !off) return null
+      const set = trackSetIn(w.raw, ctx, /\b(?:solo|unsolo)\b/)
+      if (set && (set.only || set.withEffect || set.except || set.all)) {
+        for (const word of w.all) w.markWord(word, 0)
+        return { calls: [{ name: 'set_track', input: { ...set, solo: !off } }], confidence: 0.9, needsName: true }
+      }
       const hit = nameOrSelected(w, ctx, ['solo', 'unsolo', 'track'])
       if (!hit) return null
       return {
@@ -741,6 +841,13 @@ const COMMANDS: VoiceCommand[] = [
       if (EFFECTS.some(e => w.has(e))) return null
       // The name is resolved BEFORE the number is read, because which numbers
       // are arguments depends on which are part of the name.
+      const set = trackSetIn(w.raw, ctx, /\b(?:set|put|to|at|volume|level|percent)\b|\d+(?:\.\d+)?|%/g)
+      if (set) {
+        const level = argNumbers(w, '')[0]
+        if (level == null || level < 0 || level > 100) return null
+        for (const word of w.all) w.markWord(word, 0)
+        return { calls: [{ name: 'set_track', input: { ...set, volume: level } }], confidence: 0.9, needsName: true }
+      }
       const hit = nameOrSelected(w, ctx, ['percent', 'volume', 'level', 'set', 'put', 'track'], { dropNums: true })
       if (!hit) return null
       const n = argNumbers(w, hit.name)[0]
@@ -757,7 +864,7 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'set_track',
     group: 'Mixer',
     what: 'Nudge a track louder or quieter',
-    say: ['turn the bass up', 'bring the drums down a bit', 'make the pad louder'],
+    say: ['turn the bass up', 'bring the drums down a bit', 'make the pad louder', 'turn down the tracks with reverb'],
     match(w, ctx) {
       // ⚠️ THE TRIGGER FIRST, THEN THE GUARDS.
       //
@@ -774,6 +881,23 @@ const COMMANDS: VoiceCommand[] = [
       const up = w.has(...UP)
       const down = w.has(...DOWN)
       if (!up && !down) return null
+      // "turn all the drum tracks down a bit", "bring the tracks with reverb
+      // down 3 dB" — a set, moved by an amount rather than to a level, because
+      // each track starts from its own. Read before the guards below: "with
+      // reverb" names WHICH tracks, not an effect to change.
+      if (up !== down) {
+        const set = trackSetIn(w.raw, ctx, new RegExp(`\\b(?:${[...UP, ...DOWN].join('|')}|turn|bring|make|push|pull|crank|bit|touch|little|slightly|hair|lot|way|much|loads|by|volume|level|db|dbs|decibels?|percent|points)\\b|\\d+(?:\\.\\d+)?`, 'g'))
+        if (set && (set.only || set.withEffect || set.except || set.all)) {
+          const amount = argNumbers(w, '')[0]
+          const dbSaid = w.has('db', 'dbs', 'decibel', 'decibels')
+          if (amount != null && !dbSaid && !w.has('percent', 'points')) return null
+          for (const word of w.all) w.markWord(word, 0)
+          const input: Record<string, unknown> = { ...set }
+          if (amount != null && dbSaid) input.volumeDb = up ? amount : -amount
+          else input.volumeBy = up ? (amount ?? nudgeSize(w)) : -(amount ?? nudgeSize(w))
+          return { calls: [{ name: 'set_track', input }], confidence: 0.9, needsName: true }
+        }
+      }
 
       // ⚠️ Tone words share "up" and "more" with volume — "warm UP the guitar"
       // and "MORE punch" are not level changes, and this rule sees them first
@@ -853,6 +977,13 @@ const COMMANDS: VoiceCommand[] = [
       if (!centre && !left && !right) return null
       if (!centre && !w.has('pan', 'panned')) return null
       if (left && right) return null
+      const set = trackSetIn(w.raw, ctx, /\b(?:pan|panned|left|right|hard|full|center|centre|middle|percent)\b|\d+/g)
+      if (set) {
+        const n0 = argNumbers(w, '')[0]
+        const amount0 = centre ? 0 : n0 != null && n0 >= 0 && n0 <= 100 ? n0 : w.has('hard', 'full', 'all') ? 100 : 60
+        for (const word of w.all) w.markWord(word, 0)
+        return { calls: [{ name: 'set_track', input: { ...set, pan: left ? -amount0 : amount0 } }], confidence: 0.9, needsName: true }
+      }
       const hit = nameOrSelected(w, ctx, ['pan', 'panned', 'left', 'right', 'hard', 'center', 'centre',
           'middle', 'track', 'percent'], { dropNums: true })
       if (!hit) return null
@@ -1021,7 +1152,7 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'copy_notes',
     group: 'Arrangement',
     what: 'Copy the first chord (or first bars) of a clip somewhere',
-    say: ['take the first chord of the pad and put it at bar 1', 'copy the first bar of the bass 2 to bar 9', 'recreate the opening chord of the chord stack at the first bar and repeat it 4 times'],
+    say: ['take the first chord of the pad and put it at bar 1', 'copy the first bar of the bass 2 to bar 9', 'recreate the opening chord of the chord stack at the first bar and repeat it 4 times', 'copy the third chord of the organ chords to bar 9'],
     match(w, ctx) {
       // A PART of a clip, named: the first chord / note / N bars. Without one
       // of these words this is a whole-clip move or duplicate, which sit
@@ -1029,7 +1160,12 @@ const COMMANDS: VoiceCommand[] = [
       // Read on the raw sentence: "first" and "take" are filler to the
       // matcher, and they are the whole point here.
       const raw = w.raw.toLowerCase()
-      const chord = /\b(?:first|opening|1st)\s+(?:chord|note)\b/.test(raw)
+      // The part is read from the words BEFORE "of / in / from": "take the
+      // third chord OF the pad and put it AT BAR 9" — the bar after "of" is
+      // the destination, not where the chord is.
+      const partPhrase = raw.split(/\s+(?:of|in|from)\s+/)[0]
+      const na = parseNoteAddress(partPhrase)
+      const chord = !!na && (na.addr.chord != null || na.addr.note != null)
       const bars = /\b(?:first|opening|1st)\s+(?:\d+\s+)?(?:bars?|beats?)\b/.test(raw)
       if (!chord && !bars) return null
       if (!/\b(?:take|copy|put|place|recreate|add|move|grab|repeat|duplicate)\b/.test(raw)) return null
@@ -1049,7 +1185,7 @@ const COMMANDS: VoiceCommand[] = [
       const times = timesM ? Number(timesM[1]) : (w.has('twice') ? 2 : 1)
       const at = barM ? Number(barM[1] ?? barM[2] ?? ORD[barM[3]]) : (nums.find(n => n !== times) ?? null)
       const partM = /\bfirst\s+(\d+)\s+(bars?|beats?)\b|\bfirst\s+(bar|beat)\b/.exec(raw)
-      const part = chord ? 'first chord' : partM ? (partM[1] ? `${partM[1]} ${partM[2]}` : `1 ${partM[3]}`) : 'first chord'
+      const part = chord && na ? na.label.replace(/^the /, '') : partM ? (partM[1] ? `${partM[1]} ${partM[2]}` : `1 ${partM[3]}`) : 'first chord'
       // The clip is what follows "of / in / from": "the first chord OF THE PAD
       // INTRO and put it…". clipOrSelected returns the track's name glued on
       // ("Pad Pad intro") when a clip and its track share a word, and the
@@ -1076,7 +1212,7 @@ const COMMANDS: VoiceCommand[] = [
       // A PART of a clip — "the first chord", "the first two bars" — is
       // copy_notes, whatever verb comes with it; repeating the whole clip is
       // this.
-      if (/\b(?:first|opening|1st)\s+(?:chord|note|(?:\d+\s+)?(?:bars?|beats?))\b/.test(w.raw.toLowerCase())) return null
+      if (/\b(?:first|second|third|fourth|fifth|sixth|last|opening|\d+(?:st|nd|rd|th))\s+(?:(?:one|two|three|four|\d+)\s+)?(?:chords?|notes?|(?:\d+\s+)?(?:bars?|beats?))\b|\bchord\s+\d/.test(w.raw.toLowerCase())) return null
       const asked = w.has('repeat', 'duplicate', 'again', 'copy')
         || (w.has('loop') && w.has('times', 'more'))
         || w.has('double')
@@ -1107,14 +1243,16 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'move_clips',
     group: 'Arrangement',
     what: 'Shift clips later or earlier',
-    say: ['move the drums back 2 bars', 'push the bass back one bar', 'move the pad earlier by 1 bar'],
+    say: ['move the drums back 2 bars', 'push the bass back one bar', 'move the pad earlier by 1 bar', 'move everything on the pad before the chorus back 2 bars'],
     match(w, ctx) {
       if (!w.has('move', 'push', 'shift', 'nudge', 'slide')) return null
       const hit = nameFrom(w, ctx, ['move', 'push', 'shift', 'nudge', 'slide', 'back',
         'over', 'earlier', 'sooner', 'forward', 'left', 'bar', 'bars', 'measure',
         'measures', 'beat', 'beats', 'second', 'seconds', 'by', 'track', 'clip',
         'everything', 'all'], { dropNums: true })
-      const by = lengthWith(w, argNumbers(w, hit?.name ?? '')[0])
+      // "back a bar" is one bar: the article is the count.
+      const one = /\b(?:a|an|another)\s+(?:bar|beat|measure|second)\b/i.test(w.raw) ? 1 : undefined
+      const by = lengthWith(w, argNumbers(w, hit?.name ?? '')[0] ?? one)
       if (!by) return null
       // The contract's own examples treat "back" as LATER, which is how the
       // operation is named in every DAW; "earlier" is the only word that
@@ -1123,6 +1261,24 @@ const COMMANDS: VoiceCommand[] = [
       const signed = Object.fromEntries(
         Object.entries(by).map(([k, v]) => [k, earlier ? -(v as number) : v]),
       )
+      // A set — "the pad clips after bar 9", "everything on the pad after the
+      // chorus", "them" — moves together.
+      const moveBody = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+        .replace(/^.*?\b(?:move|push|shift|nudge|slide)\b\s*/, '')
+        .replace(/\s*\b(?:back|over|earlier|sooner|forward|forwards|left|right|later|ahead|by)?\s*(?:by\s+)?(?:a|an|\d+(?:\.\d+)?|one|two|three|four|half a|half)\s+(?:bars?|beats?|measures?|seconds?)(?:\s+(?:back|over|earlier|sooner|forward|forwards|left|right|later|ahead|to the (?:left|right)))?\s*$/, '')
+        .replace(/\s*\b(?:back|over|earlier|sooner|forward|forwards|left|right|later|ahead)\s*$/, '')
+        .trim()
+      const set = clipSetIn(moveBody, ctx)
+      if (set && (set.target !== undefined || set.track !== undefined || set.after !== undefined || set.before !== undefined || set.section !== undefined || set.at !== undefined)) {
+        for (const word of w.all) w.markWord(word, 0)
+        return { calls: [{ name: 'move_clips', input: { ...set, by: signed } }], confidence: 0.9, needsName: true }
+      }
+      // Pointed at — "move them back a bar" — with several clips selected.
+      const sel = ctx.selectedClipIds?.length ? ctx.selectedClipIds : ctx.selectedClipId ? [ctx.selectedClipId] : []
+      if (!hit && sel.length && /\b(?:them|these|those|it|this|that|selected|selection)\b/i.test(w.raw)) {
+        for (const word of w.all) w.markWord(word, 0)
+        return { calls: [{ name: 'move_clips', input: { target: sel.length > 1 ? `#sel:${sel.join(',')}` : `#${sel[0]}`, by: signed } }], confidence: 0.88, needsName: true }
+      }
       // No name means the whole arrangement, which the tool supports and people
       // say constantly ("move everything over a bar").
       if (!hit || w.has('everything', 'all')) {
@@ -1166,7 +1322,7 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'transpose',
     group: 'Notes',
     what: 'Move a part up or down in pitch',
-    say: ['take the bass up an octave', 'drop the pad down a fifth', 'transpose the lead up 3 semitones'],
+    say: ['take the bass up an octave', 'drop the pad down a fifth', 'transpose the lead up 3 semitones', 'transpose the third chord of the organ chords up an octave'],
     match(w, ctx) {
       const up = w.has('up', 'raise', 'higher')
       const down = w.has('down', 'drop', 'lower')
@@ -1174,22 +1330,31 @@ const COMMANDS: VoiceCommand[] = [
       if (!w.has('transpose', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third', 'step', 'steps')) {
         return null
       }
+      // Part of a clip: "transpose the third chord of the pad up an octave",
+      // "take the notes above C5 down an octave". The clip is what follows
+      // "of / in / on"; the part is read by lib/note-address.ts.
+      const rawT = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const na = parseNoteAddress(rawT)
+      const srcM = na ? /\b(?:of|in|on|from)\s+(?:the\s+)?([a-z0-9' ]+?)(?=\s+(?:up|down|by|an?\s+octave|and|then)\b|[,.]|$)/.exec(rawT) : null
       const hit = clipOrSelected(w, ctx, ['transpose', 'take', 'drop', 'move', 'up', 'down', 'raise', 'lower',
           'higher', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third',
-          'second', 'step', 'steps', 'half', 'tone', 'whole', 'by', 'track', 'clip'], { dropNums: true })
-      if (!hit) return null
-      const named = Object.keys(INTERVALS).find(k => w.has(k))
+          'second', 'step', 'steps', 'half', 'tone', 'whole', 'by', 'track', 'clip',
+          ...(na ? ['chord', 'chords', 'note', 'notes', 'above', 'below', 'over', 'under', 'every', 'all', 'at', 'bar', 'bars', 'beat', 'beats', 'of', 'in', 'on', 'from', 'to', 'two', 'three', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'last', 'highest', 'lowest', 'top', 'bottom', 'opening'] : [])], { dropNums: true })
+      const target = srcM?.[1]?.trim() || hit?.name
+      if (!target) return null
+      const named = Object.keys(INTERVALS).filter(k => !na || !new RegExp(`\\b${k}\\s+(?:one|two|three|four|\\d+\\s+)?(?:chords?|notes?)`).test(rawT)).find(k => w.has(k))
       // "take bass 2 up 3 semitones" — the 2 is the track, the 3 is the move.
-      const n = argNumbers(w, hit.name)[0]
+      const n = argNumbers(w, hit?.name ?? target).filter(x => !na || (x !== na.addr.chord && x !== na.addr.note))[0]
       // An explicit number always wins over the named interval, because the
       // interval word is often the UNIT rather than the size: "up 3 semitones"
       // is three, not one, and reading the word first made every counted
       // transposition move by exactly one.
       const size = n != null && n > 0 && n <= 48 ? n : named ? INTERVALS[named] : null
       if (size == null) return null
+      if (na) for (const word of w.all) w.markWord(word, 0)
       return {
-        calls: [{ name: 'transpose', input: { target: hit.name, semitones: up ? size : -size } }],
-        confidence: nameConfidence(hit.score),
+        calls: [{ name: 'transpose', input: { target, semitones: up ? size : -size, ...(na ? { notes: na.label } : {}) } }],
+        confidence: na ? 0.9 : nameConfidence(hit?.score ?? 0.8),
         needsName: true,
       }
     },
@@ -1410,7 +1575,7 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'edit_note',
     group: 'Notes',
     what: 'Put in or take out a single note',
-    say: ['put a C on beat 3 of the bass', 'delete the last note of the bass', 'add an E flat at bar 2 of the bass'],
+    say: ['put a C on beat 3 of the bass', 'delete the last note of the bass', 'add an E flat at bar 2 of the bass', 'delete the third note of the bass 2 clip', 'remove the notes above C5 in the organ chords'],
     match(w, ctx) {
       // ⚠️ The word "note", singular, is what separates this from every bulk
       // command. "Make the notes longer" is note_length; "put a note in" is
@@ -1424,19 +1589,29 @@ const COMMANDS: VoiceCommand[] = [
       const pitch = candidates.find(m => m[1].toLowerCase() !== 'a' || m[2] || m[3])
         ?? candidates.find(m => m[1].toLowerCase() !== 'a')
         ?? candidates[0] ?? null
-      const saysNote = w.has('note')
-      if (!saysNote && !pitch) return null
+      const rawN = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // "delete the third note", "remove the notes above C5", "take out every
+      // C", "delete the last chord" — one or many, by address.
+      const na = w.has('delete', 'remove', 'take') ? parseNoteAddress(rawN) : null
+      // ⚠️ "chords" on its own is not a note word: "delete the organ chords
+      // clip" names a clip. A chord counts only when a part was addressed —
+      // "the last chord", "chord 3".
+      const saysNote = w.has('note') || !!na
+      if (!saysNote && !pitch && !na) return null
 
       const removing = w.has('delete', 'remove') || (w.has('take') && w.has('out'))
       if (removing) {
-        if (!saysNote) return null      // "take the bass out" is a mute, not a note
+        if (!saysNote && !na) return null      // "take the bass out" is a mute, not a note
         const which = w.has('first') ? 'first' : w.has('highest') ? 'highest'
           : w.has('lowest') ? 'lowest' : 'last'
+        const srcM = /\b(?:of|in|from|on)\s+(?:the\s+)?([a-z0-9' ]+?)(?=\s+(?:and|then)\b|[,.]|$)/.exec(rawN)
         const named = nameOrSelected(w, ctx, ['delete', 'remove', 'take', 'out', 'the', 'note',
-          'last', 'first', 'highest', 'lowest', 'of', 'from'], { dropNums: true })
-        if (!named) return null
+          'last', 'first', 'highest', 'lowest', 'of', 'from', ...(na ? ['chord', 'chords', 'note', 'notes', 'above', 'below', 'over', 'under', 'every', 'all', 'at', 'bar', 'bars', 'beat', 'beats', 'of', 'in', 'on', 'from', 'to', 'two', 'three', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'last', 'highest', 'lowest', 'top', 'bottom', 'opening'] : [])], { dropNums: true })
+        const target = srcM?.[1]?.trim() || named?.name
+        if (!target) return null
+        if (na) for (const word of w.all) w.markWord(word, 0)
         return {
-          calls: [{ name: 'edit_note', input: { action: 'remove', target: named.name, which } }],
+          calls: [{ name: 'edit_note', input: { action: 'remove', target, ...(na ? { notes: na.label } : { which }) } }],
           confidence: 0.88,
           destructive: true,
         }
@@ -1944,7 +2119,8 @@ const COMMANDS: VoiceCommand[] = [
     group: 'Project',
     what: 'Choose what "this" means, without the mouse',
     say: ['select everything', 'select the loop', 'select nothing', 'select the pad',
-      'select all the pad clips', 'select the first pad clip', 'select the clips after bar 1', 'select the clips longer than a beat'],
+      'select all the pad clips', 'select the first pad clip', 'select the clips after bar 1', 'select the clips longer than a beat',
+      'select everything on the pad before the chorus', 'select the clips between bar 1 and 5'],
     match(w, ctx) {
       if (!w.has('select', 'selected')) return null
       if (w.has('nothing', 'none', 'deselect')) {
@@ -1974,7 +2150,7 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'set_colour',
     group: 'Project',
     what: 'Colour a clip or a track',
-    say: ['colour the pad clips blue', 'make the drums track red', 'paint the pad clip green'],
+    say: ['colour the pad clips blue', 'make the drums track red', 'paint the pad clip green', 'colour all the drum tracks red'],
     match(w, ctx) {
       const col = colourOf(w.raw)
       if (!col) return null
@@ -1994,12 +2170,25 @@ const COMMANDS: VoiceCommand[] = [
         .replace(/\b(?:re)?colou?r(?:ed|ing)?\b|\bpaint(?:ed)?\b|\b(?:make|turn|set|mark|change)\b/g, ' ')
         .replace(new RegExp(`\\b${col.name}\\b`, 'i'), ' ')
         .replace(/#[0-9a-f]{6}\b/i, ' ')
-        .replace(/\b(?:to|into|as|in|of|it|this|that|them)\b/g, ' ')
+        // ⚠️ Not "it / them / these": pointing at the selection is the whole
+        // sentence in "colour them blue", and clipSetIn reads the pointer.
+        .replace(/\b(?:to|into|as|in|of)\b/g, ' ')
         .replace(/\s+/g, ' ').trim()
       const of = /\btracks?\b/.test(body) ? 'track' : /\b(?:clips?|parts?|copies|items)\b/.test(body) ? 'clip' : undefined
+      // "colour all the drum tracks red", "make the muted tracks grey".
+      const tset = /\btracks\b|\b(?:every|each|all)\b[\w ]*\btrack/.test(body) ? trackSetIn(body, ctx, /^$/) : null
+      if (tset) {
+        for (const word of w.all) w.markWord(word, 0)
+        return { calls: [{ name: 'set_colour', input: { ...tset, colour: col.name, of: 'track' } }], confidence: 0.9, needsName: true }
+      }
       const set = clipSetIn(body.replace(/\btracks?\b/g, ' '), ctx)
       const name = body.replace(/\b(?:the|a|tracks?|clips?|parts?|copies|items|all|every|each)\b/g, ' ').replace(/\s+/g, ' ').trim()
-      const target = (typeof set?.target === 'string' && set.target) || name
+      let target = (typeof set?.target === 'string' && set.target) || name
+      // "Colour them blue", "make it red": pointed at, with something selected.
+      const selC = ctx.selectedClipIds?.length ? ctx.selectedClipIds : ctx.selectedClipId ? [ctx.selectedClipId] : []
+      if (!target && selC.length && /\b(?:them|these|those|it|this|that|selected|selection)\b/.test(raw)) {
+        target = selC.length > 1 ? `#sel:${selC.join(',')}` : `#${selC[0]}`
+      }
       if (!target) return null
       // The whole sentence was read by the regexes above, so the whole
       // sentence is explained: coverage is what decides between rules, and
@@ -2034,7 +2223,8 @@ const COMMANDS: VoiceCommand[] = [
       // 1 to 4" is the transport; "turn the guitar down to 60%" is the fader.
       // Without it, only a name that is an AUDIO clip and nothing else counts
       // — "reverse the lead" on a MIDI clip is reverse_notes.
-      const clipWord = /\bclips?\b/.test(raw)
+      const pointed = /\b(?:them|these|those|it|this|that|selected|selection)\b/.test(raw) && !!(ctx.selectedClipIds?.length || ctx.selectedClipId)
+      const clipWord = /\bclips?\b/.test(raw) || pointed
       const fadeIn = /\bfade[\s-]*in\b|\bfades?\s+(?:the\s+)?[\w\s]+?\s+in\b/.test(rest)
       const fadeOut = /\bfade[\s-]*out\b|\bfades?\s+(?:the\s+)?[\w\s]+?\s+out\b/.test(rest)
       const reverseSaid = /\b(?:reverse|reversed|backwards?)\b/.test(rest)
@@ -2051,8 +2241,9 @@ const COMMANDS: VoiceCommand[] = [
           'bar', 'bars', 'beat', 'beats', 'measure', 'measures', 'second', 'seconds', 'percent', 'half', 'down', 'up', 'in', 'out', 'the', 'a', 'an',
           'to', 'at', 'it', 'this', 'that', 'again', 'forwards', 'forward'], { dropNums: true })
         if (!hit) return null
-        const byId = (ctx.clips ?? []).find(c => hit.name === c.id || hit.name === `#${c.id}`)
-        const named = byId ? [byId] : (ctx.clips ?? []).filter(c => foldName(c.name ?? '').includes(foldName(hit.name)))
+        const selIds = hit.name.startsWith('#sel:') ? hit.name.slice(5).split(',') : null
+        const byId = selIds ? null : (ctx.clips ?? []).find(c => hit.name === c.id || hit.name === `#${c.id}`)
+        const named = selIds ? (ctx.clips ?? []).filter(c => selIds.includes(c.id)) : byId ? [byId] : (ctx.clips ?? []).filter(c => foldName(c.name ?? '').includes(foldName(hit.name)))
         if (!clipWord && !named.length) return null
         kind = named.length && named.every(c => c.kind === 'midi') ? 'midi' : named.some(c => c.kind === 'audio') ? 'audio' : undefined
         target = hit.name
@@ -2705,14 +2896,27 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'name_notes',
     group: 'Questions',
     what: 'Ask what notes or chord are sounding',
-    say: ['what notes are being played', 'what chord is this', 'what notes are these'],
+    say: ['what notes are being played', 'what chord is this', 'what notes are these', 'what is the first chord in the chord stack', 'what are the chords in the chord stack'],
     match(w) {
       if (!w.has('note', 'notes', 'chord', 'chords')) return null
       if (!w.has('what', 'which', 'name', 'tell')) return null
       // A question, not an edit. Everything here that also takes notes as its
       // object is an instruction, and they share the noun.
       if (w.has('add', 'delete', 'remove', 'move', 'transpose', 'quantize', 'louder', 'quieter')) return null
-      return { calls: [{ name: 'name_notes', input: {} }], confidence: 0.9 }
+      // ⚠️ The record, 23:37: "What is the chord, the 1st chord in pad intro,
+      // about a 2nd into it?" → every note in the clip. Which clip, and which
+      // part of it, are both read here and answered on their own.
+      const rawQ = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const na = parseNoteAddress(rawQ)
+      const srcM = /\b(?:in|of|on|from)\s+(?:the\s+)?([a-z0-9' ]+?)(?=\s+(?:about|around|at|and|then)\b|[,.]|$)/.exec(rawQ)
+      const input: Record<string, unknown> = {}
+      if (srcM && na) {
+        const name = srcM[1].trim()
+        if (name && !/^(?:the\s+)?(?:song|track|project|arrangement|this|that|it|here|there)$/.test(name)) input.target = name
+      }
+      if (na) input.notes = na.label
+      if (na) for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'name_notes', input }], confidence: 0.9 }
     },
   },
   {
@@ -2803,13 +3007,19 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'remove_track',
     group: 'Project',
     what: 'Delete a track and everything on it',
-    say: ['delete the pad track', 'remove the guitar track'],
+    say: ['delete the pad track', 'remove the guitar track', 'delete the empty tracks'],
     // Confirmed before it runs. A mishearing that deletes a track is not
     // undone by saying the opposite.
     destructive: true,
     match(w, ctx) {
       if (!w.has('track')) return null
       if (!w.has('delete', 'remove', 'get')) return null
+      // "delete the empty tracks", "remove every muted track" — a set.
+      const set = trackSetIn(w.raw, ctx, /\b(?:delete|remove|get rid of|get|rid|of)\b/)
+      if (set && !w.has('clip', 'clips')) {
+        for (const word of w.all) w.markWord(word, 0)
+        return { calls: [{ name: 'remove_track', input: set }], confidence: 0.9, needsName: true }
+      }
       const hit = nameFrom(w, ctx, ['delete', 'remove', 'get', 'rid', 'track'], { dropNums: true })
       if (!hit) return null
       return {
@@ -3013,11 +3223,23 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'remove_clip',
     group: 'Arrangement',
     what: 'Delete a clip',
-    say: ['delete the bass 2 clip', 'remove the drums clip', 'delete all the pad clips', 'delete the first pad clip'],
+    say: ['delete the bass 2 clip', 'remove the drums clip', 'delete all the pad clips', 'delete the first pad clip', 'delete everything on the pad before the chorus'],
     destructive: true,
     match(w, ctx) {
-      if (!w.has('clip', 'item', 'clips', 'items', 'copies', 'parts')) return null
       if (!w.has('delete', 'remove', 'get')) return null
+      // "delete everything on the pad before the chorus", "delete them": a
+      // set with no clip word in it, named by place or by pointing.
+      if (!w.has('clip', 'item', 'clips', 'items', 'copies', 'parts')) {
+        if (w.has('track', 'tracks', 'note', 'notes', 'marker', 'effect')) return null
+        const set0 = clipSetIn(w.raw.toLowerCase().replace(/^.*?\b(?:delete|remove|get rid of)\b\s*/, ''), ctx)
+        if (!set0 || (set0.track === undefined && set0.after === undefined && set0.before === undefined && set0.section === undefined && set0.at === undefined && set0.shorterThan === undefined && set0.longerThan === undefined && !String(set0.target ?? '').startsWith('#'))) return null
+        // "remove the delay from the pad" names an effect on a track, not a
+        // clip on it: a name that is no clip's name is somebody else's command.
+        const named0 = String(set0.target ?? '')
+        if (named0 && !named0.startsWith('#') && !(ctx.clips ?? []).some(c => foldName(c.name ?? '').includes(foldName(named0)))) return null
+        for (const word of w.all) w.markWord(word, 0)
+        return { calls: [{ name: 'remove_clip', input: { target: '', ...set0 } }], confidence: 0.9, needsName: true }
+      }
       // ⚠️ "all" / an ordinal name a SET, and the set goes in one call. The
       // record, 23:43: "Delete all pad intro part" was answered one clip at a
       // time, five commands over.
@@ -3084,22 +3306,30 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'set_velocity',
     group: 'Notes',
     what: 'Play a part harder or softer',
-    say: ['make the drums softer', 'play the bass 2 harder', 'set the pad velocity to 90'],
+    say: ['make the drums softer', 'play the bass 2 harder', 'set the pad velocity to 90', 'make the last chord of the organ chords softer'],
     match(w, ctx) {
       const softer = w.has('softer', 'gentler', 'lighter')
       const harder = w.has('harder', 'stronger', 'punchier')
       const named = w.has('velocity')
       if (!softer && !harder && !named) return null
       if (softer && harder) return null
+      // Part of a clip: "make the last chord of the pad softer".
+      const rawV = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const na = parseNoteAddress(rawV)
+      const srcM = na ? /\b(?:of|in|on|from)\s+(?:the\s+)?([a-z0-9' ]+?)(?=\s+(?:softer|harder|gentler|lighter|stronger|punchier|a bit|a little|a lot|to|by|and|then)\b|[,.]|$)/.exec(rawV) : null
       const hit = clipOrSelected(w, ctx, ['softer', 'gentler', 'lighter', 'harder',
         'stronger', 'punchier', 'velocity', 'make', 'play', 'set', 'track', 'clip',
-        'bit', 'lot'], { dropNums: true })
-      if (!hit) return null
-      const n = argNumbers(w, hit.name)[0]
+        'bit', 'lot', ...(na ? ['chord', 'chords', 'note', 'notes', 'above', 'below', 'over', 'under', 'every', 'all', 'at', 'bar', 'bars', 'beat', 'beats', 'of', 'in', 'on', 'from', 'to', 'two', 'three', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'last', 'highest', 'lowest', 'top', 'bottom', 'opening'] : [])], { dropNums: true })
+      const target = srcM?.[1]?.trim() || hit?.name
+      if (!target) return null
+      const score = na ? 1 : (hit?.score ?? 0.8)
+      const extra = na ? { notes: na.label } : {}
+      if (na) for (const word of w.all) w.markWord(word, 0)
+      const n = argNumbers(w, hit?.name ?? target).filter(x => !na || (x !== na.addr.chord && x !== na.addr.note))[0]
       if (named && n != null && n > 0 && n <= 127) {
         return {
-          calls: [{ name: 'set_velocity', input: { target: hit.name, velocity: n } }],
-          confidence: nameConfidence(hit.score),
+          calls: [{ name: 'set_velocity', input: { target, velocity: n, ...extra } }],
+          confidence: nameConfidence(score),
           needsName: true,
         }
       }
@@ -3110,9 +3340,9 @@ const COMMANDS: VoiceCommand[] = [
       return {
         calls: [{
           name: 'set_velocity',
-          input: { target: hit.name, scale: softer ? 100 - step : 100 + step },
+          input: { target, scale: softer ? 100 - step : 100 + step, ...extra },
         }],
-        confidence: nameConfidence(hit.score),
+        confidence: nameConfidence(score),
         needsName: true,
       }
     },

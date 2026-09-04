@@ -65,6 +65,21 @@ export interface ClipAddress {
   /** Only clips starting at or after / before this beat. */
   after?: number
   before?: number
+  /** Only clips inside this named section — from its marker to the next. */
+  section?: string
+  /** Exactly these clips — the selection, or an answer to a question. */
+  ids?: string[]
+}
+
+/** Where a named section runs: its marker to the next marker (or the end). */
+export function sectionSpan(project: Pick<DawProject, 'cueMarkers'>, name: string): { start: number; end: number; name: string } | null {
+  const markers = [...(project.cueMarkers ?? [])].sort((a, b) => a.beat - b.beat)
+  const want = foldName(name.replace(/^(?:the|in|during|inside|within)\s+/i, ''))
+  if (!want) return null
+  const i = markers.findIndex(m => foldName(m.name ?? '') === want)
+  const j = i >= 0 ? i : markers.findIndex(m => foldName(m.name ?? '').includes(want))
+  if (j < 0) return null
+  return { start: markers[j].beat, end: markers[j + 1]?.beat ?? Infinity, name: markers[j].name ?? name }
 }
 
 /**
@@ -117,6 +132,12 @@ function matchesName(want: string, name: string): boolean {
  */
 export function addressClips(project: DawProject, addr: ClipAddress): DawClip[] {
   let pool = [...(project.arrangementClips ?? [])]
+  if (addr.ids) { const ids = new Set(addr.ids); pool = pool.filter(c => ids.has(c.id)) }
+  if (addr.section) {
+    const span = sectionSpan(project, addr.section)
+    if (!span) return []
+    pool = pool.filter(c => c.startBeat >= span.start - 1e-6 && c.startBeat < span.end - 1e-6)
+  }
   if (addr.track) {
     const tw = foldName(addr.track)
     const track = (project.tracks ?? []).find(t => foldName(t.name ?? '') === tw)
