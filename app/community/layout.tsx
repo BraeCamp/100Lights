@@ -7,7 +7,7 @@ import AgeGate from '@/components/AgeGate'
 
 export const metadata: Metadata = {
   title: 'Community — Free Sounds, Samples & Chord Recipes',
-  description: 'Browse and play free samples, chord progressions, presets, and full songs shared by 100Lights producers. Listen in the browser, no account needed — import anything into your own project with one click.',
+  description: 'Free chord recipes, samples, presets and song starters shared by producers. Play any card in the browser, no account needed, then open it in Studio with one click.',
   alternates: { canonical: 'https://100lights.com/community' },
   openGraph: {
     title: '100Lights Community — Free Sounds & Chord Recipes',

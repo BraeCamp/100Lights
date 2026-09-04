@@ -5,8 +5,8 @@ import AppChrome from '@/components/apps/AppChrome'
 const AutotuneApp = dynamic(() => import('@/components/apps/AutotuneApp'))
 
 export const metadata: Metadata = {
-  title: 'Autotune — Record Your Voice and Pitch-Correct It in Your Browser',
-  description: 'Record your voice, pitch-correct it to any key and scale, then compare original vs corrected and download the result. Free, all in your browser. No download, nothing uploaded.',
+  title: 'Autotune: Pitch-Correct Your Voice in Your Browser',
+  description: 'Record a vocal and snap it to the nearest note in your key, from a subtle touch-up to hard tune. A/B against the original and download a WAV.',
   alternates: { canonical: 'https://100lights.com/autotune' },
   openGraph: {
     title: 'Autotune — 100Lights',

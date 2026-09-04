@@ -5,7 +5,7 @@ import ToolShell from '@/components/tools/ToolShell'
 const CircleOfFifths = dynamic(() => import('@/components/tools/CircleOfFifths'))
 
 export const metadata: Metadata = {
-  title: 'Circle of Fifths — Interactive, Hear Every Key & Its Chords',
+  title: 'Interactive Circle of Fifths with Chords',
   description: 'An interactive circle of fifths. Click any key to hear it, see its relative minor, and play the chords that belong to it. Free, in your browser.',
   alternates: { canonical: 'https://100lights.com/tools/circle-of-fifths' },
   openGraph: {

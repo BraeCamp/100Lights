@@ -6,7 +6,7 @@ const CaptionsApp = dynamic(() => import('@/components/apps/CaptionsApp'))
 
 export const metadata: Metadata = {
   title: 'Captions — Turn Speech Into Timed Captions',
-  description: 'Drop in audio or video and get timed captions on-device (free, private, no upload). Edit the words, export SRT/VTT/TXT, or send them to the video editor to caption your clip.',
+  description: 'Add a video from your camera roll and get timed, animated captions transcribed on your device — nothing uploads. Edit the words, export SRT/VTT, or send them to the video editor to burn them in.',
   alternates: { canonical: 'https://100lights.com/captions' },
   openGraph: {
     title: 'Captions — 100Lights',

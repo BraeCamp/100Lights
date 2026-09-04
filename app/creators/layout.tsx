@@ -3,8 +3,8 @@ import type { Metadata } from 'next'
 import { LogoMark } from '@/components/Logo'
 
 export const metadata: Metadata = {
-  title: 'Creator Program — Earn Recurring Commission with 100Lights',
-  description: 'Join the 100Lights Founding Affiliate beta: recurring commission on every producer you refer, plus free Pro to hand your own audience. A full DAW in the browser — no download for your fans to try.',
+  title: 'Creator Program: Earn 30% Recurring Commission',
+  description: 'Earn 30% recurring commission for 12 months on every producer you refer, and give your followers 30 days of free Pro. 25 founding seats, reviewed by hand.',
   alternates: { canonical: 'https://100lights.com/creators' },
   openGraph: {
     title: '100Lights Creator Program — Founding Affiliate Beta',

@@ -6,8 +6,8 @@ import ToolShell from '@/components/tools/ToolShell'
 const ChordTeacher = dynamic(() => import('@/components/tools/ChordTeacher'))
 
 export const metadata: Metadata = {
-  title: 'Chord Identifier — Name Any Chord From the Notes, Free',
-  description: 'A free chord identifier. Click the notes on a piano and it names the chord — major, minor, 7ths, extensions, and inversions. Part of the 100Lights Chord Teacher.',
+  title: 'Chord Identifier Tool — Name Any Chord',
+  description: 'Click any keys on the piano and it names the chord instantly — sevenths, extensions, and inversions too, telling you which note is in the bass. Free, no signup.',
   alternates: { canonical: 'https://100lights.com/tools/chord-identifier' },
   openGraph: {
     title: 'Chord Identifier — 100Lights',

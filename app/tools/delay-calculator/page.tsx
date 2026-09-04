@@ -5,7 +5,7 @@ import ToolShell from '@/components/tools/ToolShell'
 const DelayCalculator = dynamic(() => import('@/components/tools/DelayCalculator'))
 
 export const metadata: Metadata = {
-  title: 'Delay Time Calculator — Free BPM to MS for Delay & Reverb',
+  title: 'Delay Time Calculator — BPM to MS',
   description: 'A free delay time calculator. Enter your BPM and get delay and reverb times in milliseconds for every note value — straight, dotted, and triplet. Plus LFO Hz.',
   alternates: { canonical: 'https://100lights.com/tools/delay-calculator' },
   openGraph: { title: 'Delay Time Calculator — 100Lights', description: 'BPM to delay time in ms for every note value. Free, in your browser.', url: 'https://100lights.com/tools/delay-calculator', type: 'website', siteName: '100Lights' },

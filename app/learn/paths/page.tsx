@@ -7,7 +7,7 @@ import { getLearnPaths } from '@/lib/learn-paths-store'
 export const revalidate = 60
 
 export const metadata: Metadata = {
-  title: 'Learning Paths — Guided Music-Production Courses (Free)',
+  title: 'Learning Paths — Free Music Production Courses',
   description: 'Free, ordered learning paths that take you from your first beat to a finished, mixed track — a few short guides each, all doable in your browser.',
   alternates: { canonical: 'https://100lights.com/learn/paths' },
   openGraph: {

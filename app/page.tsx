@@ -16,7 +16,7 @@ import PricingSection from '@/components/PricingSection'
 
 export const metadata: Metadata = {
   title: { absolute: '100Lights — The Music Studio in Your Browser' },
-  description: 'A full digital audio workstation that runs in the browser: Session and Arrangement views, piano roll, drum rack, mixer, a Practice Room that teaches by doing, and a community of shared sounds and chord recipes. Free to start — no downloads.',
+  description: 'A free browser DAW with Session and Arrangement views, a piano roll that traces your singing, drum rack and full mixer — plus video, synth and ear-training apps.',
   keywords: ['browser DAW', 'online music studio', 'digital audio workstation', 'online audio editor', 'make music in browser', 'free DAW', 'learn to make music', 'how to make a song', 'piano roll online', 'chord progressions', 'sample library', 'music collaboration'],
   openGraph: {
     title: '100Lights — The Music Studio in Your Browser',

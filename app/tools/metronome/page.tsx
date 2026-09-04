@@ -5,8 +5,8 @@ import ToolShell from '@/components/tools/ToolShell'
 const Metronome = dynamic(() => import('@/components/tools/Metronome'))
 
 export const metadata: Metadata = {
-  title: 'Online Metronome — Free, with Tap Tempo & Tempo Trainer',
-  description: 'A free online metronome with tap tempo, a tempo trainer that speeds up as you play, subdivisions, and editable accents. 20–400 BPM, in your browser. No download.',
+  title: 'Free Online Metronome with Tap Tempo & Trainer',
+  description: 'Set the tempo by dragging, tapping or typing, accent or silence any beat for odd meters like 5/4, and let the tempo trainer climb a few BPM as you play.',
   alternates: { canonical: 'https://100lights.com/tools/metronome' },
   openGraph: {
     title: 'Free Online Metronome — 100Lights',

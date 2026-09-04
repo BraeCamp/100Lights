@@ -7,7 +7,7 @@ import { MINI_APPS } from '@/lib/apps-registry'
 
 export const metadata: Metadata = {
   title: '100Lights Apps — Free Browser Music Tools',
-  description: 'The 100Lights constellation: full music and video studios plus focused free apps — sing a melody into an instrument, make a beat, design a synth patch, autotune a vocal, and more. In your browser, no download.',
+  description: 'Two studios — Beacon for music, Prism for video — plus free browser tools: hum a melody into MIDI, read sheet music aloud, tap out beats, autotune vocals, caption clips.',
   alternates: { canonical: 'https://100lights.com/apps' },
   openGraph: {
     title: '100Lights Apps',
