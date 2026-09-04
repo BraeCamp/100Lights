@@ -53,16 +53,16 @@ export default function CreatorsApplyForm() {
     <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
         <div>
-          <label style={labelStyle}>Name or handle *</label>
-          <input required value={f.name} onChange={set('name')} placeholder="Jane's Beats" style={inputStyle} />
+          <label htmlFor="creator-name" style={labelStyle}>Name or handle *</label>
+          <input id="creator-name" required value={f.name} onChange={set('name')} placeholder="Jane's Beats" style={inputStyle} />
         </div>
         <div>
-          <label style={labelStyle}>Email or DM handle *</label>
-          <input required value={f.contact} onChange={set('contact')} placeholder="you@email.com / @yourhandle" style={inputStyle} />
+          <label htmlFor="creator-contact" style={labelStyle}>Email or DM handle *</label>
+          <input id="creator-contact" required value={f.contact} onChange={set('contact')} placeholder="you@email.com / @yourhandle" style={inputStyle} />
         </div>
         <div>
-          <label style={labelStyle}>Main platform</label>
-          <select value={f.platform} onChange={set('platform')} style={inputStyle}>
+          <label htmlFor="creator-platform" style={labelStyle}>Main platform</label>
+          <select id="creator-platform" value={f.platform} onChange={set('platform')} style={inputStyle}>
             <option value="">Choose…</option>
             <option value="youtube">YouTube</option>
             <option value="tiktok">TikTok</option>
@@ -72,17 +72,17 @@ export default function CreatorsApplyForm() {
           </select>
         </div>
         <div>
-          <label style={labelStyle}>Audience size</label>
-          <input value={f.audience} onChange={set('audience')} placeholder="e.g. 12k subscribers" style={inputStyle} />
+          <label htmlFor="creator-audience" style={labelStyle}>Audience size</label>
+          <input id="creator-audience" value={f.audience} onChange={set('audience')} placeholder="e.g. 12k subscribers" style={inputStyle} />
         </div>
       </div>
       <div>
-        <label style={labelStyle}>Where can we find your work? *</label>
-        <input required value={f.links} onChange={set('links')} placeholder="https://youtube.com/@yourchannel" style={inputStyle} />
+        <label htmlFor="creator-links" style={labelStyle}>Where can we find your work? *</label>
+        <input id="creator-links" required value={f.links} onChange={set('links')} placeholder="https://youtube.com/@yourchannel" style={inputStyle} />
       </div>
       <div>
-        <label style={labelStyle}>Anything you&apos;d like us to know? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
-        <textarea value={f.note} onChange={set('note')} rows={3} placeholder="What you make, how you'd share 100Lights…" style={{ ...inputStyle, resize: 'vertical' }} />
+        <label htmlFor="creator-note" style={labelStyle}>Anything you&apos;d like us to know? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
+        <textarea id="creator-note" value={f.note} onChange={set('note')} rows={3} placeholder="What you make, how you'd share 100Lights…" style={{ ...inputStyle, resize: 'vertical' }} />
       </div>
       {err && <p style={{ fontSize: 13, color: '#f87171', margin: 0 }}>{err}</p>}
       <button type="submit" disabled={state === 'sending'} style={{

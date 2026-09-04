@@ -207,9 +207,9 @@ export default function NewProjectClient({ flags }: Props) {
           {/* Start from a template (audio) — so users don't begin from a blank timeline */}
           {audioAvailable && (
             <div style={{ marginBottom: 44 }}>
-              <label style={{ display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>
+              <div style={{ display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>
                 Start from a template
-              </label>
+              </div>
               <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 14 }}>
                 Optional — opens an audio project pre-loaded with a few instruments so you have something to build on.
               </div>

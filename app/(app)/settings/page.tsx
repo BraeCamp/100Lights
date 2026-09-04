@@ -194,7 +194,7 @@ export default function SettingsPage() {
             >
               {/* Username */}
               <div className="mb-4">
-                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                <label htmlFor="settings-username" className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                   Username
                 </label>
                 <div className="flex items-center gap-0" style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-surface)' }}>
@@ -205,6 +205,7 @@ export default function SettingsPage() {
                     type="text"
                     value={username}
                     onChange={e => setUsername(e.target.value)}
+                    id="settings-username"
                     placeholder="yourhandle"
                     maxLength={30}
                     autoComplete="username"
@@ -227,13 +228,14 @@ export default function SettingsPage() {
               {/* First + Last name */}
               <div className="flex gap-3 mb-5">
                 <div className="flex-1">
-                  <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  <label htmlFor="settings-first-name" className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     First name
                   </label>
                   <input
                     type="text"
                     value={firstName}
                     onChange={e => setFirstName(e.target.value)}
+                    id="settings-first-name"
                     placeholder="First"
                     maxLength={64}
                     autoComplete="given-name"
@@ -250,13 +252,14 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  <label htmlFor="settings-last-name" className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                     Last name
                   </label>
                   <input
                     type="text"
                     value={lastName}
                     onChange={e => setLastName(e.target.value)}
+                    id="settings-last-name"
                     placeholder="Last"
                     maxLength={64}
                     autoComplete="family-name"

@@ -163,7 +163,7 @@ function FireflyApp() {
       <header style={{ position: 'sticky', top: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', gap: 10, background: 'color-mix(in srgb, var(--bg-base) 82%, transparent)', backdropFilter: 'blur(10px)', borderBottom: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <span aria-hidden style={{ fontSize: 18, filter: 'drop-shadow(0 0 6px var(--accent))' }}>🔆</span>
-          <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>Firefly</span>
+          <h1 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0 }}>Firefly</h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="button" onClick={() => setSketchesOpen(true)} aria-label="Saved sketches" style={iconBtn}>

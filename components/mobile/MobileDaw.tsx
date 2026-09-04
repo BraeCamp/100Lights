@@ -218,7 +218,7 @@ function TemplateChooser({ onPick, onBlank }: { onPick: (t: MobileTemplate) => v
     <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-base)', color: 'var(--text-primary)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
       <div style={{ maxWidth: 560, margin: '0 auto', padding: 'calc(28px + env(safe-area-inset-top)) 18px calc(28px + env(safe-area-inset-bottom))' }}>
         <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent-light)' }}>New project</div>
-        <h1 style={{ fontSize: 24, fontWeight: 800, margin: '8px 0 4px', letterSpacing: '-0.02em' }}>Start from a beat</h1>
+        <h2 style={{ fontSize: 24, fontWeight: 800, margin: '8px 0 4px', letterSpacing: '-0.02em' }}>Start from a beat</h2>
         <p style={{ fontSize: 13.5, color: 'var(--text-muted)', margin: '0 0 20px' }}>Pick a groove to jam on — press play and it&apos;s already a song. You can change everything.</p>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>

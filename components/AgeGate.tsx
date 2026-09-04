@@ -78,8 +78,8 @@ export default function AgeGate() {
             <p style={{ fontSize: 14, color: 'var(--text-secondary, #b8b3ca)', lineHeight: 1.6, margin: '0 0 18px' }}>
               Confirm your date of birth to continue. 100Lights is for creators 13 and up.
             </p>
-            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary, #b8b3ca)', display: 'block', marginBottom: 6 }}>Date of birth</label>
-            <input type="date" required value={birthdate} onChange={e => setBirthdate(e.target.value)} max="2030-12-31" style={{
+            <label htmlFor="age-gate-dob" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary, #b8b3ca)', display: 'block', marginBottom: 6 }}>Date of birth</label>
+            <input id="age-gate-dob" type="date" required value={birthdate} onChange={e => setBirthdate(e.target.value)} max="2030-12-31" style={{
               width: '100%', padding: '11px 13px', borderRadius: 10, fontSize: 14, marginBottom: 14,
               border: '1px solid var(--border, #252540)', background: 'var(--bg-surface, #131320)', color: 'var(--text-primary, #f0effe)', outline: 'none',
             }} />

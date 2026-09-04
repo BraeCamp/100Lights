@@ -3552,10 +3552,10 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
           <button type="button" onClick={() => setGlow(v => !v)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: glow ? 'var(--accent)' : 'var(--bg-card)', color: glow ? '#0e0d12' : 'var(--text-secondary)' }}>Glow</button>
           <button type="button" onClick={() => setTrail(v => !v)} style={{ padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: trail ? 'var(--accent)' : 'var(--bg-card)', color: trail ? '#0e0d12' : 'var(--text-secondary)' }}>Trails</button>
         </div>
-        <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 5 }}>Sensitivity</label>
-        <input type="range" min={0.5} max={2.6} step={0.1} value={gain} onChange={e => setGain(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
-        <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '12px 0 5px' }}>Smoothness</label>
-        <input type="range" min={0} max={0.95} step={0.01} value={smoothing} onChange={e => setSmoothing(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
+        <label htmlFor="lb-sensitivity" style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 5 }}>Sensitivity</label>
+        <input id="lb-sensitivity" type="range" min={0.5} max={2.6} step={0.1} value={gain} onChange={e => setGain(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
+        <label htmlFor="lb-smoothness" style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '12px 0 5px' }}>Smoothness</label>
+        <input id="lb-smoothness" type="range" min={0} max={0.95} step={0.01} value={smoothing} onChange={e => setSmoothing(parseFloat(e.target.value))} style={{ width: '100%', maxWidth: 320 }} />
       </TabSection>)}
 
       {openPanel === 'edits' && (
@@ -3690,8 +3690,8 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
         {autoShuffle && shufOpen && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>{matchEnergy ? 'Reads the song’s energy off the EQ and pulls matching scenes — calm songs get slow, mellow backgrounds; loud, busy songs get fast, bright ones.' : 'A new clip comes on automatically — each bar there’s a chance to cut (set below), otherwise on a timer.'}</p>}
         {autoShuffle && shufOpen && (
           <div style={{ margin: '4px 0 6px' }}>
-            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Switch chance — {Math.round(switchChance * 100)}% per bar</label>
-            <input type="range" min={0} max={1} step={0.05} value={switchChance} onChange={e => setSwitchChance(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+            <label htmlFor="lb-switch-chance" style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Switch chance — {Math.round(switchChance * 100)}% per bar</label>
+            <input id="lb-switch-chance" type="range" min={0} max={1} step={0.05} value={switchChance} onChange={e => setSwitchChance(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
             <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0', lineHeight: 1.5 }}>A “bar” = 4 beats of the detected tempo{running && bpm > 0 ? ` (~${(4 * 60 / bpm).toFixed(1)}s at ${bpm} BPM)` : ' (≈4s until a beat is found)'}. Each bar it rolls this chance to cut. The clip always changes when it finishes, so 0% = only when the video ends.</p>
           </div>
         )}
@@ -3836,18 +3836,18 @@ function LiveVisualizer({ onExit, initialBg, broadcast, broadcastEdit }: { onExi
           {!reactive && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 12px' }}>Turn on <strong style={{ color: 'var(--text-secondary)' }}>React to the music</strong> in Background to make these filters move with the audio; otherwise the sliders are a static grade.</p>}
           {reactive && (
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Drum punch — {Math.round(punchAmt * 100)}%</label>
-              <input type="range" min={0} max={2} step={0.1} value={punchAmt} onChange={e => setPunchAmt(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+              <label htmlFor="lb-drum-punch" style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Drum punch — {Math.round(punchAmt * 100)}%</label>
+              <input id="lb-drum-punch" type="range" min={0} max={2} step={0.1} value={punchAmt} onChange={e => setPunchAmt(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
             </div>
           )}
-          <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Blur — {blur}px</label>
-          <input type="range" min={0} max={24} step={1} value={blur} onChange={e => setBlur(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
-          <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Brightness</label>
-          <input type="range" min={0.3} max={1.6} step={0.05} value={brightness} onChange={e => setBrightness(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
-          <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Saturation</label>
-          <input type="range" min={0} max={2.2} step={0.05} value={saturate} onChange={e => setSaturate(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
-          <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Hue shift — {hueRot}°</label>
-          <input type="range" min={0} max={360} step={5} value={hueRot} onChange={e => setHueRot(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+          <label htmlFor="lb-blur" style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Blur — {blur}px</label>
+          <input id="lb-blur" type="range" min={0} max={24} step={1} value={blur} onChange={e => setBlur(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+          <label htmlFor="lb-brightness" style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Brightness</label>
+          <input id="lb-brightness" type="range" min={0.3} max={1.6} step={0.05} value={brightness} onChange={e => setBrightness(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+          <label htmlFor="lb-saturation" style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Saturation</label>
+          <input id="lb-saturation" type="range" min={0} max={2.2} step={0.05} value={saturate} onChange={e => setSaturate(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
+          <label htmlFor="lb-hue-shift" style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', margin: '10px 0 4px' }}>Hue shift — {hueRot}°</label>
+          <input id="lb-hue-shift" type="range" min={0} max={360} step={5} value={hueRot} onChange={e => setHueRot(+e.target.value)} style={{ width: '100%', maxWidth: 320 }} />
           <button type="button" onClick={() => { setBlur(0); setBrightness(1); setSaturate(1); setHueRot(0) }} style={{ marginTop: 12, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Reset filters</button>
           </div>
           )}

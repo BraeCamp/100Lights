@@ -1,21 +1,16 @@
 import type { Viewport } from 'next'
 import AppLayoutClient from './AppLayoutClient'
-import ZoomBlock from '@/components/ZoomBlock'
 
-// The DAW re-locks zoom (the root layout allows it for public pages): editing
-// gestures — pinch, ctrl+wheel — conflict with browser zoom inside the editor.
+// Zoom stays allowed here. This group also holds the dashboard, library,
+// projects list, settings and profiles — ordinary pages where pinch zoom is a
+// low-vision user's tool (WCAG 1.4.4). The editors, where pinch and ctrl+wheel
+// are editing gestures, re-lock it in their own layouts: create/, projects/[id]/
+// and lab/ (a zoom-locking `viewport` export plus ZoomBlock).
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
 }
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <>
-      <ZoomBlock />
-      <AppLayoutClient>{children}</AppLayoutClient>
-    </>
-  )
+  return <AppLayoutClient>{children}</AppLayoutClient>
 }
