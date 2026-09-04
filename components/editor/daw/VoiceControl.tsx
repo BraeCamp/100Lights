@@ -30,6 +30,23 @@ import { useLight } from '@/lib/voice/use-light'
 import { useRouter } from 'next/navigation'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
 import { wakePhraseIn, standbyControlIn, standbyOn, setStandbyOn, standbyAwakeSeconds, setStandbyAwakeSeconds, isAwake, WAKE_PHRASES } from '@/lib/voice/wake'
+import { listCommands } from '@/lib/commands'
+import { requestArrangement, centerOnBeat } from '@/lib/daw-view'
+import { matchCommand, type SnapChoice, type OverlayChoice } from '@/lib/voice/workspace'
+
+/** The studio's own commands, for the rules and the assistant. Track / clip /
+ *  edit commands are left out: they name the selection and the music tools
+ *  already cover them by name. */
+const PALETTE_SKIP = new Set(['Track', 'Clip', 'Edit'])
+function studioCommands(): { id: string; label: string; keywords?: string; group?: string }[] {
+  return listCommands()
+    .filter(c => (c.when?.() ?? true) && !PALETTE_SKIP.has(c.group ?? ''))
+    .map(c => ({ id: c.id, label: c.label, keywords: c.keywords, group: c.group }))
+}
+function studioCommandsLine(): string {
+  const names = studioCommands().map(c => c.label)
+  return names.length ? `Studio commands (workspace.command, by name): ${names.slice(0, 40).join('; ')}.\n` : ''
+}
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { drumTake, chordTake, takeToNotes, describeTake } from '@/lib/voice/pass'
 import { detectOnsets, monoOf } from '@/lib/voice/onsets'
@@ -147,6 +164,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     metronome, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
     setSelectedClipIds, setSelectedClipId, setSelectedTrackId,
     setShowPads, setApolloRack, setShowAppearance,
+    view, setView, setOverlay, setSoundPanel,
   } = useLight()
   const router = useRouter()
   const [listening, setListening] = useState(false)
@@ -1180,6 +1198,43 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
 
+    // ── The workspace ──────────────────────────────────────────────────
+    // The view, an overlay, zoom, scroll, snap, the Sound panel, a track
+    // brought into view — and a palette command by name. See the workspace
+    // tool. Zoom, snap and scroll live in the arrangement, so that view is
+    // brought up first when another is showing.
+    if (act.type === 'WORKSPACE') {
+      const ws = act as unknown as {
+        view?: 'arrangement' | 'session' | 'mixer'; zoom?: 'in' | 'out' | 'fit'; scrollToBeat?: number
+        snap?: SnapChoice; overlay?: OverlayChoice; soundPanelClipId?: string | null; focusTrackId?: string; command?: string
+      }
+      if (ws.view) setView?.(ws.view)
+      if (ws.overlay) setOverlay?.(ws.overlay)
+      const needsArrangement = !!ws.zoom || !!ws.snap || ws.scrollToBeat != null || !!ws.focusTrackId
+      const switching = needsArrangement && (ws.view ?? view) !== 'arrangement'
+      if (switching) setView?.('arrangement')
+      const later = (fn: () => void) => { if (switching) setTimeout(fn, 120); else fn() }
+      if (ws.zoom || ws.snap) later(() => { requestArrangement({ zoom: ws.zoom, snap: ws.snap }) })
+      if (ws.scrollToBeat != null) later(() => centerOnBeat(ws.scrollToBeat!))
+      if (ws.focusTrackId) {
+        setSelectedTrackId?.(ws.focusTrackId)
+        later(() => document.querySelector(`[data-track-id="${ws.focusTrackId}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }))
+      }
+      if (ws.soundPanelClipId !== undefined) {
+        const id = ws.soundPanelClipId ?? selectedClipIdRef.current ?? lastSelection.current.clipId
+        if (!id) { setProblem('Select a clip first, or say which one.'); return }
+        setSelectedClipId?.(id)
+        setSoundPanel?.({ x: Math.round(window.innerWidth / 2 - 180), y: Math.round(window.innerHeight / 2 - 220) })
+      }
+      if (ws.command) {
+        const hit = matchCommand(studioCommands(), ws.command)
+        if (!hit || hit.score < 0.6) { setProblem(`I don't have a command called "${ws.command}".`); return }
+        const real = listCommands().find(c => c.id === hit.command.id)
+        real?.run()
+        setSaid(`${hit.command.label}.`)
+      }
+      return
+    }
     if (act.type === 'VIEW_ACTION') {
       const v = act as unknown as { view: string; clipId?: string; trackId?: string; open?: boolean }
       const open = v.open !== false
@@ -1360,7 +1415,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
     dispatch(act as never)
-  }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
+  }, [view, setView, setOverlay, setSoundPanel, dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
       setShowPads, setApolloRack, setShowAppearance, setSelectedTrackId, runBalance, undo, redo])
 
   /**
@@ -1718,6 +1773,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       selectedClipIds: [...(selectedClipIds ?? [])],
       // The song's markers, so "after the chorus" can be read as a place.
       markers: (project.cueMarkers ?? []).map(m => ({ name: m.name, beat: m.beat })),
+      // The studio's own commands, so "hide the sidebar" is a sentence.
+      commands: studioCommands(),
       // So "Bass body 1" reads as one target — a track and an item said
       // together, which is the most specific thing anybody can say and was the
       // one form the rules could not see.
@@ -2509,7 +2566,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             // Re-read every turn: after the first pass the song is not what it
             // was, and a summary from before the edits would have the assistant
             // checking its work against the project it started with.
-            stateSummary: musicStateSummary({
+            stateSummary: studioCommandsLine() + musicStateSummary({
               ...projectRef.current,
               // ⚠️ Four words per macro, and it is what lets the assistant
               // START FROM ONE instead of deriving a long move from nothing —

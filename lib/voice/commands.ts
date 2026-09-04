@@ -46,6 +46,7 @@ import { characterWordsIn } from './preset-character'
 import { parseClipAddress, colourOf } from '../clip-address'
 import { parseNoteAddress } from '../note-address'
 import { parseTrackAddress } from '../track-address'
+import { viewOf, snapOf, overlayOf, matchCommand } from './workspace'
 
 const SECTION_WORDS = ['chorus', 'verse', 'bridge', 'intro', 'outro', 'drop', 'breakdown', 'hook', 'refrain', 'solo', 'build', 'pre-chorus', 'prechorus', 'interlude', 'coda', 'ending']
 /** Section names a sentence can use as places: the song's own markers, plus the usual words. */
@@ -192,6 +193,8 @@ export interface InterpretContext {
   selectedClipIds?: string[]
   /** The song's markers, so "after the chorus" reads as a place. */
   markers?: { name: string; beat: number }[]
+  /** The studio's own commands (the ⌘K palette), so any of them can be said. */
+  commands?: { id: string; label: string; keywords?: string; group?: string }[]
   /**
    * The sound library, as far as this machine has one.
    *
@@ -2309,6 +2312,157 @@ const COMMANDS: VoiceCommand[] = [
       return { calls: [{ name: 'move_track', input }], confidence: 0.92, needsName: true }
     },
   },
+  // ── The workspace ────────────────────────────────────────────────────────
+  //
+  // Brae: "look at more navigation options that could be wired into voice
+  // control." What a hand does between two edits: the view, zoom, scroll,
+  // snap, an overlay, the Sound panel, a track brought into view — and the
+  // editor's own palette, by name.
+  {
+    id: 'workspace.view',
+    tool: 'workspace',
+    group: 'View',
+    what: 'Switch between the arrangement, session and mixer',
+    say: ['show the mixer', 'switch to the arrangement view', 'go to session view', 'back to the arrangement'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const view = viewOf(raw)
+      if (!view) return null
+      // A view word beside a thing to do to a track is not a view change:
+      // "the mixer channel for the pad", "mixer volume".
+      if (/\b(?:volume|level|fader|channel|pan|mute|solo|track|effects?|devices?|clip)\b/.test(raw)) return null
+      if (!/\b(?:show|switch|go|open|back|view|take me|bring up|see|let'?s|to the|the)\b/.test(raw)) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { view } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'workspace.zoom',
+    tool: 'workspace',
+    group: 'View',
+    what: 'Zoom the arrangement in, out, or to fit',
+    say: ['zoom in', 'zoom out', 'zoom to fit', 'fit the song to the screen'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const zoom = /\bzoom\s+(?:all the way\s+|right\s+)?in\b/.test(raw) ? 'in'
+        : /\bzoom\s+(?:all the way\s+|right\s+)?out\b/.test(raw) ? 'out'
+          : /\bzoom\s+to\s+fit\b|\bfit\s+(?:the\s+)?(?:song|everything|it|it all|all of it|whole song)\b|\bfit\s+to\s+(?:the\s+)?(?:screen|window|view)\b|\bzoom\s+to\s+(?:the\s+)?(?:whole|full|entire)\s+song\b/.test(raw) ? 'fit'
+            : null
+      if (!zoom) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { zoom } }], confidence: 0.93 }
+    },
+  },
+  {
+    id: 'workspace.scroll',
+    tool: 'workspace',
+    group: 'View',
+    what: 'Bring a bar or a section into view',
+    say: ['show me bar 17', 'scroll to bar 9', 'scroll to the chorus', 'bring bar 5 into view'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      if (!/\b(?:show me|show|scroll|bring|look at|centre on|center on|let me see)\b/.test(raw)) return null
+      // ⚠️ Not "show the effects on…" (show_view), not "show me the drums"
+      // (workspace.focus): a bar or a section only, and the playhead stays.
+      if (/\b(?:effects?|devices?|automation|notes?|chords?|clips?|tracks?|overlay|mixer|arrangement|session|pads?|sound|library|sidebar)\b/.test(raw)) return null
+      const barM = /\b(?:bar|measure)\s+(\d{1,3})\b/.exec(raw)
+      const secRe = `(${sectionNames(ctx).map(escapeRe).join('|')})`
+      const secM = new RegExp(`\\b(?:to|at|me|show|see)\\s+(?:the\\s+)?${secRe}\\b`).exec(raw)
+      if (!barM && !secM) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { scrollTo: barM ? { bar: Number(barM[1]) } : { marker: secM![1] } } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'workspace.snap',
+    tool: 'workspace',
+    group: 'View',
+    what: 'What the grid snaps to',
+    say: ['snap to bars', 'snap to eighths', 'turn snap off', 'snap to beats'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      if (!/\bsnap(?:ping)?\b/.test(raw)) return null
+      const snap = snapOf(raw.replace(/\bsnap(?:ping)?\b/g, ' '))
+      if (!snap) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { snap } }], confidence: 0.92 }
+    },
+  },
+  {
+    id: 'workspace.overlay',
+    tool: 'workspace',
+    group: 'View',
+    what: 'Grey out one kind of thing — an overlay',
+    say: ['show the loading overlay', 'overlay the sections', 'clear the overlay', "show what's not loaded"],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const mentions = /\boverlays?\b/.test(raw) || /\bwhat'?s not (?:loaded|synced)\b|\bnot loaded\b|\bunloaded\b|\bout of key\b/.test(raw)
+      if (!mentions) return null
+      const clearing = /\b(?:clear|off|remove|hide|turn off|no|away|none)\b/.test(raw) && !/\b(?:not loaded|unloaded|not synced|out of key)\b/.test(raw)
+      const kind = clearing ? 'none' : overlayOf(raw.replace(/\boverlays?\b/g, ' ').replace(/\b(?:show|put|turn on|switch on|the|a|an|me|what'?s|is)\b/g, ' '))
+      if (!kind) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { overlay: kind } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'workspace.sound',
+    tool: 'workspace',
+    group: 'View',
+    what: "Open a clip's Sound panel",
+    say: ['open the sound panel', 'open the sound settings for the pad clip', 'show the sound panel on the bass 2 clip'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      if (!/\bsound\s+(?:panel|settings?)\b/.test(raw)) return null
+      if (!/\b(?:open|show|bring up|pull up|see|edit)\b/.test(raw)) return null
+      const srcM = /\b(?:for|on|of)\s+(?:the\s+)?([a-z0-9' ]+?)(?:\s+clip)?\s*$/.exec(raw)
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { soundPanel: true, ...(srcM ? { target: srcM[1].trim() } : {}) } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'workspace.focus',
+    tool: 'workspace',
+    group: 'View',
+    what: 'Bring a track into view and select it',
+    say: ['show me the drums track', 'take me to the pad', 'scroll to the bass 2 track'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const verb = /\b(?:show me|take me to|scroll to|find|bring up|jump to)\b/.exec(raw)
+      if (!verb) return null
+      // ⚠️ "the pads" is the pad card; "the pad" is a track called Pad.
+      if (/\b(?:bar|measure|effects?|devices?|automation|notes?|chords?|clips?|mixer|arrangement|session|overlay|sound|pads|sequencer|piano|library|sidebar|marker|playhead)\b/.test(raw)) return null
+      const name = raw.slice(verb.index + verb[0].length).replace(/^\s*(?:the\s+)?/, '').replace(/\s+track$/, '').trim()
+      if (!name) return null
+      const want = foldName(name)
+      const track = (ctx.tracks ?? []).find(t => foldName(t.name ?? '') === want) ?? (ctx.tracks ?? []).find(t => foldName(t.name ?? '').startsWith(want))
+      if (!track) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { focus: track.name } }], confidence: 0.88, needsName: true }
+    },
+  },
+  {
+    id: 'workspace.command',
+    tool: 'workspace',
+    group: 'View',
+    what: "Any of the studio's own commands, by name",
+    // ⚠️ Not "open the sound library" as an example: it is a hair from
+    // open_editor's "open the library" (the library PAGE), and the suite
+    // rightly calls that a close call. It still works when the palette
+    // offers it — see the workspace test.
+    say: ['hide the sidebar', 'start a new section here', 'go to the end of the song', 'drop a marker at the playhead', 'import an audio file'],
+    match(w, ctx) {
+      if (!ctx.commands?.length) return null
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      const hit = matchCommand(ctx.commands, raw)
+      // ⚠️ 0.8, not lower: "open the library" says two of the three words of
+      // "Open Sound Library" and scores 0.77 — and it is open_editor's
+      // sentence (the library page), not the sidebar tab.
+      if (!hit || hit.score < 0.8) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { command: hit.command.label } }], confidence: 0.86 }
+    },
+  },
   {
     id: 'strip_back',
     tool: 'strip_back',
@@ -4188,7 +4342,10 @@ const COMMANDS: VoiceCommand[] = [
       // was actually about went to show_view.automation never. The more
       // specific noun wins: automation beside a track name is the lanes.
       if (w.has('automation', 'automated', 'lanes', 'lane')) return null
-      if (!(w.has('devices') || ((w.has('rack') || w.has('effects')) && w.has('open', 'show', 'bring')))) return null
+      // ⚠️ EXACT "rack": it is one edit from "track", so "show me the drums
+      // track" read as "open the drums rack" and tied with bringing the track
+      // into view — a close call, so a signed-out session did neither.
+      if (!(w.has('devices') || ((w.exact('rack', 'racks') || w.has('effects')) && w.has('open', 'show', 'bring')))) return null
       const open = !w.has('close', 'hide')
       const hit = open ? nameOrSelected(w, ctx, ['open', 'show', 'devices', 'device', 'rack', 'effects', 'for', 'on']) : null
       if (open && !hit) return null

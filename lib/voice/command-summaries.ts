@@ -152,4 +152,12 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   set_colour: 'Colours a clip or a track so the arrangement reads at a glance. Colour is a label and never changes the sound. Several clips with one name are all coloured together.',
   set_clip_audio: 'An audio clip\'s own settings: fade in, fade out, its level, reversed or not, looped or not. These live on the clip, so the track fader and its effects are untouched.',
   move_track: 'Moves a track up or down the list, to the top or the bottom, or above or below another track. Only the order changes; nothing about the sound does.',
+  'workspace.view': 'Switches what the studio shows — the arrangement timeline, the session grid of clips, or the mixer with its faders. The song is untouched.',
+  'workspace.zoom': 'Zooms the arrangement in or out, or fits the whole song to the screen — what a hand does with the scroll wheel between two edits.',
+  'workspace.scroll': 'Brings a bar or a named section into view without moving the playhead, so you can look at a part of the song while another part plays.',
+  'workspace.snap': 'Sets what the grid snaps to — bars, beats, eighths, sixteenths — or turns snapping off for free placement. Only the grid changes.',
+  'workspace.overlay': 'Puts an overlay on the arrangement that greys out one kind of thing — what is not loaded, other sections, what is out of key — or clears it.',
+  'workspace.sound': 'Opens the Sound panel for a clip, where its own sound settings live — the panel a right-click would open, without the right-click.',
+  'workspace.focus': 'Brings a track into view and selects it, so the next "this" means that track. Handy in a long list of tracks.',
+  'workspace.command': 'Runs any command the studio offers in its own command palette, by name — hide the sidebar, open the sound library, go to the end of the song. Whatever is in the list is sayable.',
 }

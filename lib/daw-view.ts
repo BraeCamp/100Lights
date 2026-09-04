@@ -25,3 +25,29 @@ export function onCenterOnBeat(fn: Listener): () => void {
   listeners.add(fn)
   return () => { listeners.delete(fn) }
 }
+
+// ── Voice → arrangement: "zoom in", "snap to bars", "fit the song" ─────────
+//
+// Zoom and snap are the arrangement view's own state, and the voice control
+// lives outside it; the same two-function bridge as above, for the same
+// reason.
+
+export interface ArrangementRequest {
+  zoom?: 'in' | 'out' | 'fit'
+  snap?: 'off' | '1/16' | '1/8' | 'beat' | 'bar'
+}
+type RequestListener = (r: ArrangementRequest) => void
+const requestListeners = new Set<RequestListener>()
+
+/** Ask the arrangement view to zoom or change its snap. True if one is listening. */
+export function requestArrangement(r: ArrangementRequest): boolean {
+  for (const fn of requestListeners) {
+    try { fn(r) } catch { /* one bad listener must not block the rest */ }
+  }
+  return requestListeners.size > 0
+}
+
+export function onArrangementRequest(fn: RequestListener): () => void {
+  requestListeners.add(fn)
+  return () => { requestListeners.delete(fn) }
+}

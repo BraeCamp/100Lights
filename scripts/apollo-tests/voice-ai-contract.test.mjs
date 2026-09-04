@@ -120,6 +120,7 @@ const CALLS = {
   set_colour: { target: 'pad clip', colour: 'blue' },
   set_clip_audio: { target: 'pad take', fadeOut: { bars: 1 } },
   move_track: { target: 'drums', to: 'top' },
+  workspace: { view: 'mixer' },
   strip_back: { keep: ['drums'] },
   chord_inversion: { target: 'pad clip', direction: 'up' },
   modulate: { semitones: 2 },
