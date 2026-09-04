@@ -118,6 +118,7 @@ export function describeAction(a: unknown, names: { track?: (id: string) => stri
       if ('mute' in p) parts.push(p.mute ? 'muted' : 'unmuted')
       if ('solo' in p) parts.push(p.solo ? 'soloed' : 'unsoloed')
       if ('name' in p) parts.push(`renamed to "${String(p.name)}"`)
+      if ('color' in p) parts.push('recoloured')
       return `${t(act.trackId)}: ${parts.length ? parts.join(', ') : `changed ${Object.keys(p).join(', ')}`}`
     }
     case 'SET_INSTRUMENT': return `${t(act.trackId)}: instrument set to ${String((act.instrument as { type?: string } | undefined)?.type ?? 'a new one')}`
@@ -127,11 +128,22 @@ export function describeAction(a: unknown, names: { track?: (id: string) => stri
     }
     case 'REMOVE_CLIP': return `Removed ${c(act.clipId)}`
     case 'MOVE_CLIP': return `Moved ${c(act.clipId)} to ${bar(act.startBeat, bpb)}`
+    case 'MOVE_TRACK': return `Moved ${t(act.trackId)} ${act.beforeId ? `above ${t(act.beforeId)}` : 'to the bottom'}`
+    case 'SELECT': {
+      const ids = (act.clipIds ?? act.ids) as string[] | undefined
+      if (Array.isArray(ids)) return ids.length === 1 ? `Selected ${c(ids[0])}` : `Selected ${ids.length} clips`
+      return `Selected ${String(act.what ?? act.mode ?? 'clips')}`
+    }
     case 'UPDATE_CLIP': {
       const p = (act.patch ?? {}) as Record<string, unknown>
       if ('startBeat' in p) return `Moved ${c(act.clipId)} to ${bar(p.startBeat, bpb)}`
       if ('durationBeats' in p) return `Resized ${c(act.clipId)}`
       if ('name' in p) return `Renamed ${c(act.clipId)} to "${String(p.name)}"`
+      if ('color' in p) return `Recoloured ${c(act.clipId)}`
+      if ('fadeIn' in p || 'fadeOut' in p) return `${'fadeIn' in p ? 'Faded in' : 'Faded out'} ${c(act.clipId)}`
+      if ('gain' in p) return `${c(act.clipId)}: level ${pct(p.gain)}`
+      if ('reverse' in p) return `${p.reverse ? 'Reversed' : 'Un-reversed'} ${c(act.clipId)}`
+      if ('loopEnabled' in p) return `${p.loopEnabled ? 'Looped' : 'Stopped looping'} ${c(act.clipId)}`
       if ('fxMotion' in p || 'rollFx' in p || 'fxGraphs' in p) return `Changed the sound of ${c(act.clipId)}`
       return `Changed ${c(act.clipId)} (${Object.keys(p).join(', ')})`
     }

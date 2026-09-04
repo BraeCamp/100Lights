@@ -142,7 +142,7 @@ function pullSharedCommands() {
 export default function VoiceControl({ style }: { style?: React.CSSProperties }) {
   const {
     inStudio,
-    project, dispatch, engine, undo, redo, beginUndoGroup, endUndoGroup, selectedTrackId, selectedClipId,
+    project, dispatch, engine, undo, redo, beginUndoGroup, endUndoGroup, selectedTrackId, selectedClipId, selectedClipIds,
     metronome, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
     setSelectedClipIds, setSelectedClipId, setSelectedTrackId,
     setShowPads, setApolloRack, setShowAppearance,
@@ -244,6 +244,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   useEffect(() => { projectRef.current = project }, [project])
   useEffect(() => { selectedTrackIdRef.current = selectedTrackId }, [selectedTrackId])
   useEffect(() => { selectedClipIdRef.current = selectedClipId }, [selectedClipId])
+  const selectedClipIdsRef = useRef(selectedClipIds)
+  useEffect(() => { selectedClipIdsRef.current = selectedClipIds }, [selectedClipIds])
   /** The assistant asked something and is waiting — a question, not a failure. */
   const [asking, setAsking] = useState('')
   useEffect(() => { askingRef.current = asking }, [asking])
@@ -463,6 +465,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   // credit barrier, for the same reason: the cost of asking is a keystroke, and
   // the cost of not asking is somebody's work.
   const [pendingDo, setPendingDo] = useState<{ label: string; calls: VoiceCall[] } | null>(null)
+  // Read inside run(), which does not list pendingDo as a dependency.
+  const pendingDoRef = useRef(pendingDo)
+  useEffect(() => { pendingDoRef.current = pendingDo }, [pendingDo])
 
   // ── The conversation ─────────────────────────────────────────────────────
   //
@@ -709,6 +714,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // same locate, and only the words separate them. See notAMove.
     said: saidRef.current.join(' '),
     atBeat: engine?.currentBeat,
+    // The selection, so "them" / "these" can mean a set of clips.
+    selectedClipIds: [...(selectedClipIdsRef.current ?? [])],
+    selectedTrackId: selectedTrackIdRef.current ?? lastSelection.current.trackId ?? undefined,
     // The library, so a preset can be chosen by CHARACTER inside the executor —
     // "one of the darker piano presets" is a question about what is installed
     // on this machine, and the executor cannot see the machine. Carries the
@@ -1475,6 +1483,33 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // built from the timings of a previous, unrelated sentence.
     heardRef.current = heard
     setSpokenRaw(spoken)
+    // ── "Yes" to a pending delete ───────────────────────────────────────────
+    // A destructive command is read back and waits: "Delete 3 clips…? Say
+    // yes." The answer is a word, not a command, and it is read here before
+    // the gate below can drop it as room noise.
+    if (pendingDoRef.current) {
+      const t = spoken.trim().toLowerCase().replace(/[.,!?]+$/, '')
+      if (/^(?:yes|yeah|yep|yup|do it|go ahead|go on|confirm|confirmed|sure|ok|okay|please do|yes please|do that|go for it)$/.test(t)) {
+        const pending = pendingDoRef.current
+        setPendingDo(null)
+        const plan = planVoiceCalls(pending.calls, projectRef.current, voiceCtx())
+        if (plan.problem) { setProblem(plan.problem); return }
+        beginUndoGroup?.(pending.label)
+        for (const a of plan.actions) runAction(a)
+        endUndoGroup?.()
+        setSaid(plan.say)
+        respond(plan.say)
+        postExchange({ said: spoken, calls: pending.calls, say: plan.say, path: 'rules', outcome: 'confirmed by voice' })
+        return
+      }
+      if (/^(?:no|nope|nah|cancel|don't|do not|never mind|nevermind|forget it|leave it|stop)$/.test(t)) {
+        setPendingDo(null)
+        setSaid('Left as it was.')
+        respond('Left as it was.')
+        postExchange({ said: spoken, calls: [], say: 'Left as it was.', path: 'rules', outcome: 'cancelled by voice' })
+        return
+      }
+    }
     // ── One request, one undo ──────────────────────────────────────────────
     // Brae: "If I ask it to do 4 things in one request, an undo request after
     // that should undo the whole thing." Everything this sentence dispatches —
@@ -1595,11 +1630,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // something is a statement about what you are working on, and the studio
       // should not need to be told twice.
       selectedClipId: selectedClipId ?? lastSelection.current.clipId ?? undefined,
+      // Every selected clip, so "delete them" and "colour these" mean the set.
+      selectedClipIds: [...(selectedClipIds ?? [])],
+      // The song's markers, so "after the chorus" can be read as a place.
+      markers: (project.cueMarkers ?? []).map(m => ({ name: m.name, beat: m.beat })),
       // So "Bass body 1" reads as one target — a track and an item said
       // together, which is the most specific thing anybody can say and was the
       // one form the rules could not see.
       clips: (project.arrangementClips ?? []).map(c => ({
-        id: c.id, name: c.name, trackId: c.trackId,
+        // The kind, so "reverse the lead" (MIDI) and "reverse the vocal
+        // take" (audio) are told apart before anything is planned.
+        id: c.id, name: c.name, trackId: c.trackId, kind: c.kind,
       })),
       // The sound library, so "make the bass a violin" can find the violin. It
       // is not part of the song — it lives on this machine — which is why the
@@ -2051,9 +2092,11 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const plan = planVoiceCalls(local.calls, project, voiceCtx())
       if (!plan.problem && local.destructive && !confirmed) {
         // Understood perfectly, and still not run: the read-back says exactly
-        // what would be lost, and a person presses the button.
+        // what would be lost, and a person presses the button — or says yes.
+        const ask = `${plan.say.replace(/^Deleted /, 'Delete ').replace(/^Took /, 'Take ').replace(/\.$/, '')}?`
         setBusy(false)
-        setPendingDo({ label: plan.say, calls: local.calls })
+        setPendingDo({ label: ask, calls: local.calls })
+        respond(`${ask} Say yes, or press Do it.`, 'question')
         return
       }
       // The executor found more than one thing the words could mean, and
@@ -2416,8 +2459,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           // work without it." while the simple command sat undone. The
           // assistant was only ever asked to CHECK a reading the studio already
           // had; when it cannot, the reading stands.
-          if ((signedOut || e.needCredits) && local.calls.length && confidentEnough(local, heardConfidence) && !local.destructive) {
+          if ((signedOut || e.needCredits) && local.calls.length && confidentEnough(local, heardConfidence)) {
             const plan = planVoiceCalls(local.calls, project, voiceCtx())
+            if (!plan.problem && !plan.ask && local.destructive) {
+              // ⚠️ Signed out, a delete was answered "Sign in to use the
+              // assistant" and left undone — the assistant was only ever going
+              // to CHECK a reading the studio already had. The read-back says
+              // what would go, and a "yes" (or the button) does it. See the
+              // top of run().
+              const ask = `${plan.say.replace(/^Deleted /, 'Delete ').replace(/^Took /, 'Take ').replace(/\.$/, '')}?`
+              setBusy(false)
+              setPendingDo({ label: ask, calls: local.calls })
+              respond(`${ask} Say yes, or press Do it.`, 'question')
+              postExchange({ said: text, calls: local.calls, say: ask, path: 'rules', outcome: 'asked to confirm (assistant needs sign-in)' })
+              traceEnd(ask)
+              return
+            }
             if (!plan.problem && !plan.ask) {
               for (const a of plan.actions) runAction(a)
               setBusy(false)
@@ -2769,7 +2826,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the closure holds the question as it was when it was built — null — so
     // "yes" is parsed as a fresh command and confirms nothing.
   }, [inStudio, project, runAction, pendingAsk, pendingAsk2, pendingOffer, pendingName, respond,
-    undo, redo, selectedTrackId, selectedClipId, queue])
+    undo, redo, selectedTrackId, selectedClipId, selectedClipIds, queue])
 
   // Does the user still want to be listening? Asking for the microphone is
   // asynchronous and the first ask shows a dialog, so in hold-to-talk the
@@ -3393,7 +3450,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
                   const plan = planVoiceCalls(pendingDo.calls, project, voiceCtx())
                   setPendingDo(null)
                   if (plan.problem) { setProblem(plan.problem); return }
+                  beginUndoGroup?.(pendingDo.label)
                   for (const a of plan.actions) runAction(a)
+                  endUndoGroup?.()
                   setSaid(plan.say)
                 }}
                 style={{

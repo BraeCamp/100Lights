@@ -53,7 +53,31 @@ const LENGTH = {
 
 const TARGET = {
   type: 'string',
-  description: 'A track or clip name, as spoken.',
+  description: 'A track or clip name, as spoken. Same-named clips on a track are numbered by start order and shown as "#2", "#3" in the arrangement — say "pad intro part 3", "the third pad intro part" or "pad intro part #3" for one of them, "all the pad intro parts" for every one.',
+} as const
+/** The set-addressing fields shared by every tool that can act on several clips. */
+const ADDRESS = {
+  all: { type: 'boolean', description: 'True to act on EVERY clip the name matches — "all the pad intro parts", "delete all of them".' },
+  which: { type: 'string', description: 'Which of the same-named clips: a number (by start order, 1 = earliest), "first", "last", or "all".' },
+  track: { type: 'string', description: 'Narrow to this track when the clip name alone is not enough.' },
+  at: { ...POSITION, description: 'Only clips sounding at this place — "the pad clip at bar 9".' },
+  after: { ...POSITION, description: 'Only clips starting at or after this place.' },
+  before: { ...POSITION, description: 'Only clips starting before this place.' },
+  shorterThan: { ...LENGTH, description: 'Only clips shorter than this — "the ones that are not a full bar long".' },
+  longerThan: { ...LENGTH, description: 'Only clips longer than this.' },
+  section: { type: 'string', description: 'Only clips inside this named section — "in the chorus" is from the Chorus marker to the next marker.' },
+  selected: { type: 'boolean', description: 'True to act on the clips selected in the studio — "these", "them", "the selected clips".' },
+} as const
+
+const NOTE_ADDRESS = {
+  notes: { type: 'string', description: 'Which notes INSIDE the clip, as said: "the first chord", "the third chord", "the last chord", "the first two chords", "the chord at bar 3", "the chord about a second in", "the second note", "the highest note", "the notes above C5", "the notes below C3", "every C". A chord is a moment when two or more notes start together, and a clip holds several. Omit for every note in the clip.' },
+} as const
+
+const TRACK_ADDRESS = {
+  all: { type: 'boolean', description: 'True for every track — "all the tracks", "every track".' },
+  only: { type: 'array', items: { type: 'string', enum: ['muted', 'unmuted', 'soloed', 'unsoloed', 'drums', 'audio', 'midi', 'synth', 'apollo', 'sampler', 'plugin', 'empty', 'group'] }, description: 'Only tracks that are all of these — "every muted track" is ["muted"], "all the drum tracks" is ["drums"].' },
+  withEffect: { type: 'string', description: 'Only tracks carrying this effect — "the tracks with reverb".' },
+  except: { type: 'array', items: { type: 'string' }, description: 'Leave these out — "every track except the drums".' },
 } as const
 
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS } from '../daw-effect-catalog'
@@ -127,7 +151,8 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         target: { ...TARGET, description: 'The clip (or track) to copy from — "pad intro".' },
-        part: { type: 'string', description: '"first chord" (default), "first note", or a length like "1 bar", "2 bars", "8 beats" measured from the clip\'s start.' },
+        part: { type: 'string', description: '"first chord" (default), "third chord", "last chord", "first note", or a length like "1 bar", "2 bars", "8 beats" measured from the clip\'s start.' },
+        ...NOTE_ADDRESS,
         at: { ...POSITION, description: 'Where the copy goes. Omit for the source clip\'s own start.' },
         times: { type: 'number', description: 'How many copies back to back — "repeat that 4 times" is 4. Defaults to 1.' },
       },
@@ -231,7 +256,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'set_track',
     description:
-      'MIXER — mute, solo, set volume or pan on one track. "mute the hats", "bring the bass up", "pan the guitar left".',
+      'MIXER — mute, solo, set volume or pan on one track — or on a SET of tracks: "mute all the drum tracks", "unmute every muted track", "turn down the tracks with reverb", "solo the audio tracks", "mute everything except the drums" (all + except), "mute these" with clips selected.',
     input_schema: {
       type: 'object',
       properties: {
@@ -240,6 +265,9 @@ export const MUSIC_TOOLS = [
         solo: { type: 'boolean' },
         volume: { type: 'number', description: 'Percentage, 0-100.' },
         pan: { type: 'number', description: '-100 (hard left) to 100 (hard right).' },
+        volumeBy: { type: 'number', description: 'Move the volume by this many points instead of setting it (negative is down) — for a SET of tracks, "turn the drum tracks down a bit" is -15, since each starts from its own level.' },
+        volumeDb: { type: 'number', description: 'Move the volume by this many decibels instead of setting it (negative is down).' },
+        ...TRACK_ADDRESS,
       },
       required: ['target'],
     },
@@ -247,12 +275,14 @@ export const MUSIC_TOOLS = [
   {
     name: 'transpose',
     description:
-      'TRANSPOSE — move the notes of a clip up or down in semitones. "take the bass up an octave" is 12, "down a fifth" is -7.',
+      'TRANSPOSE — move the notes of a clip up or down in semitones. "take the bass up an octave" is 12, "down a fifth" is -7. Part of a clip with `notes`: "transpose the third chord of the pad up an octave", "take the notes above C5 down an octave". Several clips by address: "all the pad parts", "them".',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
         semitones: { type: 'number', description: 'Positive is up. An octave is 12.' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
       },
       required: ['target', 'semitones'],
     },
@@ -574,14 +604,64 @@ export const MUSIC_TOOLS = [
   {
     name: 'select',
     description:
-      'SELECT / FOCUS — choose what "this" refers to, without touching the mouse. "select everything on the bass", "select the loop", "select all the clips", "select nothing" — and the way people usually start: "let\'s edit the bass track", "focus on the drums", "work on the pad". With `what: "track"` this focuses that track and says so, and every command afterwards that names nothing acts on it. Useful before a command that acts on the selection, and the answer to "how do I tell it which one I mean".',
+      'SELECT / FOCUS — choose what "this" refers to, without touching the mouse. "select everything on the bass", "select the loop", "select all the clips", "select nothing" — and the way people usually start: "let\'s edit the bass track", "focus on the drums", "work on the pad". With `what: "track"` this focuses that track and says so, and every command afterwards that names nothing acts on it. With `what: "clips"` it selects ONE OR MANY clips by address: "select all the pad intro parts", "select the third pad clip", "select pad intro part 2", "select the pad clips after bar 9", "select the clips shorter than a bar" — the multi-select, by voice. Useful before a command that acts on the selection, and the answer to "how do I tell it which one I mean".',
     input_schema: {
       type: 'object',
       properties: {
-        what: { type: 'string', enum: ['all', 'none', 'track', 'loop'] },
-        target: { ...TARGET, description: 'For "track" — which one.' },
+        what: { type: 'string', enum: ['all', 'none', 'track', 'loop', 'clips'] },
+        target: { ...TARGET, description: 'For "track" — which one. For "clips" — the clip name (or track) to address.' },
+        ...ADDRESS,
       },
       required: ['what'],
+    },
+  },
+  {
+    name: 'set_colour',
+    description:
+      'COLOUR — "colour the pad clips blue", "make the drums track red", "paint pad intro part 2 green". A clip name colours the clips it addresses (all of them if several); a track name colours the track. Colour is the arrangement\'s own labelling and never changes the sound.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        colour: { type: 'string', description: 'red, orange, amber, yellow, lime, green, teal, cyan, blue, indigo, purple, violet, pink, magenta, rose, brown, grey, white, black — or a #hex.' },
+        of: { type: 'string', enum: ['clip', 'track'], description: 'Say which when the name could be either.' },
+        ...ADDRESS,
+        ...TRACK_ADDRESS,
+      },
+      required: ['target', 'colour'],
+    },
+  },
+  {
+    name: 'set_clip_audio',
+    description:
+      'AN AUDIO CLIP\'S OWN SETTINGS — "fade in the vocal over a bar", "fade out the last drums clip over two beats", "turn the guitar clip down to 60%", "reverse the crash", "loop the drum clip", "stop looping it". Fades, level, reverse and loop are per clip; the track\'s volume is set_track, and a MIDI clip\'s sound is set_sound.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        fadeIn: { ...LENGTH, description: 'Fade the clip in over this length from its start.' },
+        fadeOut: { ...LENGTH, description: 'Fade the clip out over this length before its end.' },
+        gain: { type: 'string', description: 'The clip\'s own level as a percentage, "60%" — 100% is unity, up to 200%.' },
+        reverse: { type: 'boolean', description: 'Play the audio backwards (true) or forwards (false).' },
+        loop: { type: 'boolean', description: 'Repeat the clip\'s content across its length.' },
+        ...ADDRESS,
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'move_track',
+    description:
+      'TRACK ORDER — "move the drums to the top", "put the pad below the bass", "move the vocal up one", "send the FX track to the bottom". Changes only where the track sits in the list.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The track to move.' },
+        to: { type: 'string', enum: ['top', 'bottom', 'up', 'down'], description: 'Where, when no other track is named.' },
+        before: { type: 'string', description: 'Put it directly ABOVE this track.' },
+        after: { type: 'string', description: 'Put it directly BELOW this track.' },
+      },
+      required: ['target'],
     },
   },
   {
@@ -893,6 +973,7 @@ export const MUSIC_TOOLS = [
       type: 'object',
       properties: {
         target: { ...TARGET, description: 'A track or clip to name the notes of. Omit for whatever is at the playhead.' },
+        ...NOTE_ADDRESS,
       },
     },
   },
@@ -944,7 +1025,7 @@ export const MUSIC_TOOLS = [
       'DELETE A TRACK — remove a track and everything on it. "delete the guitar track", "get rid of the pad", "remove that track". ⚠️ Destructive and confirmed out loud before it runs. If they only want it quiet, that is set_track with muted — reach for this only when they said delete or remove.',
     input_schema: {
       type: 'object',
-      properties: { target: TARGET },
+      properties: { target: TARGET, ...TRACK_ADDRESS },
       required: ['target'],
     },
   },
@@ -1050,10 +1131,10 @@ export const MUSIC_TOOLS = [
   {
     name: 'remove_clip',
     description:
-      'DELETE A CLIP — remove one clip from the arrangement. "delete the second pad clip", "get rid of that clip", "take the crash out of bar 9". ⚠️ Destructive and confirmed before it runs. This removes the clip; remove_track removes the whole track it sits on.',
+      'DELETE CLIPS — remove one clip, or a whole set, from the arrangement. "delete the second pad clip", "get rid of that clip", "take the crash out of bar 9", "delete all the pad intro parts", "delete the pad clips that are shorter than a bar", "remove every clip on the drums after bar 17". ⚠️ Destructive and confirmed before it runs. One call deletes the whole set — never one call per clip. This removes clips; remove_track removes the whole track they sit on.',
     input_schema: {
       type: 'object',
-      properties: { target: TARGET },
+      properties: { target: TARGET, ...ADDRESS },
       required: ['target'],
     },
   },
@@ -1093,7 +1174,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'edit_note',
     description:
-      'ONE NOTE — put a single note in, or take one out. "put a C on beat three", "add an E flat at bar 5 beat 2", "delete the last note", "take out the highest note". ⚠️ For changing notes in BULK — transposing, quantising, lengthening, making them softer — use those commands instead; this is the one for a single note, which everything else could do except add or remove one.',
+      'ONE NOTE — put a single note in, or take one out. "put a C on beat three", "add an E flat at bar 5 beat 2", "delete the last note", "take out the highest note". Several at once by address in `notes`: "delete the third note", "remove the notes above C5", "take out every C", "delete the last chord". ⚠️ For changing notes in BULK — transposing, quantising, lengthening, making them softer — use those commands instead; this is the one for a single note, which everything else could do except add or remove one.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1103,6 +1184,7 @@ export const MUSIC_TOOLS = [
         at: POSITION,
         length: LENGTH,
         which: { type: 'string', enum: ['last', 'first', 'highest', 'lowest'], description: 'For remove, when they did not say a pitch.' },
+        ...NOTE_ADDRESS,
       },
       required: ['action'],
     },
@@ -1110,13 +1192,15 @@ export const MUSIC_TOOLS = [
   {
     name: 'set_velocity',
     description:
-      'VELOCITY — how hard the notes are played. "make the drums softer", "set the bass velocity to 100", "play it harder".',
+      'VELOCITY — how hard the notes are played. "make the drums softer", "set the bass velocity to 100", "play it harder". Part of a clip with `notes`: "make the last chord of the pad softer", "play the highest note harder".',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
         velocity: { type: 'number', description: 'Absolute, 1-127.' },
         scale: { type: 'number', description: 'Or a percentage change: 80 makes everything 80% as hard.' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
       },
       required: ['target'],
     },

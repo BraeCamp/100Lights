@@ -48,6 +48,9 @@ import {
   type MusicMaps, type MusicPosition, type MusicDuration,
 } from './position'
 import { beatToSeconds } from '../tempo-map'
+import { addressClips, parseClipAddress, clipLabel, colourOf, type ClipAddress } from '../clip-address'
+import { parseNoteAddress, addressNotes, chordsOf, type NoteAddress, type Chord } from '../note-address'
+import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { LOWPASS_HZ, HIGHPASS_HZ, automatableParams, shortNameOf, type AutomatableParam } from '../daw-effect-params'
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '../daw-effect-catalog'
 import { nameChord, groupIntoChords } from '../chord-analysis'
@@ -90,7 +93,10 @@ import type { RollFx, AutomationLane } from '@/lib/daw-types'
  * Returns the reason, or null when the move is genuinely what was asked.
  */
 const EDITS = /\b(make|set|change|turn|put|add|raise|lower|drop|bring|fade|sweep|automate|ramp|louder|quieter|brighter|darker|wetter|drier|mute|solo|delete|remove|duplicate|copy|move|stretch|shorten|lengthen|reverb|delay|filter|volume|pan|gain|drive|chorus|eq|compress)\b/i
-const MOVES = /\b(go|goto|jump|move the playhead|take me|skip|scrub|locate|start from|play from|back to|rewind|position)\b/i
+// "Move to bar 1" is a move: the record, 22:15, refused it as an edit because
+// "move" is also an edit word. A move TO a bar, with nothing else in the
+// sentence, is what going somewhere sounds like.
+const MOVES = /\b(go|goto|jump|move the playhead|move (?:up |back |forward )?to (?:the )?(?:bar|measure|beginning|start|end|top)|take me|skip|scrub|locate|start from|play from|back to|rewind|position)\b/i
 
 export function notAMove(said?: string): string | null {
   const t = String(said ?? '').trim()
@@ -840,10 +846,195 @@ function trackNameOf(clip: DawClip, p: DawProject): string | undefined {
   return (p.tracks ?? []).find(t => t.id === clip.trackId)?.name
 }
 
+/**
+ * The set of clips a call names, or null when it names exactly one thing the
+ * ordinary resolver should handle (with its ambiguity question).
+ *
+ * A set is meant when the call says `all`, gives a `which`, a place, or a
+ * length filter — or when the spoken target itself carries "all" / an ordinal
+ * ("all the pad intro parts", "pad intro part 3", "the third pad clip").
+ */
+/** "#sel:id,id" — the studio's selection, carried as ids so it is never re-resolved by name. */
+function selectionIds(target: string, i: Record<string, unknown>, heard?: VoiceContext): string[] | null {
+  if (target.startsWith('#sel:')) return target.slice(5).split(',').filter(Boolean)
+  const t = target.toLowerCase().trim()
+  const saysSelection = i.selected === true
+    || /^(?:the\s+)?(?:selection|selected(?:\s+(?:clips?|items?|parts?|ones?))?|these(?:\s+(?:clips?|items?|parts?|ones?))?|those(?:\s+(?:clips?|items?|parts?|ones?))?|them|it|this)$/.test(t)
+  if (saysSelection && heard?.selectedClipIds?.length) return heard.selectedClipIds
+  return null
+}
+
+function clipAddressOf(i: Record<string, unknown>, target: string, maps: MusicMaps, project: DawProject, heard?: VoiceContext): ClipAddress | null {
+  // ── The selection ──────────────────────────────────────────────────────
+  // "delete them", "colour these blue", "move the selected clips back a
+  // bar": the ids of what is selected, narrowed by anything else said.
+  const ids = selectionIds(target, i, heard)
+  const parsed = ids ? { name: '', which: undefined as ClipAddress['which'] } : parseClipAddress(target)
+  const whichIn = i.which
+  const which: ClipAddress['which'] | undefined =
+    i.all === true ? 'all'
+      : whichIn === 'all' || whichIn === 'first' || whichIn === 'last' ? whichIn
+        : typeof whichIn === 'number' ? whichIn
+          : typeof whichIn === 'string' && /^\d+$/.test(whichIn) ? Number(whichIn)
+            : Array.isArray(whichIn) ? (whichIn as unknown[]).map(Number).filter(n => Number.isFinite(n))
+              : parsed.which
+  const at = i.at != null ? placeOf(i.at, maps, project) : null
+  const shorter = i.shorterThan != null ? spanOf(i.shorterThan, 0, maps) : null
+  const longer = i.longerThan != null ? spanOf(i.longerThan, 0, maps) : null
+  const after = i.after != null ? placeOf(i.after, maps, project) : null
+  const before = i.before != null ? placeOf(i.before, maps, project) : null
+  // "in the chorus": from its marker to the next one.
+  const section = typeof i.section === 'string' && i.section.trim() ? i.section.trim() : undefined
+  const track = typeof i.track === 'string' && i.track.trim() ? i.track.trim() : undefined
+  const filtered = at?.beat != null || shorter?.beats != null || longer?.beats != null || after?.beat != null || before?.beat != null || !!section || !!track
+  // ⚠️ "Bass 2" is a track, not the second Bass: a trailing number is only an
+  // ordinal when the name without it exists on its own.
+  const trailingIsName = typeof parsed.which === 'number' && !addressClips(project, { name: parsed.name }).length
+  if (!ids && (which === undefined || (trailingIsName && !filtered && i.all !== true))) {
+    if (!filtered) return null
+  }
+  return {
+    ids: ids ?? undefined,
+    name: trailingIsName ? target : parsed.name,
+    track,
+    which: trailingIsName ? undefined : which,
+    at: at?.beat ?? undefined,
+    shorterThan: shorter?.beats ?? undefined,
+    longerThan: longer?.beats ?? undefined,
+    after: after?.beat ?? undefined,
+    before: before?.beat ?? undefined,
+    section,
+  }
+}
+
+/**
+ * The clips a command edits: a set when the words name one ("all the pad
+ * parts", "them"), otherwise the one clip — or the question, when the one
+ * clip is ambiguous.
+ */
+function clipsForEdit(
+  i: Record<string, unknown>, target: string, maps: MusicMaps, project: DawProject,
+  heard: VoiceContext | undefined, verb: string, rest: Record<string, unknown> = {},
+): { clips: DawClip[]; how: string; ask?: VoiceAsk } {
+  const addr = clipAddressOf(i, target, maps, project, heard)
+  if (addr) {
+    const set = addressClips(project, addr)
+    return { clips: set, how: set.length === 1 ? clipLabel(project, set[0]) : `${set.length} clips ${describeAddress(addr, maps)}` }
+  }
+  const chosen = resolveClipOrAsk(target, project, maps, verb, rest)
+  if (chosen.ask) return { clips: [], how: '', ask: chosen.ask }
+  return { clips: chosen.clip ? [chosen.clip] : [], how: chosen.how ?? '' }
+}
+
+type PickedPart = {
+  notes: MidiClip['notes']; label: string; startBeat: number; endBeat: number; chords?: Chord[]
+  /** True when nothing inside the clip was named — every note. */
+  whole: boolean
+}
+
+/**
+ * The notes inside a clip that a command names — "the first chord", "the
+ * third note", "the notes above C5", "the chord at bar 3" — or every note
+ * when nothing inside it was named.
+ *
+ * ⚠️ THE RECORD, 23:37: "the 1st chord in pad intro" → all fourteen notes.
+ * A chord is a moment when two or more notes start together; see
+ * lib/note-address.ts.
+ */
+function pickNotes(clip: MidiClip, i: Record<string, unknown>, maps: MusicMaps, project: DawProject): PickedPart | { problem: string } {
+  const said = str(i.notes).trim()
+  const parsed = said ? parseNoteAddress(said) : null
+  const all = clip.notes ?? []
+  if (!parsed) return { notes: all, label: 'the notes', startBeat: 0, endBeat: clip.durationBeats, whole: true }
+  const addr: NoteAddress = { ...parsed.addr }
+  const rel = (p: Placed): number | null => (p.beat == null ? null : p.beat - clip.startBeat)
+  if (parsed.atSaid) { const p = placeOf(parsed.atSaid, maps, project); if (p.problem) return { problem: p.problem }; const b = rel(p); if (b != null) addr.at = b }
+  if (parsed.fromSaid) { const p = placeOf(parsed.fromSaid, maps, project); if (p.problem) return { problem: p.problem }; const b = rel(p); if (b != null) addr.from = b }
+  if (parsed.toSaid) { const p = placeOf(parsed.toSaid, maps, project); if (p.problem) return { problem: p.problem }; const b = rel(p); if (b != null) addr.to = b }
+  if (parsed.atSeconds != null) { const s = spanOf({ seconds: parsed.atSeconds }, clip.startBeat, maps); if (s.beats != null) addr.at = s.beats }
+  let picked = addressNotes(all, addr)
+  let label = parsed.label
+  // "The first chord" of a part that has no chords is its first note — a
+  // melody's opening, which is what anybody pointing at it means.
+  if (!picked.notes.length && (addr.chord === 'first' || addr.chord === 1) && addr.note == null) {
+    picked = addressNotes(all, { ...addr, chord: undefined, note: 'first' })
+    if (picked.notes.length) label = 'the first note (there is no chord)'
+  }
+  return { notes: picked.notes, label, startBeat: picked.startBeat, endBeat: picked.endBeat, chords: picked.chords, whole: false }
+}
+
+/**
+ * A set of tracks, when the words name one — "all the drum tracks", "every
+ * muted track", "the tracks with reverb" — or the selection's tracks.
+ */
+function trackAddressOf(i: Record<string, unknown>, target: string, project: DawProject, heard?: VoiceContext): TrackAddress | null {
+  if (target.startsWith('#sel:')) {
+    const ids = target.slice(5).split(',').filter(Boolean)
+    const trackIds = [...new Set(allClips(project).filter(c => ids.includes(c.id)).map(c => c.trackId))]
+    return trackIds.length ? { ids: trackIds } : null
+  }
+  const t = target.toLowerCase().trim()
+  if (/^(?:the\s+)?(?:selected tracks?|these tracks?|those tracks?)$/.test(t) && heard?.selectedClipIds?.length) {
+    const ids = heard.selectedClipIds
+    const trackIds = [...new Set(allClips(project).filter(c => ids.includes(c.id)).map(c => c.trackId))]
+    if (heard.selectedTrackId && !trackIds.includes(heard.selectedTrackId)) trackIds.push(heard.selectedTrackId)
+    return trackIds.length ? { ids: trackIds } : null
+  }
+  const only = Array.isArray(i.only) ? (i.only as unknown[]).map(x => String(x).toLowerCase()) : typeof i.only === 'string' ? [i.only.toLowerCase()] : []
+  const except = Array.isArray(i.except) ? (i.except as unknown[]).map(x => String(x)) : typeof i.except === 'string' ? [i.except] : []
+  const withEffect = typeof i.withEffect === 'string' && i.withEffect.trim() ? i.withEffect.trim() : undefined
+  const explicit = i.all === true || only.length > 0 || except.length > 0 || !!withEffect
+  const parsed = parseTrackAddress(target)
+  if (!explicit && !parsed) return null
+  const addr: TrackAddress = { ...(parsed ?? {}) }
+  if (i.all === true) addr.all = true
+  if (only.length) addr.only = [...new Set([...(addr.only ?? []), ...only.map(o => TRACK_WORDS[o] ?? TRACK_WORDS[o.replace(/s$/, '')] ?? o)])] as TrackAddress['only']
+  if (except.length) addr.except = [...(addr.except ?? []), ...except]
+  if (withEffect) addr.withEffect = withEffect
+  if (explicit && !parsed && !addr.name) {
+    const name = t.replace(/^(?:the|all|every|each)\s+/, '').replace(/\s+tracks?$/, '').trim()
+    if (name && !/^(?:tracks?|everything|all|every|each|them|these|those)$/.test(name)) addr.name = name
+  }
+  return addr
+}
+
+function describeTrackAddress(a: TrackAddress): string {
+  const parts: string[] = []
+  if (a.ids) parts.push('selected')
+  if (a.name) parts.push(`called "${a.name}"`)
+  if (a.only?.length) parts.push(`that are ${a.only.join(' and ')}`)
+  if (a.withEffect) parts.push(`with ${a.withEffect}`)
+  if (a.except?.length) parts.push(`except ${a.except.join(' and ')}`)
+  return parts.join(' ') || 'like that'
+}
+
+function describeAddress(a: ClipAddress, maps: MusicMaps): string {
+  const parts: string[] = []
+  if (a.name) parts.push(`named "${a.name}"`)
+  if (a.ids) parts.push(a.ids.length === 1 ? '(selected)' : `(the ${a.ids.length} selected)`)
+  if (a.track) parts.push(`on ${a.track}`)
+  if (a.section) parts.push(`in the ${a.section}`)
+  if (a.which === 'first') parts.push('(the first)')
+  else if (a.which === 'last') parts.push('(the last)')
+  else if (typeof a.which === 'number') parts.push(`(number ${a.which})`)
+  if (a.at != null) parts.push(`at ${describeBeat(a.at, maps)}`)
+  if (a.after != null) parts.push(`from ${describeBeat(a.after, maps)}`)
+  if (a.before != null) parts.push(`before ${describeBeat(a.before, maps)}`)
+  if (a.shorterThan != null) parts.push(`shorter than ${+a.shorterThan.toFixed(2)} beats`)
+  if (a.longerThan != null) parts.push(`longer than ${+a.longerThan.toFixed(2)} beats`)
+  return parts.join(' ') || 'like that'
+}
+
 function resolveClip(spoken: string, p: DawProject): { clip: DawClip; how: string } | null {
   // An id, handed back when a question is answered: the choice was made against
   // a specific clip and must not be re-resolved by name, or answering the
   // question would land in the same ambiguity that prompted it.
+  if (spoken.startsWith('#sel:')) {
+    // The selection, several clips: a one-clip command takes the first.
+    const ids = spoken.slice(5).split(',').filter(Boolean)
+    const clip = allClips(p).find(c => ids.includes(c.id))
+    return clip ? { clip, how: ids.length > 1 ? `"${clip.name ?? clip.id}" (the first of ${ids.length} selected)` : `"${clip.name ?? clip.id}"` } : null
+  }
   if (spoken.startsWith('#')) {
     const clip = allClips(p).find(c => c.id === spoken.slice(1))
     return clip ? { clip, how: `"${clip.name ?? clip.id}"` } : null
@@ -864,6 +1055,10 @@ function resolveTrack(spoken: string, p: DawProject): DawTrack | null {
  *  each syllable landed. The tool call says which syllables; this says when. */
 export interface VoiceContext {
   words?: { word: string; confidence?: number; s?: number; e?: number }[]
+  /** The clips selected in the studio, so "them" / "these" can mean a set. */
+  selectedClipIds?: string[]
+  /** The track selected in the studio. */
+  selectedTrackId?: string
   /**
    * What was actually said, as one string.
    *
@@ -945,6 +1140,7 @@ function namePlayingNotes(
   target: string,
   maps: ReturnType<typeof mapsOf>,
   atBeat?: number,
+  notesAsked?: string,
 ): string {
   const clips = (project.arrangementClips ?? []).filter(
     (c): c is MidiClip => (c as MidiClip).kind === 'midi' && !!(c as MidiClip).notes?.length,
@@ -955,6 +1151,7 @@ function namePlayingNotes(
 
   let sounding: { pitch: number; track: string }[] = []
   let where = ''
+  let progression = ''
 
   if (target) {
     const chosen = resolveClipOrAsk(target, project, maps, 'name_notes', {})
@@ -965,10 +1162,36 @@ function namePlayingNotes(
       : track ? clips.filter(c => c.trackId === track.id) : []
     if (!wanted.length) return `I couldn't find "${target}".`
     where = `in ${clip?.name || track?.name || target}`
+    // ── A part of the clip ──────────────────────────────────────────────
+    // ⚠️ THE RECORD, 23:37: "What is the chord, the 1st chord in pad intro,
+    // about a 2nd into it?" → all fourteen notes in the clip, "that's E".
+    // A chord is a moment; the clip holds several. Named, it is answered
+    // on its own, with where it sits.
+    const notesSaid = String(notesAsked ?? '').trim()
+    const source = clip ?? wanted[0]
+    if (notesSaid && source) {
+      const pick = pickNotes(source, { notes: notesSaid }, maps, project)
+      if ('problem' in pick) return pick.problem
+      if (!pick.notes.length) return `I couldn't find ${pick.label} in "${source.name}".`
+      const uniqP = [...new Set(pick.notes.map(n => n.pitch))].sort((a, b) => a - b)
+      const chordName = uniqP.length > 1 ? nameChord(uniqP) : null
+      const at = describeBeat(source.startBeat + pick.startBeat, maps)
+      return `${pick.label[0].toUpperCase()}${pick.label.slice(1)} in "${source.name}" (${at}): ${uniqP.map(pitchName).join(', ')}${chordName ? ` - that's ${chordName}` : ''}.`
+    }
     sounding = wanted.flatMap(c => c.notes.map(n => ({
       pitch: n.pitch,
       track: (project.tracks ?? []).find(t => t.id === c.trackId)?.name ?? '',
     })))
+    // A whole clip with a progression in it: name the chords in order, so
+    // "what are the chords in the pad" is answered as chords, not as one
+    // pile of fourteen notes.
+    if (clip) {
+      const chords = chordsOf(clip.notes ?? [])
+      if (chords.length > 1) {
+        const names = chords.map(c => nameChord([...new Set(c.notes.map(n => n.pitch))].sort((a, b) => a - b)) ?? c.notes.map(n => pitchName(n.pitch)).join(' '))
+        progression = ` ${chords.length} chords: ${names.join(', ')}.`
+      }
+    }
   } else {
     if (atBeat == null) {
       return 'Point me at a track or clip and I\'ll name its notes - I can\'t see where the playhead is.'
@@ -1000,7 +1223,7 @@ function namePlayingNotes(
   const chord = nameChord(uniq)
   // The chord name is the answer to "what chord is this"; the note list is the
   // answer to "what notes". Saying both costs one clause and covers both.
-  return `${names} ${where}${chord ? ` - that's ${chord}` : ''}.`
+  return `${names} ${where}${chord ? ` - that's ${chord}` : ''}.${progression}`
 }
 
 /**
@@ -1203,18 +1426,36 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (!src) return fail(`I couldn't find "${target || 'that'}" — say the track or clip name.`)
       if (!('notes' in src) || !(src as MidiClip).notes.length) return fail(`"${src.name}" has no notes to copy — it is ${'notes' in src ? 'empty' : 'an audio clip'}.`)
       const notes = (src as MidiClip).notes
-      const partSaid = str(i.part).toLowerCase().trim()
+      const partSaid = (str(i.notes) || str(i.part)).toLowerCase().trim()
       let picked: (typeof notes)[number][]
       let partLabel: string
       let spanBeats: number
-      if (/chord|first note|opening note/.test(partSaid) || !partSaid) {
-        const firstOn = Math.min(...notes.map(n => n.startBeat))
-        picked = notes.filter(n => Math.abs(n.startBeat - firstOn) < 0.13)
-        const nextOn = Math.min(...notes.filter(n => n.startBeat > firstOn + 0.13).map(n => n.startBeat), Infinity)
-        const held = Math.max(...picked.map(n => n.durationBeats))
-        spanBeats = Math.max(0.25, Number.isFinite(nextOn) ? Math.min(held, nextOn - firstOn) : held)
-        picked = picked.map(n => ({ ...n, startBeat: 0, durationBeats: Math.min(n.durationBeats, spanBeats) }))
-        partLabel = picked.length > 1 ? `the first chord (${picked.length} notes)` : 'the first note'
+      const noteAddr = partSaid ? parseNoteAddress(partSaid) : null
+      if (noteAddr || !partSaid) {
+        // ── A chord, told apart from the rest ─────────────────────────
+        //
+        // ⚠️ THE RECORD, 23:37: "the 1st chord in pad intro" → every note in
+        // the clip. A chord is a moment when two or more notes start
+        // together, and a clip holds several; "the first chord", "the third
+        // chord", "the last chord", "the chord at bar 3" name ONE of them.
+        // See lib/note-address.ts.
+        const pick = pickNotes(src as MidiClip, { notes: partSaid || 'the first chord' }, maps, project)
+        if ('problem' in pick) return fail(pick.problem)
+        if (!pick.notes.length) return fail(`I couldn't find ${pick.label} in "${src.name}".`)
+        const start = pick.startBeat
+        spanBeats = Math.max(0.25, pick.endBeat - start)
+        // A chord's notes land together: a strum's few hundredths of a beat
+        // become one block chord on the grid.
+        const snapped = (n: { startBeat: number }): number => {
+          const rel = n.startBeat - start
+          return pick.chords?.length && rel < 0.2 ? 0 : rel
+        }
+        picked = pick.notes.map(n => ({
+          ...n,
+          startBeat: snapped(n),
+          durationBeats: Math.max(0.05, Math.min(n.durationBeats, spanBeats - snapped(n))),
+        }))
+        partLabel = `${pick.label} (${pick.notes.length} note${pick.notes.length === 1 ? '' : 's'})`
       } else {
         const span = spanOf(i.part, src.startBeat, maps)
         if (span.problem || span.beats == null) return fail(`Say which part — "the first chord", "the first bar", "the first two bars".`)
@@ -1228,7 +1469,11 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const at = place.beat ?? src.startBeat
       const times = Math.max(1, Math.min(64, spokenNumber(i.times as string) ?? 1))
       const bar = project.timeSignatureNum || 4
-      const clipLen = Math.max(spanBeats, Math.min(bar, spanBeats))
+      // ⚠️ WHOLE BARS. The record, 23:39: "Pad intro part isn't 1 full bar
+      // long. It's slightly shorter." The chord's notes were a hair under four
+      // beats, so the clip was too, and repeating it drifted off the grid. A
+      // part is rounded up to the bar it sits in.
+      const clipLen = Math.max(bar, Math.ceil(spanBeats / bar - 1e-6) * bar)
       const actions = Array.from({ length: times }, (_, n) => ({
         type: 'ADD_CLIP',
         clip: {
@@ -1514,14 +1759,19 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
 
     // MOVE — "move everything over by one bar"
     case 'move_clips': {
-      const chosen = target
-        ? (() => {
-          const track = resolveTrack(target, project)
-          if (track) return allClips(project).filter(c => c.trackId === track.id)
-          const one = resolveClip(target, project)
-          return one ? [one.clip] : []
-        })()
-        : allClips(project)
+      // A set — "all the pad intro parts", "the pad clips after bar 9" — moves
+      // together; a track name means everything on it; a plain clip name, one.
+      const moveAddr = clipAddressOf(i, target, maps, project, heard)
+      const chosen = moveAddr
+        ? addressClips(project, moveAddr)
+        : target
+          ? (() => {
+            const track = resolveTrack(target, project)
+            if (track) return allClips(project).filter(c => c.trackId === track.id)
+            const one = resolveClip(target, project)
+            return one ? [one.clip] : []
+          })()
+          : allClips(project)
 
       // ── EXCEPT ───────────────────────────────────────────────────────────
       //
@@ -1624,7 +1874,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         // filter sweeps stayed where they were.
         // Says what was LEFT as well as what moved: "except" is only believable
         // if the read-back proves it was heard.
-        say: `Moved ${target ? `${clips.length} clip${clips.length === 1 ? '' : 's'} on ${target}` : `${spared.size ? clips.length : 'all ' + clips.length} clips`}${carried ? ' and their automation' : ''} ${spoken ? describeDuration(spoken, Math.abs(by)) : `${Math.abs(by)} beats`} ${by > 0 ? 'later' : 'earlier'}${spared.size ? `, leaving ${exceptions.join(' and ')} where ${spared.size === 1 ? 'it was' : 'they were'}` : ''}.`,
+        say: `Moved ${target ? (target.startsWith('#') ? `${clips.length} selected clip${clips.length === 1 ? '' : 's'}` : `${clips.length} clip${clips.length === 1 ? '' : 's'} on ${target}`) : `${spared.size ? clips.length : 'all ' + clips.length} clips`}${carried ? ' and their automation' : ''} ${spoken ? describeDuration(spoken, Math.abs(by)) : `${Math.abs(by)} beats`} ${by > 0 ? 'later' : 'earlier'}${spared.size ? `, leaving ${exceptions.join(' and ')} where ${spared.size === 1 ? 'it was' : 'they were'}` : ''}.`,
       }
     }
 
@@ -1745,8 +1995,6 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     case 'set_track': {
-      const track = resolveTrack(target, project)
-      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
       const patch: Record<string, unknown> = {}
       const said: string[] = []
       if (i.muted != null) { patch.mute = !!i.muted; said.push(i.muted ? 'muted' : 'unmuted') }
@@ -1755,27 +2003,59 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (vol != null) { patch.volume = Math.max(0, Math.min(1, vol)); said.push(`volume ${Math.round(vol * 100)}%`) }
       const pan = spokenNumber(i.pan as string)
       if (pan != null) { patch.pan = Math.max(-1, Math.min(1, pan / 100)); said.push(`pan ${pan > 0 ? 'right' : 'left'} ${Math.abs(pan)}%`) }
+      // A move rather than a level — "turn the drum tracks down a bit" —
+      // because each track in a set starts from its own fader.
+      const by = spokenNumber(i.volumeBy as string)
+      const db = spokenNumber(i.volumeDb as string)
+      const relative = by != null || db != null
+      if (relative) said.push(db != null ? `volume ${db > 0 ? 'up' : 'down'} ${Math.abs(db)} dB` : `volume ${(by ?? 0) > 0 ? 'up' : 'down'} ${Math.abs(by ?? 0)} points`)
+      const patchFor = (t: DawTrack): Record<string, unknown> => {
+        if (!relative) return patch
+        const now = typeof t.volume === 'number' ? t.volume : 0.8
+        const next = db != null ? now * Math.pow(10, db / 20) : now + (by ?? 0) / 100
+        return { ...patch, volume: Math.max(0, Math.min(1, next)) }
+      }
       if (!said.length) return fail('Say what to change about that track.')
-      return { actions: [{ type: 'UPDATE_TRACK', trackId: track.id, patch }], say: `${track.name}: ${said.join(', ')}.` }
+      // ── A set of tracks ──────────────────────────────────────────────
+      // "mute all the drum tracks", "unmute every muted track", "turn down
+      // the tracks with reverb", "mute these" with several clips selected.
+      const taddr = trackAddressOf(i, target, project, heard)
+      if (taddr) {
+        const tracks = addressTracks(project, taddr)
+        if (!tracks.length) return fail(`I couldn't find any tracks ${describeTrackAddress(taddr)}.`)
+        return {
+          actions: tracks.map(t => ({ type: 'UPDATE_TRACK', trackId: t.id, patch: patchFor(t) })),
+          say: `${tracks.length} track${tracks.length === 1 ? '' : 's'} ${said.join(', ')}: ${describeTracks(tracks)}.`,
+        }
+      }
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      return { actions: [{ type: 'UPDATE_TRACK', trackId: track.id, patch: patchFor(track) }], say: `${track.name}: ${said.join(', ')}.` }
     }
 
     case 'transpose': {
       const semis = spokenNumber(i.semitones as string)
       if (semis == null || semis === 0) return fail('Say how many semitones to move it.')
-      const chosen = resolveClipOrAsk(target, project, maps, 'transpose', { semitones: semis })
-      if (chosen.ask) return { actions: [], say: '', ask: chosen.ask }
-      const found = chosen.clip ? { clip: chosen.clip, how: chosen.how ?? '' } : null
-      if (!found) return fail(`I couldn't find "${target || 'that'}" to transpose.`)
-      const clip = found.clip
-      if (!('notes' in clip)) return fail('That is an audio clip — transposing audio is not supported yet.')
-      const notes = (clip as MidiClip).notes
-      if (!notes.length) return fail('That clip has no notes.')
+      const got = clipsForEdit(i, target, maps, project, heard, 'transpose', { semitones: semis })
+      if (got.ask) return { actions: [], say: '', ask: got.ask }
+      if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}" to transpose.`)
+      const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
+      if (!midi.length) return fail('That is an audio clip — transposing audio is not supported yet.')
+      const actions: unknown[] = []
+      let label = ''
+      for (const clip of midi) {
+        const pick = pickNotes(clip, i, maps, project)
+        if ('problem' in pick) return fail(pick.problem)
+        if (!pick.whole && !pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
+        if (!pick.whole) label = pick.label
+        for (const n of pick.notes) {
+          actions.push({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { pitch: Math.max(0, Math.min(127, n.pitch + semis)) } })
+        }
+      }
+      if (!actions.length) return fail('That clip has no notes.')
       return {
-        actions: notes.map(n => ({
-          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
-          patch: { pitch: Math.max(0, Math.min(127, n.pitch + semis)) },
-        })),
-        say: `Transposed ${found.how} ${Math.abs(semis)} semitone${Math.abs(semis) === 1 ? '' : 's'} ${semis > 0 ? 'up' : 'down'}.`,
+        actions,
+        say: `Transposed ${label ? `${label} of ` : ''}${got.how} ${Math.abs(semis)} semitone${Math.abs(semis) === 1 ? '' : 's'} ${semis > 0 ? 'up' : 'down'}.`,
       }
     }
 
@@ -1835,6 +2115,17 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     case 'remove_track': {
+      // "delete the empty tracks", "remove every muted track" — a set.
+      const taddr = trackAddressOf(i, target, project, heard)
+      if (taddr) {
+        const tracks = addressTracks(project, taddr)
+        if (!tracks.length) return fail(`I couldn't find any tracks ${describeTrackAddress(taddr)}.`)
+        const clipCount = allClips(project).filter(c => tracks.some(t => t.id === c.trackId)).length
+        return {
+          actions: tracks.map(t => ({ type: 'REMOVE_TRACK', trackId: t.id })),
+          say: `Deleted ${tracks.length} track${tracks.length === 1 ? '' : 's'}${clipCount ? ` and ${clipCount} clip${clipCount === 1 ? '' : 's'}` : ''}: ${describeTracks(tracks)}.`,
+        }
+      }
       const track = resolveTrack(target, project)
       if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
       const clips = allClips(project).filter(c => c.trackId === track.id).length
@@ -2212,12 +2503,29 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     case 'remove_clip': {
+      // ── Many at once ───────────────────────────────────────────────────
+      //
+      // The record, 23:43: "Delete all pad intro part" → one clip, five times
+      // over, one command each. "All", a number, a place or a length names a
+      // SET, and the set is deleted together — as one undo step.
+      const addr = clipAddressOf(i, target, maps, project, heard)
+      if (addr) {
+        const set = addressClips(project, addr)
+        if (!set.length) return fail(`I couldn't find any clips ${describeAddress(addr, maps)}.`)
+        const tracks = [...new Set(set.map(c => project.tracks.find(t => t.id === c.trackId)?.name).filter(Boolean))]
+        return {
+          actions: set.map(c => ({ type: 'REMOVE_CLIP', clipId: c.id })),
+          say: set.length === 1
+            ? `Deleted ${clipLabel(project, set[0])} at ${describeBeat(set[0].startBeat, maps)}.`
+            : `Deleted ${set.length} clips ${describeAddress(addr, maps)} on ${tracks.join(' and ')}.`,
+        }
+      }
       const found = resolveClip(target, project)
       if (!found) return fail(`I couldn't find "${target || 'that'}" to delete.`)
       const track = project.tracks.find(t => t.id === found.clip.trackId)
       return {
         actions: [{ type: 'REMOVE_CLIP', clipId: found.clip.id }],
-        say: `Deleted the clip at ${describeBeat(found.clip.startBeat, maps)}${track ? ` on "${track.name}"` : ''}.`,
+        say: `Deleted ${clipLabel(project, found.clip)} at ${describeBeat(found.clip.startBeat, maps)}${track ? ` on "${track.name}"` : ''}.`,
       }
     }
 
@@ -2292,12 +2600,11 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     case 'set_velocity': {
-      const found = resolveClip(target, project)
-      if (!found) return fail(`I couldn't find "${target || 'that'}".`)
-      const clip = found.clip
-      if (!('notes' in clip)) return fail('That is an audio clip — velocity is a note thing.')
-      const notes = (clip as MidiClip).notes
-      if (!notes.length) return fail('That clip has no notes.')
+      const got = clipsForEdit(i, target, maps, project, heard, 'set_velocity', {})
+      if (got.ask) return { actions: [], say: '', ask: got.ask }
+      if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}".`)
+      const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
+      if (!midi.length) return fail('That is an audio clip — velocity is a note thing.')
 
       const absolute = spokenNumber(i.velocity as string)
       const pct = spokenNumber(i.scale as string)
@@ -2309,16 +2616,26 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         // which is a deletion wearing a dynamics command's clothes.
         return Math.max(1, Math.min(127, Math.round(raw)))
       }
-      const changed = notes.filter(n => next(n.velocity) !== n.velocity)
-      if (!changed.length) return { actions: [], say: 'Those notes are already there.' }
+      const actions: unknown[] = []
+      let label = ''
+      let any = 0
+      for (const clip of midi) {
+        const pick = pickNotes(clip, i, maps, project)
+        if ('problem' in pick) return fail(pick.problem)
+        if (!pick.whole && !pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
+        if (!pick.whole) label = pick.label
+        any += pick.notes.length
+        for (const n of pick.notes) {
+          if (next(n.velocity) === n.velocity) continue
+          actions.push({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { velocity: next(n.velocity) } })
+        }
+      }
+      if (!any) return fail('That clip has no notes.')
+      if (!actions.length) return { actions: [], say: 'Those notes are already there.' }
+      const what = `${label ? `${label} of ` : ''}${got.how}`
       return {
-        actions: changed.map(n => ({
-          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
-          patch: { velocity: next(n.velocity) },
-        })),
-        say: absolute != null
-          ? `${found.how}: velocity ${absolute}.`
-          : `${found.how}: ${pct}% of the velocity.`,
+        actions,
+        say: absolute != null ? `${what}: velocity ${absolute}.` : `${what}: ${pct}% of the velocity.`,
       }
     }
 
@@ -3018,6 +3335,22 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (doing === 'remove') {
         if (!notes.length) return fail(`"${clip.name}" has no notes in it.`)
         const which = str(i.which).toLowerCase()
+        // ── Notes by address ────────────────────────────────────────────
+        // "the third note", "the notes above C5", "every C", "the last
+        // chord": one or many, named. See lib/note-address.ts.
+        const notesSaid = str(i.notes).trim()
+          || (which && !['first', 'last', 'highest', 'lowest'].includes(which) ? `the ${which} note` : '')
+        if (notesSaid) {
+          const pick = pickNotes(clip as MidiClip, { notes: notesSaid }, maps, project)
+          if ('problem' in pick) return fail(pick.problem)
+          if (!pick.notes.length) return fail(`I couldn't find ${pick.label} in "${clip.name}".`)
+          return {
+            actions: pick.notes.map(n => ({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: n.id })),
+            say: pick.notes.length === 1
+              ? `Took the ${pitchName(pick.notes[0].pitch)} (${pick.label}) out of "${clip.name}".`
+              : `Took ${pick.notes.length} notes (${pick.label}) out of "${clip.name}".`,
+          }
+        }
         const said = spokenPitch(str(i.note))
         const pick = said != null
           ? [...notes].reverse().find(n => n.pitch === said)
@@ -3665,6 +3998,23 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const what = str(i.what).toLowerCase() || 'all'
       const clips = allClips(project)
       if (what === 'none') return { actions: [{ type: 'SELECT', clipIds: [] }], say: 'Nothing selected.' }
+      // ── Clips by address: one, several, or all with a name ────────────
+      //
+      // Brae: "give the voice control control over the multiselect function…
+      // so that one can be selected or many with the same name can be
+      // selected by name or by place on the track."
+      if (what === 'clips' || what === 'clip') {
+        const addr = clipAddressOf(i, target, maps, project, heard) ?? { name: parseClipAddress(target).name, which: 'all' as const, track: typeof i.track === 'string' ? i.track : undefined }
+        const set = addressClips(project, addr)
+        if (!set.length) return fail(`I couldn't find any clips ${describeAddress(addr, maps)}.`)
+        const labels = set.slice(0, 4).map(c => clipLabel(project, c))
+        return {
+          actions: [{ type: 'SELECT', clipIds: set.map(c => c.id), ...(set.length === 1 ? { trackId: set[0].trackId } : {}) }],
+          say: set.length === 1
+            ? `Selected ${labels[0]} at ${describeBeat(set[0].startBeat, maps)}.`
+            : `Selected ${set.length} clips: ${labels.join(', ')}${set.length > 4 ? ', …' : ''}.`,
+        }
+      }
       if (what === 'track') {
         const track = resolveTrack(target, project)
         if (!track) return fail(`I couldn't find "${target || 'that track'}".`)
@@ -3691,6 +4041,90 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     // ── STRIP BACK ──────────────────────────────────────────────────────
+    // ── COLOUR ──────────────────────────────────────────────────────────
+    // "colour the pad clips blue", "make the drums track red". A clip name
+    // colours the clips it addresses (all of them, if several); a track name
+    // with no such clip colours the track.
+    case 'set_colour': {
+      const col = colourOf(str(i.colour) || str(i.color) || str(i.said))
+      if (!col) return fail('Say a colour — red, orange, yellow, green, teal, blue, purple, pink, grey.')
+      const wantTrack = str(i.of).toLowerCase() === 'track'
+      // "colour all the drum tracks red", "make the muted tracks grey".
+      const taddr = (wantTrack || /\btracks\b/.test(target.toLowerCase()) || i.only != null || i.withEffect != null || i.all === true) ? trackAddressOf(i, target, project, heard) : null
+      if (taddr) {
+        const tracks = addressTracks(project, taddr)
+        if (!tracks.length) return fail(`I couldn't find any tracks ${describeTrackAddress(taddr)}.`)
+        return {
+          actions: tracks.map(t => ({ type: 'UPDATE_TRACK', trackId: t.id, patch: { color: col.hex } })),
+          say: tracks.length === 1 ? `"${tracks[0].name}" is ${col.name} now.` : `${tracks.length} tracks are ${col.name} now: ${describeTracks(tracks)}.`,
+        }
+      }
+      const track = resolveTrack(target, project)
+      const addr = clipAddressOf(i, target, maps, project, heard) ?? { name: parseClipAddress(target).name, which: 'all' as const }
+      const set = wantTrack ? [] : addressClips(project, addr)
+      if (set.length && (!track || str(i.of).toLowerCase() === 'clip' || set.some(c => foldName(c.name ?? '') === foldName(parseClipAddress(target).name)))) {
+        return {
+          actions: set.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: { color: col.hex } })),
+          say: set.length === 1 ? `${clipLabel(project, set[0])} is ${col.name} now.` : `${set.length} clips are ${col.name} now.`,
+        }
+      }
+      if (track) return { actions: [{ type: 'UPDATE_TRACK', trackId: track.id, patch: { color: col.hex } }], say: `"${track.name}" is ${col.name} now.` }
+      return fail(`I couldn't find "${target || 'that'}" to colour.`)
+    }
+
+    // ── AN AUDIO CLIP'S OWN SHAPE ───────────────────────────────────────
+    // Fades, gain, reverse, loop — the things in the clip's own settings that
+    // had no way to be said.
+    case 'set_clip_audio': {
+      const addr = clipAddressOf(i, target, maps, project, heard)
+      const set = addr ? addressClips(project, addr) : (() => { const f = resolveClip(target, project); return f ? [f.clip] : [] })()
+      if (!set.length) return fail(`I couldn't find "${target || 'that'}".`)
+      const patch: Record<string, unknown> = {}
+      const said: string[] = []
+      if (i.fadeIn != null) { const s = spanOf(i.fadeIn, set[0].startBeat, maps); if (s.problem || s.beats == null) return fail('Say how long the fade in should be — "over one bar".'); patch.fadeIn = s.beats; said.push(`fade in over ${s.said ? describeDuration(s.said, s.beats) : `${s.beats} beats`}`) }
+      if (i.fadeOut != null) { const s = spanOf(i.fadeOut, set[0].startBeat, maps); if (s.problem || s.beats == null) return fail('Say how long the fade out should be — "over two beats".'); patch.fadeOut = s.beats; said.push(`fade out over ${s.said ? describeDuration(s.said, s.beats) : `${s.beats} beats`}`) }
+      if (i.gain != null) { const g = spokenFraction(i.gain as string); if (g == null) return fail('Say the clip level as a percentage.'); patch.gain = Math.max(0, Math.min(2, g)); said.push(`level ${Math.round(g * 100)}%`) }
+      if (typeof i.reverse === 'boolean') { patch.reverse = i.reverse; said.push(i.reverse ? 'reversed' : 'playing forwards') }
+      if (typeof i.loop === 'boolean') { patch.loopEnabled = i.loop; said.push(i.loop ? 'looping' : 'not looping') }
+      if (!said.length) return fail('Say what to change — a fade in, a fade out, the level, reverse, or loop.')
+      const audioOnly = 'fadeIn' in patch || 'fadeOut' in patch || 'gain' in patch || 'reverse' in patch
+      const targets = audioOnly ? set.filter(c => c.kind === 'audio') : set
+      if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level and reverse are for audio clips. Its notes have a Sound panel instead.`)
+      return {
+        actions: targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch })),
+        say: `${targets.length === 1 ? clipLabel(project, targets[0]) : `${targets.length} clips`}: ${said.join(', ')}.`,
+      }
+    }
+
+    // ── TRACK ORDER ─────────────────────────────────────────────────────
+    // "move the drums to the top", "put the pad below the bass".
+    case 'move_track': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const order = (project.tracks ?? []).filter(t => !t.groupId || t.kind === 'group')
+      const idx = order.findIndex(t => t.id === track.id)
+      const to = str(i.to).toLowerCase()
+      let beforeId: string | null | undefined
+      let where = ''
+      if (i.before != null || i.after != null) {
+        const other = resolveTrack(str(i.before ?? i.after), project)
+        if (!other) return fail(`I couldn't find a track called "${str(i.before ?? i.after)}".`)
+        if (other.id === track.id) return { actions: [], say: `"${track.name}" is already there.` }
+        const oi = order.findIndex(t => t.id === other.id)
+        if (i.before != null) { beforeId = other.id; where = `above "${other.name}"` }
+        else { beforeId = order[oi + 1]?.id ?? null; where = `below "${other.name}"` }
+      } else if (to === 'top' || to === 'first') { beforeId = order[0]?.id ?? null; where = 'at the top' }
+      else if (to === 'bottom' || to === 'last' || to === 'end') { beforeId = null; where = 'at the bottom' }
+      else if (to === 'up') { if (idx <= 0) return { actions: [], say: `"${track.name}" is already at the top.` }; beforeId = order[idx - 1].id; where = 'up one' }
+      else if (to === 'down') { if (idx < 0 || idx >= order.length - 1) return { actions: [], say: `"${track.name}" is already at the bottom.` }; beforeId = order[idx + 2]?.id ?? null; where = 'down one' }
+      else return fail('Say where — "to the top", "to the bottom", "up", "down", "above the bass".')
+      if (beforeId === track.id) return { actions: [], say: `"${track.name}" is already ${where}.` }
+      return {
+        actions: [{ type: 'MOVE_TRACK', trackId: track.id, beforeId: beforeId ?? null }],
+        say: `Moved "${track.name}" ${where}.`,
+      }
+    }
+
     case 'strip_back': {
       const tracks = (project.tracks ?? []).filter(t => t.kind !== 'group')
       if (i.restore === true) {
@@ -4417,7 +4851,7 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     // WHAT NOTES - name what is sounding.
     case 'name_notes': {
       // A question, not an edit: it changes nothing and answers out loud.
-      return { actions: [], say: namePlayingNotes(project, target, maps, heard?.atBeat) }
+      return { actions: [], say: namePlayingNotes(project, target, maps, heard?.atBeat, str(i.notes) || str(i.part)) }
     }
 
     // ── UNDO / REDO ─────────────────────────────────────────────────────

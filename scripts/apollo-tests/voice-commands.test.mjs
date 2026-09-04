@@ -117,7 +117,14 @@ const PROJECT = {
     track('t6', 'Lead', 0.8, { solo: true }), track('t7', 'Keys'),
     // Apollo, because the sub and noise layers only exist on an Apollo patch
     // and there was no such track to point an example at.
-    track('t8', 'Synth', 0.8, { instrument: { type: 'apollo', params: APOLLO_PATCH } })].map(t =>
+    track('t8', 'Synth', 0.8, { instrument: { type: 'apollo', params: APOLLO_PATCH } }),
+    // An audio track with a take on it, for a clip's own fades, level, reverse
+    // and loop — every other clip here is MIDI, and those are refused.
+    track('t9', 'Vox', 0.8, { type: 'audio' }),
+    // A part with a progression in it — four chords, the top note above C5 —
+    // for "the third chord" and "the notes above C5"; and an empty track, for
+    // "delete the empty tracks".
+    track('t10', 'Organ'), track('t11', 'Spare')].map(t =>
     // Effects on SOME tracks, not all. Both cases have to exist in one project:
     // "take the reverb off the drums" needs a reverb to take off, and "put
     // reverb on the vocals" needs a track that has not got one — a fixture
@@ -146,6 +153,13 @@ const PROJECT = {
     clip('c5', 't5', 'Vocals clip', 4, 64),
     clip('c6', 't6', 'Lead clip', 8, 72),
     clip('c8', 't8', 'Synth clip', 0, 64),
+    { kind: 'audio', id: 'c9', trackId: 't9', name: 'Vox take', startBeat: 0, durationBeats: 16, sampleId: 's-vox', duration: 8, offset: 0, gain: 1, fadeIn: 0, fadeOut: 0 },
+    {
+      kind: 'midi', id: 'c10', trackId: 't10', name: 'Organ chords', startBeat: 0, durationBeats: 16, isDrumClip: false,
+      notes: [[60, 64, 67], [62, 65, 69], [64, 67, 71], [67, 71, 74]].flatMap((chord, i) => chord.map((pitch, k) => ({
+        id: `org-${i}-${k}`, pitch, startBeat: i * 4, durationBeats: 4, velocity: 100,
+      }))),
+    },
     // ⚠️ On its OWN track. Putting it on the Pad gave that track two clips,
     // which made "the pad" ambiguous and broke transpose and duplicate_clip —
     // a fixture addition that quietly changed what other examples mean.
@@ -173,7 +187,7 @@ const PROJECT = {
 const CTX = {
   tracks: PROJECT.tracks,
   tempo: PROJECT.tempo,
-  clips: PROJECT.arrangementClips.map(c => ({ id: c.id, name: c.name, trackId: c.trackId })),
+  clips: PROJECT.arrangementClips.map(c => ({ id: c.id, name: c.name, trackId: c.trackId, kind: c.kind })),
   // The sound library. It is not part of the song — it lives on the machine —
   // so the rules resolve a name against it and hand the executor an id.
   library: [

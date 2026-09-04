@@ -149,4 +149,7 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   'describe.effects': 'Lists the devices on a track in signal order, which is the order they actually happen in - an EQ before a compressor is a different sound from the same two the other way round.',
   'describe.volume': 'Says where a track fader is set, as a percentage - the number worth knowing before saying "a bit louder" three times and losing track of where you started.',
   'describe.position': 'Says where the loop is and whether it is on.',
+  set_colour: 'Colours a clip or a track so the arrangement reads at a glance. Colour is a label and never changes the sound. Several clips with one name are all coloured together.',
+  set_clip_audio: 'An audio clip\'s own settings: fade in, fade out, its level, reversed or not, looped or not. These live on the clip, so the track fader and its effects are untouched.',
+  move_track: 'Moves a track up or down the list, to the top or the bottom, or above or below another track. Only the order changes; nothing about the sound does.',
 }
