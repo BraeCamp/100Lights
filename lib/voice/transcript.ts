@@ -129,6 +129,20 @@ export function describeAction(a: unknown, names: { track?: (id: string) => stri
     case 'REMOVE_CLIP': return `Removed ${c(act.clipId)}`
     case 'MOVE_CLIP': return `Moved ${c(act.clipId)} to ${bar(act.startBeat, bpb)}`
     case 'MOVE_TRACK': return `Moved ${t(act.trackId)} ${act.beforeId ? `above ${t(act.beforeId)}` : 'to the bottom'}`
+    case 'WORKSPACE': {
+      const w = act as { view?: string; zoom?: string; scrollToBeat?: number; snap?: string; overlay?: string; soundPanelClipId?: string | null; focusTrackId?: string; command?: string }
+      const parts: string[] = []
+      if (w.view) parts.push(`${w.view} view`)
+      if (w.zoom) parts.push(w.zoom === 'fit' ? 'fitted the song to the screen' : `zoomed ${w.zoom}`)
+      if (w.scrollToBeat != null) parts.push(`showed ${bar(w.scrollToBeat, bpb)}`)
+      if (w.snap) parts.push(`snap ${w.snap}`)
+      if (w.overlay) parts.push(w.overlay === 'none' ? 'overlay off' : `${w.overlay} overlay`)
+      if (w.soundPanelClipId !== undefined) parts.push(`opened the sound panel${w.soundPanelClipId ? ` for ${c(w.soundPanelClipId)}` : ''}`)
+      if (w.focusTrackId) parts.push(`showed ${t(w.focusTrackId)}`)
+      if (w.command) parts.push(`ran "${w.command}"`)
+      const line = parts.join(', ') || 'workspace'
+      return `${line[0].toUpperCase()}${line.slice(1)}`
+    }
     case 'SELECT': {
       const ids = (act.clipIds ?? act.ids) as string[] | undefined
       if (Array.isArray(ids)) return ids.length === 1 ? `Selected ${c(ids[0])}` : `Selected ${ids.length} clips`

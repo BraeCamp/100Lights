@@ -75,6 +75,12 @@ function subscribe(cb: () => void): () => void {
 }
 
 /** Reactive list of all registered commands. SSR-safe (empty on the server). */
+/** Every registered command, right now — for readers that are not components
+ *  (the voice control matches what was said against these labels). */
+export function listCommands(): Command[] {
+  return snapshot
+}
+
 export function useCommands(): Command[] {
   return useSyncExternalStore(subscribe, () => snapshot, () => EMPTY)
 }

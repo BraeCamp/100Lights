@@ -51,6 +51,7 @@ import { beatToSeconds } from '../tempo-map'
 import { addressClips, parseClipAddress, clipLabel, colourOf, type ClipAddress } from '../clip-address'
 import { parseNoteAddress, addressNotes, chordsOf, type NoteAddress, type Chord } from '../note-address'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
+import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { LOWPASS_HZ, HIGHPASS_HZ, automatableParams, shortNameOf, type AutomatableParam } from '../daw-effect-params'
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '../daw-effect-catalog'
 import { nameChord, groupIntoChords } from '../chord-analysis'
@@ -2973,6 +2974,70 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     // These change what is on screen and nothing about the song, which makes
     // them the safest thing the assistant can do. Nothing here is undoable
     // because nothing here is a change to the document.
+    // ── THE WORKSPACE ─────────────────────────────────────────────────
+    //
+    // Brae: "look at more navigation options that could be wired into voice
+    // control." The view, the overlay, zoom, scroll, snap, the clip Sound
+    // panel, a track brought into view — and any command the editor's own
+    // palette offers, by name (the studio resolves that one; the planner
+    // cannot see the palette). Screen only; the song is untouched.
+    case 'workspace': {
+      const out: Record<string, unknown> = { type: 'WORKSPACE' }
+      const said: string[] = []
+      if (str(i.view)) {
+        const view = viewOf(str(i.view))
+        if (!view) return fail(`I don't know a view called "${str(i.view)}" — arrangement, session or mixer.`)
+        out.view = view
+        said.push(`${view[0].toUpperCase()}${view.slice(1)} view`)
+      }
+      const zoom = str(i.zoom).toLowerCase()
+      if (zoom) {
+        if (!['in', 'out', 'fit'].includes(zoom)) return fail('Say zoom in, zoom out, or fit.')
+        out.zoom = zoom
+        said.push(zoom === 'fit' ? 'fitted the song to the screen' : `zoomed ${zoom}`)
+      }
+      if (i.scrollTo != null) {
+        const place = placeOf(i.scrollTo, maps, project)
+        if (place.problem) return fail(place.problem)
+        if (place.beat == null) return fail('Say where to scroll to — "bar 17", "the chorus".')
+        out.scrollToBeat = place.beat
+        said.push(`showing ${describeBeat(place.beat, maps)}`)
+      }
+      if (i.snap != null && str(i.snap)) {
+        const snap = snapOf(str(i.snap))
+        if (!snap) return fail('Say what to snap to — bars, beats, eighths, sixteenths, or off.')
+        out.snap = snap
+        said.push(snap === 'off' ? 'snap off' : `snapping to ${snapLabel(snap)}`)
+      }
+      if (i.overlay != null && str(i.overlay)) {
+        const kind = overlayOf(str(i.overlay))
+        if (!kind) return fail(`I don't have an overlay called "${str(i.overlay)}".`)
+        out.overlay = kind
+        said.push(kind === 'none' ? 'overlay off' : `${OVERLAY_LABEL[kind]} overlay`)
+      }
+      if (i.soundPanel === true) {
+        const found = target ? resolveClip(target, project) : null
+        if (target && !found) return fail(`I couldn't find "${target}".`)
+        out.soundPanelClipId = found?.clip.id ?? null
+        said.push(`sound panel${found ? ` for ${clipLabel(project, found.clip)}` : ''}`)
+      }
+      if (str(i.focus)) {
+        const track = resolveTrack(str(i.focus), project)
+        if (!track) return fail(`I couldn't find a track called "${str(i.focus)}".`)
+        out.focusTrackId = track.id
+        said.push(`showing "${track.name}"`)
+      }
+      if (str(i.command)) {
+        // The studio runs it and says its name; if it has no such command,
+        // the studio says that instead.
+        out.command = str(i.command).trim()
+        said.push(out.command as string)
+      }
+      if (!said.length) return fail('Say what to show — a view, an overlay, zoom, a bar, snap, or one of the studio\'s commands.')
+      const line = said.join(', ')
+      return { actions: [out], say: line ? `${line[0].toUpperCase()}${line.slice(1)}.` : '' }
+    }
+
     case 'show_view': {
       const view = str(i.view).toLowerCase().replace(/[^a-z]/g, '')
       const open = i.open !== false

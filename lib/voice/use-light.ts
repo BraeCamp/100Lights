@@ -75,6 +75,14 @@ export interface LightStudio {
   setShowPads?: DawContextValue['setShowPads']
   setApolloRack?: DawContextValue['setApolloRack']
   setShowAppearance?: DawContextValue['setShowAppearance']
+  // Brae: "look at more navigation options that could be wired into voice
+  // control." The view, the overlay and the clip Sound panel — see the
+  // workspace tool.
+  view?: DawContextValue['view']
+  setView?: DawContextValue['setView']
+  overlay?: DawContextValue['overlay']
+  setOverlay?: DawContextValue['setOverlay']
+  setSoundPanel?: DawContextValue['setSoundPanel']
 }
 
 export function useLight(): LightStudio {

@@ -316,6 +316,25 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'workspace',
+    description:
+      'THE WORKSPACE ITSELF — which view is up, what is overlaid, how far it is zoomed, what snaps, and the studio\'s own commands. Views: "show the mixer", "back to the arrangement", "session view". Zoom: "zoom in", "zoom out", "fit the song to the screen". Scroll: "show me bar 17", "scroll to the chorus" (the view moves, the playhead does not). Snap: "snap to bars", "snap to eighths", "turn snap off". Overlays: "show the loading overlay", "overlay what\'s not loaded", "overlay the sections", "clear the overlay". "Open the sound panel for the pad clip". "Show me the drums" brings that track into view and selects it. And ANY studio command by name — "hide the sidebar", "open the sound library", "go to the end of the song", "drop a marker at the playhead", "import an audio file" — the current list is in the state summary under "Studio commands". Changes only what is on screen, never the song.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        view: { type: 'string', enum: ['arrangement', 'session', 'mixer'] },
+        zoom: { type: 'string', enum: ['in', 'out', 'fit'] },
+        scrollTo: { ...POSITION, description: 'Bring this place into view without moving the playhead — "show me bar 17", "scroll to the chorus".' },
+        snap: { type: 'string', enum: ['off', '1/16', '1/8', 'beat', 'bar'], description: 'What the grid snaps to. "eighths" is 1/8, "sixteenths" is 1/16.' },
+        overlay: { type: 'string', description: 'An overlay by name: loading (not loaded), sync (not synced), sections, tempo, key (out of key), automation, effects, frozen, loudness, collab, unused — or "off" to clear it.' },
+        soundPanel: { type: 'boolean', description: 'Open the clip Sound panel — for `target`, or the selected clip.' },
+        focus: { type: 'string', description: 'A track to bring into view and select — "show me the drums".' },
+        target: TARGET,
+        command: { type: 'string', description: 'A studio command by its name, from the "Studio commands" list in the state summary — "Hide the sidebar", "Open Sound Library".' },
+      },
+    },
+  },
+  {
     name: 'show_view',
     description:
       'THE WORKSPACE — open or close a panel around the song: "bring up the devices for the pad", "show the effects rack on the bass", "open the Stab effects", "show automation on the drums", "show me the automation lanes on the pad", "open the pads", "let\'s edit the UI colours", "close the devices", "open the list of commands", "show me the transcript", "open the voice settings". Changes what is ON SCREEN and never changes the song, so it is safe whenever somebody asks to SEE something. ⚠️ "Show me the automation" / "show me the effects" on a track is a request to OPEN them, not to be told about them in words — use this, not describe. ⚠️ For the piano roll, the step sequencer, or moving to another part of the app, use open_editor instead — this tool does not do those.',

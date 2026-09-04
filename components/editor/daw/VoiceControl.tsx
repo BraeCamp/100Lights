@@ -29,6 +29,24 @@ import { reducer as dawReducer, makeMidiClip, makeAudioClip, extractPeaks, type 
 import { useLight } from '@/lib/voice/use-light'
 import { useRouter } from 'next/navigation'
 import { isSpeechAvailable, listen, requestMic, stripWakeWord, type SpeechHandle } from '@/lib/voice/speech'
+import { wakePhraseIn, standbyControlIn, standbyOn, setStandbyOn, standbyAwakeSeconds, setStandbyAwakeSeconds, isAwake, WAKE_PHRASES } from '@/lib/voice/wake'
+import { listCommands } from '@/lib/commands'
+import { requestArrangement, centerOnBeat } from '@/lib/daw-view'
+import { matchCommand, type SnapChoice, type OverlayChoice } from '@/lib/voice/workspace'
+
+/** The studio's own commands, for the rules and the assistant. Track / clip /
+ *  edit commands are left out: they name the selection and the music tools
+ *  already cover them by name. */
+const PALETTE_SKIP = new Set(['Track', 'Clip', 'Edit'])
+function studioCommands(): { id: string; label: string; keywords?: string; group?: string }[] {
+  return listCommands()
+    .filter(c => (c.when?.() ?? true) && !PALETTE_SKIP.has(c.group ?? ''))
+    .map(c => ({ id: c.id, label: c.label, keywords: c.keywords, group: c.group }))
+}
+function studioCommandsLine(): string {
+  const names = studioCommands().map(c => c.label)
+  return names.length ? `Studio commands (workspace.command, by name): ${names.slice(0, 40).join('; ')}.\n` : ''
+}
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { drumTake, chordTake, takeToNotes, describeTake } from '@/lib/voice/pass'
 import { detectOnsets, monoOf } from '@/lib/voice/onsets'
@@ -146,6 +164,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     metronome, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
     setSelectedClipIds, setSelectedClipId, setSelectedTrackId,
     setShowPads, setApolloRack, setShowAppearance,
+    view, setView, setOverlay, setSoundPanel,
   } = useLight()
   const router = useRouter()
   const [listening, setListening] = useState(false)
@@ -372,6 +391,25 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
   const lastQueuedAt = useRef(0)
   /** The bar the level is being judged against, drawn on the meter. */
   const [sensitivity, setSensitivityState] = useState(1)
+  // ── Standby ──────────────────────────────────────────────────────────────
+  // Brae: "Can we have a standby mode that only listens for the user saying
+  // 'Hey Light' or 'Voice Control'." The microphone stays open; nothing runs
+  // until the studio is called by name, and it goes back to sleep on its own.
+  // See lib/voice/wake.ts.
+  const [standby, setStandbyState] = useState(false)
+  const standbyRef = useRef(false)
+  const [awakeFor, setAwakeForState] = useState(30)
+  const awakeForRef = useRef(30)
+  /** When the studio was last called by name; 0 = not yet this session. */
+  const wokeAt = useRef(0)
+  /** What the card and HUD show: standing by, awake, or standby off. */
+  const [standbyState, setStandbyShown] = useState<'off' | 'asleep' | 'awake'>('off')
+  /** Sentences heard and dropped while standing by — shown, so "is it
+   *  hearing me at all" has an answer. */
+  const ignoredRef = useRef(0)
+  const [ignored, setIgnored] = useState(0)
+  /** heardSentence is declared far below; the dev hook reaches it through this. */
+  const heardSentenceRef = useRef<((text: string, alternatives: string[][], confidence: number) => void) | null>(null)
   /** The last microphone check, and whether one is running. */
   const [calibration, setCalibration] = useState<CalibrationResult | null>(null)
   const [calibrating, setCalibrating] = useState<null | 'room' | 'voice'>(null)
@@ -630,6 +668,12 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the browser voice saying the thing anyway and reporting that it finished.
     if (process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DAW_HOOKS === '1') {
       (window as unknown as { __beaconSpeak?: typeof speak }).__beaconSpeak = speak
+      // A sentence as if the microphone heard it, for checks that cannot speak.
+      // `held` stands for a kept-open session, which is where standby applies.
+      ;(window as unknown as { __lightHear?: (text: string, opts?: { held?: boolean }) => void }).__lightHear = (text, opts) => {
+        if (opts?.held) continuousRef.current = true
+        heardSentenceRef.current?.(text, [], 1)
+      }
     }
     modeRef.current = readVoiceMode()
     const on = hudOn()
@@ -638,6 +682,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const sens = voiceSensitivity()
     setSensitivityState(sens)
     sensitivityRef.current = sens
+    const sb = standbyOn()
+    setStandbyState(sb); standbyRef.current = sb
+    const aw = standbyAwakeSeconds()
+    setAwakeForState(aw); awakeForRef.current = aw
     const auto = aiActs()
     setAiAutoState(auto)
     aiAutoRef.current = auto
@@ -1150,6 +1198,43 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
 
+    // ── The workspace ──────────────────────────────────────────────────
+    // The view, an overlay, zoom, scroll, snap, the Sound panel, a track
+    // brought into view — and a palette command by name. See the workspace
+    // tool. Zoom, snap and scroll live in the arrangement, so that view is
+    // brought up first when another is showing.
+    if (act.type === 'WORKSPACE') {
+      const ws = act as unknown as {
+        view?: 'arrangement' | 'session' | 'mixer'; zoom?: 'in' | 'out' | 'fit'; scrollToBeat?: number
+        snap?: SnapChoice; overlay?: OverlayChoice; soundPanelClipId?: string | null; focusTrackId?: string; command?: string
+      }
+      if (ws.view) setView?.(ws.view)
+      if (ws.overlay) setOverlay?.(ws.overlay)
+      const needsArrangement = !!ws.zoom || !!ws.snap || ws.scrollToBeat != null || !!ws.focusTrackId
+      const switching = needsArrangement && (ws.view ?? view) !== 'arrangement'
+      if (switching) setView?.('arrangement')
+      const later = (fn: () => void) => { if (switching) setTimeout(fn, 120); else fn() }
+      if (ws.zoom || ws.snap) later(() => { requestArrangement({ zoom: ws.zoom, snap: ws.snap }) })
+      if (ws.scrollToBeat != null) later(() => centerOnBeat(ws.scrollToBeat!))
+      if (ws.focusTrackId) {
+        setSelectedTrackId?.(ws.focusTrackId)
+        later(() => document.querySelector(`[data-track-id="${ws.focusTrackId}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }))
+      }
+      if (ws.soundPanelClipId !== undefined) {
+        const id = ws.soundPanelClipId ?? selectedClipIdRef.current ?? lastSelection.current.clipId
+        if (!id) { setProblem('Select a clip first, or say which one.'); return }
+        setSelectedClipId?.(id)
+        setSoundPanel?.({ x: Math.round(window.innerWidth / 2 - 180), y: Math.round(window.innerHeight / 2 - 220) })
+      }
+      if (ws.command) {
+        const hit = matchCommand(studioCommands(), ws.command)
+        if (!hit || hit.score < 0.6) { setProblem(`I don't have a command called "${ws.command}".`); return }
+        const real = listCommands().find(c => c.id === hit.command.id)
+        real?.run()
+        setSaid(`${hit.command.label}.`)
+      }
+      return
+    }
     if (act.type === 'VIEW_ACTION') {
       const v = act as unknown as { view: string; clipId?: string; trackId?: string; open?: boolean }
       const open = v.open !== false
@@ -1330,7 +1415,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
     dispatch(act as never)
-  }, [dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
+  }, [view, setView, setOverlay, setSoundPanel, dispatch, engine, setMetronome, setExpandedStepSeqClipId, setExpandedPianoRollClipId,
       setShowPads, setApolloRack, setShowAppearance, setSelectedTrackId, runBalance, undo, redo])
 
   /**
@@ -1510,6 +1595,60 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         return
       }
     }
+    // ── Standby: called by name, or not at all ──────────────────────────────
+    //
+    // Brae: "Can we have a standby mode that only listens for the user saying
+    // 'Hey Light' or 'Voice Control'." Only for what the MICROPHONE heard in a
+    // kept-open session: typing is deliberate, holding the button is
+    // deliberate, and an answer to a question the studio just asked is
+    // addressed by construction. A dropped sentence runs nothing, says
+    // nothing and is never sent to the assistant — that is the whole point.
+    // See lib/voice/wake.ts.
+    const standbyWord = standbyControlIn(spoken)
+    if (standbyWord === 'standby-on' || standbyWord === 'sleep') {
+      const wasOff = !standbyRef.current
+      setStandbyState(true); standbyRef.current = true; setStandbyOn(true)
+      wokeAt.current = 0
+      lastAcceptedAt.current = 0
+      setStandbyShown('asleep')
+      const msg = wasOff ? 'Standing by — say "Hey Light" or "Voice Control" when you want me.' : 'Standing by.'
+      setSaid(msg)
+      respond(msg)
+      postExchange({ said: spoken, calls: [], say: msg, path: 'rules', outcome: wasOff ? 'standby on' : 'standby' })
+      return
+    }
+    if (standbyWord === 'standby-off') {
+      setStandbyState(false); standbyRef.current = false; setStandbyOn(false)
+      setStandbyShown('off')
+      setSaid('Listening to everything again.')
+      respond('Listening to everything again.')
+      postExchange({ said: spoken, calls: [], say: 'Listening to everything again.', path: 'rules', outcome: 'standby off' })
+      return
+    }
+    const fromMic = !!heard && continuousRef.current
+    if (fromMic && standbyRef.current) {
+      const wake = wakePhraseIn(spoken)
+      const answering = !!pendingDoRef.current || !!askingRef.current || !!pendingAsk2 || !!pendingOffer || !!pendingName
+      const awake = answering || isAwake(wokeAt.current, lastAcceptedAt.current, awakeForRef.current)
+      if (wake) {
+        wokeAt.current = Date.now()
+        setStandbyShown('awake')
+        if (!wake.rest) {
+          setSaid('Listening.')
+          respond('Listening.')
+          postExchange({ said: spoken, calls: [], say: 'Listening.', path: 'rules', outcome: 'woke' })
+          return
+        }
+        spoken = wake.rest
+      } else if (!awake) {
+        ignoredRef.current += 1
+        setIgnored(ignoredRef.current)
+        setStandbyShown('asleep')
+        return
+      } else {
+        setStandbyShown('awake')
+      }
+    }
     // ── One request, one undo ──────────────────────────────────────────────
     // Brae: "If I ask it to do 4 things in one request, an undo request after
     // that should undo the whole thing." Everything this sentence dispatches —
@@ -1634,6 +1773,8 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       selectedClipIds: [...(selectedClipIds ?? [])],
       // The song's markers, so "after the chorus" can be read as a place.
       markers: (project.cueMarkers ?? []).map(m => ({ name: m.name, beat: m.beat })),
+      // The studio's own commands, so "hide the sidebar" is a sentence.
+      commands: studioCommands(),
       // So "Bass body 1" reads as one target — a track and an item said
       // together, which is the most specific thing anybody can say and was the
       // one form the rules could not see.
@@ -2425,7 +2566,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             // Re-read every turn: after the first pass the song is not what it
             // was, and a summary from before the edits would have the assistant
             // checking its work against the project it started with.
-            stateSummary: musicStateSummary({
+            stateSummary: studioCommandsLine() + musicStateSummary({
               ...projectRef.current,
               // ⚠️ Four words per macro, and it is what lets the assistant
               // START FROM ONE instead of deriving a long move from nothing —
@@ -2890,6 +3031,17 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     setHeard(repaired || text)
     void run(heard.text, confidence, false, heard)
   }, [project, run])
+  useEffect(() => { heardSentenceRef.current = heardSentence }, [heardSentence])
+  // What the card shows while standing by: awake after a call or a command,
+  // asleep once the window has passed. Ticked, because the window passing is
+  // not an event anything else fires.
+  useEffect(() => {
+    if (!listening || !standby) { setStandbyShown(standby ? 'asleep' : 'off'); return }
+    const tick = () => setStandbyShown(isAwake(wokeAt.current, lastAcceptedAt.current, awakeForRef.current) ? 'awake' : 'asleep')
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [listening, standby])
 
   /** Record and transcribe on the server — the path that does not go through
    *  the browser's speech service. */
@@ -2924,6 +3076,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     const vocabulary = [...new Set([
       ...named,
       ...WAKE_WORDS,
+      ...WAKE_PHRASES,
       ...COMMAND_VOCABULARY.filter(t => t.includes(' ')),
       ...COMMAND_VOCABULARY.filter(t => !t.includes(' ')),
     ])]
@@ -3306,7 +3459,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     return () => window.removeEventListener('keydown', onKey)
   }, [enterRuns, listening, busy, start, finish])
 
-  const label = busy ? 'Working…' : listening ? 'Listening…' : 'Voice'
+  const label = busy ? 'Working…' : listening ? (standbyState === 'asleep' ? 'Standing by' : 'Listening…') : 'Voice'
   const active = listening || busy
 
   const hold = mode === 'hold'
@@ -3724,6 +3877,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
         <VoiceHud
           listening={listening}
           continuous={continuousRef.current}
+          standby={standbyState}
           talking={talking}
           hearing={taking || heard}
           said={said}
@@ -3738,6 +3892,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
               return t ? [{ label: 'Selected', value: t.name }] : []
             })(),
             { label: 'Assistant', value: assistantMode() === 'rules' ? 'off' : aiAutoRef.current ? 'acting' : 'asks first' },
+            ...(standby ? [{ label: 'Standby', value: standbyState === 'asleep' ? `asleep · ${ignored} ignored` : 'awake' }] : []),
           ]}
           onNormalHud={() => { setHudState(false); setHud(false) }}
           onType={() => setShowType(true)}
@@ -3776,6 +3931,15 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           onMinimize={() => setPanelOpen(false)}
           mode={mode}
           onMode={m => { setMode(m); modeRef.current = m; writeVoiceMode(m) }}
+          standby={standby}
+          onStandby={on => {
+            setStandbyState(on); standbyRef.current = on; setStandbyOn(on)
+            if (!on) setStandbyShown('off')
+            else { wokeAt.current = 0; setStandbyShown(isAwake(0, lastAcceptedAt.current, awakeForRef.current) ? 'awake' : 'asleep') }
+          }}
+          awakeFor={awakeFor}
+          onAwakeFor={v => { setAwakeForState(v); awakeForRef.current = v; setStandbyAwakeSeconds(v) }}
+          ignored={ignored}
           enterRuns={enterRuns}
           onEnterRuns={on => { setEnterRuns(on); writeVoiceEnter(on) }}
           speaks={speaks}

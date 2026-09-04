@@ -187,6 +187,16 @@ const PROJECT = {
 const CTX = {
   tracks: PROJECT.tracks,
   tempo: PROJECT.tempo,
+  // The studio's own command palette, as the editor registers it — so "hide
+  // the sidebar" is a sentence the rules can read.
+  commands: [
+    { id: 'audio.view.sidebar', label: 'Hide the sidebar', keywords: 'collapse panel wider room space', group: 'View' },
+    { id: 'audio.library', label: 'Open Sound Library', keywords: 'instruments sounds browser', group: 'Audio' },
+    { id: 'audio.transport.end', label: 'Go to the end of the song', keywords: 'last final', group: 'Transport' },
+    { id: 'audio.project.marker', label: 'Drop a marker at the playhead', keywords: 'cue section name', group: 'Project' },
+    { id: 'audio.import', label: 'Import an audio file', keywords: 'load wav mp3 upload', group: 'Audio' },
+    { id: 'audio.project.section', label: 'Start a new section here', keywords: 'verse chorus bridge intro arrangement structure', group: 'Project' },
+  ],
   clips: PROJECT.arrangementClips.map(c => ({ id: c.id, name: c.name, trackId: c.trackId, kind: c.kind })),
   // The sound library. It is not part of the song — it lives on the machine —
   // so the rules resolve a name against it and hand the executor an id.

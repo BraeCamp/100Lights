@@ -29,6 +29,8 @@ export interface VoiceHudProps {
   listening: boolean
   /** Held open, rather than one push-to-talk take. */
   continuous: boolean
+  /** Standing by: open, but acting on nothing until called by name. */
+  standby?: 'off' | 'asleep' | 'awake'
   /** 0–1 input level. Optional now: the HUD reads the level bus itself. */
   level?: number
   talking: boolean
@@ -56,6 +58,7 @@ function stateOf(p: VoiceHudProps): { label: string; tone: string } {
   if (p.problem) return { label: 'Problem', tone: '#ef4444' }
   if (p.talking) return { label: 'Speaking', tone: '#8b5cf6' }
   if (p.question) return { label: 'Waiting for you', tone: '#fbbf24' }
+  if (p.listening && p.standby === 'asleep') return { label: 'Standing by', tone: '#6b7280' }
   if (p.listening) return { label: p.continuous ? 'Listening' : 'Hold to talk', tone: '#22c55e' }
   return { label: 'Idle', tone: '#6b7280' }
 }

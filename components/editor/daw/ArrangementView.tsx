@@ -5,7 +5,7 @@ import { useAppear } from '@/components/ui/Appear'
 import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, Maximize2, Scissors, Blend, ChevronDown, Music, Grid3x3, X, Cloud, HardDrive, Folder, Check, MessageSquare, RectangleHorizontal, MoreHorizontal, Download } from 'lucide-react'
-import { onCenterOnBeat } from '@/lib/daw-view'
+import { onCenterOnBeat, onArrangementRequest } from '@/lib/daw-view'
 import { useDaw, makeMidiClip, makeAudioClip, useEnginePlaying, OVERLAYS } from '@/lib/daw-state'
 import { highlightHelpTargets } from './HelpButton'
 import { isMidiClip, isAudioClip, TRACK_COLORS, clipLockedBy } from '@/lib/daw-types'
@@ -530,6 +530,13 @@ export default function ArrangementView() {
     const visible = Math.max(120, (lane?.clientWidth ?? window.innerWidth) - hdrW)
     setScrollLeft(Math.max(MIN_SCROLL, beat * beatW - visible / 2))
   }), [beatW, hdrW])
+  // Voice: "zoom in", "zoom out", "fit the song", "snap to bars". (lib/daw-view)
+  useEffect(() => onArrangementRequest(r => {
+    if (r.zoom === 'in') setBeatW(w => Math.min(MAX_BEAT_W, w * 1.3))
+    else if (r.zoom === 'out') setBeatW(w => Math.max(MIN_BEAT_W, w * 0.77))
+    else if (r.zoom === 'fit') fitToWindowRef.current()
+    if (r.snap) setSnap(r.snap)
+  }), [])
   const playheadRef = useRef<HTMLDivElement>(null)
   const rafRef      = useRef<number | undefined>(undefined)
   const [viewWidth, setViewWidth] = useState(800)

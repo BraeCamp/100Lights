@@ -137,6 +137,14 @@ export interface VoicePanelProps {
    */
   mode: 'hold' | 'toggle'
   onMode: (m: 'hold' | 'toggle') => void
+  /** Standby: with the microphone kept open, act on nothing until "Hey Light" / "Voice Control". */
+  standby: boolean
+  onStandby: (on: boolean) => void
+  /** Seconds awake after a call or a command; 0 = until told to stand by. */
+  awakeFor: number
+  onAwakeFor: (v: number) => void
+  /** Sentences heard and dropped while standing by, this session. */
+  ignored?: number
   enterRuns: boolean
   onEnterRuns: (on: boolean) => void
   speaks: boolean
@@ -641,7 +649,7 @@ export default function VoicePanel({
   listening, continuous, hud,
   talking = false, saying = '', reply = '', problem = '', question,
   onHud, onClose, onMinimize, side, onSide, caption, onCaption, colors: C,
-  mode, onMode, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
+  mode, onMode, standby, onStandby, awakeFor, onAwakeFor, ignored, enterRuns, onEnterRuns, speaks, onSpeaks, canSpeak, studio, onStudio,
   mic, sensitivity, onSensitivity, patience, onPatience,
   queue, collecting, onCollecting, onRunQueue, onClearQueue, onDropQueued,
   calibration, calibrating, calibrationPhrase, onCalibrate, credits,
@@ -1245,6 +1253,30 @@ export default function VoicePanel({
                   { id: 'toggle' as const, label: 'Keep listening', note: 'Click once and it stays open. Say what you want, as many times as you like — it acts on the commands it recognises and ignores the rest of the room.' },
                 ]}
               />
+              <Toggle
+                C={C} on={standby} onChange={onStandby}
+                label={'Standby — wake on “Hey Light” or “Voice Control”'}
+                note={'With “Keep listening” on, the microphone stays open but nothing runs until you call it: “Hey Light, mute the drums”, or “Voice Control” and then the command. '
+                  + 'What the room says is heard and dropped — not run, not sent to the assistant, not recorded. Say “stand by” to send it back to sleep. '
+                  + 'Free with the browser’s ear; the AI ear still transcribes what it hears before deciding, at about half a cent a minute of talk.'
+                  + (ignored ? ` Ignored ${ignored} so far this session.` : '')}
+              />
+              {standby && (
+                <div data-voice-awake-for>
+                  <div style={{ color: C.textPrimary, marginBottom: 5 }}>Stays awake for</div>
+                  <Segmented
+                    C={C}
+                    value={String(awakeFor)}
+                    onChange={v => onAwakeFor(Number(v))}
+                    options={[
+                      { id: '15', label: '15 s', note: 'Fifteen seconds after a call or a command, then back to sleep.' },
+                      { id: '30', label: '30 s', note: 'The standing choice: long enough for a follow-up, short enough that the room’s next sentence is not read.' },
+                      { id: '60', label: '1 min', note: 'A minute — for a run of commands with thinking in between.' },
+                      { id: '0', label: 'Until told', note: 'Awake from the call until you say “stand by”.' },
+                    ]}
+                  />
+                </div>
+              )}
               <Toggle
                 C={C} on={enterRuns} onChange={onEnterRuns}
                 label="Enter starts and runs a command"
