@@ -27,8 +27,10 @@ const LANE_TO_BEAT: Record<string, BeatType> = {
   tomHi: 'tom', tomMid: 'tom', tomLo: 'tom',
 }
 import { seedDefaultSamples } from '@/lib/default-samples'
-import { getAllChordRecipes, RECIPE_GENRE_ORDER, type PracticeRecipe } from '@/lib/practice-recipes'
-import { DRUM_PATTERNS, DRUM_LANES, STEP_BEATS } from '@/lib/drum-presets'
+import { getAllChordRecipes, type PracticeRecipe } from '@/lib/practice-recipes'
+import { DRUM_PATTERNS, DRUM_LANES, STEP_BEATS, getPatterns } from '@/lib/drum-presets'
+import { patternTags, recipeTags, tagCounts, matchesTags, matchesQuery } from '@/lib/library-tags'
+import TagFilterBar from './TagFilterBar'
 import { playDrumHit } from '@/lib/drum-samples'
 import type { BeatType } from '@/lib/beat-analyzer'
 import { clampToViewport } from './daw/menu-clamp'
@@ -112,11 +114,16 @@ function EntryRow({
     setLoadErr('')
     let blob = entry.audioBlob
     if (!blob) {
-      if (!entry.renderSpec && !entry.communityRef) { setLoadErr('no audio'); return }
+      // ⚠️ A catalog sound has no blob until first use — its audio streams from
+      // catalogUrl (libraryFulfill). This guard was written before the catalog
+      // existed and knew only rendered stubs and community links, so every one
+      // of the 7,600 catalog drums answered "no audio" in red the first time it
+      // was clicked, while the same sound played fine from the picker.
+      if (!entry.renderSpec && !entry.communityRef && !entry.catalogUrl) { setLoadErr('no audio'); return }
       setFulfilling(true)
       try {
         const fulfilled = await libraryFulfill(entry.id)
-        if (!fulfilled?.audioBlob) { setLoadErr("couldn't render"); return }
+        if (!fulfilled?.audioBlob) { setLoadErr(entry.catalogUrl ? "couldn't fetch" : "couldn't render"); return }
         blob = fulfilled.audioBlob
         onFulfilled?.(fulfilled)
       } finally {
@@ -1299,7 +1306,11 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   const [presetSub,        setPresetSub]        = useState<'recipes' | 'patterns'>('recipes')
   const [recipesVersion,   setRecipesVersion]   = useState(0)
   const [recipeDetail,     setRecipeDetail]     = useState<{ id: string; x: number; y: number } | null>(null)
-  const [openGenres,       setOpenGenres]       = useState<Set<string>>(new Set())
+  // The filters over recipes and patterns — chips and a search, each its own.
+  const [recipeFilter,     setRecipeFilter]     = useState<Set<string>>(new Set())
+  const [recipeQuery,      setRecipeQuery]      = useState('')
+  const [patternFilter,    setPatternFilter]    = useState<Set<string>>(new Set())
+  const [patternQuery,     setPatternQuery]     = useState('')
   const [auditioningRecipe, setAuditioningRecipe] = useState<string | null>(null)
   const recipeStopRef = useRef<() => void>(() => {})
   useEffect(() => () => { recipeStopRef.current() }, [])
@@ -1858,6 +1869,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     return (
         <div
           key={r.id}
+          data-lib-recipe={r.id}
           draggable
           onDragStart={e => {
             e.dataTransfer.setData('application/x-recipe-id', r.id)
@@ -1890,8 +1902,13 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           </button>
           <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</span>
           {showGenre && r.genre && (
-            <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(167,139,250,0.13)', color: '#a78bfa', flexShrink: 0 }}>{r.genre}</span>
+            <span onClick={e => { e.stopPropagation(); setRecipeFilter(prev => new Set(prev).add(r.genre!)) }} title={`Only ${r.genre}`}
+              style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(167,139,250,0.13)', color: '#a78bfa', flexShrink: 0, cursor: 'pointer' }}>{r.genre}</span>
           )}
+          {recipeTags(r, spec).filter(t => t !== r.genre && !/^\d+ bars?$|^Long$|^Mid$|^Mine$|^Community$/.test(t)).slice(0, 2).map(t => (
+            <span key={t} onClick={e => { e.stopPropagation(); setRecipeFilter(prev => new Set(prev).add(t)) }} title={`Only ${t}`}
+              style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', flexShrink: 0, cursor: 'pointer' }}>{t}</span>
+          ))}
           <span style={{ fontSize: 8.5, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(52,211,153,0.13)', color: '#34d399', flexShrink: 0 }}>{bars} bar{bars !== 1 ? 's' : ''}</span>
         </div>
     )
@@ -1920,8 +1937,25 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       {label}
     </div>
   )
+  // ── Recipes: one flat list, tagged and filterable ────────────────────────
+  //
+  // Brae: "The recipe section should look like [the patterns] and stuff should
+  // be taken out of folders, but they need to keep the tags and maybe add more
+  // and a filter system should be applied to that too." Sources stay as small
+  // headings (yours, the community's, the app's); genre becomes a tag rather
+  // than a folder, and every recipe carries what its title, tagline and notes
+  // say about it — see lib/library-tags.ts.
+  const recipeTagsOf = (r: PracticeRecipe) => recipeTags(r, recipeSpecs.get(r.id))
+  const recipeTagList = useMemo(() => tagCounts(allRecipes, recipeTagsOf), [allRecipes, recipeSpecs]) // eslint-disable-line react-hooks/exhaustive-deps
+  const recipeShown = (r: PracticeRecipe) => matchesTags(recipeTagsOf(r), recipeFilter) && matchesQuery(`${r.title} ${r.tagline}`, recipeTagsOf(r), recipeQuery)
+  const recipeGroups: [string, string, PracticeRecipe[]][] = [
+    ['Your Recipes', '#a78bfa', userRecipes.filter(recipeShown)],
+    ['From the Community', '#34d399', communityRecipes.filter(recipeShown)],
+    ['100Lights Recipes', 'var(--text-muted)', builtinRecipes.filter(recipeShown)],
+  ]
+  const recipeShownCount = recipeGroups.reduce((n, [, , rs]) => n + rs.length, 0)
   const recipesBody = (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div data-lib-body="recipes" style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
         Drag a recipe onto a track; click one for its piano roll and description. Notes and sound stay editable, and dragging the clip edge stretches the progression to fit.
       </p>
@@ -1945,42 +1979,24 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           <RotateCw size={11} />
         </button>
       </div>
-      {userRecipes.length > 0 && (
-        <>
-          {recipeSectionHeader('Your Recipes', '#a78bfa')}
-          {userRecipes.map(r => recipeCard(r, true))}
-        </>
+      <TagFilterBar
+        tags={recipeTagList}
+        active={recipeFilter}
+        onToggle={t => setRecipeFilter(prev => { const n = new Set(prev); if (n.has(t)) n.delete(t); else n.add(t); return n })}
+        onClear={() => { setRecipeFilter(new Set()); setRecipeQuery('') }}
+        query={recipeQuery}
+        onQuery={setRecipeQuery}
+        placeholder={`Search ${allRecipes.length} recipes…`}
+      />
+      {recipeShownCount === 0 && (
+        <div style={{ padding: '10px 4px', fontSize: 10, color: 'var(--text-muted)' }}>Nothing matches — clear a tag or two.</div>
       )}
-      {communityRecipes.length > 0 && (
-        <>
-          {recipeSectionHeader('From the Community', '#34d399')}
-          {communityRecipes.map(r => recipeCard(r, true))}
-        </>
-      )}
-      {(communityRecipes.length > 0 || userRecipes.length > 0) && recipeSectionHeader('100Lights Recipes', 'var(--text-muted)')}
-      {/* Built-ins grouped into genre folders */}
-      {RECIPE_GENRE_ORDER.filter(g => builtinRecipes.some(r => (r.genre ?? 'Other') === g)).map(g => {
-        const inGenre = builtinRecipes.filter(r => (r.genre ?? 'Other') === g)
-        const open = openGenres.has(g)
-        return (
-          <div key={g} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <button
-              onClick={() => setOpenGenres(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n })}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 6,
-                cursor: 'pointer', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)',
-                color: 'var(--text-secondary)', fontSize: 10.5, fontWeight: 700, textAlign: 'left',
-              }}
-            >
-              {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-              <Folder size={10} style={{ color: '#a78bfa' }} />
-              <span style={{ flex: 1 }}>{g}</span>
-              <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>{inGenre.length}</span>
-            </button>
-            {open && <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 10 }}>{inGenre.map(r => recipeCard(r))}</div>}
-          </div>
-        )
-      })}
+      {recipeGroups.filter(([, , rs]) => rs.length > 0).map(([label, color, rs]) => (
+        <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {recipeSectionHeader(label, color)}
+          {rs.map(r => recipeCard(r, true))}
+        </div>
+      ))}
       {/* Detail card for the clicked recipe */}
       {detailRecipe && detailSpec && recipeDetail && (
         <RecipeDetailCard
@@ -1995,18 +2011,38 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
     </div>
   )
 
+  // ── Patterns: the same list, with the same filter ────────────────────────
   // Pads-sequencer grooves. Drag a pattern onto a track → a beat clip that opens
   // in the step sequencer (drop wired in TrackRow via application/x-drum-pattern-id).
+  // Yours first, then the built-ins; every one tagged by what its name and
+  // hits say (lib/library-tags.ts), so "Swing" or "Latin" or "Sparse" is a click.
+  const allPatterns = useMemo(() => getPatterns(), [recipesVersion])
+  const patternTagList = useMemo(() => tagCounts(allPatterns, patternTags), [allPatterns])
+  const patternsShown = allPatterns.filter(p => matchesTags(patternTags(p), patternFilter) && matchesQuery(`${p.name} ${p.desc}`, patternTags(p), patternQuery))
   const patternsBody = (
-    <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div data-lib-body="patterns" style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: '2px 2px 4px', lineHeight: 1.5 }}>
         Drag a pattern onto a track to drop in a beat. It opens in the step sequencer, where every hit stays editable.
       </p>
-      {DRUM_PATTERNS.map(pat => {
+      <TagFilterBar
+        tags={patternTagList}
+        active={patternFilter}
+        onToggle={t => setPatternFilter(prev => { const n = new Set(prev); if (n.has(t)) n.delete(t); else n.add(t); return n })}
+        onClear={() => { setPatternFilter(new Set()); setPatternQuery('') }}
+        query={patternQuery}
+        onQuery={setPatternQuery}
+        placeholder={`Search ${allPatterns.length} patterns…`}
+      />
+      {patternsShown.length === 0 && (
+        <div style={{ padding: '10px 4px', fontSize: 10, color: 'var(--text-muted)' }}>Nothing matches — clear a tag or two.</div>
+      )}
+      {patternsShown.map(pat => {
         const playing = auditioningPattern === pat.id
+        const chips = patternTags(pat).filter(t => !/^\d+ bars?$/.test(t) && t !== 'Medium').slice(0, 3)
         return (
         <div
           key={pat.id}
+          data-lib-pattern={pat.id}
           draggable
           onDragStart={e => { e.dataTransfer.setData('application/x-drum-pattern-id', pat.id); e.dataTransfer.effectAllowed = 'copy' }}
           onClick={() => auditionPattern(pat.id)}
@@ -2035,6 +2071,10 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pat.name}</div>
             <div style={{ fontSize: 9, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pat.desc}</div>
           </div>
+          {chips.map(t => (
+            <span key={t} onClick={e => { e.stopPropagation(); setPatternFilter(prev => new Set(prev).add(t)) }} title={`Only ${t}`}
+              style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(167,139,250,0.13)', color: '#a78bfa', flexShrink: 0, cursor: 'pointer' }}>{t}</span>
+          ))}
           <span style={{ fontSize: 8.5, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(52,211,153,0.13)', color: '#34d399', flexShrink: 0 }}>{pat.bars} bar{pat.bars !== 1 ? 's' : ''}</span>
         </div>
         )
@@ -2043,12 +2083,14 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   )
 
   // The "Presets" tab: a Recipe sub-tab (piano-roll chord progressions) and a
-  // Patterns sub-tab (pads-sequencer grooves).
+  // Patterns sub-tab (pads-sequencer grooves). The body is keyed by the sub-tab
+  // so switching remounts it with a short fade — a cut between two lists that
+  // look alike reads as nothing having happened.
   const presetsBody = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div style={{ display: 'flex', gap: 4, padding: '6px 10px 4px', flexShrink: 0 }}>
         {([['recipes', 'Recipe'], ['patterns', 'Patterns']] as const).map(([k, lbl]) => (
-          <button key={k} onClick={() => setPresetSub(k)} style={{
+          <button key={k} data-lib-subtab={k} onClick={() => setPresetSub(k)} style={{
             fontSize: 9.5, fontWeight: 700, padding: '3px 11px', borderRadius: 99, cursor: 'pointer',
             border: `1px solid ${presetSub === k ? 'var(--accent)' : 'var(--border)'}`,
             background: presetSub === k ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
@@ -2056,7 +2098,9 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           }}>{lbl}</button>
         ))}
       </div>
-      {presetSub === 'recipes' ? recipesBody : patternsBody}
+      <div key={presetSub} className="appear-fade" data-lib-tab-body={presetSub} style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {presetSub === 'recipes' ? recipesBody : patternsBody}
+      </div>
     </div>
   )
 
@@ -2086,7 +2130,9 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           </a>
         </div>
       )}
-      {!onPick && libTab === 'presets' ? presetsBody : (<>
+      {!onPick && libTab === 'presets' ? (
+        <div key="presets" className="appear-fade" data-lib-tab-body="presets" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>{presetsBody}</div>
+      ) : (<div key="samples" className={onPick ? undefined : 'appear-fade'} data-lib-tab-body="samples" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       {/* Header toolbar */}
       <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{entries.length} item{entries.length !== 1 ? 's' : ''}</span>
@@ -2339,7 +2385,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
       </div>
 
       {showAdd && <AddToLibraryModal onClose={() => setShowAdd(false)} onAdded={load} />}
-      </>)}
+      </div>)}
     </>
   )
 

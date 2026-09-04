@@ -23,7 +23,7 @@ import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from 
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, sampleAutomationAt, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
-import { libraryGetByFolder } from './sound-library'
+import { libraryGetByFolder, libraryGetById } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
 import { resampleBySemitones } from './audio-resample'
 import type { MidiPreset } from './midi-presets'
@@ -2195,6 +2195,14 @@ export class DawEngine extends EventTarget {
         // note asked for — and cached under the same (preset, pitch) key as
         // every other preset buffer, so the scheduler is none the wiser.
         if (preset.sampleId) {
+          // A seeded synth sound is a RECIPE (renderSpec), not a recording:
+          // render it at the pitch asked for rather than repitching one note
+          // of it, which is what the folder presets have always done.
+          const entry = await libraryGetById(preset.sampleId)
+          if (entry?.renderSpec && this.ctx) {
+            this._presetBufSet(key, await renderPresetAtPitch(entry.renderSpec, pitch))
+            return
+          }
           const root = preset.rootNote ?? 60
           const src = await this._sampleRootBuffer(preset.id, preset.sampleId)
           if (!src || !this.ctx) { this._presetBufSet(key, null); return }
