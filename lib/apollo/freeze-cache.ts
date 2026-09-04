@@ -28,6 +28,7 @@ import type { ApolloPatch } from '@/lib/apollo/patch'
 import { renderApolloProject, freezeStamp, type TrackRenderGroup } from '@/lib/apollo/daw-freeze'
 import { loadCombined, saveCombined, clearStoredCombines, pruneCombined } from '@/lib/apollo/combine-store'
 import { keepForNextTime, setCombineWriter, setStorageTransportPlaying, storagePolicy } from '@/lib/apollo/storage-policy'
+import { serverAskQueue, explainServerFetchFailure, type ServerAnswer } from '@/lib/apollo/server-answers'
 
 // The policy module does the deciding; the store does the writing. Wiring them
 // here keeps storage-policy free of any dependency on IndexedDB, which is what
@@ -417,6 +418,23 @@ let MAX_FRAMES = DEVICE_CEILING
  * So ask for what the project needs and take it if the device can carry it.
  * Nothing changes on a small device except that it still keeps what it can.
  */
+/**
+ * How many frames this song's renders take, all of them held at once.
+ *
+ * ⚠️ WITH THE TAIL. A render is the clip plus two seconds for releases and
+ * effects to ring out (daw-freeze, tailSec), and the cache was sized to the
+ * notes alone. On a song that only just fit, the last render always pushed the
+ * cache over by its tail, eviction took the oldest buffer — every clip at the
+ * same distance from the playhead — and the next pass rendered THAT one and
+ * evicted the next: twenty-one one-clip windows in a row, and never the seventh
+ * part ready. Seen on seven pads that start together.
+ */
+function projectFramesOf(wanted: Want[], bpm: number): number {
+  const spb = 60 / bpm
+  return wanted.reduce((n, w) => n + Math.ceil((w.clip.durationBeats * spb + RENDER_TAIL_SEC) * 48_000), 0)
+}
+const RENDER_TAIL_SEC = 2
+
 function setProjectNeed(frames: number): void {
   projectFrames = frames
   // A little headroom so re-rendering one clip can't immediately evict another.
@@ -584,7 +602,7 @@ const keyBeat = new Map<string, number>()
  * The module already renders nearest-the-playhead first. Evicting
  * furthest-from-the-playhead is the same idea pointed the other way.
  */
-function evictIfNeeded(): void {
+function evictIfNeeded(protect: ReadonlySet<string> = new Set()): void {
   let frames = 0
   for (const b of buffers.values()) frames += b.length
   if (frames <= MAX_FRAMES) return
@@ -599,6 +617,9 @@ function evictIfNeeded(): void {
   })
   for (const key of order) {
     if (frames <= MAX_FRAMES || buffers.size <= 1) break
+    // What this pass just rendered stays, whatever the distance: evicting it
+    // is the rotating-eviction loop described at projectFramesOf.
+    if (protect.has(key)) continue
     frames -= buffers.get(key)?.length ?? 0
     buffers.delete(key)
   }
@@ -725,6 +746,9 @@ export function setServerLoading(on: boolean, why = 'chosen'): void {
   if (serverLoading === on) return
   serverLoading = on
   logEvent(on ? 'server-on' : 'server-off', { detail: why })
+  // Switching it on is a fresh request: ask again, including for parts that
+  // failed earlier — the reason may have been fixed since.
+  if (on) { serverPassFor = null; serverAnswered.clear() }
   // ⚠️ BOTH directions have to ask again. Turning it ON only parked the local
   // bake and then waited for something to call requestCombine — which nothing
   // does until the transport next asks for a clip, so the server was never
@@ -878,7 +902,7 @@ async function keep(rendered: Map<string, AudioBuffer>, batch: { clip: MidiClip;
     void keepForNextTime(w.key, buf)
     await breathe()
   }
-  evictIfNeeded()
+  evictIfNeeded(new Set(landed))
 }
 
 // ── Telling the user something is happening ─────────────────────────────────
@@ -1274,10 +1298,13 @@ async function bakeLayer(
   let headStartDone = false
 
   while (renderable().length) {
-    // Rule 0: the user asked for this work to happen somewhere else.
-    if (serverLoading) {
+    // Rule 0: the user asked for this work to happen somewhere else — so the
+    // server is asked FIRST, and this machine renders only what it would not
+    // or could not give. Parking here for as long as server loading was on is
+    // what left refused and unfetchable parts playing live for good.
+    if (serverLoading && serverPassFor !== lastGroups) {
       setProgress({ ...progress, active: false, phase: 'paused' })
-      logEvent('paused', { layer: label, detail: 'server loading is on — this machine is not rendering' })
+      logEvent('paused', { layer: label, detail: 'server loading is on — asking the server first' })
       return false
     }
     // Rule 1, checked every pass: play may have been pressed while the last
@@ -1499,16 +1526,35 @@ async function bake(bpm: number, groups: TrackRenderGroup[], wanted: Want[], job
  * second, so it returns immediately unless there is new work to start.
  */
 /**
+ * How the server answered each part this session.
+ *
+ * ⚠️ THE RECORD, 2026-09-04 09:56, production: twenty parts rendered and
+ * stored, then thirty-two requests for the same parts in the next minute. The
+ * browser was refused every one of them on the hop to storage — the bucket's
+ * cross-origin rules list 100lights.com and localhost and not www.100lights.com
+ * — and nothing remembered that, so every scheduler pass asked again, four at
+ * a time, forever. "Rendering with server loading keeps failing."
+ *
+ * A refusal is asked once. A failure is retried, but not before SERVER_RETRY_MS.
+ * A part that was served and has since been evicted is asked again freely —
+ * storage has it and a GET is cheap.
+ */
+const serverAnswered = new Map<string, ServerAnswer>()
+/**
+ * The groups the server has been asked for. Server loading means ASK THE
+ * SERVER FIRST — never "leave the rest live". Once the server has answered for
+ * this exact set, the local bake takes whatever is still missing; see Rule 0.
+ */
+let serverPassFor: TrackRenderGroup[] | null = null
+
+/**
  * Ask the server for renders instead of making them here.
  *
- * ⚠️ This serves what has ALREADY been rendered. A clip's stamp is a content
- * hash of its notes, its patch and the tempo, which is identical for every
- * user — so a song rendered once can be served to everyone who opens it, and
- * that sharing is the actual prize rather than the CPU offload.
- *
- * Nothing renders on demand yet: a 404 means nobody has made this part, and
- * the honest thing is to say so and let the song play live, which it does
- * perfectly well. Pretending to load would be worse than the wait.
+ * A clip's stamp is a content hash of its notes, its patch and the tempo,
+ * which is identical for every user — so a song rendered once can be served to
+ * everyone who opens it, and that sharing is the actual prize rather than the
+ * CPU offload. A miss is a request: the server renders it, stores it and
+ * redirects here to the stored copy.
  */
 async function fetchServerRenders(
   wanted: Want[],
@@ -1517,14 +1563,29 @@ async function fetchServerRenders(
 ): Promise<number> {
   let got = 0
   let made = 0
+  let failed = 0
+  let failWhy = ''
   const refused = new Map<string, number>()
+  const fail = (key: string, why: string) => {
+    failed++
+    if (!failWhy) failWhy = why
+    serverAnswered.set(key, { how: 'failed', at: Date.now(), why })
+  }
+  const serve = (key: string, buf: AudioBuffer) => {
+    buffers.set(key, buf)
+    serverAnswered.set(key, { how: 'served', at: Date.now() })
+    // On disk as well, so the next open finds it without asking anybody.
+    void keepForNextTime(key, buf)
+    got++
+    onProgress?.(got)
+  }
 
   // Rendering a clip on the server costs a second or two, so asking for them
   // one at a time turns a 23-clip song into a minute of waiting. Small batches:
   // enough to hide the latency, not so many that one song monopolises the
   // renderer.
   const BATCH = 4
-  const queue = wanted.filter(w => !buffers.has(w.key))
+  const queue = serverAskQueue(wanted, k => buffers.has(k), serverAnswered)
 
   for (let i = 0; i < queue.length; i += BATCH) {
     if (!serverLoading) break        // switched off mid-run
@@ -1535,38 +1596,42 @@ async function fetchServerRenders(
         const res = await fetch(`/api/render-clip?stamp=${encodeURIComponent(w.key)}`)
         if (res.ok) {
           const buf = await audioFromBytes(await res.arrayBuffer())
-          if (buf) { buffers.set(w.key, buf); got++; onProgress?.(got) }
+          if (buf) serve(w.key, buf)
+          else fail(w.key, 'the stored render could not be decoded')
           return
         }
-        if (res.status !== 404) {
-          logEvent('window-error', { detail: `server render ${res.status}` })
-          return
-        }
-        // ⚠️ This is the part that used to be missing, and the whole reason
-        // server loading "gave up trying": a 404 was the end of the road,
-        // because nothing anywhere ever MADE a render. Now a miss is a request.
+        if (res.status !== 404) { fail(w.key, `the server answered ${res.status}`); return }
+        // A miss is a request — the part that used to be missing, and the whole
+        // reason server loading once "gave up trying".
         const body = await res.json().catch(() => null) as { renderer?: boolean } | null
-        if (!body?.renderer) { bump(refused, 'no-renderer'); return }
+        if (!body?.renderer) {
+          bump(refused, 'no-renderer')
+          serverAnswered.set(w.key, { how: 'refused', at: Date.now(), why: 'no-renderer' })
+          return
+        }
 
         const made_ = await fetch('/api/render-clip', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ key: w.key, clipId: w.clip.id, notes: w.clip.notes, patch: w.patch, bpm }),
         })
-        if (!made_.ok) { logEvent('window-error', { detail: `server render ${made_.status}` }); return }
+        if (!made_.ok) { fail(w.key, `the server answered ${made_.status}`); return }
 
         // A refusal comes back as JSON and a render as audio. Both are 200:
         // being told "not this one, and here is why" is a normal answer, not a
-        // failure, and the clip simply plays live.
+        // failure, and the clip is simply rendered here instead.
         if ((made_.headers.get('content-type') ?? '').includes('json')) {
           const why = await made_.json().catch(() => null) as { reason?: string } | null
-          bump(refused, why?.reason ?? 'refused')
+          const reason = why?.reason ?? 'refused'
+          bump(refused, reason)
+          serverAnswered.set(w.key, { how: 'refused', at: Date.now(), why: reason })
           return
         }
         const buf = await audioFromBytes(await made_.arrayBuffer())
-        if (buf) { buffers.set(w.key, buf); got++; made++; onProgress?.(got) }
+        if (buf) { serve(w.key, buf); made++ }
+        else fail(w.key, 'the render came back unreadable')
       } catch (err) {
-        logEvent('window-error', { detail: `server render: ${String(err).slice(0, 90)}` })
+        fail(w.key, failWhy || await explainFetchFailure(w.key, err))
       }
     }))
   }
@@ -1576,13 +1641,33 @@ async function fetchServerRenders(
     // ⚠️ Not 'gave-up'. Giving up is what this did when there was no renderer,
     // and it belongs to the honest-failure kinds that colour the log red and
     // count against the load in the admin report. A part the server declines —
-    // because it needs samples only this machine has, say — is a part that
-    // plays live, which is the normal, working state of the studio.
+    // because it needs samples only this machine has, say — is a part this
+    // machine renders, which is the normal, working state of the studio.
     logEvent('server-refused', {
-      detail: [...refused].map(([why, n]) => `${n} ${SERVER_REFUSALS[why] ?? why}`).join(', '),
+      detail: `${[...refused].map(([why, n]) => `${n} ${SERVER_REFUSALS[why] ?? why}`).join(', ')} — rendering those here`,
     })
   }
+  if (failed) {
+    // ONE line for the pass, with the reason, not one per clip per pass: the
+    // old log filled with "server render: TypeError: Failed to fetch" and said
+    // nothing about why, which is how this stayed a mystery for a day.
+    logEvent('window-error', {
+      detail: `${failed} part${failed === 1 ? '' : 's'} could not be fetched from the server: ${failWhy} — rendering them here`,
+    })
+  }
+  evictIfNeeded()
   return got
+}
+
+/** Why a fetch threw — see explainServerFetchFailure. The probe is a same-origin
+ *  ask of the studio's own route that does NOT follow the redirect. */
+async function explainFetchFailure(key: string, err: unknown): Promise<string> {
+  let probe: { type: string; status: number } | null = null
+  try {
+    const r = await fetch(`/api/render-clip?stamp=${encodeURIComponent(key)}`, { redirect: 'manual' })
+    probe = { type: r.type, status: r.status }
+  } catch { /* the route itself is unreachable; the message says so */ }
+  return explainServerFetchFailure(err, probe, typeof location !== 'undefined' ? location.origin : 'this site')
 }
 
 function bump(m: Map<string, number>, k: string): void { m.set(k, (m.get(k) ?? 0) + 1) }
@@ -1653,6 +1738,7 @@ const SERVER_REFUSALS: Record<string, string> = {
   'silent': 'came back silent from the server',
   'empty': 'have no notes',
   'no-renderer': 'have not been rendered and the server cannot make them',
+  'needs-builtin-samples': 'use built-in sounds the server does not carry',
 }
 
 /** Decode bytes from the server into a buffer this cache can hold. */
@@ -1670,10 +1756,18 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   // already running will park itself on its next pass (Rule 0), and waiting for
   // it to finish first would mean the switch did nothing until the bake it was
   // meant to stop had completed.
-  if (serverLoading) {
+  // Once per set of groups: after the server has answered for this exact
+  // song, the request falls through to the local bake for whatever is still
+  // missing. Server loading means "ask the server first", not "leave the rest
+  // live" — leaving them live is how a seven-track song ends up as seven live
+  // synths and the audio thread gives out.
+  if (serverLoading && serverPassFor !== groups) {
     if (!serverFetchRunning) {
       serverFetchRunning = true
       const wantedNow = wantsOf(groups, bpm)
+      // Size the cache to the song HERE too. The local branch always did; this
+      // one never did, so a long song could not keep what the server sent.
+      setProjectNeed(projectFramesOf(wantedNow, bpm))
       setProgress({ done: 0, total: wantedNow.length, active: true, phase: 'head', layer: 'Loading from the server' })
       // Server rendering takes real seconds now that it actually renders, so the
       // bar has to move while it does — a frozen bar is how this looked when it
@@ -1682,7 +1776,9 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
         setProgress({ done, total: wantedNow.length, active: true, phase: 'head', layer: 'Loading from the server' }),
       ).then(got => {
         serverFetchRunning = false
+        serverPassFor = groups
         setProgress({ done: got, total: wantedNow.length, active: false, phase: 'idle', layer: undefined })
+        if (wantedNow.some(w => !buffers.has(w.key))) requestCombine(bpm, groups)
       })
     }
     return
@@ -1695,7 +1791,16 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
   // scheduler pass, and all it does is write down that there is work waiting.
   // Refusing to START is stronger than parking mid-job: it means play can never
   // be pressed into a render that has already begun.
-  if (transportPlaying) {
+  //
+  // ⚠️ ONLY WHERE RENDERING WOULD COMPETE WITH PLAYBACK. This door was left
+  // unconditional when Rule 1 inside the job learned about the worker, so a
+  // job already running carried on through playback while a job not yet
+  // started could not begin until the pause. Press play on a freshly opened
+  // song — the ordinary thing — and nothing baked for the whole first listen:
+  // every clip the playhead reached was synthesised live, and at seven at once
+  // the audio thread gives out. "Live playing stops working at 7 piano roll
+  // items playing at once."
+  if (transportPlaying && !canRenderInWorker()) {
     pendingWhilePlaying = true
     if (progress.active) setProgress({ ...progress, active: false, phase: 'paused' })
     return
@@ -1705,8 +1810,7 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
 
   // Size the cache to this song before rendering into it, or it evicts the
   // opening of the song to make room for the end of it.
-  const spb = 60 / bpm
-  setProjectNeed(wanted.reduce((n, w) => n + Math.ceil(w.clip.durationBeats * spb * 48_000), 0))
+  setProjectNeed(projectFramesOf(wanted, bpm))
   const done = wanted.filter(w => buffers.has(w.key)).length
   setProgress({ done, total: wanted.length, phase: 'idle', active: false })
   if (done === wanted.length) { retryAttempt = 0; return }
@@ -1719,6 +1823,8 @@ export function requestCombine(bpm: number, groups: TrackRenderGroup[]): void {
 
 /** Drop everything (project close / user reset). */
 export function clearCombined(): void {
+  serverPassFor = null
+  serverAnswered.clear()
   buffers.clear(); keyBeat.clear(); inFlight.clear(); failures.clear(); queue.length = 0
   resetCombineRetries()
 }

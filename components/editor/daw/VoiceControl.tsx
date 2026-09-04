@@ -33,6 +33,55 @@ import { wakePhraseIn, standbyControlIn, standbyOn, setStandbyOn, standbyAwakeSe
 import { listCommands } from '@/lib/commands'
 import { requestArrangement, centerOnBeat } from '@/lib/daw-view'
 import { matchCommand, type SnapChoice, type OverlayChoice } from '@/lib/voice/workspace'
+import { SAMPLE_ID_PREFIX, isPickableSample, samplePresetFor, isSampleRef, sampleRefId } from '@/lib/sample-preset'
+import { libraryGetAll, libraryGetById, type LibraryEntry } from '@/lib/sound-library'
+import { addPreset } from '@/lib/midi-presets'
+
+/**
+ * The library's SAMPLES, as sounds the voice can name.
+ *
+ * Brae: "This should help the AI also come up with better songs." A preset was
+ * the only sound the assistant could put on a track; every kick, chop and
+ * recording in the library was invisible to it. These ride in the same list,
+ * under ids the studio resolves into a sample preset (lib/sample-preset.ts)
+ * the moment one is chosen — see USE_SAMPLE below.
+ *
+ * Read once and refreshed on a slow clock: the library is IndexedDB, the
+ * rules run synchronously, and thirteen thousand catalog rows do not change
+ * between sentences.
+ */
+let librarySamplesCache: LibraryEntry[] = []
+let librarySamplesAt = 0
+type LibrarySample = { id: string; name: string; group: string; category: string | null; tags: string[] | null }
+// Mapped once per refresh: the rules read this list on every hypothesis of
+// every sentence, and a catalog is thousands of rows.
+let librarySamplesMapped: LibrarySample[] = []
+async function refreshLibrarySamples(): Promise<void> {
+  try {
+    const all = await libraryGetAll()
+    librarySamplesCache = all.filter(isPickableSample)
+    librarySamplesMapped = librarySamplesCache.map(e => ({
+      id: `${SAMPLE_ID_PREFIX}${e.id}`, name: e.name, group: 'Samples',
+      category: (e.category as string) ?? null, tags: e.tags ?? null,
+    }))
+    librarySamplesAt = Date.now()
+  } catch { /* no library on this device */ }
+}
+function librarySamples(): LibrarySample[] {
+  // Sooner while it is empty: the library seeds itself after the card is up,
+  // and a minute of not knowing your own sounds is a minute too long.
+  const stale = librarySamplesMapped.length ? 60_000 : 5_000
+  if (Date.now() - librarySamplesAt > stale) { librarySamplesAt = Date.now(); void refreshLibrarySamples() }
+  return librarySamplesMapped
+}
+/** What the assistant is told it can pick from — names by folder, capped. */
+function librarySamplesLine(): string {
+  const byFolder = new Map<string, string[]>()
+  for (const e of librarySamplesCache) { const f = e.folder || 'Samples'; const g = byFolder.get(f) ?? []; if (g.length < 12) g.push(e.name); byFolder.set(f, g) }
+  if (!byFolder.size) return ''
+  const folders = [...byFolder.entries()].slice(0, 12).map(([f, names]) => `${f}: ${names.join(', ')}`)
+  return `Library samples (${librarySamplesCache.length}; set_instrument or write_part can name one — it becomes an instrument pitched across the keys): ${folders.join(' | ')}.\n`
+}
 
 /** The studio's own commands, for the rules and the assistant. Track / clip /
  *  edit commands are left out: they name the selection and the music tools
@@ -676,6 +725,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       }
     }
     modeRef.current = readVoiceMode()
+    void refreshLibrarySamples()
     const on = hudOn()
     setHudState(on)
     applyHud(on)
@@ -774,14 +824,18 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // fresh each time — it is a moment, not a document, and a stale answer to
     // that question is worse than no answer.
     loading: loadingRef.current,
-    library: combinePresets(projectRef.current?.presets).map(p => ({
-      id: p.id, name: p.name, group: p.group,
-      loNote: p.loNote, hiNote: p.hiNote, fx: p.sound?.fx ?? null,
-      // What it IS and what anybody called it — the type comes from the
-      // category, the character is measured from the shaping, and a tag the
-      // author wrote beats both. See lib/sound-tags.ts.
-      category: p.category ?? null, tags: p.tags ?? null,
-    })),
+    library: [
+      ...combinePresets(projectRef.current?.presets).map(p => ({
+        id: p.id, name: p.name, group: p.group,
+        loNote: p.loNote, hiNote: p.hiNote, fx: p.sound?.fx ?? null,
+        // What it IS and what anybody called it — the type comes from the
+        // category, the character is measured from the shaping, and a tag the
+        // author wrote beats both. See lib/sound-tags.ts.
+        category: p.category ?? null, tags: p.tags ?? null,
+      })),
+      // And the samples, so "a dark kick" or "the vocal chop" can be one.
+      ...librarySamples().map(s => ({ ...s, loNote: 36, hiNote: 84, fx: null })),
+    ],
   }), [engine])
 
   /**
@@ -1375,6 +1429,22 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // matters more than it looks: the selection is what "this track" and "this
     // clip" resolve against, so a failed select left every following pronoun
     // pointing at whatever was selected before.
+    // ── A library sample as a clip's sound ───────────────────────────────
+    // The planner names the sample (a `sample:` id it was handed in the
+    // library); the studio makes the preset — a name and a root, no audio
+    // copied — embeds it in the project and puts it on the clips.
+    if (act.type === 'USE_SAMPLE') {
+      const a = act as unknown as { sampleId: string; clipIds: string[]; name?: string; rootNote?: number }
+      void (async () => {
+        const entry = await libraryGetById(a.sampleId)
+        if (!entry) { setProblem(`I couldn't find "${a.name ?? 'that sample'}" in the library.`); return }
+        const p = addPreset(samplePresetFor(entry, a.rootNote != null ? { rootNote: a.rootNote } : {}))
+        dispatch({ type: 'ADD_PRESET', preset: p })
+        engine?.setPresets(combinePresets([...(projectRef.current?.presets ?? []), p]))
+        for (const clipId of a.clipIds) dispatch({ type: 'UPDATE_CLIP', clipId, patch: { presetId: p.id } })
+      })()
+      return
+    }
     if (act.type === 'SELECT') {
       const a = act as unknown as { clipIds?: string[]; trackId?: string }
       const ids = a.clipIds ?? []
@@ -1755,6 +1825,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the tempo (so "a bit faster" has something to be faster than). A reading
     // that cannot see these has to guess, and guessing is what this whole path
     // exists to avoid.
+    // The library seeds itself after the card is up; a sentence that names a
+    // sample before the list has filled would go to the assistant instead.
+    // Waited for once, only while the list is empty.
+    if (!librarySamples().length) await refreshLibrarySamples()
     const ctx = {
       tracks: project.tracks ?? [],
       tempo: project.tempo,
@@ -1786,9 +1860,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // The sound library, so "make the bass a violin" can find the violin. It
       // is not part of the song — it lives on this machine — which is why the
       // rules resolve the name here and hand the executor an id.
-      library: combinePresets(project.presets).map(p => ({
-        id: p.id, name: p.name, group: p.group,
-      })),
+      library: [
+        ...combinePresets(project.presets).map(p => ({ id: p.id, name: p.name, group: p.group })),
+        ...librarySamples().map(s => ({ id: s.id, name: s.name, group: s.group })),
+      ],
     }
 
     // ── Is this about the queue rather than about the song? ────────────────
@@ -2566,7 +2641,7 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
             // Re-read every turn: after the first pass the song is not what it
             // was, and a summary from before the edits would have the assistant
             // checking its work against the project it started with.
-            stateSummary: studioCommandsLine() + musicStateSummary({
+            stateSummary: studioCommandsLine() + librarySamplesLine() + musicStateSummary({
               ...projectRef.current,
               // ⚠️ Four words per macro, and it is what lets the assistant
               // START FROM ONE instead of deriving a long move from nothing —

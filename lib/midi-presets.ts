@@ -37,9 +37,19 @@ export interface MidiPreset {
    * genre, an era, a project, a mood only the author knows.
    */
   tags?:     string[]
+  /**
+   * A preset made from ONE library sample, pitched across the keys.
+   *
+   * Set instead of a folder of per-note entries: the engine fulfils this
+   * library entry, decodes it once and repitches it from `rootNote` to every
+   * note played (see lib/sample-preset.ts and _loadPresetBuffer). `folder` is a
+   * label only for such a preset.
+   */
+  sampleId?: string
+  rootNote?: number
 }
 
-export const PRESET_GROUPS = ['Piano', 'Mallets', 'Organ', 'Guitar', 'Bass', 'Strings', 'Brass', 'Woodwinds', 'World', 'Synth', 'Custom'] as const
+export const PRESET_GROUPS = ['Piano', 'Mallets', 'Organ', 'Guitar', 'Bass', 'Strings', 'Brass', 'Woodwinds', 'World', 'Synth', 'Samples', 'Custom'] as const
 export type PresetGroup = typeof PRESET_GROUPS[number]
 
 // ── Built-in presets (mirrors KEYBOARD_PRESETS in default-samples.ts) ─────────
