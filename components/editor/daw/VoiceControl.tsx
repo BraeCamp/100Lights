@@ -123,6 +123,7 @@ import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
 import { stitch, worthHolding, looksIncomplete, continuesPrevious, notAlreadyRun, STITCH_MS, CONTINUE_MS } from '@/lib/voice/stitch'
+import { isEchoOfReadBack } from '@/lib/voice/echo-guard'
 import { useDropDirection, useMountTransition, popClass } from '@/lib/ui/popup'
 import { interpretSequence } from '@/lib/voice/sequence'
 import { interpret } from '@/lib/voice/interpret'
@@ -3076,15 +3077,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the command word, the room played it back into the microphone, and the
     // rules ran it again. The read-backs no longer use command words, and this
     // is the second guard: within a few seconds of Light speaking, a transcript
-    // that is what it just said (or a piece of it) is its own echo, not you.
-    {
-      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
-      const heardN = norm(text), spokeN = norm(lastSpokenRef.current)
-      const recent = Date.now() - lastReplyAt.current < 8000
-      if (recent && heardN.length >= 4 && spokeN.length >= 4 && (spokeN.includes(heardN) || heardN.includes(spokeN))) {
-        console.info('[voice] ignored an echo of the read-back:', text)
-        return
-      }
+    // that IS what it just said is its own echo, not you. A sentence that
+    // merely contains the same word — "change the preset to Rhodes" after
+    // Light said "Rhodes" — is you, and used to be thrown away here. See
+    // lib/voice/echo-guard.ts.
+    if (isEchoOfReadBack(text, lastSpokenRef.current, Date.now() - lastReplyAt.current)) {
+      console.info('[voice] ignored an echo of the read-back:', text)
+      return
     }
     // hearBetter repairs the project's own nouns — "base two" into "Bass 2" —
     // which is the single most valuable correction available, because a general

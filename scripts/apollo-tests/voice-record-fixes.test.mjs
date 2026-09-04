@@ -49,7 +49,18 @@ const project = {
   const restart = planVoiceCall({ name: 'transport', input: { action: 'restart' } }, project)
   check('the read-backs no longer use the command word', play.say === 'Playing.' && pause.say === 'Paused.' && restart.say === 'Restarting.', `${play.say} ${pause.say} ${restart.say}`)
   const control = readFileSync('components/editor/daw/VoiceControl.tsx', 'utf8')
-  check('and a transcript that is what Light just said is dropped as an echo', /ignored an echo of the read-back/.test(control) && /spokeN\.includes\(heardN\) \|\| heardN\.includes\(spokeN\)/.test(control))
+  check('and the card asks the echo guard before acting on a transcript', /isEchoOfReadBack\(text, lastSpokenRef\.current/.test(control))
+  const { isEchoOfReadBack } = await importTs('lib/voice/echo-guard.ts')
+  const echo = (heard, spoke, ms = 1000) => isEchoOfReadBack(heard, spoke, ms)
+  // "Restart" is how the recogniser heard "Restarting." coming back — the 22:03 record.
+  check('the read-back heard whole, or nearly, is an echo', echo('Restart', 'Restarting.') === true && echo('restarting', 'Restarting.') === true && echo('paused', 'Paused.') === true)
+  check('the read-back with a little room around it is an echo', echo('um bass 2 is rhodes now 3 clips yeah', 'Bass 2 is Rhodes now, 3 clips.') === true)
+  check('most of a long read-back is an echo', echo('bass 2 is rhodes now', 'Bass 2 is Rhodes now, 3 clips.') === true)
+  // Brae: "I wanted to change a preset with it but it would not let me do it."
+  check('a sentence that merely contains the read-back is the person, not an echo', echo('change the preset to rhodes', 'Rhodes') === false)
+  check('an answer that is a word from the question is the person', echo('bass 2', 'Which one, Bass 2 or the pad?') === false)
+  check('"done" inside a long read-back is the person', echo('done', 'The pad is done now, four clips.') === false)
+  check('too long after the reply nothing is an echo', echo('paused', 'Paused.', 9000) === false)
 }
 
 // ── 21:27 / 21:58 / 21:15: the first chord of the pad intro ────────────────
