@@ -18,7 +18,7 @@ import { getPresets, combinePresets, addPreset, getGroupedPresets, defaultPreset
 import { DRUM_LANES } from '@/lib/drum-presets'
 import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
-import { guessRootNote, samplePresetFor, isPickableSample, rootLabel } from '@/lib/sample-preset'
+import { guessRootNote, samplePresetFor, isPickableSample, rootLabel, collapseNoteVariants, type PickableSound } from '@/lib/sample-preset'
 import { resampleBySemitones } from '@/lib/audio-resample'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
@@ -406,7 +406,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   // lib/sample-preset.ts. The library is read when the tab opens, not before.
   const [pickerTab, setPickerTab] = useState<'presets' | 'samples'>('presets')
   const [sampleQuery, setSampleQuery] = useState('')
-  const [pickerSamples, setPickerSamples] = useState<LibraryEntry[]>([])
+  const [pickerSamples, setPickerSamples] = useState<PickableSound<LibraryEntry>[]>([])
   const [pickerSamplesLoading, setPickerSamplesLoading] = useState(false)
   /** Roots the user corrected, by sample id — the guess is only a guess. */
   const [sampleRoots, setSampleRoots] = useState<Record<string, number>>({})
@@ -539,10 +539,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     setPickerSamplesLoading(true)
     try {
       const all = await libraryGetAll()
-      const picks = all.filter(isPickableSample)
-      // Your own sounds first — recordings, imports, bounces — then the
-      // catalog, which is thousands deep and found by searching.
-      picks.sort((a, b) => Number(!!a.catalog) - Number(!!b.catalog) || (a.folder ?? '').localeCompare(b.folder ?? '') || a.name.localeCompare(b.name))
+      // One row per SOUND: a seeded synth arrives as one entry per note, and
+      // "Arp A3, Arp C4, Arp E4" is one arp. Your own sounds first — recordings,
+      // imports, bounces — then the catalog, which is thousands deep and found
+      // by searching.
+      const picks = collapseNoteVariants(all.filter(isPickableSample))
+      picks.sort((a, b) => Number(!!a.entry.catalog) - Number(!!b.entry.catalog) || (a.entry.folder ?? '').localeCompare(b.entry.folder ?? '') || a.name.localeCompare(b.name))
       setPickerSamples(picks)
     } catch { setPickerSamples([]) }
     finally { setPickerSamplesLoading(false) }
@@ -570,8 +572,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   /** Make the sample this clip's sound: a preset that names it and its root,
    *  embedded in the project so it travels with the song. */
-  function useSample(entry: LibraryEntry, root: number) {
-    const p = addPreset(samplePresetFor(entry, { rootNote: root }))
+  function useSample(entry: LibraryEntry, root: number, name?: string) {
+    const p = addPreset(samplePresetFor(entry, { rootNote: root, name }))
     dispatch({ type: 'ADD_PRESET', preset: p })
     const next = combinePresets([...(project.presets ?? []), p])
     setPresets(next)
@@ -1640,7 +1642,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   >{label}</button>
                 )
                 const q = sampleQuery.trim().toLowerCase()
-                const matching = pickerSamples.filter(e => !q || `${e.name} ${e.folder ?? ''} ${(e.tags ?? []).join(' ')}`.toLowerCase().includes(q))
+                const matching = pickerSamples.filter(s => !q || `${s.name} ${s.entry.folder ?? ''} ${(s.entry.tags ?? []).join(' ')}`.toLowerCase().includes(q))
                 // A catalog is thousands of rows; the menu draws the first
                 // hundred and a half and says how many more a search would
                 // reach — drawing all of them is what makes a click take a second.
@@ -1648,7 +1650,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 const shown = matching.slice(0, SHOW_MAX)
                 const hidden = matching.length - shown.length
                 const byFolder = new Map<string, typeof shown>()
-                for (const e of shown) { const f = e.folder || e.parentFolder || 'Samples'; const g = byFolder.get(f) ?? []; g.push(e); byFolder.set(f, g) }
+                for (const s of shown) { const f = s.entry.folder || s.entry.parentFolder || 'Samples'; const g = byFolder.get(f) ?? []; g.push(s); byFolder.set(f, g) }
                 return (
                   <div id="pr-preset-menu" style={{
                     position: 'fixed', top, right: window.innerWidth - btn.right,
@@ -1687,16 +1689,19 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                           {[...byFolder.entries()].map(([folder, entries]) => (
                             <div key={folder}>
                               <div style={{ padding: '5px 10px 2px', fontSize: 8, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder}</div>
-                              {entries.map(e => {
+                              {entries.map(row => {
+                                const e = row.entry
                                 const root = sampleRoots[e.id] ?? guessRootNote(e)
                                 return (
-                                  <div key={e.id} data-pr-sample={e.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px 2px 4px' }}>
+                                  <div key={e.id} data-pr-sample={e.id} data-pr-sample-name={row.name} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px 2px 4px' }}>
                                     <button
                                       onClick={ev => { ev.stopPropagation(); void previewSample(e, root) }}
                                       title={`Listen at ${rootLabel(root)}`}
                                       style={{ flexShrink: 0, width: 22, border: 'none', background: 'transparent', cursor: 'pointer', color: previewing ? 'var(--text-muted)' : 'var(--accent-light)', padding: '3px 0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                                     ><Play size={11} /></button>
-                                    <span title={e.name} style={{ flex: 1, minWidth: 0, fontSize: 10, color: '#bbb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+                                    <span title={row.notes > 1 ? `${row.name} — ${row.notes} notes in the library; played at any pitch` : e.name} style={{ flex: 1, minWidth: 0, fontSize: 10, color: '#bbb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {row.name}{row.notes > 1 && <span style={{ marginLeft: 4, fontSize: 8, color: 'var(--text-muted)' }}>· {row.notes} notes</span>}
+                                    </span>
                                     <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{e.duration ? `${e.duration.toFixed(1)}s` : ''}</span>
                                     <select
                                       value={root}
@@ -1709,7 +1714,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                                     </select>
                                     <button
                                       data-pr-sample-use={e.id}
-                                      onClick={ev => { ev.stopPropagation(); void useSample(e, root) }}
+                                      onClick={ev => { ev.stopPropagation(); void useSample(e, root, row.name) }}
                                       style={{ flexShrink: 0, fontSize: 8.5, fontWeight: 700, padding: '2px 7px', borderRadius: 3, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.12)', color: 'var(--accent)', cursor: 'pointer' }}
                                     >Use</button>
                                   </div>

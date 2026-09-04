@@ -86,13 +86,15 @@ export function samplePresetName(entry: Pick<LibraryEntry, 'name' | 'folder'>): 
  */
 export function samplePresetFor(
   entry: Pick<LibraryEntry, 'id' | 'name' | 'folder' | 'tags' | 'key' | 'renderSpec' | 'category'>,
-  opts: { rootNote?: number; loNote?: number; hiNote?: number } = {},
+  opts: { rootNote?: number; loNote?: number; hiNote?: number; name?: string } = {},
 ): Omit<MidiPreset, 'id' | 'builtIn' | 'createdAt'> {
   const rootNote = Math.max(0, Math.min(127, Math.round(opts.rootNote ?? guessRootNote(entry))))
   const loNote = Math.max(0, Math.min(127, Math.round(opts.loNote ?? rootNote - SAMPLE_SPAN)))
   const hiNote = Math.max(loNote, Math.min(127, Math.round(opts.hiNote ?? rootNote + SAMPLE_SPAN)))
   return {
-    name: samplePresetName(entry),
+    // The SOUND's name when the row stood for several notes of it — "Arp",
+    // not "Arp C4" — so the preset reads like an instrument.
+    name: opts.name?.trim() || samplePresetName(entry),
     // The folder is a label here, never looked up: a sample preset resolves
     // through sampleId. It is the library folder so the preset picker groups it
     // with where it came from.
@@ -108,6 +110,41 @@ export function samplePresetFor(
 
 /** "C4" for a root, for labels. */
 export function rootLabel(midi: number): string { return midiToNoteName(midi) }
+
+/** A sound as the Samples tab lists it: one row, however many notes of it the
+ *  library holds. `entry` is the note nearest middle C — the one "Use" takes. */
+export interface PickableSound<T> { entry: T; name: string; notes: number }
+
+const TRAILING_NOTE = /\s+[A-G](?:#|b)?-?\d$/i
+
+/**
+ * One row per sound.
+ *
+ * Brae: "some are repeats but as different base notes. That should be
+ * changed." The seeded synth sounds arrive as one entry per note — "Arp A3",
+ * "Arp C4", "Arp E4" — and the picker showed every one. They are one sound
+ * at several pitches, and the engine re-renders a seeded sound at whatever
+ * pitch is played anyway, so the row is the sound and its notes are a count.
+ * Grouped by folder and the name with its note taken off; the representative
+ * is the note nearest middle C.
+ */
+export function collapseNoteVariants<T extends Pick<LibraryEntry, 'id' | 'name' | 'folder' | 'renderSpec' | 'tags' | 'key' | 'category'>>(entries: T[]): PickableSound<T>[] {
+  const groups = new Map<string, T[]>()
+  for (const e of entries) {
+    const base = (e.name ?? '').replace(TRAILING_NOTE, '').trim() || e.name
+    const key = `${e.folder ?? ''}|${base.toLowerCase()}`
+    const g = groups.get(key) ?? []
+    g.push(e)
+    groups.set(key, g)
+  }
+  const out: PickableSound<T>[] = []
+  for (const g of groups.values()) {
+    const base = (g[0].name ?? '').replace(TRAILING_NOTE, '').trim() || g[0].name
+    const rep = g.length === 1 ? g[0] : g.reduce((best, e) => Math.abs(guessRootNote(e) - 60) < Math.abs(guessRootNote(best) - 60) ? e : best, g[0])
+    out.push({ entry: rep, name: g.length > 1 ? base : g[0].name, notes: g.length })
+  }
+  return out
+}
 
 /** Is this the id form the voice path carries for a library sample? */
 export function isSampleRef(id: string | undefined | null): id is string {
