@@ -52,7 +52,7 @@ import { addPreset } from '@/lib/midi-presets'
  */
 let librarySamplesCache: LibraryEntry[] = []
 let librarySamplesAt = 0
-type LibrarySample = { id: string; name: string; group: string; category: string | null; tags: string[] | null }
+type LibrarySample = { id: string; name: string; group: string; folder: string | null; category: string | null; tags: string[] | null }
 // Mapped once per refresh: the rules read this list on every hypothesis of
 // every sentence, and a catalog is thousands of rows.
 let librarySamplesMapped: LibrarySample[] = []
@@ -61,7 +61,7 @@ async function refreshLibrarySamples(): Promise<void> {
     const all = await libraryGetAll()
     librarySamplesCache = all.filter(isPickableSample)
     librarySamplesMapped = librarySamplesCache.map(e => ({
-      id: `${SAMPLE_ID_PREFIX}${e.id}`, name: e.name, group: 'Samples',
+      id: `${SAMPLE_ID_PREFIX}${e.id}`, name: e.name, group: 'Samples', folder: e.folder ?? null,
       category: (e.category as string) ?? null, tags: e.tags ?? null,
     }))
     librarySamplesAt = Date.now()
@@ -74,13 +74,26 @@ function librarySamples(): LibrarySample[] {
   if (Date.now() - librarySamplesAt > stale) { librarySamplesAt = Date.now(); void refreshLibrarySamples() }
   return librarySamplesMapped
 }
-/** What the assistant is told it can pick from — names by folder, capped. */
+/** What the assistant is told it can pick from.
+ *
+ *  Brae: "It said 'There is no hihat sample' but it should be in the sample
+ *  library as a whole folder." It was: the summary showed twelve folders with
+ *  twelve names each, and a library of hundreds ran out of room before the
+ *  hats. So this says what KINDS and FOLDERS there are — every one, with a
+ *  count — and a few names as examples, and set_instrument resolves a kind or a
+ *  folder itself (lib/voice/library-match.ts). A kind that is listed exists. */
 function librarySamplesLine(): string {
-  const byFolder = new Map<string, string[]>()
-  for (const e of librarySamplesCache) { const f = e.folder || 'Samples'; const g = byFolder.get(f) ?? []; if (g.length < 12) g.push(e.name); byFolder.set(f, g) }
-  if (!byFolder.size) return ''
-  const folders = [...byFolder.entries()].slice(0, 12).map(([f, names]) => `${f}: ${names.join(', ')}`)
-  return `Library samples (${librarySamplesCache.length}; set_instrument or write_part can name one — it becomes an instrument pitched across the keys): ${folders.join(' | ')}.\n`
+  const all = librarySamplesCache
+  if (!all.length) return ''
+  const byFolder = new Map<string, number>(), byKind = new Map<string, number>(), examples: string[] = []
+  for (const e of all) {
+    const f = e.folder || 'Samples'
+    byFolder.set(f, (byFolder.get(f) ?? 0) + 1)
+    if (e.category && e.category !== 'custom') byKind.set(e.category, (byKind.get(e.category) ?? 0) + 1)
+    if (examples.length < 16 && (byFolder.get(f) ?? 0) <= 2) examples.push(e.name)
+  }
+  const top = (m: Map<string, number>, n: number) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, c]) => `${k} (${c})`).join(', ')
+  return `Library samples (${all.length}) — set_instrument or write_part can name one by NAME, by FOLDER, or by KIND ("a hihat", "the 808", "a clap"); the studio picks one and it becomes an instrument pitched across the keys. Kinds: ${top(byKind, 24) || 'untagged'}. Folders: ${top(byFolder, 40)}. For example: ${examples.join(', ')}.\n`
 }
 
 /** The studio's own commands, for the rules and the assistant. Track / clip /
@@ -123,6 +136,7 @@ import { readChoice, readYesNo, type VoiceAsk, type AskOffer } from '@/lib/voice
 import { noticeFor } from '@/lib/voice/notices'
 import { WAKE_WORDS, shouldActOn, worthTheModel } from '@/lib/voice/attention'
 import { stitch, worthHolding, looksIncomplete, continuesPrevious, notAlreadyRun, STITCH_MS, CONTINUE_MS } from '@/lib/voice/stitch'
+import { isEchoOfReadBack } from '@/lib/voice/echo-guard'
 import { useDropDirection, useMountTransition, popClass } from '@/lib/ui/popup'
 import { interpretSequence } from '@/lib/voice/sequence'
 import { interpret } from '@/lib/voice/interpret'
@@ -1861,8 +1875,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // is not part of the song — it lives on this machine — which is why the
       // rules resolve the name here and hand the executor an id.
       library: [
-        ...combinePresets(project.presets).map(p => ({ id: p.id, name: p.name, group: p.group })),
-        ...librarySamples().map(s => ({ id: s.id, name: s.name, group: s.group })),
+        ...combinePresets(project.presets).map(p => ({ id: p.id, name: p.name, group: p.group, category: p.category ?? null, tags: p.tags ?? null })),
+        // With folder and kind, so "a hihat" can mean the folder of them.
+        ...librarySamples().map(s => ({ id: s.id, name: s.name, group: s.group, folder: s.folder, category: s.category, tags: s.tags })),
       ],
     }
 
@@ -3076,15 +3091,13 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     // the command word, the room played it back into the microphone, and the
     // rules ran it again. The read-backs no longer use command words, and this
     // is the second guard: within a few seconds of Light speaking, a transcript
-    // that is what it just said (or a piece of it) is its own echo, not you.
-    {
-      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
-      const heardN = norm(text), spokeN = norm(lastSpokenRef.current)
-      const recent = Date.now() - lastReplyAt.current < 8000
-      if (recent && heardN.length >= 4 && spokeN.length >= 4 && (spokeN.includes(heardN) || heardN.includes(spokeN))) {
-        console.info('[voice] ignored an echo of the read-back:', text)
-        return
-      }
+    // that IS what it just said is its own echo, not you. A sentence that
+    // merely contains the same word — "change the preset to Rhodes" after
+    // Light said "Rhodes" — is you, and used to be thrown away here. See
+    // lib/voice/echo-guard.ts.
+    if (isEchoOfReadBack(text, lastSpokenRef.current, Date.now() - lastReplyAt.current)) {
+      console.info('[voice] ignored an echo of the read-back:', text)
+      return
     }
     // hearBetter repairs the project's own nouns — "base two" into "Bass 2" —
     // which is the single most valuable correction available, because a general
