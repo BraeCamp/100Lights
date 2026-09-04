@@ -54,7 +54,7 @@ const CAT_COLORS: Record<string, string> = {
   'piano-grand': '#ec4899', 'piano-electric': '#db2777', 'piano-rhodes': '#be185d',
   // Synth
   'synth-lead': '#f43f5e', 'synth-pad': '#e879f9', 'synth-bass': '#6366f1',
-  'synth-arp': '#38bdf8', 'synth-strings': '#a78bfa', 'synth-organ': '#fb923c', 'synth-choir': '#c084fc',
+  'synth-arp': '#38bdf8', 'synth-strings': 'var(--accent-light)', 'synth-organ': '#fb923c', 'synth-choir': '#c084fc',
   // Darkwave
   'synth-dark': '#7c3aed', 'synth-drone': '#4c1d95', 'synth-pluck': '#5b21b6',
   // Strings
@@ -288,7 +288,7 @@ function EntryRow({
         // Ghost image: a small chip
         const ghost = document.createElement('div')
         ghost.textContent = `♪ ${entry.name}`
-        ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:var(--bg-card-hover);color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
+        ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:var(--bg-card-hover);color:var(--accent-light);border:1px solid var(--accent);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
         document.body.appendChild(ghost)
         e.dataTransfer.setDragImage(ghost, 0, 0)
         setTimeout(() => document.body.removeChild(ghost), 0)
@@ -416,7 +416,7 @@ function EntryRow({
         <button
           onClick={() => setFolderOpen(v => !v)}
           title={entry.folder ? `Folder: ${entry.folder}` : 'Move to folder'}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: entry.folder ? 'rgba(167,139,250,0.8)' : 'var(--text-muted)', padding: 0, opacity: entry.folder ? 1 : 0.45, display: 'flex' }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: entry.folder ? 'rgb(var(--accent-rgb) / 0.8)' : 'var(--text-muted)', padding: 0, opacity: entry.folder ? 1 : 0.45, display: 'flex' }}
         >
           <Folder size={10} />
         </button>
@@ -428,7 +428,7 @@ function EntryRow({
           }}>
             <button
               onClick={() => { onFolderChange(entry.id, undefined); setFolderOpen(false) }}
-              style={{ ...folderOptStyle, color: !entry.folder ? '#a78bfa' : 'var(--text-secondary)', fontWeight: !entry.folder ? 700 : 400 }}
+              style={{ ...folderOptStyle, color: !entry.folder ? 'var(--accent-light)' : 'var(--text-secondary)', fontWeight: !entry.folder ? 700 : 400 }}
             >
               No folder
             </button>
@@ -436,7 +436,7 @@ function EntryRow({
               <button
                 key={f}
                 onClick={() => { onFolderChange(entry.id, f); setFolderOpen(false) }}
-                style={{ ...folderOptStyle, color: entry.folder === f ? '#a78bfa' : 'var(--text-secondary)', fontWeight: entry.folder === f ? 700 : 400 }}
+                style={{ ...folderOptStyle, color: entry.folder === f ? 'var(--accent-light)' : 'var(--text-secondary)', fontWeight: entry.folder === f ? 700 : 400 }}
               >
                 {f}
               </button>
@@ -545,7 +545,7 @@ function FolderHeader({
           e.dataTransfer.setData('application/x-library-folder-name', name)
           const ghost = document.createElement('div')
           ghost.textContent = `📁 ${name}`
-          ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:var(--bg-card-hover);color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
+          ghost.style.cssText = `position:fixed;top:-999px;left:-999px;background:var(--bg-card-hover);color:var(--accent-light);border:1px solid var(--accent);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none`
           document.body.appendChild(ghost)
           e.dataTransfer.setDragImage(ghost, 0, 0)
           setTimeout(() => document.body.removeChild(ghost), 0)
@@ -567,7 +567,7 @@ function FolderHeader({
         <button onClick={onToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex', alignItems: 'center' }}>
           {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
         </button>
-        {collapsed ? <Folder size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} /> : <FolderOpen size={10} style={{ color: 'rgba(167,139,250,0.7)', flexShrink: 0 }} />}
+        {collapsed ? <Folder size={10} style={{ color: 'rgb(var(--accent-rgb) / 0.7)', flexShrink: 0 }} /> : <FolderOpen size={10} style={{ color: 'rgb(var(--accent-rgb) / 0.7)', flexShrink: 0 }} />}
         {editing ? (
           <input
             autoFocus value={draft}
@@ -1000,7 +1000,7 @@ export function AddToLibraryModal({
         <button onClick={() => { setMode('choose'); setLayers([]); setFxs([]); setAddingLayer(false); setSynthLayerId(null) }} style={{ flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>
           <ArrowLeft size={12} /> Start over
         </button>
-        <button onClick={save} disabled={saving || savedOk} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: savedOk ? '#22c55e' : saving ? 'rgba(139,92,246,0.3)' : 'var(--accent)', color: savedOk ? '#062812' : '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+        <button onClick={save} disabled={saving || savedOk} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: savedOk ? '#22c55e' : saving ? 'rgb(var(--accent-rgb) / 0.3)' : 'var(--accent)', color: savedOk ? '#062812' : saving ? 'var(--text-primary)' : 'var(--accent-contrast)', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
           {savedOk ? <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}><Check size={13} /> Saved</span> : saving ? 'Saving…' : 'Save to Library'}
         </button>
       </div>
@@ -1183,7 +1183,7 @@ function RecipeDetailCard({ recipe, spec, anchor, playing, onAudition, onClose }
       </div>
 
       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-        {recipe.genre && chip(recipe.genre, '#a78bfa')}
+        {recipe.genre && chip(recipe.genre, 'var(--accent-light)')}
         {chip(`${bars} bar${bars !== 1 ? 's' : ''}`, '#34d399')}
         {chip(spec.isDrumClip ? 'Drums' : 'Chords / melody', '#60a5fa')}
       </div>
@@ -1197,7 +1197,7 @@ function RecipeDetailCard({ recipe, spec, anchor, playing, onAudition, onClose }
         {notes.map((n, i) => (
           <rect key={i} x={n.startBeat} y={hi - n.pitch + (range - (hi - lo + 1)) / 2}
             width={Math.max(n.durationBeats - 0.08, 0.15)} height={0.82} rx={0.12}
-            fill="#a78bfa" opacity={0.45 + 0.55 * ((n.velocity ?? 100) / 127)} />
+            fill="var(--accent-light)" opacity={0.45 + 0.55 * ((n.velocity ?? 100) / 127)} />
         ))}
       </svg>
 
@@ -1216,7 +1216,7 @@ function RecipeDetailCard({ recipe, spec, anchor, playing, onAudition, onClose }
           style={{
             display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, fontWeight: 700,
             padding: '6px 12px', borderRadius: 7, cursor: 'pointer', border: 'none',
-            background: playing ? 'var(--accent)' : 'rgba(167,139,250,0.16)', color: playing ? '#fff' : '#a78bfa',
+            background: playing ? 'var(--accent)' : 'rgb(var(--accent-rgb) / 0.16)', color: playing ? 'var(--accent-contrast)' : 'var(--accent-light)',
           }}
         >
           {playing ? <Square size={9} fill="currentColor" /> : <Play size={10} />} {playing ? 'Stop' : 'Listen'}
@@ -1733,7 +1733,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
                 }}
               >
                 {subCollapsed ? <ChevronRight size={9} /> : <ChevronDown size={9} />}
-                <Folder size={9} style={{ color: 'rgba(167,139,250,0.6)', flexShrink: 0 }} />
+                <Folder size={9} style={{ color: 'rgb(var(--accent-rgb) / 0.6)', flexShrink: 0 }} />
                 <span style={{ flex: 1, fontSize: 9, fontWeight: 600, color: 'var(--text-secondary)', letterSpacing: '0.03em' }}>{subName}</span>
                 <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{subEntries.length}</span>
               </div>
@@ -1880,8 +1880,8 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           style={{
             display: 'flex', alignItems: 'center', gap: 7,
             padding: '4px 8px', borderRadius: 6, cursor: 'pointer',
-            background: recipeDetail?.id === r.id ? 'rgba(167,139,250,0.12)' : 'var(--bg-card)',
-            border: recipeDetail?.id === r.id ? '1px solid rgba(167,139,250,0.45)' : '1px solid var(--border)',
+            background: recipeDetail?.id === r.id ? 'rgb(var(--accent-rgb) / 0.12)' : 'var(--bg-card)',
+            border: recipeDetail?.id === r.id ? '1px solid rgb(var(--accent-rgb) / 0.45)' : '1px solid var(--border)',
           }}
         >
           <button
@@ -1894,8 +1894,8 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
               width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               border: 'none', cursor: 'pointer',
-              background: auditioningRecipe === r.id ? 'var(--accent)' : 'rgba(167,139,250,0.16)',
-              color: auditioningRecipe === r.id ? '#fff' : '#a78bfa',
+              background: auditioningRecipe === r.id ? 'var(--accent)' : 'rgb(var(--accent-rgb) / 0.16)',
+              color: auditioningRecipe === r.id ? '#fff' : 'var(--accent-light)',
             }}
           >
             {auditioningRecipe === r.id ? <Square size={8} fill="currentColor" /> : <Play size={9} style={{ marginLeft: 1 }} />}
@@ -1903,7 +1903,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</span>
           {showGenre && r.genre && (
             <span onClick={e => { e.stopPropagation(); setRecipeFilter(prev => new Set(prev).add(r.genre!)) }} title={`Only ${r.genre}`}
-              style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(167,139,250,0.13)', color: '#a78bfa', flexShrink: 0, cursor: 'pointer' }}>{r.genre}</span>
+              style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgb(var(--accent-rgb) / 0.13)', color: 'var(--accent-light)', flexShrink: 0, cursor: 'pointer' }}>{r.genre}</span>
           )}
           {recipeTags(r, spec).filter(t => t !== r.genre && !/^\d+ bars?$|^Long$|^Mid$|^Mine$|^Community$/.test(t)).slice(0, 2).map(t => (
             <span key={t} onClick={e => { e.stopPropagation(); setRecipeFilter(prev => new Set(prev).add(t)) }} title={`Only ${t}`}
@@ -1949,7 +1949,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
   const recipeTagList = useMemo(() => tagCounts(allRecipes, recipeTagsOf), [allRecipes, recipeSpecs]) // eslint-disable-line react-hooks/exhaustive-deps
   const recipeShown = (r: PracticeRecipe) => matchesTags(recipeTagsOf(r), recipeFilter) && matchesQuery(`${r.title} ${r.tagline}`, recipeTagsOf(r), recipeQuery)
   const recipeGroups: [string, string, PracticeRecipe[]][] = [
-    ['Your Recipes', '#a78bfa', userRecipes.filter(recipeShown)],
+    ['Your Recipes', 'var(--accent-light)', userRecipes.filter(recipeShown)],
     ['From the Community', '#34d399', communityRecipes.filter(recipeShown)],
     ['100Lights Recipes', 'var(--text-muted)', builtinRecipes.filter(recipeShown)],
   ]
@@ -2073,7 +2073,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
           </div>
           {chips.map(t => (
             <span key={t} onClick={e => { e.stopPropagation(); setPatternFilter(prev => new Set(prev).add(t)) }} title={`Only ${t}`}
-              style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(167,139,250,0.13)', color: '#a78bfa', flexShrink: 0, cursor: 'pointer' }}>{t}</span>
+              style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgb(var(--accent-rgb) / 0.13)', color: 'var(--accent-light)', flexShrink: 0, cursor: 'pointer' }}>{t}</span>
           ))}
           <span style={{ fontSize: 8.5, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: 'rgba(52,211,153,0.13)', color: '#34d399', flexShrink: 0 }}>{pat.bars} bar{pat.bars !== 1 ? 's' : ''}</span>
         </div>
@@ -2145,7 +2145,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
                 style={{
                   fontSize: 8.5, fontWeight: 700, padding: '2px 7px', border: 'none', cursor: 'pointer', textTransform: 'capitalize',
                   background: browseView === v ? 'var(--accent)' : 'transparent',
-                  color: browseView === v ? '#fff' : 'var(--text-muted)',
+                  color: browseView === v ? 'var(--accent-contrast)' : 'var(--text-muted)',
                 }}>{v}</button>
             ))}
           </div>
@@ -2197,7 +2197,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
                 fontSize: 9, padding: '3px 7px', borderRadius: 4, cursor: 'pointer',
                 border: `1px solid ${showFilters || filtersActive ? 'var(--accent)' : 'var(--border)'}`,
                 background: showFilters ? `var(--accent)` : filtersActive ? 'rgb(var(--accent-rgb) / 0.15)' : 'var(--bg-card)',
-                color: showFilters ? '#fff' : filtersActive ? 'var(--accent)' : 'var(--text-muted)',
+                color: showFilters ? 'var(--accent-contrast)' : filtersActive ? 'var(--accent)' : 'var(--text-muted)',
                 position: 'relative',
               }}
             >
@@ -2225,7 +2225,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
                     fontSize: 9, padding: '2px 7px', borderRadius: 10,
                     border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
                     background: active ? 'var(--accent)' : 'var(--bg-card)',
-                    color: active ? '#fff' : 'var(--text-muted)',
+                    color: active ? 'var(--accent-contrast)' : 'var(--text-muted)',
                     cursor: 'pointer', fontWeight: active ? 700 : 400,
                     transition: 'all 0.1s',
                   }}
@@ -2248,9 +2248,9 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
                     })}
                     style={{
                       fontSize: 9, padding: '2px 7px', borderRadius: 10,
-                      border: `1px solid ${active ? 'rgba(167,139,250,0.7)' : 'var(--border)'}`,
+                      border: `1px solid ${active ? 'rgb(var(--accent-rgb) / 0.7)' : 'var(--border)'}`,
                       background: active ? 'rgba(139,92,246,0.2)' : 'var(--bg-card)',
-                      color: active ? '#a78bfa' : 'var(--text-muted)',
+                      color: active ? 'var(--accent-light)' : 'var(--text-muted)',
                       cursor: 'pointer', fontWeight: active ? 700 : 400,
                       transition: 'all 0.1s',
                     }}
@@ -2309,7 +2309,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
             )}
             {[...byParent.entries()].filter(([n]) => n !== 'Community').map(([parentName, subFolders]) => renderParentGroup(parentName, subFolders))}
             {(byFolder.size > 0 || unfiled.length > 0) && (
-              <div style={{ padding: '7px 10px 3px', fontSize: 8.5, fontWeight: 800, letterSpacing: '0.1em', color: '#a78bfa', textTransform: 'uppercase' }}>
+              <div style={{ padding: '7px 10px 3px', fontSize: 8.5, fontWeight: 800, letterSpacing: '0.1em', color: 'var(--accent-light)', textTransform: 'uppercase' }}>
                 Your Sounds
               </div>
             )}
@@ -2365,7 +2365,7 @@ export default function SoundLibrary({ embedded, onPick }: { embedded?: boolean;
                       borderTop: '1px solid var(--border)',
                       borderLeft: `2px solid ${dragOverUnfiled ? 'rgba(139,92,246,0.7)' : 'transparent'}`,
                       background: dragOverUnfiled ? 'rgba(139,92,246,0.08)' : 'transparent',
-                      color: dragOverUnfiled ? '#a78bfa' : 'var(--text-muted)',
+                      color: dragOverUnfiled ? 'var(--accent-light)' : 'var(--text-muted)',
                       transition: 'all 0.1s',
                     }}
                   >

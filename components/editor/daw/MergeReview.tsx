@@ -48,7 +48,7 @@ export default function MergeReview() {
           border: `1px solid ${chosen ? (side === 'mine' ? '#7c3aed' : '#166534') : 'var(--border)'}`,
           background: chosen ? (side === 'mine' ? 'rgba(124,58,237,0.16)' : 'rgba(22,101,52,0.16)') : 'var(--bg-base)',
         }}>
-        <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.05em', color: chosen ? (side === 'mine' ? '#a78bfa' : '#4ade80') : 'var(--text-muted)', marginBottom: 3 }}>
+        <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: '0.05em', color: chosen ? (side === 'mine' ? 'var(--accent-light)' : '#4ade80') : 'var(--text-muted)', marginBottom: 3 }}>
           {side === 'mine' ? 'YOURS' : 'THEIRS'}{chosen ? ' ✓' : ''}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-primary)' }}>{summarize(c.kind, side === 'mine' ? c.mine : c.theirs)}</div>
@@ -88,7 +88,7 @@ export default function MergeReview() {
         <div style={{ display: 'flex', gap: 8, padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
           <span style={{ flex: 1, fontSize: 10.5, color: 'var(--text-muted)', alignSelf: 'center' }}>Unpicked items keep the shared version.</span>
           <button onClick={() => resolveMerge(choices)}
-            style={{ fontSize: 12, fontWeight: 800, padding: '7px 16px', borderRadius: 8, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff' }}>
+            style={{ fontSize: 12, fontWeight: 800, padding: '7px 16px', borderRadius: 8, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)' }}>
             Apply
           </button>
         </div>

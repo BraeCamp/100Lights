@@ -59,7 +59,7 @@ export function RollSettings({ clip, dispatch, presetLabel, onChangeSound, onPre
           padding: '2px 7px', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
           border: active ? `1px solid ${CYAN}66` : '1px solid #333',
           background: active ? 'rgba(124,58,237,0.12)' : '#222',
-          color: active ? CYAN : '#aaa', flexShrink: 0,
+          color: active ? CYAN : 'var(--text-secondary)', flexShrink: 0,
         }}
       >
         <Settings2 size={10} /> Sound{active ? ' •' : ''}

@@ -91,12 +91,12 @@ export default function SessionRecap({ projectId }: { projectId: string }) {
   return createPortal(
     <div style={{
       position: 'fixed', top: 52, left: '50%', transform: 'translateX(-50%)', zIndex: 1200,
-      background: 'var(--bg-surface)', border: '1px solid rgba(167,139,250,0.45)', borderRadius: 10,
+      background: 'var(--bg-surface)', border: '1px solid rgb(var(--accent-rgb) / 0.45)', borderRadius: 10,
       padding: '10px 14px', boxShadow: '0 12px 32px rgba(0,0,0,0.6)', maxWidth: 380,
       display: 'flex', gap: 10, alignItems: 'flex-start',
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 10, fontWeight: 800, color: '#a78bfa', letterSpacing: '0.08em', marginBottom: 4 }}>WHILE YOU WERE AWAY</div>
+        <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--accent-light)', letterSpacing: '0.08em', marginBottom: 4 }}>WHILE YOU WERE AWAY</div>
         {lines.map((l, i) => (
           <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6 }}>· {l}</div>
         ))}

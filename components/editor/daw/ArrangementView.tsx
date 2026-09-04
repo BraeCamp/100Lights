@@ -2384,7 +2384,7 @@ function MobileToolbar(p: {
               </div>
               <button onClick={p.onRipple} style={{ ...row, borderColor: p.ripple ? '#f59e0b' : 'var(--border)', color: p.ripple ? '#f59e0b' : 'var(--text-primary)' }}>{p.ripple && <Check size={16} />}Ripple edit</button>
               <button onClick={() => { p.onExport(); p.setMore(false) }} style={row}><Download size={16} /> Export</button>
-              {p.onSave && <button onClick={() => { void p.onSave!(); p.setMore(false) }} style={{ ...row, justifyContent: 'center', background: 'var(--accent)', color: '#fff', border: 'none', fontWeight: 800 }}>{p.isSaving ? 'Saving…' : 'Save project'}</button>}
+              {p.onSave && <button onClick={() => { void p.onSave!(); p.setMore(false) }} style={{ ...row, justifyContent: 'center', background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', fontWeight: 800 }}>{p.isSaving ? 'Saving…' : 'Save project'}</button>}
               {p.onSaveLocal && <button onClick={() => { void p.onSaveLocal!(); p.setMore(false) }} style={row}><HardDrive size={16} /> Save to my computer (.cfproj)</button>}
             </div>
           </div>

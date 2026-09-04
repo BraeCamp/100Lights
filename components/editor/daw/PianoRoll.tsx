@@ -153,7 +153,7 @@ function DrumLaneKeys({
                 cursor: 'pointer', userSelect: 'none', boxSizing: 'border-box',
               }}
             >
-              <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.04em', color: hover ? '#fff' : '#888', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.04em', color: hover ? '#fff' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                 {lane.label}
               </span>
             </div>
@@ -205,7 +205,7 @@ function PianoKeys({
               }}
             >
               {isC && (
-                <span style={{ fontSize: 7, color: hover ? '#fff' : '#555', letterSpacing: '0.04em', paddingRight: 2 }}>
+                <span style={{ fontSize: 7, color: hover ? '#fff' : 'var(--text-muted)', letterSpacing: '0.04em', paddingRight: 2 }}>
                   C{octave(pitch)}
                 </span>
               )}
@@ -1557,7 +1557,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                           style={{
                             padding: '6px 0', fontSize: 11, fontWeight: 600, cursor: 'pointer', border: 'none',
                             background: (clip.rootNote ?? 0) === i ? 'rgb(var(--accent-rgb) / 0.2)' : 'transparent',
-                            color: (clip.rootNote ?? 0) === i ? 'var(--accent-light)' : '#bbb',
+                            color: (clip.rootNote ?? 0) === i ? 'var(--accent-light)' : 'var(--text-secondary)',
                           }}>
                           {n}
                         </button>
@@ -1699,7 +1699,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                                       title={`Listen at ${rootLabel(root)}`}
                                       style={{ flexShrink: 0, width: 22, border: 'none', background: 'transparent', cursor: 'pointer', color: previewing ? 'var(--text-muted)' : 'var(--accent-light)', padding: '3px 0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                                     ><Play size={11} /></button>
-                                    <span title={row.notes > 1 ? `${row.name} — ${row.notes} notes in the library; played at any pitch` : e.name} style={{ flex: 1, minWidth: 0, fontSize: 10, color: '#bbb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span title={row.notes > 1 ? `${row.name} — ${row.notes} notes in the library; played at any pitch` : e.name} style={{ flex: 1, minWidth: 0, fontSize: 10, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                       {row.name}{row.notes > 1 && <span style={{ marginLeft: 4, fontSize: 8, color: 'var(--text-muted)' }}>· {row.notes} notes</span>}
                                     </span>
                                     <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{e.duration ? `${e.duration.toFixed(1)}s` : ''}</span>
@@ -1766,7 +1766,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                                 flex: 1, display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0,
                                 textAlign: 'left', padding: '4px 10px 4px 0', fontSize: 10, cursor: 'pointer', border: 'none',
                                 background: clip.presetId === p.id ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent',
-                                color: oor ? '#f87171' : clip.presetId === p.id ? 'var(--accent-light)' : '#aaa',
+                                color: oor ? '#f87171' : clip.presetId === p.id ? 'var(--accent-light)' : 'var(--text-secondary)',
                               }}>
                               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{oor ? '⚠ ' : ''}{p.name}</span>
                               <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 8.5, color: oor ? '#f87171' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{noteRangeLabel(p)}</span>

@@ -83,5 +83,5 @@ function sourceLabel(s: SampleUse): string {
   return 'Library sound'
 }
 function sourceColor(s: SampleUse): string {
-  return s.source === 'community' ? '#a78bfa' : muted
+  return s.source === 'community' ? 'var(--accent-light)' : muted
 }

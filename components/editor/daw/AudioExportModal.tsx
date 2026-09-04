@@ -559,8 +559,8 @@ style={{
             <>
               {/* Save back to the article source (admin edit-in-place flow) */}
               {saveTarget && (
-                <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 8, background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.35)' }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', marginBottom: 6 }}>
+                <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 8, background: 'rgb(var(--accent-rgb) / 0.08)', border: '1px solid rgb(var(--accent-rgb) / 0.35)' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-light)', marginBottom: 6 }}>
                     Editing article source · {saveTarget.kind === 'demo' ? 'demo clip' : 'uploaded file'}
                   </div>
                   {saveToState === 'done' ? (
@@ -575,7 +575,7 @@ style={{
                         style={{
                           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                           width: '100%', padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
-                          background: '#7c3aed', color: '#fff', fontSize: 13, fontWeight: 700,
+                          background: 'var(--accent)', color: 'var(--accent-contrast)', fontSize: 13, fontWeight: 700,
                           opacity: saveToState === 'busy' ? 0.6 : 1,
                         }}
                       >
@@ -643,7 +643,7 @@ style={{
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
                   {shareState === 'done' ? (
                     <p style={{ fontSize: 11.5, color: '#4ade80', margin: 0 }}>
-                      Shared! <a href={sharedId ? `/community/${sharedId}` : '/community?kind=song'} target="_blank" rel="noreferrer" style={{ color: '#a78bfa' }}>View its public page ↗</a>
+                      Shared! <a href={sharedId ? `/community/${sharedId}` : '/community?kind=song'} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-light)' }}>View its public page ↗</a>
                       {sharedId && (
                         <button
                           onClick={() => { void navigator.clipboard.writeText(`${window.location.origin}/community/${sharedId}`) }}
@@ -713,7 +713,7 @@ style={{
                   <div style={{ marginTop: 10 }}>
                     {starterState === 'done' ? (
                       <p style={{ fontSize: 11, color: '#4ade80', margin: 0 }}>
-                        Starter shared! <a href={starterId ? `/community/${starterId}` : '/community?kind=project'} target="_blank" rel="noreferrer" style={{ color: '#a78bfa' }}>View its public page ↗</a>
+                        Starter shared! <a href={starterId ? `/community/${starterId}` : '/community?kind=project'} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-light)' }}>View its public page ↗</a>
                       </p>
                     ) : (
                       <button

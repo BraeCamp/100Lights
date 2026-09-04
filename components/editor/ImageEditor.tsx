@@ -1250,7 +1250,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
                     }}
                     style={{
                       padding: '5px 10px', borderRadius: 6, fontSize: 12,
-                      background: ACCENT, color: '#fff', border: 'none', cursor: 'pointer',
+                      background: ACCENT, color: 'var(--accent-contrast)', border: 'none', cursor: 'pointer',
                     }}
                   >
                     Apply
@@ -1268,7 +1268,7 @@ export default function ImageEditor({ projectName, onProjectNameCommit }: ImageE
             style={{
               display: 'flex', alignItems: 'center', gap: 5,
               padding: '6px 12px', borderRadius: 7, border: 'none',
-              background: ACCENT, color: '#fff', fontSize: 12, fontWeight: 600,
+              background: ACCENT, color: 'var(--accent-contrast)', fontSize: 12, fontWeight: 600,
               cursor: 'pointer',
             }}
           >

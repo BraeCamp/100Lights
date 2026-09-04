@@ -150,7 +150,7 @@ export default function TrackInputCard({ track, anchorEl, onClose }: Props) {
                 background: active ? 'var(--accent)' : 'transparent',
               }} />
               <div>
-                <div style={{ fontSize: 11, color: active ? '#a8d4ff' : '#aaa', fontWeight: active ? 600 : 400 }}>
+                <div style={{ fontSize: 11, color: active ? '#a8d4ff' : 'var(--text-secondary)', fontWeight: active ? 600 : 400 }}>
                   {label}
                 </div>
                 {desc && <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>{desc}</div>}

@@ -147,7 +147,7 @@ export default function BeatMapEditor({ clip, onSave, onClose, onDetect }: Props
           <button onClick={() => { onSave(undefined); onClose() }} style={{ ...btn, color: '#f87171' }}>Remove grid</button>
           <div className="flex items-center gap-2">
             <button onClick={onClose} style={btn}>Cancel</button>
-            <button onClick={save} style={{ ...btn, background: 'var(--accent)', color: '#fff', border: 'none', padding: '5px 14px' }}>Save</button>
+            <button onClick={save} style={{ ...btn, background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', padding: '5px 14px' }}>Save</button>
           </div>
         </div>
       </div>

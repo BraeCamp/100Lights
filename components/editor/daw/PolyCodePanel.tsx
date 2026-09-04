@@ -288,7 +288,7 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
           title="The helpers and patch fields, at a glance"
           style={{ ...btn, fontSize: 9.5, padding: '2px 8px',
             background: showReference ? 'var(--accent)' : 'var(--bg-card)',
-            color: showReference ? '#fff' : 'var(--text-muted)', borderColor: showReference ? 'var(--accent)' : 'var(--border)' }}
+            color: showReference ? 'var(--accent-contrast)' : 'var(--text-muted)', borderColor: showReference ? 'var(--accent)' : 'var(--border)' }}
         >
           Reference
         </button>
@@ -385,7 +385,7 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
               e.dataTransfer.setData('text/plain', preview.name)
               const ghost = document.createElement('div')
               ghost.textContent = `♪ ${preview.name}`
-              ghost.style.cssText = 'position:fixed;top:-999px;left:-999px;background:var(--bg-card-hover);color:#a78bfa;border:1px solid #7c3aed;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none'
+              ghost.style.cssText = 'position:fixed;top:-999px;left:-999px;background:var(--bg-card-hover);color:var(--accent-light);border:1px solid var(--accent);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;pointer-events:none'
               document.body.appendChild(ghost)
               e.dataTransfer.setDragImage(ghost, 0, 0)
               setTimeout(() => document.body.removeChild(ghost), 0)
@@ -395,7 +395,7 @@ export default function PolyCodePanel({ onDone }: { onDone?: () => void } = {}) 
             <GripVertical size={12} /> Drag
           </span>
           <button onClick={isEditingClip ? saveToClip : addNewTrack} disabled={running}
-            style={{ ...btn, background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)', marginLeft: 'auto' }}>
+            style={{ ...btn, background: 'var(--accent)', color: 'var(--accent-contrast)', borderColor: 'var(--accent)', marginLeft: 'auto' }}>
             {isEditingClip ? 'Save' : 'Add track'}
           </button>
 

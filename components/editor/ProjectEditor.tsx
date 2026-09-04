@@ -832,7 +832,7 @@ function ProjectEditorInner({ projectId, projectName, modules: moduleProp, allow
                 Try again
               </button>
             )}
-            <a href={backHref} style={{ padding: '9px 20px', borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: 'none', background: loadError === 'unauthenticated' ? 'var(--accent)' : 'var(--bg-card)', color: loadError === 'unauthenticated' ? '#fff' : 'var(--text-primary)', border: loadError === 'unauthenticated' ? 'none' : '1px solid var(--border)' }}>
+            <a href={backHref} style={{ padding: '9px 20px', borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: 'none', background: loadError === 'unauthenticated' ? 'var(--accent)' : 'var(--bg-card)', color: loadError === 'unauthenticated' ? 'var(--accent-contrast)' : 'var(--text-primary)', border: loadError === 'unauthenticated' ? 'none' : '1px solid var(--border)' }}>
               {loadError === 'unauthenticated' ? 'Sign in' : 'Go to dashboard'}
             </a>
           </div>

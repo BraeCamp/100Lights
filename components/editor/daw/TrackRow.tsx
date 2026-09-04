@@ -1296,7 +1296,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               { label: 'Ungroup (delete group, keep tracks)', action: () => dispatch({ type: 'REMOVE_TRACK', trackId: track.id }), danger: true },
             ].map(({ label, action, danger }) => (
               <button key={label} onClick={() => { action(); setTrackCtxMenu(null) }}
-                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: danger ? '#f87171' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: danger ? '#f87171' : 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
                 onMouseEnter={e => { (e.target as HTMLElement).style.background = danger ? 'rgba(239,68,68,0.10)' : 'rgba(255,255,255,0.06)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >{label}</button>
@@ -1551,7 +1551,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               { label: 'Delete',    action: () => dispatch({ type: 'REMOVE_TRACK',    trackId: track.id }), danger: true },
             ].map(({ label, action, danger }) => (
               <button key={label} onClick={() => { action(); setTrackCtxMenu(null) }}
-                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: danger ? '#f87171' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: danger ? '#f87171' : 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
                 onMouseEnter={e => { (e.target as HTMLElement).style.background = danger ? 'rgba(239,68,68,0.10)' : 'rgba(255,255,255,0.06)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >{label}</button>
@@ -1562,14 +1562,14 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
             {track.instrument && track.instrument.type !== 'none' && (
               <button
                 onClick={() => { setTrackCtxMenu(null); void flattenTrackToAudio(track.id) }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
               >
                 <span style={{ width: 14, textAlign: 'center' }}>⇊</span>
                 <span>Flatten to Audio</span>
               </button>
             )}
             <button onClick={() => { dispatch({ type: 'SET_TRACK_FROZEN', trackId: track.id, frozen: !frozen }); setTrackCtxMenu(null) }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: frozen ? '#60a5fa' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: frozen ? '#60a5fa' : 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
               onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
               onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
             >
@@ -1649,7 +1649,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               { label: track.solo ? 'Unsolo'   : 'Solo',  action: () => dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { solo: !track.solo } }), active: track.solo },
             ].map(({ label, action, active }) => (
               <button key={label} onClick={() => { action(); setTrackCtxMenu(null) }}
-                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: active ? '#facc15' : '#ccc', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: active ? '#facc15' : 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
                 onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
                 onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
               >{label}</button>

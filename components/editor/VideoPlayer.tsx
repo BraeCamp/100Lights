@@ -219,7 +219,7 @@ function renderTitleSpec(tc: TitleSpec, stageHeight: number, key: React.Key, now
     }}>
       {drag ? (
         // Selected title → draggable to reposition (writes titleOffsetX/Y). Only the text is interactive.
-        <span style={{ display: 'inline-block', pointerEvents: 'auto', cursor: 'move', touchAction: 'none', outline: '1.5px dashed rgba(167,139,250,0.9)', outlineOffset: 6, borderRadius: 4 }}
+        <span style={{ display: 'inline-block', pointerEvents: 'auto', cursor: 'move', touchAction: 'none', outline: '1.5px dashed rgb(var(--accent-rgb) / 0.9)', outlineOffset: 6, borderRadius: 4 }}
           onPointerDown={drag.onPointerDown} onPointerMove={drag.onPointerMove} onPointerUp={drag.onPointerUp}>
           {content}
         </span>
@@ -1488,7 +1488,7 @@ export default function VideoPlayer({
               <path
                 d={buildFocusSVGPath(focusKeyframes)}
                 fill="none"
-                stroke="rgba(167,139,250,0.4)"
+                stroke="rgb(var(--accent-rgb) / 0.4)"
                 strokeWidth="1.5"
                 vectorEffect="non-scaling-stroke"
                 strokeDasharray="5 3"
@@ -1505,10 +1505,10 @@ export default function VideoPlayer({
               display: 'none', // RAF shows/hides
             }}
           >
-            <div style={{ position: 'absolute', width: 28, height: 28, borderRadius: '50%', border: '1.5px solid rgba(167,139,250,0.95)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', boxShadow: '0 0 8px rgba(0,0,0,0.7), 0 0 4px rgba(167,139,250,0.4)' }} />
-            <div style={{ position: 'absolute', width: 5, height: 5, borderRadius: '50%', background: 'rgba(167,139,250,1)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
-            <div style={{ position: 'absolute', width: 1, height: 16, background: 'rgba(167,139,250,0.9)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
-            <div style={{ position: 'absolute', width: 16, height: 1, background: 'rgba(167,139,250,0.9)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
+            <div style={{ position: 'absolute', width: 28, height: 28, borderRadius: '50%', border: '1.5px solid rgb(var(--accent-rgb) / 0.95)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', boxShadow: '0 0 8px rgba(0,0,0,0.7), 0 0 4px rgb(var(--accent-rgb) / 0.4)' }} />
+            <div style={{ position: 'absolute', width: 5, height: 5, borderRadius: '50%', background: 'rgb(var(--accent-rgb) / 1)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
+            <div style={{ position: 'absolute', width: 1, height: 16, background: 'rgb(var(--accent-rgb) / 0.9)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
+            <div style={{ position: 'absolute', width: 16, height: 1, background: 'rgb(var(--accent-rgb) / 0.9)', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
           </div>
 
           {/* Editable control points — draggable dots at each recorded keyframe */}
@@ -1520,7 +1520,7 @@ export default function VideoPlayer({
                 left: `${kf.x * 100}%`, top: `${kf.y * 100}%`,
                 transform: 'translate(-50%,-50%)',
                 width: 10, height: 10, borderRadius: '50%',
-                background: 'rgba(167,139,250,0.7)',
+                background: 'rgb(var(--accent-rgb) / 0.7)',
                 border: '1.5px solid rgba(255,255,255,0.7)',
                 cursor: 'grab', touchAction: 'none',
               }}

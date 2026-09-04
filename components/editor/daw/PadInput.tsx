@@ -362,7 +362,7 @@ function FxToggleConfig({ pad, onPadChange }: {
         disabled={!selTrackId}
         style={{
           padding: '5px 0', borderRadius: 4, border: 'none', cursor: selTrackId ? 'pointer' : 'not-allowed',
-          background: selTrackId ? C.accent : '#222', color: '#fff', fontSize: 10, fontWeight: 700,
+          background: selTrackId ? C.accent : '#222', color: selTrackId ? 'var(--accent-contrast)' : '#fff', fontSize: 10, fontWeight: 700,
         }}
       >
         {(() => {
@@ -1428,7 +1428,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                 <div style={{ display: 'flex', gap: 2 }}>
                   {(['1/16', '1/8', '1/4', '1/2', '1/1'] as const).map(g => (
                     <button key={g} onClick={() => setQuantizeGrid(g)}
-                      style={{ padding: '2px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700, border: `1px solid ${quantizeGrid === g ? 'var(--accent)' : '#222'}`, background: quantizeGrid === g ? 'rgb(var(--accent-rgb) / 0.15)' : '#111', color: quantizeGrid === g ? 'var(--accent-light)' : '#555', cursor: 'pointer' }}>
+                      style={{ padding: '2px 5px', borderRadius: 3, fontSize: 8, fontWeight: 700, border: `1px solid ${quantizeGrid === g ? 'var(--accent)' : '#222'}`, background: quantizeGrid === g ? 'rgb(var(--accent-rgb) / 0.15)' : '#111', color: quantizeGrid === g ? 'var(--accent-light)' : 'var(--text-muted)', cursor: 'pointer' }}>
                       {g}
                     </button>
                   ))}
@@ -1699,7 +1699,7 @@ export default function PadInput({ trackId, onClose }: { trackId: string; onClos
                             setSavedPresets(getPadPresets())
                             setSaveName('')
                           }}
-                          style={{ padding: '3px 8px', fontSize: 10, background: C.accent, border: 'none', borderRadius: 3, color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
+                          style={{ padding: '3px 8px', fontSize: 10, background: C.accent, border: 'none', borderRadius: 3, color: 'var(--accent-contrast)', cursor: 'pointer', fontWeight: 700 }}>
                           Save
                         </button>
                       </div>

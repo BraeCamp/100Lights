@@ -108,6 +108,46 @@ try {
   await page.evaluate(want => { window.__WANT_OFFLINE = want }, OFFLINE)
   await page.evaluate(p => window.__dawDispatch({ type: 'LOAD_PROJECT', project: p }), dawProject)
   await page.waitForTimeout(1000)
+  // A sample preset (the piano roll's Samples tab) resolves through the
+  // library — which a fresh browser is still SEEDING when the page is this
+  // young. Rendering before the seeded entry exists plays that track silent,
+  // and a silent track reads as "better dynamics" in the stats. Wait for every
+  // seeded sample the project names; if the library panel is not mounted here,
+  // open it by voice so it seeds.
+  const sampleIds = [...new Set((dawProject.presets ?? []).map(p => p.sampleId).filter(id => typeof id === 'string' && id.startsWith('seed:')))]
+  if (sampleIds.length) {
+    const seeded = async ids => {
+      const dbs = await indexedDB.databases()
+      for (const d of dbs) {
+        if (!d.name || !d.name.startsWith('contentforge-sound-library')) continue
+        const ok = await new Promise(res => {
+          const req = indexedDB.open(d.name)
+          req.onerror = () => res(false)
+          req.onsuccess = () => {
+            const db = req.result
+            try {
+              const tx = db.transaction('entries', 'readonly')
+              const st = tx.objectStore('entries')
+              let found = 0
+              for (const id of ids) { const g = st.get(id); g.onsuccess = () => { if (g.result) found++ } }
+              tx.oncomplete = () => { db.close(); res(found === ids.length) }
+              tx.onerror = () => { db.close(); res(false) }
+            } catch { db.close(); res(false) }
+          }
+        })
+        if (ok) return true
+      }
+      return false
+    }
+    console.log(`  waiting for the sound library to seed ${sampleIds.length} sample preset(s)…`)
+    try {
+      await page.waitForFunction(seeded, sampleIds, { timeout: 25000, polling: 1000 })
+    } catch {
+      console.log('  library not seeded yet — opening the Sound Library so it seeds')
+      await page.evaluate(() => window.__lightHear?.('open the sound library')).catch(() => {})
+      await page.waitForFunction(seeded, sampleIds, { timeout: 90000, polling: 1000 })
+    }
+  }
   await page.keyboard.press('Escape').catch(() => {})
   // --offline uses the OfflineAudioContext render, which goes as fast as the CPU
   // allows rather than taking as long as the music (2:05 of audio rendered in 42s
