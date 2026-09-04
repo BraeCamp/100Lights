@@ -5,8 +5,8 @@ import ToolShell from '@/components/tools/ToolShell'
 const VocalRange = dynamic(() => import('@/components/tools/VocalRange'))
 
 export const metadata: Metadata = {
-  title: 'Vocal Range Finder — Free, Find Your Range & Voice Type',
-  description: 'A free vocal range finder. Sing your lowest and highest notes and it shows your range and closest voice type — bass, tenor, alto, soprano. In your browser, nothing recorded.',
+  title: 'Vocal Range Finder — Find Your Voice Type',
+  description: 'Sing your lowest and highest notes and this detects your range live through the mic, then names the closest voice type. Runs in your browser, nothing recorded.',
   alternates: { canonical: 'https://100lights.com/tools/vocal-range' },
   openGraph: {
     title: 'Vocal Range Finder — 100Lights',

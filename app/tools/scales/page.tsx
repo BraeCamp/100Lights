@@ -5,7 +5,7 @@ import ToolShell from '@/components/tools/ToolShell'
 const Fretboard = dynamic(() => import('@/components/tools/Fretboard'))
 
 export const metadata: Metadata = {
-  title: 'Guitar Scales — Free Interactive Fretboard for Every Scale & Key',
+  title: 'Guitar Scales: Interactive Fretboard Tool',
   description:
     'A free interactive guitar fretboard. See any scale — major, minor, pentatonic, blues, modes — in any key, and click any note to hear it. No download.',
   alternates: { canonical: 'https://100lights.com/tools/scales' },

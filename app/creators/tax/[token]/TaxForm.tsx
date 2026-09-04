@@ -54,23 +54,23 @@ export default function TaxForm({ token, classes, storeTin, existing }: {
   return (
     <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-        <div><label style={labelStyle}>Legal name *</label><input required value={f.legalName} onChange={set('legalName')} placeholder="Your full legal name" style={inputStyle} /></div>
-        <div><label style={labelStyle}>Business name <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(if any)</span></label><input value={f.businessName} onChange={set('businessName')} placeholder="LLC / DBA" style={inputStyle} /></div>
+        <div><label htmlFor="tax-legal-name" style={labelStyle}>Legal name *</label><input id="tax-legal-name" required value={f.legalName} onChange={set('legalName')} placeholder="Your full legal name" style={inputStyle} /></div>
+        <div><label htmlFor="tax-business-name" style={labelStyle}>Business name <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(if any)</span></label><input id="tax-business-name" value={f.businessName} onChange={set('businessName')} placeholder="LLC / DBA" style={inputStyle} /></div>
       </div>
-      <div><label style={labelStyle}>Federal tax classification</label>
-        <select value={f.taxClass} onChange={set('taxClass')} style={inputStyle}>{classes.map(c => <option key={c} value={c}>{c}</option>)}</select>
+      <div><label htmlFor="tax-class" style={labelStyle}>Federal tax classification</label>
+        <select id="tax-class" value={f.taxClass} onChange={set('taxClass')} style={inputStyle}>{classes.map(c => <option key={c} value={c}>{c}</option>)}</select>
       </div>
-      <div><label style={labelStyle}>Mailing address *</label><input required value={f.address} onChange={set('address')} placeholder="Street address" style={inputStyle} /></div>
+      <div><label htmlFor="tax-address" style={labelStyle}>Mailing address *</label><input id="tax-address" required value={f.address} onChange={set('address')} placeholder="Street address" style={inputStyle} /></div>
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
-        <div><label style={labelStyle}>City</label><input value={f.city} onChange={set('city')} style={inputStyle} /></div>
-        <div><label style={labelStyle}>State</label><input value={f.state} onChange={set('state')} maxLength={2} placeholder="CA" style={inputStyle} /></div>
-        <div><label style={labelStyle}>ZIP</label><input value={f.zip} onChange={set('zip')} style={inputStyle} /></div>
+        <div><label htmlFor="tax-city" style={labelStyle}>City</label><input id="tax-city" value={f.city} onChange={set('city')} style={inputStyle} /></div>
+        <div><label htmlFor="tax-state" style={labelStyle}>State</label><input id="tax-state" value={f.state} onChange={set('state')} maxLength={2} placeholder="CA" style={inputStyle} /></div>
+        <div><label htmlFor="tax-zip" style={labelStyle}>ZIP</label><input id="tax-zip" value={f.zip} onChange={set('zip')} style={inputStyle} /></div>
       </div>
 
       {storeTin ? (
         <div>
-          <label style={labelStyle}>SSN or EIN (TIN) *</label>
-          <input value={f.tin} onChange={set('tin')} inputMode="numeric" placeholder="XXX-XX-XXXX" autoComplete="off" style={inputStyle} />
+          <label htmlFor="tax-tin" style={labelStyle}>SSN or EIN (TIN) *</label>
+          <input id="tax-tin" value={f.tin} onChange={set('tin')} inputMode="numeric" placeholder="XXX-XX-XXXX" autoComplete="off" style={inputStyle} />
           <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '6px 0 0' }}>Encrypted and used only to issue your year-end 1099. Never shown again.</p>
         </div>
       ) : (

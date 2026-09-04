@@ -116,10 +116,11 @@ export default function Fretboard() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          <label htmlFor="fretboard-scale" style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
             Scale
-          </div>
+          </label>
           <select
+            id="fretboard-scale"
             value={scale}
             onChange={(e) => setScale(e.target.value as ScaleType)}
             style={{

@@ -5,7 +5,7 @@ import ToolShell from '@/components/tools/ToolShell'
 const StandaloneTuner = dynamic(() => import('@/components/tools/StandaloneTuner'))
 
 export const metadata: Metadata = {
-  title: 'Online Tuner — Free Chromatic Tuner for Any Instrument',
+  title: 'Free Online Chromatic Tuner for Any Instrument',
   description: 'A free online chromatic tuner. Tune guitar, bass, violin, ukulele, or your voice from your browser mic — shows the note and cents. No download, no sign-up.',
   alternates: { canonical: 'https://100lights.com/tools/tuner' },
   openGraph: {

@@ -3,8 +3,8 @@ import Link from 'next/link'
 import { Guitar, Gauge, Piano, ArrowRight, RefreshCw, Grid3x3, Timer, Ear, Mic } from 'lucide-react'
 
 export const metadata: Metadata = {
-  title: 'Free Music Tools — Tuner, Metronome, Chord Teacher',
-  description: 'Free browser music tools from 100Lights: an online tuner, a metronome with tempo trainer, and a chord teacher for progressions and every chord. No downloads, no sign-up.',
+  title: 'Free Music Tools: Tuner, Metronome, Chord Teacher',
+  description: 'Eight free browser tools: mic tuner, tap-tempo metronome, chord teacher, circle of fifths, guitar scales, ear trainer, vocal range finder and delay calculator.',
   alternates: { canonical: 'https://100lights.com/tools' },
   openGraph: {
     title: '100Lights — Free Music Tools',

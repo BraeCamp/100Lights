@@ -7,7 +7,7 @@ import LearnBrowser, { type CardArticle } from '@/components/learn/LearnBrowser'
 import { TOOL_PROMOS } from '@/components/learn/tool-promos'
 
 export const metadata: Metadata = {
-  title: 'Learn Music Production — Free Guides & Ear Training',
+  title: 'Learn Music Production: Free Guides & Ear Training',
   description: 'Learn to make music from scratch: beats, chord progressions, recording, mixing, and arranging. Practical guides you can do free in your browser, no downloads.',
   alternates: {
     canonical: 'https://100lights.com/learn',

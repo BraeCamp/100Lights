@@ -6,8 +6,8 @@ import ToolShell from '@/components/tools/ToolShell'
 const IntervalTrainer = dynamic(() => import('@/components/tools/IntervalTrainer'))
 
 export const metadata: Metadata = {
-  title: 'Ear Training — Free Interval Trainer, Learn to Hear Intervals',
-  description: 'A free interval ear trainer. Hear two notes and name the interval — ascending, descending, or harmonic. Tracks your score. Train your ear in the browser, no sign-up.',
+  title: 'Ear Training: Free Interval Trainer',
+  description: 'Hear two notes, name the interval. Pick any of the 12 from minor 2nd to octave, switch between ascending, descending and harmonic, and track your score.',
   alternates: { canonical: 'https://100lights.com/tools/ear-training' },
   openGraph: {
     title: 'Interval Ear Trainer — 100Lights',

@@ -44,21 +44,21 @@ export default function DmcaForm() {
   return (
     <form onSubmit={submit} style={{ display: 'grid', gap: 16 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-        <div><label style={label}>Your name *</label><input required value={f.complainantName} onChange={set('complainantName')} style={input} /></div>
-        <div><label style={label}>Contact email *</label><input required type="email" value={f.email} onChange={set('email')} style={input} /></div>
+        <div><label htmlFor="dmca-name" style={label}>Your name *</label><input id="dmca-name" required value={f.complainantName} onChange={set('complainantName')} style={input} /></div>
+        <div><label htmlFor="dmca-email" style={label}>Contact email *</label><input id="dmca-email" required type="email" value={f.email} onChange={set('email')} style={input} /></div>
       </div>
-      <div><label style={label}>The copyrighted work being infringed *</label>
-        <textarea required rows={2} value={f.workDescription} onChange={set('workDescription')} placeholder="Describe or identify your original work" style={{ ...input, resize: 'vertical' }} /></div>
-      <div><label style={label}>Where it appears on 100Lights *</label>
-        <input required value={f.infringingUrl} onChange={set('infringingUrl')} placeholder="https://100lights.com/community/…" style={input} /></div>
+      <div><label htmlFor="dmca-work" style={label}>The copyrighted work being infringed *</label>
+        <textarea id="dmca-work" required rows={2} value={f.workDescription} onChange={set('workDescription')} placeholder="Describe or identify your original work" style={{ ...input, resize: 'vertical' }} /></div>
+      <div><label htmlFor="dmca-url" style={label}>Where it appears on 100Lights *</label>
+        <input id="dmca-url" required value={f.infringingUrl} onChange={set('infringingUrl')} placeholder="https://100lights.com/community/…" style={input} /></div>
 
       <label style={cbRow}><input type="checkbox" checked={goodFaith} onChange={e => setGoodFaith(e.target.checked)} style={{ marginTop: 3 }} />
         I have a good-faith belief that the use described is not authorized by the copyright owner, its agent, or the law.</label>
       <label style={cbRow}><input type="checkbox" checked={accuracy} onChange={e => setAccuracy(e.target.checked)} style={{ marginTop: 3 }} />
         Under penalty of perjury, the information in this notice is accurate and I am the copyright owner or authorized to act on their behalf.</label>
 
-      <div><label style={label}>Electronic signature (type your full name) *</label>
-        <input required value={f.signature} onChange={set('signature')} style={input} /></div>
+      <div><label htmlFor="dmca-signature" style={label}>Electronic signature (type your full name) *</label>
+        <input id="dmca-signature" required value={f.signature} onChange={set('signature')} style={input} /></div>
 
       {err && <p style={{ fontSize: 13, color: '#f87171', margin: 0 }}>{err}</p>}
       <button type="submit" disabled={state === 'sending' || !goodFaith || !accuracy} style={{

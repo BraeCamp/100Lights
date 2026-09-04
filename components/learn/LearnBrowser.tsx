@@ -66,6 +66,7 @@ export default function LearnBrowser({ articles }: { articles: CardArticle[] }) 
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search guides…"
+            aria-label="Search guides"
             style={{
               width: '100%', fontSize: 14, padding: '10px 12px 10px 34px', borderRadius: 10,
               background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)', outline: 'none',

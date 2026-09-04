@@ -56,6 +56,21 @@ const nextConfig: NextConfig = {
         headers: [
           { key: 'Cross-Origin-Opener-Policy',   value: 'same-origin' },
           { key: 'Cross-Origin-Embedder-Policy',  value: 'credentialless' },
+          // Browsers must not sniff a response into a different type, and
+          // cross-site navigations get only the origin as referrer.
+          { key: 'X-Content-Type-Options',        value: 'nosniff' },
+          { key: 'Referrer-Policy',               value: 'strict-origin-when-cross-origin' },
+        ],
+      },
+      {
+        // Clickjacking: only 100Lights itself may frame its pages. /embed is
+        // the one route built to be framed elsewhere, so it is left out.
+        // (No wider CSP here: script/connect/media sources for Clerk, PostHog,
+        // Stripe, Sentry, R2 and the media partners need a real allowlist first.)
+        source: '/((?!embed).*)',
+        headers: [
+          { key: 'X-Frame-Options',         value: 'SAMEORIGIN' },
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
         ],
       },
     ]

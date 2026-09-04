@@ -1,10 +1,15 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { auth } from '@clerk/nextjs/server'
 import { sql } from '@/lib/db'
+import ZoomBlock from '@/components/ZoomBlock'
 
 interface Props {
   params: Promise<{ id: string }>
 }
+
+// The editor: pinch and ctrl+wheel are editing gestures, so browser zoom is
+// locked here (the surrounding (app) group leaves it on for ordinary pages).
+export const viewport: Viewport = { width: 'device-width', initialScale: 1, maximumScale: 1, userScalable: false }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params
@@ -24,5 +29,5 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>
+  return <><ZoomBlock />{children}</>
 }

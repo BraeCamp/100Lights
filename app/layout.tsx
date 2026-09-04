@@ -25,7 +25,9 @@ export const metadata: Metadata = {
     siteName: '100Lights',
     title: '100Lights — The Music Studio in Your Browser',
     description: 'A full DAW built for the browser, with a community of shared sounds and chord recipes. No downloads, no plugins.',
-    url: 'https://100lights.com',
+    // No `url` here: a root-level og:url is inherited by every page that does
+    // not set its own, and then every shared link claims to be the homepage.
+    // Pages set their own (they all do); the home page sets this one.
   },
   twitter: {
     card: 'summary_large_image',

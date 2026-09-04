@@ -5,7 +5,7 @@ const LightningBug = dynamic(() => import('@/components/apps/LightningBug'))
 
 export const metadata: Metadata = {
   title: 'Lightning Bug — Live Visuals for Your Music',
-  description: 'Turn any track into a glowing live visual — reactive bars, radial glow, artsy video backgrounds, and cinematic look modes. Full-screen it for a party, or lay visuals over your own video. Free, in your browser.',
+  description: 'Add a video and get a synced visual overlay from its melody, or run party mode to react to the room\'s music on a TV. Runs on your device, no upload, no AI.',
   alternates: { canonical: 'https://100lights.com/lightningbug' },
   keywords: ['music visualizer', 'live visuals', 'audio reactive video', 'party visuals', 'VJ app', 'D&D ambience visuals', 'lofi study visuals', 'beat detection visualizer', 'browser music visualizer'],
   openGraph: {
