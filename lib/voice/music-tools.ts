@@ -1270,7 +1270,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'set_instrument',
     description:
-      'SOUND — put a library instrument on a track. "make the bass a violin", "put a piano on the pad". The caller resolves the name against the library and passes the id, because the library lives on the machine rather than in the song.',
+      'SOUND — put a library instrument on a track. "make the bass a violin", "put a piano on the pad". The caller resolves the name against the library and passes the id, because the library lives on the machine rather than in the song. A library SAMPLE works too — "make the bass the 808 kick", "put the vocal chop on the pad": its id starts with "sample:" and the studio turns it into an instrument pitched across the keys. The state summary lists the samples by folder.',
     input_schema: {
       type: 'object',
       properties: {

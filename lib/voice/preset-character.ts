@@ -203,8 +203,12 @@ export function matchPresetByCharacter(
   let pool = presets
   if (groupWanted) pool = pool.filter(p => (p.group ?? '').toLowerCase() === groupWanted)
   else if (instrument) {
+    // By group, by name — or by what its category says it IS. A library
+    // sample sits in the "Samples" group whatever it is, so "a dark bass"
+    // has to find an 808 whose category is synth-bass through its type tag.
     pool = pool.filter(p => (p.group ?? '').toLowerCase().includes(instrument)
-      || p.name.toLowerCase().includes(instrument))
+      || p.name.toLowerCase().includes(instrument)
+      || presetTags(p).some(t => t.toLowerCase().includes(instrument)))
   }
   if (!pool.length) return null
   if (!Object.keys(wanted).length) return { preset: pool[0], why: pool[0].name, considered: pool.length }

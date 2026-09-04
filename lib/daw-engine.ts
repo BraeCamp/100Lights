@@ -25,6 +25,7 @@ import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
 import { libraryGetByFolder } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
+import { resampleBySemitones } from './audio-resample'
 import type { MidiPreset } from './midi-presets'
 import { captureAudioInput } from './audio-capture'
 
@@ -331,6 +332,7 @@ export class DawEngine extends EventTarget {
   private _clearPresetBufCache(): void {
     this._presetBufCache.clear()
     this._presetBufBytes = 0
+    this._sampleRootBufs.clear()
   }
   /** Presets already reported as having no samples — warn once, not per note. */
   private _warnedMissingPreset = new Set<string>()
@@ -2149,6 +2151,24 @@ export class DawEngine extends EventTarget {
 
   // ── Preset buffer loading ─────────────────────────────────────────────────
 
+  /** The decoded recording behind a sample preset, once per preset. Keyed by
+   *  preset id so two presets on one sample with different roots share the
+   *  fetch and decode but not the repitched buffers. */
+  private _sampleRootBufs = new Map<string, Promise<AudioBuffer | null>>()
+  private _sampleRootBuffer(presetId: string, sampleId: string): Promise<AudioBuffer | null> {
+    const have = this._sampleRootBufs.get(presetId)
+    if (have) return have
+    const job = (async () => {
+      try {
+        const fulfilled = await libraryFulfill(sampleId)
+        if (!fulfilled?.audioBlob || !this.ctx) return null
+        return await this.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+      } catch { return null }
+    })()
+    this._sampleRootBufs.set(presetId, job)
+    return job
+  }
+
   private _loadPresetBuffer(presetId: string, pitch: number): Promise<void> {
     const key = `${presetId}:${pitch}`
     // De-dupe by returning the IN-FLIGHT promise, not a bare early-return.
@@ -2166,6 +2186,23 @@ export class DawEngine extends EventTarget {
       try {
         const preset = this._presets.find(p => p.id === presetId)
         if (!preset) { this._presetBufSet(key, null); return }
+
+        // ── One sample, pitched across the keys ─────────────────────────
+        //
+        // A sample preset (lib/sample-preset.ts) names a library sample and
+        // its root; there is no folder to search. The recording is fulfilled
+        // and decoded once per preset, then repitched from the root to the
+        // note asked for — and cached under the same (preset, pitch) key as
+        // every other preset buffer, so the scheduler is none the wiser.
+        if (preset.sampleId) {
+          const root = preset.rootNote ?? 60
+          const src = await this._sampleRootBuffer(preset.id, preset.sampleId)
+          if (!src || !this.ctx) { this._presetBufSet(key, null); return }
+          const semis = pitch - root
+          const buf = semis === 0 ? src : await resampleBySemitones(src, semis, { sampleRate: this.ctx.sampleRate })
+          this._presetBufSet(key, buf)
+          return
+        }
 
         // Folder-scoped, not the whole library: this runs once per (preset,
         // pitch), and _prefetchUpcoming fires it for every upcoming note, so a

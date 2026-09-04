@@ -52,6 +52,7 @@ import { addressClips, parseClipAddress, clipLabel, colourOf, type ClipAddress }
 import { parseNoteAddress, addressNotes, chordsOf, type NoteAddress, type Chord } from '../note-address'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
+import { isSampleRef, sampleRefId } from '../sample-preset'
 import { LOWPASS_HZ, HIGHPASS_HZ, automatableParams, shortNameOf, type AutomatableParam } from '../daw-effect-params'
 import { ADD_OPTIONS, APOLLO_ADD_OPTIONS, makeDefaultParams } from '../daw-effect-catalog'
 import { nameChord, groupIntoChords } from '../chord-analysis'
@@ -2731,6 +2732,16 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // is not flattened by a command about the track.
       const clips = allClips(project).filter(c => c.trackId === track.id)
       if (!clips.length) return fail(`"${track.name}" has no clips to put ${name} on.`)
+      // A library SAMPLE rather than a preset: the studio makes the preset
+      // (one recording, pitched across the keys — lib/sample-preset.ts) and
+      // puts it on the clips. The planner cannot, because the library lives
+      // on the machine.
+      if (isSampleRef(presetId)) {
+        return {
+          actions: [{ type: 'USE_SAMPLE', sampleId: sampleRefId(presetId), clipIds: clips.map(c => c.id), name }],
+          say: `"${track.name}" is ${name} now, pitched across the keys — ${clips.length} clip${clips.length === 1 ? '' : 's'}.`,
+        }
+      }
       return {
         actions: clips.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: { presetId } })),
         say: `"${track.name}" is ${name} now — ${clips.length} clip${clips.length === 1 ? '' : 's'}.`,
@@ -3581,21 +3592,26 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       })
 
       const trackId = newId()
+      const clipId = newId()
       const name = str(i.name).trim() || 'Bass'
+      // A sample chosen by character ("a dark 808"): the clip is made without
+      // a preset and the studio puts the sample on it — see USE_SAMPLE.
+      const fromSample = isSampleRef(preset.id)
       return {
         actions: [
           { type: 'ADD_TRACK', id: trackId, name },
           {
             type: 'ADD_CLIP',
             clip: {
-              kind: 'midi', id: newId(), trackId, name: `${name} 1`,
+              kind: 'midi', id: clipId, trackId, name: `${name} 1`,
               startBeat, durationBeats: bars * beatsPerBar,
               // The preset lives on the CLIP — a sampled instrument is what a
               // clip plays through, not a property of the track.
-              presetId: preset.id,
+              ...(fromSample ? {} : { presetId: preset.id }),
               notes,
             },
           },
+          ...(fromSample ? [{ type: 'USE_SAMPLE', sampleId: sampleRefId(preset.id), clipIds: [clipId], name: preset.name }] : []),
         ],
         say: `Added "${name}" playing ${match.why}, ${bars} bars from ${describeBeat(startBeat, maps)}, `
           + `low ${pitchName(notes[0].pitch)}.`,

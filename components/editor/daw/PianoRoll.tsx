@@ -17,7 +17,12 @@ import NewPresetModal from './NewPresetModal'
 import { getPresets, combinePresets, addPreset, getGroupedPresets, defaultPresetId, noteRangeLabel, clampToPreset, midiNoteLabel, type MidiPreset } from '@/lib/midi-presets'
 import { DRUM_LANES } from '@/lib/drum-presets'
 import { playInstrumentNote } from '@/lib/daw-instruments'
-import { libraryGetAll } from '@/lib/sound-library'
+import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
+import { guessRootNote, samplePresetFor, isPickableSample, rootLabel } from '@/lib/sample-preset'
+import { resampleBySemitones } from '@/lib/audio-resample'
+
+/** Roots a sample can be declared at: C1 to C7, every semitone. */
+const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
 import { libraryFulfill, importSoundfontToLibrary, parseSoundfontText } from '@/lib/default-samples'
 
 /** Previews a buffer with a 3ms attack and a 120ms tail release — raw
@@ -395,6 +400,16 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const [ctxMenu, setCtxMenu] = useState<{ note: MidiNote; x: number; y: number } | null>(null)
   const [presets, setPresets]           = useState<MidiPreset[]>([])
   const [showPresetPicker, setShowPresetPicker] = useState(false)
+  // ── The Samples tab ────────────────────────────────────────────────────
+  // Brae: "a samples tab when the user clicks on presets in the piano roll".
+  // One library sound, pitched from its root across the keys — see
+  // lib/sample-preset.ts. The library is read when the tab opens, not before.
+  const [pickerTab, setPickerTab] = useState<'presets' | 'samples'>('presets')
+  const [sampleQuery, setSampleQuery] = useState('')
+  const [pickerSamples, setPickerSamples] = useState<LibraryEntry[]>([])
+  const [pickerSamplesLoading, setPickerSamplesLoading] = useState(false)
+  /** Roots the user corrected, by sample id — the guess is only a guess. */
+  const [sampleRoots, setSampleRoots] = useState<Record<string, number>>({})
   const [rootMenuPos, setRootMenuPos] = useState<{ top: number; right: number } | null>(null)
   const [previewing, setPreviewing]     = useState(false)
   const presetPickerRef = useRef<HTMLDivElement>(null)
@@ -520,6 +535,52 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     return () => document.removeEventListener('mousedown', onDown)
   }, [showPresetPicker])
 
+  async function loadPickerSamples() {
+    setPickerSamplesLoading(true)
+    try {
+      const all = await libraryGetAll()
+      const picks = all.filter(isPickableSample)
+      // Your own sounds first — recordings, imports, bounces — then the
+      // catalog, which is thousands deep and found by searching.
+      picks.sort((a, b) => Number(!!a.catalog) - Number(!!b.catalog) || (a.folder ?? '').localeCompare(b.folder ?? '') || a.name.localeCompare(b.name))
+      setPickerSamples(picks)
+    } catch { setPickerSamples([]) }
+    finally { setPickerSamplesLoading(false) }
+  }
+
+  /** The sample at its root — what "Use" will put under the keys. */
+  async function previewSample(entry: LibraryEntry, root: number) {
+    if (previewing || !engine.ctx) return
+    setPreviewing(true)
+    try {
+      const fulfilled = await libraryFulfill(entry.id)
+      if (!fulfilled?.audioBlob || !engine.ctx) return
+      const raw = await engine.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+      // Heard at middle C when the root is within reach, so two samples can
+      // be compared at one pitch; at the root itself when it is not.
+      const semis = Math.abs(60 - root) <= 12 ? 60 - root : 0
+      const buf = semis === 0 ? raw : await resampleBySemitones(raw, semis, { sampleRate: engine.ctx.sampleRate })
+      const src = engine.ctx.createBufferSource()
+      src.buffer = buf
+      playClickFree(engine.ctx, src, engine.masterGain, 1.5)
+    } catch { /* ignore */ } finally {
+      setTimeout(() => setPreviewing(false), 1200)
+    }
+  }
+
+  /** Make the sample this clip's sound: a preset that names it and its root,
+   *  embedded in the project so it travels with the song. */
+  function useSample(entry: LibraryEntry, root: number) {
+    const p = addPreset(samplePresetFor(entry, { rootNote: root }))
+    dispatch({ type: 'ADD_PRESET', preset: p })
+    const next = combinePresets([...(project.presets ?? []), p])
+    setPresets(next)
+    engine.setPresets(next)
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: p.id } })
+    setShowPresetPicker(false)
+    setPickerTab('presets')
+  }
+
   async function previewMiddleC(presetId: string) {
     if (previewing || !engine.ctx) return
     const preset = presets.find(p => p.id === presetId)
@@ -531,6 +592,18 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       // previews its highest C-region note instead of silence)
       const target = clampToPreset(preset, 60)
       const targetName = `${NOTE_NAMES_PC[target % 12]}${Math.floor(target / 12) - 1}`
+      // A sample preset: the one recording, repitched from its root.
+      if (preset.sampleId) {
+        const fulfilled = await libraryFulfill(preset.sampleId)
+        if (!fulfilled?.audioBlob || !engine.ctx) return
+        const raw = await engine.ctx.decodeAudioData(await fulfilled.audioBlob.arrayBuffer())
+        const semis = target - (preset.rootNote ?? 60)
+        const buf = semis === 0 ? raw : await resampleBySemitones(raw, semis, { sampleRate: engine.ctx.sampleRate })
+        const src = engine.ctx.createBufferSource()
+        src.buffer = buf
+        playClickFree(engine.ctx, src, engine.masterGain, 1.5)
+        return
+      }
       const entries = await libraryGetAll()
       const inFolder = entries.filter(e => e.folder === preset.folder || e.parentFolder === preset.folder)
       const exact = inFolder.find(e => e.name === targetName)
@@ -1551,16 +1624,105 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 const btn = presetPickerRef.current?.getBoundingClientRect()
                 if (!btn) return null
                 const spaceBelow = window.innerHeight - btn.bottom
-                const menuH = Math.min(presets.length * 28 + 48, 260)
-                const top = spaceBelow > menuH + 8 ? btn.bottom + 4 : btn.top - menuH - 4
+                const samplesTab = pickerTab === 'samples'
+                const menuH = samplesTab ? 440 : Math.min(presets.length * 28 + 48, 260)
+                const top = spaceBelow > menuH + 8 ? btn.bottom + 4 : Math.max(8, btn.top - menuH - 4)
+                const tabBtn = (id: 'presets' | 'samples', label: string) => (
+                  <button
+                    key={id}
+                    data-pr-picker-tab={id}
+                    onClick={e => { e.stopPropagation(); setPickerTab(id); if (id === 'samples') void loadPickerSamples() }}
+                    style={{
+                      flex: 1, padding: '5px 0', fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', cursor: 'pointer',
+                      border: 'none', borderBottom: `2px solid ${pickerTab === id ? 'var(--accent)' : 'transparent'}`,
+                      background: 'transparent', color: pickerTab === id ? 'var(--accent-light)' : 'var(--text-muted)',
+                    }}
+                  >{label}</button>
+                )
+                const q = sampleQuery.trim().toLowerCase()
+                const matching = pickerSamples.filter(e => !q || `${e.name} ${e.folder ?? ''} ${(e.tags ?? []).join(' ')}`.toLowerCase().includes(q))
+                // A catalog is thousands of rows; the menu draws the first
+                // hundred and a half and says how many more a search would
+                // reach — drawing all of them is what makes a click take a second.
+                const SHOW_MAX = 150
+                const shown = matching.slice(0, SHOW_MAX)
+                const hidden = matching.length - shown.length
+                const byFolder = new Map<string, typeof shown>()
+                for (const e of shown) { const f = e.folder || e.parentFolder || 'Samples'; const g = byFolder.get(f) ?? []; g.push(e); byFolder.set(f, g) }
                 return (
                   <div id="pr-preset-menu" style={{
                     position: 'fixed', top, right: window.innerWidth - btn.right,
-                    width: 248, zIndex: 9999,
+                    width: samplesTab ? 340 : 248, zIndex: 9999,
                     background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8,
-                    padding: '6px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
-                    maxHeight: showNewPreset ? 480 : 280, overflowY: 'auto',
+                    padding: '0 0 6px', boxShadow: '0 10px 28px rgba(0,0,0,0.75)',
+                    maxHeight: samplesTab ? 440 : showNewPreset ? 480 : 280, overflowY: 'auto',
+                    display: 'flex', flexDirection: 'column',
                   }}>
+                    {/* Presets | Samples. Brae: "a samples tab when the user
+                        clicks on presets in the piano roll" — one library
+                        sample, played across the keys (lib/sample-preset.ts). */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                      {tabBtn('presets', 'PRESETS')}
+                      {tabBtn('samples', 'SAMPLES')}
+                    </div>
+                    {samplesTab ? (
+                      <div data-pr-samples style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+                        <div style={{ padding: '6px 8px 4px', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                          <input
+                            value={sampleQuery}
+                            onChange={e => setSampleQuery(e.target.value)}
+                            placeholder="Search your sounds…"
+                            autoFocus
+                            style={{ flex: 1, fontSize: 10, padding: '4px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-primary)' }}
+                          />
+                          <span style={{ fontSize: 8.5, color: 'var(--text-muted)', flexShrink: 0 }}>{pickerSamplesLoading ? 'loading…' : `${matching.length}`}</span>
+                        </div>
+                        <div style={{ padding: '0 10px 4px', fontSize: 8.5, color: 'var(--text-muted)', lineHeight: 1.35, flexShrink: 0 }}>
+                          Any sound in your library becomes an instrument: it is pitched from its root note to every key. Set the root if the guess is wrong.
+                        </div>
+                        <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
+                          {!pickerSamplesLoading && !shown.length && (
+                            <div style={{ padding: '10px', fontSize: 10, color: 'var(--text-muted)' }}>{q ? 'Nothing matches.' : 'No sounds in the library yet — record one, or open the Sound Library.'}</div>
+                          )}
+                          {[...byFolder.entries()].map(([folder, entries]) => (
+                            <div key={folder}>
+                              <div style={{ padding: '5px 10px 2px', fontSize: 8, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder}</div>
+                              {entries.map(e => {
+                                const root = sampleRoots[e.id] ?? guessRootNote(e)
+                                return (
+                                  <div key={e.id} data-pr-sample={e.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px 2px 4px' }}>
+                                    <button
+                                      onClick={ev => { ev.stopPropagation(); void previewSample(e, root) }}
+                                      title={`Listen at ${rootLabel(root)}`}
+                                      style={{ flexShrink: 0, width: 22, border: 'none', background: 'transparent', cursor: 'pointer', color: previewing ? 'var(--text-muted)' : 'var(--accent-light)', padding: '3px 0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                    ><Play size={11} /></button>
+                                    <span title={e.name} style={{ flex: 1, minWidth: 0, fontSize: 10, color: '#bbb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
+                                    <span style={{ fontSize: 8, color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{e.duration ? `${e.duration.toFixed(1)}s` : ''}</span>
+                                    <select
+                                      value={root}
+                                      onChange={ev => setSampleRoots(r => ({ ...r, [e.id]: Number(ev.target.value) }))}
+                                      onClick={ev => ev.stopPropagation()}
+                                      title="Root note — the pitch this recording is at"
+                                      style={{ fontSize: 8.5, padding: '1px 2px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-base)', color: 'var(--text-muted)', flexShrink: 0 }}
+                                    >
+                                      {ROOT_CHOICES.map(m => <option key={m} value={m}>{rootLabel(m)}</option>)}
+                                    </select>
+                                    <button
+                                      data-pr-sample-use={e.id}
+                                      onClick={ev => { ev.stopPropagation(); void useSample(e, root) }}
+                                      style={{ flexShrink: 0, fontSize: 8.5, fontWeight: 700, padding: '2px 7px', borderRadius: 3, border: '1px solid var(--accent)', background: 'rgb(var(--accent-rgb) / 0.12)', color: 'var(--accent)', cursor: 'pointer' }}
+                                    >Use</button>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ))}
+                          {hidden > 0 && (
+                            <div style={{ padding: '6px 10px 4px', fontSize: 9, color: 'var(--text-muted)' }}>…and {hidden.toLocaleString()} more — search to narrow it down.</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (<>
                     <div style={{ padding: '4px 10px 6px', fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.08em', borderBottom: '1px solid var(--border)' }}>CLIP SOUND — notes are kept</div>
                     {clip.presetId && track && track.instrument.type !== 'none' && (
                       <button onClick={() => { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { presetId: undefined } }); setShowPresetPicker(false) }}
@@ -1619,6 +1781,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                       style={{ display: 'block', padding: '5px 10px', fontSize: 10, color: 'var(--text-muted)', textDecoration: 'none' }}>
                       Find presets in Community ↗
                     </a>
+                    </>)}
                   </div>
                 )
               })(),
