@@ -34,6 +34,8 @@ export interface PresetLike {
   category?: string | null
   /** What a person wrote, if anything. Always beats a derivation. */
   tags?: string[] | null
+  /** A sample's library folder — "a hihat" can mean the whole folder of them. */
+  folder?: string | null
 }
 
 /**

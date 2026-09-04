@@ -35,6 +35,7 @@ import {
 } from '../daw-types'
 import { findByName, foldName, spokenNumber, spokenFraction } from './resolve'
 import { matchPresetByCharacter, characterWordsIn, presetTags, type PresetLike } from './preset-character'
+import { findLibrarySound, describeLibraryKinds } from './library-match'
 import { SCALE_INTERVALS, type ScaleType } from '../scale-constants'
 import {
   matchApolloParam, matchFilterType, moduleHint, resolveValue, readParam, writeParam,
@@ -2721,9 +2722,22 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     case 'set_instrument': {
       const track = resolveTrack(target, project)
       if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
-      const presetId = str(i.presetId)
-      if (!presetId) return fail('I could not find that sound in the library.')
-      const name = str(i.presetName) || 'that sound'
+      // An id the caller resolved is taken as given. Without one — or with one
+      // the library does not know — what was SAID is resolved here: a name, a
+      // kind ("a hihat"), or a folder. See lib/voice/library-match.ts.
+      const lib = heard?.library ?? []
+      const spoken = str(i.presetName) || str(i.instrument)
+      let presetId = str(i.presetId)
+      let name = spoken || 'that sound'
+      if ((!presetId || !lib.some(p => p.id === presetId)) && spoken && lib.length) {
+        const found = findLibrarySound(foldName(spoken).split(' ').filter(Boolean), lib)
+        if (found) { presetId = found.sound.id; name = found.sound.name }
+      }
+      if (!presetId) {
+        return fail(spoken && lib.length
+          ? `I don't see "${spoken}" in the library. ${describeLibraryKinds(lib)}`.trim()
+          : 'I could not find that sound in the library.')
+      }
 
       // A sampled instrument lives on the CLIPS, not on the track: a preset is
       // what a clip plays through, and the track's own instrument is the

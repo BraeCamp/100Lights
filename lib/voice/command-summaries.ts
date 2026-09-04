@@ -132,7 +132,7 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   duplicate_track: 'Copies a whole track with its clips, effects and settings.',
   rename_track: 'Renames a track. Worth doing early — every command that takes a target finds it by name.',
   group_tracks: 'Folds tracks into one group, so they can be moved, muted and processed together.',
-  set_instrument: 'Puts an instrument from your library onto a track. The notes already there stay exactly where they are - only what plays them changes.',
+  set_instrument: 'Puts an instrument from your library onto a track. The notes already there stay exactly where they are - only what plays them changes. A library sample works too, and it can be asked for by its name, by its folder, or by its kind - "a hihat", "the 808", "a clap" picks one of that kind and pitches it across the keys.',
   undo: 'Takes back the last change. Carried out by the studio itself rather than by the song, because the history is not part of the project.',
   redo: 'Puts back what you just undid. Like undo it belongs to the studio rather than to the song, so the history is not something the project carries around.',
 

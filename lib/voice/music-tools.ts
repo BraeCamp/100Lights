@@ -1270,15 +1270,15 @@ export const MUSIC_TOOLS = [
   {
     name: 'set_instrument',
     description:
-      'SOUND — put a library instrument on a track. "make the bass a violin", "put a piano on the pad". The caller resolves the name against the library and passes the id, because the library lives on the machine rather than in the song. A library SAMPLE works too — "make the bass the 808 kick", "put the vocal chop on the pad": its id starts with "sample:" and the studio turns it into an instrument pitched across the keys. The state summary lists the samples by folder.',
+      'SOUND — put a library instrument on a track. "make the bass a violin", "put a piano on the pad". Pass the id when the state summary gives one; otherwise pass what was said as presetName and the studio resolves it against the library, which lives on the machine rather than in the song. A library SAMPLE works too — "make the bass the 808 kick", "put the vocal chop on the pad", "change the drums to a hihat": a sample can be named by its NAME, its FOLDER, or its KIND (kick, snare, hihat, clap…) and the studio picks one and turns it into an instrument pitched across the keys. The state summary lists the folders and kinds the library holds — if a kind is listed, the sample exists; never say there is none.',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
-        presetId: { type: 'string', description: 'Library preset id, already resolved.' },
-        presetName: { type: 'string', description: 'What it is called, for the read-back.' },
+        presetId: { type: 'string', description: 'Library preset id, when the summary gives one.' },
+        presetName: { type: 'string', description: 'What was said — a name, folder or kind; resolved by the studio when there is no id.' },
       },
-      required: ['target', 'presetId'],
+      required: ['target'],
     },
   },
   {

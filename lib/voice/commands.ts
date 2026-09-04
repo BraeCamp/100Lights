@@ -31,6 +31,7 @@
 // working fails the build, which means the documentation cannot rot.
 
 import { findByName, foldName, spokenNumber } from './resolve'
+import { findLibrarySound } from './library-match'
 import { beatWordsOf } from './beatbox'
 import { parseDefinitions } from './vocab'
 import { COMMAND_SUMMARIES } from './command-summaries'
@@ -204,7 +205,7 @@ export interface InterpretContext {
    * into an id and the executor applies it, which keeps the executor honest and
    * the library where it actually is.
    */
-  library?: { id: string; name: string; group?: string }[]
+  library?: { id: string; name: string; group?: string; folder?: string | null; category?: string | null; tags?: string[] | null }[]
 }
 
 export interface Match {
@@ -3598,34 +3599,26 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'set_instrument',
     group: 'Project',
     what: 'Put a library instrument on a track',
-    say: ['make the bass 2 a violin', 'put a piano on the pad', 'change the drums to a cello'],
+    say: ['make the bass 2 a violin', 'put a piano on the pad', 'change the drums to a cello', 'change the drums to a hihat', 'put a kick sample on the drums'],
     match(w, ctx) {
       if (!ctx.library?.length) return null
       if (!w.has('make', 'put', 'change', 'use', 'load', 'swap')) return null
 
-      // The instrument is whichever library name the sentence contains. Matched
-      // against the library rather than guessed at, so "a violin" only means
-      // something when there is a violin to mean.
-      let sound: { id: string; name: string } | null = null
-      let soundWords: string[] = []
-      for (const preset of ctx.library) {
-        const folded = foldName(preset.name)
-        if (!folded) continue
-        const parts = folded.split(' ').filter(Boolean)
-        if (parts.every(part => w.all.includes(part))) {
-          if (!sound || parts.length > soundWords.length) {
-            sound = { id: preset.id, name: preset.name }
-            soundWords = parts
-          }
-        }
-      }
-      if (!sound) return null
+      // The sound is whatever the sentence names — a library NAME ("a violin",
+      // matched against the library rather than guessed at, so it only means
+      // something when there is a violin to mean), a KIND ("a hihat" is any
+      // sound whose category is hihat), or a FOLDER. See lib/voice/library-match.ts:
+      // Brae's "There is no hihat sample", with a folder of them in the library.
+      const found = findLibrarySound(w.all, ctx.library, { strict: true, raw: w.raw })
+      if (!found) return null
+      const sound = { id: found.sound.id, name: found.sound.name }
+      const soundWords = found.words
 
       // The TRACK is what is left once the instrument's own words are out of
       // the way — otherwise "make the bass a violin" looks for a track called
       // "bass violin".
       const hit = nameOrSelected(w, ctx, ['make', 'put', 'change', 'use', 'load', 'swap',
-        'into', 'onto', 'track', 'sound', 'instrument', ...soundWords], { dropNums: true })
+        'into', 'onto', 'track', 'sound', 'sounds', 'instrument', 'preset', 'presets', 'sample', 'samples', ...soundWords], { dropNums: true })
       if (!hit) return null
       return {
         calls: [{

@@ -60,11 +60,23 @@ const { PRESET_VARIANTS } = await importTs('lib/preset-variants.ts')
 // executor is handed it in the voice context. A command that chooses a sound by
 // character needs it, and without it every such example reads as "I cannot see
 // your sound library from here", which is a correct refusal and a useless test.
+// Library SAMPLES, the way the card lists them: an id with the sample prefix,
+// a folder, and a category (what it IS). "a hihat" has to find one of these.
+const SAMPLES = [
+  { id: 'sample:hat-closed-1', name: 'Closed Hat 01', group: 'Samples', folder: 'hihat/closed', category: 'hihat', tags: null },
+  { id: 'sample:hat-closed-2', name: 'Closed Hat 02 Tight', group: 'Samples', folder: 'hihat/closed', category: 'hihat', tags: null },
+  { id: 'sample:hat-open-1', name: 'Open Hat 01', group: 'Samples', folder: 'hihat/open', category: 'open-hihat', tags: null },
+  { id: 'sample:kick-1', name: 'Kick Acoustic 01', group: 'Samples', folder: 'kick', category: 'kick', tags: null },
+  { id: 'sample:chop-1', name: 'Chop 01', group: 'Samples', folder: 'Vocal Chops', category: 'voice', tags: null },
+]
 const HEARD = {
-  library: PRESET_VARIANTS.map((v, i) => ({
-    id: `builtin-${i}`, name: v.name, group: v.group,
-    loNote: v.loNote, hiNote: v.hiNote, fx: v.sound?.fx ?? null,
-  })),
+  library: [
+    ...PRESET_VARIANTS.map((v, i) => ({
+      id: `builtin-${i}`, name: v.name, group: v.group,
+      loNote: v.loNote, hiNote: v.hiNote, fx: v.sound?.fx ?? null,
+    })),
+    ...SAMPLES.map(s => ({ ...s, loNote: 36, hiNote: 84, fx: null })),
+  ],
 }
 const { MUSIC_TOOL_NAMES } = await importTs('lib/voice/music-tools.ts')
 
@@ -204,6 +216,7 @@ const CTX = {
     { id: 'p-violin', name: 'Violin', group: 'Strings' },
     { id: 'p-piano', name: 'Piano', group: 'Piano' },
     { id: 'p-cello', name: 'Cello', group: 'Strings' },
+    ...SAMPLES,
   ],
 }
 
@@ -337,6 +350,33 @@ check('the help panel lists every command', helpCount === VOICE_COMMANDS.length,
   // A summary that just repeats the one-liner teaches nothing on hover.
   const thin = listed.filter(i => i.summary.length < i.what.length + 20).map(i => i.id)
   check('and the summaries say more than the titles do', thin.length === 0, thin.join(', '))
+}
+
+// ── "There is no hihat sample" — with a folder of them in the library ───────
+//
+// Brae: "I asked for it to change presets and it didn't understand. It said
+// 'There is no hihat sample' but it should be in the sample library as a whole
+// folder." A sample is found by NAME, by KIND or by FOLDER now, in the rules
+// and in the planner alike.
+{
+  const first = phrase => interpret(phrase, CTX).calls[0]
+  const hat = first('change the drums to a hihat')
+  check('"change the drums to a hihat" finds a hat by kind, on the drums',
+    hat?.name === 'set_instrument' && hat.input.presetId === 'sample:hat-closed-1' && /drums/i.test(hat.input.target), JSON.stringify(hat))
+  const hat2 = first('put a hi hat sample on the drums')
+  check('"put a hi hat sample on the drums" too', hat2?.name === 'set_instrument' && hat2.input.presetId === 'sample:hat-closed-1', JSON.stringify(hat2))
+  const open = first('use an open hat on the drums')
+  check('"an open hat" is the open one', open?.name === 'set_instrument' && open.input.presetId === 'sample:hat-open-1', JSON.stringify(open))
+  const chop = first('put a vocal chop on the pad')
+  check('"a vocal chop" finds the Vocal Chops folder', chop?.name === 'set_instrument' && chop.input.presetId === 'sample:chop-1', JSON.stringify(chop))
+  const louder = interpret('make the kick louder', CTX).calls[0]
+  check('"make the kick louder" is not an instrument change', louder?.name !== 'set_instrument', JSON.stringify(louder))
+  // The assistant, told the kinds, passes what was said and no id.
+  const planned = planVoiceCall({ name: 'set_instrument', input: { target: 'Drums', presetName: 'hihat' } }, PROJECT, HEARD)
+  check('the planner resolves "hihat" itself when the assistant passes no id',
+    !planned.problem && (planned.actions ?? []).some(a => a.type === 'USE_SAMPLE' && a.sampleId === 'hat-closed-1'), JSON.stringify(planned).slice(0, 220))
+  const missing = planVoiceCall({ name: 'set_instrument', input: { target: 'Drums', presetName: 'didgeridoo' } }, PROJECT, HEARD)
+  check('and says what kinds there ARE when it cannot', /didgeridoo/.test(missing.problem ?? '') && /hihat 2/.test(missing.problem ?? ''), missing.problem)
 }
 
 console.log(failures
