@@ -1272,6 +1272,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <Knob
                 value={track.volume} min={0} max={1} defaultValue={0.8} size={20} color={track.color}
                 label="V" title="Group volume — drag to change, double-click resets"
+                spec={{ label: 'Group volume', min: 0, max: 1, unit: '%' }}
                 onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
                 format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
               />
@@ -1450,6 +1451,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <Knob
                 value={track.volume} min={0} max={1} defaultValue={0.8} size={20} color={track.color}
                 label="V" title="Volume — drag to change, double-click resets"
+                spec={{ label: 'Volume', min: 0, max: 1, unit: '%' }}
                 onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v); overrideLane('volume') }}
                 format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
               />
@@ -1461,6 +1463,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
               <Knob
                 value={track.pan ?? 0} min={-1} max={1} defaultValue={0} size={20} bipolar color={track.color}
                 label="P" title="Pan — drag to change, double-click centres"
+                spec={{ label: 'Pan', min: -1, max: 1 }}
                 onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
                 format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)}
               />

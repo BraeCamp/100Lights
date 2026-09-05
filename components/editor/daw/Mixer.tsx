@@ -392,6 +392,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
                   <span style={{ width: 32, fontSize: 9, fontWeight: 700, color: c, flexShrink: 0 }}>{label}</span>
                   <Knob
                     value={val} min={-12} max={12} defaultValue={0} size={44} bipolar color={c}
+                    spec={{ label: `${label} EQ`, min: -12, max: 12, unit: 'dB' }}
                     onChange={v => setBand(band, Math.round(v * 2) / 2)}
                     format={v => `${v > 0 ? '+' : ''}${v.toFixed(1)}`}
                   />
@@ -408,6 +409,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
                   <span style={{ width: 26, fontSize: 8, fontWeight: 700, color: c, flexShrink: 0 }}>{label}</span>
                   <Knob
                     value={val} min={-12} max={12} defaultValue={0} size={26} bipolar color={c}
+                    spec={{ label: `${label} EQ`, min: -12, max: 12, unit: 'dB' }}
                     onChange={v => setBand(band, Math.round(v * 2) / 2)}
                     format={v => `${v > 0 ? '+' : ''}${v.toFixed(1)}`}
                   />
@@ -433,6 +435,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
           <div style={{ display: 'flex', justifyContent: 'center' }}>
             <Knob
               value={pan} min={-1} max={1} defaultValue={0} size={44} bipolar color={color}
+              spec={{ label: 'Pan', min: -1, max: 1 }}
               onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
               format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)}
             />
@@ -452,6 +455,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
           <div style={{ display: 'flex', justifyContent: 'center' }}>
             <Knob
               value={pan} min={-1} max={1} defaultValue={0} size={30} bipolar color={color}
+              spec={{ label: 'Pan', min: -1, max: 1 }}
               onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
               format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)}
             />
@@ -548,6 +552,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
                 <Knob
                   value={sendVal} min={0} max={1} defaultValue={0} size={18} color={rt.color}
                   label={rtLabel}
+                  spec={{ label: `Send ${rtLabel}`, min: 0, max: 1, unit: '%' }}
                   onChange={v => {
                     dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { sendAmounts: { ...(track.sendAmounts ?? {}), [rt.id]: v } } })
                     engine.setSendAmount(track.id, rt.id, v)
@@ -768,6 +773,7 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
             <span style={lab}>Volume</span>
             <Knob
               value={track.volume} min={0} max={1.2} defaultValue={1} size={48} color={track.color ?? 'var(--accent)'}
+              spec={{ label: 'Volume', min: 0, max: 1.2, unit: '%' }}
               onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { volume: v } }); engine.setTrackVolume(track.id, v) }}
               format={v => (v > 0.0001 ? `${(20 * Math.log10(v)).toFixed(1)}dB` : '-inf')}
             />
@@ -779,6 +785,7 @@ function ChannelDetail({ trackId, onClose }: { trackId: string; onClose: () => v
             <span style={lab}>Pan</span>
             <Knob
               value={track.pan ?? 0} min={-1} max={1} defaultValue={0} size={44} bipolar color={track.color ?? 'var(--accent)'}
+              spec={{ label: 'Pan', min: -1, max: 1 }}
               onChange={v => { dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { pan: v } }); engine.setTrackPan(track.id, v) }}
               format={v => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'}${Math.round(Math.abs(v) * 100)}`)}
             />

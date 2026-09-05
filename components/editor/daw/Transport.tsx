@@ -472,6 +472,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                 <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }}>{def.label}</span>
                 <Knob
                   value={fx.value} min={def.min} max={def.max} defaultValue={fx.value} size={26} color="#dc2626"
+                  spec={{ label: `Record ${def.label}`, min: def.min, max: def.max }}
                   bipolar={def.min < 0 && def.max > 0}
                   onChange={v => patchRecFx(recFx.map((f, j) => j === i ? { ...f, value: v } : f))}
                   format={def.fmt}
@@ -489,6 +490,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 62, flexShrink: 0 }}>Timing</span>
           <Knob
             value={latencyMs} min={-1} max={250} defaultValue={-1} size={26} color="#dc2626"
+            spec={{ label: 'Recording latency', min: -1, max: 250, unit: 'ms' }}
             onChange={v => commitLatency(Math.round(v))}
             format={v => (v < 0 ? 'auto' : `${Math.round(v)}ms`)}
           />
@@ -857,6 +859,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <Knob
             value={project.masterVolume} min={0} max={1} defaultValue={0.85} size={26}
+            spec={{ label: 'Master volume', min: 0, max: 1, unit: '%' }}
             onChange={v => { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }}
             format={v => `${Math.round(v * 100)}%`}
           />
@@ -1165,6 +1168,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                   >SWING</span>
                   <Knob
                     value={project.swing ?? 0} min={0} max={0.5} defaultValue={0} size={26}
+                    spec={{ label: 'Swing', min: 0, max: 0.5, unit: '%' }}
                     onChange={v => { dispatch({ type: 'SET_SWING', swing: v }); engine.swing = v }}
                     format={v => `${Math.round(v * 100)}%`}
                   />
@@ -1175,6 +1179,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
                   <span style={{ fontSize: 9, width: 42, color: varispeed !== 100 ? '#f59e0b' : 'var(--text-muted)', letterSpacing: '0.06em', flexShrink: 0 }} title="Tape speed — pitch follows speed">SPEED</span>
                   <Knob
                     value={varispeed} min={25} max={200} defaultValue={100} size={26}
+                    spec={{ label: 'Varispeed', min: 25, max: 200, unit: '%' }}
                     color={varispeed !== 100 ? '#f59e0b' : 'var(--accent)'}
                     onChange={v => { const pct = Math.round(v); setVarispeed(pct); engine.setPlaybackRate(pct / 100) }}
                     format={v => `${Math.round(v)}%`}
@@ -1233,6 +1238,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
         <Knob
           value={project.masterVolume} min={0} max={1} defaultValue={0.85} size={26}
+            spec={{ label: 'Master volume', min: 0, max: 1, unit: '%' }}
           onChange={v => { dispatch({ type: 'SET_MASTER_VOLUME', volume: v }); engine.setMasterVolume(v) }}
           format={v => `${Math.round(v * 100)}%`}
         />
