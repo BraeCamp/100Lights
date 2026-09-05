@@ -123,6 +123,8 @@ const FEATURES: Feature[] = [
     description: 'The timeline where clips are laid out on tracks against beats and bars. This is where you build the full structure of your song or episode.' },
   { group: 'Views & Layout', name: 'Mixer', helpIds: ['view-mixer'],
     description: 'Channel strips for every track with volume faders, pan, mute/solo, and live spectrum meters — the place to balance your entire mix in one view.' },
+  { group: 'Views & Layout', name: 'Mixer under the Arrangement', helpIds: ['arrangement-mixer'], modes: ['music'], hint: 'Press ⌘⌥M in the Arrangement, or ⌘K → "Show the mixer under the arrangement".',
+    description: 'One row of channel strips beneath the arrangement, so you balance the mix without leaving the clips. The drop-down swaps what the row shows: Mixer, Sends, Returns, In / Out, Track Options, Crossfader (assign tracks to A or B and fade between them), Performance Impact.' },
   { group: 'Views & Layout', name: 'Sound Library', helpIds: ['sound-library'], modes: ['music'],
     description: 'Browse thousands of built-in and imported sounds organized into folders. Drag any sound straight onto a track, and save your own captures back into it.' },
   { group: 'Views & Layout', name: 'Code', helpIds: ['sound-code'], modes: ['music'],

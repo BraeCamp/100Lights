@@ -59,6 +59,7 @@ const EXPECTED = [
   ['detail area full size', ['full size']],
   ['delay compensation',   ['latency', 'compensation']],
   ['clip editor place',    ['clip editor']],
+  ['mixer in arrangement', ['mixer under']],
   ['split / splice clip',  ['splice', 'split']],
   ['rename clip',          ['rename clip', 'rename ']],
 

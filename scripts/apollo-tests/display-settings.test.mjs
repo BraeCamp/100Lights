@@ -12,8 +12,8 @@ const check = (label, fn) => {
   catch (e) { failures++; console.log(`FAIL ${label}\n   ${e.message}`) }
 }
 
-check('the clip editor lives in the pane by default, at 100%', () => {
-  assert.deepEqual(DISPLAY_DEFAULT, { clipEditor: 'pane', uiScale: 100 })
+check('the clip editor lives in the pane by default, at 100%, with the mixer row hidden', () => {
+  assert.deepEqual(DISPLAY_DEFAULT, { clipEditor: 'pane', uiScale: 100, arrangementMixer: { open: false, section: 'mixer' } })
 })
 check('the UI scale clamps to its range and snaps to tens', () => {
   assert.equal(clampUiScale(100), 100)

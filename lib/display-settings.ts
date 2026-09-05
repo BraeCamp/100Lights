@@ -15,13 +15,19 @@ import { readWorkspace, writeWorkspace } from './editor-workspace'
 
 export type ClipEditorPlace = 'pane' | 'inline'
 
+/** What the mixer under the arrangement shows (Live's mixer section drop-down). */
+export type MixerSection = 'mixer' | 'sends' | 'returns' | 'inout' | 'options' | 'crossfader' | 'performance'
+export const MIXER_SECTIONS: MixerSection[] = ['mixer', 'sends', 'returns', 'inout', 'options', 'crossfader', 'performance']
+
 export type DisplaySettings = {
   clipEditor: ClipEditorPlace
   /** UI scale, 50–200 (percent). Applied through the root font size, never CSS zoom. */
   uiScale: number
+  /** The mixer row under the arrangement: shown or not, and which section. */
+  arrangementMixer: { open: boolean; section: MixerSection }
 }
 
-export const DISPLAY_DEFAULT: DisplaySettings = { clipEditor: 'pane', uiScale: 100 }
+export const DISPLAY_DEFAULT: DisplaySettings = { clipEditor: 'pane', uiScale: 100, arrangementMixer: { open: false, section: 'mixer' } }
 
 export const UI_SCALE_MIN = 50
 export const UI_SCALE_MAX = 200
@@ -42,9 +48,11 @@ function load() {
   if (loaded || typeof window === 'undefined') return
   loaded = true
   const saved = readWorkspace('display', DISPLAY_DEFAULT)
+  const am = (saved as Partial<DisplaySettings>).arrangementMixer
   state = {
     clipEditor: saved.clipEditor === 'inline' ? 'inline' : 'pane',
     uiScale: clampUiScale(Number(saved.uiScale)),
+    arrangementMixer: { open: am?.open === true, section: MIXER_SECTIONS.includes(am?.section as MixerSection) ? (am!.section as MixerSection) : 'mixer' },
   }
 }
 

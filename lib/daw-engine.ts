@@ -13,6 +13,7 @@ import { ensurePolySample } from './poly-sample-cache'
 import { evaluateModulators, type ModReadout, type ParamRange } from './daw-modulation'
 import { automatableParams } from './daw-effect-params'
 import { compensationDelays } from './latency'
+import { crossfadeGain } from './crossfader'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
 import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
@@ -964,6 +965,11 @@ export class DawEngine extends EventTarget {
   // each collaborator can rebalance their own headphones without moving the
   // shared faders. Multiplied into every volume write below.
   private _localMix = new Map<string, number>()
+  // The crossfader's gain per track (lib/crossfader.ts): 1 for a track on
+  // neither side. Folded into the fader with the local mix, so a fader move
+  // from the UI keeps it.
+  private _xfGain = new Map<string, number>()
+  private _gainMult(id: string): number { return (this._localMix.get(id) ?? 1) * (this._xfGain.get(id) ?? 1) }
   private _baseVol  = new Map<string, number>()
 
   setLocalTrackGain(id: string, mult: number) {
@@ -980,7 +986,7 @@ export class DawEngine extends EventTarget {
   setTrackVolume(id: string, volume: number) {
     this._baseVol.set(id, volume)
     const nodes = this.trackNodes.get(id)
-    if (nodes) nodes.gain.gain.setTargetAtTime(volume * (this._localMix.get(id) ?? 1), this.ctx.currentTime, 0.01)
+    if (nodes) nodes.gain.gain.setTargetAtTime(volume * this._gainMult(id), this.ctx.currentTime, 0.01)
   }
 
   /** Point a track's main output at a new destination (a group bus, or master),
@@ -1567,6 +1573,8 @@ export class DawEngine extends EventTarget {
       const groupNodes = group ? this.trackNodes.get(group.id) : undefined
       this._routeTrackOutput(t.id, groupNodes ? groupNodes.effectsInput : this.masterGain)
       const silenced = this._trackSilenced(t, group, anySoloed, project.tracks)
+      const xf = crossfadeGain(t.crossfader, project.crossfaderValue ?? 0.5)
+      if (Math.abs(xf - 1) < 1e-6) this._xfGain.delete(t.id); else this._xfGain.set(t.id, xf)
       this.setTrackVolume(t.id, silenced ? 0 : t.volume)
       this.setTrackPan(t.id, t.pan)
       this.setTrackTone(t.id, t.tone)
@@ -3162,7 +3170,7 @@ export class DawEngine extends EventTarget {
 
     if (parameter === 'volume') {
       this._baseVol.set(trackId, value)
-      nodes.gain.gain.setTargetAtTime(value * (this._localMix.get(trackId) ?? 1), t, 0.01)
+      nodes.gain.gain.setTargetAtTime(value * this._gainMult(trackId), t, 0.01)
       return
     }
     if (parameter === 'pan') {

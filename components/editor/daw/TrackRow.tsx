@@ -677,6 +677,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
 }) {
   const { project, dispatch, engine, setEditTarget, setSelectedClipId, selectedClipId, setSelectedTrackId, selectedTrackId, selectedClipIds, setSelectedClipIds, selectedEffectIds, setSelectedEffectIds, setShowPads, expandedPianoRollClipId, setExpandedPianoRollClipId, expandedStepSeqClipId, setExpandedStepSeqClipId, recording, audioMode, blinkIds, collabPeers, notifyLocked } = useDaw()
   const display = useDisplaySettings()
+  const trackNumber = (() => { const i = project.tracks.findIndex(t => t.id === track.id); return i >= 0 ? i + 1 : null })()
 
   // Flatten: render THIS track solo through the offline path into an audio
   // clip on a fresh track (sound-library backed, so it survives reload), then
@@ -1374,6 +1375,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 flexShrink: 0, display: 'inline-block', border: '1px solid rgba(0,0,0,0.4)',
               }} />
             ))}
+              {trackNumber != null && <span data-help-id="track-number" title={`Track ${trackNumber}`} style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-muted)', minWidth: 12, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{trackNumber}</span>}
             {editing ? (
               <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
                 onBlur={() => { if (!cancelRenameRef.current) dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } }); cancelRenameRef.current = false; setEditing(false) }}

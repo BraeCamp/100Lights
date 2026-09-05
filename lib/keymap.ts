@@ -73,6 +73,7 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'view.library', keys: '⌘⌥B', scope: 'global', group: 'Transport & Global', action: 'Show / hide the sound library — hold to peek', modes: ['music'], momentary: true, command: 'audio.library' },
   { id: 'view.inspect', keys: 'I', scope: 'global', group: 'Transport & Global', action: 'Inspect mode — hover anything for its name and details; hold to peek', momentary: true },
   { id: 'help.open', keys: 'H', also: ['?'], scope: 'global', group: 'Transport & Global', action: 'Open this help menu', display: 'H or ?' },
+  { id: 'view.arrangementMixer', keys: '⌘⌥M', scope: 'global', group: 'Transport & Global', action: 'Show / hide the mixer under the arrangement', modes: ['music'] },
   // The palette listens for its own chord (CommandPalette.tsx); it is listed
   // here so the help panel knows, and so nothing else can take ⌘K.
   { id: 'palette.open', keys: '⌘K', also: ['⇧⌘P'], scope: 'global', group: 'Transport & Global', action: 'Command palette — every action, by name' },

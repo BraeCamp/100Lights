@@ -121,6 +121,7 @@ const DeviceChain = dynamic(() => import('./daw/DeviceChain'), { ssr: false })
 const ReturnDeviceChain = dynamic(() => import('./daw/DeviceChain').then(m => ({ default: m.ReturnDeviceChain })), { ssr: false })
 const InstrumentPicker = dynamic(() => import('./daw/InstrumentPicker'), { ssr: false })
 const DetailArea = dynamic(() => import('./daw/DetailArea'), { ssr: false })
+const ArrangementMixer = dynamic(() => import('./daw/ArrangementMixer'), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
@@ -2666,6 +2667,12 @@ export default function AudioEditor(props: AudioEditorProps) {
       case 'detail.device': toggleDetail('device'); return true
       case 'detail.full': toggleDetail('full'); return true
       case 'detail.flip': window.dispatchEvent(new CustomEvent('100lights:detail-flip')); return true
+      case 'view.arrangementMixer': {
+        if (view !== 'arrangement') setView('arrangement')
+        const am = display.arrangementMixer
+        setDisplay({ arrangementMixer: { ...am, open: !am.open } })
+        return true
+      }
       default:
         return false
     }
@@ -2809,6 +2816,9 @@ export default function AudioEditor(props: AudioEditorProps) {
       shortcut: keysFor('detail.device'), run: () => toggleDetail('device') },
     { id: 'audio.detail.full', group: 'Audio', label: detailLabel(detail, 'full'), keywords: 'detail area full size bigger maximize normal',
       shortcut: keysFor('detail.full'), run: () => toggleDetail('full') },
+    { id: 'audio.view.arrMixer', group: 'Audio', label: `${display.arrangementMixer.open ? 'Hide' : 'Show'} the mixer under the arrangement`,
+      keywords: 'mixer strip arrangement faders sends returns crossfader in out section', shortcut: keysFor('view.arrangementMixer'), when: () => !isPodcast,
+      run: () => { if (view !== 'arrangement') setView('arrangement'); setDisplay({ arrangementMixer: { ...display.arrangementMixer, open: !display.arrangementMixer.open } }) } },
     { id: 'audio.settings.clipEditor', group: 'Audio', label: display.clipEditor === 'pane' ? 'Clip editor: inline under the track' : 'Clip editor: bottom pane',
       keywords: 'piano roll notes editor place bottom pane inline display setting',
       run: () => setDisplay({ clipEditor: display.clipEditor === 'pane' ? 'inline' : 'pane' }) },
@@ -3969,6 +3979,7 @@ export default function AudioEditor(props: AudioEditorProps) {
           : rack
       })()}
               {view === 'arrangement' && <ArrangementView />}
+              {view === 'arrangement' && <ArrangementMixer />}
               {view === 'mixer' && <Mixer />}
             </div>
 

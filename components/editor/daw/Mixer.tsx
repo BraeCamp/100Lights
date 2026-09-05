@@ -153,7 +153,7 @@ function EqGraphModal({ trackName, color, value, onChange, onChangeAll, onClose 
   )
 }
 
-function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isMaster?: boolean; onOpenDetail?: (id: string) => void }) {
+export function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isMaster?: boolean; onOpenDetail?: (id: string) => void }) {
   const { project, dispatch, engine, selectedTrackId, setSelectedTrackId } = useDaw()
   const playing = useEnginePlaying()
   const isMobile = useIsMobile()
@@ -596,7 +596,7 @@ function ChannelStrip({ track, isMaster, onOpenDetail }: { track?: DawTrack; isM
 
 // ── Return channel strip ────────────────────────────────────────────────────
 
-function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
+export function ReturnChannelStrip({ rt, idx }: { rt: ReturnTrack; idx: number }) {
   const { dispatch, engine } = useDaw()
   const [editing, setEditing] = useState(false)
   const [nameDraft, setNameDraft] = useState(rt.name)
