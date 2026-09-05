@@ -186,6 +186,11 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
   }
   function setWarp(on: boolean) { engine.clearStretchedCache(clip.id); patch({ warpEnabled: on }) }
   function setMode(m: WarpModeName) { engine.clearStretchedCache(clip.id); patch({ warpMode: m, warpEnabled: true }) }
+  // Tempo leader (lib/tempo-leader.ts): this clip's own tempo drives the song.
+  // It needs a tempo to give — two markers, or a Seg BPM once the sample has loaded.
+  const leader = clip.tempoLeader === true
+  const canLead = markers.length >= 2 || segBpm != null
+  function toggleLeader() { dispatch({ type: 'SET_TEMPO_LEADER', clipId: leader ? null : clip.id }) }
   function setModeParams(p: Partial<AudioClip>) { engine.clearStretchedCache(clip.id); patch(p) }
   function saveDefault() {
     if (saveClipDefaults(clip)) { setSavedFlash(true); window.setTimeout(() => setSavedFlash(false), 1500) }
@@ -205,6 +210,8 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
       keywords: 'warp mode tones vocal bass monophonic grain', run: () => setMode('tones') },
     { id: 'clip.warpMode.texture', group: 'Clip', label: 'Warp mode: Texture — granular, with Flux',
       keywords: 'warp mode texture granular pads noise grain flux', run: () => setMode('texture') },
+    { id: 'clip.tempoLeader', group: 'Clip', label: leader ? 'Release the tempo leader — the song keeps the tempo it has' : 'Make this clip the tempo leader — the song follows its tempo',
+      keywords: 'tempo leader master clip follow song tempo drives warp markers seg bpm', when: () => leader || canLead, run: toggleLeader },
     { id: 'clip.segDouble', group: 'Clip', label: `Seg BPM ×2 — the sample tempo doubles${segBpm ? ` (${Math.round(segBpm * 2)})` : ''}`,
       keywords: 'seg bpm sample tempo double octave off original tempo', when: () => segBpm != null, run: () => segBpm && applySegBpm(segBpm * 2) },
     { id: 'clip.segHalve', group: 'Clip', label: `Seg BPM ÷2 — the sample tempo halves${segBpm ? ` (${Math.round(segBpm / 2)})` : ''}`,
@@ -234,7 +241,7 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
       keywords: 'insert warp marker insert point cursor', shortcut: '⌘I', when: () => cursorSec != null, run: () => cursorSec != null && insertAt(cursorSec) },
     { id: 'clip.clearWarp', group: 'Clip', label: `Clear the warp markers (${markers.length})`,
       keywords: 'clear warp markers remove all reset', when: () => markers.length > 0, run: clearWarp },
-  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds, end, cursorSec, transients.length, markers, tempo, barBeats, qGrid, clip.warpBeats, clip.warpTones, clip.warpTexture])
+  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds, end, cursorSec, transients.length, markers, tempo, barBeats, qGrid, clip.warpBeats, clip.warpTones, clip.warpTexture, leader, canLead])
 
   const chip = (on: boolean, disabled = false): React.CSSProperties => ({
     fontSize: 9, fontWeight: 600, padding: '2px 7px', borderRadius: 4, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: disabled ? 0.45 : 1,
@@ -339,6 +346,8 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
           {/* Kept for the palette's sake and for a fast switch between the two oldest modes */}
           <button data-help-id="clip-warp-mode-repitch" aria-pressed={mode === 'repitch'} onClick={() => setMode('repitch')} style={chip(warp && mode === 'repitch', !warp)} title="Re-Pitch — speed and pitch move together, like a turntable">Re-Pitch</button>
           <button data-help-id="clip-warp-mode-complex" aria-pressed={mode === 'stretch'} onClick={() => setMode('stretch')} style={chip(warp && mode === 'stretch', !warp)} title="Complex — stretched to the tempo, pitch kept">Complex</button>
+          <button data-help-id="clip-tempo-leader" aria-pressed={leader} disabled={!canLead} onClick={toggleLeader} style={chip(leader, !canLead)}
+            title={leader ? 'Tempo leader — the song follows this clip\'s tempo; click to release' : canLead ? 'Make this clip the tempo leader — the song\'s tempo follows its warp markers (or its Seg BPM), so it plays as recorded and everything else keeps time with it' : 'Tempo leader — needs the sample loaded, or two warp markers'}>Leader</button>
         </div>
         {warp && mode === 'beats' && (
           <div style={row} data-help-id="warp-beats-params">

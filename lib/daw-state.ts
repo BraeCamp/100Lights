@@ -20,6 +20,7 @@ import { DawEngine } from './daw-engine'
 import { legacyToBar } from './effect-bar'
 import { resolveOverlaps } from './note-ops'
 import { clipDefaultsFor, clipDefaultsKey } from './clip-defaults'
+import { followLeader, releaseLeader, setLeader, touchesLeader } from './tempo-leader'
 
 // ── Action types ────────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ export type DawAction =
   | { type: 'REMOVE_TEMPO_MARKER'; markerId: string }
   | { type: 'ADD_METER_MARKER'; marker: { id: string; beat: number; num: number; den: number } }
   | { type: 'REMOVE_METER_MARKER'; markerId: string }
+  | { type: 'SET_TEMPO_LEADER'; clipId: string | null }
   | { type: 'ADD_SECTION'; section: { id: string; beat: number; name: string; color: string } }
   | { type: 'REMOVE_SECTION'; sectionId: string }
   | { type: 'ADD_COMMENT'; comment: import('./daw-types').TimelineComment }
@@ -354,7 +356,10 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const clips = project.arrangementClips.map(c =>
         c.id === action.clipId ? ({ ...c, ...action.patch } as DawClip) : c
       )
-      return { ...project, arrangementClips: clips }
+      const next = { ...project, arrangementClips: clips }
+      // The tempo leader's map is made of its markers and its place
+      // (lib/tempo-leader.ts): a patch touching those re-derives the song's tempo.
+      return touchesLeader(action.patch as Record<string, unknown>) ? followLeader(next) : next
     }
 
     case 'SET_CLIPS_ACTIVE': {
@@ -381,7 +386,8 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
               : e
           )
         : (project.clipEffects ?? [])
-      return { ...project, arrangementClips: clips, clipEffects }
+      // A moved tempo leader takes its tempo changes with it (lib/tempo-leader.ts).
+      return followLeader({ ...project, arrangementClips: clips, clipEffects })
     }
 
     case 'SET_SESSION_SLOT': {
@@ -533,8 +539,14 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
           ? { ...c, durationBeats: Math.max(0.125, c.durationBeats * ratio) }
           : c
       )
-      return { ...project, tempo, tempoMarkers, arrangementClips }
+      // A tempo the user typed wins over a leader clip: the leader is released.
+      return releaseLeader({ ...project, tempo, tempoMarkers, arrangementClips })
     }
+
+    // One audio clip's own tempo drives the set (lib/tempo-leader.ts). Only
+    // ever one leader; null releases it, the tempo staying where it left it.
+    case 'SET_TEMPO_LEADER':
+      return setLeader(project, action.clipId)
 
     case 'SET_TIME_SIG':
       return { ...project, timeSignatureNum: action.num, timeSignatureDen: action.den }

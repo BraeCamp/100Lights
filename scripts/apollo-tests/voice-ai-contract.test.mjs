@@ -60,6 +60,7 @@ const CALLS = {
   edit_notes: { target: 'pad clip', op: 'chop', parts: 2 },
   clip_time: { target: 'pad clip', op: 'set_loop_length', length: { bars: 2 } },
   warp_markers: { target: 'drums clip', op: 'as_loop', bars: 1 },
+  import_settings: { shortSamples: 'loop' },
   move_clips: { by: { bars: 1 } },
   insert_clip: { sound: 'crash', at: { bar: 2 } },
   set_tempo: { bpm: 128 },

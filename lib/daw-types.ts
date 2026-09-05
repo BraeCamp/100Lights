@@ -851,6 +851,11 @@ export interface AudioClip {
   clipFade?: boolean
   /** Warp markers (lib/warp.ts): beats of the clip pinned to seconds of the sample. Two or more, and Warp on, and the engine renders the sample through them. */
   warpMarkers?: { beat: number; sec: number }[]
+  /**
+   * Tempo leader (lib/tempo-leader.ts): this clip's own tempo — its warp
+   * markers, or its Seg BPM — drives the song's tempo map. At most one clip.
+   */
+  tempoLeader?: boolean
   /** Transient markers a person placed or moved (seconds), on top of the detected ones. */
   transients?: number[]
   pitchSemitones?: number

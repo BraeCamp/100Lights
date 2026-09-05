@@ -1113,6 +1113,8 @@ const COMMANDS: VoiceCommand[] = [
       // something specific are ordered above this one and take it first.
       if (w.has('off', 'stop', 'disable')) return null
       if (w.has('first')) return null
+      // "warp the clip as a 2 bar loop" is the clip's warp (warp_markers), not the song loop.
+      if (w.has('warp', 'warped', 'warping')) return null
       if (w.nums().length >= 2) return null
       return {
         calls: [{ name: 'set_loop_region', input: { enabled: true } }],
@@ -2382,12 +2384,40 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'import_settings',
+    tool: 'import_settings',
+    group: 'View',
+    what: 'How samples land when dropped — one-shot, loop or auto; auto-warp long samples',
+    say: ['import short samples as one shots', 'loop short samples when they land', 'stop auto warping long samples'],
+    match(w) {
+      const raw = w.raw.toLowerCase()
+      // Always about "samples" in general — a named clip is set_clip_audio's.
+      if (!/\bsamples\b/.test(raw)) return null
+      const longM = /\blong samples\b/.test(raw) && /\bauto[- ]?warp/.test(raw)
+      const shortM = /\bshort samples\b/.test(raw) || /\b(?:import(?:ed)?|drop(?:ped)?|land(?:s|ed)?|when they land)\b/.test(raw)
+      if (!longM && !shortM) return null
+      const input: Record<string, unknown> = {}
+      if (longM) input.autoWarpLong = !/\b(?:stop|off|don't|do not|no longer|never)\b/.test(raw)
+      else if (/\bone[- ]?shots?\b|\bunwarped\b/.test(raw)) input.shortSamples = 'oneshot'
+      else if (/\bloops?\b|\bwarped\b/.test(raw)) input.shortSamples = 'loop'
+      else if (/\bauto\b|\bdecide\b/.test(raw)) input.shortSamples = 'auto'
+      else return null
+      for (const word of w.all) w.markWord(word, 0)
+      // ⚠️ The palette has commands called "Short samples land as: …", so the
+      // studio-command-by-name rule (0.86) reads this sentence too. Within the
+      // ambiguity margin the studio asks (or defers to the assistant) instead
+      // of acting; this rule knows exactly what was said and must win outright.
+      return { calls: [{ name: 'import_settings', input }], confidence: 0.96 }
+    },
+  },
+  {
     id: 'set_clip_audio',
     tool: 'set_clip_audio',
     group: 'Arrangement',
     what: 'Fade, level, reverse or loop an audio clip',
     say: ['fade in the vox take clip over a bar', 'fade out the vox take clip over two beats', 'reverse the vox take', 'loop the vox take clip', 'turn the vox take clip down to 60%',
-      'warp the vox take clip', 'set the vox take clip to complex mode', 'pitch the vox take clip up 3', 'the vox take clip is 90 bpm', 'put the vox take clip in beats mode'],
+      'warp the vox take clip', 'set the vox take clip to complex mode', 'pitch the vox take clip up 3', 'the vox take clip is 90 bpm', 'put the vox take clip in beats mode',
+      'make the vox take clip the tempo leader'],
     match(w, ctx) {
       const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
       // ⚠️ A clip called "Drum loop" has "loop" in it, and "reverse the drum
@@ -2424,7 +2454,10 @@ const COMMANDS: VoiceCommand[] = [
       const pitchM = clipWord && /\b(?:pitch|tune)\b/.test(rest) ? /\b(up|down)\s+(?:by\s+)?(\d+(?:\.\d+)?)/.exec(rest) : null
       const bpmM = clipWord ? /(\d+(?:\.\d+)?)\s*bpm\b/.exec(rest) : null
       const fadeM = clipWord && /\b(?:edge|clip) fades?\b/.test(rest) ? !/\boff\b|\bno\b|\bstop\b/.test(rest) : null
-      if (!fadeIn && !fadeOut && !reverseSaid && !loopSaid && !gainM && warpSaid == null && !modeM && !pitchM && !bpmM && fadeM == null) return null
+      // Tempo leader (lib/tempo-leader.ts): "make the drums clip the tempo leader", "the song follows the drums clip's tempo".
+      const leaderSaid = clipWord && /\bleader\b|\bfollows?\b[\w\s']*\btempo\b|\bdrives? the (?:song'?s? )?tempo\b/.test(rest)
+        ? !/\b(?:stop|no longer|not|un-?set|release|isn't|is not|don't|do not)\b/.test(rest) : null
+      if (!fadeIn && !fadeOut && !reverseSaid && !loopSaid && !gainM && warpSaid == null && !modeM && !pitchM && !bpmM && fadeM == null && leaderSaid == null) return null
       if ((fadeIn || fadeOut) && !clipWord) return null
       let target = spokenClip
       let score = 1
@@ -2433,7 +2466,7 @@ const COMMANDS: VoiceCommand[] = [
         const hit = clipOrSelected(w, ctx, ['fade', 'fades', 'reverse', 'reversed', 'backwards', 'backward', 'loop', 'looped', 'looping', 'unloop',
           'turn', 'set', 'make', 'play', 'stop', 'start', 'level', 'volume', 'gain', 'clip', 'clips', 'audio', 'over', 'for', 'by', 'across',
           'bar', 'bars', 'beat', 'beats', 'measure', 'measures', 'second', 'seconds', 'percent', 'half', 'down', 'up', 'in', 'out', 'the', 'a', 'an',
-          'to', 'at', 'it', 'this', 'that', 'again', 'forwards', 'forward'], { dropNums: true })
+          'to', 'at', 'it', 'this', 'that', 'again', 'forwards', 'forward', 'tempo', 'leader', 'follow', 'follows', 'song', 'drives', 'drive'], { dropNums: true })
         if (!hit) return null
         const selIds = hit.name.startsWith('#sel:') ? hit.name.slice(5).split(',') : null
         const byId = selIds ? null : (ctx.clips ?? []).find(c => hit.name === c.id || hit.name === `#${c.id}`)
@@ -2466,6 +2499,7 @@ const COMMANDS: VoiceCommand[] = [
       if (pitchM) input.transpose = (pitchM[1] === 'down' ? -1 : 1) * Number(pitchM[2])
       if (bpmM) input.segBpm = Number(bpmM[1])
       if (fadeM != null) input.fade = fadeM
+      if (leaderSaid != null) input.tempoLeader = leaderSaid
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'set_clip_audio', input }], confidence: clipWord ? 0.95 : nameConfidence(score), needsName: true }
     },
@@ -4860,6 +4894,8 @@ const COMMANDS: VoiceCommand[] = [
       // entirely: "add a marker at bar 9" moved the playhead and made no
       // marker. Naming a thing to PUT at that bar is not asking to go there.
       if (w.has('mark', 'marker', 'label')) return null
+      // "warp the clip as a 2 bar loop" names bars to warp across, not a place to go.
+      if (w.has('warp', 'warped', 'warping')) return null
       // ⚠️ The record, 16:40: "Start a low pass on bar 5. Keep it at" → moved
       // the playhead to bar 5. A thing to START at a bar — a filter, a sweep, a
       // fade, a reverb — is an automation that begins there, and the bar is

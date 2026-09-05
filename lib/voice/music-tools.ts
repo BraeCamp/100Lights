@@ -794,7 +794,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'set_clip_audio',
     description:
-      'AN AUDIO CLIP\'S OWN SETTINGS — "fade in the vocal over a bar", "fade out the last drums clip over two beats", "turn the guitar clip down to 60%", "reverse the crash", "loop the drum clip", "stop looping it". Fades, level, reverse and loop are per clip; the track\'s volume is set_track, and a MIDI clip\'s sound is set_sound.',
+      'AN AUDIO CLIP\'S OWN SETTINGS — "fade in the vocal over a bar", "fade out the last drums clip over two beats", "turn the guitar clip down to 60%", "reverse the crash", "loop the drum clip", "stop looping it", "make the drum loop clip the tempo leader" (tempoLeader). Fades, level, reverse and loop are per clip; the track\'s volume is set_track, and a MIDI clip\'s sound is set_sound.',
     input_schema: {
       type: 'object',
       properties: {
@@ -810,9 +810,22 @@ export const MUSIC_TOOLS = [
         detune: { type: 'number', description: 'Audio only: fine pitch in cents.' },
         segBpm: { type: 'number', description: 'Audio only: the sample\'s own tempo (Seg. BPM) — "the vocal clip is 120 bpm"; the clip\'s length follows the sample at that tempo.' },
         fade: { type: 'boolean', description: 'Audio only: 4 ms fades at the clip\'s edges so cuts never click.' },
+        tempoLeader: { type: 'boolean', description: 'Audio only: true makes this clip the TEMPO LEADER — the song\'s tempo map is rewritten from its warp markers (or its Seg BPM) so it plays as recorded and everything else follows; "make the drum loop the tempo leader", "the song follows the drums clip\'s tempo". false releases it. Only one clip leads.' },
         ...ADDRESS,
       },
       required: ['target'],
+    },
+  },
+  {
+    name: 'import_settings',
+    description:
+      'HOW SAMPLES LAND when dropped or imported (Live\'s Loop/Warp Short Samples and Auto-Warp Long Samples) — a studio setting, not the song. "Import short samples as one-shots" (shortSamples oneshot: play once at their own speed, warp and loop off), "loop short samples when they land" (loop: warped to whole bars and looping), "let Beacon decide" (auto: a length near whole bars at a plausible tempo is a loop, else a one-shot). "Stop auto-warping long samples" / "auto-warp long samples" (autoWarpLong: 30 s and longer warped straight at the song tempo). Changes what future drops become; clips already in the song are untouched.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        shortSamples: { type: 'string', enum: ['oneshot', 'auto', 'loop'], description: 'What a short sample (under 30 s) becomes when it lands.' },
+        autoWarpLong: { type: 'boolean', description: 'Warp long samples (30 s and over) straight at the song tempo when they land.' },
+      },
     },
   },
   {

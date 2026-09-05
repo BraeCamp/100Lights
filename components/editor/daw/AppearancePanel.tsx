@@ -1,6 +1,7 @@
 'use client'
 
 import { useDisplaySettings, setDisplay, UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_STEP } from '@/lib/display-settings'
+import { useImportSettings, setImportSettings, SHORT_SAMPLE_MODES, SHORT_SAMPLE_LABEL, LONG_SAMPLE_SEC } from '@/lib/import-settings'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, RotateCcw, Save, Upload, Trash2, Check, ExternalLink } from 'lucide-react'
@@ -20,6 +21,7 @@ const TEXT_KEYS: ThemeColorKey[] = ['textPrimary', 'textSecondary', 'textMuted']
 
 export default function AppearancePanel({ onClose, editorKind }: { onClose: () => void; editorKind?: EditorKind }) {
   const display = useDisplaySettings()
+  const imp = useImportSettings()
   const { theme, setTheme, update, reset, isSignedIn } = useWorkshopTheme()
   const [perfMode, setPerfMode] = usePerfMode()
   const { isPro, ent } = usePlan()
@@ -166,6 +168,40 @@ export default function AppearancePanel({ onClose, editorKind }: { onClose: () =
             ))}
           </div>
         </div>
+
+        {/* Warp & Import — how a sample lands when it is dropped (lib/import-settings.ts) */}
+        {editorKind === 'audio' && (
+          <div style={section} data-help-id="import-settings">
+            <p style={label}>Warp &amp; Import</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>Loop/Warp short samples</span>
+              {SHORT_SAMPLE_MODES.map(v => (
+                <label key={v} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                  <input type="radio" name="short-samples" value={v} checked={imp.shortSamples === v} data-help-id={`import-short-${v}`}
+                    onChange={() => setImportSettings({ shortSamples: v })} style={{ accentColor: 'var(--accent)', marginTop: 2, flexShrink: 0 }} />
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{SHORT_SAMPLE_LABEL[v]}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                      {v === 'oneshot' ? 'A dropped sample plays once, at its own speed — hits, stabs, effects. Warp and loop stay off.'
+                        : v === 'loop' ? 'A dropped sample is warped to a whole number of bars and loops — the Seg BPM is set so it fits.'
+                        : 'Beacon looks at the length: within a few percent of whole bars at a plausible tempo, it lands as a loop; anything else is a one-shot.'}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" checked={imp.autoWarpLong} data-help-id="import-auto-warp-long"
+                onChange={e => setImportSettings({ autoWarpLong: e.target.checked })} style={{ accentColor: 'var(--accent)', marginTop: 2, flexShrink: 0 }} />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Auto-warp long samples</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                  A sample of {LONG_SAMPLE_SEC} seconds or more — a song, a stem — is warped straight at the song tempo, so it plays at its own speed and follows tempo changes. Off, it plays as it is.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
 
         {/* Presets */}
         <div style={section}>

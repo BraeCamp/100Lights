@@ -111,7 +111,7 @@ function studioCommandsLine(): string {
 }
 import { musicStateSummary } from '@/lib/voice/music-tools'
 import { drumTake, chordTake, takeToNotes, describeTake } from '@/lib/voice/pass'
-import { detectOnsets, monoOf } from '@/lib/voice/onsets'
+import { detectOnsets, monoOf } from '@/lib/onsets'
 import { combinePresets } from '@/lib/midi-presets'
 import { hearBetter } from '@/lib/voice/hear-better'
 import { resolveLocally, resolveHeard, confidentEnough, runsLocally, needsNoProject } from '@/lib/voice/local-resolve'
@@ -155,6 +155,7 @@ import { publishLevel, subscribeLevel } from '@/lib/voice/level-bus'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
 import { requestNoteSelection } from '@/lib/note-selection'
 import { validMarkers, warpStraight, quantizeTransients } from '@/lib/warp'
+import { landClip, setImportSettings, describeImportSettings, type ImportSettings } from '@/lib/import-settings'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
   studioVoice, setStudioVoice,
@@ -1068,8 +1069,10 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
           dispatch({ type: 'ADD_CLIP', clip } as DawAction)
           const buf = await engine?.loadClipBuffer(clip)
           if (buf && engine) {
+            // Loop/Warp Short Samples decides how it lands (lib/import-settings.ts).
             dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: {
-              waveformPeaks: extractPeaks(buf), durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration,
+              waveformPeaks: extractPeaks(buf), bufferDuration: buf.duration,
+              ...landClip(clip, buf.duration, engine.tempo, projectRef.current?.timeSignatureNum || 4).patch,
             } } as DawAction)
           }
           setSelectedClipId?.(clip.id)
@@ -1492,6 +1495,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       const ms = quantizeTransients(base, onsets, a.grid > 0 ? a.grid : 0.25)
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true } })
       engine?.clearStretchedCache(clip.id)
+      return
+    }
+
+    // How samples land when dropped (lib/import-settings.ts) — a studio
+    // setting in the workspace, not the song, so the reducer never sees it.
+    if (act.type === 'IMPORT_SETTINGS') {
+      const { type: _t, ...patch } = act as unknown as { type: string } & Partial<ImportSettings>
+      void _t
+      setImportSettings(patch)
+      void describeImportSettings
       return
     }
 

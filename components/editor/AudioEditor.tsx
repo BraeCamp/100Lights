@@ -19,6 +19,7 @@ import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrum
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
 import { DawContext, DawPlayheadProvider, reducer, makeAudioClip, extractPeaks, migrateProject, useDaw } from '@/lib/daw-state'
+import { landClip, useImportSettings, setImportSettings, SHORT_SAMPLE_LABEL, type ShortSampleMode } from '@/lib/import-settings'
 import { useApolloTrackItem, ApolloTrackItemBar } from '@/components/editor/daw/ApolloTrackItem'
 import { useApolloMotion } from '@/components/editor/daw/ApolloMotion'
 import { consumeStudioSeed } from '@/lib/open-in-studio'
@@ -1535,6 +1536,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       __dawInspect?: () => unknown
       __dawRenderWav?: (opts?: Parameters<DawEngine['renderWav']>[0]) => Promise<unknown>
       __dawMakeAudioClip?: typeof makeAudioClip
+      __dawImportAudio?: (file: File) => Promise<string | null>
       __dawRenderOffline?: (opts?: { startBeat?: number; endBeat?: number }) => Promise<unknown>
       __dawFreezeApollo?: () => Promise<unknown>
       __parseMid?: (file: File) => Promise<unknown>
@@ -1589,6 +1591,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     w.__dawRenderWav = (opts) => engineRef.current?.renderWav(opts ?? {}) ?? Promise.resolve(null)
     // A clip built the way a library drop builds one — saved clip defaults included (lib/clip-defaults.ts).
     w.__dawMakeAudioClip = makeAudioClip
+    // The real import path (lib/daw-audio-import.ts) for headless checks of how a sample lands.
+    w.__dawImportAudio = (file: File) => import('@/lib/daw-audio-import').then(m => m.importAudioAsNewTrack(file, { engine: engineRef.current!, dispatch, beatsPerBar: projectRef.current?.timeSignatureNum || 4 }))
     // Bounce the REAL project audio via the OFFLINE render (OfflineAudioContext) — this is the ONE
     // that produces actual sound in a headless/automated browser, unlike the realtime renderWav which
     // captures silence when there's no audio device. Returns the encoded mix as base64 so an agent can
@@ -1743,7 +1747,8 @@ export default function AudioEditor(props: AudioEditorProps) {
         dispatch({ type: 'ADD_CLIP', clip })
         const buf = await engineRef.current?.loadClipBuffer(clip)
         if (buf) {
-          dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), durationBeats: engineRef.current!.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+          // Loop/Warp Short Samples decides how it lands (lib/import-settings.ts).
+          dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), bufferDuration: buf.duration, ...landClip(clip, buf.duration, engineRef.current!.tempo, projectRef.current?.timeSignatureNum || 4).patch } })
           // Persist so the clip survives a reload — audioUrl is stripped on save.
           try {
             const ab = await (await fetch(url)).arrayBuffer()
@@ -2196,6 +2201,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [view, setView] = useState<DawView>(wsInit.view)
   const detail = useDetail()
   const display = useDisplaySettings()
+  const importSettings = useImportSettings()
   const draw = useDrawMode()
   // The UI scale is a stylesheet on the document (lib/ui-scale.ts); it follows the setting.
   useEffect(() => { applyUiScale(display.uiScale) }, [display.uiScale])
@@ -2860,6 +2866,15 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.view.scaleReset', group: 'View', label: 'Interface at 100% (reset UI scale)',
       keywords: 'ui scale zoom display reset normal size', shortcut: keysFor('view.scaleReset'), when: () => display.uiScale !== 100,
       run: () => setDisplay({ uiScale: 100 }) },
+    // Loop/Warp Short Samples and Auto-Warp Long Samples: how a dropped sample lands (lib/import-settings.ts).
+    ...(['oneshot', 'auto', 'loop'] as ShortSampleMode[]).map(m => ({
+      id: `audio.import.short.${m}`, group: 'Audio', label: `Short samples land as: ${SHORT_SAMPLE_LABEL[m]}${importSettings.shortSamples === m ? ' (current)' : ''}`,
+      keywords: `import short samples land drop loop warp one-shot one shot unwarped auto ${m}`, when: () => importSettings.shortSamples !== m,
+      run: () => setImportSettings({ shortSamples: m }),
+    })),
+    { id: 'audio.import.autoWarpLong', group: 'Audio', label: importSettings.autoWarpLong ? 'Stop auto-warping long samples on import' : 'Auto-warp long samples on import',
+      keywords: 'import long samples auto-warp auto warp song stem straight follow tempo land',
+      run: () => setImportSettings({ autoWarpLong: !importSettings.autoWarpLong }) },
     { id: 'audio.view.info', group: 'Audio', label: `${display.infoView ? 'Hide' : 'Show'} the status bar (Info View)`,
       keywords: 'info view status bar help text hover selection readout', shortcut: keysFor('view.info'),
       run: () => setDisplay({ infoView: !display.infoView }) },

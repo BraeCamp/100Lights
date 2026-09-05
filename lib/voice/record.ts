@@ -209,7 +209,7 @@ export type StopResult =
      * ⚠️ Needed because a transcript cannot say WHEN precisely enough. Word
      * times land within tens of milliseconds, which is fine for a command and
      * a third of a sixteenth note out at 120bpm — so a spoken rhythm gets its
-     * timing from the audio's own attacks instead (lib/voice/onsets.ts) and
+     * timing from the audio's own attacks instead (lib/onsets.ts) and
      * the words only say which drum. Nothing else needs this and it costs
      * nothing to hand back, since the blob already exists.
      */

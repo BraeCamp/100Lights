@@ -20,12 +20,15 @@ import { extractPeaks, makeAudioClip, type DawAction } from './daw-state'
 import { uploadRecordingBlob } from './record-upload'
 import { decodeAiff, encodeWav } from './wav-codec'
 import type { DawEngine } from './daw-engine'
+import { landClip } from './import-settings'
 
 export interface AudioImportDeps {
   engine: DawEngine
   dispatch: (action: DawAction) => void
   /** Called instead of window.alert so a surface can show its own message. */
   onError?: (message: string) => void
+  /** The song's beats per bar, for the loop guess when a sample lands (default 4). */
+  beatsPerBar?: number
 }
 
 /** The bytes to hand the engine, plus a blob to persist and a URL to play from. */
@@ -109,14 +112,13 @@ export async function importAudioFile(
 
   try {
     const buf = await deps.engine.loadBufferFromArrayBuffer(clip.id, ab)
+    // How it lands — one-shot, loop, or warped straight — is the Loop/Warp
+    // Short Samples setting's call (lib/import-settings.ts).
+    const landed = landClip(clip, buf.duration, deps.engine.tempo, deps.beatsPerBar ?? 4)
     deps.dispatch({
       type: 'UPDATE_CLIP',
       clipId: clip.id,
-      patch: {
-        waveformPeaks: extractPeaks(buf),
-        durationBeats: deps.engine.secondsToBeats(buf.duration),
-        bufferDuration: buf.duration,
-      },
+      patch: { waveformPeaks: extractPeaks(buf), bufferDuration: buf.duration, ...landed.patch },
     })
     return clip.id
   } catch {

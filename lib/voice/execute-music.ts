@@ -58,6 +58,7 @@ import { quantizeNotes as quantizeWithSettings, parseGridSaid } from '../quantiz
 import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, insertTime, deleteTime, duplicateTime } from '../clip-time'
 import { setSegBpm } from '../sample-editor'
 import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
+import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -4528,6 +4529,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (i.gain != null) { const g = spokenFraction(i.gain as string); if (g == null) return fail('Say the clip level as a percentage.'); patch.gain = Math.max(0, Math.min(2, g)); said.push(`level ${Math.round(g * 100)}%`) }
       if (typeof i.reverse === 'boolean') { patch.reverse = i.reverse; said.push(i.reverse ? 'reversed' : 'playing forwards') }
       if (typeof i.loop === 'boolean') { patch.loopEnabled = i.loop; said.push(i.loop ? 'looping' : 'not looping') }
+      // Tempo leader (lib/tempo-leader.ts): its own reducer action, not a clip patch — only one clip leads.
+      const leader = typeof i.tempoLeader === 'boolean' ? i.tempoLeader : null
+      if (leader != null) said.push(leader ? 'the tempo leader — the song follows its tempo' : 'no longer the tempo leader')
       // The Sample Editor's settings (lib/sample-editor.ts): warp, its mode, pitch, Seg BPM, the edge fade.
       if (typeof i.warp === 'boolean') { patch.warpEnabled = i.warp; said.push(i.warp ? 'warped to the song tempo' : 'playing at its own tempo') }
       if (i.warpMode != null) {
@@ -4544,9 +4548,9 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (segBpm != null) said.push(`Seg BPM ${segBpm}`)
       if (!said.length) return fail('Say what to change — a fade in, a fade out, the level, reverse, loop, warp, pitch, or the sample\'s tempo.')
       const audioOnly = 'fadeIn' in patch || 'fadeOut' in patch || 'gain' in patch || 'reverse' in patch
-        || 'warpEnabled' in patch || 'warpMode' in patch || 'pitchSemitones' in patch || 'pitchCents' in patch || 'clipFade' in patch || segBpm != null
+        || 'warpEnabled' in patch || 'warpMode' in patch || 'pitchSemitones' in patch || 'pitchCents' in patch || 'clipFade' in patch || segBpm != null || leader != null
       const targets = audioOnly ? set.filter(c => c.kind === 'audio') : set
-      if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level, reverse, warp and pitch are for audio clips. Its notes have a Sound panel instead.`)
+      if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level, reverse, warp, pitch and the tempo leader are for audio clips. Its notes have a Sound panel instead.`)
       // A MIDI clip loops every loopLengthBeats; switching the loop on without
       // one did nothing audible. A bar, or the clip if shorter (lib/clip-time.ts).
       const bar = project.timeSignatureNum || 4
@@ -4560,10 +4564,29 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         if (segBpm != null) return { ...patch, ...(setSegBpm(c as AudioClip, segBpm) ?? { segBpm }) }
         return patch
       }
+      const updates = Object.keys(patch).length || segBpm != null ? targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: patchFor(c) })) : []
+      // The leader is one clip: the first of the set. Releasing needs no clip.
+      const lead = leader == null ? [] : [{ type: 'SET_TEMPO_LEADER', clipId: leader ? targets[0].id : null }]
       return {
-        actions: targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: patchFor(c) })),
+        actions: [...updates, ...lead],
         say: `${targets.length === 1 ? clipLabel(project, targets[0]) : `${targets.length} clips`}: ${said.join(', ')}.`,
       }
+    }
+
+    // ── HOW SAMPLES LAND when dropped (lib/import-settings.ts) — a studio setting ──
+    case 'import_settings': {
+      const out: Record<string, unknown> = { type: 'IMPORT_SETTINGS' }
+      const said: string[] = []
+      const short = str(i.shortSamples).toLowerCase()
+      if (short) {
+        const m: ShortSampleMode | null = /one|shot|unwarp/.test(short) ? 'oneshot' : /loop|warp/.test(short) ? 'loop' : /auto|decide/.test(short) ? 'auto' : null
+        if (!m) return fail('Say how short samples should land — as one-shots, as loops, or auto.')
+        out.shortSamples = m
+        said.push(`short samples land as ${SHORT_SAMPLE_LABEL[m].toLowerCase()}${m === 'auto' ? ' (a loop when the length says so, else a one-shot)' : ''}`)
+      }
+      if (typeof i.autoWarpLong === 'boolean') { out.autoWarpLong = i.autoWarpLong; said.push(i.autoWarpLong ? 'long samples are auto-warped to the song tempo' : 'long samples are left as they are') }
+      if (!said.length) return fail('Say what to change — how short samples land (one-shot, loop, auto), or whether long samples are auto-warped.')
+      return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
     }
 
     // ── WARP MARKERS on an audio clip (lib/warp.ts) ──────────────────────

@@ -9,6 +9,7 @@ import Knob from './Knob'
 import { createPortal } from 'react-dom'
 import { Plus, Headphones, X, Eraser, ChevronRight, ChevronDown, Circle, Settings, Snowflake, SlidersHorizontal, Music, Piano, Grid3x3, Group, Library, Code, Upload, Minimize2, Maximize2 } from 'lucide-react'
 import { useDaw, extractPeaks, makeAudioClip, makeMidiClip } from '@/lib/daw-state'
+import { landClip } from '@/lib/import-settings'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import { getAllChordRecipes, buildRecipeClip } from '@/lib/practice-recipes'
 import { importAudioFile } from '@/lib/daw-audio-import'
@@ -889,7 +890,8 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       dispatch({ type: 'ADD_CLIP', clip })
       const buf = await engine.loadClipBuffer(clip)
       if (buf) {
-        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+        // Loop/Warp Short Samples decides how it lands (lib/import-settings.ts).
+        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: extractPeaks(buf), bufferDuration: buf.duration, ...landClip(clip, buf.duration, project.tempo, project.timeSignatureNum || 4).patch } })
       }
       return
     }
@@ -1074,7 +1076,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
       const buf = await engine.loadClipBuffer(clip)
       if (buf) {
         const peaks = extractPeaks(buf)
-        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: peaks, durationBeats: engine.secondsToBeats(buf.duration), bufferDuration: buf.duration } })
+        dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { waveformPeaks: peaks, bufferDuration: buf.duration, ...landClip(clip, buf.duration, project.tempo, project.timeSignatureNum || 4).patch } })
       }
     }
   }
@@ -1116,7 +1118,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
   // empty arrangement space run the same code — see that file for what each
   // format becomes. Here we only add "select what landed".
   async function importMediaFile(file: File, beat: number) {
-    const clipId = await importAudioFile(file, { trackId: track.id, beat, engine, dispatch })
+    const clipId = await importAudioFile(file, { trackId: track.id, beat, engine, dispatch, beatsPerBar: project.timeSignatureNum || 4 })
     if (clipId) setSelectedClipId(clipId)
   }
 
