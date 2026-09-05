@@ -54,6 +54,8 @@ defineMacro({
   shape: 'fall',
 })
 const { planVoiceCall } = await importTs('lib/voice/execute-music.ts')
+const { setProposal } = await importTs('lib/voice/proposal.ts')
+const { PLAIN_WORDS } = await importTs('lib/voice/plain-words.ts')
 const { PRESET_VARIANTS } = await importTs('lib/preset-variants.ts')
 
 // ⚠️ The library is not part of the project — it lives on the machine — so the
@@ -206,9 +208,21 @@ const PROJECT = {
   ],
 }
 
+// Something is under discussion, because half a conversation cannot be tested
+// without the other half: "a little bit less of that" is only a sentence while
+// a change is on the table (lib/voice/proposal.ts). The store is seeded to
+// match, so the planner can carry the example out as well as read it.
+const PROPOSAL_WORD = 'fuzzy'
+setProposal({
+  word: PROPOSAL_WORD,
+  sense: PLAIN_WORDS.find(w => w.word === PROPOSAL_WORD).senses[1],
+  target: 'Pad', span: { start: 0, end: 16 }, amount: 50, at: Date.now(),
+})
+
 const CTX = {
   tracks: PROJECT.tracks,
   tempo: PROJECT.tempo,
+  proposal: { word: PROPOSAL_WORD },
   // The studio's own command palette, as the editor registers it — so "hide
   // the sidebar" is a sentence the rules can read.
   commands: [

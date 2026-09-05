@@ -109,8 +109,16 @@ const read = t => interpret(t, ctx)
   const stop = read('stop')
   check('but the transport never waits for a model',
     runsLocally(stop, 0.6, 'auto'), stop.calls[0]?.name)
+  // ⚠️ Still tiny, and the bar for joining it is high: every name here is a
+  // sentence the model never reads. The transport four are here because a
+  // round-trip IS the bug. `sound_like` and `adjust_it` are here because they
+  // never guess — they only fire on a word that is IN the vocabulary, they ask
+  // a question the model cannot hand back (its options carry the calls they
+  // would make), and the assistant, told what this studio can do, answers such
+  // a sentence by calling them anyway. Raise this number only with an argument
+  // that good.
   check('and the instant list is deliberately tiny',
-    INSTANT_COMMANDS.size <= 5, `${INSTANT_COMMANDS.size} commands`)
+    INSTANT_COMMANDS.size <= 6, `${INSTANT_COMMANDS.size} commands`)
 
   // The gate is only ever a narrowing of the existing bar, never a widening.
   const weak = { calls: [{ name: 'transport', input: {} }], confidence: 0.2, corrections: 0 }

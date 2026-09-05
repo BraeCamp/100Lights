@@ -63,6 +63,8 @@ const CALLS = {
   import_settings: { shortSamples: 'loop' },
   audio_to_midi: { target: 'drums clip', op: 'slice' },
   set_launch: { target: 'session take', mode: 'gate' },
+  sound_like: { target: 'pad', like: 'fuzzier', sense: 'muffled' },
+  adjust_it: { how: 'less', size: 'little' },
   move_clips: { by: { bars: 1 } },
   insert_clip: { sound: 'crash', at: { bar: 2 } },
   set_tempo: { bpm: 128 },

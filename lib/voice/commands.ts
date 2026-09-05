@@ -50,6 +50,8 @@ import { parseFilter } from '../find-notes'
 import { parseLoopLength } from '../clip-time'
 import { parseTrackAddress } from '../track-address'
 import { viewOf, snapOf, overlayOf, matchCommand } from './workspace'
+import { plainWordIn } from './plain-words'
+import { readAdjust, isBareAdjustment } from './proposal'
 
 const SECTION_WORDS = ['chorus', 'verse', 'bridge', 'intro', 'outro', 'drop', 'breakdown', 'hook', 'refrain', 'solo', 'build', 'pre-chorus', 'prechorus', 'interlude', 'coda', 'ending']
 /** Section names a sentence can use as places: the song's own markers, plus the usual words. */
@@ -171,6 +173,13 @@ export interface InterpretContext {
    * "this" or "it". A sentence that names a track always means that track.
    */
   selectedTrackName?: string
+  /**
+   * A change still under discussion (lib/voice/proposal.ts), if there is one.
+   *
+   * Only its presence matters here: it is what makes "a little bit less"
+   * a sentence at all. The studio holds the change itself.
+   */
+  proposal?: { word: string } | null
   /**
    * The clip currently selected, if any.
    *
@@ -2381,6 +2390,74 @@ const COMMANDS: VoiceCommand[] = [
         confidence: 0.9,
         needsName: true,
       }
+    },
+  },
+  {
+    id: 'sound_like',
+    tool: 'sound_like',
+    group: 'Mixer',
+    what: 'Ask for a sound by how it feels — fuzzier, wiggly, dreamy, bigger',
+    // Single-sense words here on purpose: these examples have to DO something,
+    // and "fuzzier" rightly asks first. The asking path is driven in
+    // .claude/light-check.mjs, where there is somebody to answer.
+    say: ['make the pad sound muffled', 'make the bass crunchy', 'make the pad echoey'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ A NAMED CONTROL IS NEVER A FEELING. "Low-pass to 800" and "reverb at
+      // 40%" are exact requests and must go to the exact rules, however
+      // descriptive the rest of the sentence is.
+      if (/\b(?:hz|hertz|khz|db|decibels?)\b|\b\d+\s*%/.test(raw)) return null
+      if (/\blow-?pass\b|\bhigh-?pass\b|\bcutoff\b|\bfilter\b.*\bat\b|\bset\b.*\bto\s+\d/.test(raw)) return null
+      // "Play harder" is how the notes are struck, not how the track sounds.
+      if (/\bplay(?:s|ed|ing)?\b|\bvelocit|\bnotes?\b|\bchords?\b/.test(raw)) return null
+      // The name is taken out before the word is looked for, so a track called
+      // "Big Muff" does not make every sentence about it a request for bigger.
+      const names = [...(ctx.tracks ?? []), ...(ctx.clips ?? [])].map(x => (x as { name?: string }).name ?? '').filter(Boolean)
+      let rest = raw
+      for (const n of names.sort((a, b) => b.length - a.length)) rest = rest.replace(n.toLowerCase(), ' ')
+      const word = plainWordIn(rest)
+      if (!word) return null
+      const hit = clipOrSelected(w, ctx, ['make', 'makes', 'let', 'lets', 'i', 'want', 'it', 'to', 'the', 'a', 'an', 'be', 'sound', 'sounds', 'sounding',
+        'can', 'could', 'should', 'more', 'less', 'bit', 'little', 'please', 'and', 'of', 'this', 'that', 'my', 'is', 'feel', 'feels', ...word.said], { dropNums: true })
+      const target = hit?.name ?? ctx.selectedTrackName ?? null
+      if (!target) return null
+      for (const word2 of w.all) w.markWord(word2, 0)
+      // ⚠️ 0.95, NOT 0.90. The studio's own commands are matched by name at
+      // 0.86, and a live project has about 190 of them — several with the word
+      // "sound" in the label. Inside the 0.05 ambiguity margin the sentence
+      // counts as two readings, and with the assistant on that means it is
+      // handed to the model rather than answered, which for a beginner reads
+      // as "sign in to use the assistant" when the studio knew the answer.
+      return { calls: [{ name: 'sound_like', input: { target, like: word.word } }], confidence: 0.95, needsName: !hit }
+    },
+  },
+  {
+    id: 'adjust_it',
+    tool: 'adjust_it',
+    group: 'Mixer',
+    what: 'Bend the change still under discussion — less, more, over time, undo',
+    say: ['a little bit less of that', 'a bit more', 'start that way then come down'],
+    match(w, ctx) {
+      // ⚠️ These words mean NOTHING on their own. "Less" is only a command
+      // while something is on the table to be less of, and offering this
+      // reading otherwise would have it competing with every real sentence.
+      if (!ctx.proposal) return null
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ Nothing but adjustment words. Anything else in the sentence — a
+      // track, a marker, an octave — makes it a new request that happens to
+      // contain the word "up" (lib/voice/proposal.ts ADJUST_WORDS).
+      if (!isBareAdjustment(w.all)) return null
+      const adjust = readAdjust(raw)
+      if (!adjust) return null
+      // ⚠️ UNDO IS THE STUDIO'S, NOT THIS ONE'S. "Undo that" and "take that
+      // back" already mean something exact, and the last edit IS the change
+      // under discussion — so claiming them here would only give the studio a
+      // second undo that does the same thing less well, and it stole the word
+      // from the real one for every sentence while a proposal was live.
+      if (adjust.kind === 'undo') return null
+      for (const word of w.all) w.markWord(word, 0)
+      // Clear of the palette-by-name rule for the same reason as sound_like.
+      return { calls: [{ name: 'adjust_it', input: { how: adjust.kind, size: adjust.size } }], confidence: 0.95 }
     },
   },
   {

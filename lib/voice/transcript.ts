@@ -176,6 +176,7 @@ export function describeAction(a: unknown, names: { track?: (id: string) => stri
     case 'WARP_QUANTIZE': return `Quantized ${c(act.clipId)}'s transients to the grid`
     case 'SET_TEMPO_LEADER': return act.clipId ? `Made ${c(act.clipId)} the tempo leader — the song follows its tempo` : 'Released the tempo leader'
     case 'IMPORT_SETTINGS': return 'Changed how dropped samples land (Loop/Warp Short Samples)'
+    case 'PLAY_SPAN': return 'Played it back so you could hear it'
     case 'AUDIO_TO_MIDI': return act.op === 'slice' ? `Sliced ${c(act.clipId)} to a new MIDI track` : `Converted ${c(act.clipId)}'s ${String(act.op)} to MIDI on a new track`
     case 'ADD_EFFECT': return `Added ${String((act.effect as { type?: string } | undefined)?.type ?? 'an effect')} to ${t(act.trackId)}`
     case 'REMOVE_EFFECT': return `Removed an effect from ${t(act.trackId)}`

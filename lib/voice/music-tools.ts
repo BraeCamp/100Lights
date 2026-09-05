@@ -819,6 +819,34 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'sound_like',
+    description:
+      'A SOUND ASKED FOR BY FEEL, not by parameter — "I want it to sound fuzzier", "let\'s make the pad wiggle", "can the drums be harder". Use this whenever somebody describes a SOUND rather than naming a control; the studio knows what its own words can mean and will ASK when one of them is genuinely two different sounds ("do you mean more like static, or more muffled?"), then make it and play it back. Do NOT use it when a parameter is named — "low-pass to 800" is set_effect, and "make the pad brighter" is shape_tone. `sense` is only for answering the studio\'s own question.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'What should sound that way. The selected track when nothing is named.' },
+        like: { type: 'string', description: 'The word they used, as they used it: "fuzzier", "wiggle", "dreamy", "bigger", "harder".' },
+        sense: { type: 'string', description: 'Which reading, when the studio asked and they answered: "muffled", "static", "tremolo", "warble", "sway", "space", "body", "wash", "echoes", "grit", "punch".' },
+        amount: { type: 'number', description: 'How much, 0-100. Omit for a sensible starting point they can then bend.' },
+      },
+      required: ['like'],
+    },
+  },
+  {
+    name: 'adjust_it',
+    description:
+      'BENDING WHAT WAS JUST MADE — only ever about the change still under discussion. "A little bit less of it", "more", "make it start that way then come down", "undo that", "that\'s good". There is no target: it is whatever was just done. Nothing else in the studio understands these sentences, because on their own they mean nothing.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        how: { type: 'string', enum: ['less', 'more', 'ramp_down', 'ramp_up', 'undo', 'keep'] },
+        size: { type: 'string', enum: ['little', 'normal', 'lot'], description: '"a little bit less" is little, "way more" is lot.' },
+      },
+      required: ['how'],
+    },
+  },
+  {
     name: 'set_launch',
     description:
       'HOW A SESSION SLOT ANSWERS A PRESS (Live\'s Launch box) — "put the drum loop slot in gate mode" (mode gate: it plays while held), "trigger" (press starts it from the top), "toggle" (press again to stop — the default), "repeat" (it starts again every step while held). Also "make the pad slot legato" (legato: a clip launched over a playing one picks up where that one had got to), "set the bass slot\'s velocity amount to 50%" (velocity), and "launch the drums slot on the bar" (quantize). These are the SESSION grid\'s clips, not the arrangement\'s.',
@@ -1764,6 +1792,20 @@ export const MUSIC_SYSTEM_HINT = [
   // worse than a refused one, so this says it twice and gives the example.
   'ONE SENTENCE OFTEN CONTAINS SEVERAL REQUESTS. Emit a tool call for EVERY request in it, in the order they were said, all in this one reply. "Move everything over by one bar and have a 1 bar long crash at the beginning, then restart" is THREE calls: move_clips, insert_clip, transport. Do not stop after the first.',
   'Use the names they used for tracks and clips; the app resolves them against the real project and will refuse rather than guess if a name is ambiguous.',
+  // Brae: "I'm worried that the AI voice assistant is bound by enough rules
+  // that users won't be able to use natural language with it… 'I want it to
+  // sound fuzzy'."
+  //
+  // ⚠️ THE INSTINCT TO FIX HERE IS GUESSING. Faced with a word it has no
+  // parameter for, a model picks the nearest control and commits — and the
+  // person who said "fuzzier" gets a filter when they meant grit, with no
+  // sign that a choice was ever made. `sound_like` hands the word to the
+  // studio instead, which knows which of ITS OWN sounds that word can mean,
+  // asks when there are two, describes both in words a beginner has, makes it
+  // for real and plays it back. Handing the word over is the whole job; the
+  // conversation after it costs no further turn, because the studio runs it.
+  'A SOUND DESCRIBED BY FEEL IS `sound_like`, NOT A GUESS AT A CONTROL. "Fuzzier", "wiggly", "dreamy", "bigger", "harder", "muffled" — pass the word they used and let the studio ask which sound they meant and demonstrate it. Only reach for a specific control when THEY named one ("low-pass to 800"), or when the word is one shape_tone already covers exactly (brighter, darker, warmer, cleaner, punchier, softer, fuller, thinner).',
+  'AND THE FOLLOW-UP IS `adjust_it`. Once something has been made this way, "a little bit less of that", "make it start that way then come down", "undo that" and "that\'s good" are all about it and nothing else. They carry no target because there is only one thing they can mean.',
   // Brae: "I told it 'change reverb so that it stays at 100% until the 6th
   // bar'. It told me 'Reverb at 100%' without changing anything, and moved
   // the playhead to the 6th bar." Three mistakes in one sentence: the span

@@ -60,6 +60,11 @@ import { setSegBpm, slipByDrag, cropSample } from '../sample-editor'
 import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
 import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
 import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
+import { plainWordIn, needsAsking, senseFromAnswer, defaultSense, describeSense, askText } from './plain-words'
+import {
+  getProposal, describeSpan, playbackSpan, rampParameter, rampEnds, stepAmount, clampAmount,
+  type Proposal, type StepSize,
+} from './proposal'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -161,6 +166,14 @@ export interface VoicePlan {
   actions: unknown[]
   say: string
   problem?: string
+  /**
+   * A change left on the table, still under discussion (lib/voice/proposal.ts).
+   *
+   * The planner does not store it — it hands it back and the studio holds it,
+   * so planning stays something you can do twice with the same answer. `null`
+   * means the opposite: whatever was on the table is finished with.
+   */
+  proposal?: Proposal | null
   /**
    * A question, when the sentence named something the project holds more than
    * one of.
@@ -486,6 +499,37 @@ function spanOf(v: unknown, atBeat: number, maps: MusicMaps): Spanned {
  * lives (lib/daw-state.ts), so there is nothing left to keep them out.
  */
 const allClips = (p: DawProject): DawClip[] => [...(p.arrangementClips ?? []), ...sessionClips(p)]
+
+/**
+ * The name to hand an ordinary tool call, given what somebody said. A track
+ * wins over a clip of the same name, as everywhere else; when neither is found
+ * the words are passed on unchanged so the inner call can decline in its own
+ * voice rather than this one guessing.
+ */
+function resolveTrackOrClipName(spoken: string, p: DawProject): string | null {
+  const track = resolveTrack(spoken, p)
+  if (track) return track.name ?? spoken
+  const clip = resolveClip(spoken, p)
+  return clip ? (clip.clip.name ?? spoken) : null
+}
+
+/** Where a named track or clip lives, in beats — for playing a change back where it happens. */
+function spanOfTargetFor(name: string, p: DawProject): { start: number; end: number } | null {
+  const want = foldName(name)
+  const clips = (p.arrangementClips ?? []).filter(c => {
+    if (foldName(c.name ?? '') === want) return true
+    const track = (p.tracks ?? []).find(t => t.id === c.trackId)
+    return foldName(track?.name ?? '') === want
+  })
+  if (!clips.length) return null
+  return { start: Math.min(...clips.map(c => c.startBeat)), end: Math.max(...clips.map(c => c.startBeat + c.durationBeats)) }
+}
+
+/** Where the song stops, so a playback span never runs off the end of it. */
+function songEndBeat(p: DawProject): number {
+  const clips = p.arrangementClips ?? []
+  return clips.length ? Math.max(...clips.map(c => c.startBeat + c.durationBeats)) : 16
+}
 
 /** The session grid's clips, in track then scene order. */
 export function sessionClips(p: Pick<DawProject, 'sessionGrid'>): DawClip[] {
@@ -4612,6 +4656,99 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       }
     }
 
+    // ── A SOUND ASKED FOR BY FEEL (lib/voice/plain-words.ts) ────────────
+    //
+    // "I want it to sound fuzzier" names no control and no number. The word is
+    // looked up, and if it carries two sounds this studio can tell apart, the
+    // studio asks WHICH SOUND rather than guessing — one question, with each
+    // answer described for somebody who does not know the word. Then it makes
+    // the change for real and plays it back, and what it made stays on the
+    // table so "a little bit less of it" has something to mean.
+    case 'sound_like': {
+      const said = str(i.like) || str(i.said)
+      const word = plainWordIn(said) ?? plainWordIn(str(heard?.said ?? ''))
+      if (!word) return fail(`I don't know what "${said || 'that'}" should sound like. Try brighter, darker, warmer, punchier — or tell me a control and a number.`)
+
+      // Nobody working on one track keeps saying its name — "I want it to
+      // sound fuzzier" is about whatever is selected.
+      const selected = heard?.selectedTrackId ? project.tracks.find(t => t.id === heard.selectedTrackId)?.name : undefined
+      const found = target ? resolveTrackOrClipName(target, project) : null
+      const name = found ?? target ?? selected ?? ''
+      if (!name) return fail('Say what should sound that way — a track or a clip.')
+
+      const chosen = str(i.sense) ? word.senses.find(s => s.id === str(i.sense)) ?? senseFromAnswer(word, str(i.sense)) : null
+      if (!chosen && needsAsking(word)) {
+        return {
+          actions: [], say: '',
+          ask: {
+            speak: askText(word),
+            options: word.senses.map(s => ({
+              label: `${s.label} — ${s.says}`,
+              keywords: [s.id, ...s.keywords],
+              calls: [{ name: 'sound_like', input: { target: name, like: word.word, sense: s.id, ...(i.amount != null ? { amount: i.amount } : {}) } }],
+            })),
+          },
+        }
+      }
+      const sense = chosen ?? defaultSense(word)
+      const amountSaid = i.amount != null ? spokenNumber(i.amount as string) : null
+      const amount = clampAmount(amountSaid ?? sense.amount)
+      const inner = planVoiceCall(sense.call(name, amount), project, heard)
+      if (inner.problem) return inner
+
+      const span = spanOfTargetFor(name, project)
+      const bar = project.timeSignatureNum || 4
+      // In the words it was asked in, not the effect rack's. Someone who said
+      // "fuzzier" is not helped by "Added saturator to Pad at 40%".
+      return {
+        ...inner,
+        say: `Here's ${describeSense(sense, amount, name)} on ${name}. How does that sound?`,
+        actions: [...inner.actions, { type: 'PLAY_SPAN', ...playbackSpan(span, bar, songEndBeat(project)) }],
+        proposal: { word: word.word, sense, target: name, span, amount, at: Date.now() },
+      }
+    }
+
+    // ── BENDING WHAT IS ON THE TABLE (lib/voice/proposal.ts) ────────────
+    case 'adjust_it': {
+      const p = getProposal()
+      if (!p) return fail('There is nothing on the table to change — tell me what to work on.')
+      const how = str(i.how).toLowerCase()
+      const size = (['little', 'normal', 'lot'].includes(str(i.size)) ? str(i.size) : 'normal') as StepSize
+      const bar = project.timeSignatureNum || 4
+
+      if (how === 'keep') return { actions: [], say: 'Nice one.', proposal: null }
+      if (how === 'undo') return { actions: [{ type: 'UNDO' }], say: `Took the ${p.word} back off.`, proposal: null }
+
+      if (how === 'ramp_down' || how === 'ramp_up') {
+        const parameter = rampParameter(p.sense)
+        if (!parameter) return fail(`I can't spread ${describeSense(p.sense, p.amount)} across the bars — that one is either on or off. I can make it stronger or weaker instead.`)
+        if (!p.span) return fail('I am not sure how far it should run — say which bars.')
+        const ends = rampEnds(p, how, size)
+        const inner = planVoiceCall({ name: 'automate_parameter', input: { target: p.target, parameter, from: ends.from, to: ends.to, start: { beat: p.span.start }, end: { beat: p.span.end } } }, project, heard)
+        if (inner.problem) return inner
+        // ⚠️ Said in the words it was asked in. The automation planner's own
+        // sentence is exact and unreadable to a beginner — "low-pass cutoff
+        // from 1.1 kHz to 200 Hz until bar 8 beat 4" — and this whole path
+        // exists for somebody who does not know what a low-pass is.
+        return {
+          ...inner,
+          say: `${describeSense(p.sense, ends.from, p.target)}, ${how === 'ramp_down' ? 'easing down' : 'building up'} to ${ends.to}% across ${describeSpan(p.span, bar)}. How does that sound?`,
+          actions: [...inner.actions, { type: 'PLAY_SPAN', ...playbackSpan(p.span, bar, songEndBeat(project)) }],
+          proposal: { ...p, amount: ends.to, ramped: ends, at: Date.now() },
+        }
+      }
+
+      const amount = stepAmount(p.amount, how === 'less' ? 'less' : 'more', size)
+      const inner = planVoiceCall(p.sense.call(p.target, amount), project, heard)
+      if (inner.problem) return inner
+      return {
+        ...inner,
+        say: `${describeSense(p.sense, amount, p.target)}. How does that sound?`,
+        actions: [...inner.actions, { type: 'PLAY_SPAN', ...playbackSpan(p.span, bar, songEndBeat(project)) }],
+        proposal: { ...p, amount, at: Date.now() },
+      }
+    }
+
     // ── A SESSION SLOT'S LAUNCH SETTINGS (lib/launch.ts) ────────────────
     // ⚠️ Session slots live in project.sessionGrid, not arrangementClips, so
     // the ordinary clip lookup cannot see them and UPDATE_CLIP cannot change
@@ -5751,6 +5888,12 @@ export function planVoiceCallsEach(calls: VoiceCall[], project: DawProject, hear
 export function planVoiceCalls(calls: VoiceCall[], project: DawProject, heard?: VoiceContext): VoicePlan {
   const actions: unknown[] = []
   const said: string[] = []
+  // ⚠️ The change left on the table has to survive being merged. It did not:
+  // this function built a fresh plan out of the actions and the sentences and
+  // dropped everything else, so a proposal never reached the studio and "a
+  // little bit less of that" — the whole point of holding one — was read as a
+  // volume command instead.
+  let proposal: Proposal | null | undefined
   for (const c of calls) {
     const plan = planVoiceCall(c, withCreated(project, actions), heard)
     if (plan.problem) return { actions: [], say: '', problem: plan.problem }
@@ -5760,9 +5903,10 @@ export function planVoiceCalls(calls: VoiceCall[], project: DawProject, heard?: 
     if (plan.ask) return { actions: [], say: '', ask: plan.ask }
     actions.push(...plan.actions)
     if (plan.say) said.push(plan.say)
+    if (plan.proposal !== undefined) proposal = plan.proposal
   }
   // A plan with no actions is not necessarily empty — a query answers in words
   // and changes nothing, which is a complete and successful command.
   if (!actions.length && !said.length) return fail('I didn\'t catch anything to do.')
-  return { actions, say: said.join(' ') }
+  return { actions, say: said.join(' '), ...(proposal !== undefined ? { proposal } : {}) }
 }

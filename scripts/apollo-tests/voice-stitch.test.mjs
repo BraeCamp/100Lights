@@ -142,7 +142,14 @@ const at = t => ({ text: 'add a descending low pass filter to', at: t })
   check('the studio keeps a join whose held half was unfinished, for the assistant',
     /else if \(joined && held && looksIncomplete\(held\.text\)\)/.test(voice))
   check('a fresh half-sentence is held quietly rather than sent anywhere',
-    /if \(!readable && !heldFragment\.current && looksIncomplete\(text\)\)/.test(voice))
+    /if \(!readable && !questionWaiting && !heldFragment\.current && looksIncomplete\(text\)\)/.test(voice))
+  // ⚠️ EXCEPT AN ANSWER. "More muffled", "the second one", "the bass clip" are
+  // all fragments, so every answer to one of the studio's own questions was
+  // held here for three seconds and then asked about — while the question it
+  // answered sat on screen. The studio asked, stopped listening, and then
+  // asked what the reply meant.
+  check('but not while a question is waiting for one',
+    /const questionWaiting = /.test(voice) && /pendingAsk2/.test(voice))
   check('and asked about only if nothing follows',
     /what would you like to do with it\?/.test(voice))
 }

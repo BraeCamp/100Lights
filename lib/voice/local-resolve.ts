@@ -168,6 +168,29 @@ export function confidentEnough(local: LocalResult, heardConfidence: number): bo
  */
 export const INSTANT_COMMANDS: ReadonlySet<string> = new Set([
   'transport', 'metronome', 'undo', 'redo',
+  // ── The studio's own conversation ────────────────────────────────────────
+  //
+  // ⚠️ These two look like exactly what the note above warns against, and they
+  // are the one case where the argument runs the other way.
+  //
+  // `sound_like` is not a guess. It only matches a word that is IN the
+  // vocabulary (lib/voice/plain-words.ts); anything else falls through to the
+  // model exactly as before. So it takes no sentence away from the assistant
+  // that the assistant would read better — and the assistant, told what this
+  // studio can do, answers such a sentence by calling `sound_like` anyway. A
+  // round-trip to arrive at the same call is a second of somebody's life.
+  //
+  // It also asks a QUESTION, and the question is data — options, the words
+  // that pick them, the calls each one would make. A model cannot hand that
+  // back; only the studio can put it on screen and match a fragment against it
+  // minutes later. Deferring meant the question was never asked at all: the
+  // sentence went to the model, the model was unavailable, and a beginner
+  // asking for a fuzzier pad was told to sign in.
+  //
+  // `adjust_it` only exists while a change is on the table AND the sentence is
+  // nothing but adjustment words. There is no reading of "a little bit less"
+  // that a model knows and the studio does not.
+  'sound_like', 'adjust_it',
 ])
 
 /**
