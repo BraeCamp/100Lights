@@ -92,6 +92,8 @@ const EXPECTED = [
   ['delete time',          ['delete time']],
   ['duplicate time',       ['duplicate time']],
   ['clip time signature',  ['clip time signature', 'clip signature']],
+  ['time selection',       ['time selection']],
+  ['insert marker',        ['insert marker']],
   ['triplet grid',         ['triplet']],
   ['overview strip',       ['overview']],
   ['waveform db scale',    ['waveforms']],

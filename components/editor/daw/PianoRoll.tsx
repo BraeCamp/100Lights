@@ -28,7 +28,7 @@ import { laneValue, lanePatch, randomizeLane, rampLane, LANE_MAX, type LaneField
 import { visibleRows, rowIndexOf, focusScrollTop, stepAdvance, stepMove } from '@/lib/roll-rows'
 import { transposeNotes, transposeDegrees, invertNotes, addInterval, stretchNotes, setLength, humanizeNotes, reverseNotes, durationLabel, describeInterval, type Scale } from '@/lib/pitch-time'
 import { PitchTimePanel } from './PitchTimePanel'
-import { splitAt, chopNotes, chopOnGrid, joinNotes, fitToRange, setActive, anyInactive, type Splice } from '@/lib/note-ops'
+import { splitAt, splitEach, chopNotes, chopOnGrid, joinNotes, fitToRange, setActive, anyInactive, type Splice } from '@/lib/note-ops'
 import { findNotes, filterIsEmpty, type NoteFilter } from '@/lib/find-notes'
 import { FindNotesBar } from './FindNotesBar'
 import { StretchMarkers } from './StretchMarkers'
@@ -36,6 +36,7 @@ import { useNoteSelectionRequest, consumeNoteSelection } from '@/lib/note-select
 import { quantizeNotes as quantizePatches, useQuantizeSettings, setQuantizeSettings, describeQuantize } from '@/lib/quantize'
 import { QuantizeDialog } from './QuantizeDialog'
 import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, insertTime, deleteTime, duplicateTime } from '@/lib/clip-time'
+import { moveCaret, nextBoundary, extendTimeSel, notesInTimeSel, timeOfNotes, resizeByGrid, type TimeSel } from '@/lib/caret'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -568,6 +569,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const qBtnRef = useRef<HTMLButtonElement>(null)
   // The loop brace (lib/clip-time.ts): selected, it takes the arrow chords.
   const [braceSelected, setBraceSelected] = useState(false)
+  // Keyboard-only editing (lib/caret.ts): a time selection grown from the
+  // insert marker (stepBeat is the marker; step entry writes at it).
+  const [timeSel, setTimeSel] = useState<TimeSel | null>(null)
   const [findOpen, setFindOpen] = useState(false)
   const [filter, setFilter] = useState<NoteFilter>({})
   // A selection asked for from outside — the voice, the palette — parked
@@ -1362,6 +1366,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const barBeats = project.timeSignatureNum || 4
   const clipBarBeats = clip.timeSignatureNum ? (clip.timeSignatureNum * 4) / (clip.timeSignatureDen || 4) : barBeats
   const brace = loopRange(clip)
+  /** What a region command works on: the time selection, else the loop, else the clip. */
+  const region = () => timeSel ?? workingRange(clip)
+  const regionName = timeSel ? 'the time selection' : brace ? 'the loop' : 'the clip'
   function setLoopLength(beats: number) {
     const L = Math.max(quant, Math.round(beats / quant) * quant)
     dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { loopEnabled: true, loopLengthBeats: L } })
@@ -1383,26 +1390,27 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     if (r) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: r })
   }
   function cropClip() {
-    const { start, end } = workingRange(clip)
+    const { start, end } = region()
     if (start === 0 && end >= clip.durationBeats - 1e-6) return
     const r = cropToRange(clip, start, end)
-    if (r) dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: r })
+    if (r) { dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: r }); setTimeSel(null); setStepBeat(0) }
   }
   function selectInLoop() {
-    const { start, end } = workingRange(clip)
+    const { start, end } = region()
     setSelectedNotes(new Set(notesInRange(clip.notes, start, end).map(n => n.id)))
     setBraceSelected(false)
   }
   function timeCommand(op: 'insert' | 'delete' | 'duplicate') {
-    const { start, end } = workingRange(clip)
+    const { start, end } = region()
     const span = end - start
+    if (op !== 'insert') setTimeSel(null)
     if (op === 'insert') dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: insertTime(clip.notes, end, span), durationBeats: clip.durationBeats + span } })
     else if (op === 'delete') {
       const newDur = Math.max(barBeats, clip.durationBeats - span)
       dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: deleteTime(clip.notes, start, end), durationBeats: newDur, ...(clip.loopLengthBeats ? { loopLengthBeats: Math.min(clip.loopLengthBeats, newDur) } : {}) } })
     } else dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { notes: duplicateTime(clip.notes, start, end, newNoteId), durationBeats: clip.durationBeats + span } })
   }
-  const rangeWord = brace ? 'the loop' : 'the clip'
+  const rangeWord = regionName
 
   // The Pitch & Time utilities (lib/pitch-time.ts), on the selection or the
   // whole clip. Each is ONE UPDATE_MIDI_NOTES — one undo step — and the same
@@ -1454,20 +1462,22 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     dispatch({ type: 'SPLICE_MIDI_NOTES', clipId: clip.id, remove: s.remove, add: s.add })
     if (select === 'added') setSelectedNotes(new Set(s.add.map(n => n.id)))
   }
-  /** ⌘E: chop the selection on the grid; with nothing selected, split at the playhead (or the step marker). */
+  /** ⌘E: chop the selection on the grid; with nothing selected, split at the
+   *  time selection's edges, else at the insert marker (or the playhead while playing). */
   function splitOrChop() {
     if (selectedNotes.size) { splice(chopOnGrid(targetNotes(), quant, newNoteId), 'added'); return }
+    if (timeSel) { splice(splitEach(clip.notes, () => [timeSel.start, timeSel.end], newNoteId), 'added'); return }
     const rel = engine.currentBeat - clip.startBeat
-    const at = stepEntry ? stepBeat : rel > 0 && rel < clip.durationBeats ? rel : null
-    if (at == null) return
+    const at = engine.isPlaying && rel > 0 && rel < clip.durationBeats ? rel : stepBeat
+    if (!(at > 0)) return
     splice(splitAt(clip.notes, at, newNoteId), 'added')
   }
   function chopSelected(parts = chopParts) { splice(chopNotes(targetNotes(), parts, newNoteId), 'added') }
   function joinSelected() { splice(joinNotes(targetNotes()), 'added') }
-  /** ⌘⌥J: the selection scaled into the clip's loop, or the whole clip. */
+  /** ⌘⌥J: the selection scaled into the time selection, else the clip's loop, else the whole clip. */
   function fitSelectedToRange() {
-    const end = clip.loopEnabled && clip.loopLengthBeats ? clip.loopLengthBeats : clip.durationBeats
-    patchMany(fitToRange(targetNotes(), 0, end))
+    const { start, end } = region()
+    patchMany(fitToRange(targetNotes(), start, end))
   }
   /** 0: deactivate the selection — or bring it back when any of it is off. */
   function toggleActive() {
@@ -1625,6 +1635,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       keywords: 'delete time remove span close gap cut clip loop', run: () => timeCommand('delete') },
     { id: 'roll.duplicateTime', group: 'Notes', label: `Duplicate time — copy ${rangeWord}'s span after itself`,
       keywords: 'duplicate time copy span repeat clip loop', run: () => timeCommand('duplicate') },
+    // Keyboard-only editing (lib/caret.ts).
+    { id: 'roll.timeSelectNotes', group: 'Notes', label: `Select the notes in the time selection (${timeSel ? `${+timeSel.start.toFixed(2)}–${+timeSel.end.toFixed(2)} beats` : 'none'})`,
+      keywords: 'time selection select notes inside enter insert marker', shortcut: 'Enter', when: () => !!timeSel, run: () => { if (timeSel) { setSelectedNotes(new Set(notesInTimeSel(clip.notes, timeSel).map(n => n.id))); setTimeSel(null) } } },
+    { id: 'roll.timeOfNotes', group: 'Notes', label: `Time selection from ${rollScope} — the span they cover`,
+      keywords: 'time selection from notes span enter insert marker', when: () => selectedNotes.size > 0, run: () => { const t = timeOfNotes(targetNotes()); if (t) { setTimeSel(t); setStepBeat(t.start); setSelectedNotes(new Set()) } } },
+    { id: 'roll.caretHome', group: 'Notes', label: 'Insert marker to the clip start',
+      keywords: 'insert marker caret home start beginning cursor', shortcut: 'Home', run: () => { setStepBeat(0); setTimeSel(null) } },
     { id: 'roll.clipSig', group: 'Notes', label: clip.timeSignatureNum ? `Clip time signature ${clip.timeSignatureNum}/${clip.timeSignatureDen || 4} — back to the song's` : 'Clip time signature — its own bar lines (choose in the Musical bar)',
       keywords: 'clip time signature clip signature meter bar lines', when: () => !!clip.timeSignatureNum, run: () => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { timeSignatureNum: undefined, timeSignatureDen: undefined } }) },
     { id: 'roll.selectAll', group: 'Notes', label: 'Select every note in this clip',
@@ -1664,7 +1681,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     { id: 'roll.close', group: 'Notes', label: 'Close the piano roll',
       keywords: 'hide dismiss done back arrangement',
       run: () => { setExpandedPianoRollClipId?.(null); setEditTarget?.(null) } },
-  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor, chopParts, findOpen, filter, found, clip.loopEnabled, clip.loopLengthBeats, qSettings, qAnchor, braceSelected, clip.durationBeats, clip.timeSignatureNum, clip.timeSignatureDen, barBeats])
+  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor, chopParts, findOpen, filter, found, clip.loopEnabled, clip.loopLengthBeats, qSettings, qAnchor, braceSelected, clip.durationBeats, clip.timeSignatureNum, clip.timeSignatureDen, barBeats, timeSel])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const selected = clip.notes.filter(n => selectedNotes.has(n.id))
@@ -1683,6 +1700,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     if (kb === 'notes.selectInLoop') { e.preventDefault(); e.stopPropagation(); selectInLoop(); return }
     if (kb === 'notes.deselect') {
       setSelectedNotes(new Set())
+      setTimeSel(null)
       setChordType(null)
       e.preventDefault(); e.stopPropagation()
       return
@@ -1754,10 +1772,48 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     if (kb === 'notes.foldScale') { e.preventDefault(); e.stopPropagation(); setFoldScale(v => !v); return }
     if (kb === 'notes.highlightScale') { e.preventDefault(); e.stopPropagation(); setHighlightScale(v => !v); return }
     if (kb === 'notes.focus') { e.preventDefault(); e.stopPropagation(); focusNotes(); return }
-    // Step entry: with nothing selected, ← / → move the insert marker.
-    if (stepEntry && selected.length === 0 && (kb === 'notes.earlier' || kb === 'notes.later')) {
+    // Keyboard-only editing (lib/caret.ts). With nothing selected, ← / →
+    // move the insert marker by the grid (step entry wraps at the clip end),
+    // ⌥← / ⌥→ jump it to a note boundary, Home / End to the clip's ends,
+    // ⇧ grows a time selection from it, Enter turns the time into the notes
+    // inside it. With notes selected, ⇧← / ⇧→ resize them by the grid and
+    // Enter turns them into the time they span.
+    if (selected.length === 0 && (kb === 'notes.earlier' || kb === 'notes.later')) {
       e.preventDefault(); e.stopPropagation()
-      setStepBeat(b => stepMove(b, kb === 'notes.later' ? 1 : -1, quant, clip.durationBeats))
+      const dir = kb === 'notes.later' ? 1 : -1
+      setStepBeat(b => (stepEntry ? stepMove(b, dir, quant, clip.durationBeats) : moveCaret(b, dir, quant, clip.durationBeats)))
+      setTimeSel(null)
+      return
+    }
+    if (kb === 'notes.boundaryPrev' || kb === 'notes.boundaryNext') {
+      e.preventDefault(); e.stopPropagation()
+      setStepBeat(b => nextBoundary(clip.notes, b, kb === 'notes.boundaryNext' ? 1 : -1, clip.durationBeats))
+      setTimeSel(null)
+      return
+    }
+    if (kb === 'notes.home' || kb === 'notes.end') {
+      e.preventDefault(); e.stopPropagation()
+      setStepBeat(kb === 'notes.home' ? 0 : clip.durationBeats)
+      setTimeSel(null)
+      return
+    }
+    if (kb === 'notes.extendLeft' || kb === 'notes.extendRight' || kb === 'notes.extendBoundaryLeft' || kb === 'notes.extendBoundaryRight') {
+      e.preventDefault(); e.stopPropagation()
+      const dir: 1 | -1 = kb.endsWith('Right') ? 1 : -1
+      if (selected.length) { patchMany(resizeByGrid(selected, dir, quant)); return }
+      const byBoundary = kb.includes('Boundary')
+      setTimeSel(sel => extendTimeSel(sel, stepBeat, dir, (from, d) => (byBoundary ? nextBoundary(clip.notes, from, d, clip.durationBeats) : moveCaret(from, d, quant, clip.durationBeats)), clip.durationBeats))
+      return
+    }
+    if (kb === 'notes.enter') {
+      e.preventDefault(); e.stopPropagation()
+      if (selected.length) {
+        const t = timeOfNotes(selected)
+        if (t) { setTimeSel(t); setStepBeat(t.start); setSelectedNotes(new Set()) }
+      } else if (timeSel) {
+        setSelectedNotes(new Set(notesInTimeSel(clip.notes, timeSel).map(n => n.id)))
+        setTimeSel(null)
+      }
       return
     }
     // The expression lanes by key (lib/keymap.ts): ⌘↑↓ velocity, ⇧⌘↑↓ deviation, ⌘⌥↑↓ chance, ⌘G group.
@@ -2527,8 +2583,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
             {/* Playhead */}
             <PlayheadLine clipStart={clip.startBeat} clipDuration={clip.durationBeats} beatW={beatW} scrollLeft={scrollLeft} />
-            {stepEntry && (
-              <div data-help-id="step-marker" data-step-beat={stepBeat} style={{ position: 'absolute', top: 0, bottom: 0, left: stepBeat * beatW - scrollLeft, width: 2, background: '#f59e0b', boxShadow: '0 0 4px rgba(245,158,11,0.7)', pointerEvents: 'none', zIndex: 6 }} />
+            {/* The insert marker (lib/caret.ts) — amber and bright in step entry, a thin line otherwise */}
+            <div data-help-id={stepEntry ? 'step-marker' : 'insert-marker'} data-step-beat={stepBeat} data-beat={stepBeat}
+              style={{ position: 'absolute', top: 0, bottom: 0, left: stepBeat * beatW - scrollLeft, width: stepEntry ? 2 : 1, pointerEvents: 'none', zIndex: 6,
+                background: stepEntry ? '#f59e0b' : 'rgba(255,255,255,0.45)', boxShadow: stepEntry ? '0 0 4px rgba(245,158,11,0.7)' : undefined }} />
+            {/* The time selection grown from it with ⇧← / ⇧→ */}
+            {timeSel && (
+              <div data-help-id="time-selection" data-start={timeSel.start} data-end={timeSel.end}
+                style={{ position: 'absolute', top: 0, bottom: 0, left: timeSel.start * beatW - scrollLeft, width: (timeSel.end - timeSel.start) * beatW, pointerEvents: 'none', zIndex: 5,
+                  background: 'rgb(var(--accent-rgb) / 0.16)', borderLeft: '1px solid rgb(var(--accent-rgb) / 0.6)', borderRight: '1px solid rgb(var(--accent-rgb) / 0.6)' }} />
             )}
 
             {/* The loop brace (lib/clip-time.ts): click to select, drag the end to resize */}
