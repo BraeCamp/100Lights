@@ -12,6 +12,7 @@ const {
   readAdjust, isBareAdjustment, stepAmount, rampParameter, rampEnds, describeSpan, playbackSpan,
   setProposal, getProposal, clearProposal, PROPOSAL_TTL_MS, ADJUST_WORDS,
 } = await importTs('lib/voice/proposal.ts')
+const { isEchoOfReadBack } = await importTs('lib/voice/echo-guard.ts')
 
 let passed = 0
 const ok = (name, fn) => { fn(); passed++; console.log(`PASS ${name}`) }
@@ -133,6 +134,25 @@ ok('playback takes a run-up and a tail, and never runs off either end', () => {
   assert.deepEqual(playbackSpan({ start: 32, end: 64 }, 4, 80), { start: 24, end: 72 })
   assert.deepEqual(playbackSpan({ start: 0, end: 16 }, 4, 80), { start: 0, end: 24 }, 'no run-up before the beginning')
   assert.deepEqual(playbackSpan(null, 4, 80), { start: 0, end: 32 }, 'no span: the opening')
+})
+
+console.log('\nanswering a question said out loud')
+
+ok('an answer is not mistaken for Light hearing its own question back', () => {
+  // ⚠️ Answering a SPOKEN question means saying its words back at an open
+  // microphone, which is exactly the shape the echo guard exists to catch.
+  // Every option here has to survive it, or the conversation cannot happen by
+  // voice at all — only by typing.
+  const q = word('fuzzy').asks
+  for (const answer of ['more muffled', 'more like static', 'the muffled one', 'muffled', 'the second one']) {
+    assert.equal(isEchoOfReadBack(answer, q, 500), false, answer)
+  }
+  const w = word('wiggle').asks
+  for (const answer of ['the volume pulsing', 'the tone moving underneath', 'side to side']) {
+    assert.equal(isEchoOfReadBack(answer, w, 500), false, answer)
+  }
+  // And the question coming back whole still is an echo.
+  assert.equal(isEchoOfReadBack(q, q, 500), true)
 })
 
 console.log('\nthe table is put away when it goes stale')
