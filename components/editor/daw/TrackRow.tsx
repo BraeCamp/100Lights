@@ -2088,6 +2088,7 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                   onCrop={() => setCroppingClipId(prev => prev === clip.id ? null : clip.id)}
                   onCropChange={(ts, te) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { trimStart: ts, trimEnd: te } })}
                   onCropSnap={(b) => snapBeat(b, snap, project.timeSignatureNum, meterSegments(project))}
+                  onSlip={p => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: p })}
                   onIsolate={beat => setIsolateTgt(beat)}
                   onSplice={() => {
                     if (frozen) return

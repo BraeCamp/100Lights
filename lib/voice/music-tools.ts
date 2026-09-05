@@ -810,6 +810,8 @@ export const MUSIC_TOOLS = [
         detune: { type: 'number', description: 'Audio only: fine pitch in cents.' },
         segBpm: { type: 'number', description: 'Audio only: the sample\'s own tempo (Seg. BPM) — "the vocal clip is 120 bpm"; the clip\'s length follows the sample at that tempo.' },
         fade: { type: 'boolean', description: 'Audio only: 4 ms fades at the clip\'s edges so cuts never click.' },
+        slip: { ...LENGTH, description: 'Audio only: SLIP the audio under the clip by this much — the clip keeps its place and its length, the sample slides inside it. "slip the vocal clip 20 milliseconds", "slide the audio in the drums clip back half a beat".' },
+        slipDirection: { type: 'string', enum: ['later', 'earlier'], description: 'Which way to slip. "back", "earlier" and "left" are earlier; the default is later.' },
         tempoLeader: { type: 'boolean', description: 'Audio only: true makes this clip the TEMPO LEADER — the song\'s tempo map is rewritten from its warp markers (or its Seg BPM) so it plays as recorded and everything else follows; "make the drum loop the tempo leader", "the song follows the drums clip\'s tempo". false releases it. Only one clip leads.' },
         ...ADDRESS,
       },

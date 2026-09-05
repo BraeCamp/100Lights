@@ -27,6 +27,7 @@ import { RollSoundPanel } from './RollSettings'
 import { clampToViewport } from './menu-clamp'
 import { canConsolidate, consolidateMidiClip } from '@/lib/daw-consolidate'
 import { sliceToNewTrack, convertToNewTrack } from '@/lib/audio-to-track'
+import { slipByDrag } from '@/lib/sample-editor'
 import type { ConvertKind } from '@/lib/slice-to-midi'
 import Waveform from './Waveform'
 import { tempoSegments, tempoAt } from '@/lib/tempo-map'
@@ -86,7 +87,7 @@ export function detectTransients(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onRangeSelect, onDoubleClick, onSettings, onMove, onResize, onResizeLeft, onResizeStart, onResizeEnd, onCrop, onCropChange, onCropSnap, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
+export default function ClipView({ clip, track, beatW, selected, multiSelected, loopNativeBeats, isCropping, collabHolder, onSelect, onShiftSelect, onRangeSelect, onDoubleClick, onSettings, onMove, onResize, onResizeLeft, onResizeStart, onResizeEnd, onCrop, onCropChange, onCropSnap, onSlip, onIsolate, onSplice, onDelete, onDragStart, onDeleteAll, onReplaceSample, onSpectral, onScrollBy, waveformZoom, onFadeChange, onCopy, onPaste }: {
   clip: DawClip; track: DawTrack; beatW: number; selected: boolean; multiSelected: boolean
   loopNativeBeats?: number
   isCropping?: boolean
@@ -103,6 +104,8 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
   onCrop(): void
   onCropChange?(trimStart: number, trimEnd: number): void
   onCropSnap?(beat: number): number
+  /** Slip edit (⇧⌥-drag the body): the audio slides under the clip, which stays. */
+  onSlip?(patch: Partial<AudioClip>): void
   onIsolate(beat: number): void; onSplice?(): void; onDelete(): void
   onDragStart?(): void
   onDeleteAll?(): void
@@ -322,6 +325,9 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     if (e.button !== 0) return
     e.stopPropagation()
     if (isCropping) return  // don't drag while cropping
+    // ⇧⌥-drag slips the audio under the clip: the clip keeps its place and its
+    // length, the sample slides inside it (lib/sample-editor.ts).
+    if (e.shiftKey && e.altKey && isAudioClip(clip) && onSlip && bufDur) { onMouseDownSlip(e); return }
     // Cmd/Ctrl = add/remove this one item; Shift = select the range between the
     // current item and this one (across tracks). Alt stays free for copy-on-drag.
     const mod = e.metaKey || e.ctrlKey
@@ -394,6 +400,26 @@ export default function ClipView({ clip, track, beatW, selected, multiSelected, 
     const startX = e.clientX, startBeat = clip.startBeat
     function mm(ev: MouseEvent) { onResizeLeft!(startBeat + (ev.clientX - startX) / beatW, ev.altKey) }
     function mu() { onResizeEnd?.(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
+  }
+
+  // Slip drag — ⇧⌥ inside the clip body. The patch is always computed from the
+  // trims and markers as they were when the drag began; reading the clip as it
+  // moves would compound every frame and the audio would bolt.
+  function onMouseDownSlip(e: React.MouseEvent) {
+    if (!isAudioClip(clip) || !onSlip || !bufDur) return
+    e.preventDefault()
+    onSelect()
+    const startX = e.clientX
+    const at = { bufferDuration: bufDur, trimStart: clip.trimStart, trimEnd: clip.trimEnd, warpMarkers: clip.warpMarkers }
+    // A pixel of clip is this many seconds of sample: the clip's own seconds
+    // over its width, so the audio tracks the pointer.
+    const clipSec = engine.beatsToSeconds(clip.durationBeats)
+    function mm(ev: MouseEvent) {
+      const p = slipByDrag(at, (-(ev.clientX - startX) / Math.max(1, width)) * clipSec)
+      if (p) { engine.clearStretchedCache(clip.id); onSlip!(p) }
+    }
+    function mu() { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu) }
     document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu)
   }
 

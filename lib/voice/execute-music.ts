@@ -56,7 +56,7 @@ import { splitAt, chopNotes, joinNotes, fitToRange, setActive } from '../note-op
 import { parseFilter, findNotes, describeFilter } from '../find-notes'
 import { quantizeNotes as quantizeWithSettings, parseGridSaid } from '../quantize'
 import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, insertTime, deleteTime, duplicateTime } from '../clip-time'
-import { setSegBpm } from '../sample-editor'
+import { setSegBpm, slipByDrag, cropSample } from '../sample-editor'
 import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
 import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
@@ -4543,12 +4543,23 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (i.transpose != null) { const st = spokenNumber(i.transpose as string); if (st == null) return fail('Say how many semitones.'); patch.pitchSemitones = clamp(Math.round(st), -24, 24); said.push(`pitch ${st > 0 ? '+' : ''}${Math.round(st)} st`) }
       if (i.detune != null) { const ct = spokenNumber(i.detune as string); if (ct == null) return fail('Say how many cents.'); patch.pitchCents = clamp(Math.round(ct), -100, 100); said.push(`detune ${ct > 0 ? '+' : ''}${Math.round(ct)} ct`) }
       if (typeof i.fade === 'boolean') { patch.clipFade = i.fade; said.push(i.fade ? 'edge fades on' : 'edge fades off') }
+      // Slip: the audio slides under the clip, which keeps its place and its
+      // length. Per clip, since the room depends on that clip's own trims.
+      let slip: { seconds: number; said: string } | null = null
+      if (i.slip != null) {
+        const s = spanOf(i.slip, set[0].startBeat, maps)
+        if (s.problem || s.beats == null) return fail('Say how far to slip it — "20 milliseconds", "half a beat".')
+        const back = /\bback|\bearlier|\bleft/.test(str(i.slipDirection).toLowerCase() || 'later')
+        const seconds = (s.beats * 60) / (project.tempo || 120) * (back ? -1 : 1)
+        slip = { seconds, said: `slipped ${s.said ? describeDuration(s.said, s.beats) : `${s.beats} beats`} ${back ? 'earlier' : 'later'}` }
+        said.push(slip.said)
+      }
       const segBpm = i.segBpm != null ? spokenNumber(i.segBpm as string) : null
       if (i.segBpm != null && (segBpm == null || segBpm < 20 || segBpm > 999)) return fail('Say the sample\'s tempo in BPM, between 20 and 999.')
       if (segBpm != null) said.push(`Seg BPM ${segBpm}`)
       if (!said.length) return fail('Say what to change — a fade in, a fade out, the level, reverse, loop, warp, pitch, or the sample\'s tempo.')
       const audioOnly = 'fadeIn' in patch || 'fadeOut' in patch || 'gain' in patch || 'reverse' in patch
-        || 'warpEnabled' in patch || 'warpMode' in patch || 'pitchSemitones' in patch || 'pitchCents' in patch || 'clipFade' in patch || segBpm != null || leader != null
+        || 'warpEnabled' in patch || 'warpMode' in patch || 'pitchSemitones' in patch || 'pitchCents' in patch || 'clipFade' in patch || segBpm != null || leader != null || slip != null
       const targets = audioOnly ? set.filter(c => c.kind === 'audio') : set
       if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level, reverse, warp, pitch and the tempo leader are for audio clips. Its notes have a Sound panel instead.`)
       // A MIDI clip loops every loopLengthBeats; switching the loop on without
@@ -4562,9 +4573,21 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         }
         // Seg BPM: the clip's length follows the sample at that tempo (lib/sample-editor.ts).
         if (segBpm != null) return { ...patch, ...(setSegBpm(c as AudioClip, segBpm) ?? { segBpm }) }
+        if (slip) return { ...patch, ...(slipByDrag(c as AudioClip, slip.seconds) ?? {}) }
         return patch
       }
-      const updates = Object.keys(patch).length || segBpm != null ? targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: patchFor(c) })) : []
+      // ⚠️ An empty patch is not an update. Slip and Seg BPM write nothing into
+      // `patch` — they are worked out per clip below — so a sentence that only
+      // slipped used to report success and dispatch nothing at all.
+      const updates = targets
+        .map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: patchFor(c) as Record<string, unknown> }))
+        .filter(u => Object.keys(u.patch).length > 0)
+      if (slip && !updates.length) {
+        const one = clipLabel(project, targets[0])
+        return fail(targets[0].kind === 'audio' && (targets[0] as AudioClip).bufferDuration == null
+          ? `${one} is still loading — try again in a moment.`
+          : `${one} has no room to slip: nothing is trimmed off either end, so there is no audio to slide in from.`)
+      }
       // The leader is one clip: the first of the set. Releasing needs no clip.
       const lead = leader == null ? [] : [{ type: 'SET_TEMPO_LEADER', clipId: leader ? targets[0].id : null }]
       return {
@@ -4659,6 +4682,15 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     case 'clip_time': {
       const op = str(i.op).toLowerCase()
       const found = resolveClip(target, project)
+      // Crop is the one of these an AUDIO clip understands: the sample loses
+      // the audio the clip never plays (lib/sample-editor.ts).
+      if (found && found.clip.kind === 'audio' && op === 'crop') {
+        const a = found.clip as AudioClip
+        const how = clipLabel(project, a)
+        const p = cropSample(a, project.tempo)
+        if (!p) return fail(a.bufferDuration == null ? `${how} is still loading.` : `${how} has nothing outside the clip to crop — it plays all of its sample.`)
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: a.id, patch: p }], say: `Cropped ${how} to what it plays.` }
+      }
       if (!found || !('notes' in found.clip)) return fail(`I couldn't find a MIDI clip called "${target || 'that'}".`)
       const clip = found.clip as MidiClip
       const bar = project.timeSignatureNum || 4

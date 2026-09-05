@@ -80,6 +80,85 @@ export function sampleFraction(clip: Pick<AudioClip, 'bufferDuration' | 'trimSta
   return ((clip.trimStart ?? 0) + t * sec) / clip.bufferDuration
 }
 
+/**
+ * SLIP EDIT (Live: ⇧⌥-drag inside the waveform) — the audio slides under the
+ * clip, which stays where it is and keeps its length. A positive delta moves
+ * the window LATER in the sample, so the audio appears to slide left.
+ *
+ * Which numbers move depends on what maps the sample onto the beats:
+ *   • warp markers, when the clip has them — they name absolute seconds of the
+ *     buffer, so the trims are not in the map and shifting the markers is the
+ *     only thing that slides anything. Room is what keeps every marker inside
+ *     the buffer.
+ *   • the trims otherwise (unwarped, or warped straight across them). Room is
+ *     the audio trimmed off each end.
+ * Returns null when there is no room to move.
+ */
+export function slipByDrag(
+  clip: Pick<AudioClip, 'bufferDuration' | 'trimStart' | 'trimEnd' | 'warpMarkers'>,
+  deltaSec: number,
+): Partial<AudioClip> | null {
+  const total = clip.bufferDuration
+  if (total == null || !(total > 0)) return null
+  const ms = clip.warpMarkers
+  if (ms && ms.length) {
+    const lo = Math.min(...ms.map(m => m.sec)), hi = Math.max(...ms.map(m => m.sec))
+    const d = Math.max(-lo, Math.min(total - hi, deltaSec))
+    if (Math.abs(d) < 1e-9) return null
+    return { warpMarkers: ms.map(m => ({ ...m, sec: round6(m.sec + d) })) }
+  }
+  const ts = clip.trimStart ?? 0, te = clip.trimEnd ?? 0
+  if (total - ts - te < MIN_NATIVE_SECONDS) return null
+  const d = Math.max(-ts, Math.min(te, deltaSec))
+  if (Math.abs(d) < 1e-9) return null
+  return { trimStart: round6(ts + d), trimEnd: round6(te - d) }
+}
+
+/**
+ * CROP (Live's Crop Sample, ⇧⌘J) — throw away the audio the clip never plays,
+ * so the trims say exactly what you hear. Only an unwarped, non-looping clip
+ * has any: it plays its sample at native speed and its beat window may end
+ * before the audio does. A warped clip fits its whole trimmed span onto its
+ * beats, and a looping one repeats it, so there is nothing outside either —
+ * null, and the caller should say so rather than pretend.
+ *
+ * Reversed, the clip plays the END of the trimmed span, so the crop takes off
+ * the front.
+ */
+export function cropSample(
+  clip: Pick<AudioClip, 'bufferDuration' | 'trimStart' | 'trimEnd' | 'durationBeats' | 'warpEnabled' | 'loopEnabled' | 'reverse'>,
+  tempo: number,
+): Partial<AudioClip> | null {
+  const total = clip.bufferDuration
+  if (total == null || clip.warpEnabled || clip.loopEnabled) return null
+  const ts = clip.trimStart ?? 0, te = clip.trimEnd ?? 0
+  const native = total - ts - te
+  if (native < MIN_NATIVE_SECONDS || !(clip.durationBeats > 0)) return null
+  const played = (clip.durationBeats * 60) / (tempo > 0 ? tempo : 120)
+  if (played >= native - 1e-4) return null   // the clip outlasts its audio: nothing to cut
+  return clip.reverse
+    ? { trimStart: round6(total - te - played) }
+    : { trimEnd: round6(total - ts - played) }
+}
+
+/**
+ * MULTI-CLIP EDITING: the fields the clip panel writes to every selected audio
+ * clip. The rest — the trims, the warp markers, Seg BPM, the clip's length,
+ * the tempo leader — each describe ONE sample and would be nonsense copied
+ * across a selection of different samples.
+ */
+export const SHARED_CLIP_FIELDS = [
+  'gain', 'pitchSemitones', 'pitchCents', 'reverse', 'fadeIn', 'fadeOut', 'clipFade', 'loopEnabled',
+  'warpEnabled', 'warpMode', 'warpBeats', 'warpTones', 'warpTexture',
+] as const
+export type SharedClipField = typeof SHARED_CLIP_FIELDS[number]
+
+/** True when every field in the patch is one a selection can share. */
+export function isSharedPatch(patch: Record<string, unknown>): boolean {
+  const keys = Object.keys(patch)
+  return keys.length > 0 && keys.every(k => (SHARED_CLIP_FIELDS as readonly string[]).includes(k))
+}
+
 export interface SampleDetails { sampleRate: number; channels: number; seconds: number; frames: number }
 
 /** The header's facts about the sample, from the decoded buffer. */

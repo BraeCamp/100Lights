@@ -183,6 +183,9 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'sample.markerNext', keys: '⌘→', scope: 'sample', group: 'Sample Editor', action: 'Select the next warp marker', modes: ['music'], hidden: true },
   { id: 'sample.nudgeLeft', keys: '←', scope: 'sample', group: 'Sample Editor', action: 'Nudge the selected marker earlier in the sample', modes: ['music'], hidden: true },
   { id: 'sample.nudgeRight', keys: '→', scope: 'sample', group: 'Sample Editor', action: 'Nudge the selected marker later in the sample', modes: ['music'], hidden: true },
+  { id: 'sample.crop', keys: '⇧⌘J', scope: 'sample', group: 'Sample Editor', action: 'Crop the sample to what the clip plays — the audio past its end goes', modes: ['music'] },
+  { id: 'sample.slipLeft', keys: '⇧⌥←', scope: 'sample', group: 'Sample Editor', action: 'Slip the audio under the clip by 10 ms (⇧⌥-drag the waveform to slide it)', modes: ['music'], display: '⇧⌥← / ⇧⌥→' },
+  { id: 'sample.slipRight', keys: '⇧⌥→', scope: 'sample', group: 'Sample Editor', action: 'Slip the audio later under the clip', modes: ['music'], hidden: true },
 
   // ── Knobs (handled by the focused knob itself; listed so the help panel knows) ──
   { id: 'knob.next', keys: 'Tab', scope: 'knob', group: 'Knobs', action: 'Move between knobs — every knob takes keyboard focus' },

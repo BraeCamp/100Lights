@@ -17,10 +17,10 @@ import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import { isAudioClip, type AudioClip } from '@/lib/daw-types'
 import { useRegisterCommands } from '@/lib/commands'
-import { resolveKey } from '@/lib/keymap'
+import { resolveKey, keysFor } from '@/lib/keymap'
 import Waveform from './Waveform'
 import Knob from './Knob'
-import { nativeSeconds, segBpmOf, setSegBpm, gainToDb, dbToGain, trimByDrag, sampleFraction, sampleDetails, describeSample, warpSpeed } from '@/lib/sample-editor'
+import { nativeSeconds, segBpmOf, setSegBpm, gainToDb, dbToGain, trimByDrag, sampleFraction, sampleDetails, describeSample, warpSpeed, slipByDrag, cropSample, isSharedPatch } from '@/lib/sample-editor'
 import { saveClipDefaults, clipDefaultsKey, useClipDefaults } from '@/lib/clip-defaults'
 import { detectOnsets, monoOf } from '@/lib/onsets'
 import { validMarkers, sortMarkers, beatToSec, secToBeat, insertMarker, moveMarker, removeMarker, set111Here, warpStraight, warpAsLoop, warpAtBpm, quantizeTransients, type WarpMarker } from '@/lib/warp'
@@ -31,23 +31,38 @@ import { CONVERT_LABEL, type SliceBy, type ConvertKind } from '@/lib/slice-to-mi
 import SliceDialog from './SliceDialog'
 
 export default function SampleEditor({ clipId }: { clipId: string }) {
-  const { project, dispatch, engine } = useDaw()
+  const { project, dispatch, engine, selectedClipIds } = useDaw()
   const clip = project.arrangementClips.find(c => c.id === clipId)
   if (!clip || !isAudioClip(clip)) return null
-  return <Editor clip={clip} dispatch={dispatch} engine={engine} tempo={project.tempo} barBeats={project.timeSignatureNum || 4} trackColor={project.tracks.find(t => t.id === clip.trackId)?.color ?? 'var(--accent)'} />
+  // Multi-clip editing: the other selected audio clips take the settings a
+  // selection can share (lib/sample-editor.ts SHARED_CLIP_FIELDS).
+  const others = project.arrangementClips.filter(c => c.id !== clipId && isAudioClip(c) && selectedClipIds?.has(c.id)) as AudioClip[]
+  return <Editor clip={clip} others={others} dispatch={dispatch} engine={engine} tempo={project.tempo} barBeats={project.timeSignatureNum || 4} trackColor={project.tracks.find(t => t.id === clip.trackId)?.color ?? 'var(--accent)'} />
 }
 
 const GRID = 0.25   // a sixteenth: where an inserted marker's beat lands
 
-function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
+function Editor({ clip, others, dispatch, engine, tempo, barBeats, trackColor }: {
   clip: AudioClip
+  others: AudioClip[]
   dispatch: ReturnType<typeof useDaw>['dispatch']
   engine: ReturnType<typeof useDaw>['engine']
   tempo: number
   barBeats: number
   trackColor: string
 }) {
-  const patch = (p: Partial<AudioClip>) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: p })
+  // A setting a selection can share goes to every selected audio clip; a
+  // number that describes THIS sample (its trims, markers, Seg BPM, length)
+  // stays here, however many clips are selected.
+  const patch = (p: Partial<AudioClip>) => {
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: p })
+    if (others.length && isSharedPatch(p as Record<string, unknown>)) {
+      for (const o of others) {
+        engine.clearStretchedCache(o.id)
+        dispatch({ type: 'UPDATE_CLIP', clipId: o.id, patch: p })
+      }
+    }
+  }
   const rootRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(600)
@@ -105,6 +120,7 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
   const [menu, setMenu] = useState<{ x: number; y: number; sec: number } | null>(null)
   // Audio → MIDI (lib/audio-to-track.ts): the slice dialog, what is running, what it said.
   const [slicing, setSlicing] = useState(false)
+  const [slipping, setSlipping] = useState(false)
   const [toMidiBusy, setToMidiBusy] = useState<string | null>(null)
   const [toMidiSaid, setToMidiSaid] = useState('')
   useEffect(() => { setSelMarker(null); setCursorSec(null); setMenu(null) }, [clip.id])
@@ -170,7 +186,8 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
       setSelMarker(i)
     } else if ((kb === 'sample.nudgeLeft' || kb === 'sample.nudgeRight') && selMarker != null) {
       setMarkers(moveMarker(markers, selMarker, markers[selMarker].sec + (kb === 'sample.nudgeRight' ? 0.001 : -0.001)))
-    }
+    } else if (kb === 'sample.crop') crop()
+    else if (kb === 'sample.slipLeft' || kb === 'sample.slipRight') slip(kb === 'sample.slipRight' ? 0.01 : -0.01)
   }
 
   function dragTrim(edge: 'start' | 'end', e: React.MouseEvent) {
@@ -184,6 +201,37 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
     }
     const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
     document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp)
+  }
+
+  // Slip edit: the audio slides under the clip, which stays put. ⇧⌥-drag the
+  // waveform, or ⇧⌥← / ⇧⌥→ by 10 ms (lib/sample-editor.ts).
+  function slip(deltaSec: number) {
+    const p = slipByDrag({ ...clip, bufferDuration: total ?? undefined }, deltaSec)
+    if (!p) return
+    engine.clearStretchedCache(clip.id)
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: p })
+  }
+  function dragSlip(e: React.MouseEvent) {
+    e.preventDefault(); e.stopPropagation()
+    if (total == null) return
+    const startX = e.clientX
+    const at = { bufferDuration: total, trimStart: clip.trimStart ?? 0, trimEnd: clip.trimEnd ?? 0, warpMarkers: clip.warpMarkers }
+    setSlipping(true)
+    const onMove = (ev: MouseEvent) => {
+      // ⚠️ Always from the ORIGINAL trims and markers: reading the clip as it
+      // moves would compound every frame's delta and the audio would bolt.
+      const p = slipByDrag(at, ((ev.clientX - startX) / width) * total)
+      if (p) { engine.clearStretchedCache(clip.id); dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: p }) }
+    }
+    const onUp = () => { setSlipping(false); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp)
+  }
+  // Crop: throw away the audio the clip never plays.
+  const cropPatch = cropSample({ ...clip, bufferDuration: total ?? undefined }, tempo)
+  function crop() {
+    if (!cropPatch) { setToMidiSaid(warp || clip.loopEnabled ? 'Nothing to crop — the clip plays all of its sample.' : 'Nothing to crop — the clip already ends with its audio.'); return }
+    engine.clearStretchedCache(clip.id)
+    dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: cropPatch })
   }
 
   function applySegBpm(bpm: number) {
@@ -239,6 +287,13 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
       keywords: 'warp mode texture granular pads noise grain flux', run: () => setMode('texture') },
     { id: 'clip.tempoLeader', group: 'Clip', label: leader ? 'Release the tempo leader — the song keeps the tempo it has' : 'Make this clip the tempo leader — the song follows its tempo',
       keywords: 'tempo leader master clip follow song tempo drives warp markers seg bpm', when: () => leader || canLead, run: toggleLeader },
+    // Slip and crop (lib/sample-editor.ts).
+    { id: 'clip.slipBack', group: 'Clip', label: 'Slip the audio 10 ms earlier under the clip',
+      keywords: 'slip slide audio under clip earlier back offset nudge sample', shortcut: keysFor('sample.slipLeft'), run: () => slip(-0.01) },
+    { id: 'clip.slipFwd', group: 'Clip', label: 'Slip the audio 10 ms later under the clip',
+      keywords: 'slip slide audio under clip later forward offset nudge sample', shortcut: keysFor('sample.slipRight'), run: () => slip(0.01) },
+    { id: 'clip.cropSample', group: 'Clip', label: 'Crop the sample to what the clip plays',
+      keywords: 'crop sample trim away unused audio past the end tighten', shortcut: keysFor('sample.crop'), when: () => !!cropPatch, run: crop },
     // Audio → MIDI (lib/audio-to-track.ts).
     { id: 'clip.slice', group: 'Clip', label: 'Slice to New MIDI Track… — every transient a pad, a MIDI clip playing them',
       keywords: 'slice slicing new midi track drum rack pads transients chop sample audio to midi', run: () => setSlicing(true) },
@@ -278,7 +333,7 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
       keywords: 'insert warp marker insert point cursor', shortcut: '⌘I', when: () => cursorSec != null, run: () => cursorSec != null && insertAt(cursorSec) },
     { id: 'clip.clearWarp', group: 'Clip', label: `Clear the warp markers (${markers.length})`,
       keywords: 'clear warp markers remove all reset', when: () => markers.length > 0, run: clearWarp },
-  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds, end, cursorSec, transients.length, markers, tempo, barBeats, qGrid, clip.warpBeats, clip.warpTones, clip.warpTexture, leader, canLead, toMidiBusy])
+  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds, end, cursorSec, transients.length, markers, tempo, barBeats, qGrid, clip.warpBeats, clip.warpTones, clip.warpTexture, leader, canLead, toMidiBusy, cropPatch, others.length])
 
   const chip = (on: boolean, disabled = false): React.CSSProperties => ({
     fontSize: 9, fontWeight: 600, padding: '2px 7px', borderRadius: 4, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: disabled ? 0.45 : 1,
@@ -296,10 +351,12 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
   return (
     <div ref={rootRef} data-help-id="sample-editor" tabIndex={-1} onKeyDown={handleKey} style={{ display: 'flex', height: '100%', minHeight: 0, outline: 'none' }}>
       {/* The waveform with its trim handles, transients and warp markers */}
-      <div ref={wrapRef} style={{ flex: 1, position: 'relative', minWidth: 0, background: 'var(--bg-base)' }}
+      <div ref={wrapRef} data-slipping={slipping ? '1' : undefined} style={{ flex: 1, position: 'relative', minWidth: 0, background: 'var(--bg-base)', cursor: slipping ? 'ew-resize' : undefined }}
         onMouseDown={e => {
           rootRef.current?.focus()
           if (e.button !== 0) return
+          // ⇧⌥-drag slides the audio under the clip (lib/sample-editor.ts).
+          if (e.shiftKey && e.altKey) { dragSlip(e); return }
           const r = wrapRef.current!.getBoundingClientRect()
           // The lower half places the insert point; the upper half is the markers'.
           if (e.clientY - r.top > r.height * 0.35) { setCursorSec(secAt(e.clientX)); setSelMarker(null) }
@@ -373,6 +430,13 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
         <div data-help-id="sample-details" style={{ fontSize: 9, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={details ? describeSample(details) : ''}>
           {details ? describeSample(details) : 'sample loading…'}
         </div>
+        {/* Multi-clip editing: what a change here reaches (lib/sample-editor.ts) */}
+        {others.length > 0 && (
+          <div data-help-id="multi-clip" style={{ fontSize: 9, color: 'var(--accent-light)' }}
+            title="Several audio clips are selected: level, pitch, reverse, the fades, looping and the warp settings go to all of them. The trims, the warp markers, Seg BPM and the clip's length stay with this one.">
+            editing {others.length + 1} clips
+          </div>
+        )}
         <div style={row}>
           <span style={lab}>Warp</span>
           <button data-help-id="clip-warp" aria-pressed={warp} onClick={() => setWarp(!warp)} style={chip(warp)} title="Warp — follow the song's tempo; off plays the sample at its own">{warp ? 'On' : 'Off'}</button>
@@ -419,6 +483,14 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
             <span data-help-id="texture-flux" style={{ fontSize: 9, color: 'var(--text-muted)' }}>flux {Math.round(textureP.flux * 100)}</span>
           </div>
         )}
+        {/* Slip the audio under the clip, and crop away what it never plays */}
+        <div style={row} data-help-id="clip-slip">
+          <span style={lab}>Slip</span>
+          <button data-help-id="clip-slip-back" onClick={() => slip(-0.01)} style={chip(false)} title="Slip the audio 10 ms earlier under the clip — or ⇧⌥-drag the waveform to slide it">◀ 10 ms</button>
+          <button data-help-id="clip-slip-fwd" onClick={() => slip(0.01)} style={chip(false)} title="Slip the audio 10 ms later under the clip">10 ms ▶</button>
+          <button data-help-id="clip-crop" onClick={crop} disabled={!cropPatch} style={chip(false, !cropPatch)}
+            title={cropPatch ? 'Crop the sample to what the clip plays — the audio past its end goes (⇧⌘J)' : 'Crop — nothing outside the clip to remove'}>Crop</button>
+        </div>
         {/* Audio → MIDI (lib/audio-to-track.ts): a new track beside this clip */}
         <div style={row} data-help-id="clip-to-midi">
           <span style={lab}>To MIDI</span>

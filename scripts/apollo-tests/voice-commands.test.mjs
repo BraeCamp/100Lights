@@ -165,7 +165,10 @@ const PROJECT = {
     clip('c5', 't5', 'Vocals clip', 4, 64),
     clip('c6', 't6', 'Lead clip', 8, 72),
     clip('c8', 't8', 'Synth clip', 0, 64),
-    { kind: 'audio', id: 'c9', trackId: 't9', name: 'Vox take', startBeat: 0, durationBeats: 16, sampleId: 's-vox', duration: 8, offset: 0, gain: 1, fadeIn: 0, fadeOut: 0 },
+    // 12 seconds of audio, a second trimmed off each end, in a clip that plays
+    // 8 of them (16 beats at 120) — so the sample commands have something real
+    // to work on: room to slip either way, and two seconds crop can cut.
+    { kind: 'audio', id: 'c9', trackId: 't9', name: 'Vox take', startBeat: 0, durationBeats: 16, sampleId: 's-vox', duration: 8, offset: 0, gain: 1, fadeIn: 0, fadeOut: 0, bufferDuration: 12, trimStart: 1, trimEnd: 1 },
     {
       kind: 'midi', id: 'c10', trackId: 't10', name: 'Organ chords', startBeat: 0, durationBeats: 16, isDrumClip: false,
       notes: [[60, 64, 67], [62, 65, 69], [64, 67, 71], [67, 71, 74]].flatMap((chord, i) => chord.map((pitch, k) => ({

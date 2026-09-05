@@ -111,6 +111,8 @@ const EXPECTED = [
   ['clip as tempo leader', ['leader']],
   ['short samples land as one-shot', ['one-shot']],
   ['auto-warp long samples', ['auto-warp']],
+  ['slip the audio under the clip', ['slip']],
+  ['crop the sample to what the clip plays', ['crop the sample']],
   ['slice clip to a new midi track', ['slice']],
   ['convert harmony to midi', ['harmony']],
   ['convert melody to midi', ['melody']],

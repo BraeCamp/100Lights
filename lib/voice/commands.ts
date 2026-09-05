@@ -2456,7 +2456,7 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Fade, level, reverse or loop an audio clip',
     say: ['fade in the vox take clip over a bar', 'fade out the vox take clip over two beats', 'reverse the vox take', 'loop the vox take clip', 'turn the vox take clip down to 60%',
       'warp the vox take clip', 'set the vox take clip to complex mode', 'pitch the vox take clip up 3', 'the vox take clip is 90 bpm', 'put the vox take clip in beats mode',
-      'make the vox take clip the tempo leader'],
+      'make the vox take clip the tempo leader', 'slip the vox take clip 20 milliseconds'],
     match(w, ctx) {
       const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
       // ⚠️ A clip called "Drum loop" has "loop" in it, and "reverse the drum
@@ -2482,6 +2482,10 @@ const COMMANDS: VoiceCommand[] = [
       if (/\bcrop\b|\bduplicate\b|\bdouble\b|\bselect\b|\bloop\b.*\bto\b.*\b(?:bars?|beats?)\b|\bloop (?:length|end)\b/.test(rest)) return null
       // Warping a clip AS a loop, straight, at a tempo, or its markers is warp_markers'; here Warp only switches on and off.
       if (/\bwarp/.test(rest) && /\bas an? \S+[- ]bars?\b|\bas a loop\b|\bstraight\b|\bat\s+\d+(?:\.\d+)?\s*bpm\b|\bmarkers?\b/.test(rest)) return null
+      // Slip: the audio slides under the clip (lib/sample-editor.ts).
+      const slipM = clipWord && /\bslip\b|\bslide\b.*\baudio\b|\baudio\b.*\bslide\b/.test(rest)
+        ? /\b(?:by\s+)?(a|an|one|half a|\d+(?:\.\d+)?)\s*(milliseconds?|ms|seconds?|secs?|beats?|bars?)\b/.exec(rest)
+        : null
       const loopSaid = /\bloop(?:ed|ing)?\b/.test(rest) && clipWord
       const gainM = clipWord ? /\b(?:to|at)\s+(\d{1,3})\s*(?:%|percent)/.exec(rest) : null
       // The Sample Editor's settings (lib/sample-editor.ts), all wanting the
@@ -2496,7 +2500,7 @@ const COMMANDS: VoiceCommand[] = [
       // Tempo leader (lib/tempo-leader.ts): "make the drums clip the tempo leader", "the song follows the drums clip's tempo".
       const leaderSaid = clipWord && /\bleader\b|\bfollows?\b[\w\s']*\btempo\b|\bdrives? the (?:song'?s? )?tempo\b/.test(rest)
         ? !/\b(?:stop|no longer|not|un-?set|release|isn't|is not|don't|do not)\b/.test(rest) : null
-      if (!fadeIn && !fadeOut && !reverseSaid && !loopSaid && !gainM && warpSaid == null && !modeM && !pitchM && !bpmM && fadeM == null && leaderSaid == null) return null
+      if (!fadeIn && !fadeOut && !reverseSaid && !loopSaid && !gainM && warpSaid == null && !modeM && !pitchM && !bpmM && fadeM == null && leaderSaid == null && !slipM) return null
       if ((fadeIn || fadeOut) && !clipWord) return null
       let target = spokenClip
       let score = 1
@@ -2539,6 +2543,15 @@ const COMMANDS: VoiceCommand[] = [
       if (bpmM) input.segBpm = Number(bpmM[1])
       if (fadeM != null) input.fade = fadeM
       if (leaderSaid != null) input.tempoLeader = leaderSaid
+      if (slipM) {
+        const n = slipM[1] === 'a' || slipM[1] === 'an' || slipM[1] === 'one' ? 1 : slipM[1] === 'half a' ? 0.5 : (spokenNumber(slipM[1]) ?? Number(slipM[1]))
+        if (Number.isFinite(n)) {
+          input.slip = /^(?:milliseconds?|ms)$/.test(slipM[2]) ? { seconds: n / 1000 }
+            : /second|sec/.test(slipM[2]) ? { seconds: n }
+              : /beat/.test(slipM[2]) ? { beats: n } : { bars: n }
+          input.slipDirection = /\bback\b|\bearlier\b|\bleft\b/.test(rest) ? 'earlier' : 'later'
+        }
+      }
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'set_clip_audio', input }], confidence: clipWord ? 0.95 : nameConfidence(score), needsName: true }
     },
@@ -3245,11 +3258,14 @@ const COMMANDS: VoiceCommand[] = [
     id: 'clip_time',
     tool: 'clip_time',
     group: 'Notes',
-    what: 'A clip\'s loop: its length, doubling it, cropping to it, selecting inside it',
-    say: ['set the pad loop to two bars', 'duplicate the pad loop', 'select the notes in the loop of the pad'],
+    what: 'A clip\'s loop: its length, doubling it, cropping to it, selecting inside it — and cropping an audio clip\'s sample',
+    say: ['set the pad loop to two bars', 'duplicate the pad loop', 'select the notes in the loop of the pad', 'crop the vox take clip'],
     match(w, ctx) {
       const raw = w.raw.toLowerCase()
-      if (!/\bloop/.test(raw)) return null
+      // "Crop the vocal clip" is the audio crop (the sample loses what the clip
+      // never plays) and says nothing about a loop; everything else here does.
+      const croppingAudio = /\bcrop\b/.test(raw) && !/\bloop/.test(raw)
+      if (!/\bloop/.test(raw) && !croppingAudio) return null
       // The SONG loop ("loop the chorus", "loop bars 1 to 5", "select the loop")
       // and looping a clip on or off belong to other rules; this is a clip's
       // loop being SHAPED — its length, doubled, cropped to, its notes picked.
@@ -3260,7 +3276,18 @@ const COMMANDS: VoiceCommand[] = [
               : null
       if (!op) return null
       const named = nameOrSelected(w, ctx, ['set', 'make', 'change', 'the', 'loop', 'loops', "loop's", 'to', 'of', 'its', 'duplicate', 'double', 'crop', 'clip',
-        'select', 'notes', 'note', 'in', 'inside', 'bar', 'bars', 'beat', 'beats', 'long', 'length', 'one', 'two', 'three', 'four', 'six', 'eight', 'a', 'an'], { dropNums: true })
+        'select', 'notes', 'note', 'in', 'inside', 'bar', 'bars', 'beat', 'beats', 'long', 'length', 'one', 'two', 'three', 'four', 'six', 'eight', 'a', 'an',
+        'sample', 'audio', 'plays', 'play', 'what', 'it'], { dropNums: true })
+        // ⚠️ A clip named on its own — "crop the vox take clip" — is invisible
+        // to that lookup: it protects the words of TRACK names only, so "take"
+        // is eaten as a near-miss of "make" and the leftover names nothing.
+        // Read the clip out of the sentence the way set_clip_audio does.
+        ?? (() => {
+          const spoken = (ctx.clips ?? [])
+            .filter(c => c.name && raw.includes(c.name.toLowerCase()))
+            .sort((a, b) => (b.name?.length ?? 0) - (a.name?.length ?? 0))[0]
+          return spoken?.name ? { name: spoken.name, score: 1 } : null
+        })()
       if (!named) return null
       const input: Record<string, unknown> = { target: named.name, op }
       if (op === 'set_loop_length') {
