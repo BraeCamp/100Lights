@@ -28,6 +28,7 @@ import { useIsMobile } from '@/lib/use-is-mobile'
 import { CommentComposer, CommentThread } from './TimelineComments'
 import VersionHistory from './VersionHistory'
 import { detectTransients } from './ClipView'
+import { resolveKey } from '@/lib/keymap'
 import dynamic from 'next/dynamic'
 
 const AudioExportModal = dynamic(() => import('./AudioExportModal'), { ssr: false })
@@ -1244,9 +1245,11 @@ export default function ArrangementView() {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
 
       const meta = e.metaKey || e.ctrlKey
+      // What this key means here, from the one table (lib/keymap.ts).
+      const kb = resolveKey(e, ['arrangement'])?.id
 
       // ← → : nudge selected clips (capture phase blocks AudioEditor's seek when clips are selected)
-      if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+      if (kb === 'clip.nudgeLeft' || kb === 'clip.nudgeRight' || kb === 'clip.nudgeLeftBeat' || kb === 'clip.nudgeRightBeat') {
         const ids = selectedClipIds.size > 0 ? [...selectedClipIds] : selectedClipId ? [selectedClipId] : []
         if (ids.length === 0) return  // no clips selected → let AudioEditor move playhead
         e.preventDefault()
@@ -1268,7 +1271,7 @@ export default function ArrangementView() {
       }
 
       // ↑ ↓ : move selected clips to prev / next track lane
-      if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+      if (kb === 'clip.trackUp' || kb === 'clip.trackDown') {
         const ids = selectedClipIds.size > 0 ? [...selectedClipIds] : selectedClipId ? [selectedClipId] : []
         if (ids.length === 0) return
         e.preventDefault()
@@ -1288,7 +1291,7 @@ export default function ArrangementView() {
 
       // Live's Clip Activator: `0` parks the selected clips — kept in place,
       // dimmed, silent — and `0` again brings them back.
-      if (!meta && e.key === '0') {
+      if (kb === 'clip.activate') {
         const ids = selectedClipIds.size > 0 ? [...selectedClipIds] : selectedClipId ? [selectedClipId] : []
         if (!ids.length) return
         e.preventDefault()
@@ -1297,7 +1300,7 @@ export default function ArrangementView() {
         return
       }
 
-      if (meta && e.key === 'c') {
+      if (kb === 'clip.copy') {
         e.preventDefault()
         if (selectedEffectIds.size > 0) {
           handleCopyEffects(selectedEffectIds)
@@ -1308,7 +1311,7 @@ export default function ArrangementView() {
         return
       }
 
-      if (meta && e.key === 'v') {
+      if (kb === 'clip.paste') {
         e.preventDefault()
         if (_lastCopied === 'effects') {
           handlePasteEffects()
@@ -1319,7 +1322,7 @@ export default function ArrangementView() {
       }
 
       // Cmd+D = duplicate selected clips immediately after their current position
-      if (meta && e.key === 'd') {
+      if (kb === 'clip.duplicate') {
         e.preventDefault()
         const ids = selectedClipIds.size > 0 ? selectedClipIds : selectedClipId ? new Set([selectedClipId]) : new Set<string>()
         const clipsToDup = project.arrangementClips.filter(c => ids.has(c.id))
@@ -1344,20 +1347,20 @@ export default function ArrangementView() {
       }
 
       // Cmd+A = select all clips
-      if (meta && e.key === 'a') {
+      if (kb === 'clip.selectAll') {
         e.preventDefault()
         setSelectedClipIds(new Set(project.arrangementClips.map(c => c.id)))
         return
       }
 
-      if (e.key === 'Escape') {
+      if (kb === 'clip.deselect') {
         setSelectedClipIds(new Set())
         setSelectedClipId(null)
         setSelectedEffectIds(new Set())
         return
       }
 
-      if (e.key === 'Home') {
+      if (kb === 'transport.home') {
         e.preventDefault()
         engine.seek(0)
         setPosition(0)
@@ -1367,21 +1370,21 @@ export default function ArrangementView() {
       // S: HOLDING S is a splice modifier for the marquee drag (see the lane
       // drag). A plain S TAP splices the selected clip at the playhead — but on
       // keyUP, so holding S never auto-repeats a split. Just track the hold here.
-      if (!meta && e.key === 's') {
+      if (kb === 'clip.split') {
         e.preventDefault()
         if (!e.repeat) { sHeldRef.current = true; sSpliceUsedRef.current = false }
         return
       }
 
       // L = toggle loop
-      if (!meta && e.key === 'l') {
+      if (kb === 'loop.toggle') {
         e.preventDefault()
         dispatch({ type: 'SET_LOOP_ENABLED', enabled: !project.loopEnabled })
         return
       }
 
       // P = set loop region to span selected clips and enable loop
-      if (!meta && e.key === 'p') {
+      if (kb === 'loop.toSelection') {
         e.preventDefault()
         const ids = selectedClipIds.size > 0 ? selectedClipIds : selectedClipId ? new Set([selectedClipId]) : new Set<string>()
         const clips = project.arrangementClips.filter(c => ids.has(c.id))
@@ -1392,7 +1395,7 @@ export default function ArrangementView() {
       }
 
       // G = toggle ripple edit
-      if (!meta && e.key === 'g') {
+      if (kb === 'edit.ripple') {
         e.preventDefault()
         rippleEditRef.current  // read; actual toggle via setter
         setRippleEdit(r => !r)
@@ -1400,21 +1403,21 @@ export default function ArrangementView() {
       }
 
       // F = fit arrangement to window
-      if (!meta && e.key === 'f') {
+      if (kb === 'view.fit') {
         e.preventDefault()
         fitToWindowRef.current()
         return
       }
 
       // 1–5 = snap mode (Off / 1/16 / 1/8 / Beat / Bar)
-      if (!meta && ['1', '2', '3', '4', '5'].includes(e.key)) {
+      if (kb?.startsWith('snap.')) {
         const modes: SnapMode[] = ['off', '1/16', '1/8', 'beat', 'bar']
         setSnap(modes[parseInt(e.key) - 1])
         return
       }
 
       // Delete / Backspace for selected effects (clips handled in AudioEditor)
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEffectIds.size > 0) {
+      if (kb === 'clip.deleteEffects' && selectedEffectIds.size > 0) {
         e.preventDefault()
         for (const id of selectedEffectIds) dispatch({ type: 'REMOVE_CLIP_EFFECT', effectId: id })
         setSelectedEffectIds(new Set())

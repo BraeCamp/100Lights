@@ -20,6 +20,7 @@ import { playInstrumentNote } from '@/lib/daw-instruments'
 import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { guessRootNote, samplePresetFor, isPickableSample, rootLabel, collapseNoteVariants, type PickableSound } from '@/lib/sample-preset'
 import { resampleBySemitones } from '@/lib/audio-resample'
+import { resolveKey } from '@/lib/keymap'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -1258,39 +1259,40 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale])
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    const meta = e.metaKey || e.ctrlKey
     const selected = clip.notes.filter(n => selectedNotes.has(n.id))
+    // What this key means in the roll, from the one table (lib/keymap.ts).
+    const kb = resolveKey(e, ['roll'])?.id
 
-    if (e.key === 'Escape') {
+    if (kb === 'notes.deselect') {
       setSelectedNotes(new Set())
       setChordType(null)
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'a') {
+    if (kb === 'notes.selectAll') {
       setSelectedNotes(new Set(clip.notes.map(n => n.id)))
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNotes.size > 0) {
+    if (kb === 'notes.delete' && selectedNotes.size > 0) {
       for (const noteId of selectedNotes) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId })
       setSelectedNotes(new Set())
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'c' && selected.length > 0) {
+    if (kb === 'notes.copy' && selected.length > 0) {
       _noteClipboard = selected.map(n => ({ ...n }))
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'x' && selected.length > 0) {
+    if (kb === 'notes.cut' && selected.length > 0) {
       _noteClipboard = selected.map(n => ({ ...n }))
       for (const noteId of selectedNotes) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId })
       setSelectedNotes(new Set())
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'v' && _noteClipboard && _noteClipboard.length > 0) {
+    if (kb === 'notes.paste' && _noteClipboard && _noteClipboard.length > 0) {
       // Paste at the playhead when it's inside this clip, else after existing notes
       const rel = engine.currentBeat - clip.startBeat
       const at = rel >= 0 && rel <= clip.durationBeats
@@ -1300,20 +1302,20 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (meta && e.key === 'd' && selected.length > 0) {
+    if (kb === 'notes.duplicate' && selected.length > 0) {
       const start = Math.min(...selected.map(n => n.startBeat))
       const end   = Math.max(...selected.map(n => n.startBeat + n.durationBeats))
       pasteNotes(selected, start + Math.max(quant, end - start))
       e.preventDefault(); e.stopPropagation()
       return
     }
-    if (e.key === 'q' && !meta && selectedNotes.size > 0) {
+    if (kb === 'notes.quantize' && selectedNotes.size > 0) {
       quantizeNotes(1)
       e.preventDefault(); e.stopPropagation()
       return
     }
     // Arrows: nudge time / transpose pitch (⇧ = octave; drums move by lane)
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) && selected.length > 0) {
+    if ((kb === 'notes.earlier' || kb === 'notes.later' || kb === 'notes.up' || kb === 'notes.down' || kb === 'notes.upOctave' || kb === 'notes.downOctave') && selected.length > 0) {
       e.preventDefault(); e.stopPropagation()
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const d = (e.key === 'ArrowLeft' ? -1 : 1) * quant

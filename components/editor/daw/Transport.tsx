@@ -1131,6 +1131,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         style={metronome ? active : base}
         onClick={handleMetronomeToggle}
         title="Toggle metronome (M)"
+        aria-pressed={metronome}
         data-help-id="metronome"
       >
         <TbMetronome size={15} />

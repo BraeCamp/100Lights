@@ -35,18 +35,18 @@ export function InspectButton() {
   const entriesRef = useRef<Map<string, LibraryEntry> | null>(null)
   useEffect(() => { projectRef.current = project })
 
-  // I toggles, Escape exits
+  // `I` toggles (tap to latch, hold to peek) and Escape exits. The key itself
+  // is the studio's — lib/keymap.ts, 'view.inspect' — and arrives as an event,
+  // so the help panel, the palette and this listener cannot drift apart.
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { setOn(false); return }
-      if (e.key !== 'i' && e.key !== 'I') return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      const t = e.target as HTMLElement
-      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
-      setOn(v => !v)
-    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOn(false) }
+    function onToggle() { setOn(v => !v) }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    window.addEventListener('100lights:inspect-toggle', onToggle)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('100lights:inspect-toggle', onToggle)
+    }
   }, [])
 
   // library entries load once per activation, so sound cards are instant

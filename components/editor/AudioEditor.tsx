@@ -57,6 +57,7 @@ import { VUMeter } from './daw/TrackRow'
 import { DevicePopoutHost } from './daw/DeviceChain'
 import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
+import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
 import SendToProjectButton from './SendToProjectButton'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
@@ -2281,35 +2282,10 @@ export default function AudioEditor(props: AudioEditorProps) {
     }
   }, [dispatch])
 
-  // Tab toggles Session <-> Arrangement. They are two views of ONE project, one
-  // keystroke apart (the Ableton model the rebuild follows) - the live view is
-  // not a separate app you navigate to. Podcast mode has no session view.
-  useEffect(() => {
-    function onTab(e: KeyboardEvent) {
-      if (e.key !== 'Tab') return
-      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
-      const t = e.target as HTMLElement
-      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
-      if (isPodcast) return
-      e.preventDefault()   // Tab would otherwise walk focus out of the studio
-      setView(v => (v === 'session' ? 'arrangement' : 'session'))
-    }
-    window.addEventListener('keydown', onTab)
-    return () => window.removeEventListener('keydown', onTab)
-  }, [isPodcast])
+  // Tab (Session ⇄ Arrangement) lives in lib/keymap.ts with the other keys.
 
-  // B toggles the sound library panel (Ableton-style browser shortcut)
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== 'b' && e.key !== 'B') return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      const t = e.target as HTMLElement
-      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
-      setSidebarOpen(v => !v)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [])
+  // The library key (⌘⌥B, Live's browser chord — `B` itself is Draw Mode's)
+  // lives in lib/keymap.ts too.
   const [showPads,  setShowPads]  = useState(false)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
@@ -2610,128 +2586,135 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [doUndo, doRedo, props.projectId])
 
 
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      const target = e.target as HTMLElement
-      if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.tagName === 'SELECT' ||
-        target.isContentEditable ||
-        // A focused slider or combo box owns its arrow keys and Space; the
-        // studio's shortcuts used to steal them (arrows seeking the playhead
-        // from inside a focused select). Plain buttons are left alone: Space
-        // is the transport everywhere else, and a toolbar button that was
-        // just clicked must not swallow it.
-        !!target.closest?.('[role="slider"], [role="combobox"], [role="textbox"], [role="listbox"]')
-      ) return
-
-      const engine = engineRef.current!
-
-      if (e.code === 'Space') {
-        e.preventDefault()
-        if (engine.isRecording) {
-          engine.stop()
-          void engine.stopRecording()
-        } else if (engine.isPlaying) {
-          engine.stop()
-        } else {
-          engine.play()
-        }
-        return
-      }
-
-      if (e.code === 'KeyR') {
-        e.preventDefault()
+  // ── Keys ─────────────────────────────────────────────────────────────────
+  // Every studio-wide key goes through lib/keymap.ts — the same table the
+  // help panel and the ⌘K palette read, so the three cannot disagree again.
+  // The runner is re-pointed every render so it always sees fresh state.
+  const keyLatchRef = useRef(new MomentaryLatch())
+  const runKeyRef = useRef<(id: string, e: KeyboardEvent) => boolean>(() => false)
+  runKeyRef.current = (id, e) => {
+    const engine = engineRef.current!
+    switch (id) {
+      case 'transport.play':
+        if (engine.isRecording) { engine.stop(); void engine.stopRecording() }
+        else if (engine.isPlaying) engine.stop()
+        else void engine.play()
+        return true
+      case 'transport.record':
         // Through the transport's own record flow (arm guards, count-in, the
         // notice when the microphone refuses) — never straight to the engine.
         window.dispatchEvent(new CustomEvent('100lights:record-toggle'))
-        return
-      }
-
-      if (e.code === 'KeyM') {
-        e.preventDefault()
-        setMetronome(prev => {
-          const next = !prev
-          engine.setMetronome(next)
-          return next
-        })
-        return
-      }
-
-      if (e.code === 'ArrowLeft' && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault()
-        setPosition(Math.max(0, engine.currentBeat - 1))
-        return
-      }
-
-      if (e.code === 'ArrowRight' && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault()
-        setPosition(engine.currentBeat + 1)
-        return
-      }
-
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && !e.shiftKey) {
-        e.preventDefault(); doUndo(); return
-      }
-
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ' && e.shiftKey) {
-        e.preventDefault(); doRedo(); return
-      }
-
-      if (e.code === 'Delete' || e.code === 'Backspace') {
+        return true
+      case 'transport.metronome':
+        setMetronome(prev => { const next = !prev; engine.setMetronome(next); return next })
+        return true
+      case 'transport.back': setPosition(Math.max(0, engine.currentBeat - 1)); return true
+      case 'transport.forward': setPosition(engine.currentBeat + 1); return true
+      case 'edit.undo': doUndo(); return true
+      case 'edit.redo': doRedo(); return true
+      case 'edit.deleteClip': {
         // The clip open in the piano roll is off-limits — pressing Delete
         // with a note selected must never nuke the clip itself, even when
         // focus drifted out of the roll. Other clips still delete normally.
         const rollClip = expandedRollRef.current
-        const ids = new Set([...selectedClipIdsRef.current].filter(id => id !== rollClip))
+        const ids = new Set([...selectedClipIdsRef.current].filter(cid => cid !== rollClip))
         if (ids.size > 0) {
-          e.preventDefault()
-          ids.forEach(id => dispatch({ type: 'REMOVE_CLIP', clipId: id }))
+          ids.forEach(cid => dispatch({ type: 'REMOVE_CLIP', clipId: cid }))
           setSelectedClipIds(new Set())
           setSelectedClipId(null)
-        } else if (selectedClipIdRef.current && selectedClipIdRef.current !== rollClip) {
-          e.preventDefault()
+          return true
+        }
+        if (selectedClipIdRef.current && selectedClipIdRef.current !== rollClip) {
           dispatch({ type: 'REMOVE_CLIP', clipId: selectedClipIdRef.current })
           setSelectedClipId(null)
+          return true
         }
-        return
+        return false
       }
-
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyS') {
-        e.preventDefault()
-        handleSaveRef.current()
-      }
-
-      // ⌘/Ctrl+J — consolidate: print every selected looping MIDI clip's
-      // repetitions as real notes so single repeats become editable.
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyJ') {
+      case 'file.save': handleSaveRef.current(); return true
+      case 'edit.consolidate': {
+        // Print every selected looping MIDI clip's repetitions as real notes
+        // so single repeats become editable.
         const ids = selectedClipIdsRef.current
-        if (ids.size === 0) return
-        e.preventDefault()
-        for (const id of ids) {
-          const clip = projectRef.current.arrangementClips.find(c => c.id === id)
+        if (ids.size === 0) return false
+        for (const cid of ids) {
+          const clip = projectRef.current.arrangementClips.find(c => c.id === cid)
           if (!clip || !isMidiClip(clip) || !canConsolidate(clip)) continue
           const flat = consolidateMidiClip(clip)
-          dispatch({ type: 'UPDATE_CLIP', clipId: id, patch: { notes: flat.notes, loopEnabled: false, loopLengthBeats: undefined } })
+          dispatch({ type: 'UPDATE_CLIP', clipId: cid, patch: { notes: flat.notes, loopEnabled: false, loopLengthBeats: undefined } })
         }
+        return true
       }
-
-      // Escape deselects everything. Modals/dropdowns consume Escape first
-      // (capture-phase listeners with stopPropagation), so reaching here
-      // means nothing was open.
-      if (e.key === 'Escape' && !e.defaultPrevented) {
+      case 'edit.deselect':
+        // Modals/dropdowns consume Escape first (capture-phase listeners with
+        // stopPropagation), so reaching here means nothing was open. Escape
+        // is never swallowed — the piano roll and the help panel want it too.
+        if (e.defaultPrevented) return false
         setSelectedClipIds(new Set())
         setSelectedClipId(null)
         setSelectedEffectIds(new Set())
         setSelectedTrackId(null)
         setSelectedReturnId(null)
+        return false
+      case 'view.session':
+        // Session and Arrangement are two views of ONE project, one keystroke
+        // apart (the Ableton model the rebuild follows) — the live view is not
+        // a separate app you navigate to. Tab would otherwise walk focus out
+        // of the studio. Tap to switch; hold to peek (momentary).
+        setView(v => (v === 'session' ? 'arrangement' : 'session'))
+        return true
+      case 'view.library':
+        if (sidebarOpen && leftTab === 'library') setSidebarOpen(false)
+        else { setSidebarOpen(true); setLeftTab('library') }
+        return true
+      case 'view.inspect':
+        // InspectMode owns the mode; the key is the studio's.
+        window.dispatchEvent(new CustomEvent('100lights:inspect-toggle'))
+        return true
+      default:
+        return false
+    }
+  }
+  useEffect(() => {
+    const mode = isPodcast ? 'podcast' : 'music'
+    function typing(target: HTMLElement) {
+      return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable
+        // A focused slider or combo box owns its arrow keys and Space; the
+        // studio's shortcuts used to steal them (arrows seeking the playhead
+        // from inside a focused select). Plain buttons are left alone: Space
+        // is the transport everywhere else, and a toolbar button that was
+        // just clicked must not swallow it.
+        || !!target.closest?.('[role="slider"], [role="combobox"], [role="textbox"], [role="listbox"]')
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (typing(e.target as HTMLElement)) return
+      const b = resolveKey(e, ['global'], mode)
+      if (!b) return
+      if (b.momentary) {
+        e.preventDefault()
+        // Auto-repeat while held must not flip it back and forth.
+        if (!keyLatchRef.current.down(b.id, performance.now())) return
+        runKeyRef.current(b.id, e)
+        return
+      }
+      if (runKeyRef.current(b.id, e)) e.preventDefault()
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      // A held momentary key toggles back on release; a tap latches.
+      for (const b of releasedMomentary(e, ['global'], mode)) {
+        if (keyLatchRef.current.up(b.id, performance.now())) runKeyRef.current(b.id, e)
       }
     }
-
+    function onBlur() { keyLatchRef.current.clear() }
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [setPosition, doUndo, doRedo])
+    document.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [isPodcast])
 
   // ── Context value ────────────────────────────────────────────────────────────
   const contextValue = useMemo(() => ({
@@ -2814,7 +2797,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   // ── Command palette (⌘K): existing audio actions only ────────
   useRegisterCommands([
     {
-      id: 'audio.save', group: 'Audio', label: 'Save', keywords: 'cloud persist', shortcut: '⌘S',
+      id: 'audio.save', group: 'Audio', label: 'Save', keywords: 'cloud persist', shortcut: keysFor('file.save'),
       when: () => !!props.onSave && !props.readOnly,
       run: () => { void handleSaveRef.current() },
     },
@@ -2822,12 +2805,12 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.view.arrangement', group: 'Audio', label: 'Switch to Arrangement view', keywords: 'timeline',      when: () => view !== 'arrangement', run: () => setView('arrangement') },
     { id: 'audio.view.mixer',       group: 'Audio', label: 'Switch to Mixer view',       keywords: 'channels faders', when: () => view !== 'mixer',       run: () => setView('mixer') },
     {
-      id: 'audio.library', group: 'Audio', label: 'Open Sound Library', keywords: 'instruments sounds browser', shortcut: 'B',
+      id: 'audio.library', group: 'Audio', label: 'Open Sound Library', keywords: 'instruments sounds browser', shortcut: keysFor('view.library'),
       when: () => !isPodcast,
       run: () => { setSidebarOpen(true); setLeftTab('library') },
     },
     { id: 'audio.transport.play', group: 'Audio', label: 'Play / stop', keywords: 'start begin pause space transport',
-      shortcut: 'Space', run: () => { const e = engineRef.current; if (!e) return; if (e.isPlaying) e.stop(); else void e.play() } },
+      shortcut: keysFor('transport.play'), run: () => { const e = engineRef.current; if (!e) return; if (e.isPlaying) e.stop(); else void e.play() } },
     { id: 'audio.transport.top', group: 'Audio', label: 'Go to start', keywords: 'beginning rewind home transport',
       run: () => engineRef.current?.seek(0) },
     { id: 'audio.track.add', group: 'Audio', label: 'Add track', keywords: 'new create track',
@@ -3020,15 +3003,15 @@ export default function AudioEditor(props: AudioEditorProps) {
 
     // ── Edit ─────────────────────────────────────────────────────────────────
     { id: 'audio.edit.undo', group: 'Edit', label: 'Undo', keywords: 'revert back mistake step',
-      shortcut: '⌘Z', when: () => editable, run: doUndo },
+      shortcut: keysFor('edit.undo'), when: () => editable, run: doUndo },
     { id: 'audio.edit.redo', group: 'Edit', label: 'Redo', keywords: 'forward again reapply',
-      shortcut: '⇧⌘Z', when: () => editable, run: doRedo },
+      shortcut: keysFor('edit.redo'), when: () => editable, run: doRedo },
     { id: 'audio.edit.selectAll', group: 'Edit', label: 'Select every clip', keywords: 'all everything',
       run: () => setSelectedClipIds(new Set(projectRef.current.arrangementClips.map(c => c.id))) },
     { id: 'audio.edit.deselect', group: 'Edit', label: 'Deselect everything', keywords: 'none clear selection',
       run: () => { setSelectedClipIds(new Set()); setSelectedClipId(null) } },
     { id: 'audio.edit.deleteClip', group: 'Edit', label: `Delete ${clipLabel}`,
-      keywords: 'remove erase clip', shortcut: '⌫', when: () => editable && anyClips,
+      keywords: 'remove erase clip', shortcut: keysFor('edit.deleteClip'), when: () => editable && anyClips,
       run: () => {
         const ids = selectedClipIds.size ? [...selectedClipIds] : (clipTarget() ? [clipTarget()!.id] : [])
         ids.forEach(id => dispatch({ type: 'REMOVE_CLIP', clipId: id }))
@@ -3037,7 +3020,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     // Live's Clip Activator: park a clip without deleting it (key 0).
     { id: 'audio.edit.toggleClipActive', group: 'Edit',
       label: paletteClip && paletteClip.active === false ? `Activate ${clipLabel}` : `Deactivate ${clipLabel}`,
-      keywords: 'deactivate activate disable enable park clip off on silent', shortcut: '0', when: () => editable && anyClips,
+      keywords: 'deactivate activate disable enable park clip off on silent', shortcut: keysFor('clip.activate'), when: () => editable && anyClips,
       run: () => {
         const ids = selectedClipIds.size ? [...selectedClipIds] : (clipTarget() ? [clipTarget()!.id] : [])
         if (!ids.length) return
@@ -3045,7 +3028,7 @@ export default function AudioEditor(props: AudioEditorProps) {
         dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: ids, active: first?.active === false })
       } },
     { id: 'audio.edit.duplicateClip', group: 'Edit', label: `Duplicate ${clipLabel}`,
-      keywords: 'copy repeat again clip', shortcut: '⌘D', when: () => editable && anyClips,
+      keywords: 'copy repeat again clip', shortcut: keysFor('clip.duplicate'), when: () => editable && anyClips,
       run: () => withClip(c => {
         const copy: DawClip = { ...structuredClone(c), id: crypto.randomUUID(), startBeat: c.startBeat + c.durationBeats }
         dispatch({ type: 'ADD_CLIP', clip: copy })
@@ -3673,6 +3656,7 @@ export default function AudioEditor(props: AudioEditorProps) {
                       key={tab}
                       onClick={() => { if (isActive) setSidebarOpen(false); else { setLeftTab(tab); setSidebarOpen(true) } }}
                       title={label}
+                      aria-pressed={isActive}
                       data-help-id={help}
                       style={{
                         width: 28, height: 28, borderRadius: 6, border: 'none', cursor: 'pointer',

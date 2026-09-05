@@ -6,6 +6,7 @@ import { HelpCircle, Search, X, Lock } from 'lucide-react'
 import { useDaw } from '@/lib/daw-state'
 import { useUITierOptional } from '../UITierProvider'
 import { type UITier, ELEMENT_MIN_TIER, TIER_RANK, TIER_INFO, tierAtLeast } from '@/lib/ui-tiers'
+import { shortcutGroups, resolveKey } from '@/lib/keymap'
 
 // ── Feature highlight ──────────────────────────────────────────────────────────
 // Buttons across the editor carry data-help-id attributes. Clicking a feature in
@@ -37,77 +38,35 @@ type Mode = 'music' | 'podcast'
 interface Shortcut { keys: string; action: string }
 interface ShortcutGroup { label: string; modes?: Mode[]; items: Shortcut[] }
 
-// ⌘ is swapped for Ctrl at render time on non-Mac platforms
-const SHORTCUT_GROUPS: ShortcutGroup[] = [
-  {
-    label: 'Transport & Global',
-    items: [
-      { keys: 'Space', action: 'Play / Stop' },
-      { keys: 'R', action: 'Start / stop recording' },
-      { keys: 'M', action: 'Toggle metronome' },
-      { keys: '← / →', action: 'Move playhead ±1 beat (no clips selected)' },
-      { keys: '⌘Z', action: 'Undo' },
-      { keys: '⇧⌘Z', action: 'Redo' },
-      { keys: '⌘S', action: 'Save project' },
-      { keys: 'Delete', action: 'Delete selected clips' },
-      { keys: '0', action: 'Deactivate / activate the selected clips — kept in place, dimmed, silent' },
-      { keys: 'B', action: 'Toggle the sound library panel' },
-      { keys: 'I', action: 'Inspect mode — hover anything for its name and details' },
-      { keys: 'Hold E / L', action: 'While dragging a clip edge — force Expand or Loop for that drag' },
-      { keys: 'H or ?', action: 'Open this help menu' },
-    ],
-  },
-  {
-    label: 'Arrangement — selection & editing',
-    items: [
-      { keys: 'Drag empty space', action: 'Box-select clips (replaces the current selection)' },
-      { keys: '⌘ click', action: 'Add / remove a single clip from the selection' },
-      { keys: '⇧ click', action: 'Select the range of clips up to here (across tracks)' },
-      { keys: '⌘ drag', action: 'Add the box to the current selection' },
-      { keys: '⌥ drag clip', action: 'Copy the clip as you drag' },
-      { keys: '← / →', action: 'Nudge selected clips by snap (⇧ = 1 beat)' },
-      { keys: '↑ / ↓', action: 'Move selected clips to the track above / below' },
-      { keys: '⌘C / ⌘V', action: 'Copy / paste clips or effects' },
-      { keys: '⌘D', action: 'Duplicate selection after itself' },
-      { keys: '⌘A', action: 'Select all clips' },
-      { keys: 'Esc', action: 'Clear selection' },
-      { keys: 'S', action: 'Split selected clip at playhead' },
-      { keys: 'Delete', action: 'Delete selected effects' },
-    ],
-  },
-  {
-    label: 'Arrangement — view & playback',
-    items: [
-      { keys: 'Home', action: 'Jump playhead to start' },
-      { keys: 'L', action: 'Toggle loop' },
-      { keys: 'P', action: 'Set loop region to selected clips' },
-      { keys: 'G', action: 'Toggle ripple edit' },
-      { keys: 'F', action: 'Fit arrangement to window' },
-      { keys: '1–5', action: 'Snap mode: Off / 1/16 / 1/8 / Beat / Bar' },
-      { keys: '⌥ drag', action: 'Bypass snap while dragging' },
-    ],
-  },
-  {
-    label: 'Piano Roll',
-    modes: ['music'],
-    items: [
-      { keys: 'Delete', action: 'Delete selected notes' },
-      { keys: '⌘A', action: 'Select all notes' },
-    ],
-  },
-  {
-    label: 'Knobs',
-    items: [
-      { keys: 'Tab', action: 'Move between knobs — every knob takes keyboard focus' },
-      { keys: '↑ / ↓', action: 'Nudge the focused knob (hold Shift for fine steps)' },
-      { keys: 'PgUp / PgDn', action: 'Coarse steps — a tenth of the knob at a time' },
-      { keys: 'Home / End', action: 'All the way down / all the way up' },
-      { keys: 'Enter', action: 'Type a value in — "800", "1.2k", "-6dB", "L30" all land' },
-      { keys: 'Delete', action: 'Reset the focused knob to its default (double-click does too)' },
-      { keys: 'Right-click', action: 'MIDI-learn a device knob — turn a hardware control to bind it' },
-    ],
-  },
-]
+// ⌘ is swapped for Ctrl at render time on non-Mac platforms.
+//
+// The KEY rows come from lib/keymap.ts — the table the handlers themselves
+// resolve against — so this panel cannot advertise a key nothing listens to
+// (it did: `B` for the library, for a long time). The mouse rows have no
+// table to come from and are written here.
+const GESTURES: Record<string, Shortcut[]> = {
+  'Transport & Global': [
+    { keys: 'Hold E / L', action: 'While dragging a clip edge — force Expand or Loop for that drag' },
+  ],
+  'Arrangement — selection & editing': [
+    { keys: 'Drag empty space', action: 'Box-select clips (replaces the current selection)' },
+    { keys: '⌘ click', action: 'Add / remove a single clip from the selection' },
+    { keys: '⇧ click', action: 'Select the range of clips up to here (across tracks)' },
+    { keys: '⌘ drag', action: 'Add the box to the current selection' },
+    { keys: '⌥ drag clip', action: 'Copy the clip as you drag' },
+  ],
+  'Arrangement — view & playback': [
+    { keys: '⌥ drag', action: 'Bypass snap while dragging' },
+  ],
+  'Knobs': [
+    { keys: 'Right-click', action: 'MIDI-learn a device knob — turn a hardware control to bind it' },
+  ],
+}
+const SHORTCUT_GROUPS: ShortcutGroup[] = shortcutGroups().map(g => ({
+  label: g.label,
+  modes: g.modes,
+  items: [...g.items.map(({ keys, action }) => ({ keys, action })), ...(GESTURES[g.label] ?? [])],
+}))
 
 interface Feature {
   name: string
@@ -344,7 +303,7 @@ export default function HelpButton() {
       if (e.defaultPrevented) return
       // Pad window active → every key is potential performance input
       if (document.body.dataset.padInputActive === '1') return
-      if ((e.key === '?' || e.key === 'h' || e.key === 'H') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (resolveKey(e, ['global'])?.id === 'help.open') {
         e.preventDefault()
         setQuery('')
         setOpen(true)
