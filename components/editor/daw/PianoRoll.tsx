@@ -33,6 +33,8 @@ import { findNotes, filterIsEmpty, type NoteFilter } from '@/lib/find-notes'
 import { FindNotesBar } from './FindNotesBar'
 import { StretchMarkers } from './StretchMarkers'
 import { useNoteSelectionRequest, consumeNoteSelection } from '@/lib/note-selection'
+import { quantizeNotes as quantizePatches, useQuantizeSettings, setQuantizeSettings, describeQuantize } from '@/lib/quantize'
+import { QuantizeDialog } from './QuantizeDialog'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -559,6 +561,10 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   // Find & Select (lib/find-notes.ts) with its bar open or closed.
   const [splitting, setSplitting] = useState(false)
   const [chopParts, setChopParts] = useState(2)
+  // Quantize Settings (lib/quantize.ts) — persisted; Q and ⌘U use them.
+  const qSettings = useQuantizeSettings()
+  const [qAnchor, setQAnchor] = useState<{ x: number; y: number } | null>(null)
+  const qBtnRef = useRef<HTMLButtonElement>(null)
   const [findOpen, setFindOpen] = useState(false)
   const [filter, setFilter] = useState<NoteFilter>({})
   // A selection asked for from outside — the voice, the palette — parked
@@ -1333,17 +1339,18 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     })
   }
 
-  /** Quantise start times to the current grid — and lengths too, so a run of
-   *  notes lands flush instead of snapping to the grid while keeping ragged
-   *  ends. Drum clips keep their lengths; a snare's length is meaningless. */
-  function quantizeNotes(strength = 1) {
-    patchNotes(n => {
-      const snapped = snapBeat(n.startBeat)
-      const startBeat = n.startBeat + (snapped - n.startBeat) * strength
-      const patch: Partial<MidiNote> = { startBeat: Math.max(0, startBeat) }
-      if (!isDrum && strength === 1) patch.durationBeats = Math.max(quant, snapBeat(n.durationBeats) || quant)
-      return patch
-    })
+  /** Quantise with the settings (lib/quantize.ts): the grid — the editor's
+   *  unless one is set — starts, ends or both, and the Amount. One undo step.
+   *  `amount` overrides for the half-quantise command. */
+  function quantizeNotes(amount?: number) {
+    const s = amount == null ? qSettings : { ...qSettings, amount }
+    const patches = quantizePatches(targetNotes(), s, quant)
+    if (patches.length) dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: patches })
+  }
+  function openQuantizeSettings() {
+    if (qAnchor) { setQAnchor(null); return }
+    const r = qBtnRef.current?.getBoundingClientRect()
+    setQAnchor(r ? { x: r.left, y: r.bottom + 6 } : { x: 240, y: 240 })
   }
 
   // The Pitch & Time utilities (lib/pitch-time.ts), on the selection or the
@@ -1469,12 +1476,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   const rollScope = selectedNotes.size ? `${selectedNotes.size} selected notes` : 'every note in this clip'
   useRegisterCommands([
-    { id: 'roll.quantize', group: 'Notes', label: `Quantise ${rollScope} to the grid`,
+    { id: 'roll.quantize', group: 'Notes', label: `Quantise ${rollScope} — ${describeQuantize(qSettings, quant)}`,
       keywords: 'snap align tighten timing grid straighten on beat q', shortcut: 'Q',
-      run: () => quantizeNotes(1) },
+      run: () => quantizeNotes() },
     { id: 'roll.quantize.half', group: 'Notes', label: `Half-quantise ${rollScope} (keep some feel)`,
       keywords: 'snap partial strength loose groove timing halfway',
-      run: () => quantizeNotes(0.5) },
+      run: () => quantizeNotes(50) },
+    { id: 'roll.quantizeSettings', group: 'Notes', label: 'Quantize settings — grid, triplets, starts / ends, amount',
+      keywords: 'quantize settings quantise settings grid triplet amount start end both dialog', shortcut: '⇧⌘U',
+      run: openQuantizeSettings },
     { id: 'roll.humanize', group: 'Notes', label: `Humanise ${rollScope} — timing by up to ${humanizeAmount}% of the grid`,
       keywords: 'loosen feel random natural played not typed timing groove amount',
       run: humanize },
@@ -1584,7 +1594,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     { id: 'roll.close', group: 'Notes', label: 'Close the piano roll',
       keywords: 'hide dismiss done back arrangement',
       run: () => { setExpandedPianoRollClipId?.(null); setEditTarget?.(null) } },
-  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor, chopParts, findOpen, filter, found, clip.loopEnabled, clip.loopLengthBeats])
+  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor, chopParts, findOpen, filter, found, clip.loopEnabled, clip.loopLengthBeats, qSettings, qAnchor])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const selected = clip.notes.filter(n => selectedNotes.has(n.id))
@@ -1638,10 +1648,11 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       return
     }
     if (kb === 'notes.quantize' && selectedNotes.size > 0) {
-      quantizeNotes(1)
+      quantizeNotes()
       e.preventDefault(); e.stopPropagation()
       return
     }
+    if (kb === 'notes.quantizeSettings') { e.preventDefault(); e.stopPropagation(); openQuantizeSettings(); return }
     // Arrows: nudge time / transpose pitch (⇧ = octave; drums move by lane)
     // Fold (F), Fold to Scale (G), Highlight Scale (K), Focus (N) — lib/roll-rows.ts.
     // Note surgery (lib/note-ops.ts): E held is the split tool; ⌘E chops or
@@ -1650,7 +1661,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     if (kb === 'notes.split') { e.preventDefault(); e.stopPropagation(); splitOrChop(); return }
     if (kb === 'notes.join') { e.preventDefault(); e.stopPropagation(); if (selected.length) joinSelected(); return }
     if (kb === 'notes.fitRange') { e.preventDefault(); e.stopPropagation(); if (selected.length) fitSelectedToRange(); return }
-    if (kb === 'notes.deactivate') { e.preventDefault(); e.stopPropagation(); if (selected.length) toggleActive(); return }
+    // 0 with notes selected deactivates the notes; with none, the CLIP — the
+    // arrangement's own 0 (Live's Clip Activator) cannot reach it while the
+    // roll has focus, so it is done from here.
+    if (kb === 'notes.deactivate') {
+      e.preventDefault(); e.stopPropagation()
+      if (selected.length) toggleActive()
+      else dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: [clip.id], active: clip.active === false })
+      return
+    }
     if (kb === 'notes.fold') { e.preventDefault(); e.stopPropagation(); setFold(v => !v); return }
     if (kb === 'notes.foldScale') { e.preventDefault(); e.stopPropagation(); setFoldScale(v => !v); return }
     if (kb === 'notes.highlightScale') { e.preventDefault(); e.stopPropagation(); setHighlightScale(v => !v); return }
@@ -1889,11 +1908,23 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           <button
-            onClick={() => quantizeNotes(1)}
+            ref={qBtnRef}
+            data-help-id="roll-quantize"
+            onClick={() => quantizeNotes()}
+            onContextMenu={e => { e.preventDefault(); openQuantizeSettings() }}
             disabled={selectedNotes.size === 0}
-            title={selectedNotes.size ? `Snap ${selectedNotes.size} selected note${selectedNotes.size === 1 ? '' : 's'} to the ${QUANT_LABELS[quant]} grid (Q)` : 'Select notes to quantize (Q)'}
+            title={`${selectedNotes.size ? `Quantize ${selectedNotes.size} selected note${selectedNotes.size === 1 ? '' : 's'}` : 'Select notes to quantize'} — ${describeQuantize(qSettings, quant)} (Q or ⌘U; right-click or ⇧⌘U for settings)`}
             style={{ ...prBtn, fontSize: 9, padding: '2px 6px', opacity: selectedNotes.size ? 1 : 0.4, cursor: selectedNotes.size ? 'pointer' : 'default' }}
           >Quantize</button>
+          <button data-help-id="roll-quantize-settings" onClick={openQuantizeSettings} aria-pressed={!!qAnchor} title="Quantize Settings (⇧⌘U) — grid, triplets, starts / ends, amount"
+            style={{ ...prBtn, fontSize: 9, padding: '2px 4px', color: qAnchor ? 'var(--accent-light)' : 'var(--text-muted)' }}>⚙</button>
+          {qAnchor && (
+            <QuantizeDialog anchor={qAnchor} settings={qSettings} editorGrid={quant} scope={rollScope}
+              count={quantizePatches(targetNotes(), qSettings, quant).length}
+              onChange={patch => setQuantizeSettings(patch)}
+              onApply={() => { quantizeNotes(); setQAnchor(null) }}
+              onClose={() => setQAnchor(null)} />
+          )}
 
           <div style={{ flex: 1 }} />
 

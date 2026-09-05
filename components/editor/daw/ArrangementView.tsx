@@ -1269,7 +1269,10 @@ export default function ArrangementView() {
       // duplicates notes…). This listener runs in the capture phase, before
       // theirs, so it has to step aside or F both folds the roll AND fits the
       // arrangement to the window.
-      if ((e.target as HTMLElement)?.closest?.('[data-help-id="piano-roll"], [data-help-id="step-sequencer"]')) return
+      // Keys aimed at the roll, the step sequencer or an open dialog (the
+      // Quantize / Pitch & Time popovers) are theirs — an Escape typed into a
+      // dialog's knob used to clear the clip selection and close the roll.
+      if ((e.target as HTMLElement)?.closest?.('[data-help-id="piano-roll"], [data-help-id="step-sequencer"], [role="dialog"]')) return
 
       const meta = e.metaKey || e.ctrlKey
       // What this key means here, from the one table (lib/keymap.ts).

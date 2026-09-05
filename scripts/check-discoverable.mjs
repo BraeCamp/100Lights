@@ -82,6 +82,8 @@ const EXPECTED = [
   ['fit notes to range',   ['fit to']],
   ['deactivate notes',     ['deactivate']],
   ['find & select notes',  ['find']],
+  ['quantize settings',    ['quantize settings', 'quantise settings']],
+  ['triplet grid',         ['triplet']],
   ['overview strip',       ['overview']],
   ['waveform db scale',    ['waveforms']],
   ['split / splice clip',  ['splice', 'split']],

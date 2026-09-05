@@ -54,6 +54,7 @@ import { addressClips, parseClipAddress, clipLabel, colourOf, type ClipAddress }
 import { parseNoteAddress, addressNotes, chordsOf, pitchOf, type NoteAddress, type Chord } from '../note-address'
 import { splitAt, chopNotes, joinNotes, fitToRange, setActive } from '../note-ops'
 import { parseFilter, findNotes, describeFilter } from '../find-notes'
+import { quantizeNotes as quantizeWithSettings, parseGridSaid } from '../quantize'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -2875,36 +2876,29 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       // A quarter note by default: the grid people mean when they do not say.
       //
       // ⚠️ Triplets and dotted values are a MULTIPLIER on the division, not a
-      // division of their own — a triplet eighth is two thirds of an eighth,
-      // and a dotted eighth is one and a half of one. Treating "triplet" as a
-      // separate grid is how a swung part gets quantised onto straight
-      // sixteenths and loses the thing that made it swing.
-      const said = str(i.division).toLowerCase() + ' ' + str(i.feel).toLowerCase()
-      const triplet = /triplet|trip|third/.test(said)
-      const dotted = /dotted|dot/.test(said)
-      const base = spokenNumber(i.division as string) ?? 1
-      const division = triplet ? base * (3 / 2) : dotted ? base / 1.5 : base
-      if (!(division > 0)) return fail('That is not a grid I can quantize to.')
+      // division of their own — a triplet eighth is TWO THIRDS of an eighth
+      // (lib/quantize.ts does the arithmetic; this used to multiply by 3/2 and
+      // put swung parts onto a grid that does not exist), and a dotted eighth
+      // is one and a half of one.
+      const said = `${str(i.division)} ${str(i.feel)}`.toLowerCase()
+      const parsed = parseGridSaid(said)
+      const triplet = !!parsed?.triplet || /triplet|trip/.test(said)
+      const dotted = /dotted|dot\b/.test(said)
+      const base = parsed?.grid ?? spokenNumber(i.division as string) ?? 1
+      const grid = dotted ? base * 1.5 : base
+      if (!(grid > 0)) return fail('That is not a grid I can quantize to.')
       const pct = spokenNumber(i.strength as string)
-      const strength = pct == null ? 1 : Math.max(0, Math.min(1, pct / 100))
+      const adjustSaid = str(i.adjust).toLowerCase()
+      const adjust = /end/.test(adjustSaid) ? 'end' as const : /both/.test(adjustSaid) ? 'both' as const : 'start' as const
 
       // Partial strength moves notes PART of the way, which is the difference
       // between tightening a performance and flattening it. At 100 it is a
       // snap; below, the feel survives.
-      const moved = notes
-        .map(n => {
-          const grid = Math.round(n.startBeat / division) * division
-          const to = n.startBeat + (grid - n.startBeat) * strength
-          return { n, to }
-        })
-        .filter(({ n, to }) => Math.abs(to - n.startBeat) > 1e-6)
-      if (!moved.length) return { actions: [], say: `${found.how} is already on the grid.` }
+      const patches = quantizeWithSettings(notes, { grid, triplet, target: adjust, amount: pct == null ? 100 : clamp(pct, 0, 100) }, 1)
+      if (!patches.length) return { actions: [], say: `${found.how} is already on the grid.` }
       return {
-        actions: moved.map(({ n, to }) => ({
-          type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id,
-          patch: { startBeat: Math.max(0, +to.toFixed(4)) },
-        })),
-        say: `Quantized ${moved.length} note${moved.length === 1 ? '' : 's'} on ${found.how}${strength < 1 ? ` ${Math.round(strength * 100)}% of the way` : ''}.`,
+        actions: perNote(clip.id, patches),
+        say: `Quantized ${patches.length} note${patches.length === 1 ? '' : 's'}${adjust === 'end' ? "' ends" : adjust === 'both' ? "' starts and ends" : ''} on ${found.how}${triplet ? ' to triplets' : ''}${pct != null && pct < 100 ? ` ${Math.round(pct)}% of the way` : ''}.`,
       }
     }
 

@@ -2979,7 +2979,8 @@ const COMMANDS: VoiceCommand[] = [
         : w.has('staccato', 'stabs', 'stabby') ? 'staccato'
           : (w.has('shorter') && w.has('note', 'notes')) ? 'shorter'
             : (w.has('longer') && w.has('note', 'notes')) ? 'longer'
-              : lenM && !w.has('add', 'insert', 'put', 'play', 'draw', 'write', 'record', 'quantize', 'quantise', 'snap', 'swing', 'grid') ? 'set' : null
+              : lenM && !w.has('add', 'insert', 'put', 'play', 'draw', 'write', 'record', 'quantize', 'quantise', 'snap', 'swing', 'grid',
+                'arpeggiate', 'arpeggio', 'arp', 'arpeggiator', 'rate', 'strum', 'repeat', 'echo', 'delay', 'stutter', 'roll') ? 'set' : null
       if (!style) return null
       const named = nameOrSelected(w, ctx, ['make', 'the', 'legato', 'staccato', 'stabs',
         'stabby', 'shorter', 'longer', 'note', 'notes', 'on', 'set', 'to', 'every', 'all', 'long', 'in', 'of', 'turn', 'into',
@@ -3693,14 +3694,14 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'quantize',
     group: 'Notes',
     what: 'Pull the notes onto the grid',
-    say: ['quantize the drums', 'quantize the bass 2 to eighth notes', 'tighten up the drums'],
+    say: ['quantize the drums', 'quantize the bass 2 to eighth notes', 'tighten up the drums', 'quantize the drums to eighth note triplets', 'quantize the ends of the pad notes'],
     match(w, ctx) {
       if (!w.has('quantize', 'quantise') && !w.hasPhrase('tighten', 'up') && !w.has('tighten')) {
         return null
       }
       const hit = clipOrSelected(w, ctx, ['quantize', 'quantise', 'tighten', 'up', 'grid',
         'note', 'notes', 'to', 'track', 'clip', 'eighth', 'sixteenth', 'quarter',
-        'half', 'percent', 'by'], { dropNums: true })
+        'half', 'percent', 'by', 'triplet', 'triplets', 'end', 'ends', 'endings', 'starts', 'both', 'of', 'the'], { dropNums: true })
       if (!hit) return null
       // The grid, said the way musicians say it. A quarter note is the default
       // because it is what "quantize this" means when nobody specifies.
@@ -3708,12 +3709,15 @@ const COMMANDS: VoiceCommand[] = [
         : w.has('eighth', 'eighths') ? 0.5
           : w.has('half') ? 2
             : 1
+      // Triplets (lib/quantize.ts: two thirds of the value) and which end moves.
+      const triplet = w.has('triplet', 'triplets')
+      const adjust = w.all.includes('end') || w.all.includes('ends') || w.has('endings') ? 'end' : w.all.includes('both') ? 'both' : undefined
       const n = argNumbers(w, hit.name)[0]
       const strength = n != null && n > 0 && n <= 100 && w.has('percent') ? n : undefined
       return {
         calls: [{
           name: 'quantize',
-          input: { target: hit.name, division, ...(strength != null ? { strength } : {}) },
+          input: { target: hit.name, division, ...(triplet ? { feel: 'triplet' } : {}), ...(adjust ? { adjust } : {}), ...(strength != null ? { strength } : {}) },
         }],
         confidence: nameConfidence(hit.score),
         needsName: true,

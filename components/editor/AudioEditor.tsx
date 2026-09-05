@@ -2693,6 +2693,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     const mode = isPodcast ? 'podcast' : 'music'
     function typing(target: HTMLElement) {
       return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable
+        // A popover dialog (Quantize Settings, Pitch & Time) owns the keys typed into it.
+        || !!target.closest?.('[role="dialog"]')
         // A focused slider or combo box owns its arrow keys and Space; the
         // studio's shortcuts used to steal them (arrows seeking the playhead
         // from inside a focused select). Plain buttons are left alone: Space

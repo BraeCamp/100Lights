@@ -54,7 +54,9 @@ export function PitchTimePanel({
       if (ref.current?.contains(t) || ignoreOutside?.current?.contains(t)) return
       onClose()
     }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    // Escape closes the panel and goes no further — left to travel on it
+    // reaches the studio's "clear every selection" and closes the roll too.
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
     document.addEventListener('mousedown', onDown, true)
     document.addEventListener('keydown', onKey, true)
     return () => { document.removeEventListener('mousedown', onDown, true); document.removeEventListener('keydown', onKey, true) }

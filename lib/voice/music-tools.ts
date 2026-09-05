@@ -1289,12 +1289,14 @@ export const MUSIC_TOOLS = [
   {
     name: 'quantize',
     description:
-      'QUANTIZE — pull the notes onto the grid. "quantize the drums", "quantize the bass to eighth notes". Strength 100 snaps exactly; less moves them part of the way, which keeps the feel.',
+      'QUANTIZE — pull the notes onto the grid. "quantize the drums", "quantize the bass to eighth notes", "quantize the hats to eighth-note triplets", "quantize the ends of the pad notes", "quantize the keys 50 percent". Strength 100 snaps exactly; less moves them part of the way, which keeps the feel.',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
-        division: { type: 'number', description: 'Grid in beats: 1 is a quarter note, 0.5 an eighth, 0.25 a sixteenth.' },
+        division: { type: 'number', description: 'Grid in beats: 1 is a quarter note, 0.5 an eighth, 0.25 a sixteenth. Omit for a quarter.' },
+        feel: { type: 'string', enum: ['straight', 'triplet', 'dotted'], description: 'Triplet makes the grid two thirds of the division; dotted one and a half.' },
+        adjust: { type: 'string', enum: ['start', 'end', 'both'], description: 'What moves: note starts (the default), ends, or both.' },
         strength: { type: 'number', description: 'Percentage, 0-100. Omit for 100.' },
       },
       required: ['target'],
