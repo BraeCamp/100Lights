@@ -1265,6 +1265,11 @@ export default function ArrangementView() {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      // The note editors own their keys (F folds, G folds to scale, ⌘D
+      // duplicates notes…). This listener runs in the capture phase, before
+      // theirs, so it has to step aside or F both folds the roll AND fits the
+      // arrangement to the window.
+      if ((e.target as HTMLElement)?.closest?.('[data-help-id="piano-roll"], [data-help-id="step-sequencer"]')) return
 
       const meta = e.metaKey || e.ctrlKey
       // What this key means here, from the one table (lib/keymap.ts).

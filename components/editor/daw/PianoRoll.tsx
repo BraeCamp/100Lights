@@ -25,6 +25,7 @@ import Knob from './Knob'
 import { useDrawMode, toggleDrawMode } from '@/lib/draw-mode'
 import { beginStroke, strokeTo, velocityFromDrag, noteUnder, type Stroke } from '@/lib/draw-notes'
 import { laneValue, lanePatch, randomizeLane, rampLane, LANE_MAX, type LaneField } from '@/lib/note-chance'
+import { visibleRows, rowIndexOf, focusScrollTop, stepAdvance, stepMove } from '@/lib/roll-rows'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -170,33 +171,42 @@ function DrumLaneKeys({
 }
 
 function PianoKeys({
-  scrollTop, hoverPitch, onPlayNote, trackColor, scaleLock, inScalePitches, noteH = NOTE_H,
+  scrollTop, hoverPitch, onPlayNote, trackColor, scaleLock, inScalePitches, noteH = NOTE_H, rows, root = 0,
 }: {
   scrollTop: number
   hoverPitch: number | null
   onPlayNote: (pitch: number) => void
   trackColor: string
+  /** Scale lock or Highlight Scale — either tints the keys. */
   scaleLock: boolean
   inScalePitches: Set<number>
   noteH?: number
+  /** The pitches shown, top to bottom (lib/roll-rows.ts) — folded or chromatic. */
+  rows: number[]
+  /** The scale's root pitch class, drawn stronger when highlighted. */
+  root?: number
 }) {
   return (
-    <div style={{ width: PIANO_W, flexShrink: 0, position: 'relative', overflow: 'hidden', background: 'var(--bg-surface)' }}>
+    <div data-help-id="piano-keys" style={{ width: PIANO_W, flexShrink: 0, position: 'relative', overflow: 'hidden', background: 'var(--bg-surface)' }}>
       <div style={{ position: 'absolute', top: -scrollTop, left: 0, right: 0 }}>
-        {Array.from({ length: NUM_NOTES }, (_, i) => {
-          const pitch = NUM_NOTES - 1 - i
+        {rows.map(pitch => {
           const black = isBlack(pitch)
           const isC   = pitch % 12 === 0
           const hover = hoverPitch === pitch
           const inScale = scaleLock && inScalePitches.has(pitch % 12)
+          const isRoot = inScale && pitch % 12 === root
           const bg = hover
             ? trackColor
-            : inScale
-              ? (black ? 'rgb(var(--accent-rgb) / 0.4)' : 'rgb(var(--accent-rgb) / 0.22)')
-              : (black ? '#1a1a1a' : '#2e2e2e')
+            : isRoot
+              ? 'rgb(var(--accent-rgb) / 0.6)'
+              : inScale
+                ? (black ? 'rgb(var(--accent-rgb) / 0.4)' : 'rgb(var(--accent-rgb) / 0.22)')
+                : (black ? '#1a1a1a' : '#2e2e2e')
           return (
             <div
               key={pitch}
+              data-pitch={pitch}
+              data-in-scale={inScale || undefined}
               onMouseDown={() => onPlayNote(pitch)}
               style={{
                 height: noteH, width: black ? '65%' : '100%',
@@ -543,17 +553,35 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       return next
     })
   }
-  const rowCount = isDrum ? DRUM_LANES.length : NUM_NOTES
+  // Fold (F), Fold to Scale (G), Highlight Scale (K) — lib/roll-rows.ts. The
+  // rows are the pitches shown, top to bottom; everything that maps a row to
+  // a pitch or a pitch to a y goes through them, so a folded roll and the
+  // full one are the same code.
+  const [fold, setFold] = useState(false)
+  const [foldScale, setFoldScale] = useState(false)
+  const [highlightScale, setHighlightScale] = useState(true)
+  const rows = isDrum ? [] : visibleRows({ fold, foldScale, inScale: inScalePitches, notes: clip.notes })
+  const rowIndex = rowIndexOf(rows)
+  const rowCount = isDrum ? DRUM_LANES.length : rows.length
   const yToPitch = (y: number): number | null => {
     const row = Math.floor(y / rowH)
     if (row < 0 || row >= rowCount) return null
-    return isDrum ? DRUM_LANES[row].pitch : NUM_NOTES - 1 - row
+    return isDrum ? DRUM_LANES[row].pitch : rows[row]
   }
   const pitchToY = (pitch: number): number | null => {
-    if (!isDrum) return (NUM_NOTES - 1 - pitch) * rowH
+    if (!isDrum) { const r = rowIndex.get(pitch); return r === undefined ? null : r * rowH }
     const row = DRUM_PITCH_TO_ROW.get(pitch)
     return row === undefined ? null : row * rowH
   }
+  // Focus (N): scroll to where the notes are.
+  function focusNotes() {
+    const top = focusScrollTop(rows, clip.notes, rowH, gridRef.current?.clientHeight ?? 300)
+    if (top != null) setScrollTop(top)
+  }
+  // Step entry: with it on, playing a key writes a note at the insert marker
+  // and the marker advances by the grid; ← / → move the marker.
+  const [stepEntry, setStepEntry] = useState(false)
+  const [stepBeat, setStepBeat] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => { rootRef.current?.focus() }, [])
 
@@ -721,7 +749,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   // Holding ⌥ (alt) bypasses grid snap for free positioning
   function snapUnless(free: boolean, b: number) { return free ? b : snapBeat(b) }
 
+  // Step entry: a played key becomes a note at the insert marker.
+  function stepWrite(pitch: number) {
+    const note: MidiNote = { id: crypto.randomUUID(), pitch, startBeat: stepBeat, durationBeats: quant, velocity: lastVelRef.current }
+    dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note })
+    setSelectedNotes(new Set([note.id]))
+    setStepBeat(b => stepAdvance(b, quant, clip.durationBeats))
+  }
   async function playNote(pitch: number) {
+    if (stepEntry) stepWrite(pitch)
     if (!engine.ctx) return
     const preset = clip.presetId ? presets.find(p => p.id === clip.presetId) : null
     if (preset) {
@@ -896,7 +932,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       const swept = new Set(clip.notes
         .filter(n => {
           if (n.startBeat < x1 || n.startBeat >= x2) return false
-          const row = isDrum ? DRUM_PITCH_TO_ROW.get(n.pitch) : NUM_NOTES - 1 - n.pitch
+          const row = isDrum ? DRUM_PITCH_TO_ROW.get(n.pitch) : rowIndex.get(n.pitch)
           return row !== undefined && row >= rowTop && row <= rowBot
         })
         .map(n => n.id)
@@ -1366,10 +1402,15 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       keywords: 'velocity deviation lane humanize random expression', run: () => setLane('deviation') },
     { id: 'roll.group', group: 'Notes', label: groupLabel ? `Probability group: ${groupLabel} → ${groupLabel === 'Play One' ? 'Play All' : 'ungroup'}` : 'Group the selected notes: Play One',
       keywords: 'probability group play one play all chance notes', when: () => selectedNotes.size > 0, run: cycleGroup },
+    { id: 'roll.fold', group: 'Notes', label: fold ? 'Unfold the piano roll' : 'Fold the piano roll to the notes it uses', keywords: 'fold key tracks pitches used hide empty rows f', when: () => !isDrum, run: () => setFold(v => !v) },
+    { id: 'roll.foldScale', group: 'Notes', label: foldScale ? 'Show every pitch again' : 'Fold the piano roll to the scale', keywords: 'fold scale key tracks in key hide g', when: () => !isDrum, run: () => setFoldScale(v => !v) },
+    { id: 'roll.highlightScale', group: 'Notes', label: highlightScale ? 'Stop highlighting the scale' : 'Highlight the scale on the keys', keywords: 'highlight scale key tint root k', when: () => !isDrum, run: () => setHighlightScale(v => !v) },
+    { id: 'roll.focus', group: 'Notes', label: 'Focus the piano roll on its notes', keywords: 'focus scroll to notes n center', when: () => !isDrum, run: focusNotes },
+    { id: 'roll.stepEntry', group: 'Notes', label: stepEntry ? 'Step entry off' : 'Step entry — write notes one key at a time', keywords: 'step entry insert marker record keys one at a time', when: () => !isDrum, run: () => setStepEntry(v => !v) },
     { id: 'roll.close', group: 'Notes', label: 'Close the piano roll',
       keywords: 'hide dismiss done back arrangement',
       run: () => { setExpandedPianoRollClipId?.(null); setEditTarget?.(null) } },
-  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel])
+  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const selected = clip.notes.filter(n => selectedNotes.has(n.id))
@@ -1428,6 +1469,17 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       return
     }
     // Arrows: nudge time / transpose pitch (⇧ = octave; drums move by lane)
+    // Fold (F), Fold to Scale (G), Highlight Scale (K), Focus (N) — lib/roll-rows.ts.
+    if (kb === 'notes.fold') { e.preventDefault(); e.stopPropagation(); setFold(v => !v); return }
+    if (kb === 'notes.foldScale') { e.preventDefault(); e.stopPropagation(); setFoldScale(v => !v); return }
+    if (kb === 'notes.highlightScale') { e.preventDefault(); e.stopPropagation(); setHighlightScale(v => !v); return }
+    if (kb === 'notes.focus') { e.preventDefault(); e.stopPropagation(); focusNotes(); return }
+    // Step entry: with nothing selected, ← / → move the insert marker.
+    if (stepEntry && selected.length === 0 && (kb === 'notes.earlier' || kb === 'notes.later')) {
+      e.preventDefault(); e.stopPropagation()
+      setStepBeat(b => stepMove(b, kb === 'notes.later' ? 1 : -1, quant, clip.durationBeats))
+      return
+    }
     // The expression lanes by key (lib/keymap.ts): ⌘↑↓ velocity, ⇧⌘↑↓ deviation, ⌘⌥↑↓ chance, ⌘G group.
     if (kb === 'notes.velUp' || kb === 'notes.velDown' || kb === 'notes.devUp' || kb === 'notes.devDown' || kb === 'notes.chanceUp' || kb === 'notes.chanceDown') {
       e.preventDefault(); e.stopPropagation()
@@ -1962,6 +2014,20 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
               {scaleLock ? `♩ ${NOTE_NAMES[project.key]} ${project.scale}` : '♩ Scale'}
             </button>
 
+            {!isDrum && (
+              <>
+                <button onClick={() => setFold(v => !v)} aria-pressed={fold} data-help-id="roll-fold" title="Fold (F) — show only the pitches this clip uses"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: fold ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: fold ? 'var(--accent-light)' : 'var(--text-muted)', border: fold ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>Fold</button>
+                <button onClick={() => setFoldScale(v => !v)} aria-pressed={foldScale} data-help-id="roll-fold-scale" title={`Fold to Scale (G) — show only the notes of ${NOTE_NAMES[project.key]} ${project.scale}, and any note outside it`}
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: foldScale ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: foldScale ? 'var(--accent-light)' : 'var(--text-muted)', border: foldScale ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>Scale fold</button>
+                <button onClick={() => setHighlightScale(v => !v)} aria-pressed={highlightScale} data-help-id="roll-highlight-scale" title="Highlight Scale (K) — tint the scale on the keys and the grid, the root more so"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: highlightScale ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: highlightScale ? 'var(--accent-light)' : 'var(--text-muted)', border: highlightScale ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>Highlight</button>
+                <button onClick={focusNotes} data-help-id="roll-focus" title="Focus (N) — scroll to where the notes are"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0 }}>Focus</button>
+                <button onClick={() => setStepEntry(v => !v)} aria-pressed={stepEntry} data-help-id="roll-step-entry" title="Step entry — play a key to write a note at the insert marker and step on by the grid; ← / → move the marker"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: stepEntry ? 'rgba(245,158,11,0.18)' : 'transparent', color: stepEntry ? '#f59e0b' : 'var(--text-muted)', border: stepEntry ? '1px solid rgba(245,158,11,0.5)' : '1px solid transparent' }}>Step</button>
+              </>
+            )}
             <div style={{ width: 1, height: 12, background: 'var(--border)', flexShrink: 0, margin: '0 2px' }} />
 
             {/* Chord stamp buttons */}
@@ -2006,11 +2072,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           />
         ) : (
           <PianoKeys
+            rows={rows}
+            root={project.key}
             scrollTop={scrollTop}
             hoverPitch={hoverPitch}
             onPlayNote={playNote}
             trackColor={color}
-            scaleLock={scaleLock}
+            scaleLock={scaleLock || highlightScale}
             inScalePitches={inScalePitches}
             noteH={noteH}
           />
@@ -2037,15 +2105,18 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                 same tint on the piano keys to the left. */}
             <div style={{ position: 'absolute', top: -scrollTop, left: 0, width: totalW }}>
               {Array.from({ length: rowCount }, (_, i) => {
-                const pitch = isDrum ? DRUM_LANES[i].pitch : NUM_NOTES - 1 - i
+                const pitch = isDrum ? DRUM_LANES[i].pitch : rows[i]
                 const black = !isDrum && isBlack(pitch)
                 const hover = hoverPitch === pitch
-                const inScale = scaleLock && !isDrum && inScalePitches.has(pitch % 12)
+                const inScale = (scaleLock || highlightScale) && !isDrum && inScalePitches.has(pitch % 12)
+                const isRoot = inScale && pitch % 12 === project.key
                 const bg = hover
                   ? `${color}20`
-                  : inScale
-                    ? (black ? 'rgb(var(--accent-rgb) / 0.2)' : 'rgb(var(--accent-rgb) / 0.14)')
-                    : black ? '#1a1a1a' : isDrum && i % 2 === 0 ? '#1c1c1c' : '#1e1e1e'
+                  : isRoot
+                    ? 'rgb(var(--accent-rgb) / 0.26)'
+                    : inScale
+                      ? (black ? 'rgb(var(--accent-rgb) / 0.2)' : 'rgb(var(--accent-rgb) / 0.14)')
+                      : black ? '#1a1a1a' : isDrum && i % 2 === 0 ? '#1c1c1c' : '#1e1e1e'
                 return (
                   <div key={pitch} style={{
                     height: rowH, background: bg,
@@ -2108,6 +2179,9 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
             {/* Playhead */}
             <PlayheadLine clipStart={clip.startBeat} clipDuration={clip.durationBeats} beatW={beatW} scrollLeft={scrollLeft} />
+            {stepEntry && (
+              <div data-help-id="step-marker" data-step-beat={stepBeat} style={{ position: 'absolute', top: 0, bottom: 0, left: stepBeat * beatW - scrollLeft, width: 2, background: '#f59e0b', boxShadow: '0 0 4px rgba(245,158,11,0.7)', pointerEvents: 'none', zIndex: 6 }} />
+            )}
 
             {/* Selection rectangle */}
             {selRect && (
