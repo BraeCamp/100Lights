@@ -118,7 +118,7 @@ const project = {
   check('the overlay kinds are one list', /export const OVERLAYS/.test(state) && /kind: 'loading'/.test(state))
   if (OVERLAYS) check('Loading is among them', OVERLAYS.some(o => o.kind === 'loading'))
   const clip = readFileSync('components/editor/daw/ClipView.tsx', 'utf8')
-  check('a clip greys itself when it is the thing named', /case 'loading': return !loaded/.test(clip) && /data-overlay-grey=\{greyed \|\| undefined\}/.test(clip) && /filter: greyed \? 'grayscale\(1\)'/.test(clip))
+  check('a clip greys itself when it is the thing named', /case 'loading': return !loaded/.test(clip) && /data-overlay-grey=\{greyed \|\| undefined\}/.test(clip) && /filter: greyed( \|\| inactive)? \? 'grayscale\(1\)'/.test(clip))
   const arr = readFileSync('components/editor/daw/ArrangementView.tsx', 'utf8')
   check('the toolbar has the menu', /data-overlay-button/.test(arr) && /data-overlay-menu/.test(arr) && /OVERLAYS\.map/.test(arr))
   check('and the Loading overlay counts what is still on its way', /engine\.readiness\(\)\.waiting\.length/.test(arr))
