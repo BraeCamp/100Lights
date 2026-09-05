@@ -25,6 +25,7 @@ import { saveClipDefaults, clipDefaultsKey, useClipDefaults } from '@/lib/clip-d
 import { detectOnsets, monoOf } from '@/lib/onsets'
 import { validMarkers, sortMarkers, beatToSec, secToBeat, insertMarker, moveMarker, removeMarker, set111Here, warpStraight, warpAsLoop, warpAtBpm, quantizeTransients, type WarpMarker } from '@/lib/warp'
 import { useQuantizeSettings, gridLabel } from '@/lib/quantize'
+import { WARP_MODE_LABEL, DEFAULT_BEATS, DEFAULT_TONES, DEFAULT_TEXTURE, type WarpModeName } from '@/lib/warp-modes'
 
 export default function SampleEditor({ clipId }: { clipId: string }) {
   const { project, dispatch, engine } = useDaw()
@@ -80,7 +81,10 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
   const native = nativeSeconds({ ...clip, bufferDuration: total ?? undefined })
   const segBpm = segBpmOf({ ...clip, bufferDuration: total ?? undefined })
   const warp = clip.warpEnabled === true
-  const mode = clip.warpMode ?? 'repitch'
+  const mode: WarpModeName = clip.warpMode ?? 'repitch'
+  const beatsP = { ...DEFAULT_BEATS, ...(clip.warpBeats ?? {}) }
+  const tonesP = { ...DEFAULT_TONES, ...(clip.warpTones ?? {}) }
+  const textureP = { ...DEFAULT_TEXTURE, ...(clip.warpTexture ?? {}) }
   const defaults = useClipDefaults()
   const key = clipDefaultsKey(clip)
   const saved = key ? !!defaults[key] : false
@@ -181,7 +185,8 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
     if (p) patch(p); else patch({ segBpm: bpm })
   }
   function setWarp(on: boolean) { engine.clearStretchedCache(clip.id); patch({ warpEnabled: on }) }
-  function setMode(m: 'repitch' | 'stretch') { engine.clearStretchedCache(clip.id); patch({ warpMode: m, warpEnabled: true }) }
+  function setMode(m: WarpModeName) { engine.clearStretchedCache(clip.id); patch({ warpMode: m, warpEnabled: true }) }
+  function setModeParams(p: Partial<AudioClip>) { engine.clearStretchedCache(clip.id); patch(p) }
   function saveDefault() {
     if (saveClipDefaults(clip)) { setSavedFlash(true); window.setTimeout(() => setSavedFlash(false), 1500) }
   }
@@ -194,6 +199,12 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
       keywords: 'warp mode re-pitch repitch turntable vinyl', run: () => setMode('repitch') },
     { id: 'clip.warpMode.complex', group: 'Clip', label: 'Warp mode: Complex — stretch, keep the pitch',
       keywords: 'warp mode complex stretch keep pitch wsola', run: () => setMode('stretch') },
+    { id: 'clip.warpMode.beats', group: 'Clip', label: 'Warp mode: Beats — slice at the transients, each hit as recorded',
+      keywords: 'warp mode beats drums slice transients preserve loop envelope', run: () => setMode('beats') },
+    { id: 'clip.warpMode.tones', group: 'Clip', label: 'Warp mode: Tones — a longer grain for pitched, single-line material',
+      keywords: 'warp mode tones vocal bass monophonic grain', run: () => setMode('tones') },
+    { id: 'clip.warpMode.texture', group: 'Clip', label: 'Warp mode: Texture — granular, with Flux',
+      keywords: 'warp mode texture granular pads noise grain flux', run: () => setMode('texture') },
     { id: 'clip.segDouble', group: 'Clip', label: `Seg BPM ×2 — the sample tempo doubles${segBpm ? ` (${Math.round(segBpm * 2)})` : ''}`,
       keywords: 'seg bpm sample tempo double octave off original tempo', when: () => segBpm != null, run: () => segBpm && applySegBpm(segBpm * 2) },
     { id: 'clip.segHalve', group: 'Clip', label: `Seg BPM ÷2 — the sample tempo halves${segBpm ? ` (${Math.round(segBpm / 2)})` : ''}`,
@@ -223,7 +234,7 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
       keywords: 'insert warp marker insert point cursor', shortcut: '⌘I', when: () => cursorSec != null, run: () => cursorSec != null && insertAt(cursorSec) },
     { id: 'clip.clearWarp', group: 'Clip', label: `Clear the warp markers (${markers.length})`,
       keywords: 'clear warp markers remove all reset', when: () => markers.length > 0, run: clearWarp },
-  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds, end, cursorSec, transients.length, markers, tempo, barBeats, qGrid])
+  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds, end, cursorSec, transients.length, markers, tempo, barBeats, qGrid, clip.warpBeats, clip.warpTones, clip.warpTexture])
 
   const chip = (on: boolean, disabled = false): React.CSSProperties => ({
     fontSize: 9, fontWeight: 600, padding: '2px 7px', borderRadius: 4, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: disabled ? 0.45 : 1,
@@ -320,9 +331,47 @@ function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
         <div style={row}>
           <span style={lab}>Warp</span>
           <button data-help-id="clip-warp" aria-pressed={warp} onClick={() => setWarp(!warp)} style={chip(warp)} title="Warp — follow the song's tempo; off plays the sample at its own">{warp ? 'On' : 'Off'}</button>
+          <select data-help-id="clip-warp-mode" aria-label="Warp mode" value={mode} disabled={!warp} onChange={e => setMode(e.target.value as WarpModeName)}
+            title="How the sample is fitted to the grid: Beats slices at the transients and plays each hit as recorded; Tones stretches with a long grain for pitched lines; Texture is granular; Re-Pitch changes speed and pitch together; Complex stretches and keeps the pitch"
+            style={{ fontSize: 9, padding: '1px 2px', background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 3, opacity: warp ? 1 : 0.45 }}>
+            {(['beats', 'tones', 'texture', 'repitch', 'stretch'] as WarpModeName[]).map(m => <option key={m} value={m}>{WARP_MODE_LABEL[m]}</option>)}
+          </select>
+          {/* Kept for the palette's sake and for a fast switch between the two oldest modes */}
           <button data-help-id="clip-warp-mode-repitch" aria-pressed={mode === 'repitch'} onClick={() => setMode('repitch')} style={chip(warp && mode === 'repitch', !warp)} title="Re-Pitch — speed and pitch move together, like a turntable">Re-Pitch</button>
           <button data-help-id="clip-warp-mode-complex" aria-pressed={mode === 'stretch'} onClick={() => setMode('stretch')} style={chip(warp && mode === 'stretch', !warp)} title="Complex — stretched to the tempo, pitch kept">Complex</button>
         </div>
+        {warp && mode === 'beats' && (
+          <div style={row} data-help-id="warp-beats-params">
+            <span style={lab}>Beats</span>
+            <select data-help-id="beats-preserve" aria-label="Preserve" value={String(beatsP.preserve)} onChange={e => setModeParams({ warpBeats: { ...beatsP, preserve: e.target.value === 'transients' ? 'transients' : Number(e.target.value) } })}
+              title="Preserve — cut at the transients, or at grid divisions" style={{ fontSize: 9, padding: '1px 2px', background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 3 }}>
+              <option value="transients">Transients</option>
+              {[4, 2, 1, 0.5, 0.25, 0.125].map(g => <option key={g} value={g}>{g === 4 ? '1 bar' : gridLabel(g)}</option>)}
+            </select>
+            <select data-help-id="beats-loop" aria-label="Transient loop mode" value={beatsP.loop} onChange={e => setModeParams({ warpBeats: { ...beatsP, loop: e.target.value as 'off' | 'forward' | 'backforth' } })}
+              title="Transient Loop Mode — what fills a gap after a slice: silence, the slice again, or the slice back and forth" style={{ fontSize: 9, padding: '1px 2px', background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 3 }}>
+              <option value="off">Loop Off</option><option value="forward">Forward</option><option value="backforth">Back &amp; Forth</option>
+            </select>
+            <Knob value={beatsP.envelope} defaultValue={100} size={22} spec={{ label: 'Transient envelope', min: 0, max: 100, unit: '%' }} onChange={v => setModeParams({ warpBeats: { ...beatsP, envelope: Math.round(v) } })} />
+            <span data-help-id="beats-envelope" style={{ fontSize: 9, color: 'var(--text-muted)' }}>env {beatsP.envelope}</span>
+          </div>
+        )}
+        {warp && mode === 'tones' && (
+          <div style={row} data-help-id="warp-tones-params">
+            <span style={lab}>Tones</span>
+            <Knob value={tonesP.grainMs} defaultValue={100} size={22} spec={{ label: 'Grain size', min: 20, max: 400, unit: 'ms' }} onChange={v => setModeParams({ warpTones: { grainMs: Math.round(v) } })} />
+            <span data-help-id="tones-grain" style={{ fontSize: 9, color: 'var(--text-muted)' }}>grain {tonesP.grainMs} ms</span>
+          </div>
+        )}
+        {warp && mode === 'texture' && (
+          <div style={row} data-help-id="warp-texture-params">
+            <span style={lab}>Texture</span>
+            <Knob value={textureP.grainMs} defaultValue={60} size={22} spec={{ label: 'Grain size', min: 5, max: 500, unit: 'ms' }} onChange={v => setModeParams({ warpTexture: { ...textureP, grainMs: Math.round(v) } })} />
+            <span data-help-id="texture-grain" style={{ fontSize: 9, color: 'var(--text-muted)' }}>grain {textureP.grainMs} ms</span>
+            <Knob value={textureP.flux * 100} defaultValue={20} size={22} spec={{ label: 'Flux', min: 0, max: 100, unit: '%' }} onChange={v => setModeParams({ warpTexture: { ...textureP, flux: Math.round(v) / 100 } })} />
+            <span data-help-id="texture-flux" style={{ fontSize: 9, color: 'var(--text-muted)' }}>flux {Math.round(textureP.flux * 100)}</span>
+          </div>
+        )}
         <div style={row}>
           <span style={lab}>Seg. BPM</span>
           <input data-help-id="clip-seg-bpm" type="number" min={20} max={999} step={0.01} value={segBpm ?? ''} placeholder="—"

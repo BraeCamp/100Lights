@@ -836,7 +836,14 @@ export interface AudioClip {
   trimEnd: number
   bufferDuration?: number   // seconds — populated on first buffer load for crop math
   warpEnabled?: boolean
-  warpMode?: 'repitch' | 'stretch'
+  /** How the sample is fitted to the grid (lib/warp-modes.ts): Re-Pitch, Complex ('stretch'), Tones, Beats, Texture. */
+  warpMode?: 'repitch' | 'stretch' | 'tones' | 'beats' | 'texture'
+  /** Beats mode: cut at transients or grid divisions; how a gap after a slice is filled; the Transient Envelope. */
+  warpBeats?: { preserve: 'transients' | number; loop: 'off' | 'forward' | 'backforth'; envelope: number }
+  /** Tones mode: the grain, in ms. */
+  warpTones?: { grainMs: number }
+  /** Texture mode: the grain in ms and Flux 0–1. */
+  warpTexture?: { grainMs: number; flux: number }
   /** Seg. BPM — the sample's own tempo (lib/sample-editor.ts). With Warp on the
    *  clip plays at song tempo / segBpm; ×2 and ÷2 fix an octave-off detection. */
   segBpm?: number

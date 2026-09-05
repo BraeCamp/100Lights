@@ -12,6 +12,7 @@
 // on a click train and read the clicks back on the grid.
 
 import { beatToSec, sortMarkers, type WarpMarker } from './warp'
+import { beatsSpan, textureSpan, DEFAULT_BEATS, DEFAULT_TEXTURE, type WarpModeName, type BeatsParams, type TextureParams } from './warp-modes'
 
 export interface BufferLike {
   sampleRate: number
@@ -28,10 +29,14 @@ export interface WarpRenderOptions {
   clipBeats: number
   /** Wall seconds a beat span takes at the song's tempo (through the tempo map). */
   wallSeconds: (beat0: number, beat1: number) => number
-  mode: 'repitch' | 'stretch'
+  mode: WarpModeName
   makeBuffer: (channels: number, frames: number, sampleRate: number) => BufferLike
-  /** The pitch-keeping stretcher (WSOLA): a buffer and a factor (>1 shortens). Needed for 'stretch'. */
+  /** The pitch-keeping stretcher (WSOLA): a buffer and a factor (>1 shortens). Needed for 'stretch' and 'tones'. */
   stretch?: (buf: BufferLike, factor: number) => BufferLike
+  /** Beats mode: where to cut, in seconds of the sample (transients, or grid divisions through the map), and how to fill gaps. */
+  beats?: { cutsSec: number[]; params: BeatsParams }
+  /** Texture mode: grain and flux; the seed keeps a render the same everywhere. */
+  texture?: { params: TextureParams; seed: string }
 }
 
 /** Linear-interpolation resample of src[from..to) into `outFrames` frames. */
@@ -88,7 +93,16 @@ export function renderWarped(src: BufferLike, o: WarpRenderOptions): BufferLike 
     const frames = Math.round(sp.wall * sr)
     if (frames <= 0) continue
     const from = Math.round(sp.sec0 * sr), to = Math.round(sp.sec1 * sr)
-    if (o.mode === 'stretch' && o.stretch && to - from > 64) {
+    if (o.mode === 'beats') {
+      const cuts = (o.beats?.cutsSec ?? []).map(s => Math.round(s * sr))
+      for (let ch = 0; ch < src.numberOfChannels; ch++) {
+        beatsSpan(src.getChannelData(ch), from, to, Math.min(frames, totalFrames - at), out.getChannelData(ch), at, cuts, o.beats?.params ?? DEFAULT_BEATS, sr)
+      }
+    } else if (o.mode === 'texture') {
+      for (let ch = 0; ch < src.numberOfChannels; ch++) {
+        textureSpan(src.getChannelData(ch), from, to, Math.min(frames, totalFrames - at), out.getChannelData(ch), at, o.texture?.params ?? DEFAULT_TEXTURE, sr, `${o.texture?.seed ?? ''}:${sp.beat0}:${ch}`)
+      }
+    } else if ((o.mode === 'stretch' || o.mode === 'tones') && o.stretch && to - from > 64) {
       const factor = (to - from) / frames
       const stretched = Math.abs(factor - 1) < 0.002 ? slice(src, from, to, o.makeBuffer) : o.stretch(slice(src, from, to, o.makeBuffer), factor)
       for (let ch = 0; ch < src.numberOfChannels; ch++) {

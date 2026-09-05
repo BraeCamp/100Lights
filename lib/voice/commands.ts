@@ -2387,7 +2387,7 @@ const COMMANDS: VoiceCommand[] = [
     group: 'Arrangement',
     what: 'Fade, level, reverse or loop an audio clip',
     say: ['fade in the vox take clip over a bar', 'fade out the vox take clip over two beats', 'reverse the vox take', 'loop the vox take clip', 'turn the vox take clip down to 60%',
-      'warp the vox take clip', 'set the vox take clip to complex mode', 'pitch the vox take clip up 3', 'the vox take clip is 90 bpm'],
+      'warp the vox take clip', 'set the vox take clip to complex mode', 'pitch the vox take clip up 3', 'the vox take clip is 90 bpm', 'put the vox take clip in beats mode'],
     match(w, ctx) {
       const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
       // ⚠️ A clip called "Drum loop" has "loop" in it, and "reverse the drum
@@ -2419,7 +2419,8 @@ const COMMANDS: VoiceCommand[] = [
       // word "clip": warp on / off, its mode, the pitch, the sample's own
       // tempo, the edge fade.
       const warpSaid = clipWord && /\bwarp(?:ed|ing)?\b/.test(rest) ? !/\b(?:un-?warp|stop|off|don't|do not|no longer)\b/.test(rest) : null
-      const modeM = clipWord ? /\b(re-?pitch|complex)\b/.exec(rest) : null
+      // The warp mode needs the word "mode" (or "warp") beside it — "beats" and "texture" mean other things alone.
+      const modeM = clipWord && /\bmode\b|\bwarp/.test(rest) ? /\b(re-?pitch|complex|beats|tones|texture)\b/.exec(rest) : null
       const pitchM = clipWord && /\b(?:pitch|tune)\b/.test(rest) ? /\b(up|down)\s+(?:by\s+)?(\d+(?:\.\d+)?)/.exec(rest) : null
       const bpmM = clipWord ? /(\d+(?:\.\d+)?)\s*bpm\b/.exec(rest) : null
       const fadeM = clipWord && /\b(?:edge|clip) fades?\b/.test(rest) ? !/\boff\b|\bno\b|\bstop\b/.test(rest) : null
@@ -2461,7 +2462,7 @@ const COMMANDS: VoiceCommand[] = [
       if (loopSaid) input.loop = !/\b(?:stop|unloop|don't|do not|no longer|off)\b/.test(rest)
       if (gainM) input.gain = `${gainM[1]}%`
       if (warpSaid != null) input.warp = warpSaid
-      if (modeM) input.warpMode = /complex/.test(modeM[1]) ? 'complex' : 'repitch'
+      if (modeM) input.warpMode = /complex/.test(modeM[1]) ? 'complex' : /beats/.test(modeM[1]) ? 'beats' : /tones/.test(modeM[1]) ? 'tones' : /texture/.test(modeM[1]) ? 'texture' : 'repitch'
       if (pitchM) input.transpose = (pitchM[1] === 'down' ? -1 : 1) * Number(pitchM[2])
       if (bpmM) input.segBpm = Number(bpmM[1])
       if (fadeM != null) input.fade = fadeM

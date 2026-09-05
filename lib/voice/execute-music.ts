@@ -4530,7 +4530,12 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (typeof i.loop === 'boolean') { patch.loopEnabled = i.loop; said.push(i.loop ? 'looping' : 'not looping') }
       // The Sample Editor's settings (lib/sample-editor.ts): warp, its mode, pitch, Seg BPM, the edge fade.
       if (typeof i.warp === 'boolean') { patch.warpEnabled = i.warp; said.push(i.warp ? 'warped to the song tempo' : 'playing at its own tempo') }
-      if (i.warpMode != null) { const m = /complex|stretch/.test(str(i.warpMode).toLowerCase()) ? 'stretch' : 'repitch'; patch.warpMode = m; patch.warpEnabled = true; said.push(m === 'stretch' ? 'Complex mode' : 'Re-Pitch mode') }
+      if (i.warpMode != null) {
+        const w = str(i.warpMode).toLowerCase()
+        const m = /complex|stretch/.test(w) ? 'stretch' : /beat/.test(w) ? 'beats' : /tone/.test(w) ? 'tones' : /texture|grain/.test(w) ? 'texture' : 'repitch'
+        patch.warpMode = m; patch.warpEnabled = true
+        said.push(`${m === 'stretch' ? 'Complex' : m === 'repitch' ? 'Re-Pitch' : m[0].toUpperCase() + m.slice(1)} mode`)
+      }
       if (i.transpose != null) { const st = spokenNumber(i.transpose as string); if (st == null) return fail('Say how many semitones.'); patch.pitchSemitones = clamp(Math.round(st), -24, 24); said.push(`pitch ${st > 0 ? '+' : ''}${Math.round(st)} st`) }
       if (i.detune != null) { const ct = spokenNumber(i.detune as string); if (ct == null) return fail('Say how many cents.'); patch.pitchCents = clamp(Math.round(ct), -100, 100); said.push(`detune ${ct > 0 ? '+' : ''}${Math.round(ct)} ct`) }
       if (typeof i.fade === 'boolean') { patch.clipFade = i.fade; said.push(i.fade ? 'edge fades on' : 'edge fades off') }

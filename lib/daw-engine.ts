@@ -29,8 +29,10 @@ import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from 
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, sampleAutomationAt, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
-import { validMarkers, markersKey } from './warp'
+import { validMarkers, markersKey, warpStraight, beatToSec } from './warp'
 import { renderWarped } from './warp-render'
+import { DEFAULT_BEATS, DEFAULT_TONES, DEFAULT_TEXTURE, type WarpModeName } from './warp-modes'
+import { detectOnsets, monoOf } from './onsets'
 import { libraryGetByFolder, libraryGetById } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
 import { resampleBySemitones } from './audio-resample'
@@ -260,6 +262,8 @@ export class DawEngine extends EventTarget {
   varispeedRate = 1.0
   bufferCache = new Map<string, AudioBuffer>()
   private stretchedBufferCache = new Map<string, AudioBuffer>()
+  /** Detected transients per clip buffer — Beats mode cuts at them (lib/warp-modes.ts). */
+  private _transientCache = new Map<string, { len: number; t: number[] }>()
   private pitchShiftCache      = new Map<string, AudioBuffer>()
   private boomerangCache       = new Map<string, AudioBuffer>()
 
@@ -3419,23 +3423,52 @@ export class DawEngine extends EventTarget {
       boomerangActive = true
     }
 
-    const warpMarkers = clip.warpEnabled && !clip.reverse ? validMarkers(clip.warpMarkers) : null
+    // The warp mode (lib/warp-modes.ts). Re-Pitch and Complex without markers
+    // keep their direct paths below; every other case — markers, or Beats /
+    // Tones / Texture — renders through the map, straight when there are no
+    // markers.
+    const warpModeName = (clip.warpMode ?? 'repitch') as WarpModeName
+    const warpMarkers = clip.warpEnabled && !clip.reverse
+      ? (validMarkers(clip.warpMarkers) ?? (warpModeName === 'beats' || warpModeName === 'tones' || warpModeName === 'texture'
+          ? validMarkers(warpStraight(clip.trimStart, buf.duration - clip.trimEnd, clip.durationBeats)) : null))
+      : null
     if (warpMarkers) {
       // Warp markers (lib/warp.ts): the sample rendered through its map ONCE
       // (lib/warp-render.ts), span by span into the wall seconds each span's
       // beats take through the tempo map, then played like any other buffer —
       // the fades, the drawn effects and the seek arithmetic below stay as
-      // they are. Cached on the markers, the mode and the wall times, so a
-      // tempo change or a moved marker re-renders and nothing else does.
-      const mode = clip.warpMode === 'stretch' ? 'stretch' : 'repitch'
+      // they are. Cached on the markers, the mode, its parameters and the wall
+      // times, so a tempo change or a moved marker re-renders and nothing else does.
+      const mode = warpModeName
       const wall = (b0: number, b1: number) => this._spanSeconds(clip.startBeat + b0, clip.startBeat + b1)
-      const cacheKey = `${clip.id}:warp:${mode}:${markersKey(warpMarkers)}:${clip.durationBeats.toFixed(4)}:${clipDuration.toFixed(4)}`
+      const beatsP = { ...DEFAULT_BEATS, ...(clip.warpBeats ?? {}) }
+      const tonesP = { ...DEFAULT_TONES, ...(clip.warpTones ?? {}) }
+      const textureP = { ...DEFAULT_TEXTURE, ...(clip.warpTexture ?? {}) }
+      // Beats cuts: the transients (detected once per buffer, plus any placed by hand), or grid divisions through the map.
+      let cutsSec: number[] = []
+      if (mode === 'beats') {
+        if (beatsP.preserve === 'transients') {
+          const cached = this._transientCache.get(clip.id)
+          const detected = cached && cached.len === buf.length ? cached.t : detectOnsets(monoOf(buf), buf.sampleRate, { minGapMs: 40 }).map(o => o.t)
+          if (!cached || cached.len !== buf.length) this._transientCache.set(clip.id, { len: buf.length, t: detected })
+          cutsSec = [...new Set([...detected, ...(clip.transients ?? [])])]
+        } else {
+          const g = beatsP.preserve
+          for (let b = g; b < clip.durationBeats - 1e-6; b += g) cutsSec.push(beatToSec(warpMarkers, b))
+        }
+      }
+      const paramsKey = mode === 'beats' ? `${String(beatsP.preserve)}:${beatsP.loop}:${beatsP.envelope}:${cutsSec.length}` : mode === 'tones' ? `${tonesP.grainMs}` : mode === 'texture' ? `${textureP.grainMs}:${textureP.flux}` : ''
+      const cacheKey = `${clip.id}:warp:${mode}:${paramsKey}:${markersKey(warpMarkers)}:${clip.durationBeats.toFixed(4)}:${clipDuration.toFixed(4)}`
       let warped = this.stretchedBufferCache.get(cacheKey)
       if (!warped) {
         warped = renderWarped(buf, {
           markers: warpMarkers, clipBeats: clip.durationBeats, wallSeconds: wall, mode,
           makeBuffer: (ch, n, sr) => this.ctx.createBuffer(ch, n, sr),
-          stretch: (b, f) => wsola(b as AudioBuffer, f),
+          // ⚠️ wsola's factor SCALES THE LENGTH (0.5 halves it); the renderer's
+          // factor is source over target (0.5 = twice as long). Invert.
+          stretch: (b, f) => wsola(b as AudioBuffer, 1 / f, mode === 'tones' ? tonesP.grainMs : 40),
+          beats: { cutsSec, params: beatsP },
+          texture: { params: textureP, seed: clip.id },
         }) as AudioBuffer
         this.stretchedBufferCache.set(cacheKey, warped)
       }
@@ -3456,7 +3489,11 @@ export class DawEngine extends EventTarget {
         let stretched = this.stretchedBufferCache.get(cacheKey)
         if (!stretched) {
           const trimmed = extractTrimmed(buf, clip.trimStart, clip.trimEnd)
-          stretched = wsola(trimmed, stretchFactor)
+          // ⚠️ wsola's factor scales the LENGTH: a 2 s sample in a 4 s clip
+          // (stretchFactor 0.5, the playback rate) needs the output twice as
+          // long — factor 2. This passed the rate and made every Complex clip
+          // the wrong length in the other direction.
+          stretched = wsola(trimmed, 1 / stretchFactor)
           this.stretchedBufferCache.set(cacheKey, stretched)
         }
         playBuf        = stretched

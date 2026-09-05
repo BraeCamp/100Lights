@@ -805,7 +805,7 @@ export const MUSIC_TOOLS = [
         reverse: { type: 'boolean', description: 'Play the audio backwards (true) or forwards (false).' },
         loop: { type: 'boolean', description: 'Repeat the clip\'s content across its length.' },
         warp: { type: 'boolean', description: 'Audio only: Warp on makes the clip follow the song\'s tempo; off plays it at its own.' },
-        warpMode: { type: 'string', enum: ['repitch', 'complex'], description: 'Audio only: repitch changes speed and pitch together (turntable); complex keeps the pitch while stretching.' },
+        warpMode: { type: 'string', enum: ['repitch', 'complex', 'beats', 'tones', 'texture'], description: 'Audio only: beats slices at the transients and plays each hit as recorded (drums); tones stretches with a long grain (vocals, bass); texture is granular (pads, noise); repitch changes speed and pitch together (turntable); complex keeps the pitch while stretching (full mixes).' },
         transpose: { type: 'number', description: 'Audio only: pitch shift in semitones — "pitch the vocal clip up 3".' },
         detune: { type: 'number', description: 'Audio only: fine pitch in cents.' },
         segBpm: { type: 'number', description: 'Audio only: the sample\'s own tempo (Seg. BPM) — "the vocal clip is 120 bpm"; the clip\'s length follows the sample at that tempo.' },

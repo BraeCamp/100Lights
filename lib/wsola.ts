@@ -1,11 +1,17 @@
 // WSOLA (Waveform Similarity Overlap-Add) time stretching.
 // Stretches an AudioBuffer by stretchFactor without changing pitch.
 // stretchFactor > 1 = slower, < 1 = faster.
-export function wsola(buf: AudioBuffer, stretchFactor: number): AudioBuffer {
+/**
+ * Time-stretch keeping the pitch. `winMs` is the grain: 40 ms is Complex's
+ * all-round setting; Tones mode (lib/warp-modes.ts) asks for a larger one
+ * on pitched, monophonic material, where a longer grain keeps the pitch
+ * clearer at the cost of blurring attacks.
+ */
+export function wsola(buf: AudioBuffer, stretchFactor: number, winMs = 40): AudioBuffer {
   if (Math.abs(stretchFactor - 1) < 0.002) return buf
 
   const sr        = buf.sampleRate
-  const winSize   = Math.max(64, Math.round(sr * 0.04))   // 40 ms window
+  const winSize   = Math.max(64, Math.round(sr * (Math.max(5, Math.min(400, winMs)) / 1000)))
 
   // Buffer too short to WSOLA — return as-is and let the caller use plain playback
   if (buf.length <= winSize) return buf
