@@ -60,6 +60,7 @@ import { setSegBpm, slipByDrag, cropSample } from '../sample-editor'
 import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
 import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
 import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
+import { describePunch, punchArmed } from '../punch'
 import { describeFollow, type FollowAction } from '../follow-actions'
 import { plainWordIn, needsAsking, senseFromAnswer, defaultSense, describeSense, askText } from './plain-words'
 import {
@@ -4865,6 +4866,32 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (typeof i.autoWarpLong === 'boolean') { out.autoWarpLong = i.autoWarpLong; said.push(i.autoWarpLong ? 'long samples are auto-warped to the song tempo' : 'long samples are left as they are') }
       if (!said.length) return fail('Say what to change — how short samples land (one-shot, loop, auto), or whether long samples are auto-warped.')
       return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
+    }
+
+    // ── PUNCH IN / OUT — recording bounded by the loop brace (lib/punch.ts) ──
+    case 'set_punch': {
+      const next = {
+        punchIn:  typeof i.punchIn  === 'boolean' ? i.punchIn  : project.punchIn,
+        punchOut: typeof i.punchOut === 'boolean' ? i.punchOut : project.punchOut,
+        loopStart: project.loopStart,
+        loopEnd: project.loopEnd,
+      }
+      if (typeof i.punchIn !== 'boolean' && typeof i.punchOut !== 'boolean') {
+        return fail('Say which — punch in, punch out, or both.')
+      }
+      const action: Record<string, unknown> = { type: 'SET_PUNCH' }
+      if (typeof i.punchIn  === 'boolean') action.punchIn  = i.punchIn
+      if (typeof i.punchOut === 'boolean') action.punchOut = i.punchOut
+      // ⚠️ Said out loud rather than just switched on, because punching without
+      // a brace over the right bars records nothing and looks like it worked.
+      const bars = describePunch(next, project.timeSignatureNum || 4)
+      const noBrace = punchArmed(next) && !(project.loopEnd > project.loopStart)
+      return {
+        actions: [action],
+        say: noBrace
+          ? `${bars}, but the loop brace is empty — set the loop over the part you want to record.`
+          : `${bars}.`,
+      }
     }
 
     // ── WARP MARKERS on an audio clip (lib/warp.ts) ──────────────────────

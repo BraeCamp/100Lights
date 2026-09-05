@@ -63,6 +63,7 @@ const CALLS = {
   import_settings: { shortSamples: 'loop' },
   audio_to_midi: { target: 'drums clip', op: 'slice' },
   set_launch: { target: 'session take', mode: 'gate' },
+  set_punch: { punchIn: true, punchOut: true },
   sound_like: { target: 'pad', like: 'fuzzier', sense: 'muffled' },
   adjust_it: { how: 'less', size: 'little' },
   move_clips: { by: { bars: 1 } },

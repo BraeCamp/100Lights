@@ -57,6 +57,10 @@ export const KEYMAP: KeyBinding[] = [
   // ── Transport & Global ─────────────────────────────────────────────────
   { id: 'transport.play', keys: 'Space', scope: 'global', group: 'Transport & Global', action: 'Play / Stop', command: 'audio.transport.play' },
   { id: 'transport.record', keys: 'R', scope: 'global', group: 'Transport & Global', action: 'Start / stop recording' },
+  // Punch in / out have no default key in Live — they are control-bar buttons.
+  // These are ours, next to Record and free on every layout.
+  { id: 'transport.punchIn', keys: '⌥R', scope: 'global', group: 'Transport & Global', action: 'Punch in — the recorder waits for the loop brace', modes: ['music'], command: 'transport.punchIn' },
+  { id: 'transport.punchOut', keys: '⇧⌥R', scope: 'global', group: 'Transport & Global', action: 'Punch out — the recorder stops at the end of the brace', modes: ['music'], command: 'transport.punchOut' },
   { id: 'transport.metronome', keys: 'M', scope: 'global', group: 'Transport & Global', action: 'Toggle metronome', command: 'audio.transport.metronome' },
   { id: 'transport.back', keys: '←', scope: 'global', group: 'Transport & Global', action: 'Move playhead ±1 beat (no clips selected)', display: '← / →' },
   { id: 'transport.forward', keys: '→', scope: 'global', group: 'Transport & Global', action: 'Move playhead ±1 beat (no clips selected)', hidden: true },

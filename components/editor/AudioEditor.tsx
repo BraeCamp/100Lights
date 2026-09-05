@@ -2615,6 +2615,14 @@ export default function AudioEditor(props: AudioEditorProps) {
       case 'transport.metronome':
         setMetronome(prev => { const next = !prev; engine.setMetronome(next); return next })
         return true
+      // Punch in / out (lib/punch.ts) — project state, so it goes through the
+      // reducer here rather than through the transport's record flow.
+      case 'transport.punchIn':
+        dispatch({ type: 'SET_PUNCH', punchIn: !projectRef.current.punchIn })
+        return true
+      case 'transport.punchOut':
+        dispatch({ type: 'SET_PUNCH', punchOut: !projectRef.current.punchOut })
+        return true
       case 'transport.back': setPosition(Math.max(0, engine.currentBeat - 1)); return true
       case 'transport.forward': setPosition(engine.currentBeat + 1); return true
       case 'edit.undo': doUndo(); return true

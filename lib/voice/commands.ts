@@ -2515,6 +2515,39 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_punch',
+    tool: 'set_punch',
+    group: 'Transport',
+    what: 'Recording that starts and stops at the loop brace by itself',
+    say: ['punch in at the loop', 'stop recording at the end of the loop', 'record only inside the loop', 'turn punch in off'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ "Punch" on its own is not enough — "punch up the drums" is a mix
+      // note, and "punchy" is a sound. What makes this the transport's is the
+      // in/out word, or a sentence about recording bounded by the loop.
+      const punchIn  = /\bpunch(?:ing|es)?[- ]?in\b/.test(raw)
+      const punchOut = /\bpunch(?:ing|es)?[- ]?out\b/.test(raw)
+      // The same thing said without the jargon.
+      const insideLoop = /\brecord(?:ing)?\b[\w\s]*\b(?:only )?(?:in|inside|within|between)\b[\w\s]*\bloop\b/.test(raw)
+      const startAtLoop = /\bstart(?:s)? recording\b[\w\s]*\bloop\b/.test(raw)
+      const stopAtLoop  = /\bstop(?:s)? recording\b[\w\s]*\b(?:end of the |at the end of the )?loop\b/.test(raw)
+      if (!punchIn && !punchOut && !insideLoop && !startAtLoop && !stopAtLoop) return null
+
+      // "off", "stop", "don't", "no longer" turn it off; anything else on.
+      const off = /\b(?:off|no|not|don'?t|stop|disable|turn off|cancel|clear)\b/.test(
+        // ⚠️ Only the words AROUND the punch phrase count. "Stop recording at
+        // the end of the loop" is switching punch-out ON, and reading its own
+        // "stop" as a negation would turn off the thing being asked for.
+        raw.replace(/\bstop(?:s)? recording\b/g, ' ').replace(/\bpunch[- ]?out\b/g, ' '),
+      )
+      const input: Record<string, boolean> = {}
+      if (punchIn || insideLoop || startAtLoop) input.punchIn = !off
+      if (punchOut || insideLoop || stopAtLoop) input.punchOut = !off
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_punch', input }], confidence: 0.95 }
+    },
+  },
+  {
     id: 'audio_to_midi',
     tool: 'audio_to_midi',
     group: 'Arrangement',

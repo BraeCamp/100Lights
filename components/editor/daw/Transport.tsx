@@ -20,13 +20,14 @@ const PluginMenu = nextDynamic(() => import('./PluginMenu'), { ssr: false })
 // so it still sits in the transport bar exactly as before.
 import { setLightSlot } from '@/lib/voice/light-slot'
 import { createPortal } from 'react-dom'
-import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, Zap, RotateCcw } from 'lucide-react'
+import { Play, Square, Circle, SkipBack, Repeat, Gauge, Volume2, Camera, Video, ChevronDown, History, Upload, X, Headphones, Zap, RotateCcw, LogIn, LogOut } from 'lucide-react'
 import { TbMetronome } from 'react-icons/tb'
 import { apIcon, apIconOn, apDivider } from './apollo-chrome'
 import { captureScreenshot, screenshotSupported } from '@/lib/screen-recorder'
 import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject, type DawAction } from '@/lib/daw-state'
 import { tempoSegments, tempoAt, clampBpm } from '@/lib/tempo-map'
+import { planPunch, describePunch, punchArmed } from '@/lib/punch'
 import type { DawProject } from '@/lib/daw-types'
 import { openProjectInStudio } from '@/lib/open-in-studio'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
@@ -353,12 +354,26 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         await engine.countIn(countInBars * project.timeSignatureNum, tempoAt(engine.currentBeat, tempoSegments(project)))
         setMicError('')
       }
+      // Punch in / out (lib/punch.ts). With a punch armed the engine drives the
+      // recorder off the transport clock; this only opens the inputs and rolls.
+      const punch = planPunch(project, engine.currentBeat, project.timeSignatureNum)
+      if (punch.refused) {
+        setMicError(punch.refused)
+        setTimeout(() => setMicError(''), 8000)
+        return
+      }
       const armedTracks = project.tracks.filter(t => t.type === 'audio' && t.armed && t.inputSource)
       engine.setPendingRecordFx(recFx)
       await Promise.all(armedTracks.map(t => engine.startMicInput(t.id, t.inputSource ?? 'mic')))
+      if (punch.startAt != null || punch.stopAt != null) engine.armPunch(punch)
+      else engine.disarmPunch()
       if (!playing) engine.play()
-      await engine.startRecording()
-      setMicError('')
+      // A punch-in that has not come round yet: the tick starts the take at the
+      // brace. Anything else rolls now — including a punch-out on its own.
+      if (punch.startAt == null) await engine.startRecording()
+      setMicError(punch.startAt != null
+        ? `Waiting for bar ${Math.floor(punch.startAt / (project.timeSignatureNum || 4)) + 1} — punching in…`
+        : '')
     } catch (err) {
       const msg = err instanceof DOMException && err.name === 'NotAllowedError'
         ? 'Mic permission denied — allow access in system settings'
@@ -369,8 +384,18 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   }
 
   async function handleRecord() {
+    // Armed and waiting for the punch-in bar: pressing record again calls it off,
+    // rather than dropping into the setup box behind a take that is about to start.
+    if (!recording && engine.punchWaiting) {
+      engine.disarmPunch()
+      engine.stopAllMicInputs()
+      if (playing) engine.stop()
+      setMicError('')
+      return
+    }
     if (recording) {
       if (playing) engine.stop()
+      engine.disarmPunch()
       await engine.stopRecording()
     } else if (recordSetup) {
       closeRecordSetup()
@@ -587,6 +612,15 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       keywords: 'cycle everything full span entire repeat',
       when: () => project.arrangementClips.length > 0,
       run: handleLoopFullSpan },
+    // Punch in / out (lib/punch.ts) — the recorder starting and stopping at the
+    // loop brace by itself, so a fix in the middle of a take cannot eat what is
+    // either side of it.
+    { id: 'transport.punchIn', group: 'Transport', label: project.punchIn ? 'Punch in off — record as soon as you press record' : 'Punch in — start recording at the loop brace',
+      keywords: 'punch in record start brace loop drop fix overdub replace',
+      run: () => dispatch({ type: 'SET_PUNCH', punchIn: !project.punchIn }) },
+    { id: 'transport.punchOut', group: 'Transport', label: project.punchOut ? 'Punch out off — record until you press stop' : 'Punch out — stop recording at the end of the loop brace',
+      keywords: 'punch out record stop brace loop end fix overdub replace',
+      run: () => dispatch({ type: 'SET_PUNCH', punchOut: !project.punchOut }) },
     // Count-in is four unlabelled number buttons inside the record setup box —
     // you cannot find it unless you are already recording.
     ...[0, 1, 2].filter(b => b !== countInBars).map(b => ({
@@ -632,7 +666,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     { id: 'transport.historyrec', group: 'Share', label: 'Record how this project gets built',
       keywords: 'history timelapse replay capture session process',
       run: () => { setRecorderMode('history'); setShowRecorder(true) } },
-  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, countInBars, loopToolArmed])
+  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, countInBars, loopToolArmed, project.punchIn, project.punchOut])
 
   // ── Music-only handlers ─────────────────────────────────────────────────────
 
@@ -961,6 +995,28 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         data-help-id="loop"
       >
         <Repeat size={13} />
+      </button>
+
+      {/* Punch in / out — recording that starts and stops at the loop brace by
+          itself, so a fix in the middle of a take never risks what is either
+          side of it (lib/punch.ts). */}
+      <button
+        style={project.punchIn ? active : base}
+        onClick={() => dispatch({ type: 'SET_PUNCH', punchIn: !project.punchIn })}
+        title={`Punch in — the recorder waits for the start of the loop brace. ${describePunch(project, project.timeSignatureNum)}.`}
+        data-help-id="punch-in"
+        aria-pressed={Boolean(project.punchIn)}
+      >
+        <LogIn size={13} />
+      </button>
+      <button
+        style={project.punchOut ? active : base}
+        onClick={() => dispatch({ type: 'SET_PUNCH', punchOut: !project.punchOut })}
+        title={`Punch out — the recorder stops at the end of the loop brace. ${describePunch(project, project.timeSignatureNum)}.`}
+        data-help-id="punch-out"
+        aria-pressed={Boolean(project.punchOut)}
+      >
+        <LogOut size={13} />
       </button>
 
       {/* Performance FX — parity with the mobile ⚡ hold-FX */}

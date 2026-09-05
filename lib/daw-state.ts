@@ -74,6 +74,7 @@ export type DawAction =
   | { type: 'PATCH_PROJECT'; patch: Partial<DawProject> }
   | { type: 'SET_LOOP'; start: number; end: number }
   | { type: 'SET_LOOP_ENABLED'; enabled: boolean }
+  | { type: 'SET_PUNCH'; punchIn?: boolean; punchOut?: boolean }
   | { type: 'SET_MASTER_VOLUME'; volume: number }
   | { type: 'SET_PROJECT_NAME'; name: string }
   // MIDI notes
@@ -658,6 +659,14 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'SET_LOOP_ENABLED':
       return { ...project, loopEnabled: action.enabled }
+
+    // Punch in / out both hang off the loop brace (lib/punch.ts).
+    case 'SET_PUNCH':
+      return {
+        ...project,
+        ...(action.punchIn  !== undefined ? { punchIn:  action.punchIn  } : {}),
+        ...(action.punchOut !== undefined ? { punchOut: action.punchOut } : {}),
+      }
 
     case 'SET_MASTER_VOLUME':
       return { ...project, masterVolume: Math.max(0, Math.min(1, action.volume)) }

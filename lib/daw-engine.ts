@@ -410,6 +410,10 @@ export class DawEngine extends EventTarget {
   swing = 0
   private _beatsPerBar = 4
 
+  /** An armed punch: where the recorder starts and stops by itself (lib/punch.ts).
+   *  Checked on the scheduler tick so it lands on the same clock as the notes. */
+  private _punch: { startAt: number | null; stopAt: number | null } | null = null
+
   private _startCtxTime = 0
   private _startBeat    = 0
 
@@ -2818,6 +2822,9 @@ export class DawEngine extends EventTarget {
     }
 
     const now          = offline ? this._renderNow! : this.currentBeat
+    // Punch in / out: the recorder starting and stopping by itself at the brace.
+    // Live only — an offline render is not a performance.
+    if (!offline && this._punch) this._checkPunch(now)
     const contextNow   = offline ? this._renderCtxBase : this.ctx.currentTime
     const aheadBeats   = offline ? this._renderLookahead : this._aheadBeats(now, SCHEDULE_LOOKAHEAD)
     // Crossing into a section at another bpm retimes synced delays, Apollo's
@@ -5238,6 +5245,43 @@ export class DawEngine extends EventTarget {
       }
     }
     node.connect(ctx.destination)
+  }
+
+  /**
+   * Hand the engine a punch plan (lib/punch.ts) and let it drive the recorder.
+   *
+   * The check runs on the scheduler tick rather than a timer of its own so the
+   * punch lands on the same clock as the notes — a `setInterval` would drift
+   * against the transport under exactly the load a take puts on the machine,
+   * and a punch that is a beat late has ruined the take it was there to save.
+   */
+  armPunch(plan: { startAt: number | null; stopAt: number | null }): void {
+    this._punch = { ...plan }
+  }
+
+  disarmPunch(): void { this._punch = null }
+
+  /** The armed punch, for the transport to show what is about to happen. */
+  get punch(): { startAt: number | null; stopAt: number | null } | null {
+    return this._punch ? { ...this._punch } : null
+  }
+
+  /** Waiting on a punch-in that has not come round yet. */
+  get punchWaiting(): boolean {
+    return this._punch?.startAt != null && !this.isRecording
+  }
+
+  private _checkPunch(now: number): void {
+    const p = this._punch
+    if (!p) return
+    if (p.startAt != null && !this.isRecording && now >= p.startAt) {
+      p.startAt = null              // consumed — a loop pass must not re-arm it
+      void this.startRecording()
+    }
+    if (p.stopAt != null && this.isRecording && now >= p.stopAt) {
+      this._punch = null
+      void this.stopRecording()
+    }
   }
 
   async startRecording(): Promise<void> {

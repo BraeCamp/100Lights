@@ -114,6 +114,8 @@ const EXPECTED = [
   ['insert silence across the song', ['insert silence']],
   ['delete time across the song', ['delete time']],
   ['duplicate time across the song', ['duplicate time']],
+  ['punch in at the loop brace', ['punch in']],
+  ['punch out at the end of the brace', ['punch out']],
   ['crossfader curve hard cut', ['hard cut']],
   ['crossfader curve slow fade', ['slow fade']],
   ['follow action next',    ['follow action: play the next']],

@@ -122,8 +122,13 @@ check('a released momentary key is found even when its modifiers already came up
 })
 
 check('every palette command a key names exists in the editor source', () => {
-  const src = readFileSync(new URL('../../components/editor/AudioEditor.tsx', import.meta.url), 'utf8')
-    + readFileSync(new URL('../../components/editor/daw/ArrangementView.tsx', import.meta.url), 'utf8')
+  // ⚠️ Every file that registers palette commands a key can name has to be in
+  // this list, or the check passes by not looking. Transport.tsx registers its
+  // own (recording, looping, punch, count-in) precisely because the palette
+  // cannot reach them without reimplementing the flow — see the comment above
+  // its useRegisterCommands.
+  const src = ['components/editor/AudioEditor.tsx', 'components/editor/daw/ArrangementView.tsx', 'components/editor/daw/Transport.tsx']
+    .map(f => readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8')).join('\n')
   for (const b of KEYMAP) if (b.command) assert.ok(src.includes(`id: '${b.command}'`), `${b.id} → ${b.command} not registered`)
 })
 

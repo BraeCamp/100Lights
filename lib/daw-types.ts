@@ -1133,6 +1133,10 @@ export interface DawProject {
   loopStart: number
   loopEnd: number
   loopEnabled: boolean
+  /** Wait for the loop brace before the recorder starts (lib/punch.ts). */
+  punchIn?: boolean
+  /** Stop the recorder at the end of the loop brace. */
+  punchOut?: boolean
   masterVolume: number
   automationLanes: AutomationLane[]
   /** LFOs on tracks, driving parameters every tick (see Modulator). */

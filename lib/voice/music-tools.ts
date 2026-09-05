@@ -867,6 +867,18 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_punch',
+    description:
+      'RECORDING THAT STARTS AND STOPS AT THE LOOP BRACE BY ITSELF (Live\'s Punch In / Punch Out) — "punch in at the loop" (punchIn true: the recorder waits for the start of the brace, so you can play along from a few bars early), "stop recording at the end of the loop" (punchOut true), "record only inside the loop" / "punch in and out" (both true), "turn punch in off" (punchIn false). The loop brace IS the punch region. This only decides WHEN a take would begin and end — it never starts one.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        punchIn: { type: 'boolean', description: 'Wait for the start of the loop brace before the recorder starts.' },
+        punchOut: { type: 'boolean', description: 'Stop the recorder at the end of the loop brace.' },
+      },
+    },
+  },
+  {
     name: 'audio_to_midi',
     description:
       'AN AUDIO CLIP TO MIDI, on a NEW track beside it — the audio stays. "Slice the drum loop clip to a new midi track" (op slice: every transient — or warp marker, or grid step, `per` — becomes a pad of a new drum track, and a MIDI clip plays the pads where the slices sit). "Convert the piano clip to midi" / "…the piano clip\'s harmony to midi" (harmony: every voice heard), "convert the vocal clip\'s melody to midi" (melody: one line), "convert the drums clip to midi drums" (drums: the attacks as kick, snare and hat). Local and instant.',
