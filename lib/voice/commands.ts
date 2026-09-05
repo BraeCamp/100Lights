@@ -1217,6 +1217,10 @@ const COMMANDS: VoiceCommand[] = [
       // because "turn the bass off" is the track (mute), not a clip. Read from
       // the raw sentence: "on" and "off" are filler words the token list drops.
       const raw = w.raw.toLowerCase()
+      // ⚠️ A literal look first. w.has() bends every word of the sentence
+      // against every candidate by edit distance; on a long sentence, three
+      // rules doing that pushed the whole read past its 25 ms budget.
+      if (!/activat|disabl|enabl|park|\b(?:turn|switch|bring)\b/.test(raw)) return null
       const off = w.has('deactivate', 'disable') || w.exact('park')
         || /\b(?:turn|switch)\b[^.]*\bclip\b[^.]*\boff\b/.test(raw)
       const on = w.has('activate', 'reactivate', 'enable') || w.exact('unpark')
@@ -1403,6 +1407,7 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Delay compensation on or off',
     say: ['turn delay compensation off', 'turn latency compensation on'],
     match(w) {
+      if (!/compensat|\bpdc\b/.test(w.raw.toLowerCase())) return null
       if (!w.has('compensation', 'compensate', 'pdc')) return null
       if (!w.has('delay', 'latency', 'plugin', 'plug-in', 'pdc')) return null
       const raw = w.raw.toLowerCase()
@@ -1426,6 +1431,8 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Put an LFO on a parameter — a wobble, a tremolo, an auto-pan',
     say: ['put an LFO on the pad filter', 'wobble the bass 2 cutoff every eighth', 'take the LFO off the pad'],
     match(w, ctx) {
+      // A literal look before the fuzzy one — see set_clip_active.
+      if (!/lfo|wobbl|tremolo|modulat|auto-?pan|breath|puls/.test(w.raw.toLowerCase())) return null
       const lfo = w.has('lfo', 'wobble', 'wobbling', 'wobbly', 'tremolo', 'modulate', 'modulation', 'modulating', 'autopan', 'auto-pan', 'breathe', 'pulse', 'pulsing')
       if (!lfo) return null
       // "Automate" is the ramp; a length ("over 4 bars") is a ramp too.
