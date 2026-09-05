@@ -61,6 +61,7 @@ import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
 import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
 import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
 import { describePunch, punchArmed } from '../punch'
+import { recordGridLabel, type RecordGrid } from '../record-quantize'
 import { describeFollow, type FollowAction } from '../follow-actions'
 import { plainWordIn, needsAsking, senseFromAnswer, defaultSense, describeSense, askText } from './plain-words'
 import {
@@ -4866,6 +4867,28 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (typeof i.autoWarpLong === 'boolean') { out.autoWarpLong = i.autoWarpLong; said.push(i.autoWarpLong ? 'long samples are auto-warped to the song tempo' : 'long samples are left as they are') }
       if (!said.length) return fail('Say what to change — how short samples land (one-shot, loop, auto), or whether long samples are auto-warped.')
       return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
+    }
+
+    // ── RECORD QUANTIZATION — the grid a take lands on (lib/record-quantize.ts) ──
+    case 'set_record_quantize': {
+      const said = str(i.grid).toLowerCase().trim()
+      if (!said) return fail('Say a grid — quarters, eighths, sixteenths, or off.')
+      const both = /\band\b|\+|both/.test(said)
+      const triplet = /triplet|\bt\b|\/8t|\/16t/.test(said)
+      const grid: RecordGrid | null =
+        /\b(none|off|no)\b|straight timing/.test(said) ? 'none'
+        : /32|thirty/.test(said) ? 'thirtysecond'
+        : /16|sixteen/.test(said) ? (both ? 'sixteenthBoth' : triplet ? 'sixteenthT' : 'sixteenth')
+        : /\b8\b|eighth|1\/8/.test(said) ? (both ? 'eighthBoth' : triplet ? 'eighthT' : 'eighth')
+        : /\b4\b|quarter|1\/4|beat/.test(said) ? 'quarter'
+        : null
+      if (!grid) return fail(`I don't know the grid "${said}" — say quarters, eighths, eighth triplets, sixteenths, thirty-seconds, or off.`)
+      return {
+        actions: [{ type: 'SET_RECORD_QUANTIZE', grid }],
+        say: grid === 'none'
+          ? 'Record quantization off — takes keep their own timing.'
+          : `Recording onto ${recordGridLabel(grid)} from now on. Only the note starts move; the lengths stay as you play them.`,
+      }
     }
 
     // ── PUNCH IN / OUT — recording bounded by the loop brace (lib/punch.ts) ──

@@ -2515,6 +2515,35 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_record_quantize',
+    tool: 'set_record_quantize',
+    group: 'Transport',
+    what: 'The grid recorded notes land on as they are played',
+    say: ['quantize what I record to sixteenths', 'record quantization to eighth triplets', 'turn record quantization off'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ This has to be told apart from quantizing a clip AFTERWARDS, which
+      // is the far commoner request and a different tool. The difference is
+      // always in the tense: what I RECORD, what I PLAY, as I play — never a
+      // clip that already exists. A sentence naming a clip is not this.
+      const aboutRecording = /\brecord(?:ing|ed)? quanti[sz]/.test(raw)
+        || /quanti[sz]e?\b[\w\s]*\b(?:what|whatever) (?:i|we) (?:record|play|am playing)\b/.test(raw)
+        || /\bsnap\b[\w\s]*\b(?:what|whatever) (?:i|we) (?:record|play)\b/.test(raw)
+        || /\bquanti[sz]e?\b[\w\s]*\bas (?:i|we|you) (?:record|play)\b/.test(raw)
+      if (!aboutRecording) return null
+      const off = /\b(?:off|none|no|not|don'?t|stop|disable)\b/.test(raw)
+      const grid = off ? 'none'
+        : /32|thirty/.test(raw) ? (/triplet/.test(raw) ? '1/32' : '1/32')
+        : /16|sixteen/.test(raw) ? (/triplet/.test(raw) ? '1/16T' : '1/16')
+        : /eighth|\b1\/8\b|\b8th/.test(raw) ? (/triplet/.test(raw) ? '1/8T' : '1/8')
+        : /quarter|\b1\/4\b|\bbeat\b/.test(raw) ? '1/4'
+        : null
+      if (!grid) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_record_quantize', input: { grid } }], confidence: 0.95 }
+    },
+  },
+  {
     id: 'set_punch',
     tool: 'set_punch',
     group: 'Transport',

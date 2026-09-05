@@ -28,6 +28,7 @@ import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject, type DawAction } from '@/lib/daw-state'
 import { tempoSegments, tempoAt, clampBpm } from '@/lib/tempo-map'
 import { planPunch, describePunch, punchArmed } from '@/lib/punch'
+import { RECORD_GRIDS, DEFAULT_RECORD_GRID, recordGridLabel, type RecordGrid } from '@/lib/record-quantize'
 import type { DawProject } from '@/lib/daw-types'
 import { openProjectInStudio } from '@/lib/open-in-studio'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
@@ -539,6 +540,22 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
           ))}
         </div>
 
+        {/* Record Quantization (lib/record-quantize.ts) — the grid a take lands
+            on as it is played. Only note starts move; the lengths are kept. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Quantize as played</span>
+          <select
+            data-help-id="record-quantize"
+            aria-label="Record quantization"
+            value={project.recordQuantize ?? DEFAULT_RECORD_GRID}
+            title={`Recorded notes land on this grid as you play them. Only the starts move — the lengths are kept exactly as held. Now: ${recordGridLabel(project.recordQuantize)}.`}
+            onChange={e => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: e.target.value as RecordGrid })}
+            style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, background: '#1e1e1e', color: 'var(--text-primary)', border: '1px solid #2e2e2e', cursor: 'pointer' }}
+          >
+            {RECORD_GRIDS.map(g => <option key={g.id} value={g.id}>{g.label}</option>)}
+          </select>
+        </div>
+
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={closeRecordSetup}
             style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>
@@ -621,6 +638,37 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     { id: 'transport.punchOut', group: 'Transport', label: project.punchOut ? 'Punch out off — record until you press stop' : 'Punch out — stop recording at the end of the loop brace',
       keywords: 'punch out record stop brace loop end fix overdub replace',
       run: () => dispatch({ type: 'SET_PUNCH', punchOut: !project.punchOut }) },
+    // Record Quantization (lib/record-quantize.ts) — the grid a take lands on
+    // as it is played.
+    //
+    // ⚠️ Spelled out one command per grid rather than mapped over the list, for
+    // the same reason as the crossfader curves below: the discoverability check
+    // reads these labels literally out of the source, and a label built by
+    // interpolation is a label it cannot see. It is also what a person wants —
+    // you pick a grid, you do not step through nine.
+    { id: 'transport.recordQuantize.none', group: 'Transport', label: 'Record quantization: None — takes keep their own timing',
+      keywords: 'record quantization quantize grid snap timing as played input off none straight', when: () => (project.recordQuantize ?? DEFAULT_RECORD_GRID) !== 'none',
+      run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'none' }) },
+    { id: 'transport.recordQuantize.quarter', group: 'Transport', label: 'Record quantization: 1/4 — notes land on the beat as you play',
+      keywords: 'record quantization quantize grid snap timing as played input quarter beat', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'quarter' }) },
+    { id: 'transport.recordQuantize.eighth', group: 'Transport', label: 'Record quantization: 1/8 — notes land on eighths as you play',
+      keywords: 'record quantization quantize grid snap timing as played input eighth 8th', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'eighth' }) },
+    { id: 'transport.recordQuantize.eighthT', group: 'Transport', label: 'Record quantization: 1/8 triplets — notes land on eighth triplets',
+      keywords: 'record quantization quantize grid snap timing as played input eighth triplet swing', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'eighthT' }) },
+    { id: 'transport.recordQuantize.eighthBoth', group: 'Transport', label: 'Record quantization: 1/8 and 1/8T — whichever line is nearer',
+      keywords: 'record quantization quantize grid snap timing as played input eighth triplet both straight nearer', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'eighthBoth' }) },
+    { id: 'transport.recordQuantize.sixteenth', group: 'Transport', label: 'Record quantization: 1/16 — notes land on sixteenths as you play',
+      keywords: 'record quantization quantize grid snap timing as played input sixteenth 16th', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'sixteenth' }) },
+    { id: 'transport.recordQuantize.sixteenthT', group: 'Transport', label: 'Record quantization: 1/16 triplets — notes land on sixteenth triplets',
+      keywords: 'record quantization quantize grid snap timing as played input sixteenth triplet', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'sixteenthT' }) },
+    { id: 'transport.recordQuantize.sixteenthBoth', group: 'Transport', label: 'Record quantization: 1/16 and 1/16T — whichever line is nearer',
+      keywords: 'record quantization quantize grid snap timing as played input sixteenth triplet both straight nearer', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'sixteenthBoth' }) },
+    { id: 'transport.recordQuantize.thirtysecond', group: 'Transport', label: 'Record quantization: 1/32 — notes land on thirty-seconds',
+      keywords: 'record quantization quantize grid snap timing as played input thirty-second 32nd', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'thirtysecond' }) },
+    { id: 'transport.recordQuantize.half', group: 'Transport', label: 'Record quantization: 1/2 — notes land on half notes',
+      keywords: 'record quantization quantize grid snap timing as played input half two beats', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'half' }) },
+    { id: 'transport.recordQuantize.whole', group: 'Transport', label: 'Record quantization: 1/1 — notes land on the bar',
+      keywords: 'record quantization quantize grid snap timing as played input whole bar', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'whole' }) },
     // Count-in is four unlabelled number buttons inside the record setup box —
     // you cannot find it unless you are already recording.
     ...[0, 1, 2].filter(b => b !== countInBars).map(b => ({
@@ -666,7 +714,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     { id: 'transport.historyrec', group: 'Share', label: 'Record how this project gets built',
       keywords: 'history timelapse replay capture session process',
       run: () => { setRecorderMode('history'); setShowRecorder(true) } },
-  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, countInBars, loopToolArmed, project.punchIn, project.punchOut])
+  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, countInBars, loopToolArmed, project.punchIn, project.punchOut, project.recordQuantize])
 
   // ── Music-only handlers ─────────────────────────────────────────────────────
 

@@ -114,6 +114,8 @@ const EXPECTED = [
   ['insert silence across the song', ['insert silence']],
   ['delete time across the song', ['delete time']],
   ['duplicate time across the song', ['duplicate time']],
+  ['record quantization sixteenths', ['record quantization: 1/16']],
+  ['record quantization off', ['record quantization: none']],
   ['punch in at the loop brace', ['punch in']],
   ['punch out at the end of the brace', ['punch out']],
   ['crossfader curve hard cut', ['hard cut']],

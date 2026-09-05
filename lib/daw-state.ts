@@ -23,6 +23,7 @@ import { clipDefaultsFor, clipDefaultsKey } from './clip-defaults'
 import { followLeader, releaseLeader, setLeader, touchesLeader } from './tempo-leader'
 import { insertTime as insertArrangementTime, deleteTime as deleteArrangementTime, duplicateTime as duplicateArrangementTime } from './arrangement-time'
 import type { CrossfaderCurve } from './crossfader'
+import type { RecordGrid } from './record-quantize'
 
 // ── Action types ────────────────────────────────────────────────────────
 
@@ -75,6 +76,7 @@ export type DawAction =
   | { type: 'SET_LOOP'; start: number; end: number }
   | { type: 'SET_LOOP_ENABLED'; enabled: boolean }
   | { type: 'SET_PUNCH'; punchIn?: boolean; punchOut?: boolean }
+  | { type: 'SET_RECORD_QUANTIZE'; grid: RecordGrid }
   | { type: 'SET_MASTER_VOLUME'; volume: number }
   | { type: 'SET_PROJECT_NAME'; name: string }
   // MIDI notes
@@ -659,6 +661,10 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
 
     case 'SET_LOOP_ENABLED':
       return { ...project, loopEnabled: action.enabled }
+
+    // The grid recorded notes land on as they are played (lib/record-quantize.ts).
+    case 'SET_RECORD_QUANTIZE':
+      return { ...project, recordQuantize: action.grid }
 
     // Punch in / out both hang off the loop brace (lib/punch.ts).
     case 'SET_PUNCH':

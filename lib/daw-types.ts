@@ -5,6 +5,7 @@ import type { WavetablePatch } from './wavetable-synth'
 import type { MidiPreset } from './midi-presets'   // type-only — no runtime cycle
 import type { FollowSettings } from './follow-actions'   // type-only, as above
 import type { CrossfaderCurve } from './crossfader'      // type-only, as above
+import type { RecordGrid } from './record-quantize'      // type-only, as above
 
 // Re-exported synth engine patch types, used as instrument params
 export type Fm4OpInstrumentParams     = FMPatch
@@ -1137,6 +1138,9 @@ export interface DawProject {
   punchIn?: boolean
   /** Stop the recorder at the end of the loop brace. */
   punchOut?: boolean
+  /** Grid that recorded notes land on as they are played (lib/record-quantize.ts).
+   *  Absent = none: the take keeps its own timing. */
+  recordQuantize?: RecordGrid
   masterVolume: number
   automationLanes: AutomationLane[]
   /** LFOs on tracks, driving parameters every tick (see Modulator). */

@@ -867,6 +867,18 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_record_quantize',
+    description:
+      'THE GRID RECORDED NOTES LAND ON AS THEY ARE PLAYED (Live\'s Record Quantization) — "quantize what I record to sixteenths" (grid "1/16"), "record quantization to eighth triplets" ("1/8T"), "snap what I play to the beat" ("1/4"), "turn record quantization off" ("none"). NOT the same as quantizing a clip afterwards (that is `quantize_notes`): this changes what a take becomes at the moment it is captured, and only the note starts move.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        grid: { type: 'string', description: 'One of: none, 1/4, 1/8, 1/8T, 1/8+T, 1/16, 1/16T, 1/16+T, 1/32.' },
+      },
+      required: ['grid'],
+    },
+  },
+  {
     name: 'set_punch',
     description:
       'RECORDING THAT STARTS AND STOPS AT THE LOOP BRACE BY ITSELF (Live\'s Punch In / Punch Out) — "punch in at the loop" (punchIn true: the recorder waits for the start of the brace, so you can play along from a few bars early), "stop recording at the end of the loop" (punchOut true), "record only inside the loop" / "punch in and out" (both true), "turn punch in off" (punchIn false). The loop brace IS the punch region. This only decides WHEN a take would begin and end — it never starts one.',
