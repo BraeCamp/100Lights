@@ -71,6 +71,7 @@ export const KEYMAP: KeyBinding[] = [
   // here anyway — the help panel advertised it for the library while nothing
   // listened. Live’s browser is ⌘⌥B; so is ours.
   { id: 'view.library', keys: '⌘⌥B', scope: 'global', group: 'Transport & Global', action: 'Show / hide the sound library — hold to peek', modes: ['music'], momentary: true, command: 'audio.library' },
+  { id: 'view.draw', keys: 'B', scope: 'global', group: 'Transport & Global', action: 'Draw Mode — the pencil: tap to switch, hold to draw a run and let go', modes: ['music'], momentary: true },
   { id: 'view.inspect', keys: 'I', scope: 'global', group: 'Transport & Global', action: 'Inspect mode — hover anything for its name and details; hold to peek', momentary: true },
   { id: 'help.open', keys: 'H', also: ['?'], scope: 'global', group: 'Transport & Global', action: 'Open this help menu', display: 'H or ?' },
   { id: 'view.arrangementMixer', keys: '⌘⌥M', scope: 'global', group: 'Transport & Global', action: 'Show / hide the mixer under the arrangement', modes: ['music'] },

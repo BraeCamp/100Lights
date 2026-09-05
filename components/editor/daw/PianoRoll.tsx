@@ -21,6 +21,8 @@ import { libraryGetAll, type LibraryEntry } from '@/lib/sound-library'
 import { guessRootNote, samplePresetFor, isPickableSample, rootLabel, collapseNoteVariants, type PickableSound } from '@/lib/sample-preset'
 import { resampleBySemitones } from '@/lib/audio-resample'
 import { resolveKey } from '@/lib/keymap'
+import { useDrawMode, toggleDrawMode } from '@/lib/draw-mode'
+import { beginStroke, strokeTo, velocityFromDrag, noteUnder, type Stroke } from '@/lib/draw-notes'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -51,7 +53,7 @@ const NUM_NOTES   = 128
 // Edit unifies the old Draw and Select tools: click empty draws, click a note
 // selects + drags it, shift+drag marquee-selects. Erase deletes on click or
 // marquee-drag.
-type Tool = 'edit' | 'erase'
+type Tool = 'edit' | 'erase' | 'draw'
 type Quant = 0.25 | 0.5 | 1 | 2
 
 // Copied notes survive closing/reopening the roll and work across MIDI clips
@@ -383,7 +385,14 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   const track = project.tracks.find(t => t.id === clip.trackId)
   const color = track?.color ?? '#3d8fef'
 
-  const [tool, setTool]   = useState<Tool>('edit')
+  const [toolChoice, setToolChoice] = useState<Exclude<Tool, 'draw'>>('edit')
+  // Draw Mode is the studio's (lib/draw-mode.ts, `B`): while it is on, the
+  // pencil is the tool whatever the toolbar says; the last velocity drawn
+  // is what the next note gets.
+  const draw = useDrawMode()
+  const tool: Tool = draw.on ? 'draw' : toolChoice
+  const setTool = (t: Tool) => { if (t === 'draw') toggleDrawMode(); else { if (draw.on) toggleDrawMode(); setToolChoice(t) } }
+  const lastVelRef = useRef(100)
   const [quant, setQuant] = useState<Quant>(0.25)
   const isMobile = useIsMobile()
   const mobileRoll = typeof window !== 'undefined' && window.innerWidth < 760
@@ -1046,6 +1055,53 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       document.addEventListener('mouseup', onUp)
     }
 
+    if (tool === 'draw') {
+      // ── The pencil (lib/draw-notes.ts) ──────────────────────────────
+      // A click on a note erases it; on empty grid it places a grid-length
+      // note, and dragging across places one per step (on one pitch with
+      // Pitch Lock, ⌥ flips it for this stroke), dragging up or down first
+      // sets the velocity, dragging back erases.
+      const under = noteUnder(clip.notes, rawBeat, pitch)
+      if (under) { dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: under.id }); return }
+      if (clip.loopEnabled && clip.loopLengthBeats && beat >= clip.loopLengthBeats) return
+      const lockPitch = e.altKey ? !draw.pitchLock : draw.pitchLock
+      const startPitch = scaleLock && !isDrum ? snapToScale(pitch, project.key, project.scale) : pitch
+      const stroke: Stroke = beginStroke(rawBeat, startPitch, quant, lastVelRef.current, lockPitch, clip.loopEnabled && clip.loopLengthBeats ? clip.loopLengthBeats : undefined)
+      const first = strokeTo(stroke, rawBeat, startPitch, () => crypto.randomUUID())
+      for (const n of first.add) dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: n })
+      if (first.add.length) playNote(first.add[0].pitch)
+      const startX = e.clientX, startY = e.clientY
+      let mode: 'none' | 'across' | 'velocity' = 'none'
+      function onMove(ev: MouseEvent) {
+        const dx = ev.clientX - startX, dy = ev.clientY - startY
+        if (mode === 'none') {
+          if (Math.abs(dx) >= 4 || Math.abs(dy) >= 4) mode = Math.abs(dx) >= Math.abs(dy) ? 'across' : 'velocity'
+          else return
+        }
+        if (mode === 'velocity') {
+          const v = velocityFromDrag(stroke.velocity, dy)
+          lastVelRef.current = v
+          for (const n of stroke.placed.values()) dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { velocity: v } })
+          return
+        }
+        const b = (ev.clientX - rect.left + scrollLeft) / beatW
+        const p = yToPitch(ev.clientY - rect.top + scrollTop) ?? stroke.startPitch
+        const pp = scaleLock && !isDrum ? snapToScale(p, project.key, project.scale) : p
+        const { add, remove } = strokeTo(stroke, b, pp, () => crypto.randomUUID())
+        for (const id of remove) dispatch({ type: 'REMOVE_MIDI_NOTE', clipId: clip.id, noteId: id })
+        for (const n of add) { n.velocity = lastVelRef.current; dispatch({ type: 'ADD_MIDI_NOTE', clipId: clip.id, note: n }) }
+        if (add.length) playNote(add[add.length - 1].pitch)
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+        setSelectedNotes(new Set([...stroke.placed.values()].map(n => n.id)))
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+      return
+    }
+
     if (tool === 'erase') {
       // Click a note to erase it; drag sweeps a marquee that erases everything inside
       const target = noteAt(rawBeat, pitch)
@@ -1494,11 +1550,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 2, marginRight: 4 }}>{clip.name}</span>
 
           <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-          {(['edit', 'erase'] as Tool[]).map(t => (
-            <button key={t} onClick={() => setTool(t)}
+          {(['edit', 'draw', 'erase'] as Tool[]).map(t => (
+            <button key={t} onClick={() => setTool(t)} data-help-id={t === 'draw' ? 'draw-mode' : undefined} aria-pressed={tool === t}
               title={t === 'edit'
                 ? 'Edit — click empty: draw · drag note: move · shift+click: multi-select · shift+drag: box-select'
-                : 'Erase — click a note or drag a box to delete'}
+                : t === 'draw'
+                  ? `Draw Mode (B; hold B to draw and let go) — click: a grid-length note · drag across: one note per step${draw.pitchLock ? ', on one pitch (⌥ frees it)' : ', following the pointer (⌥ locks it)'} · drag up/down: velocity · drag back: erase · click a note: erase`
+                  : 'Erase — click a note or drag a box to delete'}
               style={{ ...prBtn, background: tool === t ? 'var(--bg-surface)' : 'transparent', color: tool === t ? 'var(--text-primary)' : 'var(--text-muted)', border: tool === t ? '1px solid var(--border)' : '1px solid transparent', fontSize: 9, padding: '2px 6px' }}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -1898,7 +1956,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
           <div
             ref={gridRef}
             data-help-id="roll-grid"
-            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : 'cell', touchAction: isMobile ? 'none' : undefined }}
+            style={{ flex: 1, overflow: 'hidden', position: 'relative', cursor: tool === 'edit' ? (hoverEdge ? 'ew-resize' : 'crosshair') : tool === 'draw' ? 'copy' : 'cell', touchAction: isMobile ? 'none' : undefined }}
             onMouseDown={handleGridMouseDown}
             onMouseMove={handleGridMouseMove}
             onMouseLeave={() => setHoverPitch(null)}

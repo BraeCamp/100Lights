@@ -155,6 +155,8 @@ const FEATURES: Feature[] = [
     description: 'Automatically slice the selected audio clip at every detected hit or transient — perfect for chopping a drum break into individually editable pieces.' },
   { group: 'Arrangement Tools', name: 'Spectral Morph', helpIds: ['morph'], hint: 'Select exactly two audio clips in the Arrangement view first.',
     description: 'Blend two selected audio clips into one brand-new sound by interpolating their spectra over time — an experimental sound-design tool for unique textures.' },
+  { group: 'Arrangement Tools', name: 'Draw Mode', helpIds: ['draw-mode'], modes: ['music'], hint: 'Open a MIDI clip — Draw is the middle tool in the piano roll’s bar, or press B anywhere.',
+    description: 'The pencil. Tap B to switch it on (hold B to draw a run and let go). Click for a grid-length note; drag across for one note per step — on one pitch with Pitch Lock, or following the pointer (⌥ flips it for a stroke); drag up or down first to set the velocity, which the next notes inherit; drag back to erase; click a note to erase it.' },
   { group: 'Arrangement Tools', name: 'Piano Roll', helpIds: ['piano-roll'], modes: ['music'], hint: 'Select a MIDI clip — its notes open in the clip pane at the bottom (or double-click the clip). Appearance → Display & Input chooses bottom pane or inline.',
     description: 'The MIDI editor: draw, move, and resize notes on a grid, with velocity editing and key/scale highlighting built in. It lives in the clip pane at the bottom of the studio and follows the selected clip — Notes and Envelopes tabs top-right — or, by the Display setting, unfolds inline under the track.' },
   { group: 'Arrangement Tools', name: 'Export', helpIds: ['export'], hint: ARR_HINT,

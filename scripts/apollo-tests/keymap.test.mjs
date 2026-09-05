@@ -46,8 +46,8 @@ check('a modifier that is not in the chord is a different key', () => {
   assert.equal(resolveKey(letter('m', { shiftKey: true }), ['global']), null)
 })
 
-check('the library moved off B — B alone does nothing; ⌘⌥B opens it, even when ⌥ turns the letter into ∫', () => {
-  assert.equal(resolveKey(letter('b'), ['global']), null)
+check('the library moved off B — B is Draw Mode; ⌘⌥B opens the library, even when ⌥ turns the letter into ∫', () => {
+  assert.equal(resolveKey(letter('b'), ['global']).id, 'view.draw')
   assert.equal(resolveKey({ key: '∫', code: 'KeyB', metaKey: true, altKey: true }, ['global']).id, 'view.library')
   assert.equal(keysFor('view.library'), '⌘⌥B')
   assert.equal(keysForCommand('audio.library'), '⌘⌥B')
@@ -115,7 +115,7 @@ check('momentary: a tap latches, a hold comes back', () => {
 
 check('a released momentary key is found even when its modifiers already came up', () => {
   const ids = releasedMomentary({ key: 'b', code: 'KeyB' }, ['global']).map(b => b.id)
-  assert.deepEqual(ids, ['view.library'])
+  assert.deepEqual(ids.sort(), ['view.draw', 'view.library'])   // both answer to the letter; the latch knows which was held
   assert.deepEqual(releasedMomentary({ key: 'Tab' }, ['global']).map(b => b.id), ['view.session'])
   assert.deepEqual(releasedMomentary({ key: 'Tab' }, ['global'], 'podcast'), [])
   assert.deepEqual(releasedMomentary({ key: 'm', code: 'KeyM' }, ['global']), [])

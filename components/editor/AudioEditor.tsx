@@ -62,6 +62,7 @@ import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/ke
 import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
 import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
 import { applyUiScale, stepUiScale } from '@/lib/ui-scale'
+import { useDrawMode, toggleDrawMode, setPitchLock } from '@/lib/draw-mode'
 import SendToProjectButton from './SendToProjectButton'
 import PolyCodePanel from './daw/PolyCodePanel'
 import GuestPanel from './daw/GuestPanel'
@@ -2192,6 +2193,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [view, setView] = useState<DawView>(wsInit.view)
   const detail = useDetail()
   const display = useDisplaySettings()
+  const draw = useDrawMode()
   // The UI scale is a stylesheet on the document (lib/ui-scale.ts); it follows the setting.
   useEffect(() => { applyUiScale(display.uiScale) }, [display.uiScale])
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
@@ -2663,6 +2665,7 @@ export default function AudioEditor(props: AudioEditorProps) {
         if (sidebarOpen && leftTab === 'library') setSidebarOpen(false)
         else { setSidebarOpen(true); setLeftTab('library') }
         return true
+      case 'view.draw': toggleDrawMode(); return true
       case 'view.inspect':
         // InspectMode owns the mode; the key is the studio's.
         window.dispatchEvent(new CustomEvent('100lights:inspect-toggle'))
@@ -2836,6 +2839,13 @@ export default function AudioEditor(props: AudioEditorProps) {
     { id: 'audio.window.clip', group: 'View', label: display.popout === 'clip' ? 'Bring the clip view back into the studio' : 'Open the clip view in its own window',
       keywords: 'clip view piano roll second window pop out detach separate screen monitor float', when: () => !isPodcast,
       run: () => setDisplay({ popout: display.popout === 'clip' ? null : 'clip' }) },
+    // Draw Mode (lib/draw-mode.ts): the pencil in the note editor.
+    { id: 'audio.draw', group: 'Edit', label: `Draw Mode ${draw.on ? 'off' : 'on'} (the pencil)`,
+      keywords: 'draw mode pencil paint notes hats run brush b', shortcut: keysFor('view.draw'), when: () => !isPodcast,
+      run: () => toggleDrawMode() },
+    { id: 'audio.draw.pitchLock', group: 'Edit', label: `Pitch lock ${draw.pitchLock ? 'off' : 'on'} — a drawn run ${draw.pitchLock ? 'follows the pointer' : 'stays on one pitch'}`,
+      keywords: 'pitch lock draw mode pencil row same note hats', when: () => !isPodcast,
+      run: () => setPitchLock(!draw.pitchLock) },
     { id: 'audio.view.scaleUp', group: 'View', label: `Bigger interface (UI scale ${display.uiScale}% → ${stepUiScale(display.uiScale, 1)}%)`,
       keywords: 'ui scale zoom display bigger larger text interface size', shortcut: keysFor('view.scaleUp'), when: () => display.uiScale < 200,
       run: () => setDisplay({ uiScale: stepUiScale(display.uiScale, 1) }) },
@@ -2924,7 +2934,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       keywords: `density spacing compact smaller bigger room ${DENSITY_INFO[d].blurb}`,
       run: () => setDensity(d),
     })),
-  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity, detail, display, project.delayCompensation])
+  ], [view, isPodcast, props.onSave, props.readOnly, dispatch, density, setDensity, detail, display, draw, project.delayCompensation])
 
   // ── Sounds and tracks, by name ───────────────────────────────────────────────
   //
