@@ -26,6 +26,8 @@ import { useDrawMode, toggleDrawMode } from '@/lib/draw-mode'
 import { beginStroke, strokeTo, velocityFromDrag, noteUnder, type Stroke } from '@/lib/draw-notes'
 import { laneValue, lanePatch, randomizeLane, rampLane, LANE_MAX, type LaneField } from '@/lib/note-chance'
 import { visibleRows, rowIndexOf, focusScrollTop, stepAdvance, stepMove } from '@/lib/roll-rows'
+import { transposeNotes, transposeDegrees, invertNotes, addInterval, stretchNotes, setLength, humanizeNotes, reverseNotes, durationLabel, describeInterval, type Scale } from '@/lib/pitch-time'
+import { PitchTimePanel } from './PitchTimePanel'
 
 /** Roots a sample can be declared at: C1 to C7, every semitone. */
 const ROOT_CHOICES = Array.from({ length: 73 }, (_, i) => 24 + i)
@@ -532,6 +534,21 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   // beginners can't hit a wrong note (toggle is in the toolbar). Desktop off.
   const [scaleLock, setScaleLock] = useState(mobileRoll && !clip.isDrumClip)
   const inScalePitches = getInScalePitches(project.key, project.scale)
+
+  // Pitch & Time (lib/pitch-time.ts). With the scale on, pitch moves are in
+  // scale degrees — Live 12's rule — and the interval field means degrees.
+  const scaleOn = scaleLock && !clip.isDrumClip && project.scale !== 'chromatic'
+  const rollScale: Scale = { root: project.key, intervals: SCALE_INTERVALS[project.scale] ?? SCALE_INTERVALS['major'] }
+  const [intervalSemis, setIntervalSemis] = useState(7)
+  const [intervalDegrees, setIntervalDegrees] = useState(2)
+  const intervalSize = scaleOn ? intervalDegrees : intervalSemis
+  const setIntervalSize = scaleOn ? setIntervalDegrees : setIntervalSemis
+  const [stretchFactor, setStretchFactor] = useState(1)
+  const [lengthBeats, setLengthBeats] = useState(0.5)
+  const [humanizeAmount, setHumanizeAmount] = useState(50)
+  const [ptAnchor, setPtAnchor] = useState<{ x: number; y: number } | null>(null)
+  const ptBtnRef = useRef<HTMLButtonElement>(null)
+  const humanizeRuns = useRef(0)
 
   // Voice mapping: sung-pitch ribbon overlay + synced replay (pitched rolls only)
   const voiceMap = useVoiceMap(engine, clip, dispatch)
@@ -1252,7 +1269,12 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
   // usually just typed a word, not made a selection, and "Quantise" doing
   // nothing because you had not first dragged a marquee is the kind of silence
   // that reads as a bug.
-  const targetNotes = () => (selectedNotes.size ? clip.notes.filter(n => selectedNotes.has(n.id)) : clip.notes)
+  // A selection whose notes are gone (the clip was replaced under the roll,
+  // or Add Interval's copies were undone) is no selection — every note, not none.
+  const targetNotes = () => {
+    const sel = selectedNotes.size ? clip.notes.filter(n => selectedNotes.has(n.id)) : []
+    return sel.length ? sel : clip.notes
+  }
 
   function patchNotes(fn: (n: MidiNote, i: number) => Partial<MidiNote> | null) {
     const notes = targetNotes()
@@ -1275,18 +1297,46 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     })
   }
 
-  /** Push notes off the grid by a small random amount, in both time and
-   *  velocity. A perfectly quantised part is the single clearest tell that
-   *  music was typed rather than played. Deliberately subtle: ±18ms is about
-   *  the spread of a competent player, and it scales with tempo so it stays
-   *  ±18ms rather than ±a fixed fraction of a beat. */
+  // The Pitch & Time utilities (lib/pitch-time.ts), on the selection or the
+  // whole clip. Each is ONE UPDATE_MIDI_NOTES — one undo step — and the same
+  // arithmetic the voice path runs, so "invert the lead" and the Invert button
+  // cannot disagree.
+  const patchMany = (patches: { id: string; patch: Partial<MidiNote> }[]) => {
+    if (patches.length) dispatch({ type: 'UPDATE_MIDI_NOTES', clipId: clip.id, notes: patches })
+  }
+  /** Humanise: each start moved up to `humanizeAmount` % of half a grid step,
+   *  earlier or later. A perfectly quantised part is the single clearest tell
+   *  that music was typed rather than played. Seeded per run, so undo → redo
+   *  gives the same performance back. Timing only — velocity's randomness is
+   *  the deviation lane's, per pass. */
   function humanize() {
-    const msToBeats = (ms: number) => (ms / 1000) * (project.tempo / 60)
-    const spread = msToBeats(18)
-    patchNotes(n => ({
-      startBeat: Math.max(0, n.startBeat + (Math.random() * 2 - 1) * spread),
-      velocity: Math.max(0.15, Math.min(1, (n.velocity ?? 0.8) + (Math.random() * 2 - 1) * 0.09)),
-    }))
+    humanizeRuns.current++
+    patchMany(humanizeNotes(targetNotes(), humanizeAmount, quant, `${clip.id}:${humanizeRuns.current}`))
+  }
+  /** Up or down by scale degree when the scale is on (Live 12); a semitone otherwise. */
+  function transposeStep(dir: 1 | -1) {
+    if (isDrum) return
+    patchMany(scaleOn ? transposeDegrees(targetNotes(), dir, rollScale) : transposeNotes(targetNotes(), dir))
+  }
+  function invert() { if (!isDrum) patchMany(invertNotes(targetNotes(), scaleOn ? rollScale : null)) }
+  /** Backwards within the selection — or the whole clip when nothing is selected. */
+  function reverse() {
+    patchMany(reverseNotes(targetNotes(), selectedNotes.size ? undefined : { start: 0, end: clip.durationBeats }))
+  }
+  /** Add Interval: the copies are new notes, and they become the selection (Live). */
+  function addIntervalNow() {
+    if (isDrum) return
+    const added = addInterval(targetNotes(), intervalSize, scaleOn ? rollScale : null, () => crypto.randomUUID())
+    if (!added.length) return
+    dispatch({ type: 'ADD_MIDI_NOTES', clipId: clip.id, notes: added })
+    setSelectedNotes(new Set(added.map(n => n.id)))
+  }
+  function stretch(factor: number) { patchMany(stretchNotes(targetNotes(), factor)) }
+  function applyLength(beats = lengthBeats) { patchMany(setLength(targetNotes(), beats)) }
+  function openPitchTime() {
+    if (ptAnchor) { setPtAnchor(null); return }
+    const r = ptBtnRef.current?.getBoundingClientRect()
+    setPtAnchor(r ? { x: r.left, y: r.bottom + 6 } : { x: 240, y: 240 })
   }
 
   /** Stretch every note to touch the next one that starts after it, so a line
@@ -1306,11 +1356,13 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
 
   function transpose(semitones: number) {
     if (isDrum) return
-    patchNotes(n => ({ pitch: Math.max(0, Math.min(127, n.pitch + semitones)) }))
+    patchMany(transposeNotes(targetNotes(), semitones))
   }
 
   function scaleVelocity(mult: number) {
-    patchNotes(n => ({ velocity: Math.max(0.05, Math.min(1, (n.velocity ?? 0.8) * mult)) }))
+    // ⚠️ Velocity is 0–127. This clamped to 1.0 for a while, so "play harder"
+    // quietly turned the notes it touched down to nothing.
+    patchNotes(n => ({ velocity: Math.max(1, Math.min(127, Math.round((n.velocity ?? 100) * mult))) }))
   }
 
   function scaleLength(mult: number) {
@@ -1340,8 +1392,8 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     { id: 'roll.quantize.half', group: 'Notes', label: `Half-quantise ${rollScope} (keep some feel)`,
       keywords: 'snap partial strength loose groove timing halfway',
       run: () => quantizeNotes(0.5) },
-    { id: 'roll.humanize', group: 'Notes', label: `Humanise ${rollScope}`,
-      keywords: 'loosen feel random natural played not typed timing velocity groove',
+    { id: 'roll.humanize', group: 'Notes', label: `Humanise ${rollScope} — timing by up to ${humanizeAmount}% of the grid`,
+      keywords: 'loosen feel random natural played not typed timing groove amount',
       run: humanize },
     { id: 'roll.legato', group: 'Notes', label: `Join ${rollScope} end to end (legato)`,
       keywords: 'legato connect smooth slur sustain fill gaps length',
@@ -1373,6 +1425,25 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     { id: 'roll.shorter', group: 'Notes', label: `Make ${rollScope} half as long`,
       keywords: 'length duration halve shorten staccato shorter tighter',
       run: () => scaleLength(0.5) },
+    // Pitch & Time (lib/pitch-time.ts) — the panel and each of its buttons.
+    { id: 'roll.pitchTime', group: 'Notes', label: 'Pitch & Time utilities — invert, reverse, add interval, stretch, set length, humanise',
+      keywords: 'pitch & time utilities panel notes box tools', when: () => !isDrum, run: openPitchTime },
+    { id: 'roll.invert', group: 'Notes', label: `Invert ${rollScope} — highest becomes lowest${scaleOn ? ', in key' : ''}`,
+      keywords: 'invert flip upside down mirror pitch contour', when: () => !isDrum, run: invert },
+    { id: 'roll.reverse', group: 'Notes', label: `Reverse ${rollScope} — play it backwards`,
+      keywords: 'reverse backwards retrograde mirror time', run: reverse },
+    { id: 'roll.addInterval', group: 'Notes', label: `Add interval to ${rollScope} — a copy ${describeInterval(intervalSize, scaleOn)} away`,
+      keywords: 'add interval harmonize harmonise stack copy third fifth octave chord voice', when: () => !isDrum, run: addIntervalNow },
+    { id: 'roll.degreeUp', group: 'Notes', label: `Move ${rollScope} up a scale degree`,
+      keywords: 'scale degree step in key up transpose diatonic', shortcut: '↑', when: () => scaleOn, run: () => transposeStep(1) },
+    { id: 'roll.degreeDown', group: 'Notes', label: `Move ${rollScope} down a scale degree`,
+      keywords: 'scale degree step in key down transpose diatonic', shortcut: '↓', when: () => scaleOn, run: () => transposeStep(-1) },
+    { id: 'roll.stretch2', group: 'Notes', label: `Stretch ${rollScope} ×2 — half speed, positions and lengths together`,
+      keywords: 'stretch double twice slower half speed time expand', run: () => stretch(2) },
+    { id: 'roll.stretchHalf', group: 'Notes', label: `Stretch ${rollScope} ÷2 — double speed`,
+      keywords: 'stretch halve squash faster double speed time compress', run: () => stretch(0.5) },
+    { id: 'roll.setLength', group: 'Notes', label: `Set length — make ${rollScope} ${durationLabel(lengthBeats)} long`,
+      keywords: 'set length duration same length every note fixed uniform', run: () => applyLength() },
     { id: 'roll.selectAll', group: 'Notes', label: 'Select every note in this clip',
       keywords: 'all everything notes select', shortcut: '⌘A',
       run: () => setSelectedNotes(new Set(clip.notes.map(n => n.id))) },
@@ -1410,7 +1481,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
     { id: 'roll.close', group: 'Notes', label: 'Close the piano roll',
       keywords: 'hide dismiss done back arrangement',
       run: () => { setExpandedPianoRollClipId?.(null); setEditTarget?.(null) } },
-  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry])
+  ], [clip.id, clip.notes, selectedNotes, rollScope, isDrum, quant, project.tempo, project.key, project.scale, groupLabel, fold, foldScale, highlightScale, stepEntry, scaleOn, intervalSize, lengthBeats, humanizeAmount, ptAnchor])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const selected = clip.notes.filter(n => selectedNotes.has(n.id))
@@ -1489,7 +1560,7 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
       return
     }
     if (kb === 'notes.group') { e.preventDefault(); e.stopPropagation(); cycleGroup(); return }
-    if ((kb === 'notes.earlier' || kb === 'notes.later' || kb === 'notes.up' || kb === 'notes.down' || kb === 'notes.upOctave' || kb === 'notes.downOctave') && selected.length > 0) {
+    if ((kb === 'notes.earlier' || kb === 'notes.later' || kb === 'notes.up' || kb === 'notes.down' || kb === 'notes.upOctave' || kb === 'notes.downOctave' || kb === 'notes.upSemitone' || kb === 'notes.downSemitone') && selected.length > 0) {
       e.preventDefault(); e.stopPropagation()
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const d = (e.key === 'ArrowLeft' ? -1 : 1) * quant
@@ -1498,16 +1569,16 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
         }
       } else {
         const dir = e.key === 'ArrowUp' ? 1 : -1
-        for (const n of selected) {
-          let newPitch: number
-          if (isDrum) {
+        if (isDrum) {
+          for (const n of selected) {
             const row = DRUM_PITCH_TO_ROW.get(n.pitch) ?? 0
-            newPitch = DRUM_LANES[Math.max(0, Math.min(DRUM_LANES.length - 1, row - dir))].pitch
-          } else {
-            newPitch = Math.max(0, Math.min(127, n.pitch + dir * (e.shiftKey ? 12 : 1)))
+            const newPitch = DRUM_LANES[Math.max(0, Math.min(DRUM_LANES.length - 1, row - dir))].pitch
+            dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { pitch: newPitch } })
           }
-          dispatch({ type: 'UPDATE_MIDI_NOTE', clipId: clip.id, noteId: n.id, patch: { pitch: newPitch } })
-        }
+        } else if (e.shiftKey) transpose(dir * 12)
+        // With the scale on, ↑ / ↓ climb the scale (Live 12); ⌥ is still a semitone.
+        else if (e.altKey || !scaleOn) transpose(dir)
+        else transposeStep(dir)
       }
       return
     }
@@ -2026,6 +2097,21 @@ function PianoRollInner({ clip }: { clip: MidiClip }) {
                   style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0 }}>Focus</button>
                 <button onClick={() => setStepEntry(v => !v)} aria-pressed={stepEntry} data-help-id="roll-step-entry" title="Step entry — play a key to write a note at the insert marker and step on by the grid; ← / → move the marker"
                   style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: stepEntry ? 'rgba(245,158,11,0.18)' : 'transparent', color: stepEntry ? '#f59e0b' : 'var(--text-muted)', border: stepEntry ? '1px solid rgba(245,158,11,0.5)' : '1px solid transparent' }}>Step</button>
+                <button ref={ptBtnRef} onClick={openPitchTime} aria-pressed={!!ptAnchor} data-help-id="pitch-time" title="Pitch & Time — transpose, invert, add interval, stretch, set length, humanise, reverse, legato"
+                  style={{ ...prBtn, fontSize: 9, padding: '1px 6px', flexShrink: 0, background: ptAnchor ? 'rgb(var(--accent-rgb) / 0.15)' : 'transparent', color: ptAnchor ? 'var(--accent-light)' : 'var(--text-muted)', border: ptAnchor ? '1px solid rgb(var(--accent-rgb) / 0.4)' : '1px solid transparent' }}>Pitch &amp; Time</button>
+                {ptAnchor && (
+                  <PitchTimePanel
+                    anchor={ptAnchor} onClose={() => setPtAnchor(null)} ignoreOutside={ptBtnRef}
+                    scope={rollScope} scaleOn={scaleOn} scaleName={`${NOTE_NAMES[project.key]} ${project.scale}`}
+                    intervalSize={intervalSize} setIntervalSize={setIntervalSize}
+                    stretchFactor={stretchFactor} setStretchFactor={setStretchFactor}
+                    lengthBeats={lengthBeats} setLengthBeats={setLengthBeats}
+                    humanizeAmount={humanizeAmount} setHumanizeAmount={setHumanizeAmount}
+                    onTranspose={steps => (Math.abs(steps) === 1 ? transposeStep(steps as 1 | -1) : scaleOn ? patchMany(transposeDegrees(targetNotes(), steps, rollScale)) : transpose(steps))}
+                    onInvert={invert} onAddInterval={addIntervalNow} onStretch={stretch} onSetLength={() => applyLength()}
+                    onHumanize={humanize} onReverse={reverse} onLegato={legato}
+                  />
+                )}
               </>
             )}
             <div style={{ width: 1, height: 12, background: 'var(--border)', flexShrink: 0, margin: '0 2px' }} />

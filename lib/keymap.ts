@@ -147,6 +147,10 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'notes.group', keys: '⌘G', scope: 'roll', group: 'Piano Roll', action: 'Probability group for the selected notes — Play One, then Play All, then ungroup', modes: ['music'] },
   { id: 'notes.upOctave', keys: '⇧↑', scope: 'roll', group: 'Piano Roll', action: 'Transpose up an octave', modes: ['music'], hidden: true },
   { id: 'notes.downOctave', keys: '⇧↓', scope: 'roll', group: 'Piano Roll', action: 'Transpose down an octave', modes: ['music'], hidden: true },
+  // With the scale on, ↑ / ↓ move by scale degree (Live 12); ⌥ keeps a
+  // semitone reachable without switching the scale off.
+  { id: 'notes.upSemitone', keys: '⌥↑', scope: 'roll', group: 'Piano Roll', action: 'Transpose a semitone even with the scale on (↑ / ↓ move by scale degree then)', modes: ['music'], display: '⌥↑ / ⌥↓' },
+  { id: 'notes.downSemitone', keys: '⌥↓', scope: 'roll', group: 'Piano Roll', action: 'Transpose down a semitone with the scale on', modes: ['music'], hidden: true },
 
   // ── Knobs (handled by the focused knob itself; listed so the help panel knows) ──
   { id: 'knob.next', keys: 'Tab', scope: 'knob', group: 'Knobs', action: 'Move between knobs — every knob takes keyboard focus' },

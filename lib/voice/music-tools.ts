@@ -319,16 +319,17 @@ export const MUSIC_TOOLS = [
   {
     name: 'transpose',
     description:
-      'TRANSPOSE — move the notes of a clip up or down in semitones. "take the bass up an octave" is 12, "down a fifth" is -7. Part of a clip with `notes`: "transpose the third chord of the pad up an octave", "take the notes above C5 down an octave". Several clips by address: "all the pad parts", "them".',
+      'TRANSPOSE — move the notes of a clip up or down in semitones. "take the bass up an octave" is 12, "down a fifth" is -7. Part of a clip with `notes`: "transpose the third chord of the pad up an octave", "take the notes above C5 down an octave". Several clips by address: "all the pad parts", "them". By SCALE DEGREE with `degrees` instead: "up two scale degrees", "a step up in the scale" — the notes stay in the song\'s key.',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
-        semitones: { type: 'number', description: 'Positive is up. An octave is 12.' },
+        semitones: { type: 'number', description: 'Positive is up. An octave is 12. Omit when moving by degrees.' },
+        degrees: { type: 'number', description: 'Move by this many steps of the song\'s scale instead of semitones — "up two scale degrees" is 2, "down a degree" is -1.' },
         ...NOTE_ADDRESS,
         ...ADDRESS,
       },
-      required: ['target', 'semitones'],
+      required: ['target'],
     },
   },
   {
@@ -344,6 +345,35 @@ export const MUSIC_TOOLS = [
         ...ADDRESS,
       },
       required: ['target', 'chance'],
+    },
+  },
+  {
+    name: 'invert_notes',
+    description:
+      'INVERT — flip a part upside down: the highest note becomes the lowest and the lowest the highest, the rhythm untouched. "invert the melody", "flip the lead upside down", "turn the riff upside down". In a song with a key it inverts by scale degree, so the result stays in key. NOT for chords — "invert the chords" is chord_inversion, a voicing change. Part of a clip with `notes`, as in transpose.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'stretch_notes',
+    description:
+      'STRETCH — a part stretched in time by a factor, from its first note: positions and lengths together. "stretch the lead to twice as long" is 2, "squash the melody to half" is 0.5, "stretch the pad by one and a half" is 1.5. The clip grows to fit. For plain half time / double time on a whole clip, time_feel does the same thing. Part of a clip with `notes`, as in transpose.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        factor: { type: 'number', description: 'Greater than 1 is longer and slower, less than 1 shorter and faster. 2 is twice as long.' },
+        ...NOTE_ADDRESS,
+        ...ADDRESS,
+      },
+      required: ['target', 'factor'],
     },
   },
   {
@@ -925,13 +955,14 @@ export const MUSIC_TOOLS = [
   {
     name: 'note_length',
     description:
-      'ARTICULATION — how long the notes are held. "make the pad legato", "staccato the bass", "shorter notes on the keys", "let the chords ring". Legato joins notes up to the next one; staccato clips them short.',
+      'ARTICULATION — how long the notes are held. "make the pad legato", "staccato the bass", "shorter notes on the keys", "let the chords ring". Legato joins notes up to the next one; staccato clips them short. ONE LENGTH for every note is style "set" with `length`: "make the hats sixteenth notes", "set every note in the lead to a quarter note".',
     input_schema: {
       type: 'object',
       properties: {
         target: TARGET,
-        style: { type: 'string', enum: ['legato', 'staccato', 'longer', 'shorter', 'slide'] },
+        style: { type: 'string', enum: ['legato', 'staccato', 'longer', 'shorter', 'slide', 'set'] },
         amount: { type: 'number', description: 'Percent, 0-100.' },
+        length: { type: 'string', description: 'For style "set": the length every note gets — "eighth", "sixteenth", "1/16", "a quarter note", "two beats", "a bar".' },
       },
       required: ['style'],
     },
@@ -952,7 +983,7 @@ export const MUSIC_TOOLS = [
   {
     name: 'harmonize',
     description:
-      'HARMONISE — add a second voice to a part. "harmonise the lead a third above", "add a fifth to the bass", "double it an octave down". Adds notes; it does not replace what is there.',
+      'HARMONISE — add a second voice to a part. "harmonise the lead a third above", "add a fifth to the bass", "double it an octave down". Adds notes; it does not replace what is there. When the song has a key the interval is taken in the scale (a diatonic third), so the harmony stays in key.',
     input_schema: {
       type: 'object',
       properties: {

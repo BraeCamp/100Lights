@@ -164,6 +164,9 @@ export function describeAction(a: unknown, names: { track?: (id: string) => stri
     case 'ADD_MIDI_NOTE': return `Added a note on ${c(act.clipId)}`
     case 'REMOVE_MIDI_NOTE': return `Removed a note on ${c(act.clipId)}`
     case 'UPDATE_MIDI_NOTE': return `Edited a note on ${c(act.clipId)}`
+    case 'UPDATE_MIDI_NOTES': return `Edited ${(act.notes as unknown[] | undefined)?.length ?? 'the'} notes on ${c(act.clipId)}`
+    case 'ADD_MIDI_NOTES': return `Added ${(act.notes as unknown[] | undefined)?.length ?? ''} notes on ${c(act.clipId)}`
+    case 'SET_CHANCE_GROUP': return `${act.group ? 'Grouped' : 'Ungrouped'} notes on ${c(act.clipId)}`
     case 'ADD_EFFECT': return `Added ${String((act.effect as { type?: string } | undefined)?.type ?? 'an effect')} to ${t(act.trackId)}`
     case 'REMOVE_EFFECT': return `Removed an effect from ${t(act.trackId)}`
     case 'UPDATE_EFFECT': {

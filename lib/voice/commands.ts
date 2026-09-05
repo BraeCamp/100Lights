@@ -843,6 +843,9 @@ const COMMANDS: VoiceCommand[] = [
       if (!w.has('percent', 'volume', 'level')) return null
       // A named effect makes this a different command entirely.
       if (EFFECTS.some(e => w.has(e))) return null
+      // "humanize the guitar 30 percent" is an AMOUNT for time_feel, not a
+      // fader level — the percent is the only thing the two sentences share.
+      if (w.has('humanize', 'humanise', 'loosen')) return null
       // The name is resolved BEFORE the number is read, because which numbers
       // are arguments depends on which are part of the name.
       const set = trackSetIn(w.raw, ctx, /\b(?:set|put|to|at|volume|level|percent)\b|\d+(?:\.\d+)?|%/g)
@@ -1363,12 +1366,12 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'transpose',
     group: 'Notes',
     what: 'Move a part up or down in pitch',
-    say: ['take the bass up an octave', 'drop the pad down a fifth', 'transpose the lead up 3 semitones', 'transpose the third chord of the organ chords up an octave'],
+    say: ['take the bass up an octave', 'drop the pad down a fifth', 'transpose the lead up 3 semitones', 'transpose the third chord of the organ chords up an octave', 'take the lead up two scale degrees'],
     match(w, ctx) {
       const up = w.has('up', 'raise', 'higher')
       const down = w.has('down', 'drop', 'lower')
       if (up === down) return null
-      if (!w.has('transpose', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third', 'step', 'steps')) {
+      if (!w.has('transpose', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third', 'step', 'steps', 'degree', 'degrees')) {
         return null
       }
       // Part of a clip: "transpose the third chord of the pad up an octave",
@@ -1380,6 +1383,7 @@ const COMMANDS: VoiceCommand[] = [
       const hit = clipOrSelected(w, ctx, ['transpose', 'take', 'drop', 'move', 'up', 'down', 'raise', 'lower',
           'higher', 'octave', 'semitone', 'semitones', 'fifth', 'fourth', 'third',
           'second', 'step', 'steps', 'half', 'tone', 'whole', 'by', 'track', 'clip',
+          'degree', 'degrees', 'scale', 'key', 'diatonic',
           ...(na ? ['chord', 'chords', 'note', 'notes', 'above', 'below', 'over', 'under', 'every', 'all', 'at', 'bar', 'bars', 'beat', 'beats', 'of', 'in', 'on', 'from', 'to', 'two', 'three', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'last', 'highest', 'lowest', 'top', 'bottom', 'opening'] : [])], { dropNums: true })
       const target = srcM?.[1]?.trim() || hit?.name
       if (!target) return null
@@ -1390,11 +1394,16 @@ const COMMANDS: VoiceCommand[] = [
       // interval word is often the UNIT rather than the size: "up 3 semitones"
       // is three, not one, and reading the word first made every counted
       // transposition move by exactly one.
-      const size = n != null && n > 0 && n <= 48 ? n : named ? INTERVALS[named] : null
+      // "up two scale degrees", "a step up in the scale", "down a degree":
+      // by degree, in the song's key (lib/pitch-time.ts). One degree when no
+      // number is said.
+      const byDegree = /\bdegrees?\b|\bin (?:the )?(?:scale|key)\b|\bdiatonic/.test(rawT)
+      const size = n != null && n > 0 && n <= 48 ? n : byDegree ? 1 : named ? INTERVALS[named] : null
       if (size == null) return null
-      if (na) for (const word of w.all) w.markWord(word, 0)
+      if (na || byDegree) for (const word of w.all) w.markWord(word, 0)
+      const move = byDegree ? { degrees: up ? size : -size } : { semitones: up ? size : -size }
       return {
-        calls: [{ name: 'transpose', input: { target, semitones: up ? size : -size, ...(na ? { notes: na.label } : {}) } }],
+        calls: [{ name: 'transpose', input: { target, ...move, ...(na ? { notes: na.label } : {}) } }],
         confidence: na ? 0.9 : nameConfidence(hit?.score ?? 0.8),
         needsName: true,
       }
@@ -2633,6 +2642,9 @@ const COMMANDS: VoiceCommand[] = [
     say: ['invert the keys', 'invert the keys down'],
     match(w, ctx) {
       if (!w.has('invert', 'inverted', 'inversion')) return null
+      // A LINE turned over — "upside down", or a word for a line — is
+      // invert_notes (lib/pitch-time.ts), not a chord voicing.
+      if (/\bupside down\b|\b(?:melody|line|riff|pattern|notes|part)\b/.test(w.raw.toLowerCase())) return null
       const down = w.has('down', 'lower')
       const named = nameOrSelected(w, ctx, ['invert', 'inverted', 'inversion', 'the',
         'up', 'down', 'lower', 'higher', 'a'], { dropNums: true })
@@ -2912,7 +2924,7 @@ const COMMANDS: VoiceCommand[] = [
     what: 'Half time, double time, humanize, push or lay back',
     say: [
       'make the drums half time', 'double time the pad', 'humanize the guitar',
-      'lay the pad back a bit', 'push the drums ahead',
+      'lay the pad back a bit', 'push the drums ahead', 'humanize the guitar 30 percent',
     ],
     match(w, ctx) {
       const feel = (w.has('half') && w.has('time')) ? 'half'
@@ -2921,11 +2933,13 @@ const COMMANDS: VoiceCommand[] = [
             : (w.has('lay', 'laid', 'behind', 'lazy') && !w.has('ahead')) ? 'behind'
               : w.has('ahead', 'push', 'rushed') ? 'ahead' : null
       if (!feel) return null
+      // "humanize the guitar 30 percent" — the Amount (lib/pitch-time.ts).
+      const pctM = /(\d+)\s*(?:%|percent)/.exec(w.raw)
       const named = nameOrSelected(w, ctx, ['make', 'the', 'half', 'double', 'time',
         'humanize', 'humanise', 'loosen', 'lay', 'laid', 'back', 'behind', 'lazy',
-        'ahead', 'push', 'rushed', 'a', 'bit'])
+        'ahead', 'push', 'rushed', 'a', 'bit', 'percent', 'by'], { dropNums: true })
       if (!named) return null
-      return { calls: [{ name: 'time_feel', input: { target: named.name, feel } }], confidence: 0.88 }
+      return { calls: [{ name: 'time_feel', input: { target: named.name, feel, ...(pctM ? { amount: Number(pctM[1]) } : {}) } }], confidence: 0.88 }
     },
   },
   {
@@ -2933,17 +2947,27 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'note_length',
     group: 'Notes',
     what: 'Legato, staccato, or just longer and shorter notes',
-    say: ['make the pad legato', 'staccato the guitar', 'shorter notes on the lead'],
+    say: ['make the pad legato', 'staccato the guitar', 'shorter notes on the lead', 'make the pad eighth notes'],
     match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      // One length for every note — Set Length (lib/pitch-time.ts): "make the
+      // pad eighth notes", "set the lead to 1/16". Not when something is being
+      // ADDED in that length — that is a beat or a clip. ⚠️ Not "two beats
+      // long": that is resize_clip's sentence, and the clip is what it means.
+      const lenM = /\b((?:thirty[- ]second|sixteenth|eighth|quarter|half|whole)\s+notes?|1\/(?:32|16|8|4|2)(?:\s+notes?)?)\b/.exec(raw)
       const style = w.has('legato') ? 'legato'
         : w.has('staccato', 'stabs', 'stabby') ? 'staccato'
           : (w.has('shorter') && w.has('note', 'notes')) ? 'shorter'
-            : (w.has('longer') && w.has('note', 'notes')) ? 'longer' : null
+            : (w.has('longer') && w.has('note', 'notes')) ? 'longer'
+              : lenM && !w.has('add', 'insert', 'put', 'play', 'draw', 'write', 'record', 'quantize', 'quantise', 'snap', 'swing', 'grid') ? 'set' : null
       if (!style) return null
       const named = nameOrSelected(w, ctx, ['make', 'the', 'legato', 'staccato', 'stabs',
-        'stabby', 'shorter', 'longer', 'note', 'notes', 'on'])
+        'stabby', 'shorter', 'longer', 'note', 'notes', 'on', 'set', 'to', 'every', 'all', 'long', 'in', 'of', 'turn', 'into',
+        'thirty', 'second', 'sixteenth', 'eighth', 'quarter', 'half', 'whole', 'beat', 'beats', 'one', 'two', 'three', 'four'], { dropNums: true })
       if (!named) return null
-      return { calls: [{ name: 'note_length', input: { target: named.name, style } }], confidence: 0.9 }
+      if (style === 'set') for (const word of w.all) w.markWord(word, 0)
+      const length = style === 'set' ? lenM![1].replace(/\s+long$/, '') : undefined
+      return { calls: [{ name: 'note_length', input: { target: named.name, style, ...(length ? { length } : {}) } }], confidence: 0.9 }
     },
   },
   {
@@ -3014,6 +3038,54 @@ const COMMANDS: VoiceCommand[] = [
         'backward', 'play', 'the'])
       if (!named) return null
       return { calls: [{ name: 'reverse_notes', input: { target: named.name } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'invert_notes',
+    tool: 'invert_notes',
+    group: 'Notes',
+    what: 'Flip a part upside down — the highest note becomes the lowest',
+    say: ['flip the lead upside down', 'invert the pad melody', 'turn the guitar riff upside down'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      // Plain "invert the keys" is chord_inversion — a voicing. This is the
+      // LINE turned over, and the sentence has to say so: "upside down", or
+      // "invert" beside a word for a line. ⚠️ Not w.has('flip'): it is one
+      // edit from "clip" and would swallow half the studio.
+      if (!/\bupside down\b|\binvert(?:ed)?\b.*\b(?:melody|line|riff|pattern|notes|part)\b|\b(?:melody|line|riff|pattern|notes|part)\b.*\binvert/.test(raw)) return null
+      if (w.has('chord', 'chords', 'inversion', 'selection', 'voicing')) return null
+      const named = nameOrSelected(w, ctx, ['invert', 'inverted', 'flip', 'turn', 'upside', 'down', 'the',
+        'melody', 'line', 'riff', 'pattern', 'notes', 'part', 'of', 'in', 'on'])
+      if (!named) return null
+      for (const word of w.all) w.markWord(word, 0)
+      // 0.92: "down" is also the volume rule's word, and a tie there is a
+      // question nobody should be asked.
+      return { calls: [{ name: 'invert_notes', input: { target: named.name } }], confidence: 0.92 }
+    },
+  },
+  {
+    id: 'stretch_notes',
+    tool: 'stretch_notes',
+    group: 'Timing',
+    what: 'Stretch a part in time — twice as long, half, or by a factor',
+    say: ['stretch the lead to twice as long', 'stretch the pad by 1.5', 'squash the guitar to half'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      if (!/\bstretch|\bsquash|\bsquish/.test(raw)) return null
+      // Audio is warping (a later batch); a bar count is a clip resize.
+      if (w.has('warp', 'audio', 'sample', 'bars', 'bar')) return null
+      const numM = /(?:by|to|times|x)\s*(\d+(?:\.\d+)?)\b|\b(\d+(?:\.\d+)?)\s*(?:x|times|×)\b/.exec(raw)
+      const factor = /\btwice\b|\bdouble\b|\b2x\b/.test(raw) ? 2
+        : /\bhalf\b/.test(raw) ? 0.5
+          : /\bthree times\b|\btriple\b/.test(raw) ? 3
+            : /one and a half/.test(raw) ? 1.5
+              : numM ? Number(numM[1] ?? numM[2]) : null
+      if (factor == null || !(factor > 0) || factor === 1) return null
+      const named = nameOrSelected(w, ctx, ['stretch', 'stretched', 'squash', 'squish', 'the', 'to', 'by', 'twice', 'as', 'long',
+        'double', 'half', 'times', 'x', 'factor', 'of', 'a', 'one', 'and', 'triple', 'three', 'out', 'notes', 'part', 'it'], { dropNums: true })
+      if (!named) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'stretch_notes', input: { target: named.name, factor } }], confidence: 0.9 }
     },
   },
   {

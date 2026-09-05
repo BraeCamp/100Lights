@@ -39,8 +39,11 @@ export function touchedByAction(action: DawAction): Touched {
     case 'UPDATE_CLIP':
     case 'MOVE_CLIP':
     case 'ADD_MIDI_NOTE':
+    case 'ADD_MIDI_NOTES':
     case 'REMOVE_MIDI_NOTE':
-    case 'UPDATE_MIDI_NOTE':  return { whole: [], entities: { arrangementClips: [action.clipId] } }
+    case 'UPDATE_MIDI_NOTE':
+    case 'UPDATE_MIDI_NOTES':
+    case 'SET_CHANCE_GROUP':  return { whole: [], entities: { arrangementClips: [action.clipId] } }
 
     // ── clip effects (FX bars) ──
     case 'ADD_CLIP_EFFECT':   return { whole: [], entities: { clipEffects: [action.effect.id] } }

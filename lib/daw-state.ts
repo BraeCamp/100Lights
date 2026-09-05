@@ -73,6 +73,7 @@ export type DawAction =
   | { type: 'REMOVE_MIDI_NOTE'; clipId: string; noteId: string }
   | { type: 'UPDATE_MIDI_NOTE'; clipId: string; noteId: string; patch: Partial<MidiNote> }
   | { type: 'UPDATE_MIDI_NOTES'; clipId: string; notes: Array<{ id: string; patch: Partial<MidiNote> }> }
+  | { type: 'ADD_MIDI_NOTES'; clipId: string; notes: MidiNote[] }
   | { type: 'SET_CHANCE_GROUP'; clipId: string; noteIds: string[]; group: string | null; mode?: 'all' | 'one' }
   // Effects chain
   | { type: 'ADD_EFFECT'; trackId: string; effect: TrackEffect }
@@ -567,7 +568,22 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       const byId = new Map(action.notes.map(n => [n.id, n.patch]))
       const clips = project.arrangementClips.map(c => {
         if (c.id !== action.clipId || c.kind !== 'midi') return c
-        return { ...c, notes: c.notes.map(n => (byId.has(n.id) ? { ...n, ...byId.get(n.id) } : n)) }
+        const notes = c.notes.map(n => (byId.has(n.id) ? { ...n, ...byId.get(n.id) } : n))
+        // Stretch ×2 can push the phrase past the clip's end; grow to fit, the
+        // way a single note's move does, so nothing is silently cut off.
+        const end = Math.max(0, ...notes.filter(n => byId.has(n.id)).map(n => n.startBeat + n.durationBeats))
+        return growToFitNoteEnd({ ...c, notes } as MidiClip, end, project.timeSignatureNum)
+      })
+      return { ...project, arrangementClips: clips }
+    }
+    // Many notes added as one undo step — Add Interval's copies, a voice
+    // "harmonize the lead a third above".
+    case 'ADD_MIDI_NOTES': {
+      if (!action.notes.length) return project
+      const clips = project.arrangementClips.map(c => {
+        if (c.id !== action.clipId || c.kind !== 'midi') return c
+        const end = Math.max(...action.notes.map(n => n.startBeat + n.durationBeats))
+        return growToFitNoteEnd({ ...c, notes: [...c.notes, ...action.notes] } as MidiClip, end, project.timeSignatureNum)
       })
       return { ...project, arrangementClips: clips }
     }
