@@ -5,7 +5,7 @@ import { midiToNoteName } from './scale-constants'
 import { rngFor } from '@/lib/seeded-random'
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, Modulator, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
 import { isAudioClip, isMidiClip, POLY_PRESETS } from './daw-types'
-import { tempoSegments, tempoAt, beatsAtEvenSeconds, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
+import { tempoSegments, tempoAt, beatsAtEvenSeconds, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, beatsPerBarAt, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
 import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
 import { barParamValue, activeBarFields } from './effect-bar'
@@ -14,6 +14,7 @@ import { evaluateModulators, type ModReadout, type ParamRange } from './daw-modu
 import { automatableParams } from './daw-effect-params'
 import { compensationDelays } from './latency'
 import { crossfadeGain } from './crossfader'
+import { renderClick, clickBeats, type ClickSound, type ClickRhythm } from './metronome'
 import { rollNote, groupWinners, winnerFor, clipHasExpression } from './note-chance'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
@@ -4999,20 +5000,31 @@ export class DawEngine extends EventTarget {
 
   // ── Metronome ──────────────────────────────────────────────────────────────
 
+  /** How the click sounds, how often, and whether it is only for takes
+   *  (lib/metronome.ts). The studio pushes these in; the engine never reads
+   *  the workspace itself. */
+  private _clickSound: ClickSound = 'click'
+  private _clickRhythm: ClickRhythm = 'auto'
+  private _clickOnlyWhileRecording = false
+
+  setMetronomeSettings(s: { sound?: ClickSound; rhythm?: ClickRhythm; onlyWhileRecording?: boolean }): void {
+    if (s.sound && s.sound !== this._clickSound) { this._clickSound = s.sound; this._buildMetronomeBuffers() }
+    if (s.rhythm) this._clickRhythm = s.rhythm
+    if (typeof s.onlyWhileRecording === 'boolean') this._clickOnlyWhileRecording = s.onlyWhileRecording
+  }
+
+  get metronomeSound(): ClickSound { return this._clickSound }
+
   private _buildMetronomeBuffers() {
-    const sr  = this.ctx.sampleRate
-    const len = Math.floor(sr * 0.04)
-    const tick = this.ctx.createBuffer(1, len, sr)
-    const tock = this.ctx.createBuffer(1, len, sr)
-    const td = tick.getChannelData(0)
-    const wd = tock.getChannelData(0)
-    for (let i = 0; i < len; i++) {
-      const env = Math.exp(-i / (sr * 0.015))
-      td[i] = Math.sin(2 * Math.PI * 1800 * i / sr) * env
-      wd[i] = Math.sin(2 * Math.PI * 900  * i / sr) * env * 0.5
+    const sr = this.ctx.sampleRate
+    const mk = (accent: boolean) => {
+      const data = renderClick(this._clickSound, sr, accent)
+      const buf = this.ctx.createBuffer(1, data.length, sr)
+      buf.getChannelData(0).set(data)
+      return buf
     }
-    this._tickBuf = tick
-    this._tockBuf = tock
+    this._tickBuf = mk(true)
+    this._tockBuf = mk(false)
   }
 
   setMetronome(on: boolean) {
@@ -5026,9 +5038,18 @@ export class DawEngine extends EventTarget {
 
   private _scheduleMetronome() {
     if (!this.isPlaying) return
+    // Enable Only While Recording: playback stays clean and the click is there
+    // for the take. The clicks are not SKIPPED, they are not scheduled — so
+    // switching a take on mid-song starts clicking from the next one.
+    if (this._clickOnlyWhileRecording && !this.isRecording) return
     const now         = this.ctx.currentTime
     const currentBeat = this.currentBeat
     const ahead       = this._aheadBeats(currentBeat, SCHEDULE_LOOKAHEAD)
+    // How far apart the clicks are: Auto subdivides when the beat is too far
+    // apart to play to, and thins out when it would be a buzz (lib/metronome.ts).
+    const step = clickBeats(this._clickRhythm, this.tempo || 120, beatsPerBarAt(currentBeat, this._meterSegs))
+    // Keep the clicks on the grid rather than on wherever the transport started.
+    if (this._nextMetronomeBeat % step > 1e-6) this._nextMetronomeBeat = Math.ceil(this._nextMetronomeBeat / step) * step
     while (this._nextMetronomeBeat <= currentBeat + ahead) {
       const when       = this._ctxTimeForBeat(Math.max(currentBeat, this._nextMetronomeBeat), currentBeat, now)
       // Downbeat = a bar START in the meter map (honors mid-song time-sig changes);
@@ -5044,7 +5065,7 @@ export class DawEngine extends EventTarget {
         src.start(when)
         src.onended = () => { src.disconnect(); g.disconnect() }
       }
-      this._nextMetronomeBeat++
+      this._nextMetronomeBeat += step
     }
   }
 
@@ -5090,6 +5111,10 @@ export class DawEngine extends EventTarget {
     if (this.ctx.state === 'suspended') await this.ctx.resume()
     const secPerBeat = 60 / tempo
     const start = this.ctx.currentTime + 0.06
+    // What the position display reads while this runs: negative bars counting
+    // down to the take (lib/metronome.ts countInPosition). Off the audio clock,
+    // not a timer, so the number on screen matches the click you can hear.
+    this._countIn = { startCtxTime: start, totalBeats: beats, secPerBeat }
     for (let i = 0; i < beats; i++) {
       const isDownbeat = (i % this._beatsPerBar) === 0
       const buf = isDownbeat ? this._tickBuf : this._tockBuf
@@ -5103,6 +5128,16 @@ export class DawEngine extends EventTarget {
       src.onended = () => { src.disconnect(); g.disconnect() }
     }
     await new Promise(r => setTimeout(r, (0.06 + beats * secPerBeat) * 1000))
+    this._countIn = null
+  }
+
+  /** Beats elapsed and total while a count-in runs, else null. Read every frame
+   *  by the transport to show negative bars. */
+  private _countIn: { startCtxTime: number; totalBeats: number; secPerBeat: number } | null = null
+  get countInProgress(): { elapsed: number; total: number } | null {
+    const c = this._countIn
+    if (!c) return null
+    return { elapsed: Math.max(0, (this.ctx.currentTime - c.startCtxTime) / c.secPerBeat), total: c.totalBeats }
   }
 
   // ── Recording ─────────────────────────────────────────────────────────────

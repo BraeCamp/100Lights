@@ -28,6 +28,7 @@ import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject, type DawAction } from '@/lib/daw-state'
 import { tempoSegments, tempoAt, clampBpm } from '@/lib/tempo-map'
 import { planPunch, describePunch, punchArmed } from '@/lib/punch'
+import { useMetronomeSettings, setMetronomeSettings, countInPosition, describeMetronome, CLICK_SOUNDS, CLICK_RHYTHMS, type ClickSound, type ClickRhythm } from '@/lib/metronome'
 import { RECORD_GRIDS, DEFAULT_RECORD_GRID, recordGridLabel, type RecordGrid } from '@/lib/record-quantize'
 import type { DawProject } from '@/lib/daw-types'
 import { openProjectInStudio } from '@/lib/open-in-studio'
@@ -124,6 +125,8 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   const [bpmDraft, setBpmDraft] = useState('')
   const [fxOpen, setFxOpen] = useState(false)
   const fxA = useAppear(fxOpen, 'pop-up')
+  const [metroMenu, setMetroMenu] = useState(false)
+  const metroA = useAppear(metroMenu, 'pop-up')
   const [editingTimeSig, setEditingTimeSig] = useState(false)
   const [showTuner, setShowTuner] = useState(false)
   const [showRecorder, setShowRecorder] = useState(false)
@@ -246,6 +249,11 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     return () => window.removeEventListener('100lights:record-toggle', on)
   })
 
+  // The click's sound, rhythm, count-in and only-while-recording all live in
+  // the workspace (lib/metronome.ts) — preferences about how you work, not part
+  // of the song, since the click is never in the render.
+  const metro = useMetronomeSettings()
+
   // RAF loop — music mode: render beats; podcast mode: render wall-clock time
   useEffect(() => {
     if (audioMode === 'podcast') {
@@ -268,7 +276,13 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       const num = project.timeSignatureNum
       function musicFrame() {
         if (posRef.current) {
-          posRef.current.textContent = formatBeat(engine.currentBeat, num)
+          // During a count-in the display reads NEGATIVE bars ticking down to
+          // the take. Counting up from zero would show 1.1.1 while the song has
+          // not started, and the number a player watches to come in on would be
+          // the same one they see once they are already late (lib/metronome.ts).
+          const c = engine.countInProgress
+          posRef.current.textContent =
+            (c && countInPosition(c.elapsed, c.total, num)) ?? formatBeat(engine.currentBeat, num)
         }
         rafRef.current = requestAnimationFrame(musicFrame)
       }
@@ -276,6 +290,12 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     }
     return () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current) }
   }, [engine, project.timeSignatureNum, audioMode])
+
+  // The click's sound, rhythm and only-while-recording live in the workspace
+  // (lib/metronome.ts); the engine is told, it never reads them itself.
+  useEffect(() => {
+    engine.setMetronomeSettings({ sound: metro.sound, rhythm: metro.rhythm, onlyWhileRecording: metro.onlyWhileRecording })
+  }, [engine, metro.sound, metro.rhythm, metro.onlyWhileRecording])
 
   // ── Common handlers ─────────────────────────────────────────────────────────
 
@@ -291,7 +311,6 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
   const [recordSetup, setRecordSetup] = useState(false)
   const [monitorOn, setMonitorOn] = useState(false)
   const [recFx, setRecFx] = useState<MonitorFx[]>([])
-  const [countInBars, setCountInBars] = useState(0)
   const [latencyMs, setLatencyMs] = useState<number>(() => {
     try {
       const s = typeof localStorage !== 'undefined' ? localStorage.getItem('100lights-rec-latency-ms') : null
@@ -348,11 +367,11 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     setMonitorOn(false)
     setRecordSetup(false)
     try {
-      if (countInBars > 0) {
-        setMicError(`Count-in — ${countInBars} bar${countInBars > 1 ? 's' : ''}…`)
+      if (metro.countInBars > 0) {
+        setMicError(`Count-in — ${metro.countInBars} bar${metro.countInBars > 1 ? 's' : ''}…`)
         // The count-in clicks at the tempo of the section the take starts in,
         // not the opening bpm — after a tempo change those differ.
-        await engine.countIn(countInBars * project.timeSignatureNum, tempoAt(engine.currentBeat, tempoSegments(project)))
+        await engine.countIn(metro.countInBars * project.timeSignatureNum, tempoAt(engine.currentBeat, tempoSegments(project)))
         setMicError('')
       }
       // Punch in / out (lib/punch.ts). With a punch armed the engine drives the
@@ -528,13 +547,13 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Count-in</span>
-          {[0, 1, 2].map(b => (
-            <button key={b} onClick={() => setCountInBars(b)}
+          {[0, 1, 2, 4].map(b => (
+            <button key={b} data-help-id={b === 0 ? 'count-in' : undefined} onClick={() => setMetronomeSettings({ countInBars: b })}
               style={{
                 fontSize: 10, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', fontWeight: 700,
-                border: countInBars === b ? '1px solid rgba(220,38,38,0.6)' : '1px solid #2e2e2e',
-                background: countInBars === b ? 'rgba(220,38,38,0.14)' : '#1e1e1e',
-                color: countInBars === b ? '#f87171' : 'var(--text-muted)',
+                border: metro.countInBars === b ? '1px solid rgba(220,38,38,0.6)' : '1px solid #2e2e2e',
+                background: metro.countInBars === b ? 'rgba(220,38,38,0.14)' : '#1e1e1e',
+                color: metro.countInBars === b ? '#f87171' : 'var(--text-muted)',
               }}
             >{b === 0 ? 'Off' : `${b} bar${b > 1 ? 's' : ''}`}</button>
           ))}
@@ -669,13 +688,32 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       keywords: 'record quantization quantize grid snap timing as played input half two beats', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'half' }) },
     { id: 'transport.recordQuantize.whole', group: 'Transport', label: 'Record quantization: 1/1 — notes land on the bar',
       keywords: 'record quantization quantize grid snap timing as played input whole bar', run: () => dispatch({ type: 'SET_RECORD_QUANTIZE', grid: 'whole' }) },
+    // The click's sound and rhythm (lib/metronome.ts). Behind a right-click on
+    // the metronome button, which nobody discovers, so they are spelled out
+    // here — one per sound, for the same reason as the grids above.
+    { id: 'transport.click.click', group: 'Transport', label: 'Metronome sound: Click — a short high ping', keywords: 'metronome click sound tick tone ping cut through', run: () => setMetronomeSettings({ sound: 'click' }) },
+    { id: 'transport.click.beep', group: 'Transport', label: 'Metronome sound: Beep — the most audible, the least pleasant', keywords: 'metronome click sound beep tone loud audible', run: () => setMetronomeSettings({ sound: 'beep' }) },
+    { id: 'transport.click.stick', group: 'Transport', label: 'Metronome sound: Stick — broadband, survives a busy mix', keywords: 'metronome click sound stick sticks crack noise busy mix', run: () => setMetronomeSettings({ sound: 'stick' }) },
+    { id: 'transport.click.wood', group: 'Transport', label: 'Metronome sound: Wood — a wood block, easy over long sessions', keywords: 'metronome click sound wood block dry mid', run: () => setMetronomeSettings({ sound: 'wood' }) },
+    { id: 'transport.click.cowbell', group: 'Transport', label: 'Metronome sound: Cowbell — metallic, sits above a kit', keywords: 'metronome click sound cowbell metallic bell drums', run: () => setMetronomeSettings({ sound: 'cowbell' }) },
+    { id: 'transport.click.rimshot', group: 'Transport', label: 'Metronome sound: Rimshot — a crack with body under it', keywords: 'metronome click sound rimshot rim crack snare', run: () => setMetronomeSettings({ sound: 'rimshot' }) },
+    ...CLICK_RHYTHMS.filter(r => r.id !== metro.rhythm).map(r => ({
+      id: `transport.clickRhythm.${r.id}`, group: 'Transport',
+      label: r.id === 'auto' ? 'Metronome rhythm: Auto — subdivides when the beat is far apart' : `Metronome rhythm: ${r.label}`,
+      keywords: `metronome click rhythm how often subdivision grid ${r.label.toLowerCase()}`,
+      run: () => setMetronomeSettings({ rhythm: r.id }),
+    })),
+    { id: 'transport.clickOnlyRecording', group: 'Transport',
+      label: metro.onlyWhileRecording ? 'Metronome on for playback too' : 'Metronome only while recording',
+      keywords: 'metronome click only while recording takes playback silent enable',
+      run: () => setMetronomeSettings({ onlyWhileRecording: !metro.onlyWhileRecording }) },
     // Count-in is four unlabelled number buttons inside the record setup box —
     // you cannot find it unless you are already recording.
-    ...[0, 1, 2].filter(b => b !== countInBars).map(b => ({
+    ...[0, 1, 2, 4].filter(b => b !== metro.countInBars).map(b => ({
       id: `transport.countin.${b}`, group: 'Transport',
       label: b === 0 ? 'No count-in before recording' : `Count in ${b} bar${b > 1 ? 's' : ''} before recording`,
       keywords: 'countin count in lead pre roll click bars metronome record',
-      run: () => setCountInBars(b),
+      run: () => setMetronomeSettings({ countInBars: b }),
     })),
     // Tempo goes through applyTempo because a project with tempo markers must
     // retempo the segment under the playhead, not stamp one global BPM over a
@@ -714,7 +752,7 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
     { id: 'transport.historyrec', group: 'Share', label: 'Record how this project gets built',
       keywords: 'history timelapse replay capture session process',
       run: () => { setRecorderMode('history'); setShowRecorder(true) } },
-  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, countInBars, loopToolArmed, project.punchIn, project.punchOut, project.recordQuantize])
+  ], [recording, project.loopEnabled, project.arrangementClips.length, project.tempo, project.swing, metro.countInBars, loopToolArmed, project.punchIn, project.punchOut, project.recordQuantize, metro.rhythm, metro.onlyWhileRecording])
 
   // ── Music-only handlers ─────────────────────────────────────────────────────
 
@@ -1230,16 +1268,49 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
         </button>
       )}
 
-      {/* Metronome */}
-      <button
-        style={metronome ? active : base}
-        onClick={handleMetronomeToggle}
-        title="Toggle metronome (M)"
-        aria-pressed={metronome}
-        data-help-id="metronome"
-      >
-        <TbMetronome size={15} />
-      </button>
+      {/* Metronome. Right-click opens what it sounds like and how often — the
+          click has to cut through what you are playing, and which sound does
+          that depends entirely on the music (lib/metronome.ts). */}
+      <div style={{ position: 'relative' }}>
+        <button
+          style={metronome ? active : base}
+          onClick={handleMetronomeToggle}
+          onContextMenu={e => { e.preventDefault(); setMetroMenu(o => !o) }}
+          title={`Toggle metronome (M). Right-click for the click's sound and rhythm — ${describeMetronome(metro)}.`}
+          aria-pressed={metronome}
+          data-help-id="metronome"
+        >
+          <TbMetronome size={15} />
+        </button>
+        {metroA.mounted && (
+          <div className={metroA.cls} data-help-id="metronome-settings"
+            style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, padding: 10, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 8, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 1000, boxShadow: '0 6px 20px rgba(0,0,0,0.5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 46 }}>Sound</span>
+              <select value={metro.sound} aria-label="Metronome sound" data-help-id="metronome-sound"
+                title={CLICK_SOUNDS.find(x => x.id === metro.sound)?.hint}
+                onChange={e => setMetronomeSettings({ sound: e.target.value as ClickSound })}
+                style={{ flex: 1, fontSize: 10, padding: '3px 6px', borderRadius: 5, background: '#1e1e1e', color: 'var(--text-primary)', border: '1px solid #2e2e2e', cursor: 'pointer' }}>
+                {CLICK_SOUNDS.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-secondary)', width: 46 }}>Rhythm</span>
+              <select value={metro.rhythm} aria-label="Metronome rhythm" data-help-id="metronome-rhythm"
+                title="Auto subdivides when the beat is too far apart to play to, and thins out when it would be a buzz."
+                onChange={e => setMetronomeSettings({ rhythm: e.target.value as ClickRhythm })}
+                style={{ flex: 1, fontSize: 10, padding: '3px 6px', borderRadius: 5, background: '#1e1e1e', color: 'var(--text-primary)', border: '1px solid #2e2e2e', cursor: 'pointer' }}>
+                {CLICK_RHYTHMS.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+              </select>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={metro.onlyWhileRecording} data-help-id="metronome-only-recording"
+                onChange={e => setMetronomeSettings({ onlyWhileRecording: e.target.checked })} />
+              Only while recording
+            </label>
+          </div>
+        )}
+      </div>
 
       {showMore && <div style={divider} />}
 

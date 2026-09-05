@@ -157,6 +157,7 @@ import { LUMENS_NAME } from '@/lib/credit-tiers'
 import { requestNoteSelection } from '@/lib/note-selection'
 import { validMarkers, warpStraight, quantizeTransients } from '@/lib/warp'
 import { landClip, setImportSettings, describeImportSettings, type ImportSettings } from '@/lib/import-settings'
+import { setMetronomeSettings, type MetronomeSettings } from '@/lib/metronome'
 import { sliceToNewTrack, convertToNewTrack } from '@/lib/audio-to-track'
 import type { AudioClip as VoiceAudioClip } from '@/lib/daw-types'
 import {
@@ -1553,6 +1554,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       void _t
       setImportSettings(patch)
       void describeImportSettings
+      return
+    }
+
+    // What the click sounds like and how often (lib/metronome.ts) — also a
+    // workspace setting: the click is never in the render, so a project that
+    // carried it would be carrying something nobody could hear.
+    if (act.type === 'METRONOME') {
+      const { type: _t, ...patch } = act as unknown as { type: string } & Partial<MetronomeSettings>
+      void _t
+      setMetronomeSettings(patch)
       return
     }
 

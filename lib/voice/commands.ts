@@ -2515,6 +2515,62 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'set_metronome',
+    tool: 'set_metronome',
+    group: 'Transport',
+    what: 'What the click sounds like, how often it clicks, and the count-in',
+    say: ['use a cowbell for the metronome', 'click on eighths', 'only click while I am recording', 'count me in two bars'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ NOT the on/off switch. "Turn the metronome on" is transport, and it
+      // is the far commoner sentence — so this rule needs a sentence that names
+      // a sound, a rhythm, the recording-only rule, or a count-in.
+      const aboutClick = /\b(?:metronome|click)\b/.test(raw)
+      const input: Record<string, unknown> = {}
+
+      const soundM = /\b(cowbell|bell|rim ?shot|rim|wood ?block|wood|stick|beep|click)\b/.exec(raw)
+      if (aboutClick && soundM && /\b(?:use|make|give|switch|change|set|to|as|with)\b/.test(raw)) {
+        const s = /cowbell|bell/.test(soundM[1]) ? 'cowbell'
+          : /rim/.test(soundM[1]) ? 'rimshot'
+          : /wood/.test(soundM[1]) ? 'wood'
+          : /stick/.test(soundM[1]) ? 'stick'
+          : /beep/.test(soundM[1]) ? 'beep'
+          : null            // bare "click" is the word for the metronome itself
+        if (s) input.sound = s
+      }
+
+      // "Click on eighths", "metronome every sixteenth" — how often, not what.
+      if (aboutClick && /\b(?:on|every|to|at)\b/.test(raw)) {
+        const triplet = /triplet/.test(raw)
+        const r = /\bauto\b/.test(raw) ? 'auto'
+          : /16|sixteen/.test(raw) ? (triplet ? '1/16T' : '1/16')
+          : /eighth|\b1\/8\b|8th/.test(raw) ? (triplet ? '1/8T' : '1/8')
+          : /quarter|\b1\/4\b|\bbeat\b/.test(raw) ? '1/4'
+          : null
+        if (r) input.rhythm = r
+      }
+
+      // "Only click while I'm recording" / "click for playback too".
+      if (aboutClick && /\bonly\b[\w\s']*\b(?:record|take)/.test(raw)) input.onlyWhileRecording = true
+      if (aboutClick && /\b(?:playback|play) too\b|\ball the time\b/.test(raw)) input.onlyWhileRecording = false
+
+      // "Count me in two bars", "no count-in".
+      const countM = /\bcount(?:\s*(?:me|us))?\s*(?:-|\s)?in\b|\bcount me in\b|\bcount-in\b/.test(raw)
+      if (countM) {
+        const n = /\bno\b|\boff\b|\bnone\b/.test(raw) ? 0
+          : /\bfour\b|\b4\b/.test(raw) ? 4
+          : /\btwo\b|\b2\b/.test(raw) ? 2
+          : /\bone\b|\b1\b|\ba bar\b/.test(raw) ? 1
+          : null
+        if (n !== null) input.countInBars = n
+      }
+
+      if (!Object.keys(input).length) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_metronome', input }], confidence: 0.95 }
+    },
+  },
+  {
     id: 'set_record_quantize',
     tool: 'set_record_quantize',
     group: 'Transport',

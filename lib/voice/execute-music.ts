@@ -62,6 +62,7 @@ import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
 import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
 import { describePunch, punchArmed } from '../punch'
 import { recordGridLabel, type RecordGrid } from '../record-quantize'
+import { CLICK_SOUNDS } from '../metronome'
 import { describeFollow, type FollowAction } from '../follow-actions'
 import { plainWordIn, needsAsking, senseFromAnswer, defaultSense, describeSense, askText } from './plain-words'
 import {
@@ -4867,6 +4868,48 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (typeof i.autoWarpLong === 'boolean') { out.autoWarpLong = i.autoWarpLong; said.push(i.autoWarpLong ? 'long samples are auto-warped to the song tempo' : 'long samples are left as they are') }
       if (!said.length) return fail('Say what to change — how short samples land (one-shot, loop, auto), or whether long samples are auto-warped.')
       return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
+    }
+
+    // ── THE CLICK — sound, rhythm, count-in (lib/metronome.ts) ────────────────
+    case 'set_metronome': {
+      const out: Record<string, unknown> = { type: 'METRONOME' }
+      const said: string[] = []
+      const sound = str(i.sound).toLowerCase()
+      if (sound) {
+        const s = CLICK_SOUNDS.find(x => x.id === sound || x.label.toLowerCase() === sound)
+          ?? (/bell/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'cowbell') : null)
+          ?? (/rim|snare/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'rimshot') : null)
+          ?? (/block|wood/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'wood') : null)
+          ?? (/stick/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'stick') : null)
+          ?? (/beep|tone/.test(sound) ? CLICK_SOUNDS.find(x => x.id === 'beep') : null)
+        if (!s) return fail(`I don't have a "${sound}" click. There's ${CLICK_SOUNDS.map(x => x.label).join(', ')}.`)
+        out.sound = s.id
+        said.push(`${s.label.toLowerCase()} — ${s.hint.replace(/\.$/, '').toLowerCase()}`)
+      }
+      const rhythm = str(i.rhythm).toLowerCase()
+      if (rhythm) {
+        const triplet = /triplet|t$/.test(rhythm)
+        const r = /auto/.test(rhythm) ? 'auto'
+          : /16|sixteen/.test(rhythm) ? (triplet ? '1/16T' : '1/16')
+          : /\b8\b|eighth|1\/8/.test(rhythm) ? (triplet ? '1/8T' : '1/8')
+          : /\b4\b|quarter|beat|1\/4/.test(rhythm) ? '1/4'
+          : null
+        if (!r) return fail('Say auto, quarters, eighths, eighth triplets, sixteenths or sixteenth triplets.')
+        out.rhythm = r
+        said.push(r === 'auto' ? 'clicking on auto — it subdivides when the beat is far apart' : `clicking on ${r}`)
+      }
+      if (typeof i.onlyWhileRecording === 'boolean') {
+        out.onlyWhileRecording = i.onlyWhileRecording
+        said.push(i.onlyWhileRecording ? 'only while recording' : 'clicking for playback too')
+      }
+      if (i.countInBars != null) {
+        const n = Math.max(0, Math.min(4, Math.round(Number(i.countInBars))))
+        if (!Number.isFinite(n)) return fail('Say how many bars to count in — none, one, two or four.')
+        out.countInBars = n
+        said.push(n === 0 ? 'no count-in' : `${n} bar${n > 1 ? 's' : ''} of count-in, shown as negative bars`)
+      }
+      if (!said.length) return fail('Say what to change about the click — its sound, how often it clicks, whether it is only for takes, or the count-in.')
+      return { actions: [out], say: `The click: ${said.join('; ')}.` }
     }
 
     // ── RECORD QUANTIZATION — the grid a take lands on (lib/record-quantize.ts) ──

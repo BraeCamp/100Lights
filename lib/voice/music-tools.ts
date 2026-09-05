@@ -867,6 +867,20 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_metronome',
+    description:
+      'WHAT THE CLICK SOUNDS LIKE AND HOW OFTEN (Live\'s metronome preferences) — "use a cowbell for the metronome" (sound cowbell; also click, beep, stick, wood, rimshot), "click on eighths" (rhythm "1/8"; also auto, 1/4, 1/8T, 1/16, 1/16T), "only click while I\'m recording" (onlyWhileRecording true), "count me in two bars" (countInBars 2). NOT the metronome on/off switch — that is `transport`.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sound: { type: 'string', enum: ['click', 'beep', 'stick', 'wood', 'cowbell', 'rimshot'] },
+        rhythm: { type: 'string', description: 'auto, 1/4, 1/8, 1/8T, 1/16 or 1/16T.' },
+        onlyWhileRecording: { type: 'boolean', description: 'Silent for ordinary playback; the click is there for takes.' },
+        countInBars: { type: 'number', description: 'Bars of clicks before a take starts. 0 = none.' },
+      },
+    },
+  },
+  {
     name: 'set_record_quantize',
     description:
       'THE GRID RECORDED NOTES LAND ON AS THEY ARE PLAYED (Live\'s Record Quantization) — "quantize what I record to sixteenths" (grid "1/16"), "record quantization to eighth triplets" ("1/8T"), "snap what I play to the beat" ("1/4"), "turn record quantization off" ("none"). NOT the same as quantizing a clip afterwards (that is `quantize_notes`): this changes what a take becomes at the moment it is captured, and only the note starts move.',
