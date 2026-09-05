@@ -29,6 +29,8 @@ import { playInstrumentNote, preloadDrumInstrument, type DrumVoiceHandle } from 
 import { CLIP_EFFECT_PARAM_META, sampleAutomation, sampleAutomationAt, normToParam } from './clip-effect-utils'
 import { encodeWav } from './wav-codec'
 import { wsola, extractTrimmed, pitchShiftBuffer } from './wsola'
+import { validMarkers, markersKey } from './warp'
+import { renderWarped } from './warp-render'
 import { libraryGetByFolder, libraryGetById } from './sound-library'
 import { libraryFulfill, renderPresetAtPitch } from './default-samples'
 import { resampleBySemitones } from './audio-resample'
@@ -3417,7 +3419,34 @@ export class DawEngine extends EventTarget {
       boomerangActive = true
     }
 
-    if (clip.warpEnabled && !clip.reverse) {
+    const warpMarkers = clip.warpEnabled && !clip.reverse ? validMarkers(clip.warpMarkers) : null
+    if (warpMarkers) {
+      // Warp markers (lib/warp.ts): the sample rendered through its map ONCE
+      // (lib/warp-render.ts), span by span into the wall seconds each span's
+      // beats take through the tempo map, then played like any other buffer —
+      // the fades, the drawn effects and the seek arithmetic below stay as
+      // they are. Cached on the markers, the mode and the wall times, so a
+      // tempo change or a moved marker re-renders and nothing else does.
+      const mode = clip.warpMode === 'stretch' ? 'stretch' : 'repitch'
+      const wall = (b0: number, b1: number) => this._spanSeconds(clip.startBeat + b0, clip.startBeat + b1)
+      const cacheKey = `${clip.id}:warp:${mode}:${markersKey(warpMarkers)}:${clip.durationBeats.toFixed(4)}:${clipDuration.toFixed(4)}`
+      let warped = this.stretchedBufferCache.get(cacheKey)
+      if (!warped) {
+        warped = renderWarped(buf, {
+          markers: warpMarkers, clipBeats: clip.durationBeats, wallSeconds: wall, mode,
+          makeBuffer: (ch, n, sr) => this.ctx.createBuffer(ch, n, sr),
+          stretch: (b, f) => wsola(b as AudioBuffer, f),
+        }) as AudioBuffer
+        this.stretchedBufferCache.set(cacheKey, warped)
+      }
+      playBuf        = warped
+      playTrimStart  = 0
+      playTrimEnd    = 0
+      const seekOff  = Math.min(alreadyPlayed, warped.duration)
+      effectiveDuration = Math.max(0, warped.duration - seekOff)
+      source.buffer = playBuf
+      source.start(startAt, seekOff, effectiveDuration)
+    } else if (clip.warpEnabled && !clip.reverse) {
       const nativeDur = buf.duration - clip.trimStart - clip.trimEnd
       const stretchFactor = nativeDur > 0 && clipDuration > 0 ? nativeDur / clipDuration : 1
 

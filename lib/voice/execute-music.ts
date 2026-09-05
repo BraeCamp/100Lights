@@ -57,6 +57,7 @@ import { parseFilter, findNotes, describeFilter } from '../find-notes'
 import { quantizeNotes as quantizeWithSettings, parseGridSaid } from '../quantize'
 import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, insertTime, deleteTime, duplicateTime } from '../clip-time'
 import { setSegBpm } from '../sample-editor'
+import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -2879,7 +2880,13 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       const found = resolveClip(target, project)
       if (!found) return fail(`I couldn't find "${target || 'that'}" to quantize.`)
       const clip = found.clip
-      if (!('notes' in clip)) return fail('That is an audio clip — there are no notes to move.')
+      if (!('notes' in clip)) {
+        // An AUDIO clip quantizes its transients onto the grid — warp markers
+        // (lib/warp.ts), found by the studio from the decoded audio.
+        const said = `${str(i.division)} ${str(i.feel)}`.toLowerCase()
+        const g = parseGridSaid(said)?.grid ?? spokenNumber(i.division as string) ?? 0.25
+        return { actions: [{ type: 'WARP_QUANTIZE', clipId: clip.id, grid: g }], say: `Quantizing ${found.how}'s transients to ${g === 0.25 ? 'sixteenths' : g === 0.5 ? 'eighths' : g === 1 ? 'the beat' : `${g} beats`}.` }
+      }
       const notes = (clip as MidiClip).notes
       if (!notes.length) return fail('That clip has no notes.')
 
@@ -4552,6 +4559,50 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
         actions: targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: patchFor(c) })),
         say: `${targets.length === 1 ? clipLabel(project, targets[0]) : `${targets.length} clips`}: ${said.join(', ')}.`,
       }
+    }
+
+    // ── WARP MARKERS on an audio clip (lib/warp.ts) ──────────────────────
+    case 'warp_markers': {
+      const op = str(i.op).toLowerCase()
+      const found = resolveClip(target, project)
+      if (!found || found.clip.kind !== 'audio') return fail(`I couldn't find an audio clip called "${target || 'that'}" — MIDI clips have no warp markers.`)
+      const clip = found.clip as AudioClip
+      const how = clipLabel(project, clip)
+      const bar = project.timeSignatureNum || 4
+      const start = clip.trimStart ?? 0
+      // The sample's length once it has loaded; until then the clip's own
+      // seconds at the song's tempo — what an unwarped clip spans.
+      const end = clip.bufferDuration != null
+        ? clip.bufferDuration - (clip.trimEnd ?? 0)
+        : start + clip.durationBeats * (60 / (project.tempo || 120))
+      if (op === 'clear') {
+        const had = clip.warpMarkers?.length ?? 0
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: undefined } }], say: had ? `Cleared ${how}'s warp markers.` : `${how} had no warp markers — it plays straight.` }
+      }
+      if (op === 'quantize_transients') {
+        // The attacks live in the decoded audio, which the planner cannot see:
+        // the studio finds them and writes the markers (VoiceControl).
+        const grid = spokenNumber(i.grid as string) ?? 0.25
+        return { actions: [{ type: 'WARP_QUANTIZE', clipId: clip.id, grid }], say: `Quantizing ${how}'s transients to ${grid === 0.25 ? 'sixteenths' : grid === 0.5 ? 'eighths' : grid === 1 ? 'the beat' : `${grid} beats`}.` }
+      }
+      if (!(end > start)) return fail(`${how} has no length to warp yet.`)
+      if (op === 'as_loop') {
+        const bars = spokenNumber(i.bars as string)
+        if (bars == null || !(bars > 0)) return fail('Say how many bars the sample is — "as a 2 bar loop".')
+        const ms = warpAsLoop(start, end, bars, bar)
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true, durationBeats: bars * bar, segBpm: Math.round(((bars * bar) / (end - start)) * 60 * 100) / 100 } }], say: `Warped ${how} as a ${bars}-bar loop.` }
+      }
+      if (op === 'at_bpm') {
+        const bpm = spokenNumber(i.bpm as string)
+        if (bpm == null || bpm < 20 || bpm > 999) return fail('Say the sample\'s tempo — "at 90 bpm".')
+        const ms = warpAtBpm(start, end, bpm)
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true, segBpm: bpm, durationBeats: ms[1].beat } }], say: `Warped ${how} straight at ${bpm} BPM.` }
+      }
+      if (op === 'straight') {
+        const ms = warpStraight(start, end, clip.durationBeats)
+        return { actions: [{ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true } }], say: `Warped ${how} straight across its ${+(clip.durationBeats / bar).toFixed(2)} bars.` }
+      }
+      return fail('Say how to warp it — as a loop of so many bars, straight, at a tempo, quantize its transients, or clear the markers.')
     }
 
     // ── A MIDI CLIP'S LOOP AND TIME (lib/clip-time.ts) ───────────────────

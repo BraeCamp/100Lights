@@ -2411,6 +2411,8 @@ const COMMANDS: VoiceCommand[] = [
       // Shaping a clip's loop — cropping to it, doubling it, its length, the
       // notes in it — is clip_time's; this only switches looping on and off.
       if (/\bcrop\b|\bduplicate\b|\bdouble\b|\bselect\b|\bloop\b.*\bto\b.*\b(?:bars?|beats?)\b|\bloop (?:length|end)\b/.test(rest)) return null
+      // Warping a clip AS a loop, straight, at a tempo, or its markers is warp_markers'; here Warp only switches on and off.
+      if (/\bwarp/.test(rest) && /\bas an? \S+[- ]bars?\b|\bas a loop\b|\bstraight\b|\bat\s+\d+(?:\.\d+)?\s*bpm\b|\bmarkers?\b/.test(rest)) return null
       const loopSaid = /\bloop(?:ed|ing)?\b/.test(rest) && clipWord
       const gainM = clipWord ? /\b(?:to|at)\s+(\d{1,3})\s*(?:%|percent)/.exec(rest) : null
       // The Sample Editor's settings (lib/sample-editor.ts), all wanting the
@@ -3134,6 +3136,35 @@ const COMMANDS: VoiceCommand[] = [
       if (!named) return null
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'stretch_notes', input: { target: named.name, factor } }], confidence: 0.9 }
+    },
+  },
+  {
+    id: 'warp_markers',
+    tool: 'warp_markers',
+    group: 'Arrangement',
+    what: 'Warp an audio clip — as a loop of N bars, straight, at a tempo; clear its markers',
+    say: ['warp the vox take clip as a 2 bar loop', 'warp the vox take clip straight', 'warp the vox take clip at 90 bpm', 'clear the warp markers on the vox take clip'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase()
+      if (!/\bwarp/.test(raw)) return null
+      const op = /\bas an? (\d+|one|two|four|eight)[- ]bars?\b|\bas a loop\b/.test(raw) ? 'as_loop'
+        : /\bstraight\b/.test(raw) ? 'straight'
+          : /\bat\s+\d+(?:\.\d+)?\s*bpm\b/.test(raw) ? 'at_bpm'
+            : /\bclear\b|\bremove\b|\bdelete\b/.test(raw) && /\bmarkers?\b/.test(raw) ? 'clear'
+              : null
+      if (!op) return null
+      const named = nameOrSelected(w, ctx, ['warp', 'warped', 'the', 'clip', 'as', 'a', 'an', 'bar', 'bars', 'loop', 'straight', 'at', 'bpm', 'clear', 'remove', 'delete',
+        'markers', 'marker', 'on', 'of', 'from', 'one', 'two', 'four', 'eight'], { dropNums: true })
+      if (!named) return null
+      const input: Record<string, unknown> = { target: named.name, op }
+      if (op === 'as_loop') {
+        const m = /\bas an? (\d+|one|two|four|eight)/.exec(raw)
+        const WORDS: Record<string, number> = { one: 1, two: 2, four: 4, eight: 8 }
+        input.bars = m ? (WORDS[m[1]] ?? Number(m[1])) : 1
+      }
+      if (op === 'at_bpm') input.bpm = Number(/\bat\s+(\d+(?:\.\d+)?)\s*bpm/.exec(raw)![1])
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'warp_markers', input }], confidence: 0.95 }
     },
   },
   {

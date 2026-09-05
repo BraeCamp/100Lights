@@ -14,7 +14,7 @@
 import assert from 'node:assert'
 import { importTs } from '../lib/ts-import.mjs'
 
-const { detectOnsets, alignToOnsets } = await importTs('lib/voice/onsets.ts')
+const { detectOnsets, alignToOnsets } = await importTs('lib/onsets.ts')
 
 let failures = 0
 const check = (label, pass, extra = '') => {

@@ -17,7 +17,7 @@
 // Tab, glance at the session grid, let go, you are back). One key, both
 // behaviours, no setting.
 
-export type KeyScope = 'global' | 'arrangement' | 'roll' | 'knob'
+export type KeyScope = 'global' | 'arrangement' | 'roll' | 'sample' | 'knob'
 export type KeyMode = 'music' | 'podcast'
 
 export interface KeyBinding {
@@ -174,6 +174,15 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'loop.longer', keys: '⌘→', scope: 'roll', group: 'Piano Roll', action: 'Lengthen the loop by the grid', modes: ['music'], hidden: true },
   { id: 'notes.selectInLoop', keys: '⇧⌘L', scope: 'roll', group: 'Piano Roll', action: 'Select the notes inside the loop brace', modes: ['music'] },
   { id: 'notes.crop', keys: '⇧⌘J', scope: 'roll', group: 'Piano Roll', action: 'Crop the clip to its loop — notes outside it go, the loop becomes the clip', modes: ['music'] },
+
+  // ── Sample Editor (an audio clip in the clip pane; lib/warp.ts) ───────────
+  { id: 'sample.insertWarpMarker', keys: '⌘I', scope: 'sample', group: 'Sample Editor', action: 'Insert a warp marker at the insert point (click the waveform to place it)', modes: ['music'] },
+  { id: 'sample.insertTransient', keys: '⇧⌘I', scope: 'sample', group: 'Sample Editor', action: 'Insert a transient marker at the insert point', modes: ['music'] },
+  { id: 'sample.deleteMarker', keys: 'Delete', also: ['Backspace'], scope: 'sample', group: 'Sample Editor', action: 'Delete the selected warp marker', modes: ['music'] },
+  { id: 'sample.markerPrev', keys: '⌘←', scope: 'sample', group: 'Sample Editor', action: 'Select the previous / next warp marker (← / → nudge it by a millisecond)', modes: ['music'], display: '⌘← / ⌘→' },
+  { id: 'sample.markerNext', keys: '⌘→', scope: 'sample', group: 'Sample Editor', action: 'Select the next warp marker', modes: ['music'], hidden: true },
+  { id: 'sample.nudgeLeft', keys: '←', scope: 'sample', group: 'Sample Editor', action: 'Nudge the selected marker earlier in the sample', modes: ['music'], hidden: true },
+  { id: 'sample.nudgeRight', keys: '→', scope: 'sample', group: 'Sample Editor', action: 'Nudge the selected marker later in the sample', modes: ['music'], hidden: true },
 
   // ── Knobs (handled by the focused knob itself; listed so the help panel knows) ──
   { id: 'knob.next', keys: 'Tab', scope: 'knob', group: 'Knobs', action: 'Move between knobs — every knob takes keyboard focus' },

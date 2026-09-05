@@ -173,6 +173,7 @@ export function describeAction(a: unknown, names: { track?: (id: string) => stri
     }
     case 'RESOLVE_NOTE_OVERLAPS': return `Tidied overlapping notes on ${c(act.clipId)}`
     case 'SELECT_NOTES': return `Selected ${(act.noteIds as unknown[] | undefined)?.length ?? ''} notes on ${c(act.clipId)}`
+    case 'WARP_QUANTIZE': return `Quantized ${c(act.clipId)}'s transients to the grid`
     case 'ADD_EFFECT': return `Added ${String((act.effect as { type?: string } | undefined)?.type ?? 'an effect')} to ${t(act.trackId)}`
     case 'REMOVE_EFFECT': return `Removed an effect from ${t(act.trackId)}`
     case 'UPDATE_EFFECT': {

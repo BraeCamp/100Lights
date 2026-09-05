@@ -154,6 +154,7 @@ import { recordExchange, describeAction } from '@/lib/voice/transcript'
 import { publishLevel, subscribeLevel } from '@/lib/voice/level-bus'
 import { LUMENS_NAME } from '@/lib/credit-tiers'
 import { requestNoteSelection } from '@/lib/note-selection'
+import { validMarkers, warpStraight, quantizeTransients } from '@/lib/warp'
 import {
   speak, stopSpeaking, speechEnabled, setSpeechEnabled, speechAvailable,
   studioVoice, setStudioVoice,
@@ -1476,6 +1477,21 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
     if (act.type === 'SELECT_NOTES') {
       const a = act as unknown as { clipId: string; noteIds: string[] }
       requestNoteSelection(a.clipId, a.noteIds ?? [])
+      return
+    }
+    // Quantize an audio clip's transients onto the grid (lib/warp.ts). The
+    // attacks live in the decoded buffer, which only the studio has.
+    if (act.type === 'WARP_QUANTIZE') {
+      const a = act as unknown as { clipId: string; grid: number }
+      const clip = projectRef.current?.arrangementClips.find(c => c.id === a.clipId)
+      const buf = engine?.bufferCache.get(a.clipId)
+      if (!clip || clip.kind !== 'audio' || !buf) { setProblem('That clip is still loading — try again in a moment.'); return }
+      const start = clip.trimStart ?? 0, end = buf.duration - (clip.trimEnd ?? 0)
+      const onsets = detectOnsets(monoOf(buf), buf.sampleRate).map(o => o.t).filter(t => t >= start && t <= end)
+      const base = validMarkers(clip.warpMarkers) ?? warpStraight(start, end, clip.durationBeats)
+      const ms = quantizeTransients(base, onsets, a.grid > 0 ? a.grid : 0.25)
+      dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: { warpMarkers: ms, warpEnabled: true } })
+      engine?.clearStretchedCache(clip.id)
       return
     }
 

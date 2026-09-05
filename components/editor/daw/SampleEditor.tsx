@@ -3,36 +3,48 @@
 // The Sample Editor — Live's Clip View for an audio clip, in the clip pane.
 //
 // The full waveform with trim handles at both edges and the playhead riding
-// over it; beside it the clip panel (Live's Audio Utilities): Warp on/off,
-// the warp mode, Seg. BPM with ÷2 and ×2, Gain in dB, Pitch and Detune,
-// Reverse, the Fade switch, the sample's facts, and Save Default Clip. The
-// arithmetic is lib/sample-editor.ts; the defaults store is
-// lib/clip-defaults.ts; the palette registers every control here.
+// over it; along its top the detected transients (grey ticks) and the warp
+// markers (yellow) that pin moments of the sample to beats of the clip
+// (lib/warp.ts); beside it the clip panel (Live's Audio Utilities): Warp
+// on/off, the warp mode, Seg. BPM with ÷2 and ×2, Gain in dB, Pitch and
+// Detune, Reverse, the Fade switch, the sample's facts, and Save Default
+// Clip. The arithmetic is lib/sample-editor.ts; the defaults store is
+// lib/clip-defaults.ts; the transient detector is lib/onsets.ts; the palette
+// registers every control here, and the ⌘I family is the 'sample' key scope.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useDaw } from '@/lib/daw-state'
 import { isAudioClip, type AudioClip } from '@/lib/daw-types'
 import { useRegisterCommands } from '@/lib/commands'
+import { resolveKey } from '@/lib/keymap'
 import Waveform from './Waveform'
 import Knob from './Knob'
 import { nativeSeconds, segBpmOf, setSegBpm, gainToDb, dbToGain, trimByDrag, sampleFraction, sampleDetails, describeSample, warpSpeed } from '@/lib/sample-editor'
 import { saveClipDefaults, clipDefaultsKey, useClipDefaults } from '@/lib/clip-defaults'
+import { detectOnsets, monoOf } from '@/lib/onsets'
+import { validMarkers, sortMarkers, beatToSec, secToBeat, insertMarker, moveMarker, removeMarker, set111Here, warpStraight, warpAsLoop, warpAtBpm, quantizeTransients, type WarpMarker } from '@/lib/warp'
+import { useQuantizeSettings, gridLabel } from '@/lib/quantize'
 
 export default function SampleEditor({ clipId }: { clipId: string }) {
   const { project, dispatch, engine } = useDaw()
   const clip = project.arrangementClips.find(c => c.id === clipId)
   if (!clip || !isAudioClip(clip)) return null
-  return <Editor clip={clip} dispatch={dispatch} engine={engine} tempo={project.tempo} trackColor={project.tracks.find(t => t.id === clip.trackId)?.color ?? 'var(--accent)'} />
+  return <Editor clip={clip} dispatch={dispatch} engine={engine} tempo={project.tempo} barBeats={project.timeSignatureNum || 4} trackColor={project.tracks.find(t => t.id === clip.trackId)?.color ?? 'var(--accent)'} />
 }
 
-function Editor({ clip, dispatch, engine, tempo, trackColor }: {
+const GRID = 0.25   // a sixteenth: where an inserted marker's beat lands
+
+function Editor({ clip, dispatch, engine, tempo, barBeats, trackColor }: {
   clip: AudioClip
   dispatch: ReturnType<typeof useDaw>['dispatch']
   engine: ReturnType<typeof useDaw>['engine']
   tempo: number
+  barBeats: number
   trackColor: string
 }) {
   const patch = (p: Partial<AudioClip>) => dispatch({ type: 'UPDATE_CLIP', clipId: clip.id, patch: p })
+  const rootRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(600)
   useEffect(() => {
@@ -73,6 +85,82 @@ function Editor({ clip, dispatch, engine, tempo, trackColor }: {
   const key = clipDefaultsKey(clip)
   const saved = key ? !!defaults[key] : false
   const [savedFlash, setSavedFlash] = useState(false)
+  const start = clip.trimStart ?? 0
+  const end = total != null ? total - (clip.trimEnd ?? 0) : null
+
+  // ── Transients and warp markers (lib/onsets.ts, lib/warp.ts) ───────────
+  const detected = useMemo(() => (buf ? detectOnsets(monoOf(buf), buf.sampleRate, { minGapMs: 40 }).map(o => o.t) : []), [buf])
+  const transients = useMemo(() => [...new Set([...detected, ...(clip.transients ?? [])])].sort((a, b) => a - b), [detected, clip.transients])
+  const markers: WarpMarker[] = useMemo(() => sortMarkers(clip.warpMarkers ?? []), [clip.warpMarkers])
+  const liveMap = validMarkers(markers)
+  const [cursorSec, setCursorSec] = useState<number | null>(null)
+  const [selMarker, setSelMarker] = useState<number | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; sec: number } | null>(null)
+  useEffect(() => { setSelMarker(null); setCursorSec(null); setMenu(null) }, [clip.id])
+  // The grid the transients quantize to: the Quantize Settings' (lib/quantize.ts),
+  // a beat when those follow the editor, or the chooser beside the button.
+  const qSettings = useQuantizeSettings()
+  const [qGridOverride, setQGridOverride] = useState<number | null>(null)
+  const qGrid = qGridOverride ?? qSettings.grid ?? 1
+
+  function setMarkers(ms: WarpMarker[], extra: Partial<AudioClip> = {}) {
+    engine.clearStretchedCache(clip.id)
+    patch({ warpMarkers: ms.length ? ms : undefined, warpEnabled: ms.length ? true : clip.warpEnabled, ...extra })
+  }
+  /** The map to build on: the live one, else a straight one across the clip. */
+  const baseMap = (): WarpMarker[] => liveMap ?? (end != null && end > start ? warpStraight(start, end, clip.durationBeats) : [])
+  const secToClipBeat = (sec: number) => { const m = baseMap(); return m.length >= 2 ? secToBeat(m, sec) : 0 }
+  const clipBeatToSec = (beat: number) => { const m = baseMap(); return m.length >= 2 ? beatToSec(m, beat) : start }
+  function insertAt(sec: number) {
+    const base = baseMap()
+    if (base.length < 2) return
+    const beat = Math.max(0, Math.round(secToBeat(base, sec) / GRID) * GRID)
+    const next = insertMarker(base, beat, sec)
+    setMarkers(next)
+    setSelMarker(next.findIndex(m => Math.abs(m.sec - sec) < 0.002))
+  }
+  function insertTransientAt(sec: number) { patch({ transients: [...new Set([...(clip.transients ?? []), Math.round(sec * 1000) / 1000])] }) }
+  function set111(sec: number) { setMarkers(set111Here(baseMap(), sec)) }
+  function straight() { if (end != null) setMarkers(warpStraight(start, end, clip.durationBeats)) }
+  function asLoop(bars: number) {
+    if (end == null) return
+    const ms = warpAsLoop(start, end, bars, barBeats)
+    setMarkers(ms, { durationBeats: bars * barBeats, segBpm: Math.round(((bars * barBeats) / (end - start)) * 60 * 100) / 100 })
+  }
+  function atSegBpm() {
+    if (end == null) return
+    const bpm = segBpm ?? tempo
+    const ms = warpAtBpm(start, end, bpm)
+    setMarkers(ms, { segBpm: bpm, durationBeats: ms[1].beat })
+  }
+  function quantizeAll() { setMarkers(quantizeTransients(baseMap(), transients.filter(t => t >= start && (end == null || t <= end)), qGrid)) }
+  function clearWarp() { setMarkers([]); setSelMarker(null) }
+  function dragMarker(index: number, e: React.MouseEvent) {
+    e.preventDefault(); e.stopPropagation()
+    if (total == null) return
+    setSelMarker(index)
+    const startX = e.clientX
+    const at = markers
+    const sec0 = at[index]?.sec ?? 0
+    const onMove = (ev: MouseEvent) => setMarkers(moveMarker(at, index, sec0 + ((ev.clientX - startX) / width) * total))
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp)
+  }
+  function handleKey(e: React.KeyboardEvent) {
+    const kb = resolveKey(e, ['sample'])?.id
+    if (!kb) return
+    e.preventDefault(); e.stopPropagation()
+    if (kb === 'sample.insertWarpMarker' && cursorSec != null) insertAt(cursorSec)
+    else if (kb === 'sample.insertTransient' && cursorSec != null) insertTransientAt(cursorSec)
+    else if (kb === 'sample.deleteMarker' && selMarker != null) { setMarkers(removeMarker(markers, selMarker)); setSelMarker(null) }
+    else if (kb === 'sample.markerPrev' || kb === 'sample.markerNext') {
+      if (!markers.length) return
+      const i = selMarker == null ? (kb === 'sample.markerNext' ? 0 : markers.length - 1) : Math.max(0, Math.min(markers.length - 1, selMarker + (kb === 'sample.markerNext' ? 1 : -1)))
+      setSelMarker(i)
+    } else if ((kb === 'sample.nudgeLeft' || kb === 'sample.nudgeRight') && selMarker != null) {
+      setMarkers(moveMarker(markers, selMarker, markers[selMarker].sec + (kb === 'sample.nudgeRight' ? 0.001 : -0.001)))
+    }
+  }
 
   function dragTrim(edge: 'start' | 'end', e: React.MouseEvent) {
     e.preventDefault(); e.stopPropagation()
@@ -120,7 +208,22 @@ function Editor({ clip, dispatch, engine, tempo, trackColor }: {
       keywords: 'save default clip sample settings remember asd', when: () => !!key, run: saveDefault },
     { id: 'clip.details', group: 'Clip', label: details ? `Sample details — ${describeSample(details)}` : 'Sample details — loading',
       keywords: 'sample details rate channels length bit depth', run: () => {} },
-  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds])
+    // Warp markers (lib/warp.ts).
+    ...[1, 2, 4, 8].map(bars => ({ id: `clip.warpLoop${bars}`, group: 'Clip', label: `Warp as ${bars}-bar loop — the whole sample is ${bars} bar${bars === 1 ? '' : 's'}`,
+      keywords: 'warp as loop bars whole sample markers', when: () => end != null, run: () => asLoop(bars) })),
+    { id: 'clip.warpStraight', group: 'Clip', label: 'Warp from here (straight) — one steady speed across the clip',
+      keywords: 'warp straight steady speed markers from here', when: () => end != null, run: straight },
+    { id: 'clip.warpAtBpm', group: 'Clip', label: `Warp at the Seg BPM (${segBpm ?? tempo}) from here`,
+      keywords: 'warp at bpm seg bpm from here markers straight', when: () => end != null, run: atSegBpm },
+    { id: 'clip.set111', group: 'Clip', label: 'Set 1.1.1 here — the insert point becomes the first beat',
+      keywords: 'set 1.1.1 here downbeat first beat insert point warp marker', when: () => cursorSec != null, run: () => cursorSec != null && set111(cursorSec) },
+    { id: 'clip.quantizeTransients', group: 'Clip', label: `Quantize transients to the grid — ${transients.length} attack${transients.length === 1 ? '' : 's'} onto ${gridLabel(qGrid)} notes`,
+      keywords: 'quantize transients audio grid warp markers attacks tighten', when: () => transients.length > 0 && end != null, run: quantizeAll },
+    { id: 'clip.insertWarpMarker', group: 'Clip', label: 'Insert a warp marker at the insert point',
+      keywords: 'insert warp marker insert point cursor', shortcut: '⌘I', when: () => cursorSec != null, run: () => cursorSec != null && insertAt(cursorSec) },
+    { id: 'clip.clearWarp', group: 'Clip', label: `Clear the warp markers (${markers.length})`,
+      keywords: 'clear warp markers remove all reset', when: () => markers.length > 0, run: clearWarp },
+  ], [clip.id, warp, mode, segBpm, clip.pitchSemitones, clip.clipFade, key, details?.sampleRate, details?.channels, details?.seconds, end, cursorSec, transients.length, markers, tempo, barBeats, qGrid])
 
   const chip = (on: boolean, disabled = false): React.CSSProperties => ({
     fontSize: 9, fontWeight: 600, padding: '2px 7px', borderRadius: 4, cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: disabled ? 0.45 : 1,
@@ -131,17 +234,49 @@ function Editor({ clip, dispatch, engine, tempo, trackColor }: {
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, minHeight: 24 }
   const ts = total ? (clip.trimStart ?? 0) / total : 0
   const te = total ? (clip.trimEnd ?? 0) / total : 0
+  const xOf = (sec: number) => (total ? (sec / total) * width : 0)
+  const secAt = (clientX: number) => { const r = wrapRef.current?.getBoundingClientRect(); return r && total ? Math.max(0, Math.min(total, ((clientX - r.left) / width) * total)) : 0 }
+  const menuItem: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', fontSize: 11, padding: '5px 10px', background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer' }
 
   return (
-    <div data-help-id="sample-editor" style={{ display: 'flex', height: '100%', minHeight: 0 }}>
-      {/* The waveform with its trim handles */}
-      <div ref={wrapRef} style={{ flex: 1, position: 'relative', minWidth: 0, background: 'var(--bg-base)' }}>
+    <div ref={rootRef} data-help-id="sample-editor" tabIndex={-1} onKeyDown={handleKey} style={{ display: 'flex', height: '100%', minHeight: 0, outline: 'none' }}>
+      {/* The waveform with its trim handles, transients and warp markers */}
+      <div ref={wrapRef} style={{ flex: 1, position: 'relative', minWidth: 0, background: 'var(--bg-base)' }}
+        onMouseDown={e => {
+          rootRef.current?.focus()
+          if (e.button !== 0) return
+          const r = wrapRef.current!.getBoundingClientRect()
+          // The lower half places the insert point; the upper half is the markers'.
+          if (e.clientY - r.top > r.height * 0.35) { setCursorSec(secAt(e.clientX)); setSelMarker(null) }
+        }}
+        onDoubleClick={e => { const r = wrapRef.current!.getBoundingClientRect(); if (e.clientY - r.top <= r.height * 0.35 && total != null) insertAt(secAt(e.clientX)) }}
+        onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, sec: secAt(e.clientX) }) }}>
         {clip.waveformPeaks?.length ? (
           <Waveform peaks={clip.waveformPeaks} color={trackColor} width={width} height={Math.max(60, (wrapRef.current?.clientHeight ?? 120))}
             trimStart={ts} trimEnd={te} playhead={playFrac ?? undefined} style={{ display: 'block' }} />
         ) : (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text-muted)' }}>Loading the sample…</div>
         )}
+        {/* The beat grid through the map, while warping with markers */}
+        {warp && liveMap && total != null && Array.from({ length: Math.floor(clip.durationBeats) + 1 }, (_, b) => b).map(b => {
+          const x = xOf(clipBeatToSec(b))
+          if (x < 0 || x > width) return null
+          return <div key={b} style={{ position: 'absolute', top: 0, bottom: 0, left: x, width: 1, background: b % barBeats === 0 ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.09)', pointerEvents: 'none', zIndex: 1 }} />
+        })}
+        {/* Transient markers: the detected attacks (grey ticks along the top) */}
+        {total != null && transients.map((t, i) => (
+          <div key={`t${i}`} data-help-id="transient-marker" data-sec={t} title={`Transient at ${t.toFixed(3)} s — double-click for a warp marker here`}
+            onDoubleClick={e => { e.stopPropagation(); insertAt(t) }} onMouseDown={e => e.stopPropagation()}
+            style={{ position: 'absolute', top: 0, left: xOf(t) - 2, width: 5, height: 9, background: 'rgba(255,255,255,0.45)', borderRadius: '0 0 2px 2px', cursor: 'pointer', zIndex: 4 }} />
+        ))}
+        {/* Warp markers (yellow): drag slides the audio under the beat; double-click removes */}
+        {total != null && markers.map((m, i) => (
+          <div key={`w${i}`} data-help-id="warp-marker" data-beat={m.beat} data-sec={m.sec} aria-selected={selMarker === i}
+            title={`Warp marker — beat ${+m.beat.toFixed(3)} at ${m.sec.toFixed(3)} s; drag to slide the audio, double-click to remove`}
+            onMouseDown={e => dragMarker(i, e)} onDoubleClick={e => { e.stopPropagation(); setMarkers(removeMarker(markers, i)); setSelMarker(null) }}
+            style={{ position: 'absolute', top: 0, left: xOf(m.sec) - 6, width: 12, height: 14, cursor: 'ew-resize', zIndex: 5,
+              clipPath: 'polygon(0 0, 100% 0, 50% 100%)', background: selMarker === i ? '#fde68a' : '#f59e0b', outline: selMarker === i ? '1px solid #fff' : 'none' }} />
+        ))}
         {total != null && (
           <>
             <div data-help-id="trim-start" data-seconds={clip.trimStart ?? 0} onMouseDown={e => dragTrim('start', e)} title={`Trim start — ${(clip.trimStart ?? 0).toFixed(3)} s in; drag`}
@@ -150,12 +285,31 @@ function Editor({ clip, dispatch, engine, tempo, trackColor }: {
               style={{ position: 'absolute', top: 0, bottom: 0, left: Math.min(width - 3, (1 - te) * width - 3), width: 6, cursor: 'ew-resize', background: 'rgb(var(--accent-rgb) / 0.7)', zIndex: 3 }} />
           </>
         )}
+        {cursorSec != null && total != null && (
+          <div data-help-id="sample-insert-point" data-sec={cursorSec} style={{ position: 'absolute', top: 0, bottom: 0, left: xOf(cursorSec), width: 1, background: 'rgba(255,255,255,0.6)', pointerEvents: 'none', zIndex: 2 }} />
+        )}
         {clip.loopEnabled && (
           <div title="Looping across the clip" style={{ position: 'absolute', top: 0, left: ts * width, right: te * width, height: 4, background: 'rgb(var(--accent-rgb) / 0.55)', zIndex: 2 }} />
         )}
         <div style={{ position: 'absolute', left: 8, bottom: 4, fontSize: 9, color: 'var(--text-muted)', pointerEvents: 'none' }}>
           {native != null ? `${native.toFixed(3)} s playing${total != null && native < total - 1e-6 ? ` of ${total.toFixed(3)} s` : ''}` : ''}
+          {liveMap ? ` · ${liveMap.length} warp markers` : ''}
+          {cursorSec != null ? ` · insert at ${cursorSec.toFixed(3)} s (beat ${+secToClipBeat(cursorSec).toFixed(2)})` : ''}
         </div>
+        {menu && createPortal(
+          <div role="menu" data-help-id="warp-menu" style={{ position: 'fixed', left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 330), zIndex: 9999, minWidth: 220, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 0', boxShadow: '0 10px 28px rgba(0,0,0,0.6)' }}
+            onMouseLeave={() => setMenu(null)}>
+            <button role="menuitem" style={menuItem} onClick={() => { set111(menu.sec); setMenu(null) }}>Set 1.1.1 here</button>
+            <button role="menuitem" style={menuItem} onClick={() => { straight(); setMenu(null) }}>Warp from here (straight)</button>
+            {[1, 2, 4, 8].map(b => <button key={b} role="menuitem" style={menuItem} onClick={() => { asLoop(b); setMenu(null) }}>Warp as {b}-bar loop</button>)}
+            <button role="menuitem" style={menuItem} onClick={() => { atSegBpm(); setMenu(null) }}>Warp at {segBpm ?? tempo} BPM from here</button>
+            <button role="menuitem" style={menuItem} onClick={() => { quantizeAll(); setMenu(null) }} disabled={!transients.length}>Quantize transients to the grid</button>
+            <button role="menuitem" style={menuItem} onClick={() => { insertAt(menu.sec); setMenu(null) }}>Insert warp marker here</button>
+            <button role="menuitem" style={menuItem} onClick={() => { insertTransientAt(menu.sec); setMenu(null) }}>Insert transient here</button>
+            <button role="menuitem" style={{ ...menuItem, color: 'var(--text-muted)' }} onClick={() => { clearWarp(); setMenu(null) }} disabled={!markers.length}>Clear warp markers</button>
+          </div>,
+          document.body,
+        )}
       </div>
 
       {/* The clip panel — Live's Audio Utilities */}
@@ -177,7 +331,7 @@ function Editor({ clip, dispatch, engine, tempo, trackColor }: {
             style={{ width: 58, fontSize: 10, padding: '2px 4px', background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 3 }} />
           <button data-help-id="clip-seg-half" onClick={() => segBpm && applySegBpm(segBpm / 2)} disabled={!segBpm} style={chip(false, !segBpm)} title="÷2 — the detection was an octave high">÷2</button>
           <button data-help-id="clip-seg-double" onClick={() => segBpm && applySegBpm(segBpm * 2)} disabled={!segBpm} style={chip(false, !segBpm)} title="×2 — the detection was an octave low">×2</button>
-          <span data-help-id="clip-speed" style={{ fontSize: 9, color: 'var(--text-muted)' }}>{warp && segBpm ? `${speed.toFixed(3)}×` : 'as recorded'}</span>
+          <span data-help-id="clip-speed" style={{ fontSize: 9, color: 'var(--text-muted)' }}>{warp && liveMap ? 'by markers' : warp && segBpm ? `${speed.toFixed(3)}×` : 'as recorded'}</span>
         </div>
         <div style={row}>
           <span style={lab}>Gain</span>
@@ -195,6 +349,16 @@ function Editor({ clip, dispatch, engine, tempo, trackColor }: {
             onChange={v => { engine.clearPitchCache(clip.id); patch({ pitchCents: Math.round(v) }) }} />
           <span data-help-id="clip-detune" style={{ minWidth: 40, fontVariantNumeric: 'tabular-nums', opacity: warp && mode === 'repitch' ? 0.45 : 1 }}>{(clip.pitchCents ?? 0) > 0 ? '+' : ''}{clip.pitchCents ?? 0} ct</span>
           {warp && mode === 'repitch' && <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>Re-Pitch sets the pitch by speed</span>}
+        </div>
+        <div style={row}>
+          <span style={lab}>Markers</span>
+          <span data-help-id="warp-markers" style={{ fontSize: 9, color: 'var(--text-muted)' }}>{liveMap ? `${liveMap.length} warp` : 'none'} · {transients.length} transient{transients.length === 1 ? '' : 's'}</span>
+          <button data-help-id="clip-quantize-transients" onClick={quantizeAll} disabled={!transients.length || end == null} style={chip(false, !transients.length)} title={`Quantize transients — pin each attack to the nearest ${gridLabel(qGrid)} note`}>Quantize</button>
+          <select data-help-id="clip-quantize-grid" aria-label="Transient quantize grid" value={qGrid} onChange={e => setQGridOverride(Number(e.target.value))} title="The grid the transients are pinned to"
+            style={{ fontSize: 9, padding: '1px 2px', background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 3 }}>
+            {[1, 0.5, 0.25, 0.125].map(g => <option key={g} value={g}>{gridLabel(g)}</option>)}
+          </select>
+          <button data-help-id="clip-warp-clear" onClick={clearWarp} disabled={!markers.length} style={chip(false, !markers.length)} title="Clear the warp markers">Clear</button>
         </div>
         <div style={{ ...row, marginTop: 'auto' }}>
           <button data-help-id="clip-save-default" onClick={saveDefault} disabled={!key} style={chip(saved, !key)}

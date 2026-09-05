@@ -395,6 +395,23 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'warp_markers',
+    description:
+      'WARP an audio clip — its warp markers (lib/warp.ts). "warp the drum clip as a 2 bar loop" (as_loop, bars), "warp the vocal clip straight" (straight — one steady speed, spanning its clip), "warp the vox clip at 90 bpm" (at_bpm), "quantize the drum clip" on an AUDIO clip is quantize_transients (its attacks onto the grid), "clear the warp markers on the drums" (clear). Turning Warp on or off is set_clip_audio\'s `warp`. MIDI clips have no warp markers.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: TARGET,
+        op: { type: 'string', enum: ['as_loop', 'straight', 'at_bpm', 'quantize_transients', 'clear'] },
+        bars: { type: 'number', description: 'For as_loop: how many bars the sample is.' },
+        bpm: { type: 'number', description: 'For at_bpm: the sample\'s own tempo.' },
+        grid: { type: 'number', description: 'For quantize_transients: the grid in beats (0.25 = sixteenths, the default).' },
+        ...ADDRESS,
+      },
+      required: ['target', 'op'],
+    },
+  },
+  {
     name: 'clip_time',
     description:
       'A MIDI CLIP\'S LOOP AND TIME — "set the pad clip\'s loop to two bars" (set_loop_length), "duplicate the pad\'s loop" (duplicate_loop: the loop doubles and its notes are copied, what came after moves along), "crop the pad clip to its loop" (crop), "select the notes in the pad\'s loop" (select_in_loop), and the time commands on the loop\'s span — or the whole clip when it does not loop: "insert a bar of silence after the pad\'s loop" (insert_time, with `length`), "delete the pad\'s loop time" (delete_time), "duplicate the time of the pad" (duplicate_time). Looping on or off is set_clip_audio\'s `loop`; the SONG loop is set_loop_region.',
