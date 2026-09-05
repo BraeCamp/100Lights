@@ -1534,6 +1534,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       __dawSnapshot?: () => { project: DawProject; history: NonNullable<DawProject['history']> }
       __dawInspect?: () => unknown
       __dawRenderWav?: (opts?: Parameters<DawEngine['renderWav']>[0]) => Promise<unknown>
+      __dawMakeAudioClip?: typeof makeAudioClip
       __dawRenderOffline?: (opts?: { startBeat?: number; endBeat?: number }) => Promise<unknown>
       __dawFreezeApollo?: () => Promise<unknown>
       __parseMid?: (file: File) => Promise<unknown>
@@ -1586,6 +1587,8 @@ export default function AudioEditor(props: AudioEditorProps) {
     // Bounce a beat range to lossless WAV(s) for offline mix analysis (see
     // scripts/analyze-mix.py). Real-time capture off the live engine graph.
     w.__dawRenderWav = (opts) => engineRef.current?.renderWav(opts ?? {}) ?? Promise.resolve(null)
+    // A clip built the way a library drop builds one — saved clip defaults included (lib/clip-defaults.ts).
+    w.__dawMakeAudioClip = makeAudioClip
     // Bounce the REAL project audio via the OFFLINE render (OfflineAudioContext) — this is the ONE
     // that produces actual sound in a headless/automated browser, unlike the realtime renderWav which
     // captures silence when there's no audio device. Returns the encoded mix as base64 so an agent can

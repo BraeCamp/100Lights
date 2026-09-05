@@ -21,7 +21,7 @@
 //   Never invent an id. Everything referenced is resolved from the project or
 //   freshly minted here.
 
-import type { DawProject, DawTrack, MidiClip, MidiNote, DawClip, EffectType, TrackEffect } from '../daw-types'
+import type { DawProject, DawTrack, MidiClip, MidiNote, DawClip, AudioClip, EffectType, TrackEffect } from '../daw-types'
 import { defaultDrumInstrument } from '../daw-types'
 import { parseSpokenBeat, beatToNotes, describeBeat as describeSpokenBeat } from './beatbox'
 import { parseDefinitions, applyDefinitions, clearVocab, definitions, laneFromName } from './vocab'
@@ -56,6 +56,7 @@ import { splitAt, chopNotes, joinNotes, fitToRange, setActive } from '../note-op
 import { parseFilter, findNotes, describeFilter } from '../find-notes'
 import { quantizeNotes as quantizeWithSettings, parseGridSaid } from '../quantize'
 import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, insertTime, deleteTime, duplicateTime } from '../clip-time'
+import { setSegBpm } from '../sample-editor'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
 import { viewOf, snapOf, snapLabel, overlayOf, OVERLAY_LABEL } from './workspace'
 import { isSampleRef, sampleRefId } from '../sample-preset'
@@ -2208,7 +2209,15 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (got.ask) return { actions: [], say: '', ask: got.ask }
       if (!got.clips.length) return fail(`I couldn't find "${target || 'that'}" to transpose.`)
       const midi = got.clips.filter((c): c is MidiClip => 'notes' in c)
-      if (!midi.length) return fail('That is an audio clip — transposing audio is not supported yet.')
+      if (!midi.length) {
+        // An AUDIO clip transposes by its pitch shift (the Sample Editor's Pitch, lib/sample-editor.ts) — in semitones only.
+        const audio = got.clips.filter((c): c is AudioClip => c.kind === 'audio')
+        if (!audio.length || scale) return fail(scale ? 'An audio clip moves in semitones, not scale degrees — say how many semitones.' : `I couldn't find "${target || 'that'}" to transpose.`)
+        return {
+          actions: audio.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: { pitchSemitones: clamp(Math.round((c.pitchSemitones ?? 0) + step), -24, 24) } })),
+          say: `Pitched ${got.how} ${Math.abs(step)} semitone${Math.abs(step) === 1 ? '' : 's'} ${step > 0 ? 'up' : 'down'}.`,
+        }
+      }
       const actions: unknown[] = []
       let label = ''
       for (const clip of midi) {
@@ -4512,16 +4521,33 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (i.gain != null) { const g = spokenFraction(i.gain as string); if (g == null) return fail('Say the clip level as a percentage.'); patch.gain = Math.max(0, Math.min(2, g)); said.push(`level ${Math.round(g * 100)}%`) }
       if (typeof i.reverse === 'boolean') { patch.reverse = i.reverse; said.push(i.reverse ? 'reversed' : 'playing forwards') }
       if (typeof i.loop === 'boolean') { patch.loopEnabled = i.loop; said.push(i.loop ? 'looping' : 'not looping') }
-      if (!said.length) return fail('Say what to change — a fade in, a fade out, the level, reverse, or loop.')
+      // The Sample Editor's settings (lib/sample-editor.ts): warp, its mode, pitch, Seg BPM, the edge fade.
+      if (typeof i.warp === 'boolean') { patch.warpEnabled = i.warp; said.push(i.warp ? 'warped to the song tempo' : 'playing at its own tempo') }
+      if (i.warpMode != null) { const m = /complex|stretch/.test(str(i.warpMode).toLowerCase()) ? 'stretch' : 'repitch'; patch.warpMode = m; patch.warpEnabled = true; said.push(m === 'stretch' ? 'Complex mode' : 'Re-Pitch mode') }
+      if (i.transpose != null) { const st = spokenNumber(i.transpose as string); if (st == null) return fail('Say how many semitones.'); patch.pitchSemitones = clamp(Math.round(st), -24, 24); said.push(`pitch ${st > 0 ? '+' : ''}${Math.round(st)} st`) }
+      if (i.detune != null) { const ct = spokenNumber(i.detune as string); if (ct == null) return fail('Say how many cents.'); patch.pitchCents = clamp(Math.round(ct), -100, 100); said.push(`detune ${ct > 0 ? '+' : ''}${Math.round(ct)} ct`) }
+      if (typeof i.fade === 'boolean') { patch.clipFade = i.fade; said.push(i.fade ? 'edge fades on' : 'edge fades off') }
+      const segBpm = i.segBpm != null ? spokenNumber(i.segBpm as string) : null
+      if (i.segBpm != null && (segBpm == null || segBpm < 20 || segBpm > 999)) return fail('Say the sample\'s tempo in BPM, between 20 and 999.')
+      if (segBpm != null) said.push(`Seg BPM ${segBpm}`)
+      if (!said.length) return fail('Say what to change — a fade in, a fade out, the level, reverse, loop, warp, pitch, or the sample\'s tempo.')
       const audioOnly = 'fadeIn' in patch || 'fadeOut' in patch || 'gain' in patch || 'reverse' in patch
+        || 'warpEnabled' in patch || 'warpMode' in patch || 'pitchSemitones' in patch || 'pitchCents' in patch || 'clipFade' in patch || segBpm != null
       const targets = audioOnly ? set.filter(c => c.kind === 'audio') : set
-      if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level and reverse are for audio clips. Its notes have a Sound panel instead.`)
+      if (!targets.length) return fail(`${clipLabel(project, set[0])} is a MIDI clip — fades, level, reverse, warp and pitch are for audio clips. Its notes have a Sound panel instead.`)
       // A MIDI clip loops every loopLengthBeats; switching the loop on without
       // one did nothing audible. A bar, or the clip if shorter (lib/clip-time.ts).
       const bar = project.timeSignatureNum || 4
-      const patchFor = (c: DawClip) => (c.kind === 'midi' && patch.loopEnabled === true && !(c as MidiClip).loopLengthBeats
-        ? { ...patch, loopLengthBeats: Math.max(1, Math.min(c.durationBeats, bar)) }
-        : c.kind === 'midi' && patch.loopEnabled === false ? { ...patch, loopLengthBeats: undefined } : patch)
+      const patchFor = (c: DawClip) => {
+        if (c.kind === 'midi') {
+          if (patch.loopEnabled === true && !(c as MidiClip).loopLengthBeats) return { ...patch, loopLengthBeats: Math.max(1, Math.min(c.durationBeats, bar)) }
+          if (patch.loopEnabled === false) return { ...patch, loopLengthBeats: undefined }
+          return patch
+        }
+        // Seg BPM: the clip's length follows the sample at that tempo (lib/sample-editor.ts).
+        if (segBpm != null) return { ...patch, ...(setSegBpm(c as AudioClip, segBpm) ?? { segBpm }) }
+        return patch
+      }
       return {
         actions: targets.map(c => ({ type: 'UPDATE_CLIP', clipId: c.id, patch: patchFor(c) })),
         say: `${targets.length === 1 ? clipLabel(project, targets[0]) : `${targets.length} clips`}: ${said.join(', ')}.`,

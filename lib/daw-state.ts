@@ -19,6 +19,7 @@ import {
 import { DawEngine } from './daw-engine'
 import { legacyToBar } from './effect-bar'
 import { resolveOverlaps } from './note-ops'
+import { clipDefaultsFor, clipDefaultsKey } from './clip-defaults'
 
 // ── Action types ────────────────────────────────────────────────────────
 
@@ -1300,6 +1301,9 @@ export function makeAudioClip(
     fadeOut: 0,
     trimStart: 0,
     trimEnd: 0,
+    // Save Default Clip (lib/clip-defaults.ts): the sample's remembered
+    // settings sit under whatever the caller says explicitly.
+    ...(clipDefaultsFor(clipDefaultsKey(opts)) ?? {}),
     ...opts,
   }
 }

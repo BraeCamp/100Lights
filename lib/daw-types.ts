@@ -837,6 +837,11 @@ export interface AudioClip {
   bufferDuration?: number   // seconds — populated on first buffer load for crop math
   warpEnabled?: boolean
   warpMode?: 'repitch' | 'stretch'
+  /** Seg. BPM — the sample's own tempo (lib/sample-editor.ts). With Warp on the
+   *  clip plays at song tempo / segBpm; ×2 and ÷2 fix an octave-off detection. */
+  segBpm?: number
+  /** Live's clip Fade switch: a 4 ms fade at each edge so a cut never clicks, on top of any fadeIn/fadeOut. */
+  clipFade?: boolean
   pitchSemitones?: number
   pitchCents?: number
   boomerang?: boolean

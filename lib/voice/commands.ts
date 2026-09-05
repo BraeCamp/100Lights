@@ -1385,6 +1385,8 @@ const COMMANDS: VoiceCommand[] = [
       // "take the notes above C5 down an octave". The clip is what follows
       // "of / in / on"; the part is read by lib/note-address.ts.
       const rawT = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // "pitch the vocal clip up 3" is the audio clip's own pitch (set_clip_audio).
+      if (/\b(?:pitch|tune)\b/.test(rawT) && /\bclips?\b/.test(rawT)) return null
       const na = parseNoteAddress(rawT)
       const srcM = na ? /\b(?:of|in|on|from)\s+(?:the\s+)?([a-z0-9' ]+?)(?=\s+(?:up|down|by|an?\s+octave|and|then)\b|[,.]|$)/.exec(rawT) : null
       const hit = clipOrSelected(w, ctx, ['transpose', 'take', 'drop', 'move', 'up', 'down', 'raise', 'lower',
@@ -2384,7 +2386,8 @@ const COMMANDS: VoiceCommand[] = [
     tool: 'set_clip_audio',
     group: 'Arrangement',
     what: 'Fade, level, reverse or loop an audio clip',
-    say: ['fade in the vox take clip over a bar', 'fade out the vox take clip over two beats', 'reverse the vox take', 'loop the vox take clip', 'turn the vox take clip down to 60%'],
+    say: ['fade in the vox take clip over a bar', 'fade out the vox take clip over two beats', 'reverse the vox take', 'loop the vox take clip', 'turn the vox take clip down to 60%',
+      'warp the vox take clip', 'set the vox take clip to complex mode', 'pitch the vox take clip up 3', 'the vox take clip is 90 bpm'],
     match(w, ctx) {
       const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
       // ⚠️ A clip called "Drum loop" has "loop" in it, and "reverse the drum
@@ -2410,7 +2413,15 @@ const COMMANDS: VoiceCommand[] = [
       if (/\bcrop\b|\bduplicate\b|\bdouble\b|\bselect\b|\bloop\b.*\bto\b.*\b(?:bars?|beats?)\b|\bloop (?:length|end)\b/.test(rest)) return null
       const loopSaid = /\bloop(?:ed|ing)?\b/.test(rest) && clipWord
       const gainM = clipWord ? /\b(?:to|at)\s+(\d{1,3})\s*(?:%|percent)/.exec(rest) : null
-      if (!fadeIn && !fadeOut && !reverseSaid && !loopSaid && !gainM) return null
+      // The Sample Editor's settings (lib/sample-editor.ts), all wanting the
+      // word "clip": warp on / off, its mode, the pitch, the sample's own
+      // tempo, the edge fade.
+      const warpSaid = clipWord && /\bwarp(?:ed|ing)?\b/.test(rest) ? !/\b(?:un-?warp|stop|off|don't|do not|no longer)\b/.test(rest) : null
+      const modeM = clipWord ? /\b(re-?pitch|complex)\b/.exec(rest) : null
+      const pitchM = clipWord && /\b(?:pitch|tune)\b/.test(rest) ? /\b(up|down)\s+(?:by\s+)?(\d+(?:\.\d+)?)/.exec(rest) : null
+      const bpmM = clipWord ? /(\d+(?:\.\d+)?)\s*bpm\b/.exec(rest) : null
+      const fadeM = clipWord && /\b(?:edge|clip) fades?\b/.test(rest) ? !/\boff\b|\bno\b|\bstop\b/.test(rest) : null
+      if (!fadeIn && !fadeOut && !reverseSaid && !loopSaid && !gainM && warpSaid == null && !modeM && !pitchM && !bpmM && fadeM == null) return null
       if ((fadeIn || fadeOut) && !clipWord) return null
       let target = spokenClip
       let score = 1
@@ -2447,6 +2458,11 @@ const COMMANDS: VoiceCommand[] = [
       if (reverseSaid) input.reverse = !/\b(?:un-?reverse|stop|forwards?|back to normal)\b/.test(rest)
       if (loopSaid) input.loop = !/\b(?:stop|unloop|don't|do not|no longer|off)\b/.test(rest)
       if (gainM) input.gain = `${gainM[1]}%`
+      if (warpSaid != null) input.warp = warpSaid
+      if (modeM) input.warpMode = /complex/.test(modeM[1]) ? 'complex' : 'repitch'
+      if (pitchM) input.transpose = (pitchM[1] === 'down' ? -1 : 1) * Number(pitchM[2])
+      if (bpmM) input.segBpm = Number(bpmM[1])
+      if (fadeM != null) input.fade = fadeM
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'set_clip_audio', input }], confidence: clipWord ? 0.95 : nameConfidence(score), needsName: true }
     },

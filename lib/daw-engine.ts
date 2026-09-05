@@ -3560,19 +3560,26 @@ export class DawEngine extends EventTarget {
     // there too, or the first samples play into a partially-raised gain and the
     // transient loses a random few dB (audible on one-shots at the playhead).
     const rampAt = Math.max(startAt, fadeGain.context.currentTime)
+    // Live's clip Fade switch (lib/sample-editor.ts): 4 ms at each edge so a
+    // cut never clicks — longer than the anti-click ramp, shorter than any
+    // fade a person would draw.
+    const edgeFade = clip.clipFade ? 0.004 : 0
     if (clip.fadeIn > 0) {
       const fs = this._spanSeconds(clip.startBeat, clip.startBeat + clip.fadeIn)
       fadeGain.gain.setValueAtTime(0, rampAt)
-      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + Math.max(fs, ANTI_CLICK_S))
+      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + Math.max(fs, ANTI_CLICK_S, edgeFade))
     } else {
       fadeGain.gain.setValueAtTime(0, rampAt)
-      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + ANTI_CLICK_S)
+      fadeGain.gain.linearRampToValueAtTime(clip.gain, rampAt + Math.max(ANTI_CLICK_S, edgeFade))
     }
     if (clip.fadeOut > 0 && effectiveDuration > 0) {
       const clipEndB  = clip.startBeat + clip.durationBeats
       const fs        = this._spanSeconds(clipEndB - clip.fadeOut, clipEndB)
       const fadeStart = Math.max(startAt, startAt + effectiveDuration - fs)
       fadeGain.gain.setValueAtTime(clip.gain, fadeStart)
+      fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
+    } else if (edgeFade > 0 && effectiveDuration > edgeFade * 2) {
+      fadeGain.gain.setValueAtTime(clip.gain, startAt + effectiveDuration - edgeFade)
       fadeGain.gain.linearRampToValueAtTime(0, startAt + effectiveDuration)
     }
 

@@ -33,6 +33,7 @@ const ReturnDeviceChain = dynamic(() => import('./DeviceChain').then(m => ({ def
 const InstrumentPicker = dynamic(() => import('./InstrumentPicker'), { ssr: false })
 const PianoRoll = dynamic(() => import('./PianoRoll'), { ssr: false })
 const StepSequencer = dynamic(() => import('./StepSequencer'), { ssr: false })
+const SampleEditor = dynamic(() => import('./SampleEditor'), { ssr: false })
 
 const tabBtn = (on: boolean): React.CSSProperties => ({
   background: on ? 'var(--bg-card)' : 'transparent',
@@ -41,7 +42,7 @@ const tabBtn = (on: boolean): React.CSSProperties => ({
   cursor: 'pointer', fontSize: 11, padding: '2px 10px', textTransform: 'capitalize',
 })
 
-type ClipTab = 'notes' | 'envelopes'
+type ClipTab = 'notes' | 'sample' | 'envelopes'
 
 export default function DetailArea() {
   const {
@@ -62,6 +63,12 @@ export default function DetailArea() {
   const [bottomTab, setBottomTab] = useState<'devices' | 'instrument'>('devices')
   const [clipTab, setClipTab] = useState<ClipTab>('notes')
   useEffect(() => { setBottomTab('devices') }, [selectedTrackId])
+  // The first tab is the clip's own: Notes for MIDI, Sample for audio (Batch 3).
+  // ⚠️ Above the pane's early return below — a hook after it changes the hook
+  // count between renders, and React tears the pane down.
+  const selClipForTab = selectedClipId ? project.arrangementClips.find(c => c.id === selectedClipId) : undefined
+  const clipIsAudio = !!selClipForTab && isAudioClip(selClipForTab)
+  useEffect(() => { setClipTab(t => (clipIsAudio ? (t === 'notes' ? 'sample' : t) : (t === 'sample' ? 'notes' : t))) }, [clipIsAudio, selectedClipId])
 
   const clipResize = useResizable({ key: 'detail-clip', initial: 280, min: 96, max: 640, axis: 'y', invert: true })
   const deviceResize = useResizable({ key: 'bottom-panel', initial: 220, min: 120, max: 560, axis: 'y', invert: true })
@@ -99,7 +106,9 @@ export default function DetailArea() {
   if (!showClip && !showDevice) return null
 
   const full = detail.full
-  const editorHere = !!clip && isMidiClip(clip) && paneEditor
+  // The pane hosts the note editor for a MIDI clip and the Sample Editor
+  // (Batch 3) for an audio clip.
+  const editorHere = !!clip && paneEditor
   const clipH = full ? Math.max(clipResize.size, editorHere ? 360 : 160) : clipResize.size
   const deviceH = full ? '40vh' : deviceResize.size
 
@@ -115,9 +124,11 @@ export default function DetailArea() {
             <ClipHeader clip={clip} />
             {editorHere && clip && !clipOut && (
               <div style={{ flex: 1, minHeight: 0, position: 'relative', borderTop: '1px solid var(--border)' }} data-help-id="clip-editor">
-                {clipTab === 'notes'
-                  ? (clip.isDrumClip ? <StepSequencer clipId={clip.id} /> : <PianoRoll clipId={clip.id} />)
-                  : <Envelopes clip={clip} />}
+                {clipTab === 'envelopes'
+                  ? <Envelopes clip={clip} />
+                  : isMidiClip(clip)
+                    ? (clip.isDrumClip ? <StepSequencer clipId={clip.id} /> : <PianoRoll clipId={clip.id} />)
+                    : <SampleEditor clipId={clip.id} />}
               </div>
             )}
             {editorHere && clip && clipOut && (
@@ -243,9 +254,9 @@ export default function DetailArea() {
               Piano roll
             </button>
           )}
-          {midi && paneEditor && (
+          {paneEditor && (
             <div role="tablist" aria-label="Clip view" style={{ display: 'flex', gap: 2, marginLeft: 6, borderLeft: '1px solid var(--border)', paddingLeft: 8 }}>
-              {(['notes', 'envelopes'] as const).map(t => (
+              {((midi ? ['notes', 'envelopes'] : ['sample', 'envelopes']) as ClipTab[]).map(t => (
                 <button key={t} role="tab" aria-selected={clipTab === t} data-help-id={`clip-tab-${t}`} style={tabBtn(clipTab === t)} onClick={() => setClipTab(t)}>{t}</button>
               ))}
               <button onClick={() => setDisplay({ popout: clipOut ? null : 'clip' })} data-help-id="clip-window" aria-pressed={clipOut}
