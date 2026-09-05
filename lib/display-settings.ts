@@ -25,9 +25,20 @@ export type DisplaySettings = {
   uiScale: number
   /** The mixer row under the arrangement: shown or not, and which section. */
   arrangementMixer: { open: boolean; section: MixerSection }
+  /** The overview strip (minimap) above the arrangement. */
+  overview: boolean
+  /** Follow the playhead while playing: off, by the page, or gliding. */
+  follow: FollowMode
+  /** Waveform heights: linear amplitude, or a 60 dB scale that shows the quiet parts. */
+  waveformScale: 'linear' | 'db'
 }
 
-export const DISPLAY_DEFAULT: DisplaySettings = { clipEditor: 'pane', uiScale: 100, arrangementMixer: { open: false, section: 'mixer' } }
+export type FollowMode = 'off' | 'page' | 'scroll'
+
+export const DISPLAY_DEFAULT: DisplaySettings = {
+  clipEditor: 'pane', uiScale: 100, arrangementMixer: { open: false, section: 'mixer' },
+  overview: true, follow: 'off', waveformScale: 'linear',
+}
 
 export const UI_SCALE_MIN = 50
 export const UI_SCALE_MAX = 200
@@ -53,6 +64,9 @@ function load() {
     clipEditor: saved.clipEditor === 'inline' ? 'inline' : 'pane',
     uiScale: clampUiScale(Number(saved.uiScale)),
     arrangementMixer: { open: am?.open === true, section: MIXER_SECTIONS.includes(am?.section as MixerSection) ? (am!.section as MixerSection) : 'mixer' },
+    overview: saved.overview !== false,
+    follow: saved.follow === 'page' || saved.follow === 'scroll' ? saved.follow : 'off',
+    waveformScale: saved.waveformScale === 'db' ? 'db' : 'linear',
   }
 }
 

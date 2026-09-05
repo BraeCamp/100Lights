@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import { useDisplaySettings } from '@/lib/display-settings'
+import { peakToDb } from '@/lib/arrangement-overview'
 
 interface WaveformProps {
   peaks: number[]
@@ -30,6 +32,10 @@ export default function Waveform({
   className,
 }: WaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  // Linear amplitude, or a 60 dB scale so the quiet tail of a note is not a
+  // flat line (Live's waveform "dB" mode). A display setting, read here so
+  // every waveform in the studio switches at once.
+  const scale = useDisplaySettings().waveformScale
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -56,7 +62,8 @@ export default function Waveform({
 
     ctx.fillStyle = color
     for (let i = 0; i < peaks.length; i++) {
-      const barH = Math.min(mid, Math.max(1, peaks[i] * mid * 0.95 * verticalZoom))
+      const amp = scale === 'db' ? peakToDb(peaks[i] * verticalZoom) : peaks[i] * verticalZoom
+      const barH = Math.min(mid, Math.max(1, amp * mid * 0.95))
       ctx.fillRect(i * step, mid - barH, Math.max(1, step - 0.5), barH * 2)
     }
 
@@ -79,7 +86,7 @@ export default function Waveform({
       ctx.lineTo(playhead * width, height)
       ctx.stroke()
     }
-  }, [peaks, color, bgColor, width, height, playhead, trimStart, trimEnd, verticalZoom])
+  }, [peaks, color, bgColor, width, height, playhead, trimStart, trimEnd, verticalZoom, scale])
 
   return <canvas ref={canvasRef} style={style} className={className} />
 }

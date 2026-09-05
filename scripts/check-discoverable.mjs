@@ -60,6 +60,9 @@ const EXPECTED = [
   ['delay compensation',   ['latency', 'compensation']],
   ['clip editor place',    ['clip editor']],
   ['mixer in arrangement', ['mixer under']],
+  ['follow playhead',      ['follow']],
+  ['overview strip',       ['overview']],
+  ['waveform db scale',    ['waveforms']],
   ['split / splice clip',  ['splice', 'split']],
   ['rename clip',          ['rename clip', 'rename ']],
 
