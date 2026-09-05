@@ -68,6 +68,7 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'edit.redo', keys: '⇧⌘Z', scope: 'global', group: 'Transport & Global', action: 'Redo', command: 'audio.edit.redo' },
   { id: 'file.save', keys: '⌘S', scope: 'global', group: 'Transport & Global', action: 'Save project', command: 'audio.save' },
   { id: 'edit.deleteClip', keys: 'Delete', also: ['Backspace'], scope: 'global', group: 'Transport & Global', action: 'Delete selected clips', command: 'audio.edit.deleteClip' },
+  { id: 'track.bounce', keys: '⌘B', scope: 'global', group: 'Transport & Global', action: 'Bounce the selected track to a new track — its devices printed as audio', modes: ['music'], command: 'audio.track.bounce' },
   { id: 'edit.consolidate', keys: '⌘J', scope: 'global', group: 'Transport & Global', action: 'Consolidate — print a looping MIDI clip’s repeats as real notes' },
   { id: 'edit.deselect', keys: 'Esc', scope: 'global', group: 'Transport & Global', action: 'Clear every selection', command: 'audio.edit.deselect' },
   { id: 'view.session', keys: 'Tab', scope: 'global', group: 'Transport & Global', action: 'Session ⇄ Arrangement — tap to switch, hold to peek', modes: ['music'], momentary: true },

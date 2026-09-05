@@ -867,6 +867,19 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'bounce_track',
+    description:
+      'A TRACK\'S DEVICES PRINTED AS AUDIO (Live\'s Bounce to New Track / Bounce Track in Place) — "bounce the pad to a new track", "print the drums as audio", "bounce the bass in place". The result is a normal audio clip you can then cut, warp and reverse — not a freeze, which is a cache that thaws back. To a new track, the originals are PARKED rather than deleted. Takes real seconds: the render happens after the reply.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The track to bounce.' },
+        where: { type: 'string', description: '"new track" (default — the audio lands beside it, originals parked) or "in place" (it replaces the track\'s own clips).' },
+      },
+      required: ['target'],
+    },
+  },
+  {
     name: 'set_metronome',
     description:
       'WHAT THE CLICK SOUNDS LIKE AND HOW OFTEN (Live\'s metronome preferences) — "use a cowbell for the metronome" (sound cowbell; also click, beep, stick, wood, rimshot), "click on eighths" (rhythm "1/8"; also auto, 1/4, 1/8T, 1/16, 1/16T), "only click while I\'m recording" (onlyWhileRecording true), "count me in two bars" (countInBars 2). NOT the metronome on/off switch — that is `transport`.',

@@ -63,6 +63,7 @@ import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
 import { describePunch, punchArmed } from '../punch'
 import { recordGridLabel, type RecordGrid } from '../record-quantize'
 import { CLICK_SOUNDS } from '../metronome'
+import { bounceSpan, clipsInSpan } from '../bounce'
 import { describeFollow, type FollowAction } from '../follow-actions'
 import { plainWordIn, needsAsking, senseFromAnswer, defaultSense, describeSense, askText } from './plain-words'
 import {
@@ -4868,6 +4869,26 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (typeof i.autoWarpLong === 'boolean') { out.autoWarpLong = i.autoWarpLong; said.push(i.autoWarpLong ? 'long samples are auto-warped to the song tempo' : 'long samples are left as they are') }
       if (!said.length) return fail('Say what to change — how short samples land (one-shot, loop, auto), or whether long samples are auto-warped.')
       return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
+    }
+
+    // ── BOUNCE — a track's devices printed as audio (lib/bounce.ts) ───────────
+    case 'bounce_track': {
+      const track = resolveTrack(target, project)
+      if (!track) return fail(`I couldn't find a track called "${target || 'that'}".`)
+      const inPlace = /in ?place|same track|itself|over it|replace/.test(str(i.where).toLowerCase())
+      const what = inPlace ? 'inPlace' : 'newTrack'
+      const span = bounceSpan(project, track.id)
+      if (!span) return fail(`"${track.name}" has nothing to bounce — it has no active clips.`)
+      const covered = clipsInSpan(project, track.id, span)
+      return {
+        actions: [{ type: 'BOUNCE', trackId: track.id, what }],
+        // ⚠️ Said in the future tense, because the render happens after this
+        // returns and takes real seconds. Saying "bounced" here would be a
+        // claim about something that has not happened yet.
+        say: what === 'newTrack'
+          ? `Bouncing "${track.name}" to a new track — printing ${covered.length} clip${covered.length === 1 ? '' : 's'} as audio. The originals will be parked, not deleted.`
+          : `Bouncing "${track.name}" in place — the ${covered.length} clip${covered.length === 1 ? '' : 's'} there will be replaced by the audio.`,
+      }
     }
 
     // ── THE CLICK — sound, rhythm, count-in (lib/metronome.ts) ────────────────

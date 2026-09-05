@@ -60,6 +60,7 @@ import { DevicePopoutHost } from './daw/DeviceChain'
 import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
 import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
+import { bounceSpan, clipsInSpan, bounceName, bouncedTrack, describeBounce, type BounceWhat } from '@/lib/bounce'
 import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
 import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
 import { applyUiScale, stepUiScale } from '@/lib/ui-scale'
@@ -1936,6 +1937,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   useEffect(() => { collabPeersRef.current = collabPeers }, [collabPeers])
   // Collab lock: "X is editing this clip" notice, shown when an edit is blocked.
   const [lockNotice, setLockNotice] = useState<string | null>(null)
+  // What a bounce did, or why it could not. It says the bars and how many clips
+  // were parked, because a command that prints audio somewhere else has to tell
+  // you where it went (lib/bounce.ts).
+  const [bounceNotice, setBounceNotice] = useState<string | null>(null)
   const notifyLocked = useCallback((byName: string) => {
     setLockNotice(byName)
     window.setTimeout(() => setLockNotice(cur => cur === byName ? null : cur), 2600)
@@ -2300,6 +2305,7 @@ export default function AudioEditor(props: AudioEditorProps) {
   const [saveError,  setSaveError]  = useState('')
   // The words a toast shows while it fades out are the words it was showing.
   const lockNoticeS = useSticky(lockNotice)
+  const bounceNoticeS = useSticky(bounceNotice)
   const syncMsgS = useSticky(syncMsg)
   const saveStatusS = useSticky(saveStatus === 'saved' || saveStatus === 'error' ? saveStatus : null)
   const [expandedPianoRollClipId, setExpandedPianoRollClipId] = useState<string | null>(null)
@@ -2560,6 +2566,70 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [])
   const endUndoGroup = useCallback(() => { undoGroupRef.current = null }, [])
 
+  // ── Bounce: a track's sound printed as audio (lib/bounce.ts) ───────────────
+  //
+  // The render is faster than real time and still takes seconds on a long
+  // track, so the whole thing is ONE undo group: a bounce that had to be undone
+  // three times — the clip, the track, the parked originals — would be worse
+  // than the mistake it was undoing.
+  const [bouncing, setBouncing] = useState<string | null>(null)
+  const setNotice = useCallback((msg: string) => {
+    setBounceNotice(msg)
+    window.setTimeout(() => setBounceNotice(n => (n === msg ? null : n)), 9000)
+  }, [])
+  const runBounce = useCallback(async (trackId: string, what: BounceWhat) => {
+    const project = projectRef.current
+    const source = project.tracks.find(t => t.id === trackId)
+    if (!source || bouncing) return
+    // The selected clips if any are on this track, else everything it plays.
+    const selected = [...selectedClipIdsRef.current].filter(id =>
+      project.arrangementClips.some(c => c.id === id && c.trackId === trackId))
+    const span = bounceSpan(project, trackId, selected)
+    if (!span) { setNotice(`"${source.name}" has nothing to bounce — it has no active clips.`); return }
+    const covered = clipsInSpan(project, trackId, span, selected)
+    const name = bounceName(source.name)
+    setBouncing(trackId)
+    try {
+      const { bounceTrackToLibrary } = await import('@/lib/bounce-render')
+      const { libraryId, durationSec } = await bounceTrackToLibrary(project, trackId, span, name)
+      const beats = Math.max(0.25, span.endBeat - span.startBeat)
+      beginUndoGroup(`Bounce ${source.name}`)
+      const targetId = what === 'newTrack' ? crypto.randomUUID() : trackId
+      if (what === 'newTrack') dispatch({ type: 'ADD_TRACK', id: targetId, name })
+      const clip = makeAudioClip(targetId, name, span.startBeat, beats, { libraryId, bufferDuration: durationSec })
+      dispatch({ type: 'ADD_CLIP', clip })
+      if (what === 'newTrack') {
+        // The mixer position comes with it, so the bounce sounds like the source
+        // rather than like the source at full volume (lib/bounce.ts).
+        const t = bouncedTrack(source, targetId, name)
+        dispatch({ type: 'UPDATE_TRACK', trackId: targetId, patch: { color: t.color, volume: t.volume, pan: t.pan, height: t.height, groupId: t.groupId, sendAmounts: t.sendAmounts, sendModes: t.sendModes, crossfader: t.crossfader } })
+        // Parked, not deleted: you can hear the difference and bring them back.
+        dispatch({ type: 'SET_CLIPS_ACTIVE', clipIds: covered.map(c => c.id), active: false })
+      } else {
+        for (const c of covered) dispatch({ type: 'REMOVE_CLIP', clipId: c.id })
+      }
+      endUndoGroup()
+      setNotice(describeBounce(what, source.name, span, project.timeSignatureNum, covered.length))
+    } catch (err) {
+      endUndoGroup()
+      setNotice(err instanceof Error ? err.message : 'The bounce failed.')
+    } finally {
+      setBouncing(null)
+    }
+  }, [bouncing, dispatch, beginUndoGroup, endUndoGroup, setNotice])
+
+  // The track menu's Bounce (TrackRow.tsx) — an event rather than a prop chain,
+  // for the same reason the desktop menu below uses one: the row is deep in the
+  // tree and the render lives here.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ trackId: string; what: BounceWhat }>).detail
+      if (d?.trackId) void runBounceRef.current(d.trackId, d.what ?? 'newTrack')
+    }
+    window.addEventListener('100lights:bounce-track', on)
+    return () => window.removeEventListener('100lights:bounce-track', on)
+  }, [])
+
   // ── What the desktop menu bar and the global shortcuts reach ─────────────
   //
   // The menu sends a command; DesktopMenu turns it into this event; the studio
@@ -2599,6 +2669,12 @@ export default function AudioEditor(props: AudioEditorProps) {
   // The runner is re-pointed every render so it always sees fresh state.
   const keyLatchRef = useRef(new MomentaryLatch())
   const runKeyRef = useRef<(id: string, e: KeyboardEvent) => boolean>(() => false)
+  // ⌘B reaches the bouncer through a ref: runBounce is defined above the key
+  // runner but re-created on every render, and the runner is re-pointed each
+  // render too, so a direct call would be fine — the ref is here so the switch
+  // reads the same as its neighbours and cannot capture a stale closure.
+  const runBounceRef = useRef(runBounce)
+  runBounceRef.current = runBounce
   runKeyRef.current = (id, e) => {
     const engine = engineRef.current!
     switch (id) {
@@ -2617,6 +2693,14 @@ export default function AudioEditor(props: AudioEditorProps) {
         return true
       // Punch in / out (lib/punch.ts) — project state, so it goes through the
       // reducer here rather than through the transport's record flow.
+      // Bounce the selected track (lib/bounce.ts). Nothing selected is not an
+      // error — it just has no track to print.
+      case 'track.bounce': {
+        const id = selectedTrackIdRef.current
+        if (!id) return false
+        void runBounceRef.current(id, 'newTrack')
+        return true
+      }
       case 'transport.punchIn':
         dispatch({ type: 'SET_PUNCH', punchIn: !projectRef.current.punchIn })
         return true
@@ -3277,6 +3361,12 @@ export default function AudioEditor(props: AudioEditorProps) {
 
     // ── Track ────────────────────────────────────────────────────────────────
     ...(paletteTrack ? [
+      { id: 'audio.track.bounce', group: 'Track', label: `Bounce ${paletteTrack.name} to a new track`,
+        keywords: 'bounce render print commit freeze flatten audio devices new track', shortcut: keysFor('track.bounce'), when: () => editable,
+        run: () => { void runBounce(paletteTrack.id, 'newTrack') } },
+      { id: 'audio.track.bounceInPlace', group: 'Track', label: `Bounce ${paletteTrack.name} in place`,
+        keywords: 'bounce in place render print commit flatten replace audio devices same track', when: () => editable,
+        run: () => { void runBounce(paletteTrack.id, 'inPlace') } },
       { id: 'audio.track.duplicate', group: 'Track', label: `Duplicate ${paletteTrack.name}`,
         keywords: 'copy clone track', when: () => editable,
         run: () => dispatch({ type: 'DUPLICATE_TRACK', trackId: paletteTrack.id, seed: crypto.randomUUID() }) },
@@ -4161,6 +4251,16 @@ export default function AudioEditor(props: AudioEditorProps) {
             border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', whiteSpace: 'nowrap',
           }}>Discard</button>
         </div>
+      )}</Appear>
+
+      {/* What the bounce did */}
+      <Appear show={!!bounceNotice} kind="rise">{cls => (
+        <div role="status" className={`${cls} appear-centered`} style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1200,
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 12,
+          background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-primary)',
+          fontSize: 12.5, fontWeight: 500, boxShadow: '0 8px 30px rgba(0,0,0,0.5)', maxWidth: 460, textAlign: 'center',
+        }}>{bounceNoticeS}</div>
       )}</Appear>
 
       {/* Collab lock notice */}

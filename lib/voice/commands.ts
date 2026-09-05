@@ -2515,6 +2515,32 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'bounce_track',
+    tool: 'bounce_track',
+    group: 'Arrangement',
+    what: 'A track\'s devices printed as audio, on a new track or over itself',
+    say: ['bounce the drums to a new track', 'print the pad as audio', 'bounce the bass in place'],
+    match(w, ctx) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ "Bounce" alone is not enough — a bouncing bassline is a sound, and
+      // "print" is a word for a lot of things. The sentence has to be about
+      // making audio out of a track.
+      const verb = /\b(?:bounce|print|render|commit|freeze and flatten)\b/.test(raw)
+      const audio = /\bas audio\b|\bto audio\b|\bnew track\b|\bin ?place\b|\bto a track\b|\bdown\b/.test(raw)
+      if (!verb || !audio) return null
+      const where = /\bin ?place\b|\bover it(?:self)?\b|\bsame track\b/.test(raw) ? 'in place' : 'new track'
+      // The track by name, or whatever is selected — the command's own words go
+      // first, so "bounce the drums to a new track" does not read "new track"
+      // as the name.
+      const target = nameOrSelected(w, ctx,
+        ['bounce', 'bounces', 'print', 'prints', 'render', 'renders', 'commit', 'commits', 'freeze', 'flatten',
+         'to', 'as', 'down', 'new', 'track', 'tracks', 'audio', 'in', 'place', 'over', 'it', 'itself', 'same', 'please'])
+      if (!target) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'bounce_track', input: { target: target.name, where } }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
     id: 'set_metronome',
     tool: 'set_metronome',
     group: 'Transport',

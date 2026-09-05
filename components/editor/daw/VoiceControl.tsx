@@ -1557,6 +1557,16 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       return
     }
 
+    // Bounce (lib/bounce.ts) — the render lives in the editor, which owns the
+    // undo group and the notice, so this hands it over rather than doing it
+    // twice. Fire-and-forget: it takes real seconds and Light has already said
+    // what it is about to do.
+    if (act.type === 'BOUNCE') {
+      const a = act as unknown as { trackId: string; what: 'newTrack' | 'inPlace' }
+      window.dispatchEvent(new CustomEvent('100lights:bounce-track', { detail: { trackId: a.trackId, what: a.what } }))
+      return
+    }
+
     // What the click sounds like and how often (lib/metronome.ts) — also a
     // workspace setting: the click is never in the render, so a project that
     // carried it would be carrying something nobody could hear.

@@ -1579,6 +1579,18 @@ export default function TrackRow({ track, beatW, scrollLeft, viewWidth, snap, on
                 <span>Flatten to Audio</span>
               </button>
             )}
+            {/* Bounce (lib/bounce.ts). Beside Freeze on purpose — they look
+                alike and are not: freeze is a cache that thaws back, a bounce is
+                audio you can then cut and warp. */}
+            <button data-help-id="bounce-track"
+              onClick={() => { window.dispatchEvent(new CustomEvent('100lights:bounce-track', { detail: { trackId: track.id, what: 'newTrack' } })); setTrackCtxMenu(null) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={e => { (e.target as HTMLElement).style.background = 'transparent' }}
+            >
+              <span style={{ width: 14, textAlign: 'center' }}>⤓</span>
+              <span>Bounce to New Track</span>
+            </button>
             <button onClick={() => { dispatch({ type: 'SET_TRACK_FROZEN', trackId: track.id, frozen: !frozen }); setTrackCtxMenu(null) }}
               style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '6px 14px', fontSize: 11, color: frozen ? '#60a5fa' : 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
               onMouseEnter={e => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.06)' }}
