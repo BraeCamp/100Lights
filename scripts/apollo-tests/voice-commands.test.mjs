@@ -399,6 +399,40 @@ check('the help panel lists every command', helpCount === VOICE_COMMANDS.length,
   check('and says so when it is already parked', !(again.actions ?? []).length && /already/.test(again.say ?? ''), again.say)
 }
 
+// ── The modulation bus by voice ───────────────────────────────────────────
+{
+  const first = phrase => interpret(phrase, CTX).calls[0]
+  const lfo = first('put an lfo on the pad filter')
+  check('"put an LFO on the pad filter" wobbles the low-pass', lfo?.name === 'modulate_parameter' && lfo.input.parameter === 'lowpass' && /pad/i.test(lfo.input.target) && !lfo.input.off, JSON.stringify(lfo))
+  const eighth = first('wobble the bass 2 cutoff every eighth')
+  check('"every eighth" is the rate', eighth?.name === 'modulate_parameter' && eighth.input.rate === 'eighth' && /bass 2/i.test(eighth.input.target), JSON.stringify(eighth))
+  const trem = first('tremolo the pad at 4 hz')
+  check('"tremolo … at 4 hz" is the volume at 4 Hz', trem?.name === 'modulate_parameter' && trem.input.parameter === 'volume' && trem.input.rate === '4 hz', JSON.stringify(trem))
+  const off = first('take the lfo off the pad')
+  check('"take the LFO off" is off', off?.name === 'modulate_parameter' && off.input.off === true, JSON.stringify(off))
+  const apollo = first('lfo 2 rate to 5 hertz on the synth')
+  check('Apollo\'s own "LFO 2 rate" is not a modulator', apollo?.name !== 'modulate_parameter', JSON.stringify(apollo))
+  const ramp = first('open the filter on the pad over 8 bars')
+  check('a sweep over bars is still automation', ramp?.name === 'automate_parameter', JSON.stringify(ramp))
+  const planned = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', parameter: 'lowpass', rate: '1/8', depth: 40 } }, PROJECT, HEARD)
+  const addMod = (planned.actions ?? []).find(a => a.type === 'ADD_MODULATOR')
+  const addFx = (planned.actions ?? []).find(a => a.type === 'ADD_EFFECT')
+  check('the planner adds a low-pass and an LFO routed to its cutoff',
+    !!addMod && !!addFx && addFx.effect.type === 'filter' && addMod.modulator.routes[0].parameter === `fx:${addFx.effect.id}:frequency`
+      && addMod.modulator.rate.division === '1/8' && Math.abs(addMod.modulator.routes[0].amount - 0.4) < 1e-9, JSON.stringify(planned).slice(0, 260))
+  check('and says what it did', /Wobbling the low-pass cutoff on "Pad" — 1\/8 notes, 40% deep/.test(planned.say ?? ''), planned.say)
+  const withMod = { ...PROJECT, tracks: PROJECT.tracks.map(t => t.name === 'Pad' ? { ...t, effects: [addFx.effect] } : t), modulators: [addMod.modulator] }
+  const retune = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', parameter: 'lowpass', rate: '2 Hz', shape: 'square' } }, withMod, HEARD)
+  check('asking again re-tunes the LFO that is there rather than stacking one',
+    (retune.actions ?? []).some(a => a.type === 'UPDATE_MODULATOR' && a.patch.shape === 'square' && a.patch.rate.hz === 2) && !(retune.actions ?? []).some(a => a.type === 'ADD_MODULATOR'), JSON.stringify(retune).slice(0, 200))
+  const gone = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', off: true } }, withMod, HEARD)
+  check('"off" removes it', (gone.actions ?? []).some(a => a.type === 'REMOVE_MODULATOR' && a.modulatorId === addMod.modulator.id), JSON.stringify(gone).slice(0, 200))
+  const none = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', off: true } }, PROJECT, HEARD)
+  check('and answers, not fails, when there was none', !none.problem && /no LFOs/.test(none.say ?? ''), none.say ?? none.problem)
+  const unknown = planVoiceCall({ name: 'modulate_parameter', input: { target: 'Pad', parameter: 'bitcrush' } }, PROJECT, HEARD)
+  check('a parameter it cannot modulate is a question', !!unknown.problem && /bitcrush/.test(unknown.problem), unknown.problem)
+}
+
 console.log(failures
   ? `\n${failures} failing`
   : `\nevery advertised command resolves, plans, and acts`)

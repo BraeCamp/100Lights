@@ -687,6 +687,42 @@ export interface AutomationLane {
 // ── Tone EQ ───────────────────────────────────────────────────────────────────
 // A simple 4-band tone control (all values in dB, -12..+12, 0 = flat).
 // Applied per-track (DawTrack.tone) and per-MIDI-clip (MidiClip.rollFx).
+// ── Modulation ────────────────────────────────────────────────────────────────
+//
+// A modulator is an LFO on a track that drives parameters through the same
+// namespace automation uses ('volume', 'pan', 'fx:{effectId}:{key}',
+// 'apollo:{path}', 'plugin:{id}', 'macro:N'). Automation is a shape along the
+// song; a modulator is a shape that repeats. Evaluated every scheduler tick
+// (lib/daw-modulation.ts) beside the automation lanes.
+
+export type ModShape = 'sine' | 'triangle' | 'saw' | 'square' | 'random'
+
+export interface ModRoute {
+  id: string
+  parameter: string
+  /** Swing as a fraction of the parameter's range, −1..1. */
+  amount: number
+  /** Swing above the base only (0..amount) rather than around it. */
+  unipolar?: boolean
+  enabled?: boolean
+}
+
+export interface Modulator {
+  id: string
+  trackId: string
+  name: string
+  shape: ModShape
+  rate: { kind: 'sync'; division: string } | { kind: 'hz'; hz: number }
+  /** Scales every route, 0..1. */
+  depth?: number
+  /** Starting phase, 0..1 of a cycle. */
+  phase?: number
+  /** For 'random': the same song renders the same every time. */
+  seed?: number
+  enabled?: boolean
+  routes: ModRoute[]
+}
+
 export interface ToneParams {
   sub?: number      // low shelf ~70 Hz
   bass?: number     // low shelf ~200 Hz
@@ -1040,6 +1076,8 @@ export interface DawProject {
   loopEnabled: boolean
   masterVolume: number
   automationLanes: AutomationLane[]
+  /** LFOs on tracks, driving parameters every tick (see Modulator). */
+  modulators?: Modulator[]
   clipEffects: ClipEffect[]
   returnTracks: ReturnTrack[]
   takeLanes: TakeLane[]

@@ -49,6 +49,7 @@ import {
   type MusicMaps, type MusicPosition, type MusicDuration,
 } from './position'
 import { beatToSeconds } from '../tempo-map'
+import { parseModRate, describeModRate } from '../daw-modulation'
 import { addressClips, parseClipAddress, clipLabel, colourOf, type ClipAddress } from '../clip-address'
 import { parseNoteAddress, addressNotes, chordsOf, type NoteAddress, type Chord } from '../note-address'
 import { addressTracks, parseTrackAddress, describeTracks, TRACK_WORDS, type TrackAddress } from '../track-address'
@@ -191,6 +192,32 @@ const fmtHz = (v: number): string =>
   (v >= 1000 ? `${(v / 1000).toFixed(1).replace(/\.0$/, '')} kHz` : `${Math.round(v)} Hz`)
 
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `v${Math.random().toString(36).slice(2)}`)
+
+/** Does a modulator route's key mean the parameter somebody named? */
+function routeIsParam(routeParam: string, param: string, track: DawTrack): boolean {
+  if (param === 'volume' || param === 'pan') return routeParam === param
+  if (!routeParam.startsWith('fx:')) return false
+  const [, effectId, key] = routeParam.split(':')
+  const fx = (track.effects ?? []).find(e => e.id === effectId)
+  if (!fx) return false
+  if (FX_AUTOMATABLE[param]) {
+    const spec = FX_AUTOMATABLE[param]
+    return fx.type === spec.type || (fx.type === 'helios' && (fx.params as { unit?: { type?: string } })?.unit?.type === spec.type)
+  }
+  const kind = param === 'highpass' ? 'highpass' : 'lowpass'
+  return fx.type === 'filter' && (fx.params as { type?: string })?.type === kind && key === 'frequency'
+}
+
+/** "low-pass cutoff", "volume", "reverb" — for a sentence about a route. */
+function labelOfParam(routeParam: string | undefined, track: DawTrack): string {
+  if (!routeParam) return 'parameter'
+  if (routeParam === 'volume' || routeParam === 'pan') return routeParam
+  const [, effectId, key] = routeParam.split(':')
+  const fx = (track.effects ?? []).find(e => e.id === effectId)
+  if (!fx) return key ?? 'parameter'
+  if (fx.type === 'filter') return `${(fx.params as { type?: string })?.type === 'highpass' ? 'high' : 'low'}-pass cutoff`
+  return fx.type
+}
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const fail = (problem: string): VoicePlan => ({ actions: [], say: '', problem })
 
@@ -1775,6 +1802,92 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
     }
 
     // MOVE — "move everything over by one bar"
+    case 'modulate_parameter': {
+      const found = resolveClip(target, project)
+      const trackByName = !found ? project.tracks.find(t => foldName(t.name) === foldName(target)) : null
+      const track = found ? project.tracks.find(x => x.id === found.clip.trackId) : trackByName
+      if (!track) return fail(`I couldn't find "${target || 'that'}" to modulate.`)
+      const mods = (project.modulators ?? []).filter(m => m.trackId === track.id)
+      const param = str(i.parameter) ? automatableName(str(i.parameter)) : null
+      if (str(i.parameter) && !param) {
+        return fail(`I don't know how to modulate "${str(i.parameter)}". I can wobble a low-pass or high-pass filter, tremolo the volume, auto-pan, or move reverb, delay, drive or chorus.`)
+      }
+
+      // ── OFF ──────────────────────────────────────────────────────────────
+      if (i.off === true || i.off === 'true') {
+        const gone = param
+          ? mods.filter(m => m.routes.some(r => routeIsParam(r.parameter, param, track)))
+          : mods
+        // Nothing to take off is an answer, not a failure — the track is
+        // already still.
+        if (!gone.length) return { actions: [], say: param ? `Nothing is modulating the ${param} on "${track.name}" — it sits still already.` : `"${track.name}" has no LFOs on it — nothing to take off.` }
+        return {
+          actions: gone.map(m => ({ type: 'REMOVE_MODULATOR', modulatorId: m.id })),
+          say: gone.length === 1 ? `Took the LFO off "${track.name}" — the ${labelOfParam(gone[0].routes[0]?.parameter, track)} sits still now.` : `Took ${gone.length} LFOs off "${track.name}".`,
+        }
+      }
+
+      if (!param) return fail('Say what should move — the filter, the volume, the pan, or an effect like reverb.')
+      const rate = i.rate != null ? parseModRate(str(i.rate)) : { kind: 'sync' as const, division: '1/4' }
+      if (!rate) return fail(`I couldn't read "${str(i.rate)}" as a rate — say "1/8", "every beat", "once a bar" or "2 Hz".`)
+      const depthPct = i.depth != null ? Number(i.depth) : 50
+      if (!Number.isFinite(depthPct) || depthPct <= 0 || depthPct > 100) return fail('Depth is a percentage from 1 to 100.')
+      const shape = ['sine', 'triangle', 'saw', 'square', 'random'].includes(str(i.shape)) ? str(i.shape) as 'sine' : 'sine'
+
+      // The parameter key, adding the effect when the track has none — the
+      // same mapping automate_parameter uses, so the two never disagree.
+      const actions: unknown[] = []
+      let parameter: string
+      let label: string
+      let unipolar = false
+      if (param === 'volume' || param === 'pan') {
+        parameter = param
+        label = param === 'volume' ? 'volume' : 'pan'
+        // A tremolo dips below the fader; it never pushes above it.
+        unipolar = param === 'volume'
+      } else if (FX_AUTOMATABLE[param]) {
+        const spec = FX_AUTOMATABLE[param]
+        const isThis = (e: { type: string; params?: unknown }) =>
+          e.type === spec.type || (e.type === 'helios' && (e.params as { unit?: { type?: string } })?.unit?.type === spec.type)
+        const existing = (track.effects ?? []).find(isThis)
+        const key = existing?.type === 'helios' ? 'mix' : spec.key
+        let effectId = existing?.id
+        if (!effectId) {
+          effectId = newId()
+          actions.push({ type: 'ADD_EFFECT', trackId: track.id, effect: { id: effectId, type: spec.type, params: makeDefaultParams(spec.type) } })
+        }
+        parameter = `fx:${effectId}:${key}`
+        label = spec.label.toLowerCase()
+      } else {
+        const kind = param === 'highpass' ? 'highpass' : 'lowpass'
+        const have = (track.effects ?? []).find(e => e.type === 'filter' && (e.params as { type?: string } | undefined)?.type === kind)
+        const effectId = have?.id ?? newId()
+        if (!have) {
+          // A wobble wants room on both sides: the new filter sits in the
+          // middle of its range (by ratio), not fully open.
+          const hz = FILTER_HZ[kind]
+          const middle = Math.round(Math.sqrt(hz.min * hz.max))
+          actions.push({ type: 'ADD_EFFECT', trackId: track.id, effect: { id: effectId, type: 'filter', params: { enabled: true, type: kind, frequency: middle, q: 1 } } })
+        }
+        parameter = `fx:${effectId}:frequency`
+        label = kind === 'lowpass' ? 'low-pass cutoff' : 'high-pass cutoff'
+      }
+
+      // One LFO per parameter per track: asking again re-tunes it.
+      const already = mods.find(m => m.routes.some(r => r.parameter === parameter))
+      const route = { id: already?.routes.find(r => r.parameter === parameter)?.id ?? newId(), parameter, amount: (unipolar ? -1 : 1) * depthPct / 100, unipolar }
+      if (already) {
+        actions.push({ type: 'UPDATE_MODULATOR', modulatorId: already.id, patch: { shape, rate, depth: 1, enabled: true, routes: already.routes.map(r => r.parameter === parameter ? route : r) } })
+      } else {
+        actions.push({ type: 'ADD_MODULATOR', modulator: { id: newId(), trackId: track.id, name: `LFO ${mods.length + 1}`, shape, rate, depth: 1, phase: 0, enabled: true, routes: [route] } })
+      }
+      const verb = param === 'volume' ? 'Tremolo on' : param === 'pan' ? 'Auto-panning' : 'Wobbling'
+      return {
+        actions,
+        say: `${verb} the ${label} on "${track.name}" — ${shape === 'sine' ? '' : shape + ' wave, '}${describeModRate(rate)}, ${Math.round(depthPct)}% deep.${already ? ' (Re-tuned the one that was there.)' : ''}`,
+      }
+    }
+
     case 'move_clips': {
       // A set — "all the pad intro parts", "the pad clips after bar 9" — moves
       // together; a track name means everything on it; a plain clip name, one.

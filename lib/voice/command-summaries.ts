@@ -97,6 +97,7 @@ export const COMMAND_SUMMARIES: Record<string, string> = {
   section: 'Works with a named part of the song rather than with bar numbers. Loop the chorus, jump to the drop, double the chorus. A section runs from its marker to the next one, so it stays right when you move things.',
   'automate_parameter.fade': 'Fades a track in or out across a stretch, by writing volume automation rather than by setting a level.',
   'automate_parameter.filter': 'Sweeps a filter open or closed over time — the descending filter into a drop, or the opening one out of an intro.',
+  modulate_parameter: 'Puts an LFO on a parameter so it keeps moving — a wobble on the filter, a tremolo on the volume, an auto-pan — in time (every eighth, once a bar) or at a rate in hertz. Automation is a ramp drawn once; this repeats. "Take the LFO off" removes it.',
   add_clip_effect: 'Dials a parameter in and out across a stretch of a clip, for movement inside a part rather than across the mix.',
 
   // ── Notes ────────────────────────────────────────────────────────────────

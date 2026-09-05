@@ -1397,6 +1397,51 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'modulate_parameter',
+    tool: 'modulate_parameter',
+    group: 'Arrangement',
+    what: 'Put an LFO on a parameter — a wobble, a tremolo, an auto-pan',
+    say: ['put an LFO on the pad filter', 'wobble the bass 2 cutoff every eighth', 'take the LFO off the pad'],
+    match(w, ctx) {
+      const lfo = w.has('lfo', 'wobble', 'wobbling', 'wobbly', 'tremolo', 'modulate', 'modulation', 'modulating', 'autopan', 'auto-pan', 'breathe', 'pulse', 'pulsing')
+      if (!lfo) return null
+      // "Automate" is the ramp; a length ("over 4 bars") is a ramp too.
+      if (w.has('automate', 'automation', 'sweep', 'ramp', 'fade')) return null
+      // "LFO 2 rate to 5 hertz on the synth" is one of Apollo's own LFOs
+      // (set_apollo_param), not a modulator on a track parameter.
+      if (/\blfo\s*\d/.test(w.raw.toLowerCase()) || w.has('rate', 'synth', 'apollo', 'patch', 'oscillator', 'osc')) return null
+      const off = w.has('stop', 'remove', 'kill', 'delete', 'off', 'without') || /\b(?:take|turn)\b[^.]*\b(?:off|out)\b/.test(w.raw.toLowerCase())
+      const parameter = w.has('filter', 'cutoff', 'lowpass', 'low-pass') ? 'lowpass'
+        : w.has('highpass', 'high-pass') ? 'highpass'
+        : w.has('tremolo', 'volume', 'level', 'loudness') ? 'volume'
+        : w.has('pan', 'autopan', 'auto-pan', 'panning') ? 'pan'
+        : w.has('reverb') ? 'reverb' : w.has('delay') ? 'delay' : w.has('drive', 'saturation') ? 'drive' : w.has('chorus') ? 'chorus'
+        : null
+      const raw = w.raw.toLowerCase()
+      const rateM = /(\d+\s*\/\s*\d+)|(\d+(?:\.\d+)?)\s*(?:hz|hertz)|\b(every beat|once a bar|every bar|eighths?|sixteenths?|quarters?|triplets?|slow|slowly|fast|quickly)\b/.exec(raw)
+      const rate = rateM ? (rateM[1] ? rateM[1].replace(/\s+/g, '') : rateM[2] ? `${rateM[2]} hz` : rateM[3]) : undefined
+      const depthM = /(\d+)\s*(?:%|percent)/.exec(raw)
+      const hit = nameFrom(w, ctx, ['lfo', 'wobble', 'wobbling', 'wobbly', 'tremolo', 'modulate', 'modulation', 'modulating',
+        'autopan', 'auto-pan', 'breathe', 'pulse', 'pulsing', 'filter', 'cutoff', 'lowpass', 'low-pass', 'highpass', 'high-pass',
+        'volume', 'level', 'loudness', 'pan', 'panning', 'reverb', 'delay', 'drive', 'saturation', 'chorus',
+        'stop', 'remove', 'kill', 'delete', 'off', 'out', 'take', 'turn', 'put', 'add', 'every', 'once', 'beat', 'bar', 'bars',
+        'eighth', 'eighths', 'sixteenth', 'sixteenths', 'quarter', 'quarters', 'triplet', 'triplets', 'slow', 'slowly', 'fast', 'quickly',
+        'hz', 'hertz', 'percent', 'deep', 'depth', 'sine', 'triangle', 'saw', 'square', 'random', 'wave', 'track'], { dropNums: true })
+      if (!hit) return null
+      for (const word of w.all) w.markWord(word, 0)
+      const input: Record<string, unknown> = { target: hit.name }
+      if (parameter) input.parameter = parameter
+      if (off) input.off = true
+      else {
+        if (rate) input.rate = rate
+        if (depthM) input.depth = Number(depthM[1])
+        const shape = ['triangle', 'saw', 'square', 'random'].find(s => w.has(s))
+        if (shape) input.shape = shape
+      }
+      return { calls: [{ name: 'modulate_parameter', input }], confidence: nameConfidence(hit.score), needsName: true }
+    },
+  },
+  {
     id: 'automate_parameter.fade',
     tool: 'automate_parameter',
     group: 'Arrangement',

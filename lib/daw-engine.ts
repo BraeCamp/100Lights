@@ -3,13 +3,15 @@
 import { PcmRecorder } from './pcm-recorder'
 import { midiToNoteName } from './scale-constants'
 import { rngFor } from '@/lib/seeded-random'
-import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
+import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, Modulator, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
 import { isAudioClip, isMidiClip, POLY_PRESETS } from './daw-types'
 import { tempoSegments, tempoAt, beatsAtEvenSeconds, beatToSeconds as mapBeatToSeconds, secondsToBeat as mapSecondsToBeat, meterSegments, nearestBarBeat, type TempoSegment, type MeterSegment } from './tempo-map'
 import { resolveNoteFx, fxHasAudibleField, fxHasPitchMod, FX_FIELD_BY_KEY, fieldIsSet } from './roll-fx'
 import { resolveArtic, ARTIC_GAP_BEATS, LEGATO_ONSET_SKIP, type ClipArtic } from './articulation'
 import { barParamValue, activeBarFields } from './effect-bar'
 import { ensurePolySample } from './poly-sample-cache'
+import { evaluateModulators, type ModReadout, type ParamRange } from './daw-modulation'
+import { automatableParams } from './daw-effect-params'
 import { buildEffectsChain, type EffectHandle } from './daw-effects'
 import { buildHeliosFxChain, buildHeliosMasterBus, type HeliosChain } from './apollo/daw-fx'
 import { apolloPatchFor, newApolloResolveCache } from './apollo/resolve-apollo'
@@ -375,6 +377,11 @@ export class DawEngine extends EventTarget {
   private _midiClips: MidiClip[] = []
   private _tracks: DawTrack[] = []
   private _automationLanes: AutomationLane[] = []
+  // The modulation bus (lib/daw-modulation.ts): LFOs on tracks, evaluated
+  // every tick beside the lanes and pushed through the same _applyAutomation.
+  private _modulators: Modulator[] = []
+  private _modReadout = new Map<string, ModReadout>()
+  private _modTouched = new Set<string>()
   private _clipEffects: ClipEffect[] = []
   private _irCache = new Map<number, AudioBuffer>()
 
@@ -1526,6 +1533,7 @@ export class DawEngine extends EventTarget {
       for (const l of oscs) if (l.source === 'sample' && l.sampleId) void ensurePolySample(this.ctx, l.sampleId)
     }
     this._automationLanes = project.automationLanes ?? []
+    this._modulators      = project.modulators ?? []
     this._clipEffects     = project.clipEffects ?? []
     this.setMasterVolume(project.masterVolume)
 
@@ -2976,6 +2984,9 @@ export class DawEngine extends EventTarget {
     }
 
     // ── Automation ───────────────────────────────────────────────────────
+    // What each lane wrote this tick, so a modulator on the same parameter
+    // swings around the lane's value rather than fighting it.
+    const laneValues = new Map<string, number>()
     for (const lane of this._automationLanes) {
       if (lane.points.length === 0) continue
       // An overridden lane keeps its curve but stops driving the parameter —
@@ -2988,10 +2999,85 @@ export class DawEngine extends EventTarget {
       const value = lane.curve === 'log' && lane.min > 0
         ? lane.min * Math.pow(lane.max / lane.min, Math.min(1, Math.max(0, norm)))
         : lane.min + norm * (lane.max - lane.min)
+      laneValues.set(`${lane.trackId}|${lane.parameter}`, value)
       this._applyAutomation(lane.trackId, lane.parameter, value)
     }
 
+    // ── Modulation ───────────────────────────────────────────────────────
+    // Song seconds, not context seconds, so a Hz-rate LFO lands on the same
+    // samples live and in an offline render.
+    this._runModBus(now, this._spanSeconds(0, now), laneValues)
+
     this.dispatchEvent(new CustomEvent('tick', { detail: { beat: now } }))
+  }
+
+  /**
+   * The modulation bus: every enabled LFO route gets its value for this tick
+   * and is pushed like a lane. A parameter that was modulated last tick and is
+   * not any more goes back to its base, so removing an LFO does not leave the
+   * cutoff wherever the wave happened to be.
+   *
+   * ⚠️ 25 ms tick: fine for sweeps and tremolo up to a few hertz, audibly
+   * stepped above ~8 Hz. Audio-rate LFOs wait for AudioParam exposure.
+   */
+  private _runModBus(beat: number, seconds: number, laneValues: Map<string, number>) {
+    const touched = new Set<string>()
+    if (this._modulators.length) {
+      const readouts = evaluateModulators(this._modulators, { beat, seconds },
+        (trackId, parameter) => laneValues.get(`${trackId}|${parameter}`) ?? this._paramBase(trackId, parameter),
+        (trackId, parameter) => this._paramRange(trackId, parameter))
+      for (const r of readouts) {
+        const key = `${r.trackId}|${r.parameter}`
+        touched.add(key)
+        this._modReadout.set(key, r)
+        this._applyAutomation(r.trackId, r.parameter, r.value)
+      }
+    }
+    for (const key of this._modTouched) {
+      if (touched.has(key)) continue
+      const r = this._modReadout.get(key)
+      this._modReadout.delete(key)
+      if (r && !laneValues.has(key)) this._applyAutomation(r.trackId, r.parameter, r.base)
+    }
+    this._modTouched = touched
+  }
+
+  /** The parameter's value without modulation — the project's own number. */
+  private _paramBase(trackId: string, parameter: string): number | null {
+    const track = this._tracks.find(t => t.id === trackId)
+    if (!track) return null
+    if (parameter === 'volume') return track.volume
+    if (parameter === 'pan') return track.pan ?? 0
+    if (parameter.startsWith('fx:')) {
+      const [, effectId, key] = parameter.split(':')
+      const fx = track.effects?.find(e => e.id === effectId)
+      const v = (fx?.params as Record<string, unknown> | undefined)?.[key]
+      return typeof v === 'number' ? v : null
+    }
+    return null
+  }
+
+  private _paramRange(trackId: string, parameter: string): ParamRange | null {
+    if (parameter === 'volume') return { min: 0, max: 1 }
+    if (parameter === 'pan') return { min: -1, max: 1 }
+    if (parameter.startsWith('fx:')) {
+      const [, effectId, key] = parameter.split(':')
+      const fx = this._tracks.find(t => t.id === trackId)?.effects?.find(e => e.id === effectId)
+      if (!fx) return null
+      const p = automatableParams(fx).find(x => x.key === key)
+      return p ? { min: p.min, max: p.max, curve: p.curve } : null
+    }
+    return null
+  }
+
+  /** What the bus last pushed to a parameter, for a ring or a readout to draw. */
+  modulatedValue(trackId: string, parameter: string): ModReadout | null {
+    return this._modReadout.get(`${trackId}|${parameter}`) ?? null
+  }
+
+  /** Every parameter the bus is driving right now. */
+  modReadouts(): ModReadout[] {
+    return [...this._modReadout.values()]
   }
 
   /** Push a plugin parameter straight to the running worklet, so turning a

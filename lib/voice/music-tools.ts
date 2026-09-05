@@ -195,6 +195,27 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'modulate_parameter',
+    description:
+      'MODULATION — an LFO that keeps moving a parameter, in time or at a rate: "put an LFO on the pad\'s filter", "wobble the bass cutoff every eighth", "tremolo the keys at 4 Hz", "make the reverb breathe once a bar", "auto-pan the hats". ⚠️ automate_parameter is a ramp drawn ONCE along the song; this repeats for as long as the track plays. "stop the wobble", "take the LFO off the pad" is `off: true`.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        target: { ...TARGET, description: 'The track (or a clip on it) whose parameter moves.' },
+        parameter: {
+          type: 'string',
+          enum: ['lowpass', 'highpass', 'volume', 'pan', 'reverb', 'delay', 'drive', 'chorus'],
+          description: 'What moves. volume is a tremolo, pan an auto-pan, lowpass a wobble on the filter (added if the track has none), the rest that effect\'s amount.',
+        },
+        rate: { type: 'string', description: 'How fast: "1/8", "1/4", "1 bar", "2 Hz", "slow", "fast". Omit for a quarter note.' },
+        depth: { type: 'number', description: 'How far it swings, as a percentage of the parameter\'s range, 0-100. Omit for 50.' },
+        shape: { type: 'string', enum: ['sine', 'triangle', 'saw', 'square', 'random'], description: 'The wave. Omit for sine; "random" is sample-and-hold.' },
+        off: { type: 'boolean', description: 'Remove the modulation on that parameter — or every LFO on the track when no parameter is named.' },
+      },
+      required: ['target'],
+    },
+  },
+  {
     name: 'move_clips',
     description:
       'MOVE — shift clips later or earlier by a length. "move everything over by one bar", "push the drums back 2 bars". Negative moves earlier. Omit target to move the whole arrangement.',

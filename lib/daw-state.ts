@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useState, type Dispatch } 
 import type {
   DawProject, DawTrack, DawClip, AudioClip, MidiClip, MidiNote,
   Scene, DawView, EditTarget,
-  TrackEffect, AutomationLane, AutomationPoint, ClipEffect,
+  TrackEffect, AutomationLane, AutomationPoint, ClipEffect, Modulator, ModRoute,
   ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
 } from './daw-types'
 import { repairAutomationPoints } from './automation-repair'
@@ -83,6 +83,12 @@ export type DawAction =
   | { type: 'ADD_AUTOMATION_LANE'; lane: AutomationLane }
   | { type: 'REMOVE_AUTOMATION_LANE'; laneId: string }
   | { type: 'UPDATE_AUTOMATION_LANE'; laneId: string; patch: Partial<AutomationLane> }
+  | { type: 'ADD_MODULATOR'; modulator: Modulator }
+  | { type: 'UPDATE_MODULATOR'; modulatorId: string; patch: Partial<Modulator> }
+  | { type: 'REMOVE_MODULATOR'; modulatorId: string }
+  | { type: 'ADD_MOD_ROUTE'; modulatorId: string; route: ModRoute }
+  | { type: 'UPDATE_MOD_ROUTE'; modulatorId: string; routeId: string; patch: Partial<ModRoute> }
+  | { type: 'REMOVE_MOD_ROUTE'; modulatorId: string; routeId: string }
   | { type: 'ADD_AUTOMATION_POINT'; laneId: string; point: AutomationPoint }
   | { type: 'REMOVE_AUTOMATION_POINT'; laneId: string; pointId: string }
   | { type: 'UPDATE_AUTOMATION_POINT'; laneId: string; pointId: string; patch: Partial<AutomationPoint> }
@@ -658,6 +664,28 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
       )
       return { ...project, automationLanes }
     }
+
+    // ── Modulators ──────────────────────────────────────────────────────────
+    case 'ADD_MODULATOR': {
+      const mods = project.modulators ?? []
+      if (mods.some(m => m.id === action.modulator.id)) return project
+      return { ...project, modulators: [...mods, action.modulator] }
+    }
+    case 'UPDATE_MODULATOR':
+      return { ...project, modulators: (project.modulators ?? []).map(m => m.id === action.modulatorId ? { ...m, ...action.patch } : m) }
+    case 'REMOVE_MODULATOR':
+      return { ...project, modulators: (project.modulators ?? []).filter(m => m.id !== action.modulatorId) }
+    case 'ADD_MOD_ROUTE':
+      return { ...project, modulators: (project.modulators ?? []).map(m => {
+        if (m.id !== action.modulatorId || m.routes.some(r => r.id === action.route.id)) return m
+        return { ...m, routes: [...m.routes, action.route] }
+      }) }
+    case 'UPDATE_MOD_ROUTE':
+      return { ...project, modulators: (project.modulators ?? []).map(m => m.id !== action.modulatorId ? m
+        : { ...m, routes: m.routes.map(r => r.id === action.routeId ? { ...r, ...action.patch } : r) }) }
+    case 'REMOVE_MOD_ROUTE':
+      return { ...project, modulators: (project.modulators ?? []).map(m => m.id !== action.modulatorId ? m
+        : { ...m, routes: m.routes.filter(r => r.id !== action.routeId) }) }
 
     case 'ADD_AUTOMATION_POINT': {
       const automationLanes = project.automationLanes.map(l => {

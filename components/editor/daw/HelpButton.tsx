@@ -211,6 +211,8 @@ const FEATURES: Feature[] = [
     description: 'Play instruments live from clickable pads, your computer keyboard, or a plugged-in MIDI keyboard. Instrument notes record as editable MIDI; sample pads bounce audio.' },
   { group: 'Instruments & Effects', name: 'Capture MIDI', helpIds: [], modes: ['music'], hint: 'Open the Pad Input window — CAPTURE sits next to the REC button.',
     description: 'Everything you play while the transport runs is remembered for 30 seconds, even when not recording. One click on CAPTURE turns that great unrecorded take into a MIDI clip.' },
+  { group: 'Instruments & Effects', name: 'LFO Modulation', helpIds: [], modes: ['music'], hint: 'Select a track, then ⌘K → "Add an LFO" — or say "put an LFO on the pad filter", "tremolo the keys at 4 Hz", "take the LFO off".',
+    description: 'An LFO on a track keeps a parameter moving — a wobble on the filter cutoff, a tremolo on the volume, an auto-pan, reverb that breathes — in time with the song (every eighth, once a bar) or at a rate in hertz. Automation is a shape drawn once; modulation repeats. It rides on top of automation and steps aside when removed.' },
   { group: 'Instruments & Effects', name: 'Knobs by Keyboard', helpIds: [], hint: 'Click or Tab to any knob — mixer pan, EQ, sends, device parameters — then use the arrow keys, or press Enter and type the number.',
     description: 'Every knob is a slider to the keyboard and to a screen reader: arrows nudge it (Shift for fine, Page keys for coarse), Delete resets it, Enter opens a typed entry that understands units — "800", "1.2k", "-6dB", "50%", "L30".' },
 

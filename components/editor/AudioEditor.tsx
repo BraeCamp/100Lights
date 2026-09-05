@@ -2880,6 +2880,24 @@ export default function AudioEditor(props: AudioEditorProps) {
       { id: 'audio.track.apollo', group: 'Sound', label: `Edit ${paletteTrack.name} in Apollo`,
         keywords: 'synth patch rack instrument sound design edit',
         run: () => setApolloRack({ trackId: paletteTrack.id, seed: null, follow: true }) },
+      // The modulation bus (lib/daw-modulation.ts): an LFO on the track's
+      // low-pass cutoff, added if it has none — the same mapping the voice
+      // tool uses, so "put an LFO on the pad filter" and this land the same.
+      { id: 'audio.track.lfo', group: 'Sound', label: `Add an LFO to ${paletteTrack.name}’s filter (a wobble)`,
+        keywords: 'lfo wobble modulate modulation tremolo cutoff move', when: () => !props.readOnly,
+        run: () => {
+          const have = (paletteTrack.effects ?? []).find(e => e.type === 'filter' && (e.params as { type?: string } | undefined)?.type === 'lowpass')
+          const effectId = have?.id ?? crypto.randomUUID()
+          if (!have) dispatch({ type: 'ADD_EFFECT', trackId: paletteTrack.id, effect: { id: effectId, type: 'filter', params: { enabled: true, type: 'lowpass', frequency: 1900, q: 1 } } })
+          dispatch({ type: 'ADD_MODULATOR', modulator: {
+            id: crypto.randomUUID(), trackId: paletteTrack.id, name: 'LFO', shape: 'sine', rate: { kind: 'sync', division: '1/4' },
+            depth: 1, phase: 0, enabled: true, routes: [{ id: crypto.randomUUID(), parameter: `fx:${effectId}:frequency`, amount: 0.5 }],
+          } })
+        } },
+      { id: 'audio.track.lfoOff', group: 'Sound', label: `Remove the LFOs on ${paletteTrack.name}`,
+        keywords: 'lfo wobble modulation stop remove still',
+        when: () => !props.readOnly && (project.modulators ?? []).some(m => m.trackId === paletteTrack.id),
+        run: () => { for (const m of (project.modulators ?? []).filter(m => m.trackId === paletteTrack.id)) dispatch({ type: 'REMOVE_MODULATOR', modulatorId: m.id }) } },
     ] : []),
     // Jump straight to a track instead of finding it in a long list.
     ...project.tracks.filter(t => t.id !== selectedTrackId).map(t => ({
@@ -2890,7 +2908,7 @@ export default function AudioEditor(props: AudioEditorProps) {
     // the moment the library grows — a palette whose results are mostly one kind
     // of thing has stopped being a palette. Presets belong in a browser that can
     // page, preview and categorise; the palette's job is to get you TO it.
-  ], [project.tracks, selectedTrackId, paletteTrack, props.readOnly, dispatch, setApolloRack, setSelectedTrackId])
+  ], [project.tracks, project.modulators, selectedTrackId, paletteTrack, props.readOnly, dispatch, setApolloRack, setSelectedTrackId])
 
   // ── The rest of the studio ───────────────────────────────────────────────────
   //
