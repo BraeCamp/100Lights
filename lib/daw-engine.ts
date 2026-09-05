@@ -1,5 +1,6 @@
 'use client'
 
+import { PcmRecorder } from './pcm-recorder'
 import { midiToNoteName } from './scale-constants'
 import { rngFor } from '@/lib/seeded-random'
 import type { DawTrack, DawClip, DawProject, AudioClip, MidiClip, AutomationLane, LaunchQuantization, ClipEffect, AutoPoint, ReturnTrack, MidiEffect, MidiNote, VelocityMidiParams, ScaleMidiParams, ChordMidiParams, ArpMidiParams, PolyInstrumentParams, ApolloInstrumentParams, RollFx, TrackInstrument } from './daw-types'
@@ -4657,9 +4658,10 @@ export class DawEngine extends EventTarget {
 
   // ── Recording ─────────────────────────────────────────────────────────────
 
-  private _mediaRecorder: MediaRecorder | null = null
-  private _recChunks:   Blob[]                 = []
-  private _captureNode: MediaStreamAudioDestinationNode | null = null
+  // The take: float32 straight off the master bus, written as a 32-bit
+  // float WAV (lib/pcm-recorder.ts). MediaRecorder / Opus is kept for the jam
+  // buffer only — a take has to be sample-exact and lossless.
+  private _take: PcmRecorder | null = null
   private _recStartBeat = 0
   private _micStreams = new Map<string, { stream: MediaStream; source: MediaStreamAudioSourceNode }>()
 
@@ -4797,20 +4799,13 @@ export class DawEngine extends EventTarget {
   }
 
   async startRecording(): Promise<void> {
-    if (this._mediaRecorder || this.isRecording) return
+    if (this._take || this.isRecording) return
     if (this.ctx.state === 'suspended') await this.ctx.resume()
     // Tap the master bus — captures everything the engine plays,
     // including any mic inputs already routed through track effects chains.
-    this._captureNode  = this.ctx.createMediaStreamDestination()
-    this.masterBusOut.connect(this._captureNode)
-    this._recChunks    = []
     this._recStartBeat = this.currentBeat
-    const preferredMimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
-    const mime = preferredMimes.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
-    this._mediaRecorder = new MediaRecorder(this._captureNode.stream, mime ? { mimeType: mime } : undefined)
-    this._mediaRecorder.ondataavailable = e => { if (e.data.size > 0) this._recChunks.push(e.data) }
-    this._mediaRecorder.onerror = e => console.error('[rec] MediaRecorder error:', e)
-    this._mediaRecorder.start(100)
+    this._take = new PcmRecorder(this.ctx, this.masterBusOut, { channels: 2 })
+    this._take.start()
     this.isRecording = true
     // live waveform trail
     this.recordingPeaks = []
@@ -4825,7 +4820,7 @@ export class DawEngine extends EventTarget {
       for (let i = 0; i < peakBuf.length; i += 4) m = Math.max(m, Math.abs(peakBuf[i]))
       this.recordingPeaks.push(m)
     }, 45)
-    console.log('[rec] startRecording — beat:', this._recStartBeat, 'mime:', mime || '(default)', 'stream tracks:', this._captureNode.stream.getTracks().length)
+    console.log('[rec] startRecording — beat:', this._recStartBeat, 'pcm float32 @', this.ctx.sampleRate)
     this.dispatchEvent(new CustomEvent('recording', { detail: { recording: true } }))
   }
 
@@ -4836,31 +4831,19 @@ export class DawEngine extends EventTarget {
 
   async stopRecording(): Promise<Blob | null> {
     this._stopRecPeaks()
-    if (!this._mediaRecorder) return null
+    if (!this._take) return null
     const endBeat = this.currentBeat  // capture before scheduler stops
     this.stopAllMicInputs()
-    return new Promise(resolve => {
-      this._mediaRecorder!.onstop = () => {
-        const mime = this._mediaRecorder?.mimeType || 'audio/webm'
-        const blob = new Blob(this._recChunks, { type: mime })
-        const durationBeats = Math.max(0.25, endBeat - this._recStartBeat)
-        console.log('[rec] stopRecording onstop — chunks:', this._recChunks.length, 'blobSize:', blob.size, 'startBeat:', this._recStartBeat, 'endBeat:', endBeat, 'duration:', durationBeats)
-        this._recChunks = []
-        if (this._captureNode) {
-          try { this.masterBusOut.disconnect(this._captureNode) } catch { /* ok */ }
-          this._captureNode = null
-        }
-        this._mediaRecorder?.stream.getTracks().forEach(t => t.stop())
-        this._mediaRecorder = null
-        this.isRecording = false
-        this.dispatchEvent(new CustomEvent('recording', { detail: { recording: false } }))
-        this.dispatchEvent(new CustomEvent('recording-complete', {
-          detail: { blob, startBeat: this._recStartBeat, durationBeats },
-        }))
-        resolve(blob)
-      }
-      this._mediaRecorder!.stop()
-    })
+    const take = await this._take.stop()
+    this._take = null
+    const durationBeats = Math.max(0.25, endBeat - this._recStartBeat)
+    console.log('[rec] stopRecording — frames:', take.frames, 'blobSize:', take.blob.size, 'startBeat:', this._recStartBeat, 'endBeat:', endBeat, 'duration:', durationBeats)
+    this.isRecording = false
+    this.dispatchEvent(new CustomEvent('recording', { detail: { recording: false } }))
+    this.dispatchEvent(new CustomEvent('recording-complete', {
+      detail: { blob: take.blob, startBeat: this._recStartBeat, durationBeats, sampleRate: take.sampleRate, frames: take.frames },
+    }))
+    return take.blob
   }
 
   /** Await every sample / preset / poly buffer this project needs, so an offline

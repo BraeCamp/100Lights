@@ -35,6 +35,7 @@ import { UITierProvider } from './UITierProvider'
 import { DawEngine } from '@/lib/daw-engine'
 import type { CollabPeer } from '@/lib/daw-types'
 import { uploadRecordingBlob } from '@/lib/record-upload'
+import { PcmRecorder } from '@/lib/pcm-recorder'
 import type { AudioTrackInit, ModuleKey } from '@/lib/editor-types'
 import type { PodcastMeta } from '@/lib/project-serializer'
 import { openProjectsFromFile } from '@/lib/project-serializer'
@@ -962,7 +963,10 @@ export default function AudioEditor(props: AudioEditorProps) {
   }, [restorePrompt])
 
   // ── Per-track external input recording ──────────────────────────────────────
-  type InputRec = { recorder: MediaRecorder; startBeat: number; chunks: Blob[] }
+  // A live-input take: float32 off a MediaStreamAudioSourceNode, written
+  // as a float WAV (lib/pcm-recorder.ts) — lossless and sample-exact, which
+  // an Opus MediaRecorder was not.
+  type InputRec = { recorder: PcmRecorder; stream: MediaStream; startBeat: number }
   const inputRecsRef    = useRef<Map<string, InputRec>>(new Map())
   // Loop recording: pass counter + wrap watcher (each loop pass becomes a take)
   const recPassRef = useRef(0)
@@ -1977,19 +1981,14 @@ export default function AudioEditor(props: AudioEditorProps) {
       recPassRef.current++
       const endBeat = projectRef.current.loopEnd
       for (const [trackId, entry] of [...inputRecsRef.current]) {
-        const { recorder, startBeat, chunks } = entry
-        if (recorder.state === 'inactive') continue
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
-          finalizePassClip(trackId, blob, startBeat, endBeat, passIndex)
-        }
-        recorder.stop()
-        const stream = recorder.stream
-        const fresh = new MediaRecorder(stream, recorder.mimeType ? { mimeType: recorder.mimeType } : undefined)
-        const freshChunks: Blob[] = []
-        fresh.ondataavailable = (ev: BlobEvent) => { if (ev.data.size > 0) freshChunks.push(ev.data) }
-        fresh.start(100)
-        inputRecsRef.current.set(trackId, { recorder: fresh, startBeat: wrapToBeat, chunks: freshChunks })
+        const { recorder, stream, startBeat } = entry
+        if (recorder.state !== 'recording') continue
+        // The next pass starts at once (no gap at the wrap); the finished one
+        // lands as a clip when its last block arrives.
+        const fresh = PcmRecorder.fromStream(engineRef.current!.ctx, stream)
+        fresh.start()
+        inputRecsRef.current.set(trackId, { recorder: fresh, stream, startBeat: wrapToBeat })
+        void recorder.stop().then(take => finalizePassClip(trackId, take.blob, startBeat, endBeat, passIndex))
       }
     }
 
@@ -2026,21 +2025,11 @@ export default function AudioEditor(props: AudioEditorProps) {
                 stream = await captureAudioInput(src)
                 inputStreamsRef.current.set(src, stream)
               }
-              const chunks: Blob[] = []
-              const preferredMimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
-              const mime = preferredMimes.find(m => MediaRecorder.isTypeSupported(m)) ?? ''
-              const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
-              recorder.ondataavailable = (ev: BlobEvent) => {
-                if (ev.data.size > 0) chunks.push(ev.data)
-              }
-              recorder.start(100)
+              const recorder = PcmRecorder.fromStream(engineRef.current!.ctx, stream)
+              recorder.start()
               const startBeat = engineRef.current!.currentBeat
               console.log('[rec] per-track recorder started for:', track.name, 'startBeat:', startBeat)
-              inputRecsRef.current.set(track.id, {
-                recorder,
-                startBeat,
-                chunks,
-              })
+              inputRecsRef.current.set(track.id, { recorder, stream, startBeat })
             } catch (err) {
               console.warn(`[rec] Input capture failed for "${track.name}":`, err)
             }
@@ -2054,7 +2043,7 @@ export default function AudioEditor(props: AudioEditorProps) {
         let pending = 0
 
         for (const { recorder } of inputRecsRef.current.values()) {
-          if (recorder.state !== 'inactive') pending++
+          if (recorder.state === 'recording') pending++
         }
 
         const cleanup = () => {
@@ -2068,18 +2057,17 @@ export default function AudioEditor(props: AudioEditorProps) {
 
         if (pending === 0) { cleanup(); return }
 
-        for (const [trackId, { recorder, startBeat, chunks }] of inputRecsRef.current) {
-          if (recorder.state === 'inactive') continue
-          recorder.onstop = () => {
-            const mime = recorder.mimeType || 'audio/webm'
-            const blob = new Blob(chunks, { type: mime })
-            console.log('[rec] per-track onstop — trackId:', trackId, 'blobSize:', blob.size, 'startBeat:', startBeat, 'endBeat:', endBeat, 'pass:', finalPass)
-            finalizePassClip(trackId, blob, startBeat, endBeat, finalPass)
-            pending--
-            if (pending === 0) cleanup()
+        // Each take waits for the block that carries its last frame (at most
+        // one buffer), then the clip is placed; the streams close after.
+        void (async () => {
+          for (const [trackId, { recorder, startBeat }] of inputRecsRef.current) {
+            if (recorder.state !== 'recording') continue
+            const take = await recorder.stop()
+            console.log('[rec] per-track take — trackId:', trackId, 'frames:', take.frames, 'blobSize:', take.blob.size, 'startBeat:', startBeat, 'endBeat:', endBeat, 'pass:', finalPass)
+            finalizePassClip(trackId, take.blob, startBeat, endBeat, finalPass)
           }
-          recorder.stop()
-        }
+          cleanup()
+        })()
       }
     }
 
