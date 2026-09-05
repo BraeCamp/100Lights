@@ -1467,6 +1467,10 @@ export class DawEngine extends EventTarget {
     this.loopStart    = project.loopStart
     this.loopEnd      = project.loopEnd
     this.swing        = project.swing ?? 0
+    // Global Quantization: when a slot names no launch quantization of its own,
+    // this is the one it gets (lib/launch.ts). It used to be a hard 'bar' in
+    // the engine with nothing able to change it.
+    this.launchQuantization = project.launchQuantization ?? 'bar'
     this._delayCompensation = project.delayCompensation !== false
     this._beatsPerBar = project.timeSignatureNum ?? 4
     this._meterSegs   = meterSegments(project)

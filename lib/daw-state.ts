@@ -6,6 +6,7 @@ import type {
   Scene, DawView, EditTarget,
   TrackEffect, AutomationLane, AutomationPoint, ClipEffect, Modulator, ModRoute,
   ReturnTrack, TakeLane, MidiEffect, CueMarker, CollabPeer, DawHistoryEntry,
+  LaunchQuantization,
 } from './daw-types'
 import { repairAutomationPoints } from './automation-repair'
 import { fatPatch } from './apollo/patch-diff'
@@ -77,6 +78,7 @@ export type DawAction =
   | { type: 'SET_LOOP_ENABLED'; enabled: boolean }
   | { type: 'SET_PUNCH'; punchIn?: boolean; punchOut?: boolean }
   | { type: 'SET_RECORD_QUANTIZE'; grid: RecordGrid }
+  | { type: 'SET_LAUNCH_QUANTIZATION'; quantization: LaunchQuantization }
   | { type: 'SET_MASTER_VOLUME'; volume: number }
   | { type: 'SET_PROJECT_NAME'; name: string }
   // MIDI notes
@@ -665,6 +667,11 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     // The grid recorded notes land on as they are played (lib/record-quantize.ts).
     case 'SET_RECORD_QUANTIZE':
       return { ...project, recordQuantize: action.grid }
+
+    // Global Quantization — when a session launch lands, for every slot that
+    // does not name its own (lib/launch.ts).
+    case 'SET_LAUNCH_QUANTIZATION':
+      return { ...project, launchQuantization: action.quantization }
 
     // Punch in / out both hang off the loop brace (lib/punch.ts).
     case 'SET_PUNCH':

@@ -68,6 +68,18 @@ export const KEYMAP: KeyBinding[] = [
   { id: 'edit.redo', keys: '⇧⌘Z', scope: 'global', group: 'Transport & Global', action: 'Redo', command: 'audio.edit.redo' },
   { id: 'file.save', keys: '⌘S', scope: 'global', group: 'Transport & Global', action: 'Save project', command: 'audio.save' },
   { id: 'edit.deleteClip', keys: 'Delete', also: ['Backspace'], scope: 'global', group: 'Transport & Global', action: 'Delete selected clips', command: 'audio.edit.deleteClip' },
+  // Global Quantization (lib/launch.ts) — the one setting you change WHILE
+  // playing, so it gets keys rather than a menu.
+  //
+  // ⚠️ NOT Live's ⌘6…0. ⌘0 is "interface back to 100 %" here, and that is what
+  // ⌘0 does in every browser this studio runs in — taking it for a launch
+  // setting would break a reflex nobody would think to look up. ⌥ instead, and
+  // the five stay together.
+  { id: 'launch.none', keys: '⌥6', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: None / 1 beat / 1 bar / 2 bars / 4 bars', display: '⌥6–⌥0', modes: ['music'] },
+  { id: 'launch.beat', keys: '⌥7', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 1 beat', modes: ['music'], hidden: true },
+  { id: 'launch.bar', keys: '⌥8', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 1 bar', modes: ['music'], hidden: true },
+  { id: 'launch.2bar', keys: '⌥9', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 2 bars', modes: ['music'], hidden: true },
+  { id: 'launch.4bar', keys: '⌥0', scope: 'global', group: 'Transport & Global', action: 'Global launch quantization: 4 bars', modes: ['music'], hidden: true },
   { id: 'edit.history', keys: '⌘⌥Z', scope: 'global', group: 'Transport & Global', action: 'Undo History — everything you have done, and a way back to any of it', command: 'audio.edit.history' },
   { id: 'track.bounce', keys: '⌘B', scope: 'global', group: 'Transport & Global', action: 'Bounce the selected track to a new track — its devices printed as audio', modes: ['music'], command: 'audio.track.bounce' },
   { id: 'edit.consolidate', keys: '⌘J', scope: 'global', group: 'Transport & Global', action: 'Consolidate — print a looping MIDI clip’s repeats as real notes' },

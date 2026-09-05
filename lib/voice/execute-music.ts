@@ -21,7 +21,7 @@
 //   Never invent an id. Everything referenced is resolved from the project or
 //   freshly minted here.
 
-import type { DawProject, DawTrack, MidiClip, MidiNote, DawClip, AudioClip, EffectType, TrackEffect } from '../daw-types'
+import type { DawProject, DawTrack, MidiClip, MidiNote, DawClip, AudioClip, EffectType, TrackEffect, LaunchQuantization } from '../daw-types'
 import { defaultDrumInstrument } from '../daw-types'
 import { parseSpokenBeat, beatToNotes, describeBeat as describeSpokenBeat } from './beatbox'
 import { parseDefinitions, applyDefinitions, clearVocab, definitions, laneFromName } from './vocab'
@@ -59,7 +59,7 @@ import { loopRange, workingRange, notesInRange, duplicateLoop, cropToRange, inse
 import { setSegBpm, slipByDrag, cropSample } from '../sample-editor'
 import { warpAsLoop, warpAtBpm, warpStraight } from '../warp'
 import { SHORT_SAMPLE_LABEL, type ShortSampleMode } from '../import-settings'
-import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP } from '../launch'
+import { LAUNCH_MODE_LABEL, LAUNCH_MODE_HELP, launchQuantShort } from '../launch'
 import { describePunch, punchArmed } from '../punch'
 import { recordGridLabel, type RecordGrid } from '../record-quantize'
 import { CLICK_SOUNDS } from '../metronome'
@@ -4869,6 +4869,25 @@ export function planVoiceCall(call: VoiceCall, project: DawProject, heard?: Voic
       if (typeof i.autoWarpLong === 'boolean') { out.autoWarpLong = i.autoWarpLong; said.push(i.autoWarpLong ? 'long samples are auto-warped to the song tempo' : 'long samples are left as they are') }
       if (!said.length) return fail('Say what to change — how short samples land (one-shot, loop, auto), or whether long samples are auto-warped.')
       return { actions: [out], say: `From now on, ${said.join('; ')}. Clips already in the song are unchanged.` }
+    }
+
+    // ── GLOBAL QUANTIZATION — when a launch lands, for every slot ─────────────
+    case 'set_global_quantization': {
+      const said = str(i.quantization).toLowerCase()
+      const q: LaunchQuantization | null =
+        /none|off|instant|straight ?away|immediate/.test(said) ? 'none'
+        : /\b4\b|four/.test(said) ? '4bar'
+        : /\b2\b|two/.test(said) ? '2bar'
+        : /bar/.test(said) ? 'bar'
+        : /beat/.test(said) ? 'beat'
+        : null
+      if (!q) return fail('Say none, a beat, a bar, two bars or four bars.')
+      return {
+        actions: [{ type: 'SET_LAUNCH_QUANTIZATION', quantization: q }],
+        say: q === 'none'
+          ? 'Session clips now start the instant you press them.'
+          : `Session clips now wait for the next ${launchQuantShort(q).toLowerCase()} before they come in — unless a slot says otherwise.`,
+      }
     }
 
     // ── BOUNCE — a track's devices printed as audio (lib/bounce.ts) ───────────

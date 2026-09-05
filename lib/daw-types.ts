@@ -1141,6 +1141,9 @@ export interface DawProject {
   /** Grid that recorded notes land on as they are played (lib/record-quantize.ts).
    *  Absent = none: the take keeps its own timing. */
   recordQuantize?: RecordGrid
+  /** Global Quantization: when a session slot names none of its own, this is
+   *  when its launch lands. Absent = the bar. */
+  launchQuantization?: LaunchQuantization
   masterVolume: number
   automationLanes: AutomationLane[]
   /** LFOs on tracks, driving parameters every tick (see Modulator). */

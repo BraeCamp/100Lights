@@ -867,6 +867,18 @@ export const MUSIC_TOOLS = [
     },
   },
   {
+    name: 'set_global_quantization',
+    description:
+      'WHEN A SESSION LAUNCH LANDS, FOR EVERY SLOT (Live\'s Global Quantization) — "launch everything on the bar" (quantization "bar"), "quantize launches to a beat" ("beat"), "launch clips instantly" ("none"), "wait four bars before clips come in" ("4bar"). This is the DEFAULT for slots that name none of their own; `set_launch` sets one slot\'s.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        quantization: { type: 'string', enum: ['none', 'beat', 'bar', '2bar', '4bar'] },
+      },
+      required: ['quantization'],
+    },
+  },
+  {
     name: 'bounce_track',
     description:
       'A TRACK\'S DEVICES PRINTED AS AUDIO (Live\'s Bounce to New Track / Bounce Track in Place) — "bounce the pad to a new track", "print the drums as audio", "bounce the bass in place". The result is a normal audio clip you can then cut, warp and reverse — not a freeze, which is a cache that thaws back. To a new track, the originals are PARKED rather than deleted. Takes real seconds: the render happens after the reply.',

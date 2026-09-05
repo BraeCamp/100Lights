@@ -14,7 +14,7 @@ import { CHECKOUT_LS_KEY } from '@/lib/apollo/checkout'
 import { installDawDiagnose, type DiagnoseEngine } from '@/lib/daw-diagnose'
 import { sessionCaptureToClips } from '@/lib/daw-session'
 import dynamic from 'next/dynamic'
-import type { DawView, EditTarget, DawProject, DawTrack, DawClip, AudioClip, ApolloInstrumentParams } from '@/lib/daw-types'
+import type { DawView, EditTarget, DawProject, DawTrack, DawClip, AudioClip, ApolloInstrumentParams, LaunchQuantization } from '@/lib/daw-types'
 import { defaultProject, TRACK_COLORS, DEFAULT_TRACK_HEIGHT, defaultTrackInstrument, voiceChainEffects, clipLockedBy, isAudioClip, isMidiClip } from '@/lib/daw-types'
 import { legacyToBar } from '@/lib/effect-bar'
 import type { DawAction } from '@/lib/daw-state'
@@ -62,6 +62,7 @@ import { useRegisterCommands } from '@/lib/commands'
 import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
 import { bounceSpan, clipsInSpan, bounceName, bouncedTrack, describeBounce, type BounceWhat } from '@/lib/bounce'
 import { historyRows, type HistoryRow } from '@/lib/undo-history'
+import { LAUNCH_QUANTIZATIONS, launchQuantShort, DEFAULT_LAUNCH_QUANTIZATION } from '@/lib/launch'
 import { describeAction } from '@/lib/voice/transcript'
 import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
 import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
@@ -2754,6 +2755,13 @@ export default function AudioEditor(props: AudioEditorProps) {
         void runBounceRef.current(id, 'newTrack')
         return true
       }
+      // Global Quantization (lib/launch.ts) — when a session launch lands, for
+      // every slot that names none of its own.
+      case 'launch.none': case 'launch.beat': case 'launch.bar': case 'launch.2bar': case 'launch.4bar': {
+        const q = id.slice('launch.'.length) as LaunchQuantization
+        dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: q })
+        return true
+      }
       case 'transport.punchIn':
         dispatch({ type: 'SET_PUNCH', punchIn: !projectRef.current.punchIn })
         return true
@@ -3295,6 +3303,24 @@ export default function AudioEditor(props: AudioEditorProps) {
       shortcut: keysFor('edit.undo'), when: () => editable, run: doUndo },
     { id: 'audio.edit.redo', group: 'Edit', label: 'Redo', keywords: 'forward again reapply',
       shortcut: keysFor('edit.redo'), when: () => editable, run: doRedo },
+    // Global Quantization (lib/launch.ts). One per option: you pick a value,
+    // you do not step through five, and the labels are read literally by the
+    // discoverability check.
+    { id: 'audio.launch.none', group: 'Session', label: 'Global launch quantization: None — clips start the instant you press',
+      keywords: 'global quantization launch session clip start when lands none instant free', shortcut: keysFor('launch.none'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: 'none' }) },
+    { id: 'audio.launch.beat', group: 'Session', label: 'Global launch quantization: 1 Beat — clips start on the next beat',
+      keywords: 'global quantization launch session clip start when lands beat', shortcut: keysFor('launch.beat'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: 'beat' }) },
+    { id: 'audio.launch.bar', group: 'Session', label: 'Global launch quantization: 1 Bar — clips start on the next bar',
+      keywords: 'global quantization launch session clip start when lands bar default', shortcut: keysFor('launch.bar'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: 'bar' }) },
+    { id: 'audio.launch.2bar', group: 'Session', label: 'Global launch quantization: 2 Bars — clips wait for a two-bar line',
+      keywords: 'global quantization launch session clip start when lands two bars', shortcut: keysFor('launch.2bar'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: '2bar' }) },
+    { id: 'audio.launch.4bar', group: 'Session', label: 'Global launch quantization: 4 Bars — clips wait for a four-bar line',
+      keywords: 'global quantization launch session clip start when lands four bars phrase', shortcut: keysFor('launch.4bar'),
+      run: () => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: '4bar' }) },
     { id: 'audio.edit.history', group: 'Edit', label: 'Undo History — everything you have done, and a way back to any of it',
       keywords: 'undo history list steps timeline back revert what did i do requests',
       shortcut: keysFor('edit.history'), run: openHistory },

@@ -28,9 +28,10 @@ import { usePlan } from '@/hooks/usePlan'
 import { useDaw, formatBeat, makeAudioClip, migrateProject, type DawAction } from '@/lib/daw-state'
 import { tempoSegments, tempoAt, clampBpm } from '@/lib/tempo-map'
 import { planPunch, describePunch, punchArmed } from '@/lib/punch'
+import { LAUNCH_QUANTIZATIONS, DEFAULT_LAUNCH_QUANTIZATION, launchQuantLabel, launchQuantShort } from '@/lib/launch'
 import { useMetronomeSettings, setMetronomeSettings, countInPosition, describeMetronome, CLICK_SOUNDS, CLICK_RHYTHMS, type ClickSound, type ClickRhythm } from '@/lib/metronome'
 import { RECORD_GRIDS, DEFAULT_RECORD_GRID, recordGridLabel, type RecordGrid } from '@/lib/record-quantize'
-import type { DawProject } from '@/lib/daw-types'
+import type { DawProject, LaunchQuantization } from '@/lib/daw-types'
 import { openProjectInStudio } from '@/lib/open-in-studio'
 import { useElectronChrome } from '@/lib/use-electron-chrome'
 import { useUITierOptional } from '../UITierProvider'
@@ -1082,6 +1083,21 @@ export default function Transport({ onCommitName }: TransportProps = {}) {
       >
         <Repeat size={13} />
       </button>
+
+      {/* Global Quantization (lib/launch.ts) — when a session launch lands, for
+          every slot that names none of its own. On the bar because it is the
+          one setting you change WHILE playing: a set landing on the bar wants
+          to go to a beat for the fill and back afterwards. */}
+      <select
+        data-help-id="global-quantization"
+        aria-label="Global launch quantization"
+        value={project.launchQuantization ?? DEFAULT_LAUNCH_QUANTIZATION}
+        title={`When a session clip's launch lands, unless the slot says otherwise. Now: ${launchQuantLabel(project.launchQuantization)}. ⌥6–⌥0.`}
+        onChange={e => dispatch({ type: 'SET_LAUNCH_QUANTIZATION', quantization: e.target.value as LaunchQuantization })}
+        style={{ fontSize: 10, padding: '3px 5px', borderRadius: 5, background: '#1e1e1e', color: 'var(--text-secondary)', border: '1px solid #2e2e2e', cursor: 'pointer' }}
+      >
+        {LAUNCH_QUANTIZATIONS.map(q => <option key={q.id} value={q.id}>{launchQuantShort(q.id)}</option>)}
+      </select>
 
       {/* Punch in / out — recording that starts and stops at the loop brace by
           itself, so a fix in the middle of a take never risks what is either

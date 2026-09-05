@@ -2491,12 +2491,18 @@ const COMMANDS: VoiceCommand[] = [
       const velM = aboutLaunch || /\bvelocity\s+amount\b/.test(raw) ? /(\d{1,3})\s*(?:%|percent)/.exec(raw) : null
       const quantM = aboutLaunch ? /\bon (?:the )?(beat|bar)\b|\bevery (\d) bars?\b|\bno quantiz|\binstant/.exec(raw) : null
       if (!modeM && !legato && !velM && !quantM && !followM) return null
+      // ⚠️ A sentence about EVERY launch is the global setting, not this slot's
+      // (set_global_quantization). "Launch clips instantly" named no slot and
+      // still landed here, because "instantly" survived the word-stripping
+      // below and read as a clip called "instantly".
+      if (/\b(?:every|everything|all|globally|global)\b/.test(raw)) return null
+      if (/\blaunch\w*\s+clips?\b/.test(raw) && !/\bslot\b/.test(raw)) return null
       // ⚠️ A session slot is NOT in ctx.clips — that list is the arrangement's,
       // and the grid is a different place entirely. So the name is not resolved
       // here at all: whatever is left once the command's own words are taken
       // out is handed to the planner, which owns the grid and looks it up there.
       const target = raw
-        .replace(/\b(?:put|set|sets|make|makes|launch|launches|launching|the|a|an|its|it|this|that|slots?|clips?|in|into|on|off|to|at|mode|amount|percent|quantize|quantization|every|no|instant|trigger|gate|toggle|repeat|legato|velocity|beats?|bars?)\b/g, ' ')
+        .replace(/\b(?:put|set|sets|make|makes|launch|launches|launching|the|a|an|its|it|this|that|slots?|clips?|in|into|on|off|to|at|mode|amount|percent|quantize|quantization|every|no|instant|instantly|immediately|trigger|gate|toggle|repeat|legato|velocity|beats?|bars?)\b/g, ' ')
         // The follow-action words too — they say what to do, never which clip.
         .replace(/\b(?:when|ends?|ended|after|then|done|follow|action|play|plays|played|again|next|previous|prev|first|last|any|other|another|one|stop|stops|nothing|none)\b/g, ' ')
         .replace(/\d+\s*%?/g, ' ')
@@ -2512,6 +2518,35 @@ const COMMANDS: VoiceCommand[] = [
       if (followM) input.follow = /another|any other/.test(followM[1]) ? 'other' : followM[1].replace(/^the /, '').replace('play ', '')
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'set_launch', input }], confidence: 0.94, needsName: true }
+    },
+  },
+  {
+    id: 'set_global_quantization',
+    tool: 'set_global_quantization',
+    group: 'Arrangement',
+    what: 'When a session launch lands, for every slot that names none of its own',
+    say: ['launch everything on the bar', 'quantize launches to a beat', 'launch clips instantly'],
+    match(w) {
+      const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
+      // ⚠️ Global, so no target — and that is exactly what tells it apart from
+      // set_launch, which is about ONE slot. The sentence has to say everything,
+      // or say launches in general.
+      // "Launch clips instantly" names no slot, so it is about all of them.
+      const everything = /\b(?:every|everything|all|globally|global)\b/.test(raw)
+        || /\blaunch\w*\s+clips?\b/.test(raw)
+      const aboutLaunch = /\blaunch(?:es|ing)?\b|\bclips? (?:come|start)\b/.test(raw)
+      if (!aboutLaunch || !(everything || /\bquanti[sz]e launch|launch quanti[sz]/.test(raw))) return null
+      // A named slot means the other rule owns it.
+      if (/\bslot\b/.test(w.raw.toLowerCase())) return null
+      const q = /\binstant\w*\b|\bimmediat\w*\b|\bstraight ?away\b|\bno quantiz|\bnone\b|\boff\b/.test(raw) ? 'none'
+        : /\bfour bars?\b|\b4 bars?\b/.test(raw) ? '4bar'
+        : /\btwo bars?\b|\b2 bars?\b/.test(raw) ? '2bar'
+        : /\bbars?\b/.test(raw) ? 'bar'
+        : /\bbeat\b/.test(raw) ? 'beat'
+        : null
+      if (!q) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'set_global_quantization', input: { quantization: q } }], confidence: 0.95 }
     },
   },
   {

@@ -29,6 +29,33 @@ export const LAUNCH_MODE_HELP: Record<LaunchMode, string> = {
   repeat: 'While you hold it, it starts again every launch-quantization step.',
 }
 
+/**
+ * Global Quantization: when a launch lands, for every slot that names none of
+ * its own. Live puts it on the control bar under ⌘6…0 because it is the one
+ * setting you change WHILE playing — a set that has been landing on the bar
+ * wants to go to a beat for the fill and back afterwards.
+ *
+ * ⚠️ The session's slot menu has offered "Use Global" from the start, and there
+ * was no global: every such slot got a hard-coded bar from the engine, and
+ * nothing anywhere could change it.
+ */
+export const LAUNCH_QUANTIZATIONS: ReadonlyArray<{ id: LaunchQuantization; label: string; key: string }> = [
+  { id: 'none', label: 'None (instant)', key: '⌘6' },
+  { id: 'beat', label: '1 Beat',         key: '⌘7' },
+  { id: 'bar',  label: '1 Bar',          key: '⌘8' },
+  { id: '2bar', label: '2 Bars',         key: '⌘9' },
+  { id: '4bar', label: '4 Bars',         key: '⌘0' },
+]
+
+export const DEFAULT_LAUNCH_QUANTIZATION: LaunchQuantization = 'bar'
+
+export const launchQuantLabel = (q: LaunchQuantization | undefined): string =>
+  LAUNCH_QUANTIZATIONS.find(x => x.id === (q ?? DEFAULT_LAUNCH_QUANTIZATION))?.label ?? '1 Bar'
+
+/** The short form for the control bar: "1 Bar" → "1 Bar", "None (instant)" → "None". */
+export const launchQuantShort = (q: LaunchQuantization | undefined): string =>
+  launchQuantLabel(q).replace(/\s*\(.*\)$/, '')
+
 export type LaunchOutcome = 'start' | 'stop' | 'none'
 
 export function modeOf(mode: LaunchMode | undefined): LaunchMode {
