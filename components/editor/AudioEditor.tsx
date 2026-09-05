@@ -61,6 +61,8 @@ import SoundLibraryPanel from './SoundLibrary'
 import { useRegisterCommands } from '@/lib/commands'
 import { resolveKey, releasedMomentary, MomentaryLatch, keysFor } from '@/lib/keymap'
 import { bounceSpan, clipsInSpan, bounceName, bouncedTrack, describeBounce, type BounceWhat } from '@/lib/bounce'
+import { historyRows, type HistoryRow } from '@/lib/undo-history'
+import { describeAction } from '@/lib/voice/transcript'
 import { useDetail, toggleDetail, detailLabel } from '@/lib/detail-area'
 import { useDisplaySettings, setDisplay } from '@/lib/display-settings'
 import { applyUiScale, stepUiScale } from '@/lib/ui-scale'
@@ -129,6 +131,8 @@ const ArrangementMixer = dynamic(() => import('./daw/ArrangementMixer'), { ssr: 
 const StatusBar = dynamic(() => import('./daw/StatusBar'), { ssr: false })
 const ClipViewWindow = dynamic(() => import('./daw/DetailArea').then(m => ({ default: m.ClipViewWindow })), { ssr: false })
 const PadInput = dynamic(() => import('./daw/PadInput'), { ssr: false })
+// Everything you have done, and a way back to any of it (lib/undo-history.ts).
+const UndoHistory = dynamic(() => import('./daw/UndoHistory'), { ssr: false })
 // Liveblocks only loads for saved projects — keeps collab out of the main editor chunk
 const CollabLayer = dynamic(() => import('./daw/CollabLayer'), { ssr: false })
 const DawMixSync = dynamic(() => import('./DawMixSync'), { ssr: false })   // cross-project audio links (live)
@@ -2300,6 +2304,11 @@ export default function AudioEditor(props: AudioEditorProps) {
   // The library key (⌘⌥B, Live's browser chord — `B` itself is Draw Mode's)
   // lives in lib/keymap.ts too.
   const [showPads,  setShowPads]  = useState(false)
+  // The undo stacks are refs (they must not re-render the studio on every
+  // edit), so the panel takes a SNAPSHOT: opening it reads them once, and each
+  // step re-reads them. A live view would need the stacks in state, which is
+  // the thing they are deliberately not.
+  const [historySnap, setHistorySnap] = useState<{ rows: HistoryRow[]; redoRows: HistoryRow[] } | null>(null)
   const [isSaving,  setIsSaving]  = useState(false)
   const [saveStatus, setSaveStatus] = useState<'saved' | 'error' | null>(null)
   const [saveError,  setSaveError]  = useState('')
@@ -2528,35 +2537,53 @@ export default function AudioEditor(props: AudioEditorProps) {
   // its un-reverted value (seen on the real path: "undo" after "mute the pad
   // and mute the drums" un-muted the pad and left the drums muted). The
   // running state is stepped through the reducer between patches instead.
-  const doUndo = useCallback((): number => {
-    const taken = takeUndoGroup(historyRef.current)
-    // Reports whether it actually did anything. A caller that says "Undone."
-    // when the stack was empty is lying, and voice is the caller most likely to
-    // be believed without looking.
-    if (!taken.length) return 0
+  //
+  // ⚠️ `groups` IS NOT A CONVENIENCE. Calling this twice in one tick used to
+  // corrupt the redo stack: `cur` starts from projectRef.current, and that ref
+  // is only refreshed by an effect AFTER a render, so the second call in a tick
+  // began from the state before the first one. Every redo entry it wrote then
+  // remembered the same "before", and redoing any one of them restored ALL the
+  // undone edits at once. Nothing hit it while the only callers undid once (a
+  // grouped request comes off in a single call), and the Undo History panel —
+  // the first caller that walks back several steps — hit it immediately. So the
+  // walking happens INSIDE one call, with `cur` threaded through.
+  const doUndo = useCallback((groups = 1): number => {
     let cur = projectRef.current
-    for (const entry of taken) {
-      redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
-      const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
-      rawDispatch(patchAction)
-      if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
-      cur = undoReducer(cur, patchAction)
+    let done = 0
+    for (let g = 0; g < groups; g++) {
+      const taken = takeUndoGroup(historyRef.current)
+      // Reports whether it actually did anything. A caller that says "Undone."
+      // when the stack was empty is lying, and voice is the caller most likely
+      // to be believed without looking.
+      if (!taken.length) break
+      for (const entry of taken) {
+        redoRef.current = [...redoRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
+        const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
+        rawDispatch(patchAction)
+        if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+        cur = undoReducer(cur, patchAction)
+        done++
+      }
     }
-    return taken.length
+    return done
   }, [rawDispatch])
 
-  const doRedo = useCallback((): number => {
-    const taken = takeUndoGroup(redoRef.current)
-    if (!taken.length) return 0
+  const doRedo = useCallback((groups = 1): number => {
     let cur = projectRef.current
-    for (const entry of taken) {
-      historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
-      const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
-      rawDispatch(patchAction)
-      if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
-      cur = undoReducer(cur, patchAction)
+    let done = 0
+    for (let g = 0; g < groups; g++) {
+      const taken = takeUndoGroup(redoRef.current)
+      if (!taken.length) break
+      for (const entry of taken) {
+        historyRef.current = [...historyRef.current.slice(-(UNDO_LIMIT - 1)), { before: cur, action: entry.action, group: entry.group, label: entry.label }]
+        const patchAction: DawAction = { type: 'PATCH_PROJECT', patch: computeRevertPatch(entry.before, cur, entry.action) }
+        rawDispatch(patchAction)
+        if (!isRemoteRef.current) broadcastRef.current?.(patchAction)
+        cur = undoReducer(cur, patchAction)
+        done++
+      }
     }
-    return taken.length
+    return done
   }, [rawDispatch])
 
   const beginUndoGroup = useCallback((label?: string): string => {
@@ -2565,6 +2592,30 @@ export default function AudioEditor(props: AudioEditorProps) {
     return id
   }, [])
   const endUndoGroup = useCallback(() => { undoGroupRef.current = null }, [])
+
+  // ── Undo History (lib/undo-history.ts) ─────────────────────────────────────
+  //
+  // The rows say what a REQUEST was, not what its last action did — the group
+  // label when there is one, else the same sentence the voice transcript uses
+  // for that action, so the two never describe one edit two ways.
+  const readHistory = useCallback(() => {
+    const names = {
+      track: (id: string) => projectRef.current.tracks.find(t => t.id === id)?.name ?? 'a track',
+      clip: (id: string) => projectRef.current.arrangementClips.find(c => c.id === id)?.name ?? 'a clip',
+      beatsPerBar: projectRef.current.timeSignatureNum,
+    }
+    const describe = (a: unknown) => describeAction(a, names)
+    return {
+      rows: historyRows(historyRef.current, describe),
+      redoRows: historyRows(redoRef.current, describe),
+    }
+  }, [])
+  const openHistory = useCallback(() => setHistorySnap(readHistory()), [readHistory])
+  const stepHistory = useCallback((times: number, dir: 'undo' | 'redo') => {
+    // One call, `times` groups — see the warning on doUndo.
+    if (dir === 'undo') doUndo(times); else doRedo(times)
+    setHistorySnap(readHistory())
+  }, [doUndo, doRedo, readHistory])
 
   // ── Bounce: a track's sound printed as audio (lib/bounce.ts) ───────────────
   //
@@ -2675,6 +2726,8 @@ export default function AudioEditor(props: AudioEditorProps) {
   // reads the same as its neighbours and cannot capture a stale closure.
   const runBounceRef = useRef(runBounce)
   runBounceRef.current = runBounce
+  const openHistoryRef = useRef(openHistory)
+  openHistoryRef.current = openHistory
   runKeyRef.current = (id, e) => {
     const engine = engineRef.current!
     switch (id) {
@@ -2710,6 +2763,7 @@ export default function AudioEditor(props: AudioEditorProps) {
       case 'transport.back': setPosition(Math.max(0, engine.currentBeat - 1)); return true
       case 'transport.forward': setPosition(engine.currentBeat + 1); return true
       case 'edit.undo': doUndo(); return true
+      case 'edit.history': openHistoryRef.current(); return true
       case 'edit.redo': doRedo(); return true
       case 'edit.deleteClip': {
         // The clip open in the piano roll is off-limits — pressing Delete
@@ -3241,6 +3295,9 @@ export default function AudioEditor(props: AudioEditorProps) {
       shortcut: keysFor('edit.undo'), when: () => editable, run: doUndo },
     { id: 'audio.edit.redo', group: 'Edit', label: 'Redo', keywords: 'forward again reapply',
       shortcut: keysFor('edit.redo'), when: () => editable, run: doRedo },
+    { id: 'audio.edit.history', group: 'Edit', label: 'Undo History — everything you have done, and a way back to any of it',
+      keywords: 'undo history list steps timeline back revert what did i do requests',
+      shortcut: keysFor('edit.history'), run: openHistory },
     { id: 'audio.edit.selectAll', group: 'Edit', label: 'Select every clip', keywords: 'all everything',
       run: () => setSelectedClipIds(new Set(projectRef.current.arrangementClips.map(c => c.id))) },
     { id: 'audio.edit.deselect', group: 'Edit', label: 'Deselect everything', keywords: 'none clear selection',
@@ -4252,6 +4309,17 @@ export default function AudioEditor(props: AudioEditorProps) {
           }}>Discard</button>
         </div>
       )}</Appear>
+
+      {/* Undo History (lib/undo-history.ts) */}
+      {historySnap && (
+        <UndoHistory
+          rows={historySnap.rows}
+          redoRows={historySnap.redoRows}
+          onUndo={n => stepHistory(n, 'undo')}
+          onRedo={n => stepHistory(n, 'redo')}
+          onClose={() => setHistorySnap(null)}
+        />
+      )}
 
       {/* What the bounce did */}
       <Appear show={!!bounceNotice} kind="rise">{cls => (

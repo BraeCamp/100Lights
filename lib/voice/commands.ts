@@ -5110,6 +5110,23 @@ const COMMANDS: VoiceCommand[] = [
     },
   },
   {
+    id: 'workspace.undoHistory',
+    tool: 'workspace',
+    group: 'View',
+    what: 'Open the Undo History — everything you have done, and a way back to it',
+    say: ['show me the undo history', 'open the undo history', 'let me see the edit history'],
+    match(w) {
+      // ⚠️ Named explicitly rather than left to the palette-by-name rule, which
+      // scored the sentence against the label "Undo" and won with it — "undo
+      // history" says all of a one-word label and half of a long one. Two
+      // panels answer to "history" here (this and the voice transcript), so
+      // which one a sentence means is a decision, not a similarity score.
+      if (!/\bundo history\b|\bedit history\b|\bhistory of (?:my |the )?edits\b/i.test(w.raw)) return null
+      for (const word of w.all) w.markWord(word, 0)
+      return { calls: [{ name: 'workspace', input: { command: 'Undo History' } }], confidence: 0.95 }
+    },
+  },
+  {
     id: 'show_view.transcript',
     tool: 'show_view',
     group: 'View',
@@ -5122,6 +5139,10 @@ const COMMANDS: VoiceCommand[] = [
       const asked = w.has('show', 'open', 'see', 'bring', 'read') || didYou
       const noun = w.has('transcript', 'log', 'history', 'conversation') || didYou
       if (!asked || !noun) return null
+      // ⚠️ "History" is the one word these two panels share, and they are
+      // genuinely different: this is what was SAID, the undo history is what
+      // was DONE. "Undo history" and "edit history" belong to the other one.
+      if (/\bundo\b|\bedit history\b/i.test(w.raw)) return null
       // "what did you do TO the pad" is a question about the pad, not the log.
       if (w.has('track', 'clip', 'pad', 'bass', 'drums')) return null
       return { calls: [{ name: 'show_view', input: { view: 'transcript', open: !w.has('close', 'hide') } }], confidence: 0.9 }
