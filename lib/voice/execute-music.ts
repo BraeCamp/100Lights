@@ -477,7 +477,22 @@ function spanOf(v: unknown, atBeat: number, maps: MusicMaps): Spanned {
   return cannot(String(v))
 }
 
-const allClips = (p: DawProject): DawClip[] => p.arrangementClips ?? []
+/**
+ * Every clip anybody can name — the arrangement's AND the session grid's.
+ *
+ * ⚠️ Slots used to be invisible here, so "reverse the drum loop slot" found
+ * nothing while the same words worked on an arrangement clip. They are clips
+ * with names, and the reducer now answers clip-shaped actions wherever the clip
+ * lives (lib/daw-state.ts), so there is nothing left to keep them out.
+ */
+const allClips = (p: DawProject): DawClip[] => [...(p.arrangementClips ?? []), ...sessionClips(p)]
+
+/** The session grid's clips, in track then scene order. */
+export function sessionClips(p: Pick<DawProject, 'sessionGrid'>): DawClip[] {
+  const out: DawClip[] = []
+  for (const row of Object.values(p.sessionGrid ?? {})) for (const c of row ?? []) if (c) out.push(c)
+  return out
+}
 
 /**
  * The effects a spoken command can reach, and how to build one.

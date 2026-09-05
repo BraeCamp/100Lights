@@ -148,7 +148,27 @@ const AMBIGUOUS_MARGIN = 0.05
  * is within a hair of it, both are returned so the caller can ask instead of
  * guessing.
  */
+/**
+ * "Slot" is what the session grid calls the square a clip sits in, and people
+ * say it — but to every rule here the thing is a CLIP, and the word appears in
+ * about a hundred guards. Left alone, "turn the session take slot down to 60%"
+ * fell past all of them and was read as a tempo change to 112 BPM: a sentence
+ * about one clip's level quietly retempoed the song. One alias at the door is
+ * the whole fix, and it is a synonym rather than a correction — nothing is
+ * being second-guessed, so nothing is echoed back about it.
+ *
+ * Unless somebody has NAMED something "slot", in which case the word is a name
+ * and stays exactly as it was said.
+ */
+function aliasSlot(sentence: string, ctx: InterpretContext): string {
+  if (!/\bslots?\b/i.test(sentence)) return sentence
+  const named = [...(ctx.tracks ?? []), ...(ctx.clips ?? [])].some(x => /\bslots?\b/i.test((x as { name?: string })?.name ?? ''))
+  if (named) return sentence
+  return sentence.replace(/\bslots\b/gi, 'clips').replace(/\bslot\b/gi, 'clip')
+}
+
 export function interpret(sentence: string, ctx: InterpretContext): Interpretation {
+  sentence = aliasSlot(sentence, ctx)
   // Tell the sentence which of its words name something in this project BEFORE
   // any rule reads it. This is the context check: from here on, a rule that
   // wants to hear "bass" as "bars" is charged for discarding a real name, and

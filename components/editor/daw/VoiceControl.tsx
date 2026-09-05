@@ -123,7 +123,7 @@ import {
   startRecording, preferredTranscriber, setPreferredTranscriber, micProblemMessage,
   type Recording, type StopResult, type MicReport,
 } from '@/lib/voice/record'
-import { planVoiceCalls, planVoiceCallsEach, type VoiceCall } from '@/lib/voice/execute-music'
+import { planVoiceCalls, planVoiceCallsEach, sessionClips, type VoiceCall } from '@/lib/voice/execute-music'
 import { recallCommand, rememberCommand, forgetKey, mergeShared, shareableTemplate } from '@/lib/voice/learned'
 import { recordCommand } from '@/lib/voice/voice-ledger'
 import { macroNames } from '@/lib/voice/macros'
@@ -1927,7 +1927,9 @@ export default function VoiceControl({ style }: { style?: React.CSSProperties })
       // So "Bass body 1" reads as one target — a track and an item said
       // together, which is the most specific thing anybody can say and was the
       // one form the rules could not see.
-      clips: (project.arrangementClips ?? []).map(c => ({
+      // Session slots are clips too, and naming one is the only way to talk
+      // about it — the grid has no timeline to point at (lib/voice/execute-music).
+      clips: [...(project.arrangementClips ?? []), ...sessionClips(project)].map(c => ({
         // The kind, so "reverse the lead" (MIDI) and "reverse the vocal
         // take" (audio) are told apart before anything is planned.
         id: c.id, name: c.name, trackId: c.trackId, kind: c.kind,

@@ -398,6 +398,22 @@ const read = (s, ctx) => interpret(s, ctx)
     read('mute the drums', empty).calls.length === 0)
 }
 
+// ── "Slot" is a synonym for "clip", unless it is somebody's name ──────────
+// A session slot IS a clip, and the rules only know the word "clip", so the
+// interpreter aliases one to the other. A project that has named something
+// "slot" must keep the word: renaming it mid-sentence would lose the track.
+{
+  const WITH_SLOT = tracks('Slot machine', 'Pad', 'Drums')
+  const kept = read('mute the slot machine', WITH_SLOT)
+  check('a track called "Slot machine" is still itself',
+    kept.calls[0]?.input?.target === 'Slot machine', JSON.stringify(kept.calls[0]?.input ?? kept.matched))
+
+  const NO_SLOT = tracks('Keys', 'Pad', 'Drums')
+  const aliased = read('deactivate the pad slot', NO_SLOT)
+  check('and with nothing called that, "slot" reads as "clip"',
+    aliased.calls[0]?.name === 'set_clip_active', aliased.matched)
+}
+
 // ── Nonsense is still declined ────────────────────────────────────────────
 for (const s of ['what time is it', 'make it sound better', 'thanks that was great', '']) {
   const r = read(s, WITH_BASS)

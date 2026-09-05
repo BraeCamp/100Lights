@@ -210,7 +210,51 @@ function growToFitNoteEnd(clip: MidiClip, noteEnd: number, timeSignatureNum: num
   return { ...clip, durationBeats: Math.ceil(noteEnd / bar) * bar }
 }
 
+/**
+ * The clip-shaped actions a SESSION SLOT understands. Everything here changes
+ * a clip and nothing around it, so it means the same thing wherever the clip
+ * lives. `MOVE_CLIP` and `SET_TEMPO_LEADER` are deliberately absent: a slot has
+ * no place on the timeline to be moved to, and a clip that is not on the
+ * timeline cannot drive the song's tempo.
+ */
+const SESSION_CLIP_ACTIONS = new Set([
+  'UPDATE_CLIP', 'REMOVE_CLIP',
+  'ADD_MIDI_NOTE', 'REMOVE_MIDI_NOTE', 'UPDATE_MIDI_NOTE', 'UPDATE_MIDI_NOTES', 'ADD_MIDI_NOTES',
+  'SPLICE_MIDI_NOTES', 'RESOLVE_NOTE_OVERLAPS', 'SET_CHANCE_GROUP',
+])
+
+/** Where a clip id sits in the session grid, if it does. */
+function findSessionSlot(project: DawProject, clipId: string): { trackId: string; sceneIndex: number; clip: DawClip } | null {
+  for (const [trackId, row] of Object.entries(project.sessionGrid ?? {})) {
+    const sceneIndex = (row ?? []).findIndex(c => c?.id === clipId)
+    if (sceneIndex >= 0) return { trackId, sceneIndex, clip: (row ?? [])[sceneIndex]! }
+  }
+  return null
+}
+
+function writeSessionSlot(project: DawProject, at: { trackId: string; sceneIndex: number }, clip: DawClip | null): DawProject {
+  const row = [...(project.sessionGrid[at.trackId] ?? [])]
+  row[at.sceneIndex] = clip
+  return { ...project, sessionGrid: { ...project.sessionGrid, [at.trackId]: row } }
+}
+
 export function reducer(project: DawProject, action: DawAction): DawProject {
+  // ⚠️ A SESSION SLOT IS A CLIP TOO. Slots live in `sessionGrid`, not in
+  // `arrangementClips`, so every clip-addressed action used to be a silent
+  // no-op on one: voice could name a slot and be told it had changed it while
+  // nothing happened. Rather than teach thirteen cases about the grid, the
+  // action is run against a project whose arrangement IS that one slot, and
+  // the answer is written back where it came from. The cases stay honest about
+  // one thing each, and anything that works on a clip works on a slot.
+  const clipId = (action as { clipId?: string }).clipId
+  if (clipId && SESSION_CLIP_ACTIONS.has(action.type) && !project.arrangementClips.some(c => c.id === clipId)) {
+    const at = findSessionSlot(project, clipId)
+    if (at) {
+      const inner = reducer({ ...project, arrangementClips: [at.clip] }, action)
+      return writeSessionSlot(project, at, inner.arrangementClips[0] ?? null)
+    }
+  }
+
   switch (action.type) {
 
     case 'ADD_TRACK': {
@@ -365,10 +409,18 @@ export function reducer(project: DawProject, action: DawAction): DawProject {
     case 'SET_CLIPS_ACTIVE': {
       const ids = new Set(action.clipIds)
       if (!ids.size) return project
-      const clips = project.arrangementClips.map(c =>
-        ids.has(c.id) ? ({ ...c, active: action.active ? undefined : false } as DawClip) : c
-      )
-      return { ...project, arrangementClips: clips }
+      const park = (c: DawClip) => ({ ...c, active: action.active ? undefined : false } as DawClip)
+      const clips = project.arrangementClips.map(c => (ids.has(c.id) ? park(c) : c))
+      // Session slots park too — this action names a set of clips and says
+      // nothing about where they live (the wrapper above takes one id, not many).
+      let sessionGrid = project.sessionGrid
+      let touched = false
+      for (const [trackId, row] of Object.entries(sessionGrid ?? {})) {
+        if (!(row ?? []).some(c => c && ids.has(c.id))) continue
+        touched = true
+        sessionGrid = { ...sessionGrid, [trackId]: (row ?? []).map(c => (c && ids.has(c.id) ? park(c) : c)) }
+      }
+      return { ...project, arrangementClips: clips, ...(touched ? { sessionGrid } : {}) }
     }
 
     case 'MOVE_CLIP': {

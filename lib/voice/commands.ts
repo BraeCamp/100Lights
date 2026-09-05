@@ -2391,13 +2391,22 @@ const COMMANDS: VoiceCommand[] = [
     say: ['put the session take slot in gate mode', 'make the session take slot legato', 'launch the session take slot on the bar'],
     match(w, ctx) {
       const raw = w.raw.toLowerCase().replace(/[.,!?]+$/, '')
-      // The word "slot" or "launch" is what makes this the session's; a clip in
-      // the arrangement has no launch settings at all.
-      if (!/\bslots?\b|\blaunch/.test(raw)) return null
-      const modeM = /\b(trigger|gate|toggle|repeat)\b/.exec(raw)
-      const legato = /\blegato\b/.test(raw)
-      const velM = /\bvelocity\b[^%\d]*(\d{1,3})\s*(?:%|percent)/.exec(raw)
-      const quantM = /\bon (?:the )?(beat|bar)\b|\bevery (\d) bars?\b|\bno quantiz|\binstant/.exec(raw)
+      // ⚠️ "Slot" reads as "clip" by the time a rule sees it (lib/voice/interpret
+      // aliasSlot), so this cannot key off that word. What makes a sentence the
+      // session's is what it asks for: a launch mode, legato, a velocity
+      // amount, or when the thing launches. None of those mean anything to a
+      // clip on the timeline.
+      //
+      // ⚠️ And each of these words means something else on its own. "Repeat the
+      // drums twice" is duplicate_clip, not Repeat mode. "Put a C on beat 3 of
+      // the bass" is a note, not a launch quantization. "Make the strings
+      // legato" is how they are played. So every branch below needs the
+      // sentence to be about LAUNCHING as well as about the thing.
+      const aboutLaunch = /\blaunch/.test(raw)
+      const modeM = aboutLaunch || /\bmode\b/.test(raw) ? /\b(trigger|gate|toggle|repeat)\b/.exec(raw) : null
+      const legato = /\blegato\b/.test(raw) && (aboutLaunch || /\bclips?\b/.test(raw))
+      const velM = aboutLaunch || /\bvelocity\s+amount\b/.test(raw) ? /(\d{1,3})\s*(?:%|percent)/.exec(raw) : null
+      const quantM = aboutLaunch ? /\bon (?:the )?(beat|bar)\b|\bevery (\d) bars?\b|\bno quantiz|\binstant/.exec(raw) : null
       if (!modeM && !legato && !velM && !quantM) return null
       // ⚠️ A session slot is NOT in ctx.clips — that list is the arrangement's,
       // and the grid is a different place entirely. So the name is not resolved
@@ -2516,6 +2525,9 @@ const COMMANDS: VoiceCommand[] = [
       // Shaping a clip's loop — cropping to it, doubling it, its length, the
       // notes in it — is clip_time's; this only switches looping on and off.
       if (/\bcrop\b|\bduplicate\b|\bdouble\b|\bselect\b|\bloop\b.*\bto\b.*\b(?:bars?|beats?)\b|\bloop (?:length|end)\b/.test(rest)) return null
+      // A launch setting names a percentage too ("launch velocity amount to
+      // 50%"), and that is the SESSION's, not this clip's level (set_launch).
+      if (/\blaunch|\bvelocity\b/.test(rest)) return null
       // Warping a clip AS a loop, straight, at a tempo, or its markers is warp_markers'; here Warp only switches on and off.
       if (/\bwarp/.test(rest) && /\bas an? \S+[- ]bars?\b|\bas a loop\b|\bstraight\b|\bat\s+\d+(?:\.\d+)?\s*bpm\b|\bmarkers?\b/.test(rest)) return null
       // Slip: the audio slides under the clip (lib/sample-editor.ts).
@@ -2649,10 +2661,10 @@ const COMMANDS: VoiceCommand[] = [
       // A view word beside a thing to do to a track is not a view change:
       // "the mixer channel for the pad", "mixer volume".
       if (/\b(?:volume|level|fader|channel|pan|mute|solo|track|effects?|devices?|clip)\b/.test(raw)) return null
-      // ⚠️ "Session" is also the name of the grid a slot lives in: "put the
-      // session take slot in gate mode" is a launch setting, not a request to
-      // look at the session. A sentence about a slot is never a view change.
-      if (/\bslots?\b|\blaunch/.test(raw)) return null
+      // ⚠️ "Session" is also the grid a clip can live in: "launch the session
+      // take clip on the bar" is a launch setting, not a request to look at the
+      // session. (The clip word above already excludes most of these.)
+      if (/\blaunch/.test(raw)) return null
       if (!/\b(?:show|switch|go|open|back|view|take me|bring up|see|let'?s|to the|the)\b/.test(raw)) return null
       for (const word of w.all) w.markWord(word, 0)
       return { calls: [{ name: 'workspace', input: { view } }], confidence: 0.9 }
