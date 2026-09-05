@@ -94,6 +94,18 @@ function TrackHeader({ track }: { track: DawTrack }) {
   if (cfSide === 'A') cfOpacity = 1 - Math.max(0, (crossfaderValue - 0.5) * 2)
   else if (cfSide === 'B') cfOpacity = 1 - Math.max(0, (0.5 - crossfaderValue) * 2)
 
+  // ── The track status line ────────────────────────────────────────────────
+  //
+  // What is playing on this track, and how long it has before its follow
+  // action fires. Polled rather than pushed: the number counts down, so it is
+  // a clock, and a clock the engine has to broadcast four times a second is
+  // worse for everyone than one the header reads when it draws.
+  const [status, setStatus] = useState<{ name?: string; remainingBeats: number | null } | null>(null)
+  useEffect(() => {
+    const id = setInterval(() => setStatus(engine.sessionStatus?.(track.id) ?? null), 250)
+    return () => clearInterval(id)
+  }, [engine, track.id])
+
   function commit() {
     dispatch({ type: 'UPDATE_TRACK', trackId: track.id, patch: { name: draft } })
     setEditing(false)
@@ -112,6 +124,14 @@ function TrackHeader({ track }: { track: DawTrack }) {
       opacity: cfOpacity < 0.95 ? Math.max(0.25, cfOpacity) : 1,
       transition: 'opacity 0.12s',
     }}>
+      {/* What this track's session is doing: the clip, and how long it has
+          left before its follow action fires (lib/follow-actions.ts). */}
+      {status && (
+        <div data-help-id="track-status" style={{ fontSize: 8.5, color: 'var(--accent-light)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+          title={status.remainingBeats == null ? `Playing "${status.name ?? 'a clip'}"` : `Playing "${status.name ?? 'a clip'}" — ${status.remainingBeats.toFixed(1)} beats before its follow action`}>
+          ▶ {status.name ?? 'playing'}{status.remainingBeats != null ? ` · ${Math.ceil(status.remainingBeats)}` : ''}
+        </div>
+      )}
       {/* Row 1: name */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
         {editing ? (

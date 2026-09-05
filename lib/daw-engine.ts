@@ -1978,6 +1978,26 @@ export class DawEngine extends EventTarget {
     else this._stopSessionTrack(trackId)
   }
 
+  /**
+   * What a track's session is doing right now, for the status line in its
+   * header: the clip sounding, and how long it has left before its follow
+   * action fires (lib/follow-actions.ts). Null where nothing is playing, and a
+   * null `remaining` where nothing is going to happen.
+   */
+  sessionStatus(trackId: string): { clipId: string; name?: string; remainingBeats: number | null } | null {
+    const audio = this._sessionSlots.get(trackId)
+    const midi = this._sessionMidiSlots.get(trackId)
+    const clip = audio?.clip ?? midi?.clip
+    const started = audio?.startContextTime ?? midi?.startCtxTime
+    if (!clip || started == null) return null
+    const settings = followOf(clip)
+    if (isIdle(settings)) return { clipId: clip.id, name: clip.name, remainingBeats: null }
+    const beatsPerSecond = (this.tempo || 120) / 60
+    const due = followBeats(settings, clip.durationBeats)
+    const gone = (this.ctx.currentTime - started) * beatsPerSecond
+    return { clipId: clip.id, name: clip.name, remainingBeats: Math.max(0, due - gone) }
+  }
+
   /** Seconds into the sample where the playing slot began reading — 0 unless it was launched legato. */
   getSessionStartOffset(trackId: string): number {
     return this._sessionSlots.get(trackId)?.startOffset ?? 0
